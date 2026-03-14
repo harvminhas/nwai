@@ -10,6 +10,13 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  /* Brand colors */
+  --color-brand-purple: #8b5cf6;
+  --color-brand-purple-light: #a78bfa;
+  --color-brand-purple-dark: #7c3aed;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
 }
 
 @media (prefers-color-scheme: dark) {
