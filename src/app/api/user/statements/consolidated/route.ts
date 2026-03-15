@@ -124,7 +124,31 @@ export async function GET(request: NextRequest) {
 
     if (!month || !/^\d{4}-\d{2}$/.test(month)) {
       if (useCurrent) {
-        return NextResponse.json({ error: "No completed statements yet." }, { status: 404 });
+        // No statements yet — but may still have manual assets to display
+        const now = new Date();
+        const currentYearMonth =
+          now.getFullYear().toString() +
+          "-" +
+          String(now.getMonth() + 1).padStart(2, "0");
+        return NextResponse.json({
+          data: {
+            netWorth: manualAssetsTotal,
+            assets: manualAssetsTotal,
+            debts: 0,
+            statementDate: `${currentYearMonth}-01`,
+            bankName: "",
+            income: { total: 0, sources: [] },
+            expenses: { total: 0, categories: [] },
+            subscriptions: [],
+            savingsRate: 0,
+            insights: [],
+          },
+          count: 0,
+          previousMonth: null,
+          yearMonth: currentYearMonth,
+          history: [],
+          manualAssets: relevantManualAssets,
+        });
       }
       return NextResponse.json(
         { error: "Query param month must be YYYY-MM, e.g. month=2024-03" },

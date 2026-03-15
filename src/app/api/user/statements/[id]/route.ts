@@ -66,3 +66,26 @@ export async function PATCH(
 
   return NextResponse.json({ ok: true, parsedData: updated });
 }
+
+/**
+ * DELETE /api/user/statements/[id]
+ * Permanently deletes the statement document from Firestore.
+ */
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const uid = await getUid(request);
+  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { id } = await params;
+  const { db } = getFirebaseAdmin();
+  const statementRef = db.collection("statements").doc(id);
+  const doc = await statementRef.get();
+
+  if (!doc.exists) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (doc.data()?.userId !== uid) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  await statementRef.delete();
+  return NextResponse.json({ ok: true });
+}

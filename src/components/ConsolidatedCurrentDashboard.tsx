@@ -64,7 +64,7 @@ function firstName(displayName: string | null | undefined, email: string | null 
   return "";
 }
 
-export default function ConsolidatedCurrentDashboard() {
+export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKey?: number }) {
   const router = useRouter();
   const [data, setData] = useState<ParsedStatementData | null>(null);
   const [previousMonth, setPreviousMonth] = useState<{ netWorth: number; assets: number; debts: number } | null>(null);
@@ -97,7 +97,7 @@ export default function ConsolidatedCurrentDashboard() {
       finally { setLoading(false); }
     });
     return () => unsubscribe();
-  }, [router]);
+  }, [router, refreshKey]);
 
   if (loading) {
     return (
