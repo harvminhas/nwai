@@ -1,0 +1,62 @@
+import { NextRequest, NextResponse } from "next/server";
+import { getFirebaseAdmin } from "@/lib/firebase-admin";
+import type { ManualLiability, LiabilityCategory } from "@/lib/types";
+
+function authToken(req: NextRequest): string | null {
+  const h = req.headers.get("authorization");
+  return h?.startsWith("Bearer ") ? h.slice(7) : null;
+}
+
+export async function GET(req: NextRequest) {
+  const token = authToken(req);
+  if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  try {
+    const { auth, db } = getFirebaseAdmin();
+    const { uid } = await auth.verifyIdToken(token);
+    const snap = await db
+      .collection("users").doc(uid).collection("manualLiabilities")
+      .orderBy("updatedAt", "desc")
+      .get();
+    const liabilities: ManualLiability[] = snap.docs.map((d) => {
+      const data = d.data();
+      return {
+        id: d.id,
+        label: data.label ?? "",
+        category: (data.category as LiabilityCategory) ?? "other",
+        balance: data.balance ?? 0,
+        interestRate: data.interestRate ?? undefined,
+        updatedAt: data.updatedAt?.toDate?.()?.toISOString?.() ?? data.updatedAt ?? new Date().toISOString(),
+      };
+    });
+    return NextResponse.json({ liabilities });
+  } catch (err) {
+    console.error("GET /api/user/liabilities error:", err);
+    return NextResponse.json({ error: "Failed to load liabilities" }, { status: 500 });
+  }
+}
+
+export async function POST(req: NextRequest) {
+  const token = authToken(req);
+  if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  try {
+    const { auth, db } = getFirebaseAdmin();
+    const { uid } = await auth.verifyIdToken(token);
+    const body = await req.json();
+    const { label, category, balance, interestRate } = body;
+    if (!label || typeof balance !== "number") {
+      return NextResponse.json({ error: "label and balance are required" }, { status: 400 });
+    }
+    const doc: Record<string, unknown> = {
+      label,
+      category: category ?? "other",
+      balance,
+      updatedAt: new Date(),
+    };
+    if (typeof interestRate === "number") doc.interestRate = interestRate;
+    const ref = await db.collection("users").doc(uid).collection("manualLiabilities").add(doc);
+    return NextResponse.json({ id: ref.id });
+  } catch (err) {
+    console.error("POST /api/user/liabilities error:", err);
+    return NextResponse.json({ error: "Failed to create liability" }, { status: 500 });
+  }
+}

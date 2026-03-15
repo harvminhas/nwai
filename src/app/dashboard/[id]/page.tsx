@@ -76,13 +76,17 @@ export default async function DashboardPage({
   const data = statement.parsedData;
   if (!data) notFound();
 
-  const SPENDING_TYPES = ["checking", "savings", "credit"];
-  const hasSpending = SPENDING_TYPES.includes(data.accountType ?? "") ||
-    (data.income?.total ?? 0) > 0 ||
-    (data.expenses?.total ?? 0) > 0 ||
-    (data.subscriptions?.length ?? 0) > 0;
-  const hasIncome = (data.accountType === "checking" || data.accountType === "savings") ||
-    (data.income?.total ?? 0) > 0;
+  const accountType = data.accountType ?? "other";
+  // Debt-only accounts (no income, no savings rate, no subscriptions worth showing)
+  const DEBT_ONLY_TYPES = new Set(["mortgage", "loan"]);
+  // Accounts that have spending/transactions
+  const HAS_SPENDING_TYPES = new Set(["checking", "savings", "credit"]);
+
+  const isDebtOnly  = DEBT_ONLY_TYPES.has(accountType);
+  const hasSpending = HAS_SPENDING_TYPES.has(accountType) ||
+    (!isDebtOnly && ((data.income?.total ?? 0) > 0 || (data.expenses?.total ?? 0) > 0));
+  // Income + savings rate only meaningful for checking/savings
+  const hasIncome = accountType === "checking" || accountType === "savings";
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -115,7 +119,7 @@ export default async function DashboardPage({
             </div>
             <div className="space-y-6">
               {hasIncome && <SavingsRateCard data={data} />}
-              <SubscriptionsCard subscriptions={data.subscriptions ?? []} />
+              {!isDebtOnly && <SubscriptionsCard subscriptions={data.subscriptions ?? []} />}
             </div>
           </div>
         )}

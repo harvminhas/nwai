@@ -1,3 +1,21 @@
+export type LiabilityCategory =
+  | "mortgage"
+  | "auto_loan"
+  | "student_loan"
+  | "personal_loan"
+  | "credit_card"
+  | "line_of_credit"
+  | "other";
+
+export interface ManualLiability {
+  id: string;
+  label: string;
+  category: LiabilityCategory;
+  balance: number;
+  interestRate?: number; // annual % e.g. 5.5
+  updatedAt: string; // ISO date string
+}
+
 export type AssetCategory =
   | "property"
   | "vehicle"

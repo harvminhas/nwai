@@ -33,11 +33,15 @@ function KpiCard({
   label: string;
   value: number;
   delta: number | null;
-  deltaLabel: string;
+  deltaLabel: string | ((delta: number) => string);
   positiveIsGood?: boolean;
 }) {
-  const isPositive = delta !== null && delta > 0;
   const isGood = delta !== null && (positiveIsGood ? delta > 0 : delta < 0);
+  // Arrow shows the direction the number moved: up = increased, down = decreased
+  const arrow = delta !== null && delta > 0 ? "↑" : "↓";
+  const resolvedLabel = typeof deltaLabel === "function" && delta !== null
+    ? deltaLabel(delta)
+    : (deltaLabel as string);
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -45,7 +49,7 @@ function KpiCard({
       <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{formatCurrency(value)}</p>
       {delta !== null && delta !== 0 && (
         <p className={`mt-1.5 text-xs font-medium ${isGood ? "text-green-600" : "text-red-500"}`}>
-          {isPositive ? "↑" : "↓"} {formatDelta(Math.abs(delta))} {deltaLabel}
+          {arrow} {formatDelta(Math.abs(delta))} {resolvedLabel}
         </p>
       )}
       {delta === null && (
@@ -94,7 +98,7 @@ export default function ConsolidatedProgressHero({
         label="Total Debts"
         value={debts}
         delta={debtsDelta}
-        deltaLabel="paid down"
+        deltaLabel={(d) => d < 0 ? "paid down" : "more debt"}
         positiveIsGood={false}
       />
     </div>

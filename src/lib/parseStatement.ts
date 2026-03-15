@@ -20,7 +20,7 @@ const SYSTEM_PROMPT = `You are a financial analysis expert. Analyze this bank st
 
 3. Identify transactions if present (date, description, amount).
    - CRITICAL: List EVERY transaction individually. Do NOT deduplicate, merge, or omit repeated payees. If the same employer pays twice in a month, list both entries separately.
-   - For mortgage/loan/investment statements with no consumer transactions, skip steps 3–6 and return empty arrays/zeros.
+   - For mortgage/loan/investment statements with no consumer transactions, skip steps 3–6 and return empty arrays/zeros for income, expenses, subscriptions, and savingsRate.
 4. For checking, savings, and credit accounts — classify each debit/credit:
    INCOME (credits into the account):
    - Salary, wages, ANY deposit or credit, transfers in, government payments (e.g. "GC DEPOSIT", "CRA", "CANADA", "GST", "OAS", "CPP", "EI", "CERB"), employer payroll, freelance payments, e-transfers received.
@@ -174,20 +174,40 @@ function extractJson(text: string): string {
 function validateParsedData(data: unknown): data is ParsedStatementData {
   if (!data || typeof data !== "object") return false;
   const d = data as Record<string, unknown>;
+  // Only hard-require the truly essential fields — everything else gets defaulted
   return (
     typeof d.netWorth === "number" &&
     typeof d.statementDate === "string" &&
-    typeof d.bankName === "string" &&
-    d.income != null &&
-    typeof (d.income as Record<string, unknown>).total === "number" &&
-    Array.isArray((d.income as Record<string, unknown>).sources) &&
-    d.expenses != null &&
-    typeof (d.expenses as Record<string, unknown>).total === "number" &&
-    Array.isArray((d.expenses as Record<string, unknown>).categories) &&
-    Array.isArray(d.subscriptions) &&
-    typeof d.savingsRate === "number" &&
-    Array.isArray(d.insights)
+    typeof d.bankName === "string"
   );
+}
+
+/** Fill in any missing optional fields so downstream code never crashes. */
+function coerceDefaults(data: Record<string, unknown>): ParsedStatementData {
+  const income = (data.income ?? {}) as Record<string, unknown>;
+  const expenses = (data.expenses ?? {}) as Record<string, unknown>;
+  return {
+    netWorth: data.netWorth as number,
+    assets: typeof data.assets === "number" ? data.assets : undefined,
+    debts: typeof data.debts === "number" ? data.debts : undefined,
+    statementDate: data.statementDate as string,
+    bankName: data.bankName as string,
+    accountId: typeof data.accountId === "string" ? data.accountId : undefined,
+    accountName: typeof data.accountName === "string" ? data.accountName : undefined,
+    accountType: (data.accountType as ParsedStatementData["accountType"]) ?? "other",
+    income: {
+      total: typeof income.total === "number" ? income.total : 0,
+      sources: Array.isArray(income.sources) ? income.sources : [],
+    },
+    expenses: {
+      total: typeof expenses.total === "number" ? expenses.total : 0,
+      categories: Array.isArray(expenses.categories) ? expenses.categories : [],
+      transactions: Array.isArray(expenses.transactions) ? expenses.transactions : [],
+    },
+    subscriptions: Array.isArray(data.subscriptions) ? data.subscriptions : [],
+    savingsRate: typeof data.savingsRate === "number" ? data.savingsRate : 0,
+    insights: Array.isArray(data.insights) ? data.insights : [],
+  };
 }
 
 export async function parseStatementImage(
@@ -262,9 +282,16 @@ function normalizeData(data: ParsedStatementData): ParsedStatementData {
 
 function parseJsonResponse(raw: string): ParsedStatementData {
   const jsonStr = extractJson(raw);
-  const parsed = JSON.parse(jsonStr) as unknown;
-  if (!validateParsedData(parsed)) {
-    throw new Error("AI response did not match expected schema");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonStr);
+  } catch (e) {
+    console.error("AI response JSON parse failed. Raw (first 2000 chars):", raw.slice(0, 2000));
+    throw new Error("AI returned invalid JSON: " + (e instanceof Error ? e.message : String(e)));
   }
-  return normalizeData(parsed);
+  if (!validateParsedData(parsed)) {
+    console.error("AI response failed schema validation. Parsed:", JSON.stringify(parsed).slice(0, 2000));
+    throw new Error("AI response missing required fields (netWorth, statementDate, bankName)");
+  }
+  return normalizeData(coerceDefaults(parsed as Record<string, unknown>));
 }
