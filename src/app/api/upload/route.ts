@@ -56,10 +56,7 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
     if (!file || typeof file === "string") {
-      return NextResponse.json(
-        { error: "No file provided" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
 
     if (file.size > MAX_SIZE) {
@@ -90,21 +87,46 @@ export async function POST(request: NextRequest) {
       process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
     let bucketName = getStorageBucketName();
 
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const fileHash = createHash("sha256").update(buffer).digest("hex");
+
+    // Check for exact duplicate BEFORE counting against the monthly limit
+    if (userId) {
+      const dupSnap = await db
+        .collection("statements")
+        .where("userId", "==", userId)
+        .where("fileHash", "==", fileHash)
+        .limit(1)
+        .get();
+      if (!dupSnap.empty) {
+        const dup = dupSnap.docs[0];
+        return NextResponse.json(
+          {
+            error: "duplicate",
+            message: "You've already uploaded this exact file.",
+            existingStatementId: dup.id,
+            existingStatus: dup.data().status,
+          },
+          { status: 409 }
+        );
+      }
+    }
+
+    // Check and increment monthly upload counter (only for genuine new uploads)
     if (userId) {
       const usersRef = db.collection("users").doc(userId);
       const userDoc = await usersRef.get();
       const now = new Date();
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      let uploadsThisMonth = 0;
-      if (userDoc.exists) {
-        const data = userDoc.data();
-        const resetAt = data?.uploadsResetAt?.toDate?.() ?? data?.uploadsResetAt;
-        if (resetAt && new Date(resetAt) < monthStart) {
-          uploadsThisMonth = 0;
-        } else {
-          uploadsThisMonth = (data?.uploadsThisMonth as number) ?? 0;
-        }
-      }
+
+      // Count actual statements this month — no stale counter issues
+      const uploadsSnap = await db
+        .collection("statements")
+        .where("userId", "==", userId)
+        .where("uploadedAt", ">=", monthStart)
+        .get();
+      const uploadsThisMonth = uploadsSnap.size;
+
       if (uploadsThisMonth >= FREE_UPLOADS_PER_MONTH) {
         return NextResponse.json(
           { error: "Free plan limit: 5 uploads per month. Upgrade for more." },
@@ -125,31 +147,6 @@ export async function POST(request: NextRequest) {
         },
         { merge: true }
       );
-    }
-
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const fileHash = createHash("sha256").update(buffer).digest("hex");
-
-    // Reject exact duplicate files
-    if (userId) {
-      const dupSnap = await db
-        .collection("statements")
-        .where("userId", "==", userId)
-        .where("fileHash", "==", fileHash)
-        .limit(1)
-        .get();
-      if (!dupSnap.empty) {
-        const dup = dupSnap.docs[0];
-        return NextResponse.json(
-          {
-            error: "duplicate",
-            message: "You've already uploaded this exact file.",
-            existingStatementId: dup.id,
-            existingStatus: dup.data().status,
-          },
-          { status: 409 }
-        );
-      }
     }
 
     const statementId = randomUUID();

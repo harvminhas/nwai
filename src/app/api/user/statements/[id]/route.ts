@@ -87,5 +87,19 @@ export async function DELETE(
   if (doc.data()?.userId !== uid) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   await statementRef.delete();
+
+  // Decrement the monthly upload counter so the slot is freed
+  try {
+    const { db: firestoreDb } = getFirebaseAdmin();
+    const usersRef = firestoreDb.collection("users").doc(uid);
+    const userDoc = await usersRef.get();
+    if (userDoc.exists) {
+      const current = (userDoc.data()?.uploadsThisMonth as number) ?? 0;
+      await usersRef.update({ uploadsThisMonth: Math.max(0, current - 1) });
+    }
+  } catch {
+    // Non-fatal — deletion still succeeded
+  }
+
   return NextResponse.json({ ok: true });
 }
