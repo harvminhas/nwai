@@ -81,8 +81,8 @@ export async function GET(request: NextRequest) {
       : allManualAssets;
     const manualAssetsTotal = relevantManualAssets.reduce((sum, a) => sum + a.value, 0);
 
-    // Collect completed + filter docs once
-    const completedDocs = snapshot.docs.filter((doc) => {
+    // Collect completed + filter docs once, then apply latest-wins per account+month
+    const allCompleted = snapshot.docs.filter((doc) => {
       const d = doc.data();
       if (d.status !== "completed" || !d.parsedData) return false;
       const parsed = d.parsedData as ParsedStatementData;
@@ -90,6 +90,25 @@ export async function GET(request: NextRequest) {
       if (!matchesAccount(parsed, accountFilter)) return false;
       return true;
     });
+
+    // For each account+month, keep only the most recently uploaded statement
+    const latestByKey = new Map<string, typeof allCompleted[0]>();
+    for (const doc of allCompleted) {
+      const d = doc.data();
+      const parsed = d.parsedData as ParsedStatementData;
+      const ym = docYearMonth(d);
+      const slug = accountSlug(parsed);
+      const key = `${slug}::${ym}`;
+      const existing = latestByKey.get(key);
+      if (!existing) {
+        latestByKey.set(key, doc);
+      } else {
+        const existingTime = existing.data().uploadedAt?.toDate?.()?.getTime() ?? 0;
+        const thisTime = d.uploadedAt?.toDate?.()?.getTime() ?? 0;
+        if (thisTime > existingTime) latestByKey.set(key, doc);
+      }
+    }
+    const completedDocs = Array.from(latestByKey.values());
 
     const yearMonths = new Set<string>();
     for (const doc of completedDocs) {

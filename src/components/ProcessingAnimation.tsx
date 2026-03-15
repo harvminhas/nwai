@@ -31,6 +31,7 @@ export default function ProcessingAnimation({
   const [message, setMessage] = useState("Starting…");
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [done, setDone] = useState(false);
+  const [timedOut, setTimedOut] = useState(false);
 
   // Detect auth state
   useEffect(() => {
@@ -74,7 +75,7 @@ export default function ProcessingAnimation({
     pollTimer = setInterval(poll, POLL_INTERVAL);
     timeoutId = setTimeout(() => {
       clearInterval(pollTimer);
-      setMessage("Processing… this may take up to 30 seconds.");
+      setTimedOut(true);
     }, POLL_TIMEOUT);
 
     let elapsed = 0;
@@ -93,6 +94,33 @@ export default function ProcessingAnimation({
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statementId, router, onError, isLoggedIn]);
+
+  if (timedOut) {
+    return (
+      <div className="mt-8 rounded-lg border border-red-200 bg-red-50 p-6">
+        <p className="font-semibold text-red-800">Processing is taking too long.</p>
+        <p className="mt-1 text-sm text-gray-600">
+          This usually means the AI API key is missing or invalid. Check your environment variables and try again.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <Link
+            href="/upload"
+            className="rounded-lg bg-red-600 px-5 py-2.5 font-semibold text-white transition hover:bg-red-700"
+          >
+            Try again
+          </Link>
+          {isLoggedIn && (
+            <Link
+              href="/account/dashboard"
+              className="rounded-lg border-2 border-gray-300 px-5 py-2.5 font-semibold text-gray-700 transition hover:bg-gray-50"
+            >
+              Back to dashboard
+            </Link>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   if (done) {
     return (

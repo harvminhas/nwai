@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import AppNav from "@/components/AppNav";
 import NetWorthCard from "@/components/NetWorthCard";
 import IncomeCard from "@/components/IncomeCard";
-import ExpensesCard from "@/components/ExpensesCard";
+import StatementExpenses from "./StatementExpenses";
 import SavingsRateCard from "@/components/SavingsRateCard";
 import SubscriptionsCard from "@/components/SubscriptionsCard";
 import InsightsSection from "@/components/InsightsSection";
@@ -109,7 +109,7 @@ export default async function DashboardPage({
           <div className="grid gap-6 lg:grid-cols-2">
             <div className="space-y-6">
               {hasIncome && <IncomeCard income={data.income} />}
-              <ExpensesCard expenses={data.expenses} />
+              <StatementExpenses expenses={data.expenses} statementId={id} />
             </div>
             <div className="space-y-6">
               {hasIncome && <SavingsRateCard data={data} />}

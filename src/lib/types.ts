@@ -33,9 +33,16 @@ export interface ExpenseCategory {
   percentage: number;
 }
 
+export interface ExpenseTransaction {
+  merchant: string;
+  amount: number;
+  category: string;
+}
+
 export interface Expenses {
   total: number;
   categories: ExpenseCategory[];
+  transactions?: ExpenseTransaction[];
 }
 
 export interface Subscription {
@@ -127,4 +134,7 @@ export interface UserStatementSummary {
   accountName?: string;
   accountType?: string;
   status: string;
+  superseded?: boolean;
+  supersededBy?: string;
+  fileHash?: string;
 }

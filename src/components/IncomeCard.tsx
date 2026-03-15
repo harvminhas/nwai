@@ -9,16 +9,38 @@ function formatCurrency(value: number): string {
   }).format(value);
 }
 
-/** Group sources by normalized description and sum amounts (e.g. multiple "MAM PAY" → one row). */
+const DEPOSIT_PATTERNS = [
+  /e[-\s]?transfer/i,
+  /\bdeposit\b/i,
+  /\bGC\s/i,
+  /\bCRA\b/i,
+  /\bCANADA\b/i,
+  /\bGST\b/i,
+  /\bOAS\b/i,
+  /\bCPP\b/i,
+  /\bEI\b/i,
+  /\bCERB\b/i,
+  /\bINTERACT?\b/i,
+];
+
+function normalizeIncomeLabel(description: string): string {
+  const d = description.trim();
+  if (!d) return "Cash / Deposit";
+  if (DEPOSIT_PATTERNS.some((re) => re.test(d))) return "Cash / Deposit";
+  // Title-case the label for readability
+  return d.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+}
+
+/** Group sources by normalized label and sum amounts. */
 function groupIncomeSources(sources: IncomeSource[]): { label: string; amount: number }[] {
   const byKey = new Map<string, { label: string; amount: number }>();
   for (const src of sources) {
-    const key = src.description.trim().toUpperCase() || "Other";
-    const existing = byKey.get(key);
+    const label = normalizeIncomeLabel(src.description);
+    const existing = byKey.get(label);
     if (existing) {
       existing.amount += src.amount;
     } else {
-      byKey.set(key, { label: src.description.trim() || "Other", amount: src.amount });
+      byKey.set(label, { label, amount: src.amount });
     }
   }
   return Array.from(byKey.values());

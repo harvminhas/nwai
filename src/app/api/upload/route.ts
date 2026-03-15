@@ -4,7 +4,7 @@ import {
   FirebaseAdminCredentialsError,
   getStorageBucketName,
 } from "@/lib/firebase-admin";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 
 function isBucketNotFound(err: unknown): boolean {
   if (err && typeof err === "object") {
@@ -127,10 +127,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const fileHash = createHash("sha256").update(buffer).digest("hex");
+
+    // Reject exact duplicate files
+    if (userId) {
+      const dupSnap = await db
+        .collection("statements")
+        .where("userId", "==", userId)
+        .where("fileHash", "==", fileHash)
+        .limit(1)
+        .get();
+      if (!dupSnap.empty) {
+        const dup = dupSnap.docs[0];
+        return NextResponse.json(
+          {
+            error: "duplicate",
+            message: "You've already uploaded this exact file.",
+            existingStatementId: dup.id,
+            existingStatus: dup.data().status,
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     const statementId = randomUUID();
     const ext = file.name.split(".").pop() || "bin";
     const storagePath = `statements/${statementId}/statement.${ext}`;
-    const buffer = Buffer.from(await file.arrayBuffer());
 
     let bucket = storage.bucket(bucketName);
     try {
@@ -163,18 +187,11 @@ export async function POST(request: NextRequest) {
       storageBucket: bucketName,
       contentType: file.type,
       status: "processing",
+      fileHash,
     });
 
-    // Trigger parse in background (do not await to avoid timeout)
-    const baseUrl = process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : process.env.NEXTAUTH_URL || "http://localhost:3000";
-    fetch(`${baseUrl}/api/parse`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ statementId }),
-    }).catch(() => {});
-
+    // Parse is triggered by the client after this response, not here,
+    // because Vercel terminates server-side background fetches when the response is sent.
     return NextResponse.json({ statementId });
   } catch (err) {
     if (err instanceof FirebaseAdminCredentialsError) {

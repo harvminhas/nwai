@@ -1,5 +1,5 @@
 import type { ParsedStatementData } from "./types";
-import { sendVisionRequest, sendPdfRequest, sendTextRequest } from "./anthropic";
+import { sendVisionRequest, sendPdfRequest, sendTextRequest } from "./ai";
 
 const SYSTEM_PROMPT = `You are a financial analysis expert. Analyze this bank statement and extract structured data.
 
@@ -19,25 +19,44 @@ const SYSTEM_PROMPT = `You are a financial analysis expert. Analyze this bank st
      - For debt accounts: assets = 0, debts = total outstanding balance (positive number)
 
 3. Identify transactions if present (date, description, amount).
+   - CRITICAL: List EVERY transaction individually. Do NOT deduplicate, merge, or omit repeated payees. If the same employer pays twice in a month, list both entries separately.
    - For mortgage/loan/investment statements with no consumer transactions, skip steps 3–6 and return empty arrays/zeros.
-4. For checking, savings, and credit accounts — categorize each transaction:
-   - Income: Salary, wages, deposits, transfers in
-   - Housing: Rent, mortgage payments, utilities, insurance
+4. For checking, savings, and credit accounts — classify each debit/credit:
+   INCOME (credits into the account):
+   - Salary, wages, ANY deposit or credit, transfers in, government payments (e.g. "GC DEPOSIT", "CRA", "CANADA", "GST", "OAS", "CPP", "EI", "CERB"), employer payroll, freelance payments, e-transfers received.
+   - When in doubt, if money is coming IN to the account, it is Income.
+   - Use a clean human-readable description:
+     * Identifiable employer/payroll → use the employer name (e.g. "MAM PAY" → "MAM Pay")
+     * E-transfers, generic deposits, government payments, GC deposits, CRA → use "Cash / Deposit"
+     * Do NOT use raw transaction codes, account numbers, or cryptic strings.
+
+   EXPENSES (debits out of the account) — every debit MUST be categorized, no exceptions:
+   - Housing: Rent, mortgage payments, utilities, home insurance
    - Dining: Restaurants, food delivery, coffee shops
-   - Shopping: Retail, online shopping, Amazon
-   - Transportation: Gas, Uber/Lyft, car payment, public transit
-   - Entertainment: Streaming, movies, events, hobbies
-   - Subscriptions: Any recurring monthly charge
-   - Healthcare: Medical, pharmacy, insurance
-   - Other: Anything else
-5. Detect subscriptions (recurring charges, same amount monthly).
+   - Shopping: Retail, online shopping, Amazon, grocery stores
+   - Transportation: Gas, Uber/Lyft, transit, parking, car payment
+   - Entertainment: Streaming, movies, events, hobbies, sports
+   - Subscriptions: Any recurring monthly charge (Netflix, Spotify, gym, etc.)
+   - Healthcare: Medical, pharmacy, dental, insurance premiums
+   - Transfers & Payments: Transfers to other accounts, credit card payments, bill payments, loan payments, interac transfers sent (e.g. "TFR-TO", "TRANSFER TO", "PAY TO", "IM200", "ONLINE TRANSFER")
+   - Cash & ATM: ATM withdrawals, cash advances
+   - Other: Any other debit not covered above
+   
+   CRITICAL: Do NOT skip any debit transaction. Every withdrawal, transfer out, payment, and ATM withdrawal must appear in expenses.transactions and be reflected in the category totals.
+5. For each expense transaction, also populate expenses.transactions as a flat list:
+   - merchant: clean, human-readable merchant name (e.g. "Amazon", "Tim Hortons", "Netflix"). Strip codes, terminal IDs, trailing numbers.
+   - amount: transaction amount (positive number)
+   - category: one of the category names from step 4
+   - CRITICAL: list every individual expense transaction — do NOT deduplicate or aggregate. Two visits to Tim Hortons = two entries.
+   - For mortgage/loan/investment: return [].
+6. Detect subscriptions (recurring charges, same amount monthly).
    - For credit accounts: include subscriptions found in transactions (e.g. Netflix, Spotify).
    - For mortgage/loan/investment accounts: return [].
-6. Calculate:
-   - For checking/savings only: total income, total expenses, savings rate = (income - expenses) / income
+7. Calculate:
+   - For checking/savings only: total income = sum of ALL individual income entries (do not deduplicate). Every credit/deposit to the account must appear in income.sources. total expenses = sum of ALL individual expense entries, savings rate = (income - expenses) / income
    - For credit accounts: total expenses only; set income = 0, savingsRate = 0
    - For mortgage/loan/investment: all return 0
-7. Generate up to 4 personalized insights relevant to the account type:
+8. Generate up to 4 personalized insights relevant to the account type:
    - For mortgage/loan: focus on interest rate, payoff timeline, equity building, overpayment opportunities
    - For investment: focus on growth, diversification, contribution rate
    - For checking/savings/credit: focus on spending patterns, savings opportunities, subscriptions
@@ -95,6 +114,13 @@ For a checking/savings/credit account:
       { "name": "Transportation", "amount": 320.00, "percentage": 8 },
       { "name": "Entertainment", "amount": 180.00, "percentage": 5 },
       { "name": "Other", "amount": 970.00, "percentage": 25 }
+    ],
+    "transactions": [
+      { "merchant": "Rogers", "amount": 120.00, "category": "Housing" },
+      { "merchant": "Tim Hortons", "amount": 8.50, "category": "Dining" },
+      { "merchant": "Tim Hortons", "amount": 6.75, "category": "Dining" },
+      { "merchant": "Amazon", "amount": 45.99, "category": "Shopping" },
+      { "merchant": "Netflix", "amount": 18.99, "category": "Entertainment" }
     ]
   },
   "subscriptions": [
@@ -167,14 +193,21 @@ export async function parseStatementImage(
   imageBase64: string,
   mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp"
 ): Promise<ParsedStatementData> {
-  const prompt = `${SYSTEM_PROMPT}\n\n**Image content (bank statement) is attached. Return the JSON now.**`;
-  const raw = await sendVisionRequest({ prompt, imageBase64, mediaType });
+  const raw = await sendVisionRequest(
+    SYSTEM_PROMPT,
+    "Analyze this bank statement image and return the JSON now.",
+    imageBase64,
+    mediaType
+  );
   return parseJsonResponse(raw);
 }
 
 export async function parseStatementPdf(pdfBase64: string): Promise<ParsedStatementData> {
-  const prompt = `${SYSTEM_PROMPT}\n\n**The attached PDF is a bank statement. Return the JSON now.**`;
-  const raw = await sendPdfRequest(prompt, pdfBase64);
+  const raw = await sendPdfRequest(
+    SYSTEM_PROMPT,
+    "Analyze this bank statement PDF and return the JSON now.",
+    pdfBase64
+  );
   return parseJsonResponse(raw);
 }
 
@@ -183,25 +216,54 @@ const MAX_CSV_CHARS = 120_000;
 export async function parseStatementCsv(csvText: string): Promise<ParsedStatementData> {
   const trimmed =
     csvText.length > MAX_CSV_CHARS
-      ? csvText.slice(0, MAX_CSV_CHARS) +
-        "\n\n[Truncated for length; analyze what is shown.]"
+      ? csvText.slice(0, MAX_CSV_CHARS) + "\n\n[Truncated for length; analyze what is shown.]"
       : csvText;
-  const prompt = `${SYSTEM_PROMPT}
-
-**Below is CSV data (often a transaction export from a bank). Infer net worth from ending balance or last row if present; otherwise estimate from transactions. Return the JSON now.**
+  const userPrompt = `Below is CSV data (a transaction export from a bank). Infer net worth from ending balance or last row if present; otherwise estimate from transactions. Return the JSON now.
 
 ---CSV---
 ${trimmed}
 ---END---`;
-  const raw = await sendTextRequest(prompt);
+  const raw = await sendTextRequest(SYSTEM_PROMPT, userPrompt);
   return parseJsonResponse(raw);
+}
+
+/**
+ * Recalculate all derived numeric fields from their line items.
+ * The AI often returns inconsistent totals/percentages — this is the
+ * single source of truth before data is written to Firestore.
+ */
+function normalizeData(data: ParsedStatementData): ParsedStatementData {
+  const sources = data.income?.sources ?? [];
+  const categories = data.expenses?.categories ?? [];
+
+  const incomeTotal = sources.reduce((s, x) => s + (x.amount ?? 0), 0);
+  const expensesTotal = categories.reduce((s, x) => s + (x.amount ?? 0), 0);
+
+  const normalizedCategories = categories.map((cat) => ({
+    ...cat,
+    percentage: incomeTotal > 0 ? Math.round((cat.amount / expensesTotal) * 100) : cat.percentage,
+  }));
+
+  const savingsRate =
+    incomeTotal > 0 ? Math.round(((incomeTotal - expensesTotal) / incomeTotal) * 100) : 0;
+
+  return {
+    ...data,
+    income: { sources, total: incomeTotal },
+    expenses: {
+      categories: normalizedCategories,
+      total: expensesTotal,
+      transactions: data.expenses?.transactions ?? [],
+    },
+    savingsRate,
+  };
 }
 
 function parseJsonResponse(raw: string): ParsedStatementData {
   const jsonStr = extractJson(raw);
   const parsed = JSON.parse(jsonStr) as unknown;
   if (!validateParsedData(parsed)) {
-    throw new Error("Claude response did not match expected schema");
+    throw new Error("AI response did not match expected schema");
   }
-  return parsed;
+  return normalizeData(parsed);
 }

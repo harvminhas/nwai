@@ -106,15 +106,28 @@ export default function AccountDashboardPage() {
                   <li key={s.id}>
                     <Link
                       href={`/dashboard/${s.id}`}
-                      className="block rounded-lg border border-gray-100 bg-gray-50/50 px-4 py-2 text-sm transition hover:bg-gray-100"
+                      className={`flex items-center justify-between gap-3 rounded-lg border px-4 py-2 text-sm transition hover:bg-gray-100 ${
+                        s.superseded
+                          ? "border-gray-100 bg-white opacity-50"
+                          : "border-gray-100 bg-gray-50/50"
+                      }`}
                     >
-                      <span className="font-medium text-gray-800">
-                        {s.fileName}
+                      <span>
+                        <span className={`font-medium ${s.superseded ? "text-gray-500" : "text-gray-800"}`}>
+                          {s.bankName ?? s.fileName}
+                          {s.accountName && (
+                            <span className="font-normal text-gray-500"> · {s.accountName}</span>
+                          )}
+                        </span>
+                        <span className="text-gray-400">
+                          {" "}· {s.statementDate ? `As of ${s.statementDate}` : formatDate(s.uploadedAt)}
+                        </span>
                       </span>
-                      <span className="text-gray-500">
-                        {" "}
-                        · {s.statementDate ? `As of ${s.statementDate}` : formatDate(s.uploadedAt)}
-                      </span>
+                      {s.superseded && (
+                        <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-400">
+                          Superseded
+                        </span>
+                      )}
                     </Link>
                   </li>
                 ))}

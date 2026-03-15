@@ -9,7 +9,14 @@ import {
   parseStatementPdf,
   parseStatementCsv,
 } from "@/lib/parseStatement";
-import { AnthropicConfigError } from "@/lib/anthropic";
+import { merchantSlug, applyRulesAndRecalculate } from "@/lib/applyRules";
+import { getYearMonth } from "@/lib/consolidate";
+
+function computeAccountSlug(parsed: { bankName?: string; accountId?: string }): string {
+  const bank = (parsed.bankName ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const acct = (parsed.accountId ?? "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return acct !== "unknown" ? `${bank}-${acct}` : bank;
+}
 
 const ERROR_MESSAGE =
   "We couldn't read this statement. Try a clearer image or different format.";
@@ -23,6 +30,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     statementId = (body as { statementId?: string }).statementId;
+    console.log("[parse] received statementId:", statementId, "| AI_PROVIDER:", process.env.AI_PROVIDER, "| GEMINI_API_KEY set:", !!process.env.GEMINI_API_KEY?.trim());
     if (!statementId) {
       return NextResponse.json(
         { error: "Missing statementId" },
@@ -91,63 +99,88 @@ export async function POST(request: NextRequest) {
       parsedData = await parseStatementImage(base64, mediaType);
     }
 
+    // Apply user's saved category rules if this is an authenticated statement
+    const userId = data?.userId as string | null;
+    if (userId) {
+      const rulesSnap = await db.collection(`users/${userId}/categoryRules`).get();
+      if (!rulesSnap.empty) {
+        const rules = new Map(
+          rulesSnap.docs.map((d) => [d.data().slug ?? merchantSlug(d.data().merchant), d.data().category])
+        );
+        parsedData = applyRulesAndRecalculate(parsedData, rules);
+      }
+    }
+
+    // Compute indexing fields for dedup queries
+    const slug = computeAccountSlug(parsedData);
+    const yearMonth = parsedData.statementDate ? getYearMonth(parsedData.statementDate) : null;
+
     await statementRef.update({
       parsedData,
       status: "completed",
       errorMessage: null,
+      accountSlug: slug,
+      yearMonth: yearMonth ?? null,
     });
+
+    // Mark older statements for the same account+month as superseded
+    if (userId && slug && yearMonth) {
+      const olderSnap = await db
+        .collection("statements")
+        .where("userId", "==", userId)
+        .where("accountSlug", "==", slug)
+        .where("yearMonth", "==", yearMonth)
+        .get();
+      const batch = db.batch();
+      let hasBatchOps = false;
+      for (const doc of olderSnap.docs) {
+        if (doc.id !== statementId) {
+          batch.update(doc.ref, { superseded: true, supersededBy: statementId });
+          hasBatchOps = true;
+        }
+      }
+      if (hasBatchOps) await batch.commit();
+    }
 
     return NextResponse.json({ ok: true, status: "completed" });
   } catch (err) {
     console.error("Parse error:", err);
-    const isAnthropicAuthError =
-      err instanceof AnthropicConfigError ||
-      (err &&
-        typeof err === "object" &&
-        typeof (err as Error).message === "string" &&
-        ((err as Error).message.includes("authentication method") ||
-          (err as Error).message.includes("apiKey") ||
-          (err as Error).message.includes("authToken")));
-    if (isAnthropicAuthError) {
-      return NextResponse.json(
-        {
-          error:
-            "Anthropic API key missing or invalid. Set ANTHROPIC_API_KEY in .env.local (get a key at https://console.anthropic.com/) and restart the dev server.",
-        },
-        { status: 503 }
-      );
-    }
-    if (err instanceof FirebaseAdminCredentialsError) {
-      return NextResponse.json(
-        {
-          error:
-            "Server setup incomplete: Firebase Admin credentials missing. Add FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY to .env.local.",
-        },
-        { status: 503 }
-      );
-    }
+
+    const errMessage = err instanceof Error ? err.message : String(err);
+
+    const isAiConfigError =
+      err instanceof Error &&
+      (errMessage.includes("GEMINI_API_KEY") ||
+        errMessage.includes("ANTHROPIC_API_KEY") ||
+        errMessage.includes("authentication method") ||
+        errMessage.includes("apiKey") ||
+        errMessage.includes("authToken"));
+
+    const isFirebaseCredError = err instanceof FirebaseAdminCredentialsError;
+
     const code = err && typeof err === "object" ? (err as { code?: number }).code : undefined;
-    if (code === 5) {
-      return NextResponse.json(
-        {
-          error:
-            "Firestore not set up. Create a Firestore database in Firebase Console (Build → Firestore Database → Create database).",
-        },
-        { status: 503 }
-      );
+    const isFirestoreNotFound = code === 5;
+
+    let friendlyMessage = ERROR_MESSAGE;
+    if (isAiConfigError) {
+      friendlyMessage = "AI provider API key missing or invalid. Check your environment variables.";
+    } else if (isFirebaseCredError) {
+      friendlyMessage = "Server setup incomplete: Firebase Admin credentials missing.";
+    } else if (isFirestoreNotFound) {
+      friendlyMessage = "Firestore not set up. Create a Firestore database in Firebase Console.";
     }
+
+    // Always mark statement as error so the client stops polling
     if (statementId) {
       try {
         const { db } = getFirebaseAdmin();
         await db.collection("statements").doc(statementId).update({
           status: "error",
-          errorMessage: ERROR_MESSAGE,
+          errorMessage: friendlyMessage,
         });
       } catch (_) {}
     }
-    return NextResponse.json(
-      { error: ERROR_MESSAGE },
-      { status: 500 }
-    );
+
+    return NextResponse.json({ error: friendlyMessage }, { status: isFirebaseCredError || isFirestoreNotFound ? 503 : 500 });
   }
 }

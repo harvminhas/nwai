@@ -64,6 +64,15 @@ export default function UploadPage() {
         body: formData,
       });
       const data = await res.json();
+      if (res.status === 409 && data.error === "duplicate") {
+        // Already uploaded — navigate to existing result
+        if (isLoggedIn) {
+          window.location.href = "/account/dashboard";
+        } else {
+          setStatementId(data.existingStatementId as string);
+        }
+        return;
+      }
       if (!res.ok) {
         setUploadError(data.error || "Upload failed");
         return;
@@ -71,7 +80,16 @@ export default function UploadPage() {
       if (!idToken && typeof sessionStorage !== "undefined") {
         sessionStorage.setItem(ANONYMOUS_UPLOAD_KEY, "1");
       }
-      setStatementId(data.statementId);
+      const sid = data.statementId as string;
+      setStatementId(sid);
+
+      // Trigger parse from the client so it runs as its own request
+      // (server-side fire-and-forget is killed by Vercel when the upload response returns)
+      fetch("/api/parse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ statementId: sid }),
+      }).catch(() => {});
     } catch {
       setUploadError("Upload failed. Please try again.");
     }
