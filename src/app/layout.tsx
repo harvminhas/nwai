@@ -16,6 +16,9 @@ export const metadata: Metadata = {
   title: "networth.online – Your Financial Snapshot in 30 Seconds",
   description:
     "Upload your bank statement and instantly see your net worth, income, expenses, subscriptions, and smart insights. No bank login required.",
+  icons: {
+    icon: "/icon.svg",
+  },
 };
 
 export default function RootLayout({
