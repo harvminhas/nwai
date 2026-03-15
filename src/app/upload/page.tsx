@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
-import AppNav from "@/components/AppNav";
+import Sidebar from "@/components/Sidebar";
 import UploadZone from "@/components/UploadZone";
 import ProcessingAnimation from "@/components/ProcessingAnimation";
 
@@ -99,8 +99,10 @@ export default function UploadPage() {
   if (authChecked && isLoggedIn) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <AppNav />
-        <div className="mx-auto max-w-xl px-4 py-12 sm:px-6 lg:px-8">
+        <Sidebar />
+        <div className="lg:pl-56">
+          <div className="lg:hidden h-14" />
+          <div className="mx-auto max-w-xl px-4 py-12 sm:px-6">
           {!statementId ? (
             <>
               <div className="mb-6 flex items-center justify-between">
@@ -145,6 +147,7 @@ export default function UploadPage() {
               )}
             </>
           )}
+          </div>
         </div>
       </div>
     );

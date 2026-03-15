@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
+import Link from "next/link";
 import type { ManualAsset, AssetCategory, UserStatementSummary, Insight } from "@/lib/types";
 
 // ── constants ─────────────────────────────────────────────────────────────────
@@ -365,19 +366,17 @@ export function AssetsPage() {
         {/* Debts */}
         {debts.length > 0 && (
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="mb-4 flex items-center gap-3">
+            <div className="mb-3 flex items-center gap-3">
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Debts</p>
-              <span className="rounded-md bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-600">
-                {fmt(debtsTotal)}
-              </span>
+              <span className="rounded-md bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-600">{fmt(debtsTotal)}</span>
+              <Link href="/account/liabilities" className="ml-auto text-xs font-medium text-purple-600 hover:underline">
+                View liabilities →
+              </Link>
             </div>
             <div className="divide-y divide-gray-100">
-              {debts.map((d) => (
-                <div key={d.slug} className="flex items-center justify-between py-3">
-                  <div>
-                    <p className="text-sm font-medium text-gray-800">{d.accountName} — {d.bankName}</p>
-                    <p className="text-xs text-gray-400">{d.accountType}</p>
-                  </div>
+              {debts.slice(0, 3).map((d) => (
+                <div key={d.slug} className="flex items-center justify-between py-2.5">
+                  <p className="text-sm text-gray-700">{d.accountName} — {d.bankName}</p>
                   <p className="text-sm font-semibold text-gray-800">{fmt(Math.abs(d.balance))}</p>
                 </div>
               ))}

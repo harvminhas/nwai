@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import AppNav from "@/components/AppNav";
+import Sidebar from "@/components/Sidebar";
 import NetWorthCard from "@/components/NetWorthCard";
 import IncomeCard from "@/components/IncomeCard";
 import StatementExpenses from "./StatementExpenses";
@@ -86,8 +86,10 @@ export default async function DashboardPage({
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <AppNav />
-      <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+      <Sidebar />
+      <div className="lg:pl-56">
+        <div className="lg:hidden h-14" />
+        <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
         <div className="mb-6 flex items-center gap-2 text-sm text-gray-500">
           <Link href="/account/dashboard" className="hover:text-purple-600">
             Dashboard
@@ -121,6 +123,7 @@ export default async function DashboardPage({
         <InsightsSection insights={data.insights ?? []} />
 
         <DashboardCtas />
+        </div>
       </div>
     </div>
   );

@@ -1,10 +1,5 @@
-import AppNav from "@/components/AppNav";
+import SidebarLayout from "@/components/SidebarLayout";
 
 export default function AccountLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <AppNav />
-      <main>{children}</main>
-    </div>
-  );
+  return <SidebarLayout>{children}</SidebarLayout>;
 }
