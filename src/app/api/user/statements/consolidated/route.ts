@@ -147,24 +147,29 @@ export async function GET(request: NextRequest) {
       netWorth: adjustedNetWorth,
     };
 
-    const [y, m] = month.split("-").map(Number);
-    const prevDate = new Date(y, m - 2, 1);
-    const prevMonth =
-      prevDate.getFullYear().toString().padStart(4, "0") +
-      String(prevDate.getMonth() + 1).padStart(2, "0");
-
-    const prevStatements: ParsedStatementData[] = completedDocs
-      .filter((doc) => docYearMonth(doc.data()) === prevMonth)
-      .map((doc) => doc.data().parsedData as ParsedStatementData);
+    // Find the most recent month with data that is strictly before the current month
+    const priorMonths = Array.from(yearMonths)
+      .filter((ym) => ym < month)
+      .sort()
+      .reverse();
+    const prevMonth = priorMonths[0] ?? null;
 
     let previousMonth: { netWorth: number; assets: number; debts: number } | null = null;
-    if (prevStatements.length > 0) {
-      const prev = consolidateStatements(prevStatements, prevMonth);
-      previousMonth = {
-        netWorth: prev.netWorth,
-        assets: prev.assets ?? Math.max(0, prev.netWorth),
-        debts: prev.debts ?? Math.max(0, -prev.netWorth),
-      };
+    if (prevMonth) {
+      const prevStatements: ParsedStatementData[] = completedDocs
+        .filter((doc) => docYearMonth(doc.data()) === prevMonth)
+        .map((doc) => doc.data().parsedData as ParsedStatementData);
+      if (prevStatements.length > 0) {
+        const prev = consolidateStatements(prevStatements, prevMonth);
+        const prevManualAssetsTotal = relevantManualAssets.reduce((sum, a) => sum + a.value, 0);
+        const prevAssets = (prev.assets ?? Math.max(0, prev.netWorth)) + prevManualAssetsTotal;
+        const prevDebts = prev.debts ?? Math.max(0, -prev.netWorth);
+        previousMonth = {
+          netWorth: prevAssets - prevDebts,
+          assets: prevAssets,
+          debts: prevDebts,
+        };
+      }
     }
 
     const history: { yearMonth: string; netWorth: number }[] = [];

@@ -9,89 +9,94 @@ function formatCurrency(value: number): string {
   }).format(value);
 }
 
+function formatDelta(value: number): string {
+  const abs = Math.abs(value);
+  const sign = value >= 0 ? "+" : "−";
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sign}$${Math.round(abs / 1_000)}k`;
+  return `${sign}${formatCurrency(abs)}`;
+}
+
 export type PreviousMonth = {
   netWorth: number;
   assets: number;
   debts: number;
 };
 
+function KpiCard({
+  label,
+  value,
+  delta,
+  deltaLabel,
+  positiveIsGood = true,
+}: {
+  label: string;
+  value: number;
+  delta: number | null;
+  deltaLabel: string;
+  positiveIsGood?: boolean;
+}) {
+  const isPositive = delta !== null && delta > 0;
+  const isGood = delta !== null && (positiveIsGood ? delta > 0 : delta < 0);
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">{label}</p>
+      <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{formatCurrency(value)}</p>
+      {delta !== null && delta !== 0 && (
+        <p className={`mt-1.5 text-xs font-medium ${isGood ? "text-green-600" : "text-red-500"}`}>
+          {isPositive ? "↑" : "↓"} {formatDelta(Math.abs(delta))} {deltaLabel}
+        </p>
+      )}
+      {delta === null && (
+        <p className="mt-1.5 text-xs text-gray-400">First month tracked</p>
+      )}
+      {delta === 0 && (
+        <p className="mt-1.5 text-xs text-gray-400">No change</p>
+      )}
+    </div>
+  );
+}
+
 export default function ConsolidatedProgressHero({
   data,
   previousMonth,
-  monthLabel,
 }: {
   data: ParsedStatementData;
   previousMonth: PreviousMonth | null;
-  monthLabel: string;
+  monthLabel: string; // kept for API compat
 }) {
   const netWorth = data.netWorth ?? 0;
   const assets = data.assets ?? Math.max(0, netWorth);
   const debts = data.debts ?? Math.max(0, -netWorth);
 
-  const change =
-    previousMonth != null ? netWorth - previousMonth.netWorth : null;
-  const assetsChange =
-    previousMonth != null ? assets - previousMonth.assets : null;
-  const debtsChange =
-    previousMonth != null ? debts - previousMonth.debts : null;
+  const nwDelta = previousMonth != null ? netWorth - previousMonth.netWorth : null;
+  const assetsDelta = previousMonth != null ? assets - previousMonth.assets : null;
+  const debtsDelta = previousMonth != null ? debts - previousMonth.debts : null;
 
   return (
-    <div className="mb-8 space-y-6">
-      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-md">
-        <p className="text-sm font-medium text-gray-500">{monthLabel}</p>
-        <p className="mt-1 font-bold text-4xl text-gray-900 md:text-5xl">
-          {formatCurrency(netWorth)}
-        </p>
-        <p className="mt-1 text-sm text-gray-600">Net worth</p>
-        {change !== null && (
-          <p
-            className={`mt-2 text-sm font-medium ${
-              change >= 0 ? "text-green-600" : "text-red-600"
-            }`}
-          >
-            {change >= 0 ? "+" : ""}
-            {formatCurrency(change)} from last month
-          </p>
-        )}
-        {change === null && (
-          <p className="mt-2 text-sm text-gray-500">First month tracked</p>
-        )}
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-          <p className="text-sm font-medium text-gray-500">Assets</p>
-          <p className="mt-1 text-2xl font-bold text-gray-900">
-            {formatCurrency(assets)}
-          </p>
-          {assetsChange !== null && assetsChange !== 0 && (
-            <p
-              className={`mt-1 text-xs font-medium ${
-                assetsChange >= 0 ? "text-green-600" : "text-red-600"
-              }`}
-            >
-              {assetsChange >= 0 ? "+" : ""}
-              {formatCurrency(assetsChange)} vs last month
-            </p>
-          )}
-        </div>
-        <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-          <p className="text-sm font-medium text-gray-500">Debts</p>
-          <p className="mt-1 text-2xl font-bold text-gray-900">
-            {formatCurrency(debts)}
-          </p>
-          {debtsChange !== null && debtsChange !== 0 && (
-            <p
-              className={`mt-1 text-xs font-medium ${
-                debtsChange <= 0 ? "text-green-600" : "text-red-600"
-              }`}
-            >
-              {debtsChange <= 0 ? "" : "+"}
-              {formatCurrency(debtsChange)} vs last month
-            </p>
-          )}
-        </div>
-      </div>
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <KpiCard
+        label="Net Worth"
+        value={netWorth}
+        delta={nwDelta}
+        deltaLabel="this month"
+        positiveIsGood
+      />
+      <KpiCard
+        label="Total Assets"
+        value={assets}
+        delta={assetsDelta}
+        deltaLabel="vs last month"
+        positiveIsGood
+      />
+      <KpiCard
+        label="Total Debts"
+        value={debts}
+        delta={debtsDelta}
+        deltaLabel="paid down"
+        positiveIsGood={false}
+      />
     </div>
   );
 }
