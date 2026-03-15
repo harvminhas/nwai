@@ -46,7 +46,7 @@ const RANGES = [
 export default function NetWorthChart({
   history,
 }: {
-  history: { yearMonth: string; netWorth: number }[];
+  history: { yearMonth: string; netWorth: number; expensesTotal?: number }[];
 }) {
   const [range, setRange] = useState(3);
 

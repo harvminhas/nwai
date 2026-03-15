@@ -158,7 +158,7 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
               Top Spending · {shortMonth(yearMonth)}
             </p>
-            <Link href="/account/accounts" className="text-xs font-medium text-purple-600 hover:underline">
+            <Link href="/account/spending" className="text-xs font-medium text-purple-600 hover:underline">
               See all →
             </Link>
           </div>

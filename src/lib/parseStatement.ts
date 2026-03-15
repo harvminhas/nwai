@@ -46,6 +46,7 @@ const SYSTEM_PROMPT = `You are a financial analysis expert. Analyze this bank st
 5. For each expense transaction, also populate expenses.transactions as a flat list:
    - merchant: clean, human-readable merchant name (e.g. "Amazon", "Tim Hortons", "Netflix"). Strip codes, terminal IDs, trailing numbers.
    - amount: transaction amount (positive number)
+   - date: transaction date in ISO format YYYY-MM-DD (extract from statement — do NOT omit)
    - category: one of the category names from step 4
    - CRITICAL: list every individual expense transaction — do NOT deduplicate or aggregate. Two visits to Tim Hortons = two entries.
    - For mortgage/loan/investment: return [].
@@ -116,11 +117,11 @@ For a checking/savings/credit account:
       { "name": "Other", "amount": 970.00, "percentage": 25 }
     ],
     "transactions": [
-      { "merchant": "Rogers", "amount": 120.00, "category": "Housing" },
-      { "merchant": "Tim Hortons", "amount": 8.50, "category": "Dining" },
-      { "merchant": "Tim Hortons", "amount": 6.75, "category": "Dining" },
-      { "merchant": "Amazon", "amount": 45.99, "category": "Shopping" },
-      { "merchant": "Netflix", "amount": 18.99, "category": "Entertainment" }
+      { "merchant": "Rogers", "amount": 120.00, "date": "2026-02-03", "category": "Housing" },
+      { "merchant": "Tim Hortons", "amount": 8.50, "date": "2026-02-05", "category": "Dining" },
+      { "merchant": "Tim Hortons", "amount": 6.75, "date": "2026-02-12", "category": "Dining" },
+      { "merchant": "Amazon", "amount": 45.99, "date": "2026-02-14", "category": "Shopping" },
+      { "merchant": "Netflix", "amount": 18.99, "date": "2026-02-01", "category": "Entertainment" }
     ]
   },
   "subscriptions": [

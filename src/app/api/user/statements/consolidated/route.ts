@@ -147,7 +147,6 @@ export async function GET(request: NextRequest) {
           previousMonth: null,
           yearMonth: currentYearMonth,
           history: [],
-          manualAssets: relevantManualAssets,
         });
       }
       return NextResponse.json(
@@ -178,7 +177,7 @@ export async function GET(request: NextRequest) {
       .reverse();
     const prevMonth = priorMonths[0] ?? null;
 
-    let previousMonth: { netWorth: number; assets: number; debts: number } | null = null;
+    let previousMonth: { netWorth: number; assets: number; debts: number; expenses: number } | null = null;
     if (prevMonth) {
       const prevStatements: ParsedStatementData[] = completedDocs
         .filter((doc) => docYearMonth(doc.data()) === prevMonth)
@@ -192,11 +191,12 @@ export async function GET(request: NextRequest) {
           netWorth: prevAssets - prevDebts,
           assets: prevAssets,
           debts: prevDebts,
+          expenses: prev.expenses?.total ?? 0,
         };
       }
     }
 
-    const history: { yearMonth: string; netWorth: number }[] = [];
+    const history: { yearMonth: string; netWorth: number; expensesTotal: number }[] = [];
     for (const ym of Array.from(yearMonths).sort()) {
       const forMonth: ParsedStatementData[] = completedDocs
         .filter((doc) => docYearMonth(doc.data()) === ym)
@@ -206,7 +206,7 @@ export async function GET(request: NextRequest) {
         // Add manual assets to history too (they don't change month-to-month here, just use current value)
         const hAssets = (c.assets ?? Math.max(0, c.netWorth)) + manualAssetsTotal;
         const hNetWorth = hAssets - (c.debts ?? Math.max(0, -c.netWorth));
-        history.push({ yearMonth: ym, netWorth: hNetWorth });
+        history.push({ yearMonth: ym, netWorth: hNetWorth, expensesTotal: c.expenses?.total ?? 0 });
       }
     }
 

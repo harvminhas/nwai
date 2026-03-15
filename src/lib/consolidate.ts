@@ -34,10 +34,15 @@ export function consolidateStatements(
   if (statements.length === 1) {
     const s = statements[0];
     const nw = s.netWorth ?? 0;
+    const txns = (s.expenses?.transactions ?? []).slice().sort((a, b) => {
+      if (a.date && b.date) return b.date.localeCompare(a.date);
+      return 0;
+    });
     return {
       ...s,
       assets: s.assets ?? Math.max(0, nw),
       debts: s.debts ?? Math.max(0, -nw),
+      expenses: { ...s.expenses, total: s.expenses?.total ?? 0, categories: s.expenses?.categories ?? [], transactions: txns },
     };
   }
 
@@ -82,6 +87,7 @@ export function consolidateStatements(
 
   const expenseCategoriesMap = new Map<string, { name: string; amount: number }>();
   let expensesTotal = 0;
+  const allTransactions: import("./types").ExpenseTransaction[] = [];
   for (const s of statements) {
     const exp = s.expenses;
     if (!exp) continue;
@@ -97,6 +103,9 @@ export function consolidateStatements(
           amount: cat.amount ?? 0,
         });
       }
+    }
+    for (const txn of exp.transactions ?? []) {
+      allTransactions.push(txn);
     }
   }
   const expenseCategories: ExpenseCategory[] = Array.from(
@@ -147,7 +156,14 @@ export function consolidateStatements(
     accountName: first.accountName,
     accountType: first.accountType,
     income: { total: incomeTotal, sources: incomeSources },
-    expenses: { total: expensesTotal, categories: expenseCategories },
+    expenses: {
+      total: expensesTotal,
+      categories: expenseCategories,
+      transactions: allTransactions.sort((a, b) => {
+        if (a.date && b.date) return b.date.localeCompare(a.date);
+        return 0;
+      }),
+    },
     subscriptions,
     savingsRate,
     insights,

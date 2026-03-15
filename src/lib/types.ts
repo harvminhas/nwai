@@ -37,6 +37,7 @@ export interface ExpenseTransaction {
   merchant: string;
   amount: number;
   category: string;
+  date?: string; // ISO date YYYY-MM-DD
 }
 
 export interface Expenses {

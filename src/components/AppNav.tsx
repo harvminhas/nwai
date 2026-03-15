@@ -8,7 +8,7 @@ import { getFirebaseClient } from "@/lib/firebase";
 
 const navLinks = [
   { href: "/account/dashboard", label: "Dashboard" },
-  { href: "/account/accounts", label: "Accounts" },
+  { href: "/account/spending", label: "Spending" },
   { href: "/account/assets", label: "Assets" },
   { href: "/upload", label: "Upload" },
 ];
@@ -44,9 +44,7 @@ export default function AppNav() {
           {/* Desktop links */}
           <div className="hidden sm:flex items-center gap-1">
             {navLinks.map(({ href, label }) => {
-              const active = pathname === href || (href !== "/upload" && href !== "/account/assets" && href !== "/account/accounts" && pathname.startsWith(href))
-                || (href === "/account/assets" && pathname.startsWith("/account/assets"))
-                || (href === "/account/accounts" && pathname.startsWith("/account/accounts"));
+              const active = pathname === href || pathname.startsWith(href + "/");
               return (
                 <Link
                   key={href}
@@ -99,9 +97,7 @@ export default function AppNav() {
       {menuOpen && (
         <div className="sm:hidden border-t border-gray-100 bg-white px-4 pb-4 pt-2 space-y-1">
           {navLinks.map(({ href, label }) => {
-            const active = pathname === href || (href !== "/upload" && href !== "/account/assets" && href !== "/account/accounts" && pathname.startsWith(href))
-                || (href === "/account/assets" && pathname.startsWith("/account/assets"))
-                || (href === "/account/accounts" && pathname.startsWith("/account/accounts"));
+            const active = pathname === href || pathname.startsWith(href + "/");
             return (
               <Link
                 key={href}
