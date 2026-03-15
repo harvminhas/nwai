@@ -26,7 +26,8 @@ function isFirestoreNotFound(err: unknown): boolean {
 }
 
 const MAX_SIZE = 10 * 1024 * 1024; // 10MB
-const FREE_UPLOADS_PER_MONTH = 5;
+// 0 = unlimited; set FREE_UPLOADS_PER_MONTH env var to enforce a limit
+const FREE_UPLOADS_PER_MONTH = parseInt(process.env.FREE_UPLOADS_PER_MONTH ?? "5", 10);
 const ALLOWED_TYPES = [
   "application/pdf",
   "image/png",
@@ -127,7 +128,7 @@ export async function POST(request: NextRequest) {
         .get();
       const uploadsThisMonth = uploadsSnap.size;
 
-      if (uploadsThisMonth >= FREE_UPLOADS_PER_MONTH) {
+      if (FREE_UPLOADS_PER_MONTH > 0 && uploadsThisMonth >= FREE_UPLOADS_PER_MONTH) {
         return NextResponse.json(
           { error: "Free plan limit: 5 uploads per month. Upgrade for more." },
           { status: 403 }
