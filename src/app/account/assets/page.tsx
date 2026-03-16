@@ -355,6 +355,31 @@ export function AssetsPage() {
           </div>
         )}
 
+        {/* Statement-based accounts (checking, savings, investment) */}
+        {liquidAccounts.length > 0 && (
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">Accounts</p>
+            <div className="divide-y divide-gray-100">
+              {liquidAccounts.map((a) => (
+                <Link
+                  key={a.slug}
+                  href={`/account/accounts/${a.slug}`}
+                  className="flex items-center justify-between py-3 hover:opacity-80 transition"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">{a.accountName}</p>
+                    <p className="text-xs text-gray-400">{a.bankName}{a.statementDate && ` · as of ${new Date(a.statementDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })}`}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-sm text-gray-900">{fmt(a.balance)}</span>
+                    <svg className="h-4 w-4 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Asset Breakdown donut */}
         {chartRaw.length > 0 && (
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">

@@ -56,6 +56,7 @@ interface DisplayLiability {
   interestRate?: number;
   statementDate?: string;
   source: "manual" | "statement";
+  accountSlug?: string; // for statement-sourced liabilities
 }
 
 // ── modal form ────────────────────────────────────────────────────────────────
@@ -231,6 +232,7 @@ export default function LiabilitiesPage() {
           balance: Math.abs(s.netWorth ?? 0),
           statementDate: s.statementDate,
           source: "statement" as const,
+          accountSlug: accountSlug(s),
         }));
 
       const fromManual: DisplayLiability[] = manual.map((m) => ({
@@ -438,6 +440,17 @@ export default function LiabilitiesPage() {
                       </div>
                       <div className="ml-4 flex shrink-0 items-center gap-3">
                         <p className="font-semibold text-sm text-gray-900 tabular-nums">{fmt(l.balance)}</p>
+                        {l.source === "statement" && l.accountSlug && (
+                          <Link
+                            href={`/account/accounts/${l.accountSlug}`}
+                            className="text-gray-300 hover:text-purple-500 transition"
+                            title="View account"
+                          >
+                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                            </svg>
+                          </Link>
+                        )}
                         {l.source === "manual" && (
                           <div className="flex items-center gap-1">
                             <button

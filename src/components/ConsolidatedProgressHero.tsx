@@ -29,12 +29,14 @@ function KpiCard({
   delta,
   deltaLabel,
   positiveIsGood = true,
+  suppressReason,
 }: {
   label: string;
   value: number;
   delta: number | null;
   deltaLabel: string | ((delta: number) => string);
   positiveIsGood?: boolean;
+  suppressReason?: string;
 }) {
   const isGood = delta !== null && (positiveIsGood ? delta > 0 : delta < 0);
   // Arrow shows the direction the number moved: up = increased, down = decreased
@@ -53,7 +55,7 @@ function KpiCard({
         </p>
       )}
       {delta === null && (
-        <p className="mt-1.5 text-xs text-gray-400">First month tracked</p>
+        <p className="mt-1.5 text-xs text-gray-400">{suppressReason ?? "First month tracked"}</p>
       )}
       {delta === 0 && (
         <p className="mt-1.5 text-xs text-gray-400">No change</p>
@@ -65,18 +67,21 @@ function KpiCard({
 export default function ConsolidatedProgressHero({
   data,
   previousMonth,
+  currentMonthIncomplete = false,
 }: {
   data: ParsedStatementData;
   previousMonth: PreviousMonth | null;
   monthLabel: string; // kept for API compat
+  currentMonthIncomplete?: boolean;
 }) {
   const netWorth = data.netWorth ?? 0;
   const assets = data.assets ?? Math.max(0, netWorth);
   const debts = data.debts ?? Math.max(0, -netWorth);
 
-  const nwDelta = previousMonth != null ? netWorth - previousMonth.netWorth : null;
-  const assetsDelta = previousMonth != null ? assets - previousMonth.assets : null;
-  const debtsDelta = previousMonth != null ? debts - previousMonth.debts : null;
+  // Suppress deltas if the current month is incomplete — they'd be misleading
+  const nwDelta    = (!currentMonthIncomplete && previousMonth != null) ? netWorth - previousMonth.netWorth : null;
+  const assetsDelta = (!currentMonthIncomplete && previousMonth != null) ? assets - previousMonth.assets : null;
+  const debtsDelta  = (!currentMonthIncomplete && previousMonth != null) ? debts - previousMonth.debts : null;
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -86,6 +91,7 @@ export default function ConsolidatedProgressHero({
         delta={nwDelta}
         deltaLabel="this month"
         positiveIsGood
+        suppressReason={currentMonthIncomplete ? "Estimated month" : undefined}
       />
       <KpiCard
         label="Total Assets"
@@ -93,6 +99,7 @@ export default function ConsolidatedProgressHero({
         delta={assetsDelta}
         deltaLabel="vs last month"
         positiveIsGood
+        suppressReason={currentMonthIncomplete ? "Estimated month" : undefined}
       />
       <KpiCard
         label="Total Debts"
@@ -100,6 +107,7 @@ export default function ConsolidatedProgressHero({
         delta={debtsDelta}
         deltaLabel={(d) => d < 0 ? "paid down" : "more debt"}
         positiveIsGood={false}
+        suppressReason={currentMonthIncomplete ? "Estimated month" : undefined}
       />
     </div>
   );

@@ -69,11 +69,12 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   const [data, setData] = useState<ParsedStatementData | null>(null);
   const [previousMonth, setPreviousMonth] = useState<{ netWorth: number; assets: number; debts: number } | null>(null);
   const [yearMonth, setYearMonth] = useState<string | null>(null);
-  const [history, setHistory] = useState<{ yearMonth: string; netWorth: number }[]>([]);
+  const [history, setHistory] = useState<{ yearMonth: string; netWorth: number; isEstimate?: boolean }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statementCount, setStatementCount] = useState(0);
   const [userName, setUserName] = useState("");
+  const [incompleteMonths, setIncompleteMonths] = useState<string[]>([]);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -92,7 +93,14 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
         setStatementCount(json.count ?? 0);
         setPreviousMonth(json.previousMonth ?? null);
         setYearMonth(json.yearMonth ?? null);
-        setHistory(Array.isArray(json.history) ? json.history : []);
+        const incomplete: string[] = json.incompleteMonths ?? [];
+        setIncompleteMonths(incomplete);
+        setHistory(Array.isArray(json.history)
+          ? json.history.map((h: { yearMonth: string; netWorth: number; expensesTotal?: number }) => ({
+              ...h,
+              isEstimate: incomplete.includes(h.yearMonth),
+            }))
+          : []);
       } catch { setError("Failed to load dashboard"); }
       finally { setLoading(false); }
     });
@@ -136,11 +144,31 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
         </p>
       </div>
 
+      {/* Incomplete months banner */}
+      {incompleteMonths.length > 0 && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+          </svg>
+          <div className="text-sm">
+            <p className="font-medium text-amber-800">Trends still building</p>
+            <p className="mt-0.5 text-amber-700">
+              {incompleteMonths.length} month{incompleteMonths.length !== 1 ? "s" : ""} use estimated balances — not all accounts had statements uploaded.
+              The chart shows a dashed line for those months.{" "}
+              <Link href="/account/accounts" className="font-medium underline hover:text-amber-900">
+                Review accounts →
+              </Link>
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* KPI cards */}
       <ConsolidatedProgressHero
         data={data}
         previousMonth={previousMonth}
         monthLabel={monthLabel(yearMonth)}
+        currentMonthIncomplete={incompleteMonths.includes(yearMonth)}
       />
 
       {/* Net worth chart */}

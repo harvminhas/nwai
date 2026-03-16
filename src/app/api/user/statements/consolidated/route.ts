@@ -220,6 +220,52 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // ── Per-account statement history (for account detail page) ─────────────
+    // Map slug → sorted list of { yearMonth, netWorth, uploadedAt, statementId, isCarryForward }
+    const accountStatementHistory = new Map<string, {
+      yearMonth: string; netWorth: number; uploadedAt: string;
+      statementId: string; isCarryForward: boolean;
+    }[]>();
+
+    for (const ym of Array.from(yearMonths).sort()) {
+      const carried = carryForwardStatements(allCompleted, ym);
+      for (const parsed of carried) {
+        const slug = accountSlug(parsed);
+        // Determine if this is a real upload for this month or carried from earlier
+        const realForThisMonth = allCompleted.some((doc) => {
+          const d = doc.data();
+          return docYearMonth(d) === ym &&
+            accountSlug(d.parsedData as ParsedStatementData) === slug;
+        });
+        const sourceDoc = allCompleted.find((doc) => {
+          const d = doc.data();
+          return (d.parsedData as ParsedStatementData) === parsed;
+        });
+        const uploadedAt = sourceDoc?.data().uploadedAt?.toDate?.()?.toISOString?.() ?? "";
+        if (!accountStatementHistory.has(slug)) accountStatementHistory.set(slug, []);
+        accountStatementHistory.get(slug)!.push({
+          yearMonth: ym,
+          netWorth: parsed.netWorth ?? 0,
+          uploadedAt,
+          statementId: sourceDoc?.id ?? "",
+          isCarryForward: !realForThisMonth,
+        });
+      }
+    }
+
+    // ── Incomplete months detection ──────────────────────────────────────────
+    // A month is "incomplete" if at least one account that exists today used
+    // a carry-forward (i.e. had no real statement uploaded for that month).
+    const allSlugs = new Set(Array.from(accountStatementHistory.keys()));
+    const incompleteMonths: string[] = [];
+    for (const ym of Array.from(yearMonths).sort()) {
+      const hasCarryForward = Array.from(allSlugs).some((slug) => {
+        const entry = accountStatementHistory.get(slug)?.find((e) => e.yearMonth === ym);
+        return entry?.isCarryForward === true;
+      });
+      if (hasCarryForward) incompleteMonths.push(ym);
+    }
+
     return NextResponse.json({
       data: enrichedConsolidated,
       count: currentStatements.length,
@@ -227,6 +273,8 @@ export async function GET(request: NextRequest) {
       yearMonth: month,
       history,
       manualAssets: relevantManualAssets,
+      incompleteMonths,
+      accountStatementHistory: Object.fromEntries(accountStatementHistory),
     });
   } catch (err) {
     console.error("Consolidated statements error:", err);
