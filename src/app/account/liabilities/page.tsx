@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import { Suspense } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import type { UserStatementSummary, ManualLiability, LiabilityCategory } from "@/lib/types";
@@ -538,7 +539,7 @@ function EmptyState({ onAdd }: { onAdd?: () => void }) {
 
 // ── page ──────────────────────────────────────────────────────────────────────
 
-export default function LiabilitiesPage() {
+function LiabilitiesPageInner() {
   const router      = useRouter();
   const pathname    = usePathname();
   const searchParams = useSearchParams();
@@ -724,5 +725,17 @@ export default function LiabilitiesPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function LiabilitiesPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <div className="h-10 w-10 animate-spin rounded-full border-4 border-purple-600 border-t-transparent" />
+      </div>
+    }>
+      <LiabilitiesPageInner />
+    </Suspense>
   );
 }
