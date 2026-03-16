@@ -293,5 +293,5 @@ function parseJsonResponse(raw: string): ParsedStatementData {
     console.error("AI response failed schema validation. Parsed:", JSON.stringify(parsed).slice(0, 2000));
     throw new Error("AI response missing required fields (netWorth, statementDate, bankName)");
   }
-  return normalizeData(coerceDefaults(parsed as Record<string, unknown>));
+  return normalizeData(coerceDefaults(parsed as unknown as Record<string, unknown>));
 }
