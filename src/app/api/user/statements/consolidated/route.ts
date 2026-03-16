@@ -208,7 +208,7 @@ export async function GET(request: NextRequest) {
     }
 
     // ── History + income source history ─────────────────────────────────────
-    const history: { yearMonth: string; netWorth: number; expensesTotal: number; incomeTotal: number }[] = [];
+    const history: { yearMonth: string; netWorth: number; expensesTotal: number; incomeTotal: number; debtTotal: number }[] = [];
 
     // incomeSourceHistory: source description → per-month amounts + transaction dates
     // Used by the income page to compute cross-month reliability scores.
@@ -224,7 +224,8 @@ export async function GET(request: NextRequest) {
         const c = consolidateStatements(forMonth, ym);
         const hAssets = (c.assets ?? Math.max(0, c.netWorth)) + manualAssetsTotal;
         const hNetWorth = hAssets - (c.debts ?? Math.max(0, -c.netWorth));
-        history.push({ yearMonth: ym, netWorth: hNetWorth, expensesTotal: c.expenses?.total ?? 0, incomeTotal: c.income?.total ?? 0 });
+        const hDebts = c.debts ?? Math.max(0, -c.netWorth);
+        history.push({ yearMonth: ym, netWorth: hNetWorth, expensesTotal: c.expenses?.total ?? 0, incomeTotal: c.income?.total ?? 0, debtTotal: hDebts });
 
         // Build per-source history — only for months that had real uploaded statements
         // (carry-forwarded months would double-count income)
@@ -291,9 +292,51 @@ export async function GET(request: NextRequest) {
       if (hasCarryForward) incompleteMonths.push(ym);
     }
 
+    // ── Liquid assets (checking + savings account balances only) ────────────
+    let liquidAssets = 0;
+    for (const stmt of currentStatements) {
+      const t = (stmt.accountType ?? "").toLowerCase();
+      if (t === "checking" || t === "savings") {
+        liquidAssets += Math.max(0, stmt.netWorth ?? stmt.assets ?? 0);
+      }
+    }
+
+    // ── Asset / debt sub-labels for dashboard KPI cards ─────────────────────
+    const assetLabelSet = new Set<string>();
+    const debtLabelSet  = new Set<string>();
+    for (const stmt of currentStatements) {
+      const t = (stmt.accountType ?? "").toLowerCase();
+      if (t === "checking" || t === "savings") assetLabelSet.add("savings");
+      if (t === "investment")                  assetLabelSet.add("investments");
+      if (t === "mortgage") { assetLabelSet.add("property"); debtLabelSet.add("mortgage"); }
+      if (t === "credit")   debtLabelSet.add("CC");
+      if (t === "loan")     debtLabelSet.add("loan");
+    }
+    for (const asset of relevantManualAssets) {
+      const t = (asset.type ?? "").toLowerCase();
+      if (t.includes("real") || t.includes("property") || t.includes("home")) assetLabelSet.add("property");
+      else if (t.includes("rrsp") || t.includes("tfsa")) assetLabelSet.add("RRSP");
+      else if (t.includes("invest")) assetLabelSet.add("investments");
+    }
+
+    // ── Account count + last upload date ────────────────────────────────────
+    const uniqueAccountIds = new Set(
+      allCompleted.map((d) => (d.data() as FirebaseFirestore.DocumentData).accountId).filter(Boolean)
+    );
+    const sortedByCreated = allCompleted
+      .filter((d) => (d.data() as FirebaseFirestore.DocumentData).createdAt)
+      .sort((a, b) => {
+        const aT = (a.data() as FirebaseFirestore.DocumentData).createdAt?.toDate?.()?.getTime() ?? 0;
+        const bT = (b.data() as FirebaseFirestore.DocumentData).createdAt?.toDate?.()?.getTime() ?? 0;
+        return bT - aT;
+      });
+    const lastUploadedAt: string | null = sortedByCreated[0]
+      ? ((sortedByCreated[0].data() as FirebaseFirestore.DocumentData).createdAt?.toDate?.()?.toISOString() ?? null)
+      : null;
+
     return NextResponse.json({
       data: enrichedConsolidated,
-      count: currentStatements.length,
+      count: allCompleted.length,
       previousMonth,
       yearMonth: month,
       history,
@@ -302,6 +345,11 @@ export async function GET(request: NextRequest) {
       accountStatementHistory: Object.fromEntries(accountStatementHistory),
       incomeSourceHistory,
       totalMonthsTracked: history.length,
+      assetLabels: Array.from(assetLabelSet),
+      debtLabels: Array.from(debtLabelSet),
+      accountCount: uniqueAccountIds.size,
+      lastUploadedAt,
+      liquidAssets,
     });
   } catch (err) {
     console.error("Consolidated statements error:", err);

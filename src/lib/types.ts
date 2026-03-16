@@ -110,6 +110,13 @@ export interface ParsedStatementData {
   accountName?: string;
   /** Type of account */
   accountType?: AccountType;
+  /**
+   * Annual interest / return rate as a percentage (e.g. 4.25 means 4.25%).
+   * For debt accounts: the interest rate charged (APR).
+   * For savings/investment: the yield / expected annual return.
+   * Null if not present on the statement.
+   */
+  interestRate?: number | null;
   income: Income;
   expenses: Expenses;
   subscriptions: Subscription[];

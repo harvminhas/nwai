@@ -9,6 +9,7 @@ const SYSTEM_PROMPT = `You are a financial analysis expert. Analyze this bank st
    - accountId: the masked account number as shown on the statement (e.g. "••••1234" or "****5678"). Use the last 4 digits if shown. If not present, use "unknown".
    - accountName: the account product name or nickname shown on the statement (e.g. "Chase Sapphire Reserve", "Everyday Savings", "Home Mortgage"). If not present, infer from context.
    - accountType: classify as exactly one of: "checking", "savings", "credit", "mortgage", "investment", "loan", "other"
+   - interestRate: the annual interest or return rate as a plain number (e.g. 4.25 for 4.25%). For debt accounts extract the APR/interest rate shown. For savings/investment accounts extract the APY/annual return shown. If no rate is stated anywhere on the statement, return null.
 
 2. Extract the total balance as "netWorth":
    - For asset accounts (checking, savings, investment): use the closing/ending balance as a POSITIVE number.
@@ -81,6 +82,7 @@ For a mortgage/loan (income, expenses, subscriptions will be empty):
   "accountId": "••••0085",
   "accountName": "TD Home Equity FlexLine",
   "accountType": "mortgage",
+  "interestRate": 3.9,
   "income": { "total": 0, "sources": [] },
   "expenses": { "total": 0, "categories": [] },
   "subscriptions": [],
@@ -106,6 +108,7 @@ For a checking/savings/credit account:
   "accountId": "••••3156",
   "accountName": "TD All Inclusive Banking Plan",
   "accountType": "checking",
+  "interestRate": null,
   "income": {
     "total": 5200.00,
     "sources": [
@@ -207,6 +210,7 @@ function coerceDefaults(data: Record<string, unknown>): ParsedStatementData {
     accountId: typeof data.accountId === "string" ? data.accountId : undefined,
     accountName: typeof data.accountName === "string" ? data.accountName : undefined,
     accountType: (data.accountType as ParsedStatementData["accountType"]) ?? "other",
+    interestRate: typeof data.interestRate === "number" ? data.interestRate : null,
     income: {
       total: typeof income.total === "number" ? income.total : 0,
       sources: Array.isArray(income.sources) ? income.sources : [],

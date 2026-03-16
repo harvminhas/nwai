@@ -319,6 +319,7 @@ export default function IncomePage() {
   const [loading, setLoading]             = useState(true);
   const [error, setError]                 = useState<string | null>(null);
   const [showAllTxns, setShowAllTxns]     = useState(false);
+  const [expandedSource, setExpandedSource] = useState<string | null>(null);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -394,12 +395,32 @@ export default function IncomePage() {
   const expensesTotal   = current?.expenses?.total ?? 0;
   const savingsRate     = current?.savingsRate ?? 0;
 
-  // Score each source using cross-month history
-  const scoredSources = sources.map((src, i) => {
+  // Derive sources from transactions (ground truth) when available;
+  // fall back to income.sources only if no transactions exist.
+  const mergedSourceMap = new Map<string, number>();
+  if (transactions.length > 0) {
+    // Group transactions by their source field
+    for (const txn of transactions) {
+      const key = (txn.source ?? txn.description ?? "Other").trim();
+      mergedSourceMap.set(key, (mergedSourceMap.get(key) ?? 0) + txn.amount);
+    }
+  } else {
+    // Fallback: merge income.sources by description (case-insensitive)
+    for (const src of sources) {
+      const key = src.description.trim();
+      mergedSourceMap.set(key, (mergedSourceMap.get(key) ?? 0) + src.amount);
+    }
+  }
+  const mergedSources = Array.from(mergedSourceMap.entries())
+    .map(([description, amount]) => ({ description, amount }))
+    .sort((a, b) => b.amount - a.amount);
+
+  // Score each consolidated source using cross-month history
+  const scoredSources = mergedSources.map((src, i) => {
     const hist = sourceHistory[src.description] ?? [];
     const result = scoreSource(src.description, hist, totalMonths);
-    const pct = (income?.total ?? 0) > 0
-      ? Math.round((src.amount / (income?.total ?? 1)) * 100) : 0;
+    const totalIncome = income?.total ?? 0;
+    const pct = totalIncome > 0 ? Math.round((src.amount / totalIncome) * 100) : 0;
 
     // Frequency: gather ALL dated transactions for this source across all months
     const allDates = hist.flatMap((h) => h.transactions.map((t) => t.date).filter(Boolean) as string[]);
@@ -412,7 +433,7 @@ export default function IncomePage() {
       ...result,
       freqResult,
     };
-  }).sort((a, b) => b.amount - a.amount);
+  });
 
   // One-time sources excluded from monthly average
   const regularSources  = scoredSources.filter((s) => s.reliability !== "one-time");
@@ -576,45 +597,79 @@ export default function IncomePage() {
             <p className="mb-4 text-xs font-semibold uppercase tracking-wider text-gray-400">By source</p>
             <div className="space-y-5">
               {scoredSources.map((src) => {
-                const rcfg  = RELIABILITY_CONFIG[src.reliability];
-                const fcfg  = FREQUENCY_CONFIG[src.freqResult.frequency];
+                const fcfg        = FREQUENCY_CONFIG[src.freqResult.frequency];
                 const hasFreqData = src.freqResult.sampleCount >= 2;
-                // Gap hint: e.g. "~14 day gaps" or "±3 days"
-                const gapHint = hasFreqData && src.freqResult.medianGap != null
+                const gapHint     = hasFreqData && src.freqResult.medianGap != null
                   ? src.freqResult.stdDev != null && src.freqResult.stdDev <= 3
                     ? `every ${src.freqResult.medianGap}d`
                     : `~${src.freqResult.medianGap}d gaps`
                   : null;
+                const isExpanded  = expandedSource === src.description;
+                // Individual deposits for this source in the selected month
+                const srcTxns     = transactions
+                  .filter((t) => (t.source ?? t.description ?? "Other").trim() === src.description)
+                  .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
+                const hasBreakdown = srcTxns.length > 1 || (srcTxns.length === 1 && srcTxns[0].amount !== src.amount);
+
                 return (
                   <div key={src.description} className={src.reliability === "one-time" ? "opacity-60" : ""}>
-                    {/* Name row */}
-                    <div className="flex items-start justify-between gap-2 mb-1.5">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: src.color }} />
-                        <span className="font-medium text-sm text-gray-800 truncate">{src.description}</span>
+                    {/* Clickable header row */}
+                    <button
+                      className="w-full text-left"
+                      onClick={() => hasBreakdown && setExpandedSource(isExpanded ? null : src.description)}
+                      title={hasBreakdown ? "Click to see individual deposits" : undefined}
+                    >
+                      <div className="flex items-start justify-between gap-2 mb-1.5">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: src.color }} />
+                          <span className="font-medium text-sm text-gray-800 truncate">{src.description}</span>
+                          {hasBreakdown && (
+                            <span className="text-gray-300 text-xs">{isExpanded ? "▲" : "▾"}</span>
+                          )}
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <span className="font-semibold text-sm text-gray-900 tabular-nums">{fmt(src.amount)}</span>
+                          <span className="ml-2 text-xs text-gray-400">{src.pct}%</span>
+                        </div>
                       </div>
-                      <div className="shrink-0 text-right">
-                        <span className="font-semibold text-sm text-gray-900 tabular-nums">{fmt(src.amount)}</span>
-                        <span className="ml-2 text-xs text-gray-400">{src.pct}%</span>
+                      {/* Amount bar */}
+                      <div className="mb-2 h-1.5 w-full rounded-full bg-gray-100 overflow-hidden">
+                        <div className="h-full rounded-full transition-all"
+                          style={{ width: `${src.pct}%`, backgroundColor: src.color }} />
                       </div>
-                    </div>
-                    {/* Amount bar */}
-                    <div className="mb-2 flex-1 h-1.5 rounded-full bg-gray-100 overflow-hidden">
-                      <div className="h-full rounded-full transition-all"
-                        style={{ width: `${src.pct}%`, backgroundColor: src.color }} />
-                    </div>
-                    {/* Frequency badge + gap hint */}
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold border ${fcfg.badge}`}>
-                        {fcfg.label}
-                      </span>
-                      {gapHint && (
-                        <span className="text-[10px] text-gray-400 tabular-nums">{gapHint}</span>
-                      )}
-                      {src.reliability === "one-time" && (
-                        <span className="text-[10px] text-gray-400">· excluded from avg</span>
-                      )}
-                    </div>
+                      {/* Frequency badge + gap hint */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold border ${fcfg.badge}`}>
+                          {fcfg.label}
+                        </span>
+                        {gapHint && (
+                          <span className="text-[10px] text-gray-400 tabular-nums">{gapHint}</span>
+                        )}
+                        {src.reliability === "one-time" && (
+                          <span className="text-[10px] text-gray-400">· excluded from avg</span>
+                        )}
+                        {hasBreakdown && !isExpanded && (
+                          <span className="text-[10px] text-gray-300">· {srcTxns.length} deposits</span>
+                        )}
+                      </div>
+                    </button>
+
+                    {/* Expanded breakdown */}
+                    {isExpanded && srcTxns.length > 0 && (
+                      <div className="mt-2 rounded-lg border border-gray-100 bg-gray-50 divide-y divide-gray-100">
+                        {srcTxns.map((t, i) => (
+                          <div key={i} className="flex items-center justify-between px-3 py-2">
+                            <div>
+                              <p className="text-xs font-medium text-gray-700">{t.description}</p>
+                              {t.date && (
+                                <p className="text-[10px] text-gray-400">{fmtDate(t.date)}</p>
+                              )}
+                            </div>
+                            <span className="text-xs font-semibold tabular-nums text-green-600">+{fmt(t.amount)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -703,7 +758,7 @@ export default function IncomePage() {
             </div>
             <div className="divide-y divide-gray-100">
               {visibleTxns.map((txn, i) => {
-                const srcEntry = scoredSources.find((s) => s.description === (txn.source ?? txn.description));
+                const srcEntry = scoredSources.find((s) => s.description === (txn.source ?? txn.description ?? "Other").trim());
                 const cfg = srcEntry ? RELIABILITY_CONFIG[srcEntry.reliability] : null;
                 return (
                   <div key={i} className="flex items-center justify-between py-3">
