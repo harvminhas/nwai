@@ -313,7 +313,7 @@ export async function GET(request: NextRequest) {
       if (t === "loan")     debtLabelSet.add("loan");
     }
     for (const asset of relevantManualAssets) {
-      const t = (asset.type ?? "").toLowerCase();
+      const t = (asset.category ?? "").toLowerCase();
       if (t.includes("real") || t.includes("property") || t.includes("home")) assetLabelSet.add("property");
       else if (t.includes("rrsp") || t.includes("tfsa")) assetLabelSet.add("RRSP");
       else if (t.includes("invest")) assetLabelSet.add("investments");
