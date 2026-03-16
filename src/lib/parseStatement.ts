@@ -21,6 +21,13 @@ const SYSTEM_PROMPT = `You are a financial analysis expert. Analyze this bank st
 3. Identify transactions if present (date, description, amount).
    - CRITICAL: List EVERY transaction individually. Do NOT deduplicate, merge, or omit repeated payees. If the same employer pays twice in a month, list both entries separately.
    - For mortgage/loan/investment statements with no consumer transactions, skip steps 3–6 and return empty arrays/zeros for income, expenses, subscriptions, and savingsRate.
+3b. For checking/savings accounts, also extract income.transactions as a flat list of every individual deposit/credit:
+   - description: clean human-readable label (e.g. "Acme Corp — payroll", "Cash / Deposit", "Rental Income")
+   - amount: deposit amount (positive)
+   - date: ISO YYYY-MM-DD
+   - source: which income source category this belongs to (must match one of the descriptions in income.sources)
+   - CRITICAL: list every deposit individually — two salary deposits = two entries
+   - For credit/mortgage/loan/investment: return []
 4. For checking, savings, and credit accounts — classify each debit/credit:
    INCOME (credits into the account):
    - Salary, wages, ANY deposit or credit, transfers in, government payments (e.g. "GC DEPOSIT", "CRA", "CANADA", "GST", "OAS", "CPP", "EI", "CERB"), employer payroll, freelance payments, e-transfers received.
@@ -104,6 +111,11 @@ For a checking/savings/credit account:
     "sources": [
       { "description": "Salary - Acme Corp", "amount": 4800.00 },
       { "description": "Freelance Payment", "amount": 400.00 }
+    ],
+    "transactions": [
+      { "description": "Acme Corp — payroll", "amount": 2400.00, "date": "2026-02-01", "source": "Salary - Acme Corp" },
+      { "description": "Acme Corp — payroll", "amount": 2400.00, "date": "2026-02-15", "source": "Salary - Acme Corp" },
+      { "description": "Freelance Payment", "amount": 400.00, "date": "2026-02-10", "source": "Freelance Payment" }
     ]
   },
   "expenses": {
@@ -198,6 +210,7 @@ function coerceDefaults(data: Record<string, unknown>): ParsedStatementData {
     income: {
       total: typeof income.total === "number" ? income.total : 0,
       sources: Array.isArray(income.sources) ? income.sources : [],
+      transactions: Array.isArray(income.transactions) ? income.transactions : [],
     },
     expenses: {
       total: typeof expenses.total === "number" ? expenses.total : 0,

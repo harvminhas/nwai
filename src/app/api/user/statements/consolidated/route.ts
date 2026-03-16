@@ -207,16 +207,41 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // ── History: one entry per month that has at least one uploaded statement ─
-    // Each month uses carry-forward so older accounts don't disappear.
-    const history: { yearMonth: string; netWorth: number; expensesTotal: number }[] = [];
+    // ── History + income source history ─────────────────────────────────────
+    const history: { yearMonth: string; netWorth: number; expensesTotal: number; incomeTotal: number }[] = [];
+
+    // incomeSourceHistory: source description → per-month amounts + transaction dates
+    // Used by the income page to compute cross-month reliability scores.
+    const incomeSourceHistory: Record<string, {
+      yearMonth: string;
+      amount: number;
+      transactions: { date?: string; amount: number }[];
+    }[]> = {};
+
     for (const ym of Array.from(yearMonths).sort()) {
       const forMonth = carryForwardStatements(allCompleted, ym);
       if (forMonth.length > 0) {
         const c = consolidateStatements(forMonth, ym);
         const hAssets = (c.assets ?? Math.max(0, c.netWorth)) + manualAssetsTotal;
         const hNetWorth = hAssets - (c.debts ?? Math.max(0, -c.netWorth));
-        history.push({ yearMonth: ym, netWorth: hNetWorth, expensesTotal: c.expenses?.total ?? 0 });
+        history.push({ yearMonth: ym, netWorth: hNetWorth, expensesTotal: c.expenses?.total ?? 0, incomeTotal: c.income?.total ?? 0 });
+
+        // Build per-source history — only for months that had real uploaded statements
+        // (carry-forwarded months would double-count income)
+        const hasRealIncome = allCompleted.some((doc) => {
+          const d = doc.data() as FirebaseFirestore.DocumentData;
+          return docYearMonth(d) === ym && (d.parsedData as ParsedStatementData)?.income?.total > 0;
+        });
+        if (hasRealIncome) {
+          for (const src of c.income?.sources ?? []) {
+            if (!incomeSourceHistory[src.description]) incomeSourceHistory[src.description] = [];
+            // Collect transactions for this source from this month
+            const srcTxns = (c.income?.transactions ?? [])
+              .filter((t) => t.source === src.description || t.description === src.description)
+              .map((t) => ({ date: t.date, amount: t.amount }));
+            incomeSourceHistory[src.description].push({ yearMonth: ym, amount: src.amount, transactions: srcTxns });
+          }
+        }
       }
     }
 
@@ -275,6 +300,8 @@ export async function GET(request: NextRequest) {
       manualAssets: relevantManualAssets,
       incompleteMonths,
       accountStatementHistory: Object.fromEntries(accountStatementHistory),
+      incomeSourceHistory,
+      totalMonthsTracked: history.length,
     });
   } catch (err) {
     console.error("Consolidated statements error:", err);

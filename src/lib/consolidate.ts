@@ -1,6 +1,7 @@
 import type {
   ParsedStatementData,
   IncomeSource,
+  IncomeTransaction,
   ExpenseCategory,
   Subscription,
   Insight,
@@ -38,10 +39,15 @@ export function consolidateStatements(
       if (a.date && b.date) return b.date.localeCompare(a.date);
       return 0;
     });
+    const incomeTxns = (s.income?.transactions ?? []).slice().sort((a, b) => {
+      if (a.date && b.date) return b.date.localeCompare(a.date);
+      return 0;
+    });
     return {
       ...s,
       assets: s.assets ?? Math.max(0, nw),
       debts: s.debts ?? Math.max(0, -nw),
+      income: { ...s.income, total: s.income?.total ?? 0, sources: s.income?.sources ?? [], transactions: incomeTxns },
       expenses: { ...s.expenses, total: s.expenses?.total ?? 0, categories: s.expenses?.categories ?? [], transactions: txns },
     };
   }
@@ -64,6 +70,7 @@ export function consolidateStatements(
 
   const incomeSourcesMap = new Map<string, { label: string; amount: number }>();
   let incomeTotal = 0;
+  const allIncomeTransactions: IncomeTransaction[] = [];
   for (const s of statements) {
     const inc = s.income;
     if (!inc) continue;
@@ -79,6 +86,9 @@ export function consolidateStatements(
           amount: src.amount ?? 0,
         });
       }
+    }
+    for (const txn of inc.transactions ?? []) {
+      allIncomeTransactions.push(txn);
     }
   }
   const incomeSources: IncomeSource[] = Array.from(incomeSourcesMap.values()).map(
@@ -155,7 +165,14 @@ export function consolidateStatements(
     accountId: first.accountId,
     accountName: first.accountName,
     accountType: first.accountType,
-    income: { total: incomeTotal, sources: incomeSources },
+    income: {
+      total: incomeTotal,
+      sources: incomeSources,
+      transactions: allIncomeTransactions.sort((a, b) => {
+        if (a.date && b.date) return b.date.localeCompare(a.date);
+        return 0;
+      }),
+    },
     expenses: {
       total: expensesTotal,
       categories: expenseCategories,

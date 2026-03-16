@@ -40,9 +40,17 @@ export interface IncomeSource {
   amount: number;
 }
 
+export interface IncomeTransaction {
+  description: string;
+  amount: number;
+  date?: string; // ISO YYYY-MM-DD
+  source?: string; // which income source (e.g. "Salary", "Freelance")
+}
+
 export interface Income {
   total: number;
   sources: IncomeSource[];
+  transactions?: IncomeTransaction[];
 }
 
 export interface ExpenseCategory {
