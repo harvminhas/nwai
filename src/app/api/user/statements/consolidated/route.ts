@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { consolidateStatements, getYearMonth } from "@/lib/consolidate";
+import { applyRulesAndRecalculate, merchantSlug } from "@/lib/applyRules";
 import type { ParsedStatementData, ManualAsset, AssetCategory } from "@/lib/types";
 
 function docYearMonth(d: FirebaseFirestore.DocumentData): string {
@@ -171,14 +172,29 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // ── Load category rules for this user ────────────────────────────────────
+    const rulesSnap = await db.collection(`users/${uid}/categoryRules`).get();
+    const categoryRulesMap = new Map<string, string>();
+    for (const ruleDoc of rulesSnap.docs) {
+      const r = ruleDoc.data();
+      if (r.merchant && r.category) {
+        categoryRulesMap.set(merchantSlug(r.merchant as string), r.category as string);
+      }
+    }
+
     // ── Current month: carry-forward balances for all accounts ──────────────
     const currentStatements = carryForwardStatements(allCompleted, month);
     const consolidated = consolidateStatements(currentStatements, month);
 
-    const totalAssets = (consolidated.assets ?? Math.max(0, consolidated.netWorth)) + manualAssetsTotal;
-    const adjustedNetWorth = totalAssets - (consolidated.debts ?? Math.max(0, -consolidated.netWorth));
+    // Apply user category rules to transactions and recalculate aggregates
+    const consolidatedWithRules = categoryRulesMap.size > 0
+      ? applyRulesAndRecalculate(consolidated, categoryRulesMap)
+      : consolidated;
+
+    const totalAssets = (consolidatedWithRules.assets ?? Math.max(0, consolidatedWithRules.netWorth)) + manualAssetsTotal;
+    const adjustedNetWorth = totalAssets - (consolidatedWithRules.debts ?? Math.max(0, -consolidatedWithRules.netWorth));
     const enrichedConsolidated: ParsedStatementData = {
-      ...consolidated,
+      ...consolidatedWithRules,
       assets: totalAssets,
       netWorth: adjustedNetWorth,
     };
@@ -207,16 +223,20 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // ── History + income source history ─────────────────────────────────────
+    // ── History + income source history + recurring expense history ──────────
     const history: { yearMonth: string; netWorth: number; expensesTotal: number; incomeTotal: number; debtTotal: number }[] = [];
 
     // incomeSourceHistory: source description → per-month amounts + transaction dates
-    // Used by the income page to compute cross-month reliability scores.
     const incomeSourceHistory: Record<string, {
       yearMonth: string;
       amount: number;
       transactions: { date?: string; amount: number }[];
     }[]> = {};
+
+    // recurringHistory: merchantSlug → per-month transaction dates
+    // Used by the spending page to auto-detect subscription frequency via gap analysis.
+    // Only populated for months with real expense data (not carry-forwarded).
+    const recurringHistory: Record<string, { yearMonth: string; dates: string[] }[]> = {};
 
     for (const ym of Array.from(yearMonths).sort()) {
       const forMonth = carryForwardStatements(allCompleted, ym);
@@ -227,8 +247,7 @@ export async function GET(request: NextRequest) {
         const hDebts = c.debts ?? Math.max(0, -c.netWorth);
         history.push({ yearMonth: ym, netWorth: hNetWorth, expensesTotal: c.expenses?.total ?? 0, incomeTotal: c.income?.total ?? 0, debtTotal: hDebts });
 
-        // Build per-source history — only for months that had real uploaded statements
-        // (carry-forwarded months would double-count income)
+        // Build per-source income history — only for months that had real statements
         const hasRealIncome = allCompleted.some((doc) => {
           const d = doc.data() as FirebaseFirestore.DocumentData;
           return docYearMonth(d) === ym && (d.parsedData as ParsedStatementData)?.income?.total > 0;
@@ -236,28 +255,45 @@ export async function GET(request: NextRequest) {
         if (hasRealIncome) {
           for (const src of c.income?.sources ?? []) {
             if (!incomeSourceHistory[src.description]) incomeSourceHistory[src.description] = [];
-            // Collect transactions for this source from this month
             const srcTxns = (c.income?.transactions ?? [])
               .filter((t) => t.source === src.description || t.description === src.description)
               .map((t) => ({ date: t.date, amount: t.amount }));
             incomeSourceHistory[src.description].push({ yearMonth: ym, amount: src.amount, transactions: srcTxns });
           }
         }
+
+        // Build per-merchant expense history — only for months with real expense data
+        const hasRealExpenses = allCompleted.some((doc) => {
+          const d = doc.data() as FirebaseFirestore.DocumentData;
+          return docYearMonth(d) === ym && (d.parsedData as ParsedStatementData)?.expenses?.total > 0;
+        });
+        if (hasRealExpenses) {
+          for (const txn of c.expenses?.transactions ?? []) {
+            if (!txn.date) continue; // need dates for gap analysis
+            const slug = merchantSlug(txn.merchant);
+            if (!recurringHistory[slug]) recurringHistory[slug] = [];
+            const existing = recurringHistory[slug].find((h) => h.yearMonth === ym);
+            if (existing) {
+              existing.dates.push(txn.date);
+            } else {
+              recurringHistory[slug].push({ yearMonth: ym, dates: [txn.date] });
+            }
+          }
+        }
       }
     }
 
     // ── Per-account statement history (for account detail page) ─────────────
-    // Map slug → sorted list of { yearMonth, netWorth, uploadedAt, statementId, isCarryForward }
+    // Map slug → sorted list of { yearMonth, netWorth, uploadedAt, statementId, isCarryForward, interestRate }
     const accountStatementHistory = new Map<string, {
       yearMonth: string; netWorth: number; uploadedAt: string;
-      statementId: string; isCarryForward: boolean;
+      statementId: string; isCarryForward: boolean; interestRate: number | null;
     }[]>();
 
     for (const ym of Array.from(yearMonths).sort()) {
       const carried = carryForwardStatements(allCompleted, ym);
       for (const parsed of carried) {
         const slug = accountSlug(parsed);
-        // Determine if this is a real upload for this month or carried from earlier
         const realForThisMonth = allCompleted.some((doc) => {
           const d = doc.data();
           return docYearMonth(d) === ym &&
@@ -268,6 +304,10 @@ export async function GET(request: NextRequest) {
           return (d.parsedData as ParsedStatementData) === parsed;
         });
         const uploadedAt = sourceDoc?.data().uploadedAt?.toDate?.()?.toISOString?.() ?? "";
+        // Only include interestRate for real uploads (not carry-forward copies)
+        const interestRate = realForThisMonth && typeof parsed.interestRate === "number"
+          ? parsed.interestRate
+          : null;
         if (!accountStatementHistory.has(slug)) accountStatementHistory.set(slug, []);
         accountStatementHistory.get(slug)!.push({
           yearMonth: ym,
@@ -275,6 +315,7 @@ export async function GET(request: NextRequest) {
           uploadedAt,
           statementId: sourceDoc?.id ?? "",
           isCarryForward: !realForThisMonth,
+          interestRate,
         });
       }
     }
@@ -344,6 +385,7 @@ export async function GET(request: NextRequest) {
       incompleteMonths,
       accountStatementHistory: Object.fromEntries(accountStatementHistory),
       incomeSourceHistory,
+      recurringHistory,
       totalMonthsTracked: history.length,
       assetLabels: Array.from(assetLabelSet),
       debtLabels: Array.from(debtLabelSet),

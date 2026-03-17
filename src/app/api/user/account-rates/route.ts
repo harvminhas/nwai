@@ -1,25 +1,25 @@
 /**
  * GET  /api/user/account-rates
  *   Returns one rate entry per account, merging AI-extracted rates from the most
- *   recent completed statement for each account with any manual overrides the user
- *   has saved.  Manual overrides always win.
+ *   recent completed statement with any manual overrides.  Manual overrides win.
  *
  * PUT  /api/user/account-rates
- *   Body: { accountKey, rate }
- *   Saves a manual override for that account.  Pass rate: null to clear override
- *   (falls back to AI-extracted value).
+ *   Body: { accountKey, rate, paymentFrequency? }
+ *   Saves a manual override.  Pass rate: null to clear (falls back to AI value).
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import type { ParsedStatementData } from "@/lib/types";
 
+export type PaymentFrequency = "weekly" | "biweekly" | "semi-monthly" | "monthly";
+
 function authToken(req: NextRequest): string | null {
   const h = req.headers.get("authorization");
   return h?.startsWith("Bearer ") ? h.slice(7) : null;
 }
 
-function accountKey(p: ParsedStatementData): string {
+function toAccountKey(p: ParsedStatementData): string {
   const bank = (p.bankName ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   const acct = (p.accountId ?? "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   return acct !== "unknown" ? `${bank}__${acct}` : bank;
@@ -36,6 +36,8 @@ export interface AccountRateEntry {
   manualRate: number | null;
   /** The effective rate to use: manualRate ?? extractedRate ?? null */
   effectiveRate: number | null;
+  /** Payment frequency for this account (null = not set, default to monthly). */
+  paymentFrequency: PaymentFrequency | null;
 }
 
 export async function GET(req: NextRequest) {
@@ -46,54 +48,68 @@ export async function GET(req: NextRequest) {
     const { auth, db } = getFirebaseAdmin();
     const { uid } = await auth.verifyIdToken(token);
 
-    // Fetch all completed statements
+    // ── Fetch all completed statements (root collection, filtered by userId) ──
     const stmtSnap = await db
-      .collection("users").doc(uid).collection("statements")
+      .collection("statements")
+      .where("userId", "==", uid)
       .where("status", "==", "completed")
       .get();
 
-    // Build map: accountKey → latest statement parsed data
+    // Build map: accountKey → latest parsed data by statementDate
     const latestByAccount = new Map<string, ParsedStatementData & { statementDate: string }>();
     for (const doc of stmtSnap.docs) {
       const d = doc.data();
       const parsed = d.parsedData as ParsedStatementData | undefined;
       if (!parsed?.bankName) continue;
-      const key = accountKey(parsed);
+      const key = toAccountKey(parsed);
       const existing = latestByAccount.get(key);
       if (!existing || (parsed.statementDate ?? "") > (existing.statementDate ?? "")) {
         latestByAccount.set(key, parsed as ParsedStatementData & { statementDate: string });
       }
     }
 
-    // Fetch manual overrides
+    // ── Fetch manual overrides from users/{uid}/accountRates ──────────────────
     const overridesSnap = await db
       .collection("users").doc(uid).collection("accountRates")
       .get();
-    const overrides = new Map<string, number | null>();
+
+    const overrides = new Map<string, { rate: number | null; paymentFrequency: PaymentFrequency | null }>();
     for (const doc of overridesSnap.docs) {
       const d = doc.data();
-      overrides.set(doc.id, typeof d.rate === "number" ? d.rate : null);
-    }
-
-    // Merge
-    const entries: AccountRateEntry[] = [];
-    for (const [key, parsed] of latestByAccount) {
-      const extractedRate = typeof parsed.interestRate === "number" ? parsed.interestRate : null;
-      const manualRate = overrides.has(key) ? (overrides.get(key) ?? null) : null;
-      entries.push({
-        accountKey: key,
-        bankName: parsed.bankName,
-        accountName: parsed.accountName ?? parsed.bankName,
-        accountType: parsed.accountType ?? "other",
-        extractedRate,
-        manualRate,
-        effectiveRate: manualRate ?? extractedRate,
+      overrides.set(doc.id, {
+        rate: typeof d.rate === "number" ? d.rate : null,
+        paymentFrequency: (d.paymentFrequency as PaymentFrequency) ?? null,
       });
     }
 
-    // Sort: debts first (mortgage, loan, credit), then assets
+    // ── Merge statements + overrides ──────────────────────────────────────────
+    // Include accounts that have overrides even if no statement found
+    const allKeys = new Set([...latestByAccount.keys(), ...overrides.keys()]);
+    const entries: AccountRateEntry[] = [];
+
+    for (const key of allKeys) {
+      const parsed   = latestByAccount.get(key);
+      const override = overrides.get(key);
+
+      const extractedRate    = parsed ? (typeof parsed.interestRate === "number" ? parsed.interestRate : null) : null;
+      const manualRate       = override?.rate ?? null;
+      const paymentFrequency = override?.paymentFrequency ?? null;
+
+      entries.push({
+        accountKey: key,
+        bankName:   parsed?.bankName ?? key,
+        accountName: parsed?.accountName ?? parsed?.bankName ?? key,
+        accountType: parsed?.accountType ?? "other",
+        extractedRate,
+        manualRate,
+        effectiveRate: manualRate ?? extractedRate,
+        paymentFrequency,
+      });
+    }
+
+    // Sort: debts first, then assets
     const ORDER = ["mortgage", "loan", "credit", "savings", "checking", "investment", "other"];
-    entries.sort((a, b) => (ORDER.indexOf(a.accountType) - ORDER.indexOf(b.accountType)));
+    entries.sort((a, b) => ORDER.indexOf(a.accountType) - ORDER.indexOf(b.accountType));
 
     return NextResponse.json({ rates: entries });
   } catch (err) {
@@ -110,15 +126,30 @@ export async function PUT(req: NextRequest) {
     const { auth, db } = getFirebaseAdmin();
     const { uid } = await auth.verifyIdToken(token);
     const body = await req.json();
-    const { accountKey: key, rate } = body as { accountKey: string; rate: number | null };
+    const { accountKey: key, rate, paymentFrequency, note } =
+      body as { accountKey: string; rate?: number | null; paymentFrequency?: PaymentFrequency | null; note?: string };
 
     if (!key) return NextResponse.json({ error: "accountKey required" }, { status: 400 });
 
     const ref = db.collection("users").doc(uid).collection("accountRates").doc(key);
-    if (rate === null) {
-      await ref.delete();
-    } else {
-      await ref.set({ rate, updatedAt: new Date() }, { merge: true });
+
+    // Build the update payload — only include fields that were explicitly sent
+    const update: Record<string, unknown> = { updatedAt: new Date() };
+    if (rate !== undefined)             update.rate = rate;
+    if (paymentFrequency !== undefined) update.paymentFrequency = paymentFrequency;
+
+    if (Object.keys(update).length > 1) { // more than just updatedAt
+      await ref.set(update, { merge: true });
+    }
+
+    // Log rate change to history (only when rate explicitly changes)
+    if (rate !== undefined && rate !== null) {
+      await ref.collection("history").add({
+        rate,
+        source: "user",
+        changedAt: new Date(),
+        note: note ?? null,
+      });
     }
 
     return NextResponse.json({ ok: true });
