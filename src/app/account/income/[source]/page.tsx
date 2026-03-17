@@ -183,7 +183,11 @@ export default function IncomeSourcePage() {
             <div className="h-44">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}
-                  onClick={(d) => { if (d?.activePayload?.[0]) setExpandedMonth(d.activePayload[0].payload.ym); }}>
+                  onClick={(d) => {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const payload = (d as any)?.activePayload?.[0]?.payload;
+                    if (payload?.ym) setExpandedMonth(payload.ym as string);
+                  }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
                   <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
                   <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={52} />

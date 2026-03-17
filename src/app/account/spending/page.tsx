@@ -160,7 +160,11 @@ function SpendingChart({ history, avg, selectedMonth, onSelect }: {
       )}
       <ResponsiveContainer width="100%" height={140}>
         <BarChart data={data} barSize={22} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}
-          onClick={(s) => { if (s?.activePayload?.[0]) onSelect((s.activePayload[0].payload as { ym: string }).ym); }}>
+          onClick={(s) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const ym = (s as any)?.activePayload?.[0]?.payload?.ym as string | undefined;
+            if (ym) onSelect(ym);
+          }}>
           <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#f3f4f6" />
           <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
           <YAxis tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false}
