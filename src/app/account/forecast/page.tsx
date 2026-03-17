@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
+import { usePlan } from "@/contexts/PlanContext";
+import UpgradePrompt from "@/components/UpgradePrompt";
 import {
   ComposedChart, Area, Line, XAxis, YAxis,
   CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -128,6 +130,7 @@ type Horizon = 1 | 5 | 10;
 
 export default function ForecastPage() {
   const router = useRouter();
+  const { can, loading: planLoading } = usePlan();
 
   const [loading, setLoading]               = useState(true);
   const [error, setError]                   = useState<string | null>(null);
@@ -194,10 +197,13 @@ export default function ForecastPage() {
 
   // ── render ───────────────────────────────────────────────────────────────────
 
-  if (loading) return (
+  if (planLoading || loading) return (
     <div className="flex min-h-[50vh] items-center justify-center">
       <div className="h-10 w-10 animate-spin rounded-full border-4 border-purple-600 border-t-transparent" />
     </div>
+  );
+  if (!can("forecast")) return (
+    <UpgradePrompt feature="forecast" description="See where your net worth is heading with 1, 5, and 10-year projections." />
   );
   if (error) return (
     <div className="mx-auto max-w-3xl px-4 py-8">

@@ -20,11 +20,17 @@ const POLL_TIMEOUT = 35000;
 export type ProcessingAnimationProps = {
   statementId: string;
   onError?: (message: string) => void;
+  /** Called when parsing completes (used in multi-upload queue). */
+  onComplete?: () => void;
+  /** Compact mode: no redirect, no full-page UI — just a small status indicator. */
+  compact?: boolean;
 };
 
 export default function ProcessingAnimation({
   statementId,
   onError,
+  onComplete,
+  compact = false,
 }: ProcessingAnimationProps) {
   const router = useRouter();
   const [stepIndex, setStepIndex] = useState(0);
@@ -53,7 +59,9 @@ export default function ProcessingAnimation({
           clearInterval(pollTimer);
           clearTimeout(timeoutId);
           setTimeout(() => {
-            if (isLoggedIn) {
+            if (compact) {
+              onComplete?.();
+            } else if (isLoggedIn) {
               router.push("/account/dashboard");
             } else {
               setDone(true);
@@ -146,6 +154,15 @@ export default function ProcessingAnimation({
             View statement
           </Link>
         </div>
+      </div>
+    );
+  }
+
+  if (compact) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-gray-500">
+        <span className="h-3 w-3 animate-spin rounded-full border-2 border-purple-500 border-t-transparent" />
+        {message}
       </div>
     );
   }

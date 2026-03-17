@@ -8,6 +8,8 @@ import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import type { UserStatementSummary, ManualLiability, LiabilityCategory } from "@/lib/types";
 import type { AccountRateEntry } from "@/app/api/user/account-rates/route";
+import { usePlan } from "@/contexts/PlanContext";
+import UpgradePrompt from "@/components/UpgradePrompt";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -543,6 +545,7 @@ function LiabilitiesPageInner() {
   const router      = useRouter();
   const pathname    = usePathname();
   const searchParams = useSearchParams();
+  const { can }     = usePlan();
 
   const [activeTab, setActiveTab]       = useState<TabId>(() => {
     const t = searchParams.get("tab");
@@ -689,19 +692,29 @@ function LiabilitiesPageInner() {
 
       {/* Tab bar */}
       <div className="mt-5 mb-6 flex border-b border-gray-200">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => switchTab(tab.id)}
-            className={`relative mr-6 pb-3 text-sm font-medium transition-colors ${
-              activeTab === tab.id
-                ? "text-gray-900 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:rounded-full after:bg-gray-900 after:content-['']"
-                : "text-gray-400 hover:text-gray-600"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+        {TABS.map((tab) => {
+          const isLocked = tab.id === "payoff" && !can("payoffPlanner");
+          return (
+            <button
+              key={tab.id}
+              onClick={() => switchTab(tab.id)}
+              className={`relative mr-6 pb-3 text-sm font-medium transition-colors ${
+                activeTab === tab.id
+                  ? "text-gray-900 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:rounded-full after:bg-gray-900 after:content-['']"
+                  : "text-gray-400 hover:text-gray-600"
+              }`}
+            >
+              <span className="flex items-center gap-1.5">
+                {tab.label}
+                {isLocked && (
+                  <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-600">
+                    Pro
+                  </span>
+                )}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {/* Tab content */}
@@ -714,7 +727,11 @@ function LiabilitiesPageInner() {
           onDelete={handleDelete}
         />
       )}
-      {activeTab === "payoff" && <PayoffTab libs={displayLibs} accountRates={accountRates} />}
+      {activeTab === "payoff" && (
+        can("payoffPlanner")
+          ? <PayoffTab libs={displayLibs} accountRates={accountRates} />
+          : <UpgradePrompt feature="payoffPlanner" description="Simulate avalanche, snowball, and custom debt payoff strategies with extra payment modelling." />
+      )}
 
       {modalOpen && (
         <LiabilityModal

@@ -5,6 +5,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
+import { usePlan } from "@/contexts/PlanContext";
+import { PLANS, PLAN_ORDER, type PlanId, type PlanFeatures } from "@/lib/plans";
 
 // ── nav structure ─────────────────────────────────────────────────────────────
 
@@ -24,6 +26,7 @@ const NAV_GROUPS = [
       {
         href: "/account/forecast",
         label: "Forecast",
+        proFeature: "forecast" as keyof PlanFeatures,
         icon: (
           <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
@@ -79,6 +82,7 @@ const NAV_GROUPS = [
       {
         href: "/account/goals",
         label: "Goals",
+        proFeature: "goals" as keyof PlanFeatures,
         icon: (
           <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
@@ -117,6 +121,7 @@ interface SidebarProps {
 export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   const pathname = usePathname();
   const router   = useRouter();
+  const { planId, setTestPlan } = usePlan();
   const [userEmail, setUserEmail]         = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen]       = useState(false);
   const [lastUpload, setLastUpload]       = useState<string | null>(null);
@@ -152,12 +157,13 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   // ── nav renderer ──────────────────────────────────────────────────────────
 
   function NavItem({
-    href, label, icon, disabled, onClick,
+    href, label, icon, disabled, proFeature, onClick,
   }: {
     href: string; label: string; icon: React.ReactNode;
-    disabled?: boolean; onClick?: () => void;
+    disabled?: boolean; proFeature?: keyof PlanFeatures; onClick?: () => void;
   }) {
-    const active = !disabled && (pathname === href || (href !== "/upload" && pathname.startsWith(href + "/")));
+    const active  = !disabled && (pathname === href || (href !== "/upload" && pathname.startsWith(href + "/")));
+    const locked  = proFeature ? !PLANS[planId].features[proFeature] : false;
 
     if (disabled) {
       return (
@@ -185,8 +191,17 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
           active ? "bg-purple-50 text-purple-700" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
         } ${collapsed ? "justify-center px-2" : ""}`}
       >
-        <span className={active ? "text-purple-600" : "text-gray-400"}>{icon}</span>
-        {!collapsed && <span className="truncate">{label}</span>}
+        <span className={active ? "text-purple-600" : locked ? "text-gray-300" : "text-gray-400"}>{icon}</span>
+        {!collapsed && (
+          <span className="flex flex-1 items-center justify-between truncate">
+            <span className={locked ? "text-gray-400" : ""}>{label}</span>
+            {locked && (
+              <span className="ml-2 shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-600">
+                Pro
+              </span>
+            )}
+          </span>
+        )}
       </Link>
     );
   }
@@ -203,10 +218,12 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
               </p>
             )}
             <div className="space-y-0.5">
-              {items.map(({ href, label, icon, disabled }) => (
+              {items.map(({ href, label, icon, disabled, proFeature }) => (
                 <NavItem
                   key={href} href={href} label={label} icon={icon}
-                  disabled={disabled} onClick={onItemClick}
+                  disabled={disabled}
+                  proFeature={proFeature as keyof PlanFeatures | undefined}
+                  onClick={onItemClick}
                 />
               ))}
             </div>
@@ -293,6 +310,39 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
             </svg>
             {!collapsed && <span>Activity</span>}
           </Link>
+
+          {/* Test mode plan switcher */}
+          {!collapsed && (
+            <div className="mt-1 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
+              <p className="text-[9px] font-bold uppercase tracking-widest text-amber-500 mb-1.5">🧪 Test plan</p>
+              <div className="flex gap-1">
+                {PLAN_ORDER.map((id) => (
+                  <button key={id}
+                    onClick={() => setTestPlan(id as PlanId)}
+                    className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition ${
+                      planId === id
+                        ? "bg-amber-500 text-white"
+                        : "bg-white text-amber-600 border border-amber-200 hover:bg-amber-100"
+                    }`}
+                  >
+                    {PLANS[id as PlanId].name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {collapsed && (
+            <button
+              title={`Plan: ${PLANS[planId].name} (click to cycle)`}
+              onClick={() => {
+                const idx = PLAN_ORDER.indexOf(planId);
+                setTestPlan(PLAN_ORDER[(idx + 1) % PLAN_ORDER.length] as PlanId);
+              }}
+              className="flex w-full items-center justify-center rounded-lg px-2 py-2 text-xs font-bold text-amber-500 hover:bg-amber-50 transition"
+            >
+              {planId === "free" ? "F" : planId === "pro" ? "P" : "★"}
+            </button>
+          )}
 
           {/* Sign out */}
           <button
@@ -382,6 +432,24 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
                 </p>
               )}
               {userEmail && <p className="mb-2 truncate text-xs text-gray-400">{userEmail}</p>}
+              {/* Test mode switcher (mobile) */}
+              <div className="mb-3 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
+                <p className="text-[9px] font-bold uppercase tracking-widest text-amber-500 mb-1.5">🧪 Test plan</p>
+                <div className="flex gap-1">
+                  {PLAN_ORDER.map((id) => (
+                    <button key={id}
+                      onClick={() => setTestPlan(id as PlanId)}
+                      className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition ${
+                        planId === id
+                          ? "bg-amber-500 text-white"
+                          : "bg-white text-amber-600 border border-amber-200 hover:bg-amber-100"
+                      }`}
+                    >
+                      {PLANS[id as PlanId].name}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <Link
                 href="/account/activity"
                 onClick={() => setDrawerOpen(false)}

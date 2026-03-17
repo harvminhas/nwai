@@ -128,9 +128,14 @@ export async function POST(request: NextRequest) {
         .get();
       const uploadsThisMonth = uploadsSnap.size;
 
-      if (FREE_UPLOADS_PER_MONTH > 0 && uploadsThisMonth >= FREE_UPLOADS_PER_MONTH) {
+      // Determine upload limit from user's stored plan (falls back to env var)
+      const userPlan: string = userDoc.exists ? (userDoc.data()?.plan ?? "free") : "free";
+      const isPaidPlan = userPlan === "pro" || userPlan === "family";
+      const effectiveLimit = isPaidPlan ? 0 : FREE_UPLOADS_PER_MONTH; // 0 = unlimited
+
+      if (effectiveLimit > 0 && uploadsThisMonth >= effectiveLimit) {
         return NextResponse.json(
-          { error: "Free plan limit: 5 uploads per month. Upgrade for more." },
+          { error: `Free plan limit: ${effectiveLimit} uploads per month. Upgrade for more.` },
           { status: 403 }
         );
       }
