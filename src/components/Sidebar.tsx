@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { onAuthStateChanged, signOut } from "firebase/auth";
@@ -10,7 +10,15 @@ import { PLANS, PLAN_ORDER, type PlanId, type PlanFeatures } from "@/lib/plans";
 
 // ── nav structure ─────────────────────────────────────────────────────────────
 
-const NAV_GROUPS = [
+interface NavItemDef {
+  href: string;
+  label: string;
+  icon: React.ReactNode;
+  proFeature?: keyof PlanFeatures;
+  disabled?: boolean;
+}
+
+const NAV_GROUPS: { section: string; items: NavItemDef[] }[] = [
   {
     section: "OVERVIEW",
     items: [
