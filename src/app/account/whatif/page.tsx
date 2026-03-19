@@ -608,9 +608,9 @@ function Mode6PayoffLump({ snap }: { snap: FinancialSnapshot }) {
   const lumpSafeLimit  = snap.liquidAssets - snap.emergencyFundTarget;
   const isLargeChunk   = lumpSum > snap.liquidAssets * 0.5;
 
-  const verdictColor: Accent =
+  const verdictColor: "green" | "amber" | "red" | "blue" =
     debtBal <= 0  ? "green" :
-    lumpSum <= 0  ? "default" :
+    lumpSum <= 0  ? "blue" :
     isLargeChunk  ? "amber" : "green";
 
   const verdictText =
