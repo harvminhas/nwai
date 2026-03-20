@@ -16,6 +16,7 @@ export interface PlanFeatures {
   aiInsights: boolean;
   multiUser: boolean;
   whatIf: boolean;
+  aiChat: boolean;
 }
 
 export interface PlanDefinition {
@@ -43,6 +44,7 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
       aiInsights:    false,
       multiUser:     false,
       whatIf:        false,
+      aiChat:        false,
     },
   },
   pro: {
@@ -60,6 +62,7 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
       aiInsights:    true,
       multiUser:     false,
       whatIf:        true,
+      aiChat:        true,
     },
   },
   family: {
@@ -77,6 +80,7 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
       aiInsights:    true,
       multiUser:     true,
       whatIf:        true,
+      aiChat:        true,
     },
   },
 };
