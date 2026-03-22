@@ -113,6 +113,10 @@ export default function ActivityPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
   const [filter, setFilter]   = useState<ActivityEvent["type"] | "all">("all");
+  const [token, setToken]     = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null); // statementId
+  const [deleting, setDeleting]           = useState<string | null>(null);
+  const [deleteError, setDeleteError]     = useState<string | null>(null);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -121,6 +125,7 @@ export default function ActivityPage() {
       setLoading(true); setError(null);
       try {
         const tok = await user.getIdToken();
+        setToken(tok);
         const res = await fetch("/api/user/activity", { headers: { Authorization: `Bearer ${tok}` } });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) { setError(json.error || "Failed to load"); return; }
@@ -129,6 +134,30 @@ export default function ActivityPage() {
       finally { setLoading(false); }
     });
   }, [router]);
+
+  async function handleDelete(statementId: string) {
+    if (!token) return;
+    setDeleting(statementId);
+    setDeleteError(null);
+    try {
+      const res = await fetch(`/api/user/statements/${statementId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        setDeleteError(j.error || "Delete failed");
+        return;
+      }
+      // Remove all events for this statement from local state
+      setEvents((prev) => prev.filter((e) => e.meta?.statementId !== statementId));
+    } catch {
+      setDeleteError("Delete failed — please try again");
+    } finally {
+      setDeleting(null);
+      setConfirmDelete(null);
+    }
+  }
 
   const filtered = filter === "all" ? events : events.filter((e) => e.type === filter);
 
@@ -211,6 +240,10 @@ export default function ActivityPage() {
         </div>
       )}
 
+      {deleteError && (
+        <p className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{deleteError}</p>
+      )}
+
       {/* Timeline */}
       <div className="space-y-8">
         {groups.map((group) => (
@@ -224,34 +257,72 @@ export default function ActivityPage() {
 
             <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
               <div className="divide-y divide-gray-100">
-                {group.items.map((ev) => (
-                  <div key={ev.id} className="flex items-start gap-3 px-4 py-3.5">
-                    <EventIcon type={ev.type} meta={ev.meta} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          {ev.type === "statement_upload" && ev.meta.statementId ? (
-                            <Link
-                              href={`/dashboard/${ev.meta.statementId as string}`}
-                              className="text-sm font-medium text-gray-800 hover:text-purple-600 transition-colors truncate block"
-                            >
-                              {ev.title}
-                            </Link>
-                          ) : (
-                            <p className="text-sm font-medium text-gray-800 truncate">{ev.title}</p>
-                          )}
-                          {ev.subtitle && (
-                            <p className="mt-0.5 text-xs text-gray-400">{ev.subtitle}</p>
-                          )}
-                        </div>
-                        <div className="flex shrink-0 items-center gap-2">
-                          <EventBadge type={ev.type} meta={ev.meta} />
-                          <span className="text-[11px] text-gray-300 tabular-nums">{fmtTime(ev.timestamp)}</span>
+                {group.items.map((ev) => {
+                  const stmtId = ev.meta?.statementId as string | undefined;
+                  const isBeingDeleted = deleting === stmtId;
+                  const isPendingConfirm = confirmDelete === stmtId;
+
+                  return (
+                    <div key={ev.id} className={`flex items-start gap-3 px-4 py-3.5 transition-colors ${isBeingDeleted ? "opacity-40" : ""}`}>
+                      <EventIcon type={ev.type} meta={ev.meta} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            {ev.type === "statement_upload" && stmtId ? (
+                              <Link
+                                href={`/dashboard/${stmtId}`}
+                                className="text-sm font-medium text-gray-800 hover:text-purple-600 transition-colors truncate block"
+                              >
+                                {ev.title}
+                              </Link>
+                            ) : (
+                              <p className="text-sm font-medium text-gray-800 truncate">{ev.title}</p>
+                            )}
+                            {ev.subtitle && (
+                              <p className="mt-0.5 text-xs text-gray-400">{ev.subtitle}</p>
+                            )}
+
+                            {/* Inline confirm */}
+                            {isPendingConfirm && (
+                              <div className="mt-2 flex items-center gap-2">
+                                <p className="text-xs text-red-600 font-medium">Delete this statement and all its data?</p>
+                                <button
+                                  onClick={() => handleDelete(stmtId!)}
+                                  disabled={isBeingDeleted}
+                                  className="rounded-md bg-red-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-red-700 transition disabled:opacity-50"
+                                >
+                                  {isBeingDeleted ? "Deleting…" : "Yes, delete"}
+                                </button>
+                                <button
+                                  onClick={() => setConfirmDelete(null)}
+                                  className="rounded-md border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <EventBadge type={ev.type} meta={ev.meta} />
+                            <span className="text-[11px] text-gray-300 tabular-nums">{fmtTime(ev.timestamp)}</span>
+                            {ev.type === "statement_upload" && stmtId && !isPendingConfirm && (
+                              <button
+                                onClick={() => { setConfirmDelete(stmtId); setDeleteError(null); }}
+                                disabled={isBeingDeleted}
+                                title="Delete statement"
+                                className="ml-1 rounded p-1 text-gray-300 hover:bg-red-50 hover:text-red-500 transition disabled:opacity-30"
+                              >
+                                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>

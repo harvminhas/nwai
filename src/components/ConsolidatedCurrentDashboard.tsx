@@ -36,6 +36,9 @@ function monthLabel(ym: string) {
     .toLocaleDateString("en-US", { month: "long", year: "numeric" });
 }
 
+
+
+
 // ── scoring engine ────────────────────────────────────────────────────────────
 
 type SignalStatus = "pass" | "warning" | "fail" | "skip";
@@ -293,44 +296,6 @@ const SIGNAL_STATUS_CONFIG: Record<SignalStatus, { label: string; color: string;
   skip:    { label: "N/A",     color: "text-gray-400",   bg: "bg-gray-100 border-gray-200" },
 };
 
-// ── glance bar ────────────────────────────────────────────────────────────────
-
-function GlanceBar({
-  label, value, max, color, href,
-}: {
-  label: string; value: number; max: number; color: string; href?: string;
-}) {
-  const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
-  return (
-    <div className="grid grid-cols-[80px_1fr_80px] items-center gap-3">
-      <span className="text-xs text-gray-500 text-right">{label}</span>
-      <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
-      </div>
-      {href ? (
-        <Link href={href} className="text-xs font-semibold tabular-nums text-gray-700 hover:text-purple-600 text-right">
-          {fmt(value)}
-        </Link>
-      ) : (
-        <span className="text-xs font-semibold tabular-nums text-gray-700 text-right">{fmt(value)}</span>
-      )}
-    </div>
-  );
-}
-
-// ── velocity alert ────────────────────────────────────────────────────────────
-
-function getVelocityAlert(history: HistoryPoint[], currentYm: string): string | null {
-  const sorted = [...history].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
-  const idx = sorted.findIndex((h) => h.yearMonth === currentYm);
-  if (idx < 3) return null;
-  const cur = sorted[idx].expensesTotal;
-  const avg = sorted.slice(idx - 3, idx).reduce((s, h) => s + h.expensesTotal, 0) / 3;
-  if (avg <= 0) return null;
-  const delta = Math.round(((cur - avg) / avg) * 100);
-  if (delta >= 15) return `Spending up ${delta}% vs 3-month average`;
-  return null;
-}
 
 // ── type-to-label maps ────────────────────────────────────────────────────────
 
@@ -465,9 +430,7 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
       setLoading(true); setError(null);
       try {
         const token = await user.getIdToken();
-        const res = await fetch("/api/user/statements/consolidated", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await fetch("/api/user/statements/consolidated", { headers: { Authorization: `Bearer ${token}` } });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) { setError(json.error || "Failed to load"); return; }
 
@@ -519,7 +482,6 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   const income     = data.income?.total ?? 0;
   const expenses   = data.expenses?.total ?? 0;
   const saved      = income - expenses;
-  const glanceMax  = Math.max(income, expenses, 1);
   const hasDebts   = debts > 0;
 
   const nwDelta    = previousMonth != null ? netWorth - previousMonth.netWorth : null;
@@ -543,7 +505,6 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   const prevRaw   = prevSigs && prevScore != null ? rawStatus(prevScore, prevSigs) : null;
   const trackStatus = applyHysteresis(curRaw, prevRaw);
 
-  const velocityAlert = getVelocityAlert(history, yearMonth);
   const chartHistory  = history.map((h) => ({ yearMonth: h.yearMonth, netWorth: h.netWorth, isEstimate: h.isEstimate }));
 
   return (
@@ -552,18 +513,15 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
 
         {/* ── Header ───────────────────────────────────────────────────────── */}
         <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Today</h1>
-            <p className="mt-0.5 text-sm text-gray-400">
-              {monthLabel(yearMonth)}
-              {accountCount > 0 && (
-                <> · <span className="text-gray-500">{accountCount} account{accountCount !== 1 ? "s" : ""} synced</span></>
-              )}
-              {statementCount > 0 && (
-                <> · {statementCount} statement{statementCount !== 1 ? "s" : ""} combined</>
-              )}
-            </p>
-          </div>
+          <p className="text-sm text-gray-400">
+            {monthLabel(yearMonth)}
+            {accountCount > 0 && (
+              <> · <span className="text-gray-500">{accountCount} account{accountCount !== 1 ? "s" : ""} synced</span></>
+            )}
+            {statementCount > 0 && (
+              <> · {statementCount} statement{statementCount !== 1 ? "s" : ""} combined</>
+            )}
+          </p>
           {/* On track badge — only shown after ≥2 statements, click opens modal */}
           {trackStatus && statementCount >= 2 && (
             <button
@@ -593,18 +551,6 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
           </div>
         )}
 
-        {/* ── Velocity alert ────────────────────────────────────────────────── */}
-        {velocityAlert && (
-          <div className="flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-700">
-            <span className="shrink-0 text-base">📈</span>
-            <span>
-              {velocityAlert} —{" "}
-              <Link href="/account/spending" className="font-semibold underline hover:text-orange-900">
-                review in Spending
-              </Link>
-            </span>
-          </div>
-        )}
 
         {/* ── NET WORTH section ─────────────────────────────────────────────── */}
         <div>
@@ -642,16 +588,31 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
           </div>
         </div>
 
-        {/* ── This month at a glance ────────────────────────────────────────── */}
+        {/* ── This month at a glance — compact summary row ─────────────── */}
         {income > 0 && (
-          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-            <p className="mb-4 text-xs font-semibold uppercase tracking-widest text-gray-300">
-              This month at a glance
-            </p>
-            <div className="space-y-3">
-              <GlanceBar label="Income"   value={income}              max={glanceMax} color="bg-green-400" href="/account/income" />
-              <GlanceBar label="Spending" value={expenses}            max={glanceMax} color="bg-red-400"   href="/account/spending" />
-              <GlanceBar label="Saved"    value={Math.max(0, saved)}  max={glanceMax} color="bg-blue-400" />
+          <div className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white px-5 py-3.5 shadow-sm">
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-300 mb-1">This month</p>
+              <div className="flex items-center gap-5">
+                <div>
+                  <p className="text-xs text-gray-400">Income</p>
+                  <p className="text-sm font-semibold text-green-600 tabular-nums">{fmt(income)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400">Spending</p>
+                  <p className="text-sm font-semibold text-gray-800 tabular-nums">{fmt(expenses)}</p>
+                </div>
+                {saved !== 0 && (
+                  <div>
+                    <p className="text-xs text-gray-400">Saved</p>
+                    <p className={`text-sm font-semibold tabular-nums ${saved >= 0 ? "text-blue-600" : "text-red-500"}`}>{fmt(saved)}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="flex shrink-0 gap-3">
+              <Link href="/account/income"   className="text-xs text-gray-400 hover:text-purple-600 transition">Income →</Link>
+              <Link href="/account/spending" className="text-xs text-gray-400 hover:text-purple-600 transition">Spending →</Link>
             </div>
           </div>
         )}

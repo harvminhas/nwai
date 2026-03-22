@@ -17,11 +17,7 @@ async function getUid(request: NextRequest): Promise<string | null> {
 
 /**
  * PATCH /api/user/statements/[id]
- * Body: { merchant: string; category: string }
- *
- * 1. Re-categorizes all transactions for this merchant in the statement.
- * 2. Re-aggregates expense categories + totals.
- * 3. Saves a category rule to users/{uid}/categoryRules so future parses apply it.
+ * Re-categorizes all transactions for a merchant and saves the rule.
  */
 export async function PATCH(
   request: NextRequest,
@@ -48,20 +44,14 @@ export async function PATCH(
   const parsedData = data?.parsedData as ParsedStatementData | undefined;
   if (!parsedData) return NextResponse.json({ error: "Statement has no parsed data" }, { status: 400 });
 
-  // Apply the new rule to this statement
   const slug = merchantSlug(merchant);
   const rules = new Map([[slug, category]]);
   const updated = applyRulesAndRecalculate(parsedData, rules);
 
-  // Persist updated parsedData
   await statementRef.update({ parsedData: updated });
 
-  // Persist the rule for future parses
   await db.doc(`users/${uid}/categoryRules/${slug}`).set({
-    merchant,
-    category,
-    slug,
-    updatedAt: new Date(),
+    merchant, category, slug, updatedAt: new Date(),
   });
 
   return NextResponse.json({ ok: true, parsedData: updated });
@@ -69,7 +59,7 @@ export async function PATCH(
 
 /**
  * DELETE /api/user/statements/[id]
- * Permanently deletes the statement document from Firestore.
+ * Deletes the Firestore document AND the associated file from Firebase Storage.
  */
 export async function DELETE(
   request: NextRequest,
@@ -79,27 +69,33 @@ export async function DELETE(
   if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
-  const { db } = getFirebaseAdmin();
+  const { db, storage } = getFirebaseAdmin();
   const statementRef = db.collection("statements").doc(id);
   const doc = await statementRef.get();
 
   if (!doc.exists) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  if (doc.data()?.userId !== uid) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const data = doc.data()!;
+  if (data.userId !== uid) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  await statementRef.delete();
+  // ── 1. Delete the file from Firebase Storage ─────────────────────────────
+  const storagePath: string | undefined = data.fileUrl;
+  const storageBucket: string | undefined = data.storageBucket;
 
-  // Decrement the monthly upload counter so the slot is freed
-  try {
-    const { db: firestoreDb } = getFirebaseAdmin();
-    const usersRef = firestoreDb.collection("users").doc(uid);
-    const userDoc = await usersRef.get();
-    if (userDoc.exists) {
-      const current = (userDoc.data()?.uploadsThisMonth as number) ?? 0;
-      await usersRef.update({ uploadsThisMonth: Math.max(0, current - 1) });
+  if (storagePath) {
+    try {
+      const bucketName = storageBucket
+        || process.env.FIREBASE_STORAGE_BUCKET
+        || process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+        || `${process.env.FIREBASE_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}.appspot.com`;
+
+      await storage.bucket(bucketName).file(storagePath).delete();
+    } catch {
+      // Non-fatal — file may already be gone or bucket misconfigured
     }
-  } catch {
-    // Non-fatal — deletion still succeeded
   }
+
+  // ── 2. Delete the Firestore document ─────────────────────────────────────
+  await statementRef.delete();
 
   return NextResponse.json({ ok: true });
 }

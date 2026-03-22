@@ -197,14 +197,76 @@ function RecurringIcon({ active }: { active: boolean }) {
   );
 }
 
+// ── recurring item icon helper ─────────────────────────────────────────────
+// Returns "subscription" for digital service subscriptions, "recurring" for fees/memberships
+
+const SUBSCRIPTION_KEYWORDS = /netflix|spotify|apple|google|amazon|claude|openai|chatgpt|gpt|youtube|disney|hulu|crave|sirius|audible|xbox|playstation|adobe|microsoft|dropbox|icloud|uber.*one|tidal|deezer|shudder|crunchyroll|subscri|paramount|peacock|iqx|goodlife|gym|learning|patreon|github|figma|notion|slack|zoom/i;
+
+function isSubscriptionService(name: string): boolean {
+  return SUBSCRIPTION_KEYWORDS.test(name);
+}
+
+function RecurringListIcon({ name }: { name: string }) {
+  if (isSubscriptionService(name)) {
+    // Play/stream icon for digital subscriptions
+    return (
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-purple-100">
+        <svg className="h-4 w-4 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      </span>
+    );
+  }
+  // Calendar/repeat icon for fees and memberships
+  return (
+    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100">
+      <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+      </svg>
+    </span>
+  );
+}
+
 // ── tabs ──────────────────────────────────────────────────────────────────────
 
 const TABS = [
   { id: "overview",       label: "Overview" },
   { id: "transactions",   label: "Transactions" },
-  { id: "subscriptions",  label: "Subscriptions" },
+  { id: "subscriptions",  label: "Recurring" },
+  { id: "cash",           label: "Cash" },
 ] as const;
 type TabId = typeof TABS[number]["id"];
+
+// ── cash commitment types ─────────────────────────────────────────────────────
+
+export type CashFrequency = "weekly" | "biweekly" | "monthly" | "quarterly" | "once";
+
+export interface CashCommitment {
+  id: string;
+  name: string;
+  amount: number;
+  frequency: CashFrequency;
+  category: string;
+  notes?: string;
+  nextDate?: string; // ISO date e.g. "2026-03-28" — required when frequency is "once"
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const CASH_FREQ_OPTIONS: { value: CashFrequency; label: string; perYear: number }[] = [
+  { value: "weekly",    label: "Weekly",    perYear: 52 },
+  { value: "biweekly",  label: "Biweekly",  perYear: 26 },
+  { value: "monthly",   label: "Monthly",   perYear: 12 },
+  { value: "quarterly", label: "Quarterly", perYear: 4 },
+  { value: "once",      label: "One-off",   perYear: 0 },
+];
+
+function toMonthly(amount: number, freq: CashFrequency): number {
+  if (freq === "once") return 0; // one-offs don't count toward monthly estimate
+  const opt = CASH_FREQ_OPTIONS.find((o) => o.value === freq);
+  return amount * (opt ? opt.perYear / 12 : 1);
+}
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -266,6 +328,12 @@ function SpendingPageInner() {
 
   const [toast, setToast] = useState<string | null>(null);
 
+  // ── cash commitments ────────────────────────────────────────────────────────
+  const [cashItems, setCashItems] = useState<CashCommitment[]>([]);
+  const [cashLoading, setCashLoading] = useState(false);
+  const [cashForm, setCashForm] = useState<Partial<CashCommitment> | null>(null); // null = closed
+  const [cashSaving, setCashSaving] = useState(false);
+
   function switchTab(id: TabId) {
     setActiveTab(id);
     const p = new URLSearchParams(searchParams.toString());
@@ -285,6 +353,16 @@ function SpendingPageInner() {
     } catch { /* non-fatal */ }
   }, []);
 
+  const loadCash = useCallback(async (tok: string) => {
+    try {
+      setCashLoading(true);
+      const res = await fetch("/api/user/cash-commitments", { headers: { Authorization: `Bearer ${tok}` } });
+      const json = await res.json().catch(() => ({}));
+      setCashItems(json.items ?? []);
+    } catch { /* non-fatal */ }
+    finally { setCashLoading(false); }
+  }, []);
+
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
@@ -296,6 +374,7 @@ function SpendingPageInner() {
         const [res] = await Promise.all([
           fetch("/api/user/statements/consolidated", { headers: { Authorization: `Bearer ${tok}` } }),
           loadRecurring(tok),
+          loadCash(tok),
         ]);
         const json = await res.json().catch(() => ({}));
         if (!res.ok) { setError(json.error || "Failed to load"); return; }
@@ -325,7 +404,7 @@ function SpendingPageInner() {
       } catch { setError("Failed to load spending data"); }
       finally { setLoading(false); }
     });
-  }, [router, loadRecurring]);
+  }, [router, loadRecurring, loadCash]);
 
   // ── month switching ───────────────────────────────────────────────────────
 
@@ -402,7 +481,60 @@ function SpendingPageInner() {
     } catch { setToast("Failed to save"); }
   }
 
-  // ── derived data ──────────────────────────────────────────────────────────
+  // ── cash commitment handlers ───────────────────────────────────────────────
+
+  async function handleCashSave() {
+    if (!token || !cashForm) return;
+    const { name, amount, frequency, category } = cashForm;
+    if (!name?.trim() || !amount || !frequency || !category) {
+      setToast("Please fill in all required fields"); return;
+    }
+    if (frequency === "once" && !cashForm.nextDate) {
+      setToast("Please set the date for this one-off payment"); return;
+    }
+    // Build clean payload — omit optional fields when empty to avoid Firestore undefined errors
+    const payload: Partial<CashCommitment> = {
+      ...cashForm,
+      notes:    cashForm.notes?.trim()    || undefined,
+      nextDate: cashForm.nextDate?.trim() || undefined,
+    };
+    setCashSaving(true);
+    try {
+      if (cashForm.id) {
+        // Update
+        await fetch("/api/user/cash-commitments", {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        setCashItems((prev) => prev.map((c) => c.id === cashForm.id ? { ...c, ...payload } as CashCommitment : c));
+        setToast("Commitment updated");
+      } else {
+        // Create
+        const res = await fetch("/api/user/cash-commitments", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (json.item) setCashItems((prev) => [...prev, json.item as CashCommitment]);
+        setToast("Commitment added");
+      }
+      setCashForm(null);
+    } catch { setToast("Failed to save"); }
+    finally { setCashSaving(false); }
+  }
+
+  async function handleCashDelete(id: string) {
+    if (!token) return;
+    setCashItems((prev) => prev.filter((c) => c.id !== id));
+    await fetch(`/api/user/cash-commitments?id=${encodeURIComponent(id)}`, {
+      method: "DELETE", headers: { Authorization: `Bearer ${token}` },
+    });
+    setToast("Commitment removed");
+  }
+
+  const cashMonthlyTotal = cashItems.reduce((s, c) => s + toMonthly(c.amount, c.frequency), 0);
 
   // AI-detected subscriptions from the statement
   const aiSubscriptions: Subscription[] = data?.subscriptions ?? [];
@@ -464,7 +596,7 @@ function SpendingPageInner() {
     const monthly = sub.frequency === "annual" ? sub.amount / 12 : sub.amount;
     return s + monthly * 12;
   }, 0);
-  const hasData = total > 0 || allSubscriptions.length > 0 || txns.length > 0;
+  const hasData = total > 0 || allSubscriptions.length > 0 || txns.length > 0 || cashItems.length > 0;
 
   if (loading) return (
     <div className="flex min-h-[50vh] items-center justify-center">
@@ -540,6 +672,11 @@ function SpendingPageInner() {
                     {allSubscriptions.length}
                   </span>
                 )}
+                {tab.id === "cash" && cashItems.length > 0 && (
+                  <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
+                    {cashItems.length}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -611,7 +748,31 @@ function SpendingPageInner() {
             </div>
           )}
 
-          {/* ── Transactions tab ──────────────────────────────────────────── */}
+          {/* ── Cash overview callout in Overview tab ─────────────────────── */}
+          {activeTab === "overview" && cashItems.length > 0 && (
+            <div className="mt-1">
+              <button
+                onClick={() => switchTab("cash")}
+                className="w-full flex items-center justify-between rounded-xl border border-amber-100 bg-amber-50 px-5 py-3.5 hover:bg-amber-100/60 transition group"
+              >
+                <div className="flex items-center gap-2.5">
+                  <svg className="h-4 w-4 text-amber-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+                  </svg>
+                  <div className="text-left">
+                    <p className="text-sm font-medium text-amber-800">Cash spending</p>
+                    <p className="text-xs text-amber-600">{cashItems.length} commitment{cashItems.length !== 1 ? "s" : ""} — not on your statement</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-amber-800">{fmt(cashMonthlyTotal)}/mo</span>
+                  <svg className="h-4 w-4 text-amber-400 group-hover:text-amber-600 transition" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                  </svg>
+                </div>
+              </button>
+            </div>
+          )}
           {activeTab === "transactions" && (
             <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
               {txns.length === 0 ? (
@@ -701,7 +862,7 @@ function SpendingPageInner() {
             </div>
           )}
 
-          {/* ── Subscriptions tab ─────────────────────────────────────────── */}
+          {/* ── Recurring tab ─────────────────────────────────────────── */}
           {activeTab === "subscriptions" && (
             <div className="space-y-4">
               {allSubscriptions.length === 0 ? (
@@ -727,8 +888,9 @@ function SpendingPageInner() {
                       const yearly  = monthly * 12;
                       const slug    = merchantSlug(sub.name);
                       return (
-                        <div key={sub.name} className="flex items-center justify-between px-5 py-3.5">
-                            <div className="min-w-0">
+                        <div key={sub.name} className="flex items-center gap-3 px-5 py-3.5">
+                          <RecurringListIcon name={sub.name} />
+                          <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
                               <p className="text-sm font-medium text-gray-800">{sub.name}</p>
                               {sub.source === "ai" ? (
@@ -779,6 +941,272 @@ function SpendingPageInner() {
                 <span className="font-medium text-gray-500">Auto-detected</span> entries come from your statement.{" "}
                 <span className="font-medium text-gray-500">Manual</span> entries are ones you&apos;ve tagged as recurring in the Transactions tab.
               </p>
+            </div>
+          )}
+
+          {/* ── Cash tab ──────────────────────────────────────────────────── */}
+          {activeTab === "cash" && (
+            <div className="space-y-4">
+              {/* Header row */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-700">Recurring cash spending</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Track payments that never appear on your bank statement.</p>
+                </div>
+                <button
+                  onClick={() => setCashForm({ frequency: "monthly", category: "Other" })}
+                  className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-2 text-xs font-semibold text-white hover:bg-purple-700 transition"
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  Add
+                </button>
+              </div>
+
+              {/* Monthly estimate banner */}
+              {cashItems.length > 0 && (
+                <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-amber-600">Est. monthly cash</p>
+                    <p className="text-2xl font-bold text-amber-800 mt-1">{fmt(cashMonthlyTotal)}</p>
+                    {cashItems.some((c) => c.frequency === "once") && (
+                      <p className="text-[11px] text-amber-500 mt-0.5">recurring only — one-offs excluded</p>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-amber-600">{cashItems.length} item{cashItems.length !== 1 ? "s" : ""}</p>
+                    <p className="text-xs text-amber-500 mt-0.5">{fmt(cashMonthlyTotal * 12)}/yr</p>
+                  </div>
+                </div>
+              )}
+
+              {/* ATM correlation */}
+              {(() => {
+                const atmTxns = txns.filter((t) => (t.category ?? "").toLowerCase() === "cash & atm");
+                const atmTotal = atmTxns.reduce((s, t) => s + t.amount, 0);
+                if (atmTotal === 0 || cashItems.length === 0) return null;
+                const unaccounted = atmTotal - cashMonthlyTotal;
+                return (
+                  <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">ATM withdrawals this month</p>
+                    <div className="flex items-center gap-4 text-sm">
+                      <div>
+                        <p className="text-xs text-gray-400">Withdrawn</p>
+                        <p className="font-semibold text-gray-800">{fmt(atmTotal)}</p>
+                      </div>
+                      <div className="text-gray-200">|</div>
+                      <div>
+                        <p className="text-xs text-gray-400">Tracked cash</p>
+                        <p className="font-semibold text-gray-800">{fmt(cashMonthlyTotal)}</p>
+                      </div>
+                      <div className="text-gray-200">|</div>
+                      <div>
+                        <p className="text-xs text-gray-400">Unaccounted</p>
+                        <p className={`font-semibold ${unaccounted > 0 ? "text-amber-600" : "text-green-600"}`}>
+                          {fmt(Math.max(0, unaccounted))}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Empty state */}
+              {cashItems.length === 0 && !cashLoading && (
+                <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center">
+                  <p className="text-sm text-gray-500">No cash commitments yet.</p>
+                  <p className="mt-1 text-xs text-gray-400">
+                    Add recurring cash expenses like house cleaning, allowances, or market trips.
+                  </p>
+                </div>
+              )}
+
+              {/* List */}
+              {cashItems.length > 0 && (
+                <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                  <div className="divide-y divide-gray-100">
+                    {cashItems.map((item) => {
+                      const isOnce = item.frequency === "once";
+                      const monthly = toMonthly(item.amount, item.frequency);
+                      const freqLabel = CASH_FREQ_OPTIONS.find((o) => o.value === item.frequency)?.label ?? item.frequency;
+
+                      // Shared date display logic
+                      const dateDisplay = item.nextDate ? (() => {
+                        const today = new Date();
+                        today.setHours(0, 0, 0, 0);
+                        const d = new Date(item.nextDate + "T00:00:00");
+                        const diff = Math.round((d.getTime() - today.getTime()) / 86400000);
+                        const timeLabel = diff === 0 ? "Today"
+                          : diff === 1 ? "Tomorrow"
+                          : diff < 0  ? `${Math.abs(diff)}d overdue`
+                          : `in ${diff}d`;
+                        const cls = diff < 0 ? "text-red-500" : diff <= 2 ? "text-amber-500" : "text-gray-400";
+                        return { d, diff, timeLabel, cls };
+                      })() : null;
+
+                      return (
+                        <div key={item.id} className={`flex items-center justify-between px-5 py-3.5 ${isOnce ? "bg-gray-50/50" : ""}`}>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-medium text-gray-800">{item.name}</p>
+                              {isOnce && (
+                                <span className="rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-500">one-off</span>
+                              )}
+                            </div>
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              {isOnce ? item.category : `${freqLabel} · ${item.category}`}
+                              {item.notes && <span className="ml-2 text-gray-300">— {item.notes}</span>}
+                            </p>
+                            {dateDisplay && (
+                              <p className={`text-xs mt-0.5 ${dateDisplay.cls}`}>
+                                {isOnce ? "" : "Next: "}
+                                {dateDisplay.d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                                {" "}— {dateDisplay.timeLabel}
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <div className="text-right">
+                              <p className="text-sm font-semibold text-gray-800">{fmtDec(item.amount)}</p>
+                              {!isOnce && item.frequency !== "monthly" && (
+                                <p className="text-xs text-gray-400">{fmt(monthly)}/mo</p>
+                              )}
+                              {isOnce && (
+                                <p className="text-xs text-gray-400">one-time</p>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => setCashForm({ ...item })}
+                              className="text-xs text-gray-400 hover:text-gray-600 transition px-1"
+                              title="Edit"
+                            >
+                              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 11l6-6 3 3-6 6H9v-3z" />
+                              </svg>
+                            </button>
+                            <button
+                              onClick={() => handleCashDelete(item.id)}
+                              className="text-xs text-red-400 hover:text-red-600 transition"
+                              title="Remove"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <p className="text-xs text-gray-400 px-1">
+                Cash commitments are estimates and are not included in your statement totals.
+              </p>
+
+              {/* Add / Edit form modal */}
+              {cashForm !== null && (
+                <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/30 px-4">
+                  <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+                    <h3 className="text-base font-semibold text-gray-900 mb-4">
+                      {cashForm.id ? "Edit commitment" : "Add cash commitment"}
+                    </h3>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-xs font-medium text-gray-500 mb-1 block">Name *</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. House cleaning"
+                          value={cashForm.name ?? ""}
+                          onChange={(e) => setCashForm((f) => ({ ...f, name: e.target.value }))}
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-200"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-xs font-medium text-gray-500 mb-1 block">Amount *</label>
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.01}
+                            placeholder="0.00"
+                            value={cashForm.amount ?? ""}
+                            onChange={(e) => setCashForm((f) => ({ ...f, amount: parseFloat(e.target.value) || 0 }))}
+                            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-200"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-gray-500 mb-1 block">Frequency *</label>
+                          <select
+                            value={cashForm.frequency ?? "monthly"}
+                            onChange={(e) => setCashForm((f) => ({ ...f, frequency: e.target.value as CashFrequency }))}
+                            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-200"
+                          >
+                            {CASH_FREQ_OPTIONS.map((o) => (
+                              <option key={o.value} value={o.value}>{o.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-gray-500 mb-1 block">Category *</label>
+                        <select
+                          value={cashForm.category ?? "Other"}
+                          onChange={(e) => setCashForm((f) => ({ ...f, category: e.target.value }))}
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-200"
+                        >
+                          {ALL_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-gray-500 mb-1 block">Notes (optional)</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Every other Friday"
+                          value={cashForm.notes ?? ""}
+                          onChange={(e) => setCashForm((f) => ({ ...f, notes: e.target.value || undefined }))}
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-200"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-gray-500 mb-1 block">
+                          {cashForm.frequency === "once" ? "Date *" : "Next date (optional)"}
+                        </label>
+                        <input
+                          type="date"
+                          value={cashForm.nextDate ?? ""}
+                          onChange={(e) => setCashForm((f) => ({ ...f, nextDate: e.target.value || undefined }))}
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-200"
+                        />
+                        {cashForm.frequency !== "once" && (
+                          <p className="mt-1 text-[11px] text-gray-400">When the next payment is due — helps track upcoming cash outflows.</p>
+                        )}
+                      </div>
+                      {/* Monthly preview */}
+                      {cashForm.amount && cashForm.frequency && cashForm.frequency !== "once" && (
+                        <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
+                          ≈ {fmt(toMonthly(cashForm.amount, cashForm.frequency as CashFrequency))}/mo · {fmt(toMonthly(cashForm.amount, cashForm.frequency as CashFrequency) * 12)}/yr
+                        </p>
+                      )}
+                    </div>
+                    <div className="mt-5 flex gap-2">
+                      <button
+                        onClick={() => setCashForm(null)}
+                        className="flex-1 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleCashSave}
+                        disabled={cashSaving}
+                        className="flex-1 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50 transition"
+                      >
+                        {cashSaving ? "Saving…" : cashForm.id ? "Update" : "Add"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </>

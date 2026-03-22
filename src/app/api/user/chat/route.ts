@@ -288,6 +288,24 @@ async function buildFinancialBrief(uid: string): Promise<string> {
     .map((s) => `  ${s.name}: ${fmt(s.amount)}/mo`)
     .join("\n");
 
+  // Cash commitments
+  const cashSnap = await db.collection(`users/${uid}/cashCommitments`).get();
+  const cashSection = cashSnap.docs.map((d) => {
+    const c = d.data();
+    const freqPerYear: Record<string, number> = { weekly: 52, biweekly: 26, monthly: 12, quarterly: 4, once: 0 };
+    const perYear = freqPerYear[c.frequency as string] ?? 12;
+    const monthly = (c.amount as number) * perYear / 12;
+    const nextDateStr = c.nextDate ? ` — date: ${c.nextDate}` : "";
+    const monthlyStr = c.frequency === "once" ? "one-time" : `~${fmt(monthly)}/mo`;
+    return `  ${c.name} (${c.frequency}): ${fmt(c.amount)} = ${monthlyStr} [${c.category}]${c.notes ? ` — ${c.notes}` : ""}${nextDateStr}`;
+  }).join("\n");
+  const cashMonthly = cashSnap.docs.reduce((sum, d) => {
+    const c = d.data();
+    const freqPerYear: Record<string, number> = { weekly: 52, biweekly: 26, monthly: 12, quarterly: 4, once: 0 };
+    const perYear = freqPerYear[c.frequency as string] ?? 12;
+    return sum + (c.amount as number) * perYear / 12;
+  }, 0);
+
   return `== FINANCIAL SNAPSHOT (${month}) ==
 Net worth:       ${fmt(netWorth)}
 Total assets:    ${fmt(assets)}
@@ -309,7 +327,7 @@ ${incomeSection || "  No income data found"}
 ${truncationNote}
 ${expenseSection || "  No expense transactions found"}
 
-${subs ? `== SUBSCRIPTIONS / RECURRING ==\n${subs}\n` : ""}== MONTHLY TREND (all months) ==
+${subs ? `== SUBSCRIPTIONS / RECURRING ==\n${subs}\n` : ""}${cashSection ? `== CASH COMMITMENTS (off-statement, est. ${fmt(cashMonthly)}/mo) ==\n${cashSection}\n` : ""}== MONTHLY TREND (all months) ==
 ${historyLines.join("\n") || "  Not enough history yet"}`;
 }
 
@@ -378,7 +396,7 @@ export async function POST(req: NextRequest) {
 
   const genAI  = new GoogleGenerativeAI(apiKey);
   const model  = genAI.getGenerativeModel({
-    model: "gemini-2.0-flash",
+    model: "gemini-2.5-flash",
     systemInstruction: buildSystemPrompt(brief),
   });
 
