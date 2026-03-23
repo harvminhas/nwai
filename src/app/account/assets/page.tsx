@@ -5,7 +5,10 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
+import {
+  PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
+  AreaChart, Area, XAxis, YAxis, CartesianGrid,
+} from "recharts";
 import Link from "next/link";
 import type { ManualAsset, AssetCategory, UserStatementSummary, Insight } from "@/lib/types";
 import type { BalanceSnapshot } from "@/app/api/user/balance-snapshots/route";
@@ -167,6 +170,7 @@ export function AssetsPage() {
   const [accounts, setAccounts]               = useState<AccountGroup[]>([]);
   const [insights, setInsights]               = useState<Insight[]>([]);
   const [yearMonth, setYearMonth]             = useState<string | null>(null);
+  const [assetHistory, setAssetHistory]       = useState<{ ym: string; label: string; total: number; debt: number }[]>([]);
   const [loading, setLoading]                 = useState(true);
   const [error, setError]                     = useState<string | null>(null);
   const [token, setToken]                     = useState<string | null>(null);
@@ -211,6 +215,19 @@ export function AssetsPage() {
       setAssets(aJson.assets ?? []);
       setInsights(cJson.data?.insights ?? []);
       setYearMonth(cJson.yearMonth ?? null);
+
+      // Build asset history from consolidated monthly history
+      const rawHistory: { yearMonth: string; netWorth: number; debtTotal: number }[] =
+        cJson.history ?? [];
+      const hist = rawHistory
+        .filter((h) => h.netWorth + h.debtTotal > 0)
+        .map((h) => {
+          const [y, m] = h.yearMonth.split("-");
+          const label = new Date(parseInt(y), parseInt(m) - 1, 1)
+            .toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+          return { ym: h.yearMonth, label, total: h.netWorth + h.debtTotal, debt: h.debtTotal };
+        });
+      setAssetHistory(hist);
 
       const snaps: BalanceSnapshot[] = snapJson.snapshots ?? [];
       setSnapshots(snaps);
@@ -358,13 +375,21 @@ export function AssetsPage() {
   const illiquidTotal     = assets.filter((a) => !LIQUID_ASSET_CATEGORIES.has(a.category)).reduce((s, a) => s + a.value, 0);
   const totalAssets       = manualTotal + liquidFromStatements;
   const debts             = accountBalances.filter((a) => ["mortgage", "loan", "credit"].includes(a.accountType) || a.balance < 0);
-  const debtsTotal        = debts.reduce((s, a) => s + Math.abs(a.balance), 0);
 
   const chartRaw = CHART_GROUPS.map((g) => {
     const fromManual     = assets.filter((a) => (g.categories as string[]).includes(a.category)).reduce((s, a) => s + a.value, 0);
     const fromStatements = accountBalances.filter((a) => g.accountTypes.includes(a.accountType) && a.balance > 0).reduce((s, a) => s + a.balance, 0);
     return { label: g.label, value: fromManual + fromStatements, color: g.color };
   }).filter((d) => d.value > 0);
+
+  // Growth deltas from history
+  const firstHist    = assetHistory[0];
+  const prevHist     = assetHistory.length >= 2 ? assetHistory[assetHistory.length - 2] : null;
+  const latestHist   = assetHistory.length >= 1 ? assetHistory[assetHistory.length - 1] : null;
+  const growthTotal  = firstHist && latestHist ? latestHist.total - firstHist.total : null;
+  const growthMoM    = prevHist  && latestHist ? latestHist.total - prevHist.total  : null;
+  const growthPct    = firstHist && latestHist && firstHist.total > 0
+    ? ((latestHist.total - firstHist.total) / firstHist.total) * 100 : null;
 
   const liquidTags   = liquidAccounts.map((a) => a.accountName.toLowerCase()).slice(0, 4);
   const illiquidTags = assets
@@ -397,7 +422,7 @@ export function AssetsPage() {
       {/* Header */}
       <div className="mb-1 flex items-start justify-between gap-4">
         <div>
-          <h1 className="font-bold text-3xl text-gray-900">Assets &amp; net worth</h1>
+          <h1 className="font-bold text-3xl text-gray-900">Assets</h1>
           <p className="mt-0.5 text-sm text-gray-400">
             {totalAssets > 0 && <>{fmt(totalAssets)} total</>}
             {monthStr && <> · {monthStr}</>}
@@ -457,11 +482,74 @@ export function AssetsPage() {
                     <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Liquid</p>
                     <p className="mt-2 font-bold text-2xl text-gray-900">{fmt(liquidTotal)}</p>
                     {liquidTags.length > 0 && <p className="mt-1.5 text-xs text-gray-400">{liquidTags.join(" · ")}</p>}
+                    {growthMoM !== null && (
+                      <p className={`mt-2 text-xs font-medium ${growthMoM >= 0 ? "text-green-600" : "text-red-500"}`}>
+                        {growthMoM >= 0 ? "▲" : "▼"} {fmtShort(Math.abs(growthMoM))} vs last month
+                      </p>
+                    )}
                   </div>
                   <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                     <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Illiquid</p>
                     <p className="mt-2 font-bold text-2xl text-gray-900">{fmt(illiquidTotal)}</p>
                     {illiquidTags.length > 0 && <p className="mt-1.5 text-xs text-gray-400">{illiquidTags.join(" · ")}</p>}
+                    {growthTotal !== null && growthPct !== null && (
+                      <p className={`mt-2 text-xs font-medium ${growthTotal >= 0 ? "text-green-600" : "text-red-500"}`}>
+                        {growthTotal >= 0 ? "▲" : "▼"} {fmtShort(Math.abs(growthTotal))} ({Math.abs(growthPct).toFixed(1)}%) all-time
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Asset Growth chart */}
+              {assetHistory.length >= 2 && (
+                <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                  <div className="mb-4 flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Asset Growth</p>
+                      {growthTotal !== null && growthPct !== null && (
+                        <p className={`mt-1 text-sm font-semibold ${growthTotal >= 0 ? "text-green-600" : "text-red-500"}`}>
+                          {growthTotal >= 0 ? "+" : ""}{fmtShort(growthTotal)}
+                          <span className="ml-1.5 font-normal text-gray-400 text-xs">
+                            ({growthPct >= 0 ? "+" : ""}{growthPct.toFixed(1)}%) over {assetHistory.length} months
+                          </span>
+                        </p>
+                      )}
+                    </div>
+                    {growthMoM !== null && (
+                      <div className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${growthMoM >= 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
+                        {growthMoM >= 0 ? "▲" : "▼"} {fmtShort(Math.abs(growthMoM))} MoM
+                      </div>
+                    )}
+                  </div>
+                  <div className="h-44">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={assetHistory} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="assetGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%"  stopColor="#7c3aed" stopOpacity={0.15} />
+                            <stop offset="95%" stopColor="#7c3aed" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
+                        <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
+                        <YAxis
+                          tickFormatter={(v) => fmtShort(v)}
+                          tick={{ fontSize: 10, fill: "#9ca3af" }}
+                          tickLine={false} axisLine={false} width={48}
+                        />
+                        <Tooltip
+                          formatter={(v) => [typeof v === "number" ? fmt(v) : v, "Total assets"]}
+                          labelStyle={{ fontSize: 12, color: "#6b7280" }}
+                          contentStyle={{ borderRadius: "8px", border: "1px solid #e5e7eb", fontSize: 12 }}
+                        />
+                        <Area
+                          type="monotone" dataKey="total"
+                          stroke="#7c3aed" strokeWidth={2}
+                          fill="url(#assetGrad)" dot={false} activeDot={{ r: 4, fill: "#7c3aed" }}
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
                   </div>
                 </div>
               )}
@@ -474,26 +562,6 @@ export function AssetsPage() {
                 </div>
               )}
 
-              {/* Debts summary */}
-              {debts.length > 0 && (
-                <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                  <div className="mb-3 flex items-center gap-3">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Debts</p>
-                    <span className="rounded-md bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-600">{fmt(debtsTotal)}</span>
-                    <Link href="/account/liabilities" className="ml-auto text-xs font-medium text-purple-600 hover:underline">
-                      View liabilities →
-                    </Link>
-                  </div>
-                  <div className="divide-y divide-gray-100">
-                    {debts.slice(0, 3).map((d) => (
-                      <div key={d.slug} className="flex items-center justify-between py-2.5">
-                        <p className="text-sm text-gray-700">{d.accountName} — {d.bankName}</p>
-                        <p className="text-sm font-semibold text-gray-800">{fmt(Math.abs(d.balance))}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
 
               {/* Key insight */}
               {keyInsight && (

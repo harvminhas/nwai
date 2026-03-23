@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useRouter, useParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
@@ -9,7 +9,11 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, ReferenceLine,
 } from "recharts";
-import { categoryColor } from "@/app/account/spending/page";
+import { merchantSlug } from "@/lib/applyRules";
+import {
+  categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon,
+  type CashFrequency,
+} from "@/app/account/spending/shared";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -40,6 +44,13 @@ function fmtDate(iso: string) {
     .toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+const FREQ_OPTIONS: { value: CashFrequency; label: string }[] = [
+  { value: "weekly",    label: "Weekly" },
+  { value: "biweekly",  label: "Bi-weekly" },
+  { value: "monthly",   label: "Monthly" },
+  { value: "quarterly", label: "Quarterly" },
+];
+
 interface ExpenseTxn {
   merchant: string;
   amount: number;
@@ -47,15 +58,19 @@ interface ExpenseTxn {
   date?: string;
 }
 
+interface Subscription {
+  name: string; amount: number; frequency: string;
+}
+
 // ── page ──────────────────────────────────────────────────────────────────────
 
 export default function SpendingCategoryPage() {
   const router = useRouter();
   const params = useParams();
-  const rawName    = decodeURIComponent(params.name as string);
-  // Normalise to title case for display
+  const rawName     = decodeURIComponent(params.name as string);
   const categoryName = rawName.replace(/\b\w/g, (c) => c.toUpperCase());
 
+  const [token, setToken]                   = useState<string | null>(null);
   const [transactions, setTransactions]     = useState<ExpenseTxn[]>([]);
   const [categoryTotal, setCategoryTotal]   = useState(0);
   const [monthTotal, setMonthTotal]         = useState(0);
@@ -63,68 +78,146 @@ export default function SpendingCategoryPage() {
   const [monthlyHistory, setMonthlyHistory] = useState<{ label: string; amount: number; ym: string }[]>([]);
   const [loading, setLoading]               = useState(true);
   const [error, setError]                   = useState<string | null>(null);
+  const [toast, setToast]                   = useState<string | null>(null);
+
+  // Category picker
+  const [openPicker, setOpenPicker]         = useState<number | null>(null);
+  const btnRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
+
+  // Recurring rules
+  const [recurringRules, setRecurringRules] = useState<Map<string, Subscription>>(new Map());
+  // Pending recurring — frequency picker
+  const [pendingRecurring, setPendingRecurring] = useState<{ txn: ExpenseTxn; anchor: HTMLElement } | null>(null);
+  const [pendingFreq, setPendingFreq]           = useState<CashFrequency>("monthly");
+
+  // Auto-dismiss toast
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 2500);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const loadPage = useCallback(async (tok: string, name: string) => {
+    setLoading(true); setError(null);
+    try {
+      const [consolidatedRes, recurringRes] = await Promise.all([
+        fetch("/api/user/statements/consolidated", { headers: { Authorization: `Bearer ${tok}` } }),
+        fetch("/api/user/recurring-rules",          { headers: { Authorization: `Bearer ${tok}` } }),
+      ]);
+      const json   = await consolidatedRes.json().catch(() => ({}));
+      const rJson  = recurringRes.ok ? await recurringRes.json().catch(() => ({})) : {};
+
+      if (!consolidatedRes.ok) { setError(json.error ?? "Failed to load"); return; }
+
+      // Recurring rules
+      const rMap = new Map<string, Subscription>();
+      for (const r of (rJson.rules ?? [])) {
+        rMap.set(r.slug as string, { name: r.merchant, amount: r.amount, frequency: r.frequency });
+      }
+      setRecurringRules(rMap);
+
+      const ym = json.yearMonth ?? null;
+      setYearMonth(ym);
+      setMonthTotal(json.data?.expenses?.total ?? 0);
+
+      const allTxns: ExpenseTxn[] = json.data?.expenses?.transactions ?? [];
+      const catTxns = allTxns
+        .filter((t) => t.category?.toLowerCase() === name)
+        .sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
+      setTransactions(catTxns);
+      setCategoryTotal(catTxns.reduce((s, t) => s + t.amount, 0));
+
+      // History trend
+      const history: { yearMonth: string }[] = json.history ?? [];
+      const pastMonths = history
+        .filter((h) => h.yearMonth !== ym)
+        .sort((a, b) => a.yearMonth.localeCompare(b.yearMonth))
+        .slice(-5);
+
+      const monthData: { label: string; amount: number; ym: string }[] = [];
+      await Promise.all(pastMonths.map(async (h) => {
+        const r = await fetch(`/api/user/statements/consolidated?month=${h.yearMonth}`, {
+          headers: { Authorization: `Bearer ${tok}` },
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) {
+          const txns: ExpenseTxn[] = j.data?.expenses?.transactions ?? [];
+          const amt = txns.filter((t) => t.category?.toLowerCase() === name).reduce((s, t) => s + t.amount, 0);
+          monthData.push({ label: shortMonth(h.yearMonth), amount: amt, ym: h.yearMonth });
+        }
+      }));
+      monthData.push({ label: shortMonth(ym ?? ""), amount: catTxns.reduce((s, t) => s + t.amount, 0), ym: ym ?? "" });
+      monthData.sort((a, b) => a.ym.localeCompare(b.ym));
+      setMonthlyHistory(monthData);
+    } catch { setError("Failed to load category data"); }
+    finally { setLoading(false); }
+  }, []);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
       if (!user) { router.push("/login"); return; }
-      setLoading(true); setError(null);
-      try {
-        const token = await user.getIdToken();
-
-        // Fetch current month
-        const res = await fetch("/api/user/statements/consolidated", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) { setError(json.error ?? "Failed to load"); return; }
-
-        const ym = json.yearMonth ?? null;
-        setYearMonth(ym);
-        setMonthTotal(json.data?.expenses?.total ?? 0);
-
-        // Filter transactions for this category
-        const allTxns: ExpenseTxn[] = (json.data?.expenses?.transactions ?? []);
-        const catTxns = allTxns
-          .filter((t) => t.category?.toLowerCase() === rawName)
-          .sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
-        setTransactions(catTxns);
-        setCategoryTotal(catTxns.reduce((s, t) => s + t.amount, 0));
-
-        // Fetch each month in history for category trend
-        const history: { yearMonth: string }[] = json.history ?? [];
-        const pastMonths = history
-          .filter((h) => h.yearMonth !== ym)
-          .sort((a, b) => a.yearMonth.localeCompare(b.yearMonth))
-          .slice(-5);
-
-        const monthData: { label: string; amount: number; ym: string }[] = [];
-
-        // Add historical months
-        await Promise.all(pastMonths.map(async (h) => {
-          const r = await fetch(`/api/user/statements/consolidated?month=${h.yearMonth}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          const j = await r.json().catch(() => ({}));
-          if (r.ok) {
-            const txns: ExpenseTxn[] = (j.data?.expenses?.transactions ?? []);
-            const amt = txns
-              .filter((t) => t.category?.toLowerCase() === rawName)
-              .reduce((s, t) => s + t.amount, 0);
-            monthData.push({ label: shortMonth(h.yearMonth), amount: amt, ym: h.yearMonth });
-          }
-        }));
-
-        // Add current month
-        monthData.push({ label: shortMonth(ym ?? ""), amount: catTxns.reduce((s, t) => s + t.amount, 0), ym: ym ?? "" });
-        monthData.sort((a, b) => a.ym.localeCompare(b.ym));
-        setMonthlyHistory(monthData);
-      } catch { setError("Failed to load category data"); }
-      finally { setLoading(false); }
+      const tok = await user.getIdToken();
+      setToken(tok);
+      loadPage(tok, rawName);
     });
-  }, [router, rawName]);
+  }, [router, rawName, loadPage]);
 
-  // ── derived ───────────────────────────────────────────────────────────────
+  // ── category change ─────────────────────────────────────────────────────────
+
+  async function handleCategoryChange(idx: number, newCategory: string) {
+    const txn = transactions[idx];
+    if (!txn || !token) return;
+    setOpenPicker(null);
+    setTransactions((prev) => prev.map((t, i) => i === idx ? { ...t, category: newCategory } : t));
+    try {
+      await fetch("/api/user/category-rules", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ merchant: txn.merchant, category: newCategory }),
+      });
+      setToast(`Rule saved: "${txn.merchant}" → ${newCategory}`);
+    } catch { setToast("Failed to save rule"); }
+  }
+
+  // ── recurring toggle ────────────────────────────────────────────────────────
+
+  function handleRecurringToggle(txn: ExpenseTxn, anchorEl: HTMLElement) {
+    if (!token) return;
+    const slug = merchantSlug(txn.merchant);
+    if (recurringRules.has(slug)) {
+      setRecurringRules((prev) => { const next = new Map(prev); next.delete(slug); return next; });
+      fetch(`/api/user/recurring-rules?slug=${encodeURIComponent(slug)}`, {
+        method: "DELETE", headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+      setToast(`"${txn.merchant}" unmarked as recurring`);
+    } else {
+      setPendingFreq("monthly");
+      setPendingRecurring({ txn, anchor: anchorEl });
+    }
+  }
+
+  async function confirmRecurring() {
+    if (!token || !pendingRecurring) return;
+    const { txn } = pendingRecurring;
+    const slug = merchantSlug(txn.merchant);
+    setRecurringRules((prev) => {
+      const next = new Map(prev);
+      next.set(slug, { name: txn.merchant, amount: txn.amount, frequency: pendingFreq });
+      return next;
+    });
+    setPendingRecurring(null);
+    try {
+      await fetch("/api/user/recurring-rules", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ merchant: txn.merchant, amount: txn.amount, frequency: pendingFreq, category: txn.category }),
+      });
+      setToast(`"${txn.merchant}" marked as recurring (${pendingFreq})`);
+    } catch { setToast("Failed to save"); }
+  }
+
+  // ── derived ─────────────────────────────────────────────────────────────────
 
   const pctOfTotal = monthTotal > 0 ? Math.round((categoryTotal / monthTotal) * 100) : 0;
   const avg = monthlyHistory.length > 0
@@ -132,15 +225,11 @@ export default function SpendingCategoryPage() {
         Math.max(monthlyHistory.filter((m) => m.amount > 0).length, 1))
     : 0;
 
-  // Top merchants
   const merchantTotals = new Map<string, number>();
   for (const t of transactions) {
     merchantTotals.set(t.merchant, (merchantTotals.get(t.merchant) ?? 0) + t.amount);
   }
-  const topMerchants = Array.from(merchantTotals.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5);
-
+  const topMerchants = Array.from(merchantTotals.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5);
   const color = categoryColor(rawName);
 
   if (loading) return (
@@ -243,23 +332,72 @@ export default function SpendingCategoryPage() {
           </div>
         )}
 
-        {/* All transactions */}
+        {/* Transactions */}
         {transactions.length > 0 && (
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-            <div className="flex items-center justify-between px-5 pt-5 pb-3">
+            <div className="flex items-center justify-between px-5 pt-5 pb-1">
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Transactions</p>
               <span className="text-xs text-gray-400">{transactions.length} total</span>
             </div>
+            <p className="px-5 pt-1 pb-3 text-xs text-gray-400">
+              Tap the category pill to recategorise · tap ↻ to mark as recurring
+            </p>
             <div className="divide-y divide-gray-100">
-              {transactions.map((txn, i) => (
-                <div key={i} className="flex items-center justify-between px-5 py-3.5">
-                  <div>
-                    <p className="text-sm font-medium text-gray-800">{txn.merchant}</p>
-                    {txn.date && <p className="text-xs text-gray-400">{fmtDate(txn.date)}</p>}
+              {transactions.map((txn, i) => {
+                const slug        = merchantSlug(txn.merchant);
+                const isManualSub = recurringRules.has(slug);
+                const txnColor    = categoryColor(txn.category?.toLowerCase() ?? "other");
+                return (
+                  <div key={i} className="flex items-center justify-between px-5 py-3.5">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-gray-800 truncate">{txn.merchant}</p>
+                      <div className="mt-1 flex items-center gap-2 flex-wrap">
+                        {txn.date && <span className="text-xs text-gray-400">{fmtDate(txn.date)}</span>}
+
+                        {/* Category pill */}
+                        <button
+                          ref={(el) => { if (el) btnRefs.current.set(i, el); else btnRefs.current.delete(i); }}
+                          onClick={() => setOpenPicker(openPicker === i ? null : i)}
+                          className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-600 transition hover:border-purple-300 hover:bg-purple-50 hover:text-purple-700"
+                        >
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: txnColor }} />
+                          {txn.category}
+                          <svg className="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+                        {openPicker === i && btnRefs.current.has(i) && (
+                          <CategoryPicker
+                            anchorRef={{ current: btnRefs.current.get(i)! }}
+                            current={txn.category}
+                            onSelect={(cat) => handleCategoryChange(i, cat)}
+                            onClose={() => setOpenPicker(null)}
+                          />
+                        )}
+
+                        {/* Recurring toggle */}
+                        <button
+                          onClick={(e) => handleRecurringToggle(txn, e.currentTarget)}
+                          title={isManualSub ? "Remove from recurring" : "Mark as recurring"}
+                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition ${
+                            isManualSub
+                              ? "border-purple-200 bg-purple-50 text-purple-600"
+                              : "border-gray-200 bg-gray-50 text-gray-400 hover:border-purple-200 hover:bg-purple-50 hover:text-purple-500"
+                          }`}
+                        >
+                          <RecurringIcon active={isManualSub} />
+                          {isManualSub
+                            ? (recurringRules.get(slug)?.frequency ?? "recurring")
+                            : "↻"}
+                        </button>
+                      </div>
+                    </div>
+                    <p className="ml-4 shrink-0 text-sm font-medium text-gray-700 tabular-nums">
+                      −{fmtDec(Math.abs(txn.amount))}
+                    </p>
                   </div>
-                  <p className="text-sm font-medium text-gray-700 tabular-nums">−{fmtDec(Math.abs(txn.amount))}</p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -271,6 +409,56 @@ export default function SpendingCategoryPage() {
         )}
 
       </div>
+
+      {/* Frequency picker popover */}
+      {pendingRecurring && (() => {
+        const rect = pendingRecurring.anchor.getBoundingClientRect();
+        return (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setPendingRecurring(null)} />
+            <div
+              className="fixed z-50 w-56 rounded-xl border border-gray-200 bg-white shadow-lg"
+              style={{ top: rect.bottom + 6, left: Math.min(rect.left, window.innerWidth - 232) }}
+            >
+              <div className="border-b border-gray-100 px-3 py-2.5">
+                <p className="text-xs font-semibold text-gray-700 truncate">{pendingRecurring.txn.merchant}</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">How often does this recur?</p>
+              </div>
+              <div className="p-1.5 space-y-0.5">
+                {FREQ_OPTIONS.map(({ value, label }) => (
+                  <button key={value} onClick={() => setPendingFreq(value)}
+                    className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition ${
+                      pendingFreq === value
+                        ? "bg-purple-50 text-purple-700 font-medium"
+                        : "text-gray-700 hover:bg-gray-50"
+                    }`}
+                  >
+                    {label}
+                    {pendingFreq === value && (
+                      <svg className="h-3.5 w-3.5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    )}
+                  </button>
+                ))}
+              </div>
+              <div className="border-t border-gray-100 p-2">
+                <button onClick={confirmRecurring}
+                  className="w-full rounded-lg bg-purple-600 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition">
+                  Mark as recurring
+                </button>
+              </div>
+            </div>
+          </>
+        );
+      })()}
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 rounded-full bg-gray-900 px-4 py-2 text-sm text-white shadow-lg">
+          {toast}
+        </div>
+      )}
     </div>
   );
 }

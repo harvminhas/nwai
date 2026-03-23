@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback, Suspense } from "react";
-import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
@@ -14,98 +13,10 @@ import {
   ReferenceLine, ResponsiveContainer,
 } from "recharts";
 
-// ── constants ─────────────────────────────────────────────────────────────────
-
-export const CATEGORY_COLORS: Record<string, string> = {
-  housing: "#3b82f6",
-  groceries: "#22c55e",
-  dining: "#fb923c",
-  transportation: "#f59e0b",
-  shopping: "#a855f7",
-  entertainment: "#ec4899",
-  subscriptions: "#94a3b8",
-  healthcare: "#14b8a6",
-  "transfers & payments": "#06b6d4",
-  "cash & atm": "#f87171",
-  other: "#d1d5db",
-};
-
-export function categoryColor(name: string): string {
-  return CATEGORY_COLORS[name.toLowerCase()] ?? "#a855f7";
-}
-
-// "Subscriptions" removed — it is a payment behaviour (recurring), not a spend category
-export const ALL_CATEGORIES = [
-  "Housing",
-  "Groceries",
-  "Dining",
-  "Transportation",
-  "Shopping",
-  "Entertainment",
-  "Healthcare",
-  "Transfers & Payments",
-  "Cash & ATM",
-  "Other",
-] as const;
-
-// ── CategoryPicker (portal, fixed-position) ───────────────────────────────────
-
-interface CategoryPickerProps {
-  anchorRef: React.RefObject<HTMLButtonElement | null>;
-  current: string;
-  onSelect: (cat: string) => void;
-  onClose: () => void;
-}
-function CategoryPicker({ anchorRef, current, onSelect, onClose }: CategoryPickerProps) {
-  const menuRef = useRef<HTMLDivElement>(null);
-  const [style, setStyle] = useState<React.CSSProperties>({ visibility: "hidden" });
-
-  useEffect(() => {
-    if (!anchorRef.current) return;
-    const rect = anchorRef.current.getBoundingClientRect();
-    const menuHeight = 340;
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const top = spaceBelow >= menuHeight ? rect.bottom + 6 : rect.top - menuHeight - 6;
-    setStyle({
-      position: "fixed", top,
-      left: Math.min(rect.left, window.innerWidth - 216),
-      width: 208, zIndex: 9999, visibility: "visible",
-    });
-  }, [anchorRef]);
-
-  useEffect(() => {
-    function handle(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node) &&
-          anchorRef.current && !anchorRef.current.contains(e.target as Node)) onClose();
-    }
-    function onScroll() { onClose(); }
-    document.addEventListener("mousedown", handle);
-    window.addEventListener("scroll", onScroll, true);
-    return () => { document.removeEventListener("mousedown", handle); window.removeEventListener("scroll", onScroll, true); };
-  }, [onClose, anchorRef]);
-
-  return createPortal(
-    <div ref={menuRef} style={style}
-      className="rounded-xl border border-gray-200 bg-white py-1 shadow-xl ring-1 ring-black/5">
-      <p className="px-3 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
-        Change category · saves as rule
-      </p>
-      {ALL_CATEGORIES.map((cat) => {
-        const color = categoryColor(cat.toLowerCase());
-        const isActive = cat.toLowerCase() === current.toLowerCase();
-        return (
-          <button key={cat} onClick={() => onSelect(cat)}
-            className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition hover:bg-gray-50 ${isActive ? "font-semibold text-gray-900" : "text-gray-700"}`}>
-            <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
-            {cat}
-            {isActive && <span className="ml-auto text-xs text-gray-400">current</span>}
-          </button>
-        );
-      })}
-    </div>,
-    document.body
-  );
-}
+// ── shared constants & components (re-exported from shared.tsx) ───────────────
+export { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon } from "./shared";
+export type { CashFrequency as CashFrequencyShared } from "./shared";
+import { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker } from "./shared";
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 
@@ -185,17 +96,6 @@ function SpendingChart({ history, avg, selectedMonth, onSelect }: {
   );
 }
 
-// ── Recurring toggle icon ─────────────────────────────────────────────────────
-
-function RecurringIcon({ active }: { active: boolean }) {
-  return (
-    <svg className={`h-3.5 w-3.5 ${active ? "text-purple-600" : "text-gray-300"}`}
-      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round"
-        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-    </svg>
-  );
-}
 
 // ── recurring item icon helper ─────────────────────────────────────────────
 // Returns "subscription" for digital service subscriptions, "recurring" for fees/memberships
@@ -240,7 +140,8 @@ type TabId = typeof TABS[number]["id"];
 
 // ── cash commitment types ─────────────────────────────────────────────────────
 
-export type CashFrequency = "weekly" | "biweekly" | "monthly" | "quarterly" | "once";
+export type { CashFrequency } from "./shared";
+import type { CashFrequency } from "./shared";
 
 export interface CashCommitment {
   id: string;
@@ -325,6 +226,9 @@ function SpendingPageInner() {
   const [recurringRules, setRecurringRules] = useState<Map<string, Subscription>>(new Map());
   // Auto-detected frequency per merchant slug (from cross-month gap analysis)
   const [merchantFrequency, setMerchantFrequency] = useState<Map<string, Frequency>>(new Map());
+  // Pending recurring mark — awaiting frequency selection
+  const [pendingRecurring, setPendingRecurring] = useState<{ txn: ExpenseTransaction; anchor: HTMLElement } | null>(null);
+  const [pendingFreq, setPendingFreq] = useState<CashFrequency>("monthly");
 
   const [toast, setToast] = useState<string | null>(null);
 
@@ -447,37 +351,42 @@ function SpendingPageInner() {
 
   // ── recurring toggle ──────────────────────────────────────────────────────
 
-  async function handleRecurringToggle(txn: ExpenseTransaction) {
+  function handleRecurringToggle(txn: ExpenseTransaction, anchorEl: HTMLElement) {
     if (!token) return;
     const slug = merchantSlug(txn.merchant);
     const isCurrentlyRecurring = recurringRules.has(slug);
 
-    // Optimistic update
+    if (isCurrentlyRecurring) {
+      // Unmark immediately
+      setRecurringRules((prev) => { const next = new Map(prev); next.delete(slug); return next; });
+      fetch(`/api/user/recurring-rules?slug=${encodeURIComponent(slug)}`, {
+        method: "DELETE", headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+      setToast(`"${txn.merchant}" unmarked as recurring`);
+    } else {
+      // Open frequency picker
+      setPendingFreq("monthly");
+      setPendingRecurring({ txn, anchor: anchorEl });
+    }
+  }
+
+  async function confirmRecurring() {
+    if (!token || !pendingRecurring) return;
+    const { txn } = pendingRecurring;
+    const slug = merchantSlug(txn.merchant);
     setRecurringRules((prev) => {
       const next = new Map(prev);
-      if (isCurrentlyRecurring) {
-        next.delete(slug);
-      } else {
-        next.set(slug, { name: txn.merchant, amount: txn.amount, frequency: "monthly" });
-      }
+      next.set(slug, { name: txn.merchant, amount: txn.amount, frequency: pendingFreq });
       return next;
     });
-
+    setPendingRecurring(null);
     try {
-      if (isCurrentlyRecurring) {
-        await fetch(`/api/user/recurring-rules?slug=${encodeURIComponent(slug)}`, {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        setToast(`"${txn.merchant}" unmarked as recurring`);
-      } else {
-        await fetch("/api/user/recurring-rules", {
-          method: "PUT",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ merchant: txn.merchant, amount: txn.amount, frequency: "monthly", category: txn.category }),
-        });
-        setToast(`"${txn.merchant}" marked as recurring`);
-      }
+      await fetch("/api/user/recurring-rules", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ merchant: txn.merchant, amount: txn.amount, frequency: pendingFreq, category: txn.category }),
+      });
+      setToast(`"${txn.merchant}" marked as recurring (${pendingFreq})`);
     } catch { setToast("Failed to save"); }
   }
 
@@ -835,7 +744,7 @@ function SpendingPageInner() {
                                   </span>
                                 ) : (
                                   <button
-                                    onClick={() => handleRecurringToggle(txn)}
+                                    onClick={(e) => handleRecurringToggle(txn, e.currentTarget)}
                                     title={isManualSub ? "Remove from recurring" : "Mark as recurring"}
                                     className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition ${
                                       isManualSub
@@ -1213,6 +1122,61 @@ function SpendingPageInner() {
       )}
 
       {toast && <Toast message={toast} onDone={() => setToast(null)} />}
+
+      {/* ── Frequency picker popover ─────────────────────────────────────── */}
+      {pendingRecurring && (() => {
+        const rect = pendingRecurring.anchor.getBoundingClientRect();
+        const FREQS: { value: CashFrequency; label: string }[] = [
+          { value: "weekly",    label: "Weekly" },
+          { value: "biweekly",  label: "Bi-weekly" },
+          { value: "monthly",   label: "Monthly" },
+          { value: "quarterly", label: "Quarterly" },
+        ];
+        return (
+          <>
+            {/* Backdrop */}
+            <div className="fixed inset-0 z-40" onClick={() => setPendingRecurring(null)} />
+            {/* Popover */}
+            <div
+              className="fixed z-50 w-56 rounded-xl border border-gray-200 bg-white shadow-lg"
+              style={{ top: rect.bottom + 6, left: Math.min(rect.left, window.innerWidth - 232) }}
+            >
+              <div className="border-b border-gray-100 px-3 py-2.5">
+                <p className="text-xs font-semibold text-gray-700 truncate">{pendingRecurring.txn.merchant}</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">How often does this recur?</p>
+              </div>
+              <div className="p-1.5 space-y-0.5">
+                {FREQS.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    onClick={() => setPendingFreq(value)}
+                    className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition ${
+                      pendingFreq === value
+                        ? "bg-purple-50 text-purple-700 font-medium"
+                        : "text-gray-700 hover:bg-gray-50"
+                    }`}
+                  >
+                    {label}
+                    {pendingFreq === value && (
+                      <svg className="h-3.5 w-3.5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    )}
+                  </button>
+                ))}
+              </div>
+              <div className="border-t border-gray-100 p-2">
+                <button
+                  onClick={confirmRecurring}
+                  className="w-full rounded-lg bg-purple-600 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
+                >
+                  Mark as recurring
+                </button>
+              </div>
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }

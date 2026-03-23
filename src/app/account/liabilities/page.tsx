@@ -10,6 +10,10 @@ import type { UserStatementSummary, ManualLiability, LiabilityCategory } from "@
 import type { AccountRateEntry } from "@/app/api/user/account-rates/route";
 import { usePlan } from "@/contexts/PlanContext";
 import UpgradePrompt from "@/components/UpgradePrompt";
+import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid,
+  PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
+} from "recharts";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -234,38 +238,160 @@ function LiabilityModal({ initial, onSave, onClose, saving }: {
   );
 }
 
+// ── chart colors by category ──────────────────────────────────────────────────
+
+const CATEGORY_CHART_COLOR: Record<LiabilityCategory, string> = {
+  mortgage:       "#ef4444",
+  auto_loan:      "#3b82f6",
+  student_loan:   "#6366f1",
+  personal_loan:  "#eab308",
+  credit_card:    "#f97316",
+  line_of_credit: "#8b5cf6",
+  other:          "#94a3b8",
+};
+
 // ── tab: overview ─────────────────────────────────────────────────────────────
 
-function OverviewTab({ libs }: { libs: DisplayLiability[] }) {
+interface DebtHistoryPoint { ym: string; label: string; total: number }
+
+function OverviewTab({ libs, debtHistory }: { libs: DisplayLiability[]; debtHistory: DebtHistoryPoint[] }) {
   const total = libs.reduce((s, l) => s + l.balance, 0);
   if (libs.length === 0) return <EmptyState />;
+
+  // By-type summary
+  const byCategory = new Map<LiabilityCategory, number>();
+  for (const l of libs) byCategory.set(l.category, (byCategory.get(l.category) ?? 0) + l.balance);
+  const categoryGroups = CATEGORY_ORDER.filter((c) => byCategory.has(c)).map((c) => ({
+    cat: c, label: CATEGORY_META[c].label, total: byCategory.get(c)!, color: CATEGORY_CHART_COLOR[c],
+    meta: CATEGORY_META[c],
+  }));
+
+  // Donut data
+  const donutData = categoryGroups.map((g) => ({ label: g.label, value: g.total, color: g.color }));
+
+  // Growth metrics
+  const firstPt  = debtHistory[0];
+  const prevPt   = debtHistory.length >= 2 ? debtHistory[debtHistory.length - 2] : null;
+  const latestPt = debtHistory.length >= 1 ? debtHistory[debtHistory.length - 1] : null;
+  // Debt going down = positive (good), going up = negative
+  const growthMoM   = prevPt  && latestPt ? prevPt.total  - latestPt.total : null; // positive = paid down
+  const growthTotal = firstPt && latestPt ? firstPt.total - latestPt.total : null; // positive = net reduction
+  const growthPct   = firstPt && latestPt && firstPt.total > 0
+    ? ((firstPt.total - latestPt.total) / firstPt.total) * 100 : null;
+
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-      <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Total owed</p>
-      <p className="mt-1 font-bold text-4xl text-gray-900">{fmt(total)}</p>
-      <div className="mt-5 space-y-3">
-        {libs.map((l) => {
-          const meta = CATEGORY_META[l.category];
-          const pct  = total > 0 ? Math.min((l.balance / total) * 100, 100) : 0;
-          return (
-            <div key={l.id}>
-              <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-                <span className="flex items-center gap-1.5">
-                  <span className={`inline-block h-2 w-2 rounded-full ${meta.barColor}`} />
-                  {l.label}
-                  {l.source === "manual" && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-400">manual</span>}
-                </span>
-                <span className="tabular-nums font-medium text-gray-700">
-                  {fmt(l.balance)} <span className="text-gray-400">· {Math.round(pct)}%</span>
-                </span>
+    <div className="space-y-5">
+      {/* By-type KPI cards */}
+      {categoryGroups.length > 0 && (
+        <div className={`grid gap-4 ${categoryGroups.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}>
+          {categoryGroups.map((g) => {
+            const pct = total > 0 ? ((g.total / total) * 100).toFixed(0) : "0";
+            return (
+              <div key={g.cat} className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: g.color }} />
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">{g.label}</p>
+                </div>
+                <p className="font-bold text-2xl text-gray-900">{fmtShort(g.total)}</p>
+                <p className="mt-1 text-xs text-gray-400">
+                  {libs.filter((l) => l.category === g.cat).length} account{libs.filter((l) => l.category === g.cat).length !== 1 ? "s" : ""}
+                  <span className="ml-1.5">{pct}% of debt</span>
+                </p>
               </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-gray-100">
-                <div className={`h-full rounded-full ${meta.barColor} transition-all`} style={{ width: `${pct}%` }} />
+            );
+          })}
+        </div>
+      )}
+
+      {/* Debt Growth chart */}
+      {debtHistory.length >= 2 && (
+        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Debt Over Time</p>
+              {growthTotal !== null && growthPct !== null && (
+                <p className={`mt-1 text-sm font-semibold ${growthTotal >= 0 ? "text-green-600" : "text-red-500"}`}>
+                  {growthTotal >= 0 ? "↓ " : "↑ "}{fmtShort(Math.abs(growthTotal))}
+                  <span className="ml-1.5 font-normal text-gray-400 text-xs">
+                    ({Math.abs(growthPct).toFixed(1)}% {growthTotal >= 0 ? "reduction" : "increase"}) over {debtHistory.length} months
+                  </span>
+                </p>
+              )}
+            </div>
+            {growthMoM !== null && (
+              <div className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${growthMoM >= 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
+                {growthMoM >= 0 ? "↓" : "↑"} {fmtShort(Math.abs(growthMoM))} MoM
+              </div>
+            )}
+          </div>
+          <div className="h-44">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={debtHistory} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="debtGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%"  stopColor="#ef4444" stopOpacity={0.15} />
+                    <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
+                <YAxis tickFormatter={(v) => fmtShort(v)} tick={{ fontSize: 10, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={48} />
+                <Tooltip
+                  formatter={(v) => [typeof v === "number" ? fmt(v) : v, "Total debt"]}
+                  labelStyle={{ fontSize: 12, color: "#6b7280" }}
+                  contentStyle={{ borderRadius: "8px", border: "1px solid #e5e7eb", fontSize: 12 }}
+                />
+                <Area type="monotone" dataKey="total" stroke="#ef4444" strokeWidth={2}
+                  fill="url(#debtGrad)" dot={false} activeDot={{ r: 4, fill: "#ef4444" }} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* Debt Breakdown donut */}
+      {donutData.length > 0 && (
+        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <p className="mb-4 text-xs font-semibold uppercase tracking-wider text-gray-400">Debt Breakdown</p>
+          <div className="flex items-center gap-6">
+            <div className="relative h-40 w-40 shrink-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={donutData} cx="50%" cy="50%" innerRadius={44} outerRadius={68}
+                    paddingAngle={2} dataKey="value" strokeWidth={0}>
+                    {donutData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                  </Pie>
+                  <Tooltip
+                    formatter={(v) => [typeof v === "number" ? fmtShort(v) : String(v)]}
+                    contentStyle={{ borderRadius: "8px", border: "1px solid #e5e7eb", fontSize: 12 }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-base font-bold text-gray-900">{fmtShort(total)}</span>
+                <span className="text-xs text-gray-400">owed</span>
               </div>
             </div>
-          );
-        })}
-      </div>
+            <div className="flex-1 space-y-2">
+              {donutData.map((d) => {
+                const pct = total > 0 ? Math.round((d.value / total) * 100) : 0;
+                return (
+                  <div key={d.label} className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: d.color }} />
+                      <span className="truncate text-sm text-gray-700">{d.label}</span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 text-sm">
+                      <span className="font-medium text-gray-800">{fmtShort(d.value)}</span>
+                      <span className="w-8 text-right text-xs text-gray-400">{pct}%</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -557,6 +683,7 @@ function LiabilitiesPageInner() {
   const [displayLibs, setDisplayLibs]   = useState<DisplayLiability[]>([]);
   const [accountRates, setAccountRates] = useState<AccountRateEntry[]>([]);
   const [yearMonth, setYearMonth]       = useState<string | null>(null);
+  const [debtHistory, setDebtHistory]   = useState<DebtHistoryPoint[]>([]);
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState<string | null>(null);
 
@@ -587,6 +714,19 @@ function LiabilitiesPageInner() {
       const rJson = rRes.ok ? await rRes.json().catch(() => ({})) : {};
 
       setYearMonth(cJson.yearMonth ?? null);
+
+      // Build debt history from consolidated monthly history
+      const rawHistory: { yearMonth: string; netWorth: number; debtTotal: number }[] = cJson.history ?? [];
+      const hist: DebtHistoryPoint[] = rawHistory
+        .filter((h) => h.debtTotal > 0)
+        .map((h) => {
+          const [y, m] = h.yearMonth.split("-");
+          const label = new Date(parseInt(y), parseInt(m) - 1, 1)
+            .toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+          return { ym: h.yearMonth, label, total: h.debtTotal };
+        });
+      setDebtHistory(hist);
+
       const manual: ManualLiability[] = mJson.liabilities ?? [];
       setManualLibs(manual);
       setAccountRates(rJson.rates ?? []);
@@ -718,7 +858,7 @@ function LiabilitiesPageInner() {
       </div>
 
       {/* Tab content */}
-      {activeTab === "overview" && <OverviewTab libs={displayLibs} />}
+      {activeTab === "overview" && <OverviewTab libs={displayLibs} debtHistory={debtHistory} />}
       {activeTab === "accounts" && (
         <AccountsTab
           libs={displayLibs} manualLibs={manualLibs} deletingId={deletingId}
