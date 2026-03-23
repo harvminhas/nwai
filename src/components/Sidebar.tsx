@@ -332,10 +332,10 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
             <p className="mb-2 truncate text-xs text-gray-400">{userEmail}</p>
           )}
 
-          {/* Activity */}
+          {/* Activity & Coverage */}
           <Link
             href="/account/activity"
-            title={collapsed ? "Activity" : undefined}
+            title={collapsed ? "Activity & Coverage" : undefined}
             className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${
               pathname === "/account/activity"
                 ? "bg-purple-50 text-purple-700"
@@ -345,7 +345,7 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
             <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            {!collapsed && <span>Activity</span>}
+            {!collapsed && <span>Activity & Coverage</span>}
           </Link>
 
           {/* Test mode plan switcher */}
@@ -499,7 +499,7 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
                 <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                Activity
+                Activity & Coverage
               </Link>
               <button
                 onClick={handleSignOut}
