@@ -350,7 +350,12 @@ export default function SpendingCategoryPage() {
                 return (
                   <div key={i} className="flex items-center justify-between px-5 py-3.5">
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-gray-800 truncate">{txn.merchant}</p>
+                      <Link
+                        href={`/account/spending/merchant/${encodeURIComponent(merchantSlug(txn.merchant))}`}
+                        className="block truncate text-sm font-medium text-gray-800 hover:text-purple-600 hover:underline"
+                      >
+                        {txn.merchant}
+                      </Link>
                       <div className="mt-1 flex items-center gap-2 flex-wrap">
                         {txn.date && <span className="text-xs text-gray-400">{fmtDate(txn.date)}</span>}
 

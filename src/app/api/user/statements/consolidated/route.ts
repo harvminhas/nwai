@@ -77,7 +77,21 @@ function carryForwardStatements(
     }
   }
 
-  return Array.from(latestPerAccount.values()).map((v) => v.parsed);
+  return Array.from(latestPerAccount.values()).map(({ ym, parsed }) => {
+    // When carrying a statement forward to a different month, strip transaction-level
+    // data so October's transactions don't pollute March's spending view.
+    // Only the balance / net-worth is meaningful when carried forward.
+    if (ym !== targetMonth) {
+      return {
+        ...parsed,
+        income:        { total: 0, sources: [], transactions: [] },
+        expenses:      { total: 0, categories: [], transactions: [] },
+        subscriptions: [],
+        savingsRate:   0,
+      };
+    }
+    return parsed;
+  });
 }
 
 export async function GET(request: NextRequest) {

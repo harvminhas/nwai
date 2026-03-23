@@ -12,11 +12,12 @@ import {
   BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
   ReferenceLine, ResponsiveContainer,
 } from "recharts";
-
-// ── shared constants & components (re-exported from shared.tsx) ───────────────
-export { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon } from "./shared";
-export type { CashFrequency as CashFrequencyShared } from "./shared";
 import { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon } from "./shared";
+import type { CashFrequency } from "./shared";
+
+// Re-export shared items for other pages that used to import from this file
+export { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon } from "./shared";
+export type { CashFrequency } from "./shared";
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 
@@ -133,6 +134,7 @@ function RecurringListIcon({ name }: { name: string }) {
 const TABS = [
   { id: "overview",       label: "Overview" },
   { id: "transactions",   label: "Transactions" },
+  { id: "merchants",      label: "By Merchant" },
   { id: "subscriptions",  label: "Recurring" },
   { id: "cash",           label: "Cash" },
 ] as const;
@@ -140,8 +142,6 @@ type TabId = typeof TABS[number]["id"];
 
 // ── cash commitment types ─────────────────────────────────────────────────────
 
-export type { CashFrequency } from "./shared";
-import type { CashFrequency } from "./shared";
 
 export interface CashCommitment {
   id: string;
@@ -215,8 +215,17 @@ function SpendingPageInner() {
   const [error, setError]               = useState<string | null>(null);
   const [token, setToken]               = useState<string | null>(null);
 
+  // All-time merchant aggregation (loaded lazily when By Merchant tab is opened)
+  const [merchants, setMerchants]         = useState<import("@/app/api/user/spending/merchants/route").MerchantSummary[] | null>(null);
+  const [merchantsLoading, setMerchantsLoading] = useState(false);
+  const [merchantSearch, setMerchantSearch]     = useState("");
+
   // Transactions with optimistic category overrides
   const [txns, setTxns]             = useState<ExpenseTransaction[]>([]);
+  // Show all transactions (including those outside the selected calendar month)
+  const [showAllTxns, setShowAllTxns] = useState(false);
+  // Sort for the Transactions tab: field + direction
+  const [txnSort, setTxnSort] = useState<{ field: "date" | "amount"; dir: "asc" | "desc" }>({ field: "date", dir: "desc" });
   // Which transaction row has the category picker open (index)
   const [openPicker, setOpenPicker] = useState<number | null>(null);
   // Per-row button refs for portal positioning
@@ -243,6 +252,7 @@ function SpendingPageInner() {
     const p = new URLSearchParams(searchParams.toString());
     p.set("tab", id);
     router.replace(`${pathname}?${p.toString()}`, { scroll: false });
+    if (id === "merchants" && token) loadMerchants(token);
   }
 
   const loadRecurring = useCallback(async (tok: string) => {
@@ -267,6 +277,17 @@ function SpendingPageInner() {
     finally { setCashLoading(false); }
   }, []);
 
+  const loadMerchants = useCallback(async (tok: string) => {
+    if (merchants !== null) return; // already loaded
+    setMerchantsLoading(true);
+    try {
+      const res = await fetch("/api/user/spending/merchants", { headers: { Authorization: `Bearer ${tok}` } });
+      const json = await res.json().catch(() => ({}));
+      setMerchants(json.merchants ?? []);
+    } catch { /* non-fatal */ }
+    finally { setMerchantsLoading(false); }
+  }, [merchants]);
+
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
@@ -279,6 +300,8 @@ function SpendingPageInner() {
           fetch("/api/user/statements/consolidated", { headers: { Authorization: `Bearer ${tok}` } }),
           loadRecurring(tok),
           loadCash(tok),
+          // If landing directly on the merchants tab, pre-load merchant data
+          activeTab === "merchants" ? loadMerchants(tok) : Promise.resolve(),
         ]);
         const json = await res.json().catch(() => ({}));
         if (!res.ok) { setError(json.error || "Failed to load"); return; }
@@ -315,6 +338,7 @@ function SpendingPageInner() {
   async function handleMonthSelect(ym: string) {
     if (!token || ym === selectedMonth) return;
     setSelectedMonth(ym);
+    setShowAllTxns(false);
     setMonthLoading(true);
     try {
       const url = ym === yearMonth
@@ -686,13 +710,73 @@ function SpendingPageInner() {
             <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
               {txns.length === 0 ? (
                 <p className="px-5 py-10 text-center text-sm text-gray-400">No transactions found for this month.</p>
-              ) : (
+              ) : (() => {
+                // Filter to calendar month by default; billing periods can span prior month
+                const filteredTxns = showAllTxns
+                  ? txns
+                  : txns.filter((t) => !t.date || t.date.startsWith(selectedMonth ?? yearMonth ?? ""));
+                const hiddenCount = txns.length - filteredTxns.length;
+                // Apply sort
+                const visibleTxns = [...filteredTxns].sort((a, b) => {
+                  if (txnSort.field === "date") {
+                    const cmp = (a.date ?? "").localeCompare(b.date ?? "");
+                    return txnSort.dir === "desc" ? -cmp : cmp;
+                  } else {
+                    const cmp = Math.abs(a.amount) - Math.abs(b.amount);
+                    return txnSort.dir === "desc" ? -cmp : cmp;
+                  }
+                });
+                function SortBtn({ field, label }: { field: "date" | "amount"; label: string }) {
+                  const active = txnSort.field === field;
+                  return (
+                    <button
+                      onClick={() => setTxnSort((s) =>
+                        s.field === field ? { field, dir: s.dir === "desc" ? "asc" : "desc" } : { field, dir: "desc" }
+                      )}
+                      className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs font-medium transition ${
+                        active ? "bg-gray-100 text-gray-700" : "text-gray-400 hover:text-gray-600"
+                      }`}
+                    >
+                      {label}
+                      {active && (
+                        <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round"
+                            d={txnSort.dir === "desc" ? "M19 9l-7 7-7-7" : "M5 15l7-7 7 7"} />
+                        </svg>
+                      )}
+                    </button>
+                  );
+                }
+                return (
                 <>
-                  <p className="px-5 pt-4 pb-1 text-xs text-gray-400">
-                    Tap the category pill to recategorise · tap ↻ to mark as recurring
-                  </p>
+                  <div className="flex items-center justify-between px-5 pt-4 pb-1 gap-2">
+                    <p className="text-xs text-gray-400 min-w-0 truncate">
+                      Tap the category pill to recategorise · tap ↻ to mark as recurring
+                    </p>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <span className="text-xs text-gray-400">Sort:</span>
+                      <SortBtn field="date" label="Date" />
+                      <SortBtn field="amount" label="Amount" />
+                      {hiddenCount > 0 && !showAllTxns && (
+                        <button
+                          onClick={() => setShowAllTxns(true)}
+                          className="ml-1 text-xs text-blue-500 hover:underline"
+                        >
+                          +{hiddenCount} from billing period
+                        </button>
+                      )}
+                      {showAllTxns && hiddenCount > 0 && (
+                        <button
+                          onClick={() => setShowAllTxns(false)}
+                          className="ml-1 text-xs text-gray-400 hover:underline"
+                        >
+                          This month only
+                        </button>
+                      )}
+                    </div>
+                  </div>
                   <div className="divide-y divide-gray-100">
-                    {txns.map((txn, i) => {
+                    {visibleTxns.map((txn, i) => {
                       const color = categoryColor(txn.category ?? "other");
                       const slug = merchantSlug(txn.merchant);
                       const isAiSub      = aiSubSlugs.has(slug);
@@ -701,7 +785,12 @@ function SpendingPageInner() {
                       return (
                         <div key={i} className="flex items-center justify-between px-5 py-3.5">
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium text-gray-800 truncate">{txn.merchant}</p>
+                            <Link
+                              href={`/account/spending/merchant/${encodeURIComponent(merchantSlug(txn.merchant))}`}
+                              className="block truncate text-sm font-medium text-gray-800 hover:text-purple-600 hover:underline"
+                            >
+                              {txn.merchant}
+                            </Link>
                             <div className="mt-1 flex items-center gap-2 flex-wrap">
                               {txn.date && <span className="text-xs text-gray-400">{fmtDate(txn.date)}</span>}
                               {txn.category && (
@@ -767,6 +856,99 @@ function SpendingPageInner() {
                     })}
                   </div>
                 </>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* ── By Merchant tab ───────────────────────────────────────── */}
+          {activeTab === "merchants" && (
+            <div className="space-y-4">
+              {merchantsLoading ? (
+                <div className="flex justify-center py-16">
+                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-purple-200 border-t-purple-600" />
+                </div>
+              ) : !merchants || merchants.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center">
+                  <p className="text-sm text-gray-500">No merchant data yet.</p>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                  {/* Search bar */}
+                  <div className="px-5 pt-4 pb-3 border-b border-gray-100">
+                    <div className="relative">
+                      <svg className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z" />
+                      </svg>
+                      <input
+                        type="text"
+                        placeholder="Search merchants…"
+                        value={merchantSearch}
+                        onChange={(e) => setMerchantSearch(e.target.value)}
+                        className="w-full rounded-lg border border-gray-200 bg-gray-50 py-2 pl-9 pr-4 text-sm text-gray-800 placeholder-gray-400 focus:border-purple-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-purple-400"
+                      />
+                    </div>
+                  </div>
+                  {/* Column headers */}
+                  <div className="grid grid-cols-12 gap-2 px-5 py-2 text-xs font-medium text-gray-400 border-b border-gray-100">
+                    <div className="col-span-5">Merchant</div>
+                    <div className="col-span-2 text-center">Visits</div>
+                    <div className="col-span-2 text-right">Avg/visit</div>
+                    <div className="col-span-3 text-right">Total</div>
+                  </div>
+                  {/* Rows */}
+                  <div className="divide-y divide-gray-100">
+                    {merchants
+                      .filter((m) =>
+                        !merchantSearch ||
+                        m.name.toLowerCase().includes(merchantSearch.toLowerCase()) ||
+                        m.category.toLowerCase().includes(merchantSearch.toLowerCase())
+                      )
+                      .map((m) => {
+                        const color = categoryColor(m.category);
+                        const maxTotal = merchants[0]?.total ?? 1;
+                        const barPct = Math.round((m.total / maxTotal) * 100);
+                        return (
+                          <Link
+                            key={m.slug}
+                            href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`}
+                            className="grid grid-cols-12 gap-2 items-center px-5 py-3 transition hover:bg-gray-50"
+                          >
+                            <div className="col-span-5 min-w-0">
+                              <p className="truncate text-sm font-medium text-gray-800">{m.name}</p>
+                              <div className="mt-1 flex items-center gap-1.5">
+                                <span
+                                  className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] capitalize font-medium"
+                                  style={{ backgroundColor: color + "18", color }}
+                                >
+                                  {m.category}
+                                </span>
+                                {/* spend bar */}
+                                <div className="h-1.5 flex-1 rounded-full bg-gray-100 overflow-hidden max-w-[60px]">
+                                  <div
+                                    className="h-full rounded-full"
+                                    style={{ width: `${barPct}%`, backgroundColor: color + "88" }}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                            <div className="col-span-2 text-center text-sm text-gray-600">{m.count}</div>
+                            <div className="col-span-2 text-right text-sm text-gray-600 tabular-nums">
+                              {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(m.avgAmount)}
+                            </div>
+                            <div className="col-span-3 text-right">
+                              <span className="text-sm font-semibold text-gray-800 tabular-nums">
+                                {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(m.total)}
+                              </span>
+                              <svg className="ml-1 inline h-3.5 w-3.5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                              </svg>
+                            </div>
+                          </Link>
+                        );
+                      })}
+                  </div>
+                </div>
               )}
             </div>
           )}
