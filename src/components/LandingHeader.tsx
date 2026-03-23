@@ -32,13 +32,13 @@ export default function LandingHeader() {
           ) : (
             <>
               <Link
-                href="/account/login"
+                href="/login"
                 className="rounded-lg border-2 border-purple-600 px-4 py-2 font-semibold text-purple-600 transition hover:bg-purple-50"
               >
                 Log in
               </Link>
               <Link
-                href="/account/signup"
+                href="/signup"
                 className="rounded-lg bg-gradient-to-r from-purple-600 to-purple-700 px-4 py-2 font-semibold text-white transition hover:from-purple-700 hover:to-purple-800"
               >
                 Sign up

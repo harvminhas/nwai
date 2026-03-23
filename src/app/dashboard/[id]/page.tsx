@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import Sidebar from "@/components/Sidebar";
 import NetWorthCard from "@/components/NetWorthCard";
 import IncomeCard from "@/components/IncomeCard";
 import StatementExpenses from "./StatementExpenses";
@@ -90,13 +89,30 @@ export default async function DashboardPage({
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Sidebar />
-      <div className="lg:pl-56">
-        <div className="lg:hidden h-14" />
-        <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
+
+      {/* ── Minimal public top bar (no auth nav) ────────────────────────── */}
+      <header className="sticky top-0 z-40 border-b border-gray-100 bg-white/90 backdrop-blur-sm">
+        <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3 sm:px-6">
+          <Link href="/" className="font-bold text-purple-600 text-lg tracking-tight">
+            networth<span className="text-gray-400">.online</span>
+          </Link>
+          <div className="flex items-center gap-3">
+            <Link href="/login"
+              className="text-sm font-medium text-gray-600 hover:text-gray-900 transition">
+              Log in
+            </Link>
+            <Link href="/signup"
+              className="rounded-lg bg-purple-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-purple-700 transition">
+              Create free account
+            </Link>
+          </div>
+        </div>
+      </header>
+
+      <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
         <div className="mb-6 flex items-center gap-2 text-sm text-gray-500">
-          <Link href="/account/dashboard" className="hover:text-purple-600">
-            Dashboard
+          <Link href="/upload" className="hover:text-purple-600">
+            Upload another
           </Link>
           <span>/</span>
           <span className="font-medium text-gray-700">
@@ -127,7 +143,6 @@ export default async function DashboardPage({
         <InsightsSection insights={data.insights ?? []} />
 
         <DashboardCtas />
-        </div>
       </div>
     </div>
   );

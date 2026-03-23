@@ -54,13 +54,13 @@ export default function DashboardCtas() {
       </p>
       <div className="mt-4 flex flex-wrap gap-3">
         <Link
-          href="/account/signup"
+          href="/signup"
           className="rounded-lg bg-gradient-to-r from-purple-600 to-purple-700 px-6 py-3 font-semibold text-white transition hover:from-purple-700 hover:to-purple-800"
         >
           Create free account
         </Link>
         <Link
-          href="/account/login"
+          href="/login"
           className="rounded-lg border-2 border-purple-600 px-6 py-3 font-semibold text-purple-600 transition hover:bg-purple-50"
         >
           Log in

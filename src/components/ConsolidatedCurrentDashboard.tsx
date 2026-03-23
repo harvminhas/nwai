@@ -426,7 +426,7 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   useEffect(() => {
     const { auth } = getFirebaseClient();
     const unsub = onAuthStateChanged(auth, async (user) => {
-      if (!user) { router.push("/account/login"); return; }
+      if (!user) { router.push("/login"); return; }
       setLoading(true); setError(null);
       try {
         const token = await user.getIdToken();

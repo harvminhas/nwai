@@ -2,55 +2,40 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  signInWithPopup,
-  GoogleAuthProvider,
-} from "firebase/auth";
+import { signInWithPopup, GoogleAuthProvider } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 
 type Mode = "login" | "signup";
 
+/** After sign-in, claim any anonymous statement the user uploaded before creating an account. */
+async function claimPendingStatement(idToken: string) {
+  try {
+    const sid = localStorage.getItem("nwai_claim_statement");
+    if (!sid) return;
+    const res = await fetch("/api/claim-statement", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ statementId: sid }),
+    });
+    if (res.ok) localStorage.removeItem("nwai_claim_statement");
+  } catch { /* non-critical */ }
+}
+
 export default function AuthForm({ mode }: { mode: Mode }) {
-  const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const router  = useRouter();
+  const [error,   setError]   = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const isSignup = mode === "signup";
-
-  const handleEmailSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setLoading(true);
-    try {
-      const { auth } = getFirebaseClient();
-      if (isSignup) {
-        await createUserWithEmailAndPassword(auth, email, password);
-      } else {
-        await signInWithEmailAndPassword(auth, email, password);
-      }
-      router.push("/account/dashboard");
-      router.refresh();
-    } catch (err: unknown) {
-      const message =
-        err && typeof err === "object" && "message" in err
-          ? String((err as { message: string }).message)
-          : "Something went wrong";
-      setError(message);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleGoogleSignIn = async () => {
     setError(null);
     setLoading(true);
     try {
       const { auth } = getFirebaseClient();
-      await signInWithPopup(auth, new GoogleAuthProvider());
+      const cred = await signInWithPopup(auth, new GoogleAuthProvider());
+      const idToken = await cred.user.getIdToken();
+      await claimPendingStatement(idToken);
       router.push("/account/dashboard");
       router.refresh();
     } catch (err: unknown) {
@@ -65,89 +50,65 @@ export default function AuthForm({ mode }: { mode: Mode }) {
   };
 
   return (
-    <div className="w-full max-w-md rounded-lg border border-gray-200 bg-white p-8 shadow-md">
-      <h1 className="font-bold text-2xl text-gray-900">
-        {isSignup ? "Create account" : "Log in"}
-      </h1>
-      <p className="mt-2 text-sm text-gray-600">
-        {isSignup
-          ? "Sign up to save your statements and track over time."
-          : "Welcome back."}
-      </p>
-
-      <form onSubmit={handleEmailSubmit} className="mt-6 space-y-4">
-        <div>
-          <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-            Email
-          </label>
-          <input
-            id="email"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500"
-          />
-        </div>
-        <div>
-          <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-            Password
-          </label>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            minLength={6}
-            className="mt-1 w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500"
-          />
-        </div>
-        {error && (
-          <p className="text-sm text-red-600" role="alert">
-            {error}
-          </p>
-        )}
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full rounded-lg bg-gradient-to-r from-purple-600 to-purple-700 py-3 font-semibold text-white transition hover:from-purple-700 hover:to-purple-800 disabled:opacity-50"
-        >
-          {loading ? "Please wait…" : isSignup ? "Sign up" : "Log in"}
-        </button>
-      </form>
-
-      <div className="mt-4 flex items-center gap-4">
-        <span className="flex-1 border-t border-gray-200" />
-        <span className="text-sm text-gray-500">or</span>
-        <span className="flex-1 border-t border-gray-200" />
+    <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-8 shadow-md">
+      <div className="mb-6 text-center">
+        <p className="font-bold text-purple-600 text-xl tracking-tight">
+          networth<span className="text-gray-400">.online</span>
+        </p>
+        <h1 className="mt-3 font-bold text-2xl text-gray-900">
+          {isSignup ? "Create your free account" : "Welcome back"}
+        </h1>
+        <p className="mt-1.5 text-sm text-gray-500">
+          {isSignup
+            ? "Track your net worth, income, and spending over time."
+            : "Sign in to access your financial dashboard."}
+        </p>
       </div>
+
+      {error && (
+        <p className="mb-4 rounded-lg bg-red-50 px-4 py-2.5 text-sm text-red-600" role="alert">
+          {error}
+        </p>
+      )}
 
       <button
         type="button"
         onClick={handleGoogleSignIn}
         disabled={loading}
-        className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border-2 border-gray-300 py-3 font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
+        className="flex w-full items-center justify-center gap-3 rounded-xl border-2 border-gray-200 bg-white py-3 font-semibold text-gray-700 transition hover:border-gray-300 hover:bg-gray-50 disabled:opacity-50"
       >
-        <span>Sign in with Google</span>
+        <svg width="20" height="20" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+          <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+          <path fill="none" d="M0 0h48v48H0z"/>
+        </svg>
+        {loading ? "Signing in…" : "Continue with Google"}
       </button>
 
-      <p className="mt-6 text-center text-sm text-gray-600">
+      <p className="mt-6 text-center text-sm text-gray-500">
         {isSignup ? (
           <>
             Already have an account?{" "}
-            <a href="/account/login" className="font-medium text-purple-600 hover:underline">
-              Log in
+            <a href="/login" className="font-medium text-purple-600 hover:underline">
+              Sign in
             </a>
           </>
         ) : (
           <>
             Don&apos;t have an account?{" "}
-            <a href="/account/signup" className="font-medium text-purple-600 hover:underline">
-              Sign up
+            <a href="/signup" className="font-medium text-purple-600 hover:underline">
+              Create one free
             </a>
           </>
         )}
+      </p>
+
+      <p className="mt-4 text-center text-xs text-gray-400">
+        By continuing, you agree to our{" "}
+        <a href="/privacy" className="hover:underline">Privacy Policy</a>.
+        We never access your bank accounts.
       </p>
     </div>
   );

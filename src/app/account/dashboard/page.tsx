@@ -169,7 +169,7 @@ export default function TodayPage() {
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
-      if (!user) { router.push("/account/login"); return; }
+      if (!user) { router.push("/login"); return; }
       const tok = await user.getIdToken();
       setToken(tok);
       load(tok);

@@ -181,7 +181,7 @@ export default function ProcessingAnimation({
           Create a free account to save your data and track progress over time, or view this statement now.
         </p>
         <div className="mt-4 flex flex-wrap gap-3">
-          <Link href="/account/signup"
+          <Link href="/signup"
             className="rounded-lg bg-gradient-to-r from-purple-600 to-purple-700 px-5 py-2.5 font-semibold text-white transition hover:from-purple-700 hover:to-purple-800">
             Create free account
           </Link>

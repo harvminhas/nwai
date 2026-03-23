@@ -96,6 +96,10 @@ export default function UploadPage() {
       }
       const sid = data.statementId as string;
       setStatementId(sid);
+      // Persist for claim-on-signup — works even if user navigates away before signing up
+      if (!idToken) {
+        try { localStorage.setItem("nwai_claim_statement", sid); } catch { /* ignore */ }
+      }
       addPendingParse(sid, file.name);
       fetch("/api/parse", {
         method: "POST",
@@ -351,11 +355,11 @@ export default function UploadPage() {
                   Create a free account to upload another statement and save your financial profile.
                 </p>
                 <div className="mt-4 flex flex-wrap gap-3">
-                  <Link href="/account/signup"
+                  <Link href="/signup"
                     className="rounded-lg bg-gradient-to-r from-purple-600 to-purple-700 px-6 py-3 font-semibold text-white transition hover:from-purple-700 hover:to-purple-800">
                     Create free account
                   </Link>
-                  <Link href="/account/login"
+                  <Link href="/login"
                     className="rounded-lg border-2 border-purple-600 px-6 py-3 font-semibold text-purple-600 transition hover:bg-purple-50">
                     Log in
                   </Link>

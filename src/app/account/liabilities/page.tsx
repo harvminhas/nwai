@@ -625,7 +625,7 @@ function LiabilitiesPageInner() {
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
-      if (!user) { router.push("/account/login"); return; }
+      if (!user) { router.push("/login"); return; }
       const token = await user.getIdToken();
       setIdToken(token);
       loadData(token);

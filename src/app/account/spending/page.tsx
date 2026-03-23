@@ -366,7 +366,7 @@ function SpendingPageInner() {
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
-      if (!user) { router.push("/account/login"); return; }
+      if (!user) { router.push("/login"); return; }
       setLoading(true); setError(null);
       try {
         const tok = await user.getIdToken();
