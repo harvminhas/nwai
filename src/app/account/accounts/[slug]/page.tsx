@@ -74,6 +74,9 @@ interface StatementHistoryEntry {
   statementId: string;
   isCarryForward: boolean;
   interestRate: number | null;
+  isManualSnapshot?: boolean;
+  snapshotId?: string;
+  note?: string;
 }
 
 interface RateHistoryEntry {
@@ -198,6 +201,15 @@ export default function AccountDetailPage() {
   const [paymentFrequency, setPaymentFrequency] = useState<PaymentFrequency>("monthly");
   const [savingFreq, setSavingFreq]             = useState(false);
 
+  // Balance snapshot state
+  const [showSnapshotForm,  setShowSnapshotForm]  = useState(false);
+  const [snapBalance,       setSnapBalance]       = useState("");
+  const [snapMonth,         setSnapMonth]         = useState("");
+  const [snapNote,          setSnapNote]          = useState("");
+  const [snapSaving,        setSnapSaving]        = useState(false);
+  const [snapError,         setSnapError]         = useState<string | null>(null);
+  const [deletingSnap,      setDeletingSnap]      = useState<string | null>(null);
+
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
@@ -310,6 +322,66 @@ export default function AccountDetailPage() {
     setBaselineMonth(newBaseline);
     if (newBaseline) localStorage.setItem(`baseline-${slug}`, newBaseline);
     else localStorage.removeItem(`baseline-${slug}`);
+  }
+
+  // ── Balance snapshot handlers ──────────────────────────────────────────────
+  function openSnapshotForm() {
+    const now = new Date();
+    const ym = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
+    const latestBal = stmtHistory.find((e) => !e.isManualSnapshot && !e.isCarryForward)?.netWorth ?? 0;
+    setSnapBalance(String(Math.abs(latestBal)));
+    setSnapMonth(ym);
+    setSnapNote("");
+    setSnapError(null);
+    setShowSnapshotForm(true);
+  }
+  async function handleSaveSnapshot() {
+    if (!idToken || !data) return;
+    const val = parseFloat(snapBalance.replace(/,/g, ""));
+    if (isNaN(val)) { setSnapError("Enter a valid balance"); return; }
+    if (!snapMonth)  { setSnapError("Select a month"); return; }
+    setSnapSaving(true); setSnapError(null);
+    try {
+      const isDebt = ["credit", "mortgage", "loan"].includes(data.accountType ?? "");
+      const balance = isDebt ? -Math.abs(val) : Math.abs(val);
+      const res = await fetch("/api/user/balance-snapshots", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accountSlug: slug,
+          accountName: data.accountName ?? data.bankName ?? slug,
+          accountType: data.accountType ?? "other",
+          balance,
+          yearMonth: snapMonth,
+          note: snapNote || undefined,
+        }),
+      });
+      if (!res.ok) { setSnapError("Failed to save. Please try again."); return; }
+      setShowSnapshotForm(false);
+      // Refresh the page data
+      const refreshed = await fetch(
+        `/api/user/statements/consolidated?account=${encodeURIComponent(slug)}`,
+        { headers: { Authorization: `Bearer ${idToken}` } }
+      );
+      const rJson = await refreshed.json().catch(() => ({}));
+      const acctHistory: StatementHistoryEntry[] = rJson.accountStatementHistory?.[slug] ?? [];
+      setStmtHistory(acctHistory);
+      setHistory((rJson.history ?? []).map((h: { yearMonth: string; netWorth: number; expensesTotal?: number }) => ({
+        ...h,
+        isEstimate: acctHistory.find((e) => e.yearMonth === h.yearMonth)?.isCarryForward ?? false,
+      })));
+    } finally { setSnapSaving(false); }
+  }
+  async function handleDeleteSnapshot(snapshotId: string) {
+    if (!idToken) return;
+    setDeletingSnap(snapshotId);
+    try {
+      await fetch(`/api/user/balance-snapshots?id=${snapshotId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      setStmtHistory((prev) => prev.filter((e) => e.snapshotId !== snapshotId));
+    } finally { setDeletingSnap(null); }
   }
 
   // Merge AI rate history from stmtHistory with user rate history
@@ -612,11 +684,19 @@ export default function AccountDetailPage() {
         <div className="mt-4">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="font-semibold text-gray-900">Statement history</h2>
-            {baselineMonth && (
-              <button onClick={() => handleSetBaseline(baselineMonth)} className="text-xs text-purple-600 hover:underline">
-                Clear baseline
+            <div className="flex items-center gap-3">
+              {baselineMonth && (
+                <button onClick={() => handleSetBaseline(baselineMonth)} className="text-xs text-purple-600 hover:underline">
+                  Clear baseline
+                </button>
+              )}
+              <button
+                onClick={openSnapshotForm}
+                className="rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-600 hover:bg-purple-100 transition"
+              >
+                + Update balance
               </button>
-            )}
+            </div>
           </div>
           {baselineMonth && (
             <p className="mb-3 text-xs text-gray-400">
@@ -642,12 +722,13 @@ export default function AccountDetailPage() {
                   const isBaseline    = baselineMonth === entry.yearMonth;
                   const beforeBaseline = baselineMonth != null && entry.yearMonth < baselineMonth;
                   // Determine if APR changed from previous row
-                  const allReal = [...stmtHistory].filter((e) => !e.isCarryForward);
+                  const allReal = [...stmtHistory].filter((e) => !e.isCarryForward && !e.isManualSnapshot);
                   const prevReal = allReal[allReal.findIndex((e) => e.yearMonth === entry.yearMonth) + 1];
                   const rateChanged = entry.interestRate !== null && prevReal?.interestRate !== null &&
                     entry.interestRate !== prevReal?.interestRate;
                   return (
-                    <tr key={entry.yearMonth} className={`transition ${beforeBaseline ? "opacity-40" : ""}`}>
+                    <tr key={entry.isManualSnapshot ? `snap-${entry.snapshotId}` : entry.yearMonth}
+                      className={`transition ${beforeBaseline ? "opacity-40" : ""} ${entry.isManualSnapshot ? "bg-purple-50/30" : ""}`}>
                       <td className="px-4 py-3 font-medium text-gray-800">{shortMonth(entry.yearMonth)}</td>
                       <td className="px-4 py-3 text-right tabular-nums font-medium text-gray-900">
                         <span className={entry.isCarryForward ? "text-gray-400" : ""}>
@@ -667,7 +748,11 @@ export default function AccountDetailPage() {
                         </td>
                       )}
                       <td className="px-4 py-3">
-                        {entry.isCarryForward ? (
+                        {entry.isManualSnapshot ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-600">
+                            ✎ manual
+                          </span>
+                        ) : entry.isCarryForward ? (
                           <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-600">
                             ~ estimated
                           </span>
@@ -676,19 +761,32 @@ export default function AccountDetailPage() {
                             ✓ uploaded
                           </span>
                         )}
+                        {entry.note && (
+                          <span className="ml-1.5 text-xs text-gray-400 italic" title={entry.note}>"{entry.note}"</span>
+                        )}
                       </td>
                       <td className="px-4 py-3">
-                        <button
-                          onClick={() => handleSetBaseline(entry.yearMonth)}
-                          className={`rounded-full px-2 py-0.5 text-xs font-medium transition ${
-                            isBaseline ? "bg-purple-100 text-purple-700" : "text-gray-300 hover:bg-gray-100 hover:text-gray-500"
-                          }`}
-                        >
-                          {isBaseline ? "● baseline" : "set baseline"}
-                        </button>
+                        {!entry.isManualSnapshot && (
+                          <button
+                            onClick={() => handleSetBaseline(entry.yearMonth)}
+                            className={`rounded-full px-2 py-0.5 text-xs font-medium transition ${
+                              isBaseline ? "bg-purple-100 text-purple-700" : "text-gray-300 hover:bg-gray-100 hover:text-gray-500"
+                            }`}
+                          >
+                            {isBaseline ? "● baseline" : "set baseline"}
+                          </button>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        {!entry.isCarryForward && entry.statementId && (
+                        {entry.isManualSnapshot && entry.snapshotId ? (
+                          <button
+                            onClick={() => handleDeleteSnapshot(entry.snapshotId!)}
+                            disabled={deletingSnap === entry.snapshotId}
+                            className="text-xs text-gray-400 hover:text-red-500 disabled:opacity-40"
+                          >
+                            {deletingSnap === entry.snapshotId ? "…" : "Delete"}
+                          </button>
+                        ) : !entry.isCarryForward && entry.statementId ? (
                           <div className="flex items-center justify-end gap-2">
                             <Link href={`/dashboard/${entry.statementId}`} className="text-xs text-purple-500 hover:underline">View</Link>
                             <button
@@ -699,7 +797,7 @@ export default function AccountDetailPage() {
                               {deletingId === entry.statementId ? "…" : "Delete"}
                             </button>
                           </div>
-                        )}
+                        ) : null}
                       </td>
                     </tr>
                   );
@@ -736,6 +834,76 @@ export default function AccountDetailPage() {
       )}
 
       <InsightsSection insights={data.insights ?? []} />
+
+      {/* ── Add balance entry modal ────────────────────────────────────────── */}
+      {showSnapshotForm && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="font-semibold text-gray-900">Add balance entry</h3>
+                <p className="text-sm text-gray-400 mt-0.5">{data?.accountName ?? slug}</p>
+              </div>
+              <button onClick={() => setShowSnapshotForm(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+            </div>
+
+            <div className="mb-4 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2.5 text-xs text-blue-700">
+              <strong>Statement data stays intact.</strong> This entry only updates the displayed balance for the selected month. Your next uploaded statement will take over automatically.
+            </div>
+
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Balance {isDebtAccount ? "(enter what you owe)" : ""}
+              </label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                <input
+                  type="number" min="0" step="0.01"
+                  value={snapBalance}
+                  onChange={(e) => setSnapBalance(e.target.value)}
+                  className="w-full rounded-lg border border-gray-200 pl-7 pr-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+                  placeholder="0.00"
+                  autoFocus
+                />
+              </div>
+            </div>
+
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1">As of month</label>
+              <input
+                type="month"
+                value={snapMonth}
+                onChange={(e) => setSnapMonth(e.target.value)}
+                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+              />
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Note <span className="font-normal text-gray-400">(optional)</span></label>
+              <input
+                type="text"
+                value={snapNote}
+                onChange={(e) => setSnapNote(e.target.value)}
+                placeholder="e.g. Checked online banking today"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+              />
+            </div>
+
+            {snapError && <p className="mb-3 text-sm text-red-600">{snapError}</p>}
+
+            <div className="flex gap-3">
+              <button onClick={() => setShowSnapshotForm(false)}
+                className="flex-1 rounded-lg border border-gray-200 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
+                Cancel
+              </button>
+              <button onClick={handleSaveSnapshot} disabled={snapSaving}
+                className="flex-1 rounded-lg bg-purple-600 py-2.5 text-sm font-semibold text-white hover:bg-purple-700 transition disabled:opacity-50">
+                {snapSaving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

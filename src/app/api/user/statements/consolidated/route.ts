@@ -3,6 +3,7 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { consolidateStatements, getYearMonth } from "@/lib/consolidate";
 import { applyRulesAndRecalculate, merchantSlug } from "@/lib/applyRules";
 import type { ParsedStatementData, ManualAsset, AssetCategory } from "@/lib/types";
+import type { BalanceSnapshot } from "@/app/api/user/balance-snapshots/route";
 
 function docYearMonth(d: FirebaseFirestore.DocumentData): string {
   const parsed = d.parsedData as ParsedStatementData | undefined;
@@ -119,6 +120,20 @@ export async function GET(request: NextRequest) {
       : allManualAssets;
     const manualAssetsTotal = relevantManualAssets.reduce((sum, a) => sum + a.value, 0);
 
+    // Load balance snapshots
+    const snapshotsSnap = await db
+      .collection("users").doc(uid)
+      .collection("balanceSnapshots")
+      .get();
+    const allSnapshots: BalanceSnapshot[] = snapshotsSnap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<BalanceSnapshot, "id">),
+    }));
+    // Filter to account if needed
+    const relevantSnapshots = accountFilter
+      ? allSnapshots.filter((s) => s.accountSlug === accountFilter)
+      : allSnapshots;
+
     // Filter to completed statements passing bank/account filters
     const allCompleted = snapshot.docs.filter((doc) => {
       const d = doc.data();
@@ -193,7 +208,7 @@ export async function GET(request: NextRequest) {
 
     const totalAssets = (consolidatedWithRules.assets ?? Math.max(0, consolidatedWithRules.netWorth)) + manualAssetsTotal;
     const adjustedNetWorth = totalAssets - (consolidatedWithRules.debts ?? Math.max(0, -consolidatedWithRules.netWorth));
-    const enrichedConsolidated: ParsedStatementData = {
+    let enrichedConsolidated: ParsedStatementData = {
       ...consolidatedWithRules,
       assets: totalAssets,
       netWorth: adjustedNetWorth,
@@ -284,10 +299,11 @@ export async function GET(request: NextRequest) {
     }
 
     // ── Per-account statement history (for account detail page) ─────────────
-    // Map slug → sorted list of { yearMonth, netWorth, uploadedAt, statementId, isCarryForward, interestRate }
+    // Map slug → sorted list of balance entries (statements + manual snapshots)
     const accountStatementHistory = new Map<string, {
       yearMonth: string; netWorth: number; uploadedAt: string;
       statementId: string; isCarryForward: boolean; interestRate: number | null;
+      isManualSnapshot?: boolean; snapshotId?: string; note?: string;
     }[]>();
 
     for (const ym of Array.from(yearMonths).sort()) {
@@ -320,8 +336,61 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // ── Incomplete months detection ──────────────────────────────────────────
-    // A month is "incomplete" if at least one account that exists today used
+    // ── Merge manual balance snapshots into account history ─────────────────
+    // Snapshots are additive — they never overwrite statement rows.
+    // If a snapshot yearMonth conflicts with a statement row, both are kept;
+    // the snapshot appears as a distinct "manual" row.
+    for (const snap of relevantSnapshots) {
+      if (!accountStatementHistory.has(snap.accountSlug)) {
+        accountStatementHistory.set(snap.accountSlug, []);
+      }
+      accountStatementHistory.get(snap.accountSlug)!.push({
+        yearMonth:          snap.yearMonth,
+        netWorth:           snap.balance,
+        uploadedAt:         snap.createdAt,
+        statementId:        "",
+        isCarryForward:     false,
+        interestRate:       null,
+        isManualSnapshot:   true,
+        snapshotId:         snap.id,
+        note:               snap.note,
+      });
+    }
+    // Re-sort each account's history chronologically after merging
+    for (const [, entries] of accountStatementHistory) {
+      entries.sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
+    }
+
+    // ── Apply snapshot overrides to consolidated net worth ───────────────────
+    // If any account has a snapshot more recent than its latest statement,
+    // replace that account's contribution to net worth with the snapshot balance.
+    // This keeps the dashboard accurate without mutating any statement document.
+    let snapshotNetWorthDelta = 0;
+    for (const [slug, entries] of accountStatementHistory) {
+      const latestStatement = [...entries].reverse().find((e) => !e.isManualSnapshot);
+      const latestSnapshot  = [...entries].reverse().find((e) =>  e.isManualSnapshot);
+      if (
+        latestSnapshot && latestStatement &&
+        latestSnapshot.yearMonth > latestStatement.yearMonth
+      ) {
+        snapshotNetWorthDelta += latestSnapshot.netWorth - latestStatement.netWorth;
+      } else if (latestSnapshot && !latestStatement) {
+        // Account known only via snapshots (no statement ever uploaded)
+        snapshotNetWorthDelta += latestSnapshot.netWorth;
+      }
+    }
+    if (snapshotNetWorthDelta !== 0) {
+      const adjAssets = Math.max(0, (enrichedConsolidated.assets ?? 0) + Math.max(0, snapshotNetWorthDelta));
+      const adjDebts  = Math.max(0, (enrichedConsolidated.debts  ?? 0) - Math.min(0, snapshotNetWorthDelta));
+      enrichedConsolidated = {
+        ...enrichedConsolidated,
+        netWorth: (enrichedConsolidated.netWorth ?? 0) + snapshotNetWorthDelta,
+        assets:   adjAssets,
+        debts:    adjDebts,
+      };
+    }
+
+    // ── Incomplete months detection ──────────────────────────────────────────    // A month is "incomplete" if at least one account that exists today used
     // a carry-forward (i.e. had no real statement uploaded for that month).
     const allSlugs = new Set(Array.from(accountStatementHistory.keys()));
     const incompleteMonths: string[] = [];

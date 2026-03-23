@@ -8,6 +8,7 @@ import { getFirebaseClient } from "@/lib/firebase";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import Link from "next/link";
 import type { ManualAsset, AssetCategory, UserStatementSummary, Insight } from "@/lib/types";
+import type { BalanceSnapshot } from "@/app/api/user/balance-snapshots/route";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -71,6 +72,27 @@ function accountSlug(s: UserStatementSummary) {
   return acct !== "unknown" ? `${bank}-${acct}` : bank;
 }
 
+// Freshness: days since a YYYY-MM string (treated as 1st of that month)
+function daysSinceYearMonth(ym?: string): number | null {
+  if (!ym) return null;
+  const d = new Date(ym + "-01T12:00:00");
+  if (isNaN(d.getTime())) return null;
+  return Math.floor((Date.now() - d.getTime()) / 86400000);
+}
+function freshnessLabel(days: number | null): { text: string; cls: string } {
+  if (days === null) return { text: "", cls: "" };
+  const mo = Math.floor(days / 30);
+  const label = mo === 0 ? `${days}d ago` : mo === 1 ? "1 mo ago" : `${mo} mo ago`;
+  if (days < 35)  return { text: label, cls: "text-gray-400" };
+  if (days < 65)  return { text: label, cls: "text-amber-500 font-medium" };
+  return             { text: label, cls: "text-red-500 font-medium" };
+}
+function freshnessGlyph(days: number | null): string {
+  if (days === null || days < 35) return "";
+  if (days < 65) return "⚠ ";
+  return "⚠ ";
+}
+
 // ── types ─────────────────────────────────────────────────────────────────────
 
 type AccountGroup = { slug: string; label: string; type: string };
@@ -79,7 +101,7 @@ const EMPTY_FORM: FormState = { label: "", category: "property", value: "", link
 
 interface AccountBalance {
   slug: string; bankName: string; accountName: string; accountType: string;
-  balance: number; statementDate?: string;
+  balance: number; statementDate?: string; fromSnapshot?: boolean;
 }
 
 // ── donut chart ───────────────────────────────────────────────────────────────
@@ -156,6 +178,15 @@ export function AssetsPage() {
   const [formError, setFormError]       = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
+  // Balance snapshot (manual balance update) state
+  const [snapshots,       setSnapshots]       = useState<BalanceSnapshot[]>([]);
+  const [snapshotTarget,  setSnapshotTarget]  = useState<AccountBalance | null>(null);
+  const [snapshotBalance, setSnapshotBalance] = useState("");
+  const [snapshotMonth,   setSnapshotMonth]   = useState("");
+  const [snapshotNote,    setSnapshotNote]    = useState("");
+  const [snapshotSaving,  setSnapshotSaving]  = useState(false);
+  const [snapshotError,   setSnapshotError]   = useState<string | null>(null);
+
   function switchTab(id: TabId) {
     setActiveTab(id);
     const p = new URLSearchParams(searchParams.toString());
@@ -166,18 +197,23 @@ export function AssetsPage() {
   const load = useCallback(async (tok: string) => {
     setLoading(true); setError(null);
     try {
-      const [aRes, sRes, cRes] = await Promise.all([
-        fetch("/api/user/assets",                          { headers: { Authorization: `Bearer ${tok}` } }),
-        fetch("/api/user/statements",                      { headers: { Authorization: `Bearer ${tok}` } }),
-        fetch("/api/user/statements/consolidated",         { headers: { Authorization: `Bearer ${tok}` } }),
+      const [aRes, sRes, cRes, snapRes] = await Promise.all([
+        fetch("/api/user/assets",                 { headers: { Authorization: `Bearer ${tok}` } }),
+        fetch("/api/user/statements",             { headers: { Authorization: `Bearer ${tok}` } }),
+        fetch("/api/user/statements/consolidated",{ headers: { Authorization: `Bearer ${tok}` } }),
+        fetch("/api/user/balance-snapshots",      { headers: { Authorization: `Bearer ${tok}` } }),
       ]);
-      const aJson = await aRes.json().catch(() => ({}));
-      const sJson = await sRes.json().catch(() => ({}));
-      const cJson = cRes.ok ? await cRes.json().catch(() => ({})) : {};
+      const aJson    = await aRes.json().catch(() => ({}));
+      const sJson    = await sRes.json().catch(() => ({}));
+      const cJson    = cRes.ok ? await cRes.json().catch(() => ({})) : {};
+      const snapJson = snapRes.ok ? await snapRes.json().catch(() => ({})) : {};
 
       setAssets(aJson.assets ?? []);
       setInsights(cJson.data?.insights ?? []);
       setYearMonth(cJson.yearMonth ?? null);
+
+      const snaps: BalanceSnapshot[] = snapJson.snapshots ?? [];
+      setSnapshots(snaps);
 
       const stmts: UserStatementSummary[] = (sJson.statements ?? []).filter(
         (s: UserStatementSummary) => s.status === "completed" && !s.superseded
@@ -190,12 +226,27 @@ export function AssetsPage() {
           latestBySlug.set(slug, s);
         }
       }
+      // Build initial balances from statements
       const balances: AccountBalance[] = Array.from(latestBySlug.values()).map((s) => ({
         slug: accountSlug(s), bankName: s.bankName ?? "Unknown",
         accountName: s.accountName ?? s.bankName ?? "Account",
         accountType: s.accountType ?? "other", balance: s.netWorth ?? 0,
         statementDate: s.statementDate,
       }));
+      // Apply snapshot overrides: if a snapshot is newer, use its balance + date
+      const latestSnapBySlug = new Map<string, BalanceSnapshot>();
+      for (const snap of snaps) {
+        const cur = latestSnapBySlug.get(snap.accountSlug);
+        if (!cur || snap.yearMonth > cur.yearMonth) latestSnapBySlug.set(snap.accountSlug, snap);
+      }
+      for (const b of balances) {
+        const snap = latestSnapBySlug.get(b.slug);
+        if (snap && (!b.statementDate || snap.yearMonth > b.statementDate.slice(0, 7))) {
+          b.balance       = snap.balance;
+          b.statementDate = snap.yearMonth + "-01"; // treat as 1st of month
+          b.fromSnapshot  = true;
+        }
+      }
       setAccountBalances(balances);
 
       const seen = new Set<string>();
@@ -229,6 +280,43 @@ export function AssetsPage() {
     if (prefillLink && !loading && !showForm) openAdd({ category: prefillCategory ?? "property", linkedAccountSlug: prefillLink });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading]);
+
+  // ── Balance snapshot handlers ────────────────────────────────────────────
+  function openSnapshot(account: AccountBalance) {
+    const now = new Date();
+    const ym = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
+    setSnapshotTarget(account);
+    setSnapshotBalance(String(Math.abs(account.balance)));
+    setSnapshotMonth(ym);
+    setSnapshotNote("");
+    setSnapshotError(null);
+  }
+  async function handleSaveSnapshot() {
+    if (!snapshotTarget || !token) return;
+    const val = parseFloat(snapshotBalance.replace(/,/g, ""));
+    if (isNaN(val)) { setSnapshotError("Enter a valid balance"); return; }
+    if (!snapshotMonth) { setSnapshotError("Select a month"); return; }
+    setSnapshotSaving(true); setSnapshotError(null);
+    try {
+      const isDebt = ["credit", "mortgage", "loan"].includes(snapshotTarget.accountType);
+      const balance = isDebt ? -Math.abs(val) : Math.abs(val);
+      const res = await fetch("/api/user/balance-snapshots", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accountSlug: snapshotTarget.slug,
+          accountName: snapshotTarget.accountName,
+          accountType: snapshotTarget.accountType,
+          balance,
+          yearMonth: snapshotMonth,
+          note: snapshotNote || undefined,
+        }),
+      });
+      if (!res.ok) { setSnapshotError("Failed to save. Please try again."); return; }
+      setSnapshotTarget(null);
+      load(token);
+    } finally { setSnapshotSaving(false); }
+  }
 
   function openAdd(prefill?: Partial<FormState>) {
     setEditing(null); setForm({ ...EMPTY_FORM, ...prefill }); setFormError(null); setShowForm(true);
@@ -291,9 +379,9 @@ export function AssetsPage() {
     : null;
 
   // All accounts (liquid + debt) for Accounts tab
-  const allAccounts = accountBalances.filter(
-    (a) => LIQUID_ACCOUNT_TYPES.has(a.accountType) || ["mortgage", "loan", "credit"].includes(a.accountType) || a.balance !== 0
-  );
+  // Accounts tab shows only asset-type accounts; debts live on the Liabilities page
+  const DEBT_TYPES = new Set(["credit", "mortgage", "loan"]);
+  const allAccounts = accountBalances.filter((a) => !DEBT_TYPES.has(a.accountType));
 
   if (loading) return (
     <div className="flex min-h-[50vh] items-center justify-center">
@@ -442,13 +530,35 @@ export function AssetsPage() {
                           <p className="text-xs text-gray-400 mt-0.5">
                             {a.bankName}
                             {a.accountType && <span className="ml-1.5 capitalize text-gray-300">· {a.accountType}</span>}
-                            {a.statementDate && ` · as of ${new Date(a.statementDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })}`}
+                            {(() => {
+                              const ym = a.statementDate?.slice(0, 7);
+                              const days = daysSinceYearMonth(ym);
+                              const { text, cls } = freshnessLabel(days);
+                              return text ? (
+                                <span className={`ml-1.5 ${cls}`} title={ym ? `Data as of ${ym}` : undefined}>
+                                  {freshnessGlyph(days)}as of {new Date((ym ?? "") + "-01T12:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })} · {text}
+                                  {a.fromSnapshot && <span className="ml-1 italic text-gray-400">(manual)</span>}
+                                </span>
+                              ) : ym ? (
+                                <span className="ml-1.5 text-gray-400">
+                                  as of {new Date(ym + "-01T12:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })}
+                                  {a.fromSnapshot && <span className="ml-1 italic">(manual)</span>}
+                                </span>
+                              ) : null;
+                            })()}
                           </p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <span className={`font-semibold text-sm ${isDebt ? "text-red-600" : "text-gray-900"}`}>
                             {isDebt ? "−" : ""}{fmt(displayBalance)}
                           </span>
+                          <button
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); openSnapshot(a); }}
+                            title="Update balance"
+                            className="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-500 opacity-0 group-hover:opacity-100 hover:border-purple-300 hover:text-purple-600 transition"
+                          >
+                            Update
+                          </button>
                           <svg className="h-4 w-4 text-gray-300 group-hover:text-purple-400 transition-colors"
                             fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
@@ -593,6 +703,85 @@ export function AssetsPage() {
             <div className="mt-5 flex gap-3">
               <button onClick={() => setDeleteConfirm(null)} className="flex-1 rounded-lg border border-gray-200 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50">Cancel</button>
               <button onClick={() => handleDelete(deleteConfirm)} className="flex-1 rounded-lg bg-red-500 py-2 text-sm font-semibold text-white hover:bg-red-600">Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Update balance modal ───────────────────────────────────────────── */}
+      {snapshotTarget && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="font-semibold text-gray-900">Update balance</h3>
+                <p className="text-sm text-gray-500 mt-0.5">{snapshotTarget.accountName}</p>
+              </div>
+              <button onClick={() => setSnapshotTarget(null)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+            </div>
+
+            {/* Source-of-truth note */}
+            <div className="mb-4 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2.5 text-xs text-blue-700">
+              <strong>This won&apos;t overwrite your statement data.</strong> It adds a manual balance entry for the month you select. Your next uploaded statement will automatically take over.
+            </div>
+
+            {/* Balance field */}
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Current balance {["credit","mortgage","loan"].includes(snapshotTarget.accountType) ? "(enter what you owe)" : ""}
+              </label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                <input
+                  type="number" min="0" step="0.01"
+                  value={snapshotBalance}
+                  onChange={(e) => setSnapshotBalance(e.target.value)}
+                  className="w-full rounded-lg border border-gray-200 pl-7 pr-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+                  placeholder="0.00"
+                  autoFocus
+                />
+              </div>
+            </div>
+
+            {/* Month picker */}
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1">As of month</label>
+              <input
+                type="month"
+                value={snapshotMonth}
+                onChange={(e) => setSnapshotMonth(e.target.value)}
+                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+              />
+            </div>
+
+            {/* Note (optional) */}
+            <div className="mb-4">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Note <span className="font-normal text-gray-400">(optional)</span></label>
+              <input
+                type="text"
+                value={snapshotNote}
+                onChange={(e) => setSnapshotNote(e.target.value)}
+                placeholder="e.g. Checked online banking today"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+              />
+            </div>
+
+            {snapshotError && <p className="mb-3 text-sm text-red-600">{snapshotError}</p>}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setSnapshotTarget(null)}
+                className="flex-1 rounded-lg border border-gray-200 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveSnapshot}
+                disabled={snapshotSaving}
+                className="flex-1 rounded-lg bg-purple-600 py-2.5 text-sm font-semibold text-white hover:bg-purple-700 transition disabled:opacity-50"
+              >
+                {snapshotSaving ? "Saving…" : "Save balance"}
+              </button>
             </div>
           </div>
         </div>
