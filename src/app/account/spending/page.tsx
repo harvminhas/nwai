@@ -16,7 +16,7 @@ import {
 // ── shared constants & components (re-exported from shared.tsx) ───────────────
 export { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon } from "./shared";
 export type { CashFrequency as CashFrequencyShared } from "./shared";
-import { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker } from "./shared";
+import { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon } from "./shared";
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 
