@@ -491,6 +491,12 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   const assetSubLabel = assetLabels.map((l) => ASSET_TYPE_LABEL[l] ?? l).slice(0, 3).join(", ") || null;
   const debtSubLabel  = debtLabels.map((l) => DEBT_TYPE_LABEL[l] ?? l).slice(0, 3).join(" + ")   || null;
 
+  // ── avg income / spending from history (months with data) ─────────────────
+  const incomeMonths   = history.filter((h) => h.incomeTotal   > 0);
+  const expenseMonths  = history.filter((h) => h.expensesTotal > 0);
+  const avgIncome  = incomeMonths.length  > 0 ? incomeMonths.reduce((s, h)  => s + h.incomeTotal,   0) / incomeMonths.length  : 0;
+  const avgExpenses= expenseMonths.length > 0 ? expenseMonths.reduce((s, h) => s + h.expensesTotal, 0) / expenseMonths.length : 0;
+
   // ── scoring ────────────────────────────────────────────────────────────────
   const signals   = computeSignals(yearMonth, history, liquidAssets, hasDebts);
   const score     = computeScore(signals);
@@ -552,70 +558,95 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
         )}
 
 
-        {/* ── NET WORTH section ─────────────────────────────────────────────── */}
-        <div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-gray-300">Net worth</p>
-          <div className="grid grid-cols-3 gap-3">
-            <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-              <p className="text-xs text-gray-400">Net worth</p>
-              <p className="mt-1 text-xl font-bold text-gray-900 tabular-nums">{fmtNW(netWorth)}</p>
-              {nwDelta != null && (
-                <p className={`mt-1 text-xs font-medium ${nwDelta >= 0 ? "text-green-600" : "text-red-500"}`}>
-                  {fmtShort(nwDelta)} this month
-                </p>
-              )}
-            </div>
-            <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-              <p className="text-xs text-gray-400">Assets</p>
-              <p className="mt-1 text-xl font-bold text-gray-900 tabular-nums">{fmtNW(assets)}</p>
-              {assetSubLabel
-                ? <p className="mt-1 text-xs text-gray-400 truncate">{assetSubLabel}</p>
-                : assetDelta != null
-                  ? <p className={`mt-1 text-xs font-medium ${assetDelta >= 0 ? "text-green-600" : "text-red-500"}`}>{fmtShort(assetDelta)} this month</p>
-                  : null}
-            </div>
-            <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-              <p className="text-xs text-gray-400">Debts</p>
-              <p className="mt-1 text-xl font-bold text-red-500 tabular-nums">{fmtNW(debts)}</p>
-              {debtSubLabel
-                ? <p className="mt-1 text-xs text-gray-400 truncate">{debtSubLabel}</p>
-                : debtDelta != null && debts > 0
-                  ? <p className={`mt-1 text-xs font-medium ${debtDelta <= 0 ? "text-green-600" : "text-red-500"}`}>
-                      {debtDelta <= 0 ? `${fmtShort(Math.abs(debtDelta))} paid down` : `${fmtShort(debtDelta)} more debt`}
-                    </p>
-                  : null}
-            </div>
+        {/* ── NET WORTH hero ────────────────────────────────────────────────── */}
+        <div className="rounded-2xl border border-gray-200 bg-white px-6 py-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">Net worth</p>
+          <div className="mt-2 flex items-end gap-4">
+            <p className="text-5xl font-extrabold tracking-tight text-gray-900 tabular-nums leading-none">
+              {fmtNW(netWorth)}
+            </p>
+            {nwDelta != null && (
+              <span className={`mb-1 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-sm font-semibold ${
+                nwDelta >= 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-600"
+              }`}>
+                {nwDelta >= 0
+                  ? <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg>
+                  : <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                }
+                {fmtShort(nwDelta)} this month
+              </span>
+            )}
           </div>
+          {saved !== 0 && income > 0 && (
+            <p className="mt-2 text-xs text-gray-400">
+              {saved >= 0
+                ? <><span className="font-medium text-blue-600">{fmt(saved)}</span> saved this month</>
+                : <><span className="font-medium text-red-500">{fmt(Math.abs(saved))}</span> over budget this month</>
+              }
+            </p>
+          )}
         </div>
 
-        {/* ── This month at a glance — compact summary row ─────────────── */}
-        {income > 0 && (
-          <div className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white px-5 py-3.5 shadow-sm">
-            <div className="flex-1 min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-300 mb-1">This month</p>
-              <div className="flex items-center gap-5">
-                <div>
-                  <p className="text-xs text-gray-400">Income</p>
-                  <p className="text-sm font-semibold text-green-600 tabular-nums">{fmt(income)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-400">Spending</p>
-                  <p className="text-sm font-semibold text-gray-800 tabular-nums">{fmt(expenses)}</p>
-                </div>
-                {saved !== 0 && (
-                  <div>
-                    <p className="text-xs text-gray-400">Saved</p>
-                    <p className={`text-sm font-semibold tabular-nums ${saved >= 0 ? "text-blue-600" : "text-red-500"}`}>{fmt(saved)}</p>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="flex shrink-0 gap-3">
-              <Link href="/account/income"   className="text-xs text-gray-400 hover:text-purple-600 transition">Income →</Link>
-              <Link href="/account/spending" className="text-xs text-gray-400 hover:text-purple-600 transition">Spending →</Link>
-            </div>
-          </div>
-        )}
+        {/* ── 4 KPI cards ───────────────────────────────────────────────────── */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {/* Assets */}
+          <Link href="/account/assets" className="group rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:border-purple-200 hover:shadow transition">
+            <p className="text-xs text-gray-400">Assets</p>
+            <p className="mt-1 text-xl font-bold text-gray-900 tabular-nums">{fmtNW(assets)}</p>
+            {assetSubLabel
+              ? <p className="mt-1 text-xs text-gray-400 truncate">{assetSubLabel}</p>
+              : assetDelta != null
+                ? <p className={`mt-1 text-xs font-medium ${assetDelta >= 0 ? "text-green-600" : "text-red-500"}`}>{fmtShort(assetDelta)} vs last mo</p>
+                : null}
+          </Link>
+
+          {/* Debts */}
+          <Link href="/account/liabilities" className="group rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:border-purple-200 hover:shadow transition">
+            <p className="text-xs text-gray-400">Debts</p>
+            <p className="mt-1 text-xl font-bold text-red-500 tabular-nums">{fmtNW(debts)}</p>
+            {debtSubLabel
+              ? <p className="mt-1 text-xs text-gray-400 truncate">{debtSubLabel}</p>
+              : debtDelta != null && debts > 0
+                ? <p className={`mt-1 text-xs font-medium ${debtDelta <= 0 ? "text-green-600" : "text-red-500"}`}>
+                    {debtDelta <= 0 ? `${fmtShort(Math.abs(debtDelta))} paid down` : `${fmtShort(debtDelta)} more`}
+                  </p>
+                : null}
+          </Link>
+
+          {/* Avg Income/mo */}
+          <Link href="/account/income" className="group rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:border-purple-200 hover:shadow transition">
+            <p className="text-xs text-gray-400">Avg income/mo</p>
+            <p className="mt-1 text-xl font-bold text-green-600 tabular-nums">
+              {avgIncome > 0 ? fmtNW(avgIncome) : "—"}
+            </p>
+            {income > 0 && avgIncome > 0 ? (
+              <p className={`mt-1 text-xs font-medium ${income >= avgIncome ? "text-green-600" : "text-amber-500"}`}>
+                {fmt(income)} this month
+              </p>
+            ) : (
+              <p className="mt-1 text-xs text-gray-400">
+                {incomeMonths.length > 0 ? `${incomeMonths.length} month avg` : "no income data"}
+              </p>
+            )}
+          </Link>
+
+          {/* Avg Spending/mo */}
+          <Link href="/account/spending" className="group rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:border-purple-200 hover:shadow transition">
+            <p className="text-xs text-gray-400">Avg spending/mo</p>
+            <p className="mt-1 text-xl font-bold text-gray-900 tabular-nums">
+              {avgExpenses > 0 ? fmtNW(avgExpenses) : "—"}
+            </p>
+            {expenses > 0 && avgExpenses > 0 ? (
+              <p className={`mt-1 text-xs font-medium ${expenses <= avgExpenses ? "text-green-600" : "text-red-500"}`}>
+                {fmt(expenses)} this month
+              </p>
+            ) : (
+              <p className="mt-1 text-xs text-gray-400">
+                {expenseMonths.length > 0 ? `${expenseMonths.length} month avg` : "no spend data"}
+              </p>
+            )}
+          </Link>
+        </div>
 
         {/* ── Net worth chart ───────────────────────────────────────────────── */}
         {chartHistory.length >= 2 && <NetWorthChart history={chartHistory} />}
