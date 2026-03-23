@@ -7,6 +7,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import ConsolidatedCurrentDashboard from "@/components/ConsolidatedCurrentDashboard";
 import type { DashboardAlert, UpcomingItem } from "@/app/api/user/insights/route";
+import ParseStatusBanner from "@/components/ParseStatusBanner";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -103,6 +104,7 @@ export default function OverviewPage() {
   const [loading,   setLoading]   = useState(true);
   const [error,     setError]     = useState<string | null>(null);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const [token,     setToken]     = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -128,6 +130,7 @@ export default function OverviewPage() {
     return onAuthStateChanged(auth, async (user) => {
       if (!user) { router.push("/account/login"); return; }
       const tok = await user.getIdToken();
+      setToken(tok);
       load(tok);
     });
   }, [router, load]);
@@ -162,6 +165,9 @@ export default function OverviewPage() {
           <h1 className="text-2xl font-bold text-gray-900">Overview</h1>
           <p className="mt-0.5 text-sm text-gray-400">Your financial position at a glance</p>
         </div>
+
+        {/* Pending parse banner */}
+        {token && <ParseStatusBanner onRefresh={() => load(token)} />}
 
         {/* Financial snapshot — net worth, this month, chart, on-track */}
         <ConsolidatedCurrentDashboard />

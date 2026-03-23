@@ -8,6 +8,7 @@ import Sidebar from "@/components/Sidebar";
 import UploadZone from "@/components/UploadZone";
 import ProcessingAnimation from "@/components/ProcessingAnimation";
 import { usePlan } from "@/contexts/PlanContext";
+import { addPendingParse } from "@/components/ParseStatusBanner";
 
 const checklist = [
   "Your current net worth",
@@ -95,6 +96,7 @@ export default function UploadPage() {
       }
       const sid = data.statementId as string;
       setStatementId(sid);
+      addPendingParse(sid, file.name);
       fetch("/api/parse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -155,8 +157,9 @@ export default function UploadPage() {
         setQueue((prev) => prev.map((q) =>
           q.id === item.id ? { ...q, status: "processing", statementId: sid } : q
         ));
+        addPendingParse(sid, item.file.name);
 
-        // Kick off parsing (fire and forget — ProcessingPoller below will track status)
+        // Kick off parsing (fire and forget — QueueRow tracks status via onSnapshot)
         fetch("/api/parse", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -170,8 +173,10 @@ export default function UploadPage() {
     processItem(nextQueued);
   }, [queue, idToken, queueRunning]);
 
-  const allDone  = queue.length > 0 && queue.every((q) => q.status === "done" || q.status === "error");
-  const anyDone  = queue.some((q) => q.status === "done");
+  // "kicked off" = every item has progressed past the upload step (parse is in-flight or finished)
+  const allKickedOff = queue.length > 0 && queue.every((q) => ["processing", "done", "error"].includes(q.status));
+  const allDone      = queue.length > 0 && queue.every((q) => q.status === "done" || q.status === "error");
+  const anyDone      = queue.some((q) => q.status === "done");
   const showQueue = queue.length > 0;
 
   // ── Logged-in layout ─────────────────────────────────────────────────────
@@ -227,7 +232,33 @@ export default function UploadPage() {
                       className="mt-4 inline-block font-medium text-purple-600 hover:underline">Try again</button>
                   </div>
                 ) : (
-                  <ProcessingAnimation statementId={statementId} onError={setProcessingError} />
+                  /* Logged-in: fire-and-forget — show success immediately, no waiting */
+                  <div className="mt-2 rounded-xl border border-green-200 bg-green-50 p-6">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-100">
+                        <svg className="h-5 w-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-gray-900">Statement uploaded</p>
+                        <p className="text-sm text-gray-500">AI analysis running in the background</p>
+                      </div>
+                    </div>
+                    <p className="mt-3 text-sm text-gray-600">
+                      This usually takes 30–60 seconds. Your dashboard will show the updated data as soon as it's ready — no need to wait here.
+                    </p>
+                    <div className="mt-5 flex flex-wrap gap-3">
+                      <Link href="/account/dashboard"
+                        className="rounded-lg bg-purple-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-purple-700 transition">
+                        Go to dashboard →
+                      </Link>
+                      <button onClick={() => { setStatementId(null); setProcessingError(null); }}
+                        className="rounded-lg border border-gray-300 px-5 py-2.5 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition">
+                        Upload another
+                      </button>
+                    </div>
+                  </div>
                 )}
               </>
             )}
@@ -260,7 +291,6 @@ export default function UploadPage() {
                       <QueueRow
                         key={item.id}
                         item={item}
-                        token={idToken}
                         onDone={() => setQueue((prev) =>
                           prev.map((q) => q.id === item.id ? { ...q, status: "done" } : q)
                         )}
@@ -269,11 +299,20 @@ export default function UploadPage() {
                   </div>
                 )}
 
-                {allDone && (
+                {allKickedOff && (
                   <div className="mt-6 flex items-center justify-between rounded-xl border border-gray-200 bg-white px-5 py-4 shadow-sm">
-                    <p className="text-sm font-medium text-gray-700">
-                      {anyDone ? "Processing complete" : "All files had errors"}
-                    </p>
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">
+                        {allDone && !anyDone
+                          ? "All files had errors"
+                          : allDone
+                          ? "All done — dashboard is updated"
+                          : "Analyzing in background…"}
+                      </p>
+                      {!allDone && (
+                        <p className="mt-0.5 text-xs text-gray-400">You can go to your dashboard now — no need to wait.</p>
+                      )}
+                    </div>
                     <div className="flex gap-3">
                       <button
                         onClick={() => setQueue([])}
@@ -359,27 +398,27 @@ export default function UploadPage() {
   );
 }
 
-// ── QueueRow — shows status + inline ProcessingAnimation for processing items ─
+// ── QueueRow — shows file name + status badge; tracks parse completion ────────
 
 function QueueRow({
-  item, token, onDone,
+  item,
+  onDone,
 }: {
   item: QueueItem;
-  token: string | null;
   onDone: () => void;
 }) {
   const statusColor: Record<FileStatus, string> = {
     queued:     "bg-gray-100 text-gray-500",
     uploading:  "bg-blue-100 text-blue-600",
-    processing: "bg-amber-100 text-amber-600",
+    processing: "bg-amber-100 text-amber-700",
     done:       "bg-green-100 text-green-600",
     error:      "bg-red-100 text-red-500",
   };
   const statusLabel: Record<FileStatus, string> = {
     queued:     "Queued",
     uploading:  "Uploading…",
-    processing: "Processing…",
-    done:       "Done",
+    processing: "Analyzing…",
+    done:       "✓ Done",
     error:      "Error",
   };
 
@@ -396,7 +435,7 @@ function QueueRow({
           )}
         </div>
         <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ${statusColor[item.status]}`}>
-          {item.status === "uploading" || item.status === "processing" ? (
+          {(item.status === "uploading" || item.status === "processing") ? (
             <span className="flex items-center gap-1">
               <span className="h-2.5 w-2.5 animate-spin rounded-full border-2 border-current border-t-transparent inline-block" />
               {statusLabel[item.status]}
@@ -405,13 +444,13 @@ function QueueRow({
         </span>
       </div>
 
-      {/* Inline ProcessingAnimation for this item once parsing starts */}
-      {item.status === "processing" && item.statementId && token && (
-        <div className="mt-3">
+      {/* Compact ProcessingAnimation watches status in background; calls onDone when complete */}
+      {item.status === "processing" && item.statementId && (
+        <div className="mt-2">
           <ProcessingAnimation
             statementId={item.statementId}
-            onError={() => {}}
             onComplete={onDone}
+            onError={() => onDone()}
             compact
           />
         </div>

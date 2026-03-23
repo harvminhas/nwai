@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import type { DashboardAlert, UpcomingItem } from "@/app/api/user/insights/route";
+import ParseStatusBanner from "@/components/ParseStatusBanner";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -151,6 +152,7 @@ export default function TodayPage() {
   const [upcoming, setUpcoming] = useState<UpcomingItem[]>([]);
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState<string | null>(null);
+  const [token,    setToken]    = useState<string | null>(null);
 
   const load = useCallback(async (tok: string) => {
     setLoading(true); setError(null);
@@ -169,6 +171,7 @@ export default function TodayPage() {
     return onAuthStateChanged(auth, async (user) => {
       if (!user) { router.push("/account/login"); return; }
       const tok = await user.getIdToken();
+      setToken(tok);
       load(tok);
     });
   }, [router, load]);
@@ -191,6 +194,9 @@ export default function TodayPage() {
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
+
+      {/* ── Pending parse banner (auto-refreshes when done) ───────────────── */}
+      {token && <ParseStatusBanner onRefresh={() => load(token)} />}
 
       {/* ── Header ───────────────────────────────────────────────────────── */}
       <div className="mb-6">

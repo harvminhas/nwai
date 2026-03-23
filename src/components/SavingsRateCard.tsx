@@ -10,9 +10,16 @@ function formatCurrency(value: number): string {
 }
 
 export default function SavingsRateCard({ data }: { data: ParsedStatementData }) {
-  const rate = data.savingsRate ?? 0;
-  const income = data.income?.total ?? 0;
-  const expenses = data.expenses?.total ?? 0;
+  // Derive totals from line items to guard against AI miscalculation
+  const sources = data.income?.sources ?? [];
+  const categories = data.expenses?.categories ?? [];
+  const income = sources.length > 0
+    ? sources.reduce((s, x) => s + x.amount, 0)
+    : (data.income?.total ?? 0);
+  const expenses = categories.length > 0
+    ? categories.reduce((s, x) => s + x.amount, 0)
+    : (data.expenses?.total ?? 0);
+  const rate = income > 0 ? Math.round(((income - expenses) / income) * 100) : (data.savingsRate ?? 0);
   const monthlySavings = Math.max(0, income - expenses);
   const annualProjection = monthlySavings * 12;
 

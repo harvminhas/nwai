@@ -6,6 +6,8 @@ import {
 } from "@/lib/firebase-admin";
 import { randomUUID, createHash } from "crypto";
 
+export const maxDuration = 30;
+
 function isBucketNotFound(err: unknown): boolean {
   if (err && typeof err === "object") {
     const status = (err as { status?: number }).status;
