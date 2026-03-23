@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
@@ -214,28 +214,35 @@ export default function ActivityPage() {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [deleting, setDeleting]           = useState<string | null>(null);
   const [deleteError, setDeleteError]     = useState<string | null>(null);
+  const [refreshing, setRefreshing]       = useState(false);
+
+  const loadData = useCallback(async (tok: string, silent = false) => {
+    if (!silent) setLoading(true);
+    else setRefreshing(true);
+    setError(null);
+    try {
+      const [actRes, stmtRes] = await Promise.all([
+        fetch("/api/user/activity",   { headers: { Authorization: `Bearer ${tok}` } }),
+        fetch("/api/user/statements", { headers: { Authorization: `Bearer ${tok}` } }),
+      ]);
+      const actJson  = await actRes.json().catch(() => ({}));
+      const stmtJson = await stmtRes.json().catch(() => ({}));
+      if (!actRes.ok) { setError(actJson.error || "Failed to load"); return; }
+      setEvents(actJson.events ?? []);
+      setStatements(stmtJson.statements ?? []);
+    } catch { setError("Failed to load activity"); }
+    finally { setLoading(false); setRefreshing(false); }
+  }, []);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
       if (!user) { router.push("/login"); return; }
-      setLoading(true); setError(null);
-      try {
-        const tok = await user.getIdToken();
-        setToken(tok);
-        const [actRes, stmtRes] = await Promise.all([
-          fetch("/api/user/activity",   { headers: { Authorization: `Bearer ${tok}` } }),
-          fetch("/api/user/statements", { headers: { Authorization: `Bearer ${tok}` } }),
-        ]);
-        const actJson  = await actRes.json().catch(() => ({}));
-        const stmtJson = await stmtRes.json().catch(() => ({}));
-        if (!actRes.ok) { setError(actJson.error || "Failed to load"); return; }
-        setEvents(actJson.events ?? []);
-        setStatements(stmtJson.statements ?? []);
-      } catch { setError("Failed to load activity"); }
-      finally { setLoading(false); }
+      const tok = await user.getIdToken();
+      setToken(tok);
+      loadData(tok);
     });
-  }, [router]);
+  }, [router, loadData]);
 
   async function handleDelete(statementId: string) {
     if (!token) return;
@@ -475,22 +482,35 @@ export default function ActivityPage() {
       {!loading && activeTab === "coverage" && (
         <div className="space-y-5">
 
-          {/* Legend */}
+          {/* Legend + refresh */}
           <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500">
             {[
               { color: "bg-green-500",  label: "Uploaded" },
               { color: "bg-amber-400",  label: "Carried forward" },
               { color: "bg-red-400",    label: "Gap — missing upload" },
-              { color: "bg-gray-100 border border-gray-200",   label: "Not applicable" },
+              { color: "bg-gray-100 border border-gray-200", label: "Not applicable" },
             ].map(({ color, label }) => (
               <span key={label} className="flex items-center gap-1.5">
                 <span className={`h-3 w-3 rounded-sm ${color}`} />
                 {label}
               </span>
             ))}
-            <Link href="/upload" className="ml-auto text-xs font-medium text-purple-600 hover:underline">
-              Upload missing →
-            </Link>
+            <div className="ml-auto flex items-center gap-3">
+              <button
+                onClick={() => token && loadData(token, true)}
+                disabled={refreshing}
+                className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-purple-600 transition disabled:opacity-40"
+                title="Refresh coverage"
+              >
+                <svg className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                {refreshing ? "Refreshing…" : "Refresh"}
+              </button>
+              <Link href="/upload" className="text-xs font-medium text-purple-600 hover:underline">
+                Upload missing →
+              </Link>
+            </div>
           </div>
 
           {coverageAccounts.length === 0 ? (
