@@ -36,7 +36,7 @@ export const ALL_CATEGORIES = [
   "Other",
 ] as const;
 
-export type CashFrequency = "weekly" | "biweekly" | "monthly" | "quarterly" | "once";
+export type CashFrequency = "weekly" | "biweekly" | "monthly" | "quarterly" | "annual" | "once";
 
 // ── RecurringIcon ─────────────────────────────────────────────────────────────
 

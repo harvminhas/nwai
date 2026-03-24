@@ -160,6 +160,7 @@ export const CASH_FREQ_OPTIONS: { value: CashFrequency; label: string; perYear: 
   { value: "biweekly",  label: "Biweekly",  perYear: 26 },
   { value: "monthly",   label: "Monthly",   perYear: 12 },
   { value: "quarterly", label: "Quarterly", perYear: 4 },
+  { value: "annual",    label: "Annual",    perYear: 1 },
   { value: "once",      label: "One-off",   perYear: 0 },
 ];
 
@@ -1313,6 +1314,7 @@ function SpendingPageInner() {
           { value: "biweekly",  label: "Bi-weekly" },
           { value: "monthly",   label: "Monthly" },
           { value: "quarterly", label: "Quarterly" },
+          { value: "annual",    label: "Annual" },
         ];
         return (
           <>

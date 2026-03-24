@@ -49,6 +49,7 @@ const FREQ_OPTIONS: { value: CashFrequency; label: string }[] = [
   { value: "biweekly",  label: "Bi-weekly" },
   { value: "monthly",   label: "Monthly" },
   { value: "quarterly", label: "Quarterly" },
+  { value: "annual",    label: "Annual" },
 ];
 
 interface ExpenseTxn {
