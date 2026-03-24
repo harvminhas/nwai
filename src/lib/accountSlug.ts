@@ -17,11 +17,20 @@ export function normalizeAccountId(raw: string | undefined | null): string {
 }
 
 /**
- * Stable slug for an account: `bank-last4digits`
- * e.g. "cibc-costco-world-mastercard-0773"
+ * Stable slug for an account.
+ *
+ * When the account ID is known, use only the last 4 digits — this is unique
+ * enough in practice (one person very rarely has two accounts ending in the
+ * same 4 digits at different banks) and is immune to bank name variations like
+ * "TD" vs "TD Bank" vs "TD Canada Trust".
+ *
+ * When the account ID is not extractable, fall back to a normalized bank name
+ * so that at least same-bank accounts without IDs group together rather than
+ * all collapsing into a single "unknown" bucket.
  */
 export function buildAccountSlug(bankName: string | undefined | null, accountId: string | undefined | null): string {
-  const bank = (bankName ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   const acct = normalizeAccountId(accountId);
-  return acct !== "unknown" ? `${bank}-${acct}` : bank;
+  if (acct !== "unknown") return acct;
+  // Fallback: use normalized bank name when no account ID is available
+  return (bankName ?? "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "unknown";
 }
