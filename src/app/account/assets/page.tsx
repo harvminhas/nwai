@@ -563,31 +563,82 @@ export function AssetsPage() {
           {/* ── Overview tab ──────────────────────────────────────────────── */}
           {activeTab === "overview" && (
             <div className="space-y-5">
-              {/* Liquid / Illiquid KPI cards */}
-              {(liquidTotal > 0 || illiquidTotal > 0) && (
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Liquid</p>
-                    <p className="mt-2 font-bold text-2xl text-gray-900">{fmt(liquidTotal)}</p>
-                    {liquidTags.length > 0 && <p className="mt-1.5 text-xs text-gray-400">{liquidTags.join(" · ")}</p>}
+              {/* Total assets header */}
+              {totalAssets > 0 && (
+                <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Total Assets</p>
+                  <div className="mt-1 flex items-center gap-3 flex-wrap">
+                    <p className="font-bold text-4xl text-gray-900">{fmtShort(totalAssets)}</p>
                     {growthMoM !== null && (
-                      <p className={`mt-2 text-xs font-medium ${growthMoM >= 0 ? "text-green-600" : "text-red-500"}`}>
-                        {growthMoM >= 0 ? "▲" : "▼"} {fmtShort(Math.abs(growthMoM))} vs last month
-                      </p>
-                    )}
-                  </div>
-                  <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Illiquid</p>
-                    <p className="mt-2 font-bold text-2xl text-gray-900">{fmt(illiquidTotal)}</p>
-                    {illiquidTags.length > 0 && <p className="mt-1.5 text-xs text-gray-400">{illiquidTags.join(" · ")}</p>}
-                    {growthTotal !== null && growthPct !== null && (
-                      <p className={`mt-2 text-xs font-medium ${growthTotal >= 0 ? "text-green-600" : "text-red-500"}`}>
-                        {growthTotal >= 0 ? "▲" : "▼"} {fmtShort(Math.abs(growthTotal))} ({Math.abs(growthPct).toFixed(1)}%) all-time
-                      </p>
+                      <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm font-semibold ${
+                        growthMoM >= 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"
+                      }`}>
+                        {growthMoM >= 0 ? "↑" : "↓"} {fmtShort(Math.abs(growthMoM))} this month
+                      </span>
                     )}
                   </div>
                 </div>
               )}
+
+              {/* KPI cards — Cash / Investments / Property / Other */}
+              {totalAssets > 0 && (() => {
+                const cashVal       = chartRaw.find((g) => g.label === "Cash")?.value ?? 0;
+                const investVal     = (chartRaw.find((g) => g.label === "Investments")?.value ?? 0)
+                                    + (chartRaw.find((g) => g.label === "RRSP / TFSA")?.value ?? 0);
+                const propertyVal   = chartRaw.find((g) => g.label === "Real Estate")?.value ?? 0;
+                const otherVal      = (chartRaw.find((g) => g.label === "Vehicles")?.value ?? 0)
+                                    + (chartRaw.find((g) => g.label === "Business")?.value ?? 0)
+                                    + (chartRaw.find((g) => g.label === "Other")?.value ?? 0);
+                const cashAccts     = liquidAccounts.length;
+                const investAccts   = accountBalances.filter((a) => a.accountType === "investment" && a.balance > 0).length
+                                    + assets.filter((a) => a.category === "investment" || a.category === "retirement").length;
+                const propertyItems = assets.filter((a) => a.category === "property").length;
+                const otherItems    = assets.filter((a) => ["vehicle", "business", "other"].includes(a.category)).length;
+                return (
+                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-amber-400" />
+                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Cash</p>
+                      </div>
+                      <p className="font-bold text-2xl text-gray-900">{cashVal > 0 ? fmtShort(cashVal) : "—"}</p>
+                      <p className="mt-1 text-xs text-gray-400">
+                        {cashVal > 0 ? `${cashAccts} account${cashAccts !== 1 ? "s" : ""} · ${totalAssets > 0 ? ((cashVal / totalAssets) * 100).toFixed(0) : 0}%` : "none"}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-blue-400" />
+                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Investments</p>
+                      </div>
+                      <p className="font-bold text-2xl text-gray-900">{investVal > 0 ? fmtShort(investVal) : "—"}</p>
+                      <p className="mt-1 text-xs text-gray-400">
+                        {investVal > 0 ? `${investAccts} item${investAccts !== 1 ? "s" : ""} · ${totalAssets > 0 ? ((investVal / totalAssets) * 100).toFixed(0) : 0}%` : "none"}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-indigo-400" />
+                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Property</p>
+                      </div>
+                      <p className="font-bold text-2xl text-gray-900">{propertyVal > 0 ? fmtShort(propertyVal) : "—"}</p>
+                      <p className="mt-1 text-xs text-gray-400">
+                        {propertyVal > 0 ? `${propertyItems} item${propertyItems !== 1 ? "s" : ""} · ${totalAssets > 0 ? ((propertyVal / totalAssets) * 100).toFixed(0) : 0}%` : "none"}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-gray-400" />
+                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Other</p>
+                      </div>
+                      <p className="font-bold text-2xl text-gray-900">{otherVal > 0 ? fmtShort(otherVal) : "—"}</p>
+                      <p className="mt-1 text-xs text-gray-400">
+                        {otherVal > 0 ? `${otherItems} item${otherItems !== 1 ? "s" : ""} · ${totalAssets > 0 ? ((otherVal / totalAssets) * 100).toFixed(0) : 0}%` : "none"}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* What changed this month */}
               {accountMonthly.some((a) => a.delta !== null) && (() => {

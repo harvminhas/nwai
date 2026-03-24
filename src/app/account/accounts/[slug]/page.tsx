@@ -192,6 +192,12 @@ export default function AccountDetailPage() {
   const [idToken, setIdToken]             = useState<string | null>(null);
   const [deletingId, setDeletingId]       = useState<string | null>(null);
 
+  // Transactions section state
+  const [txMonth, setTxMonth]         = useState<string | null>(null);
+  const [txData, setTxData]           = useState<ParsedStatementData["expenses"] | null>(null);
+  const [txPayments, setTxPayments]   = useState<number>(0);
+  const [txLoading, setTxLoading]     = useState(false);
+
   // APR / frequency state
   const [effectiveRate, setEffectiveRate]       = useState<number | null>(null);
   const [extractedRate, setExtractedRate]       = useState<number | null>(null);
@@ -228,6 +234,10 @@ export default function AccountDetailPage() {
         setPreviousMonth(json.previousMonth ?? null);
         setYearMonth(json.yearMonth ?? null);
         setManualAssets(Array.isArray(json.manualAssets) ? json.manualAssets : []);
+        // Seed transaction section with latest month
+        setTxMonth(json.yearMonth ?? null);
+        setTxData((json.data as ParsedStatementData | null)?.expenses ?? null);
+        setTxPayments(json.paymentsMade ?? 0);
 
         const acctHistory: StatementHistoryEntry[] = json.accountStatementHistory?.[slug] ?? [];
         setStmtHistory(acctHistory);
@@ -313,6 +323,23 @@ export default function AccountDetailPage() {
         })
       ));
     } finally { setDeletingId(null); }
+  }
+
+  async function handleTxMonthSelect(ym: string) {
+    if (!idToken || ym === txMonth) return;
+    setTxMonth(ym);
+    setTxLoading(true);
+    try {
+      const res = await fetch(
+        `/api/user/statements/consolidated?account=${encodeURIComponent(slug)}&month=${ym}`,
+        { headers: { Authorization: `Bearer ${idToken}` } }
+      );
+      const json = await res.json().catch(() => ({}));
+      setTxData((json.data as ParsedStatementData | null)?.expenses ?? null);
+      setTxPayments(json.paymentsMade ?? 0);
+    } finally {
+      setTxLoading(false);
+    }
   }
 
   async function handleFrequencyChange(freq: PaymentFrequency) {
@@ -850,6 +877,90 @@ export default function AccountDetailPage() {
       )}
 
       <InsightsSection insights={data.insights ?? []} />
+
+      {/* ── Transactions section ─────────────────────────────────────────── */}
+      {["credit", "checking", "savings"].includes(accountType) && (() => {
+        const realMonths = stmtHistory
+          .filter((e) => !e.isCarryForward && !e.isManualSnapshot)
+          .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth));
+        if (realMonths.length === 0) return null;
+        const txns = txData?.transactions ?? [];
+        const hasTxns = txns.length > 0;
+        return (
+          <div className="mt-10">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h2 className="font-semibold text-lg text-gray-900">Transactions</h2>
+              {txPayments > 0 && (
+                <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-600">
+                  {fmt(txPayments)} payment{txPayments > 0 ? "s" : ""} made
+                </span>
+              )}
+            </div>
+
+            {/* Month pills */}
+            <div className="mb-4 flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+              {realMonths.map((e) => (
+                <button
+                  key={e.yearMonth}
+                  onClick={() => handleTxMonthSelect(e.yearMonth)}
+                  className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                    txMonth === e.yearMonth
+                      ? "bg-gray-900 text-white"
+                      : "border border-gray-200 text-gray-500 hover:border-gray-400 hover:text-gray-700"
+                  }`}
+                >
+                  {shortMonth(e.yearMonth)}
+                </button>
+              ))}
+            </div>
+
+            {txLoading ? (
+              <div className="flex items-center justify-center py-10">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-purple-600 border-t-transparent" />
+              </div>
+            ) : !hasTxns ? (
+              <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 py-10 text-center">
+                <p className="text-sm text-gray-400">No transactions found for {txMonth ? shortMonth(txMonth) : "this month"}.</p>
+                <p className="mt-1 text-xs text-gray-400">Upload a statement to see itemized charges.</p>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+                <div className="divide-y divide-gray-100">
+                  {txns.map((txn, i) => (
+                    <div key={i} className="flex items-center gap-3 px-4 py-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="truncate text-sm font-medium text-gray-900">{txn.merchant}</p>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          {txn.date && (
+                            <span className="text-xs text-gray-400">{fmtDate(txn.date)}</span>
+                          )}
+                          {txn.category && (
+                            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500">
+                              {txn.category}
+                            </span>
+                          )}
+                          {txn.recurring && (
+                            <span className="rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-medium text-teal-600">
+                              ↻ {txn.recurring}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <p className="shrink-0 text-sm font-semibold tabular-nums text-gray-900">
+                        {fmt(txn.amount)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+                <div className="border-t border-gray-100 bg-gray-50 px-4 py-2.5 flex items-center justify-between">
+                  <span className="text-xs text-gray-400">{txns.length} transaction{txns.length !== 1 ? "s" : ""}</span>
+                  <span className="text-xs font-semibold text-gray-700">{fmt(txData?.total ?? 0)} total</span>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── Add balance entry modal ────────────────────────────────────────── */}
       {showSnapshotForm && (

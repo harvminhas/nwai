@@ -242,6 +242,46 @@ export async function GET(req: NextRequest) {
   const daysInMonth  = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const monthFraction = dayOfMonth / daysInMonth;
 
+  // Whether the consolidated data is actually from the current calendar month.
+  // Alerts that extrapolate this-month data (e.g. spending pace) must only fire
+  // when the data is current — otherwise we'd be projecting December's spike
+  // into March's fraction, producing nonsense numbers.
+  const dataIsCurrentMonth = !!consolidated && (() => {
+    const ym = consolidated.statementDate?.slice(0, 7);
+    return ym === thisMonth;
+  })();
+
+  // Typical monthly expenses: median of all months we have data for.
+  // Used for cash-buffer calculation so one outlier month doesn't skew the
+  // "days of runway" figure.
+  const typicalMonthlyExpenses = (() => {
+    const monthlyTotals: number[] = [];
+    const seenYm = new Set<string>();
+    for (const doc of stmtSnap.docs) {
+      const p = doc.data().parsedData as ParsedStatementData | undefined;
+      if (!p) continue;
+      let ym = p.statementDate ? getYearMonth(p.statementDate) : "";
+      if (!ym) {
+        const raw = doc.data().uploadedAt?.toDate?.() ?? doc.data().uploadedAt;
+        if (raw) ym = (typeof raw === "object" && "toISOString" in raw
+          ? (raw as Date).toISOString() : String(raw)).slice(0, 7);
+      }
+      if (!ym || seenYm.has(ym)) continue;
+      // Exclude transfers/payments to avoid double-counting CC payments
+      const transfersAmt = (p.expenses?.categories ?? [])
+        .filter((c) => /transfer|payment/i.test(c.name))
+        .reduce((s, c) => s + (c.amount ?? 0), 0);
+      const realTotal = Math.max(0, (p.expenses?.total ?? 0) - transfersAmt);
+      if (realTotal > 0) { seenYm.add(ym); monthlyTotals.push(realTotal); }
+    }
+    if (monthlyTotals.length === 0) return expenses;
+    const sorted = [...monthlyTotals].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 !== 0
+      ? sorted[mid]
+      : (sorted[mid - 1] + sorted[mid]) / 2;
+  })();
+
   // ── build alerts ──────────────────────────────────────────────────────────
   const alerts: DashboardAlert[] = [];
 
@@ -258,42 +298,59 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // Low liquid buffer
-  if (liquidAssets > 0 && expenses > 0) {
-    const daysOfBuffer = liquidAssets / (expenses / 30);
+  // Low liquid buffer — use typicalMonthlyExpenses (median across months) so one
+  // outlier month doesn't inflate the daily burn rate and trigger a false alarm.
+  if (liquidAssets > 0 && typicalMonthlyExpenses > 0) {
+    const daysOfBuffer = liquidAssets / (typicalMonthlyExpenses / 30);
     if (daysOfBuffer < 7) {
       alerts.push({
         id: "low_liquid", type: "low_liquid", severity: "high",
         title: "Very low cash buffer",
-        body: `${fmt(liquidAssets)} in cash — less than a week of expenses. Consider moving funds.`,
+        body: `${fmt(liquidAssets)} in cash — less than a week of typical expenses. Consider moving funds.`,
         href: "/account/assets",
       });
     } else if (daysOfBuffer < 14) {
       alerts.push({
         id: "low_liquid", type: "low_liquid", severity: "medium",
         title: "Low cash buffer",
-        body: `${fmt(liquidAssets)} in checking/savings — about ${Math.round(daysOfBuffer)} days of expenses.`,
+        body: `${fmt(liquidAssets)} in checking/savings — about ${Math.round(daysOfBuffer)} days of typical expenses.`,
         href: "/account/assets",
       });
     }
   }
 
-  // Spending pace
-  if (income > 0 && expenses > 0 && monthFraction >= 0.40) {
-    const projected = expenses / monthFraction;
-    const overshoot = projected - income;
-    if (overshoot > income * 0.10) {
-      alerts.push({
-        id: "spending_pace", type: "spending_pace", severity: "medium",
-        title: "Spending ahead of income",
-        body: `At current pace you'll spend ${fmt(projected)} this month — ${fmt(overshoot)} more than your income.`,
-        href: "/account/spending",
-      });
+  // Spending pace — only meaningful when the expense data is from THIS calendar
+  // month. Using last month's (or December's) expenses with today's month-fraction
+  // produces wildly inflated projections.
+  //
+  // Also exclude "Transfers & Payments" from the expense total — those are
+  // credit card payments / inter-account transfers that are already counted as
+  // spending on the receiving account (credit card statement). Including them
+  // here would double-count and massively inflate the projected spend.
+  if (dataIsCurrentMonth && income > 0 && expenses > 0 && monthFraction >= 0.40) {
+    const transfersAmount = (consolidated?.expenses?.categories ?? [])
+      .filter((c) => /transfer|payment/i.test(c.name))
+      .reduce((s, c) => s + (c.amount ?? 0), 0);
+    const realExpenses = Math.max(0, expenses - transfersAmount);
+
+    // Require income to be reasonably captured (≥ 20% of real spending) to
+    // avoid false alerts when only a credit card statement was uploaded.
+    if (realExpenses > 0 && income >= realExpenses * 0.20) {
+      const projected = realExpenses / monthFraction;
+      const overshoot = projected - income;
+      if (overshoot > income * 0.10) {
+        alerts.push({
+          id: "spending_pace", type: "spending_pace", severity: "medium",
+          title: "Spending ahead of income",
+          body: `At current pace you'll spend ${fmt(projected)} this month — ${fmt(overshoot)} more than your income.`,
+          href: "/account/spending",
+        });
+      }
     }
   }
 
-  // No income this month
-  if (consolidated && income === 0 && expenses > 0) {
+  // No income this month — only relevant when data is from the current month
+  if (dataIsCurrentMonth && income === 0 && expenses > 0) {
     alerts.push({
       id: "no_income", type: "no_income", severity: "low",
       title: "No income recorded this month",

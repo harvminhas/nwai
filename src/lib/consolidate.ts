@@ -126,6 +126,8 @@ export function consolidateStatements(
     percentage: expensesTotal > 0 ? Math.round((v.amount / expensesTotal) * 100) : 0,
   }));
 
+  const totalPaymentsMade = statements.reduce((sum, s) => sum + (s.paymentsMade ?? 0), 0);
+
   const subsMap = new Map<string, { name: string; amount: number }>();
   for (const s of statements) {
     for (const sub of s.subscriptions ?? []) {
@@ -165,6 +167,7 @@ export function consolidateStatements(
     accountId: first.accountId,
     accountName: first.accountName,
     accountType: first.accountType,
+    paymentsMade: totalPaymentsMade > 0 ? totalPaymentsMade : undefined,
     income: {
       total: incomeTotal,
       sources: incomeSources,

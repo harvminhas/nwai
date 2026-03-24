@@ -127,6 +127,15 @@ export interface ParsedStatementData {
   interestRate?: number | null;
   income: Income;
   expenses: Expenses;
+  /**
+   * Total payments made toward this account's balance this period.
+   * Populated for credit/loan/mortgage accounts only — represents money
+   * received (e.g. a monthly credit card payment or mortgage payment).
+   * This is NOT income; it is debt repayment tracked separately so the
+   * consolidated view can offset the matching outgoing transfer in the
+   * checking/savings statement and avoid double-counting.
+   */
+  paymentsMade?: number;
   subscriptions: Subscription[];
   savingsRate: number;
   insights: Insight[];

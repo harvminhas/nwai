@@ -35,9 +35,10 @@ function Toast({ message, onDone }: { message: string; onDone: () => void }) {
 
 // ── Monthly spending chart ────────────────────────────────────────────────────
 
-function SpendingChart({ history, avg, selectedMonth }: {
+function SpendingChart({ history, avg, median, selectedMonth }: {
   history: HistoryPoint[];
   avg: number | null;
+  median: number | null;
   selectedMonth: string | null;
 }) {
   const data = history
@@ -64,9 +65,13 @@ function SpendingChart({ history, avg, selectedMonth }: {
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
       <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-widest text-gray-400">Monthly Spending</p>
-      {avg !== null && (
+      {median !== null && (
         <p className="mb-4 text-sm font-medium text-gray-600">
-          {data.length}-month avg <span className="font-bold text-gray-900">{fmt(avg)} / mo</span>
+          {data.length}-month median{" "}
+          <span className="font-bold text-gray-900">{fmt(median)} / mo</span>
+          {avg !== null && avg !== median && (
+            <span className="ml-2 text-xs text-gray-400">(avg {fmt(avg)})</span>
+          )}
         </p>
       )}
       <div style={{ pointerEvents: "none" }}>
@@ -77,9 +82,9 @@ function SpendingChart({ history, avg, selectedMonth }: {
             <YAxis tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false}
               tickFormatter={(v: number) => v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${v}`} />
             <Tooltip content={<CustomTooltip />} cursor={{ fill: "#f5f3ff" }} />
-            {avg !== null && (
-              <ReferenceLine y={avg} stroke="#a78bfa" strokeDasharray="4 3" strokeWidth={1.5}
-                label={{ value: "avg", position: "right", fontSize: 10, fill: "#a78bfa" }} />
+            {median !== null && (
+              <ReferenceLine y={median} stroke="#a78bfa" strokeDasharray="4 3" strokeWidth={1.5}
+                label={{ value: "median", position: "right", fontSize: 10, fill: "#a78bfa" }} />
             )}
             <Bar dataKey="amount" radius={[4, 4, 0, 0]} label={false}>
               {data.map((entry) => (
@@ -203,6 +208,7 @@ function SpendingPageInner() {
   });
 
   const [data, setData]                 = useState<ParsedStatementData | null>(null);
+  const [paymentsMade, setPaymentsMade] = useState<number>(0);
   const [yearMonth, setYearMonth]       = useState<string | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [history, setHistory]           = useState<HistoryPoint[]>([]);
@@ -305,6 +311,7 @@ function SpendingPageInner() {
         if (!res.ok) { setError(json.error || "Failed to load"); return; }
         const currentYM = json.yearMonth ?? null;
         setData(json.data ?? null);
+        setPaymentsMade(json.paymentsMade ?? 0);
         setYearMonth(currentYM);
         setSelectedMonth(currentYM);
         setHistory(Array.isArray(json.history) ? json.history : []);
@@ -347,6 +354,7 @@ function SpendingPageInner() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) return;
       setData(json.data ?? null);
+      setPaymentsMade(json.paymentsMade ?? 0);
       setPrevExpenses(json.previousMonth?.expenses ?? null);
       const raw: ExpenseTransaction[] = (json.data?.expenses?.transactions ?? [])
         .slice()
@@ -548,9 +556,17 @@ function SpendingPageInner() {
   })();
 
   const monthsTracked = history.length;
-  const avgExpenses   = monthsTracked > 0
+  const avgExpenses = monthsTracked > 0
     ? Math.round(history.reduce((s, h) => s + (h.expensesTotal ?? 0), 0) / monthsTracked)
     : null;
+  const medianExpenses = (() => {
+    if (monthsTracked === 0) return null;
+    const sorted = [...history].map((h) => h.expensesTotal ?? 0).sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 !== 0
+      ? sorted[mid]
+      : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+  })();
   const expDelta  = prevExpenses !== null ? total - prevExpenses : null;
   const subsYearly = allSubscriptions.reduce((s, sub) => {
     const monthly = sub.frequency === "annual" ? sub.amount / 12 : sub.amount;
@@ -649,6 +665,7 @@ function SpendingPageInner() {
                   <SpendingChart
                     history={history}
                     avg={avgExpenses}
+                    median={medianExpenses}
                     selectedMonth={selectedMonth}
                   />
 
@@ -739,7 +756,7 @@ function SpendingPageInner() {
                 </>
               )}
               {total > 0 && (
-                <div className="grid grid-cols-2 gap-4">
+                <div className={`grid gap-4 ${paymentsMade > 0 ? "grid-cols-3" : "grid-cols-2"}`}>
                   <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                     <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">This Month</p>
                     <p className="mt-2 font-bold text-2xl text-gray-900">{fmt(total)}</p>
@@ -750,12 +767,24 @@ function SpendingPageInner() {
                       </p>
                     )}
                   </div>
+                  {paymentsMade > 0 && (
+                    <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-5 shadow-sm">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-blue-400">Payments Made</p>
+                      <p className="mt-2 font-bold text-2xl text-gray-900">{fmt(paymentsMade)}</p>
+                      <p className="mt-1 text-xs text-gray-400">to CC / loans</p>
+                    </div>
+                  )}
                   <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Monthly Avg</p>
-                    <p className="mt-2 font-bold text-2xl text-gray-900">{avgExpenses !== null ? fmt(avgExpenses) : "—"}</p>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Typical Month</p>
+                    <p className="mt-2 font-bold text-2xl text-gray-900">{medianExpenses !== null ? fmt(medianExpenses) : "—"}</p>
                     <p className="mt-1 text-xs text-gray-400">
-                      {monthsTracked > 0 ? `${monthsTracked} month${monthsTracked !== 1 ? "s" : ""} tracked` : "No history yet"}
+                      {monthsTracked > 0
+                        ? <>median · {monthsTracked} month{monthsTracked !== 1 ? "s" : ""} tracked</>
+                        : "No history yet"}
                     </p>
+                    {avgExpenses !== null && medianExpenses !== null && avgExpenses !== medianExpenses && (
+                      <p className="mt-1 text-xs text-gray-400">avg {fmt(avgExpenses)}</p>
+                    )}
                   </div>
                 </div>
               )}

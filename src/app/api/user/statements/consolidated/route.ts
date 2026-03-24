@@ -245,6 +245,7 @@ export async function GET(request: NextRequest) {
 
     const totalAssets = (consolidatedWithRules.assets ?? Math.max(0, consolidatedWithRules.netWorth)) + manualAssetsTotal;
     const adjustedNetWorth = totalAssets - (consolidatedWithRules.debts ?? Math.max(0, -consolidatedWithRules.netWorth));
+
     let enrichedConsolidated: ParsedStatementData = {
       ...consolidatedWithRules,
       assets: totalAssets,
@@ -483,6 +484,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       data: enrichedConsolidated,
+      /** Total payments made toward credit/loan/mortgage accounts this month.
+       *  Shown separately alongside expenses — NOT netted from expenses. */
+      paymentsMade: enrichedConsolidated.paymentsMade ?? 0,
       count: allCompleted.length,
       previousMonth,
       yearMonth: month,

@@ -496,6 +496,12 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   const expenseMonths  = history.filter((h) => h.expensesTotal > 0);
   const avgIncome  = incomeMonths.length  > 0 ? incomeMonths.reduce((s, h)  => s + h.incomeTotal,   0) / incomeMonths.length  : 0;
   const avgExpenses= expenseMonths.length > 0 ? expenseMonths.reduce((s, h) => s + h.expensesTotal, 0) / expenseMonths.length : 0;
+  const medianExpenses = (() => {
+    if (expenseMonths.length === 0) return 0;
+    const sorted = [...expenseMonths].map((h) => h.expensesTotal).sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  })();
 
   // ── scoring ────────────────────────────────────────────────────────────────
   const signals   = computeSignals(yearMonth, history, liquidAssets, hasDebts);
@@ -630,19 +636,19 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
             )}
           </Link>
 
-          {/* Avg Spending/mo */}
+          {/* Typical Spending/mo */}
           <Link href="/account/spending" className="group rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:border-purple-200 hover:shadow transition">
-            <p className="text-xs text-gray-400">Avg spending/mo</p>
+            <p className="text-xs text-gray-400">Typical spending/mo</p>
             <p className="mt-1 text-xl font-bold text-gray-900 tabular-nums">
-              {avgExpenses > 0 ? fmtNW(avgExpenses) : "—"}
+              {medianExpenses > 0 ? fmtNW(medianExpenses) : "—"}
             </p>
-            {expenses > 0 && avgExpenses > 0 ? (
-              <p className={`mt-1 text-xs font-medium ${expenses <= avgExpenses ? "text-green-600" : "text-red-500"}`}>
+            {expenses > 0 && medianExpenses > 0 ? (
+              <p className={`mt-1 text-xs font-medium ${expenses <= medianExpenses ? "text-green-600" : "text-red-500"}`}>
                 {fmt(expenses)} this month
               </p>
             ) : (
               <p className="mt-1 text-xs text-gray-400">
-                {expenseMonths.length > 0 ? `${expenseMonths.length} month avg` : "no spend data"}
+                {expenseMonths.length > 0 ? `${expenseMonths.length} month median` : "no spend data"}
               </p>
             )}
           </Link>

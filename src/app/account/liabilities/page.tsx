@@ -289,10 +289,11 @@ function Sparkline({ values, color, good }: { values: number[]; color: string; g
 
 interface DebtHistoryPoint { ym: string; label: string; total: number }
 
-function OverviewTab({ libs, debtHistory, accountMonthly }: {
+function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade }: {
   libs: DisplayLiability[];
   debtHistory: DebtHistoryPoint[];
   accountMonthly: AccountMonthlyData[];
+  paymentsMade: number;
 }) {
   const total = libs.reduce((s, l) => s + l.balance, 0);
   const [selectedYm, setSelectedYm] = useState<string | null>(null);
@@ -325,6 +326,16 @@ function OverviewTab({ libs, debtHistory, accountMonthly }: {
     meta: CATEGORY_META[c],
   }));
 
+  // Fixed 4-card groupings
+  const mortgageTotal = (["mortgage", "line_of_credit"] as LiabilityCategory[])
+    .reduce((s, c) => s + (byCategory.get(c) ?? 0), 0);
+  const ccTotal = byCategory.get("credit_card") ?? 0;
+  const loansTotal = (["auto_loan", "student_loan", "personal_loan", "other"] as LiabilityCategory[])
+    .reduce((s, c) => s + (byCategory.get(c) ?? 0), 0);
+  const mortgageAccts = libs.filter((l) => l.category === "mortgage" || l.category === "line_of_credit").length;
+  const ccAccts       = libs.filter((l) => l.category === "credit_card").length;
+  const loanAccts     = libs.filter((l) => ["auto_loan", "student_loan", "personal_loan", "other"].includes(l.category)).length;
+
   // Donut data
   const donutData = categoryGroups.map((g) => ({ label: g.label, value: g.total, color: g.color }));
 
@@ -340,27 +351,75 @@ function OverviewTab({ libs, debtHistory, accountMonthly }: {
 
   return (
     <div className="space-y-5">
-      {/* By-type KPI cards */}
-      {categoryGroups.length > 0 && (
-        <div className={`grid gap-4 ${categoryGroups.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}>
-          {categoryGroups.map((g) => {
-            const pct = total > 0 ? ((g.total / total) * 100).toFixed(0) : "0";
-            return (
-              <div key={g.cat} className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: g.color }} />
-                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">{g.label}</p>
-                </div>
-                <p className="font-bold text-2xl text-gray-900">{fmtShort(g.total)}</p>
-                <p className="mt-1 text-xs text-gray-400">
-                  {libs.filter((l) => l.category === g.cat).length} account{libs.filter((l) => l.category === g.cat).length !== 1 ? "s" : ""}
-                  <span className="ml-1.5">{pct}% of debt</span>
-                </p>
-              </div>
-            );
-          })}
+      {/* Total debt header */}
+      <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Total Debt</p>
+        <div className="mt-1 flex items-center gap-3 flex-wrap">
+          <p className="font-bold text-4xl text-gray-900">{fmtShort(total)}</p>
+          {growthMoM !== null && (
+            <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm font-semibold ${
+              growthMoM >= 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"
+            }`}>
+              {growthMoM >= 0 ? "↓" : "↑"} {fmtShort(Math.abs(growthMoM))} this month
+            </span>
+          )}
         </div>
-      )}
+      </div>
+
+      {/* KPI cards — Mortgage / CC / Loans / Payments Made */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        {/* Mortgage */}
+        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-red-400" />
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Mortgage</p>
+          </div>
+          <p className="font-bold text-2xl text-gray-900">{mortgageTotal > 0 ? fmtShort(mortgageTotal) : "—"}</p>
+          <p className="mt-1 text-xs text-gray-400">
+            {mortgageTotal > 0
+              ? `${mortgageAccts} account${mortgageAccts !== 1 ? "s" : ""} · ${total > 0 ? ((mortgageTotal / total) * 100).toFixed(0) : 0}% of debt`
+              : "none"}
+          </p>
+        </div>
+
+        {/* Credit Cards */}
+        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-orange-400" />
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Credit Cards</p>
+          </div>
+          <p className="font-bold text-2xl text-gray-900">{ccTotal > 0 ? fmtShort(ccTotal) : "—"}</p>
+          <p className="mt-1 text-xs text-gray-400">
+            {ccTotal > 0
+              ? `${ccAccts} card${ccAccts !== 1 ? "s" : ""} · ${total > 0 ? ((ccTotal / total) * 100).toFixed(0) : 0}% of debt`
+              : "none"}
+          </p>
+        </div>
+
+        {/* Loans */}
+        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-blue-400" />
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Loans</p>
+          </div>
+          <p className="font-bold text-2xl text-gray-900">{loansTotal > 0 ? fmtShort(loansTotal) : "—"}</p>
+          <p className="mt-1 text-xs text-gray-400">
+            {loansTotal > 0
+              ? `${loanAccts} account${loanAccts !== 1 ? "s" : ""} · ${total > 0 ? ((loansTotal / total) * 100).toFixed(0) : 0}% of debt`
+              : "none"}
+          </p>
+        </div>
+
+        {/* Payments Made */}
+        <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-5 shadow-sm">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-blue-400" />
+            <p className="text-xs font-semibold uppercase tracking-wider text-blue-400">Payments Made</p>
+          </div>
+          <p className="font-bold text-2xl text-gray-900">{paymentsMade > 0 ? fmtShort(paymentsMade) : "—"}</p>
+          <p className="mt-1 text-xs text-gray-400">{paymentsMade > 0 ? "this month" : "re-upload for data"}</p>
+        </div>
+      </div>
 
       {/* What changed this month */}
       {accountMonthly.some((a) => a.delta !== null) && (() => {
@@ -894,6 +953,7 @@ function LiabilitiesPageInner() {
   const searchParams = useSearchParams();
   const { can }     = usePlan();
 
+  const [paymentsMade, setPaymentsMade] = useState<number>(0);
   const [activeTab, setActiveTab]       = useState<TabId>(() => {
     const t = searchParams.get("tab");
     return TABS.some((tb) => tb.id === t) ? (t as TabId) : "overview";
@@ -936,6 +996,7 @@ function LiabilitiesPageInner() {
       const rJson = rRes.ok ? await rRes.json().catch(() => ({})) : {};
 
       setYearMonth(cJson.yearMonth ?? null);
+      setPaymentsMade(cJson.paymentsMade ?? 0);
 
       // Build debt history from consolidated monthly history
       const rawHistory: { yearMonth: string; netWorth: number; debtTotal: number }[] = cJson.history ?? [];
@@ -1119,7 +1180,7 @@ function LiabilitiesPageInner() {
       </div>
 
       {/* Tab content */}
-      {activeTab === "overview" && <OverviewTab libs={displayLibs} debtHistory={debtHistory} accountMonthly={accountMonthly} />}
+      {activeTab === "overview" && <OverviewTab libs={displayLibs} debtHistory={debtHistory} accountMonthly={accountMonthly} paymentsMade={paymentsMade} />}
       {activeTab === "accounts" && (
         <AccountsTab
           libs={displayLibs} manualLibs={manualLibs} deletingId={deletingId}

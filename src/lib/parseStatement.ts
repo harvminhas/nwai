@@ -38,19 +38,27 @@ const SYSTEM_PROMPT = `You are a financial analysis expert. Analyze this bank st
      * E-transfers, generic deposits, government payments, GC deposits, CRA → use "Cash / Deposit"
      * Do NOT use raw transaction codes, account numbers, or cryptic strings.
 
-   EXPENSES (debits out of the account) — every debit MUST be categorized, no exceptions:
-   - Housing: Rent, mortgage payments, utilities, home insurance
+   EXPENSES (debits out of the account):
+
+   *** EXCLUDE ENTIRELY (do NOT add to expenses.transactions or expenses.total) ***
+   - Credit card payments: any transaction that is clearly a payment TO a credit card (e.g. "VISA PAYMENT", "MASTERCARD PMT", "AMEX PAYMENT", "TD CREDIT CARD", "CIBC VISA", "PAYMENT - MASTERCARD", or similar). These purchases are already captured in the credit card statement — including them here is double-counting.
+   - Loan / mortgage repayments: payments reducing a loan or mortgage balance. The balance is already tracked separately.
+   - Transfers between your own accounts: moving money from chequing to savings or vice versa.
+
+   *** INCLUDE as expenses (categorize below) ***
+   - Housing: Rent, utilities (hydro, gas, internet, phone), home insurance, condo fees
    - Dining: Restaurants, food delivery, coffee shops
-   - Shopping: Retail, online shopping, Amazon, grocery stores
-   - Transportation: Gas, Uber/Lyft, transit, parking, car payment
+   - Groceries: Grocery stores, supermarkets, bulk food stores
+   - Shopping: Retail, online shopping, clothing, electronics
+   - Transportation: Gas, Uber/Lyft, transit, parking, car payment to a dealer/lender
    - Entertainment: Streaming, movies, events, hobbies, sports
    - Subscriptions: Any recurring monthly charge (Netflix, Spotify, gym, etc.)
    - Healthcare: Medical, pharmacy, dental, insurance premiums
-   - Transfers & Payments: Transfers to other accounts, credit card payments, bill payments, loan payments, interac transfers sent (e.g. "TFR-TO", "TRANSFER TO", "PAY TO", "IM200", "ONLINE TRANSFER")
+   - Transfers & Payments: E-transfers sent to individuals or businesses for goods/services (e.g. rent paid via Interac e-transfer, paying a contractor). Do NOT use this for credit card payments or bank-to-bank transfers.
    - Cash & ATM: ATM withdrawals, cash advances
-   - Other: Any other debit not covered above
-   
-   CRITICAL: Do NOT skip any debit transaction. Every withdrawal, transfer out, payment, and ATM withdrawal must appear in expenses.transactions and be reflected in the category totals.
+   - Other: Any other real spending not covered above
+
+   CRITICAL: Do NOT include credit card payments, loan payments, or own-account transfers in expenses under any category.
 5. For each expense transaction, also populate expenses.transactions as a flat list:
    - merchant: clean, human-readable merchant name (e.g. "Amazon", "Tim Hortons", "Netflix"). Strip codes, terminal IDs, trailing numbers.
    - amount: transaction amount (positive number)
@@ -62,10 +70,16 @@ const SYSTEM_PROMPT = `You are a financial analysis expert. Analyze this bank st
 6. Detect subscriptions (recurring charges, same amount monthly).
    - For credit accounts: include subscriptions found in transactions (e.g. Netflix, Spotify).
    - For mortgage/loan/investment accounts: return [].
+6b. For credit card, loan, and mortgage accounts — extract "paymentsMade":
+   - paymentsMade: the total amount of payments received toward this account's balance during the statement period (e.g. the monthly credit card payment, mortgage payment, or loan payment credited to the account).
+   - This is NOT income. It represents debt repayment made from a chequing/savings account. Tracking it separately allows the system to cancel the matching outgoing transfer in the bank account and avoid double-counting.
+   - If no payment was received this period, set paymentsMade to 0.
+   - For checking/savings/investment accounts: omit paymentsMade (or set to 0).
 7. Calculate:
    - For checking/savings only: total income = sum of ALL individual income entries (do not deduplicate). Every credit/deposit to the account must appear in income.sources. total expenses = sum of ALL individual expense entries, savings rate = (income - expenses) / income
-   - For credit accounts: total expenses only; set income = 0, savingsRate = 0
-   - For mortgage/loan/investment: all return 0
+   - For credit accounts: total expenses only; set income = 0, savingsRate = 0; populate paymentsMade
+   - For mortgage/loan: all expenses/income return 0; populate paymentsMade
+   - For investment: all return 0
 8. Generate up to 4 personalized insights relevant to the account type:
    - For mortgage/loan: focus on interest rate, payoff timeline, equity building, overpayment opportunities
    - For investment: focus on growth, diversification, contribution rate
@@ -73,7 +87,7 @@ const SYSTEM_PROMPT = `You are a financial analysis expert. Analyze this bank st
 
 **Return JSON only, no markdown or explanation, in this exact structure.**
 
-For a mortgage/loan (income, expenses, subscriptions will be empty):
+For a mortgage/loan (income, expenses, subscriptions will be empty; paymentsMade = the payment credited this period):
 {
   "netWorth": -517991.36,
   "assets": 0,
@@ -86,6 +100,7 @@ For a mortgage/loan (income, expenses, subscriptions will be empty):
   "interestRate": 3.9,
   "income": { "total": 0, "sources": [] },
   "expenses": { "total": 0, "categories": [] },
+  "paymentsMade": 2500.00,
   "subscriptions": [],
   "savingsRate": 0,
   "insights": [
@@ -139,8 +154,10 @@ For a checking/savings/credit account:
       { "merchant": "Tim Hortons", "amount": 6.75, "date": "2026-02-12", "category": "Dining" },
       { "merchant": "Amazon", "amount": 45.99, "date": "2026-02-14", "category": "Shopping" },
       { "merchant": "Netflix", "amount": 18.99, "date": "2026-02-01", "category": "Entertainment", "recurring": "monthly" }
-    ]
+    ],
+    "_note": "VISA PAYMENT $3200 on 2026-02-28 is NOT included above — it is a credit card payment and would double-count spending already captured in the credit card statement."
   },
+  "paymentsMade": 0,
   "subscriptions": [
     { "name": "Netflix", "amount": 15.99, "frequency": "monthly" },
     { "name": "Spotify", "amount": 10.99, "frequency": "monthly" }
@@ -223,6 +240,7 @@ function coerceDefaults(data: Record<string, unknown>): ParsedStatementData {
       categories: Array.isArray(expenses.categories) ? expenses.categories : [],
       transactions: Array.isArray(expenses.transactions) ? expenses.transactions : [],
     },
+    paymentsMade: typeof data.paymentsMade === "number" ? data.paymentsMade : 0,
     subscriptions: Array.isArray(data.subscriptions) ? data.subscriptions : [],
     savingsRate: typeof data.savingsRate === "number" ? data.savingsRate : 0,
     insights: Array.isArray(data.insights) ? data.insights : [],
