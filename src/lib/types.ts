@@ -64,6 +64,12 @@ export interface ExpenseTransaction {
   amount: number;
   category: string;
   date?: string; // ISO date YYYY-MM-DD
+  /**
+   * AI-detected recurrence frequency for this specific transaction.
+   * One of: "weekly" | "biweekly" | "monthly" | "quarterly" | "annual"
+   * Omitted / undefined when the AI cannot determine recurrence with confidence.
+   */
+  recurring?: string;
   /** Human-readable account label e.g. "TD ••••7780". Populated at API aggregation time. */
   accountLabel?: string;
 }

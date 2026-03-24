@@ -413,6 +413,26 @@ function SpendingPageInner() {
     } catch { setToast("Failed to save"); }
   }
 
+  async function dismissRecurring() {
+    if (!token || !pendingRecurring) return;
+    const { txn } = pendingRecurring;
+    const slug = merchantSlug(txn.merchant);
+    setRecurringRules((prev) => {
+      const next = new Map(prev);
+      next.set(slug, { name: txn.merchant, amount: txn.amount, frequency: "never" });
+      return next;
+    });
+    setPendingRecurring(null);
+    try {
+      await fetch("/api/user/recurring-rules", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ merchant: txn.merchant, amount: txn.amount, frequency: "never", category: txn.category }),
+      });
+      setToast(`"${txn.merchant}" marked as not recurring`);
+    } catch { setToast("Failed to save"); }
+  }
+
   // ── cash commitment handlers ───────────────────────────────────────────────
 
   async function handleCashSave() {
@@ -483,15 +503,23 @@ function SpendingPageInner() {
   }
 
   // Merge AI subs + user-marked recurring (user-marked take precedence by name)
+  // Exclude "never" rules from both lists — those are user-dismissed entries
   const manualOnly = Array.from(recurringRules.values()).filter(
-    (r) => !aiSubSlugs.has(merchantSlug(r.name))
+    (r) => !aiSubSlugs.has(merchantSlug(r.name)) && r.frequency !== "never"
+  );
+  const dismissedSlugs = new Set(
+    Array.from(recurringRules.entries())
+      .filter(([, r]) => r.frequency === "never")
+      .map(([slug]) => slug)
   );
   const allSubscriptions: (Subscription & { source: "ai" | "manual"; detectedFrequency: string })[] = [
-    ...aiSubscriptions.map((s) => ({
-      ...s,
-      source: "ai" as const,
-      detectedFrequency: resolvedFrequency(s.name, s.frequency),
-    })),
+    ...aiSubscriptions
+      .filter((s) => !dismissedSlugs.has(merchantSlug(s.name)))
+      .map((s) => ({
+        ...s,
+        source: "ai" as const,
+        detectedFrequency: resolvedFrequency(s.name, s.frequency),
+      })),
     ...manualOnly.map((s) => ({
       ...s,
       source: "manual" as const,
@@ -864,9 +892,13 @@ function SpendingPageInner() {
                     {visibleTxns.map((txn, i) => {
                       const color = categoryColor(txn.category ?? "other");
                       const slug = merchantSlug(txn.merchant);
-                      const isAiSub      = aiSubSlugs.has(slug);
-                      const isManualSub  = recurringRules.has(slug);
-                      const isRecurring  = isAiSub || isManualSub;
+                      // AI recurring: either the subscriptions list OR a per-transaction recurring tag
+                      const isAiSub        = aiSubSlugs.has(slug) || !!txn.recurring;
+                      const aiFreq         = txn.recurring ?? resolvedFrequency(txn.merchant, "monthly");
+                      const isManualSub    = recurringRules.has(slug);
+                      const isNeverRule    = recurringRules.get(slug)?.frequency === "never";
+                      const isManualActive = isManualSub && !isNeverRule;
+                      const isRecurring    = isAiSub || isManualActive;
                       return (
                         <div key={i} className="flex items-center justify-between px-5 py-3.5">
                           <div className="min-w-0 flex-1">
@@ -905,32 +937,56 @@ function SpendingPageInner() {
                                 </>
                               )}
                               {/* Recurring badge / toggle
-                                  - AI-detected: shown as read-only teal badge
-                                  - Manual: purple, clickable to remove
-                                  - Neither: faint button to add  */}
+                                  1. Manual active (user rule, not "never")  → purple, click to remove
+                                  2. AI-detected, not dismissed               → teal, click to override/dismiss
+                                  3. Dismissed ("never" rule)                 → muted, click to undo
+                                  4. Neither                                  → faint add button */}
                               {(() => {
-                                const freq = resolvedFrequency(txn.merchant, "monthly");
-                                const freqLabel = freq !== "monthly" ? freq : null;
-                                return isAiSub ? (
-                                  <span
-                                    title="Auto-detected as recurring"
-                                    className="inline-flex items-center gap-1 rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-600"
-                                  >
-                                    <RecurringIcon active={true} />
-                                    {freqLabel ?? "recurring"}
-                                  </span>
-                                ) : (
+                                const manualFreq = resolvedFrequency(txn.merchant, "monthly");
+                                const manualFreqLabel = manualFreq !== "monthly" ? manualFreq : null;
+                                if (isManualActive) {
+                                  return (
+                                    <button
+                                      onClick={(e) => handleRecurringToggle(txn, e.currentTarget)}
+                                      title="Remove from recurring"
+                                      className="inline-flex items-center gap-1 rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-600 transition hover:border-purple-300"
+                                    >
+                                      <RecurringIcon active={true} />
+                                      {manualFreqLabel ?? "recurring"}
+                                    </button>
+                                  );
+                                }
+                                if (isAiSub && !isNeverRule) {
+                                  return (
+                                    <button
+                                      onClick={(e) => handleRecurringToggle(txn, e.currentTarget)}
+                                      title="Auto-detected as recurring — click to change frequency or dismiss"
+                                      className="inline-flex items-center gap-1 rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-600 transition hover:border-teal-300"
+                                    >
+                                      <RecurringIcon active={true} />
+                                      {aiFreq !== "monthly" ? aiFreq : "recurring"}
+                                    </button>
+                                  );
+                                }
+                                if (isNeverRule) {
+                                  return (
+                                    <button
+                                      onClick={(e) => handleRecurringToggle(txn, e.currentTarget)}
+                                      title="Marked as not recurring — click to undo"
+                                      className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-400 transition hover:border-gray-300 line-through"
+                                    >
+                                      not recurring
+                                    </button>
+                                  );
+                                }
+                                return (
                                   <button
                                     onClick={(e) => handleRecurringToggle(txn, e.currentTarget)}
-                                    title={isManualSub ? "Remove from recurring" : "Mark as recurring"}
-                                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition ${
-                                      isManualSub
-                                        ? "border-purple-200 bg-purple-50 text-purple-600"
-                                        : "border-gray-200 bg-gray-50 text-gray-400 hover:border-purple-200 hover:bg-purple-50 hover:text-purple-500"
-                                    }`}
+                                    title="Mark as recurring"
+                                    className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-400 transition hover:border-purple-200 hover:bg-purple-50 hover:text-purple-500"
                                   >
-                                    <RecurringIcon active={isRecurring} />
-                                    {isManualSub ? (freqLabel ?? "recurring") : "↻"}
+                                    <RecurringIcon active={false} />
+                                    ↻
                                   </button>
                                 );
                               })()}
@@ -1414,7 +1470,11 @@ function SpendingPageInner() {
             >
               <div className="border-b border-gray-100 px-3 py-2.5">
                 <p className="text-xs font-semibold text-gray-700 truncate">{pendingRecurring.txn.merchant}</p>
-                <p className="text-[11px] text-gray-400 mt-0.5">How often does this recur?</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  {aiSubSlugs.has(merchantSlug(pendingRecurring.txn.merchant))
+                    ? "Override AI detection — set frequency or dismiss"
+                    : "How often does this recur?"}
+                </p>
               </div>
               <div className="p-1.5 space-y-0.5">
                 {FREQS.map(({ value, label }) => (
@@ -1436,12 +1496,18 @@ function SpendingPageInner() {
                   </button>
                 ))}
               </div>
-              <div className="border-t border-gray-100 p-2">
+              <div className="border-t border-gray-100 p-2 space-y-1.5">
                 <button
                   onClick={confirmRecurring}
                   className="w-full rounded-lg bg-purple-600 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
                 >
                   Mark as recurring
+                </button>
+                <button
+                  onClick={dismissRecurring}
+                  className="w-full rounded-lg border border-gray-200 py-2 text-sm font-medium text-gray-500 hover:border-red-200 hover:text-red-500 transition"
+                >
+                  Not recurring
                 </button>
               </div>
             </div>

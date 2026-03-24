@@ -56,6 +56,7 @@ const SYSTEM_PROMPT = `You are a financial analysis expert. Analyze this bank st
    - amount: transaction amount (positive number)
    - date: transaction date in ISO format YYYY-MM-DD (extract from statement — do NOT omit)
    - category: one of the category names from step 4
+   - recurring: ONLY include this field when you are confident the charge recurs on a fixed schedule. Use exactly one of: "weekly", "biweekly", "monthly", "quarterly", "annual". Examples: "Annual Fee" → "annual", "Netflix" → "monthly", "Spotify" → "monthly", "car insurance" paid quarterly → "quarterly". Omit the field entirely for one-time or ambiguous charges.
    - CRITICAL: list every individual expense transaction — do NOT deduplicate or aggregate. Two visits to Tim Hortons = two entries.
    - For mortgage/loan/investment: return [].
 6. Detect subscriptions (recurring charges, same amount monthly).
@@ -132,11 +133,12 @@ For a checking/savings/credit account:
       { "name": "Other", "amount": 970.00, "percentage": 25 }
     ],
     "transactions": [
-      { "merchant": "Rogers", "amount": 120.00, "date": "2026-02-03", "category": "Housing" },
+      { "merchant": "Rogers", "amount": 120.00, "date": "2026-02-03", "category": "Housing", "recurring": "monthly" },
+      { "merchant": "Annual Fee", "amount": 139.00, "date": "2026-02-03", "category": "Subscriptions", "recurring": "annual" },
       { "merchant": "Tim Hortons", "amount": 8.50, "date": "2026-02-05", "category": "Dining" },
       { "merchant": "Tim Hortons", "amount": 6.75, "date": "2026-02-12", "category": "Dining" },
       { "merchant": "Amazon", "amount": 45.99, "date": "2026-02-14", "category": "Shopping" },
-      { "merchant": "Netflix", "amount": 18.99, "date": "2026-02-01", "category": "Entertainment" }
+      { "merchant": "Netflix", "amount": 18.99, "date": "2026-02-01", "category": "Entertainment", "recurring": "monthly" }
     ]
   },
   "subscriptions": [
