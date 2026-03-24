@@ -56,6 +56,7 @@ interface ExpenseTxn {
   merchant: string;
   amount: number;
   category: string;
+  accountLabel?: string;
   date?: string;
 }
 
@@ -359,6 +360,9 @@ export default function SpendingCategoryPage() {
                       </Link>
                       <div className="mt-1 flex items-center gap-2 flex-wrap">
                         {txn.date && <span className="text-xs text-gray-400">{fmtDate(txn.date)}</span>}
+                        {txn.accountLabel && (
+                          <span className="text-xs text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">{txn.accountLabel}</span>
+                        )}
 
                         {/* Category pill */}
                         <button

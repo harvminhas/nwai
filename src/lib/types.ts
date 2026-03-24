@@ -64,6 +64,8 @@ export interface ExpenseTransaction {
   amount: number;
   category: string;
   date?: string; // ISO date YYYY-MM-DD
+  /** Human-readable account label e.g. "TD ••••7780". Populated at API aggregation time. */
+  accountLabel?: string;
 }
 
 export interface Expenses {

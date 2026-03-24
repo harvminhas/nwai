@@ -256,10 +256,15 @@ export default function MerchantDetailPage() {
           {sortedTxns.map((txn, i) => (
             <div key={i} className="flex items-center justify-between px-5 py-3">
               <div className="min-w-0">
-                <p className="text-xs text-gray-500">
-                  {txn.date ? fmtDateShort(txn.date) : shortMonth(txn.ym)}
-                  <span className="ml-2 text-gray-400">{shortMonth(txn.ym)}</span>
-                </p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-xs text-gray-500">
+                    {txn.date ? fmtDateShort(txn.date) : shortMonth(txn.ym)}
+                    <span className="ml-2 text-gray-400">{shortMonth(txn.ym)}</span>
+                  </p>
+                  {txn.accountLabel && (
+                    <span className="text-xs text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">{txn.accountLabel}</span>
+                  )}
+                </div>
                 <span
                   className="mt-0.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs capitalize"
                   style={{ backgroundColor: categoryColor(txn.category) + "18", color: categoryColor(txn.category) }}

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getYearMonth } from "@/lib/consolidate";
 import { applyRulesAndRecalculate, merchantSlug } from "@/lib/applyRules";
+import { buildAccountSlug } from "@/lib/accountSlug";
 import type { ParsedStatementData, ExpenseTransaction } from "@/lib/types";
 
 export interface MerchantSummary {
@@ -17,6 +18,14 @@ export interface MerchantSummary {
   monthly: { ym: string; total: number; count: number }[];
   /** All transactions, newest first */
   transactions: (ExpenseTransaction & { ym: string })[];
+}
+
+function accountDisplayLabel(parsed: ParsedStatementData): string {
+  if (parsed.accountName) return parsed.accountName;
+  const slug = buildAccountSlug(parsed.bankName, parsed.accountId);
+  const bank = (parsed.bankName ?? "").trim();
+  if (slug === "unknown") return bank || "Unknown Account";
+  return [bank, `••••${slug}`].filter(Boolean).join(" ");
 }
 
 function docYearMonth(d: FirebaseFirestore.DocumentData): string {
@@ -85,7 +94,8 @@ export async function GET(request: NextRequest) {
 
       // Apply category rules
       const withRules = applyRulesAndRecalculate(parsed, rulesMap);
-      const txns: ExpenseTransaction[] = withRules.expenses?.transactions ?? [];
+      const label = accountDisplayLabel(parsed);
+      const txns: ExpenseTransaction[] = (withRules.expenses?.transactions ?? []).map((t) => ({ ...t, accountLabel: label }));
 
       for (const txn of txns) {
         const slug = merchantSlug(txn.merchant);

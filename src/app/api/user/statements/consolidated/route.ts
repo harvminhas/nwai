@@ -26,6 +26,30 @@ function accountSlug(parsed: ParsedStatementData): string {
   return buildAccountSlug(parsed.bankName, parsed.accountId);
 }
 
+/** Human-readable label for a statement's account, e.g. "TD ••••7780" */
+function accountDisplayLabel(parsed: ParsedStatementData): string {
+  if (parsed.accountName) return parsed.accountName;
+  const slug = accountSlug(parsed);
+  const bank = (parsed.bankName ?? "").trim();
+  if (slug === "unknown") return bank || "Unknown Account";
+  const parts = [bank, `••••${slug}`].filter(Boolean);
+  return parts.join(" ");
+}
+
+/** Tag every expense transaction in a statement with its account label. */
+function tagTransactions(stmt: ParsedStatementData): ParsedStatementData {
+  const label = accountDisplayLabel(stmt);
+  return {
+    ...stmt,
+    expenses: {
+      ...stmt.expenses,
+      total: stmt.expenses?.total ?? 0,
+      categories: stmt.expenses?.categories ?? [],
+      transactions: (stmt.expenses?.transactions ?? []).map((txn) => ({ ...txn, accountLabel: label })),
+    },
+  };
+}
+
 function matchesBank(parsed: ParsedStatementData, bankFilter: string | null): boolean {
   if (!bankFilter) return true;
   return (parsed.bankName ?? "").toLowerCase().replace(/\s+/g, "-") === bankFilter;
@@ -212,7 +236,7 @@ export async function GET(request: NextRequest) {
 
     // ── Current month: carry-forward balances for all accounts ──────────────
     const currentStatements = carryForwardStatements(allCompleted, month);
-    const consolidated = consolidateStatements(currentStatements, month);
+    const consolidated = consolidateStatements(currentStatements.map(tagTransactions), month);
 
     // Apply user category rules to transactions and recalculate aggregates
     const consolidatedWithRules = categoryRulesMap.size > 0
