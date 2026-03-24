@@ -18,6 +18,13 @@ function shortMonthLabel(yearMonth: string): string {
     .toLocaleDateString("en-US", { month: "short", year: "2-digit" });
 }
 
+function longMonthLabel(yearMonth: string): string {
+  const [y, m] = yearMonth.split("-");
+  if (!m) return yearMonth;
+  return new Date(parseInt(y, 10), parseInt(m, 10) - 1, 1)
+    .toLocaleDateString("en-US", { month: "long", year: "numeric" });
+}
+
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency", currency: "USD",
@@ -49,27 +56,51 @@ const RANGES = [
   { label: "All", months: 0 },
 ];
 
+// Standalone clickable dot component — defined outside render to avoid Recharts re-mount issues
+function ChartDot({
+  cx, cy, yearMonth, isVisible, isSelected, opacity,
+  onSelect,
+}: {
+  cx?: number; cy?: number; yearMonth: string;
+  isVisible: boolean; isSelected: boolean; opacity?: number;
+  onSelect: (ym: string) => void;
+}) {
+  if (!isVisible || cx == null || cy == null) return <g />;
+  return (
+    <circle
+      cx={cx} cy={cy}
+      r={isSelected ? 7 : 4}
+      fill={isSelected ? "rgb(124 58 237)" : "#fff"}
+      stroke="rgb(124 58 237)"
+      strokeWidth={isSelected ? 2 : 1.5}
+      fillOpacity={opacity ?? 1}
+      style={{ cursor: "pointer", outline: "none" }}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={(e) => { e.stopPropagation(); onSelect(yearMonth); }}
+    />
+  );
+}
+
 export default function NetWorthChart({
   history,
+  isDebt = false,
 }: {
   history: { yearMonth: string; netWorth: number; expensesTotal?: number; isEstimate?: boolean }[];
+  isDebt?: boolean;
 }) {
   const [range, setRange] = useState(3);
+  const [selectedYm, setSelectedYm] = useState<string | null>(null);
 
   const allPoints: Point[] = history.map(({ yearMonth, netWorth, isEstimate }) => ({
     yearMonth,
     label: shortMonthLabel(yearMonth),
     netWorth,
-    // Solid line: real points + one connector point adjacent to estimated runs
     netWorthSolid: isEstimate ? null : netWorth,
-    // Dotted line: estimated points + one connector on each side for visual continuity
     netWorthDotted: isEstimate ? netWorth : null,
     isEstimate: isEstimate ?? false,
   }));
 
-  // Add connector points: when transitioning real→estimate or estimate→real,
-  // include the adjacent real value on the dotted series (and vice versa) so
-  // the lines visually connect.
+  // Add connector points so solid and dotted lines visually connect at transitions
   const connected = allPoints.map((pt, i) => {
     const prev = allPoints[i - 1];
     const next = allPoints[i + 1];
@@ -77,10 +108,8 @@ export default function NetWorthChart({
     let dotted = pt.netWorthDotted;
 
     if (!pt.isEstimate) {
-      // Real point: also draw on dotted line if adjacent to an estimated point
       if (prev?.isEstimate || next?.isEstimate) dotted = pt.netWorth;
     } else {
-      // Estimated point: also draw on solid line if adjacent to a real point
       if (prev && !prev.isEstimate) solid = pt.netWorth;
       if (next && !next.isEstimate) solid = pt.netWorth;
     }
@@ -91,12 +120,23 @@ export default function NetWorthChart({
   const data = range === 0 ? connected : connected.slice(-range);
   const hasEstimates = data.some((p) => p.isEstimate);
 
+  // Month detail for the selected point
+  const selIdx   = selectedYm ? data.findIndex((p) => p.yearMonth === selectedYm) : -1;
+  const selPt    = selIdx >= 0 ? data[selIdx] : null;
+  const prevPt   = selIdx > 0  ? data[selIdx - 1] : null;
+  const selDelta = selPt && prevPt ? selPt.netWorth - prevPt.netWorth : null;
+  const deltaGood = selDelta !== null ? (isDebt ? selDelta < 0 : selDelta > 0) : null;
+
+  function handleSelect(ym: string) {
+    setSelectedYm((prev) => prev === ym ? null : ym);
+  }
+
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-            Net Worth Over Time
+            Balance Over Time
           </p>
           {hasEstimates && (
             <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">
@@ -140,8 +180,8 @@ export default function NetWorthChart({
             />
             <Tooltip
               formatter={(value, name) => {
-                if (typeof value !== "number") return [String(value), "Net worth"];
-                const label = name === "netWorthDotted" ? "Net worth (estimated)" : "Net worth";
+                if (typeof value !== "number") return [String(value), "Balance"];
+                const label = name === "netWorthDotted" ? "Balance (estimated)" : "Balance";
                 return [formatCurrency(value), label];
               }}
               contentStyle={{
@@ -159,17 +199,19 @@ export default function NetWorthChart({
               stroke="rgb(124 58 237)"
               strokeWidth={2}
               dot={(props) => {
-                const { cx, cy, payload } = props as { cx: number; cy: number; payload: Point };
-                if (payload.netWorthSolid == null) return <g key={`dot-solid-${payload.yearMonth}`} />;
+                const p = props as { cx?: number; cy?: number; payload: Point };
                 return (
-                  <circle
-                    key={`dot-solid-${payload.yearMonth}`}
-                    cx={cx} cy={cy} r={3}
-                    fill="rgb(124 58 237)" stroke="none"
+                  <ChartDot
+                    key={`solid-${p.payload.yearMonth}`}
+                    cx={p.cx} cy={p.cy}
+                    yearMonth={p.payload.yearMonth}
+                    isVisible={p.payload.netWorthSolid != null}
+                    isSelected={p.payload.yearMonth === selectedYm}
+                    onSelect={handleSelect}
                   />
                 );
               }}
-              activeDot={{ r: 5, fill: "rgb(124 58 237)", stroke: "#fff", strokeWidth: 2 }}
+              activeDot={false}
               connectNulls={false}
               name="netWorthSolid"
               legendType="none"
@@ -183,17 +225,20 @@ export default function NetWorthChart({
               strokeDasharray="5 4"
               strokeOpacity={0.45}
               dot={(props) => {
-                const { cx, cy, payload } = props as { cx: number; cy: number; payload: Point };
-                if (payload.netWorthDotted == null) return <g key={`dot-dotted-${payload.yearMonth}`} />;
+                const p = props as { cx?: number; cy?: number; payload: Point };
                 return (
-                  <circle
-                    key={`dot-dotted-${payload.yearMonth}`}
-                    cx={cx} cy={cy} r={3}
-                    fill="rgb(124 58 237)" stroke="#fff" strokeWidth={1.5}
-                    fillOpacity={0.45}
+                  <ChartDot
+                    key={`dotted-${p.payload.yearMonth}`}
+                    cx={p.cx} cy={p.cy}
+                    yearMonth={p.payload.yearMonth}
+                    isVisible={p.payload.netWorthDotted != null}
+                    isSelected={p.payload.yearMonth === selectedYm}
+                    opacity={0.45}
+                    onSelect={handleSelect}
                   />
                 );
               }}
+              activeDot={false}
               connectNulls={false}
               name="netWorthDotted"
               legendType="none"
@@ -202,11 +247,53 @@ export default function NetWorthChart({
         </ResponsiveContainer>
       </div>
 
+      <p className="mt-2 mb-1 text-xs text-gray-400">Click a point to see details</p>
+
       {hasEstimates && (
-        <p className="mt-2 text-xs text-gray-400">
+        <p className="mt-1 text-xs text-gray-400">
           <span className="inline-block w-5 border-t-2 border-dashed border-purple-400 opacity-50 align-middle mr-1" />
           Dashed = estimated from last uploaded balance · Upload a statement to make it solid
         </p>
+      )}
+
+      {/* Month detail panel */}
+      {selPt && (
+        <div className="mt-4 rounded-lg border border-purple-100 bg-purple-50/40 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-gray-800">{longMonthLabel(selPt.yearMonth)}</p>
+              <p className="mt-0.5 text-xs text-gray-400">
+                Balance:{" "}
+                <span className="font-semibold text-gray-700">{formatCurrency(selPt.netWorth)}</span>
+                {selPt.isEstimate && (
+                  <span className="ml-2 rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
+                    ~ estimated
+                  </span>
+                )}
+              </p>
+              {selDelta !== null && prevPt ? (
+                <p className={`mt-1 text-xs font-semibold ${deltaGood ? "text-green-600" : "text-red-500"}`}>
+                  {selDelta > 0 ? "↑ " : "↓ "}{formatCurrency(Math.abs(selDelta))} vs {shortMonthLabel(prevPt.yearMonth)}
+                  {isDebt && selDelta < 0 && <span className="ml-1 font-normal text-green-500">(paid down)</span>}
+                  {isDebt && selDelta > 0 && <span className="ml-1 font-normal text-red-400">(increased)</span>}
+                  {!isDebt && selDelta > 0 && <span className="ml-1 font-normal text-green-500">(growth)</span>}
+                  {!isDebt && selDelta < 0 && <span className="ml-1 font-normal text-red-400">(decline)</span>}
+                </p>
+              ) : (
+                <p className="mt-1 text-xs text-gray-400">First tracked month</p>
+              )}
+            </div>
+            <button
+              onClick={() => setSelectedYm(null)}
+              className="shrink-0 rounded-full p-1 text-gray-400 hover:bg-purple-100 hover:text-gray-600"
+              aria-label="Close"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M4 4l8 8M12 4l-8 8" />
+              </svg>
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

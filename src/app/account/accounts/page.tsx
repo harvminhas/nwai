@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import type { UserStatementSummary } from "@/lib/types";
+import { buildAccountSlug } from "@/lib/accountSlug";
 
 type AccountType = "checking" | "savings" | "credit" | "mortgage" | "investment" | "loan" | "other";
 
@@ -30,9 +31,7 @@ const TYPE_COLOR: Record<AccountType, string> = {
 };
 
 function accountSlug(s: UserStatementSummary): string {
-  const bank = (s.bankName ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  const acct = (s.accountId ?? "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return acct !== "unknown" ? `${bank}-${acct}` : bank;
+  return buildAccountSlug(s.bankName, s.accountId);
 }
 
 function formatCurrency(value: number): string {

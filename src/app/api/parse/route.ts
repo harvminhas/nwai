@@ -10,14 +10,13 @@ import {
   parseStatementCsv,
 } from "@/lib/parseStatement";
 import { merchantSlug, applyRulesAndRecalculate } from "@/lib/applyRules";
+import { buildAccountSlug } from "@/lib/accountSlug";
 import { getYearMonth } from "@/lib/consolidate";
 
 export const maxDuration = 120;
 
 function computeAccountSlug(parsed: { bankName?: string; accountId?: string }): string {
-  const bank = (parsed.bankName ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  const acct = (parsed.accountId ?? "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return acct !== "unknown" ? `${bank}-${acct}` : bank;
+  return buildAccountSlug(parsed.bankName, parsed.accountId);
 }
 
 const ERROR_MESSAGE =

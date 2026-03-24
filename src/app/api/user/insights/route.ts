@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { consolidateStatements, getYearMonth } from "@/lib/consolidate";
 import type { ParsedStatementData } from "@/lib/types";
+import { buildAccountSlug } from "@/lib/accountSlug";
 
 async function getUid(req: NextRequest): Promise<string | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
@@ -117,9 +118,7 @@ export async function GET(req: NextRequest) {
             ? (raw as Date).toISOString() : String(raw)).slice(0, 7);
         }
         if (!ym || ym > currentYm) continue;
-        const bank = (p.bankName ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-        const acct = (p.accountId ?? "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-        const slug = acct !== "unknown" ? `${bank}-${acct}` : bank;
+        const slug = buildAccountSlug(p.bankName, p.accountId);
         if (!latestPerAccount.has(slug)) latestPerAccount.set(slug, p);
       }
       consolidated = consolidateStatements(Array.from(latestPerAccount.values()), currentYm);

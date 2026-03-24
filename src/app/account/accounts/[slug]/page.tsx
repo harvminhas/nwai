@@ -13,6 +13,7 @@ import SavingsRateCard from "@/components/SavingsRateCard";
 import SubscriptionsCard from "@/components/SubscriptionsCard";
 import InsightsSection from "@/components/InsightsSection";
 import type { ParsedStatementData, ManualAsset } from "@/lib/types";
+import { buildAccountSlug } from "@/lib/accountSlug";
 import type { PaymentFrequency } from "@/app/api/user/account-rates/route";
 
 // ── constants ─────────────────────────────────────────────────────────────────
@@ -60,9 +61,7 @@ function fmtDate(iso: string): string {
 }
 /** Derive the accountKey (used by account-rates API) from parsedData fields. */
 function toAccountKey(bankName: string, accountId?: string): string {
-  const bank = bankName.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-  const acct = (accountId ?? "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-  return acct !== "unknown" ? `${bank}__${acct}` : bank;
+  return buildAccountSlug(bankName, accountId);
 }
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -233,12 +232,24 @@ export default function AccountDetailPage() {
         const acctHistory: StatementHistoryEntry[] = json.accountStatementHistory?.[slug] ?? [];
         setStmtHistory(acctHistory);
 
-        const chartHistory = (Array.isArray(json.history) ? json.history : []).map(
-          (h: { yearMonth: string; netWorth: number; expensesTotal?: number }) => ({
-            ...h,
-            isEstimate: acctHistory.find((e) => e.yearMonth === h.yearMonth)?.isCarryForward ?? false,
-          })
-        );
+        // Build chart from acctHistory (statements + manual snapshots + carry-forwards).
+        // One entry per month: prefer real statement > manual snapshot > carry-forward.
+        const monthMap = new Map<string, { yearMonth: string; netWorth: number; isEstimate: boolean; priority: number }>();
+        for (const e of acctHistory) {
+          const priority = e.isCarryForward ? 0 : e.isManualSnapshot ? 1 : 2;
+          const existing = monthMap.get(e.yearMonth);
+          if (!existing || priority > existing.priority) {
+            monthMap.set(e.yearMonth, {
+              yearMonth: e.yearMonth,
+              netWorth: e.netWorth,
+              isEstimate: e.isCarryForward,
+              priority,
+            });
+          }
+        }
+        const chartHistory = Array.from(monthMap.values())
+          .sort((a, b) => a.yearMonth.localeCompare(b.yearMonth))
+          .map(({ yearMonth, netWorth, isEstimate }) => ({ yearMonth, netWorth, isEstimate }));
         setHistory(chartHistory);
 
         const saved = localStorage.getItem(`baseline-${slug}`);
@@ -444,7 +455,12 @@ export default function AccountDetailPage() {
 
       {/* Breadcrumb */}
       <div className="mb-4 flex items-center gap-2 text-sm text-gray-500">
-        <Link href="/account/accounts" className="hover:text-purple-600">Accounts</Link>
+        <Link
+          href={isDebtAccount ? "/account/liabilities?tab=accounts" : "/account/assets?tab=accounts"}
+          className="hover:text-purple-600"
+        >
+          Accounts
+        </Link>
         <span>/</span>
         <span className="font-medium text-gray-700">{data.accountName ?? data.bankName ?? slug}</span>
       </div>
@@ -675,7 +691,7 @@ export default function AccountDetailPage() {
       {/* Balance trend chart */}
       {filteredHistory.length >= 2 && (
         <div className="mt-2 mb-6">
-          <NetWorthChart history={filteredHistory} />
+          <NetWorthChart history={filteredHistory} isDebt={isDebtAccount} />
         </div>
       )}
 

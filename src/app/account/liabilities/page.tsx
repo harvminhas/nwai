@@ -7,6 +7,7 @@ import { Suspense } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import type { UserStatementSummary, ManualLiability, LiabilityCategory } from "@/lib/types";
+import { buildAccountSlug } from "@/lib/accountSlug";
 import type { AccountRateEntry } from "@/app/api/user/account-rates/route";
 import { usePlan } from "@/contexts/PlanContext";
 import UpgradePrompt from "@/components/UpgradePrompt";
@@ -61,9 +62,7 @@ function fmtShort(v: number) {
   return fmt(v);
 }
 function accountSlug(s: UserStatementSummary) {
-  const bank = (s.bankName ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  const acct = (s.accountId ?? "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return acct !== "unknown" ? `${bank}-${acct}` : bank;
+  return buildAccountSlug(s.bankName, s.accountId);
 }
 function normalizeName(s: string) { return s.toLowerCase().replace(/[^a-z0-9]/g, ""); }
 function addMonths(n: number): string {
@@ -250,13 +249,73 @@ const CATEGORY_CHART_COLOR: Record<LiabilityCategory, string> = {
   other:          "#94a3b8",
 };
 
+// ── per-account monthly history ───────────────────────────────────────────────
+
+export interface AccountMonthlyData {
+  slug: string;
+  label: string;
+  accountId?: string; // masked account number e.g. "****1234"
+  category: LiabilityCategory;
+  color: string;
+  // sorted oldest → newest
+  months: { ym: string; balance: number }[];
+  currentBalance: number;
+  prevBalance: number | null;
+  delta: number | null; // positive = debt increased (bad), negative = paid down (good)
+}
+
+// Inline SVG sparkline (no recharts overhead for small charts)
+function Sparkline({ values, color, good }: { values: number[]; color: string; good: "up" | "down" }) {
+  if (values.length < 2) return null;
+  const W = 64, H = 24, PAD = 2;
+  const min = Math.min(...values), max = Math.max(...values);
+  const range = max - min || 1;
+  const xs = values.map((_, i) => PAD + (i / (values.length - 1)) * (W - PAD * 2));
+  const ys = values.map((v) => H - PAD - ((v - min) / range) * (H - PAD * 2));
+  const pts = xs.map((x, i) => `${x},${ys[i]}`).join(" ");
+  // trend: for debts going down = good; for assets going up = good
+  const first = values[0], last = values[values.length - 1];
+  const trending = good === "down" ? last < first : last > first;
+  const strokeColor = trending ? "#16a34a" : "#dc2626";
+  return (
+    <svg width={W} height={H} className="overflow-visible">
+      <polyline points={pts} fill="none" stroke={strokeColor} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={xs[xs.length - 1]} cy={ys[ys.length - 1]} r={2.5} fill={strokeColor} />
+    </svg>
+  );
+}
+
 // ── tab: overview ─────────────────────────────────────────────────────────────
 
 interface DebtHistoryPoint { ym: string; label: string; total: number }
 
-function OverviewTab({ libs, debtHistory }: { libs: DisplayLiability[]; debtHistory: DebtHistoryPoint[] }) {
+function OverviewTab({ libs, debtHistory, accountMonthly }: {
+  libs: DisplayLiability[];
+  debtHistory: DebtHistoryPoint[];
+  accountMonthly: AccountMonthlyData[];
+}) {
   const total = libs.reduce((s, l) => s + l.balance, 0);
+  const [selectedYm, setSelectedYm] = useState<string | null>(null);
   if (libs.length === 0) return <EmptyState />;
+
+  const selectedPt = selectedYm ? debtHistory.find((p) => p.ym === selectedYm) ?? null : null;
+  const selectedIdx = selectedYm ? debtHistory.findIndex((p) => p.ym === selectedYm) : -1;
+  const prevPtYm = selectedIdx > 0 ? debtHistory[selectedIdx - 1].ym : null;
+  // Find the latest known balance at-or-before a given ym for an account
+  const latestBalanceAtOrBefore = (a: AccountMonthlyData, ym: string) => {
+    const pts = a.months.filter((m) => m.ym <= ym);
+    if (pts.length === 0) return null;
+    return pts[pts.length - 1].balance;
+  };
+  const selectedRows = accountMonthly
+    .map((a) => {
+      const bal = selectedYm ? latestBalanceAtOrBefore(a, selectedYm) : null;
+      const prevBal = prevPtYm ? latestBalanceAtOrBefore(a, prevPtYm) : null;
+      const delta = bal !== null && prevBal !== null ? bal - prevBal : null;
+      return { ...a, balanceThisMonth: bal, balancePrevMonth: prevBal, delta };
+    })
+    .filter((r) => r.balanceThisMonth !== null)
+    .sort((a, b) => (b.balanceThisMonth ?? 0) - (a.balanceThisMonth ?? 0));
 
   // By-type summary
   const byCategory = new Map<LiabilityCategory, number>();
@@ -303,6 +362,40 @@ function OverviewTab({ libs, debtHistory }: { libs: DisplayLiability[]; debtHist
         </div>
       )}
 
+      {/* What changed this month */}
+      {accountMonthly.some((a) => a.delta !== null) && (() => {
+        const changed = accountMonthly
+          .filter((a) => a.delta !== null && Math.abs(a.delta!) > 0)
+          .sort((a, b) => Math.abs(b.delta!) - Math.abs(a.delta!));
+        const netChange = changed.reduce((s, a) => s + a.delta!, 0);
+        if (changed.length === 0) return null;
+        return (
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">What changed this month</p>
+              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${netChange <= 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
+                {netChange <= 0 ? "↓ " : "↑ "}{fmtShort(Math.abs(netChange))} net
+              </span>
+            </div>
+            <div className="space-y-2">
+              {changed.map((a) => {
+                const paidDown = (a.delta ?? 0) < 0; // negative delta = paid down = good
+                return (
+                  <div key={a.slug} className="flex items-center gap-3">
+                    <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: a.color }} />
+                    <span className="flex-1 truncate text-sm text-gray-700">{a.label}</span>
+                    <span className={`text-sm font-semibold tabular-nums ${paidDown ? "text-green-600" : "text-red-500"}`}>
+                      {paidDown ? "↓ " : "↑ "}{fmtShort(Math.abs(a.delta!))}
+                    </span>
+                    <span className="w-20 text-right text-xs text-gray-400 tabular-nums">{fmt(a.currentBalance)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Debt Growth chart */}
       {debtHistory.length >= 2 && (
         <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -324,6 +417,7 @@ function OverviewTab({ libs, debtHistory }: { libs: DisplayLiability[]; debtHist
               </div>
             )}
           </div>
+          <p className="mb-2 text-xs text-gray-400">Click a point to see per-account breakdown</p>
           <div className="h-44">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={debtHistory} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
@@ -341,10 +435,137 @@ function OverviewTab({ libs, debtHistory }: { libs: DisplayLiability[]; debtHist
                   labelStyle={{ fontSize: 12, color: "#6b7280" }}
                   contentStyle={{ borderRadius: "8px", border: "1px solid #e5e7eb", fontSize: 12 }}
                 />
-                <Area type="monotone" dataKey="total" stroke="#ef4444" strokeWidth={2}
-                  fill="url(#debtGrad)" dot={false} activeDot={{ r: 4, fill: "#ef4444" }} />
+                <Area
+                  type="monotone"
+                  dataKey="total"
+                  stroke="#ef4444"
+                  strokeWidth={2}
+                  fill="url(#debtGrad)"
+                  dot={(props) => {
+                    const { cx, cy, payload } = props as { cx: number; cy: number; payload: DebtHistoryPoint };
+                    const selected = payload.ym === selectedYm;
+                    return (
+                      <circle
+                        key={payload.ym}
+                        cx={cx} cy={cy}
+                        r={selected ? 7 : 5}
+                        fill={selected ? "#ef4444" : "#fff"}
+                        stroke="#ef4444"
+                        strokeWidth={selected ? 2 : 1.5}
+                        style={{ cursor: "pointer", outline: "none" }}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedYm((prev) => prev === payload.ym ? null : payload.ym);
+                        }}
+                      />
+                    );
+                  }}
+                  activeDot={false}
+                />
               </AreaChart>
             </ResponsiveContainer>
+          </div>
+
+          {/* Month breakdown panel */}
+          {selectedPt && (
+            <div className="mt-4 rounded-lg border border-red-100 bg-red-50/40 p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">{selectedPt.label}</p>
+                  <p className="text-xs text-gray-400">
+                    Total debt: <span className="font-medium text-gray-700">{fmt(selectedPt.total)}</span>
+                    {prevPtYm && (() => {
+                      const prevTotal = debtHistory.find((p) => p.ym === prevPtYm)?.total ?? null;
+                      if (prevTotal === null) return null;
+                      const diff = selectedPt.total - prevTotal;
+                      return (
+                        <span className={`ml-2 font-semibold ${diff <= 0 ? "text-green-600" : "text-red-500"}`}>
+                          {diff <= 0 ? "↓ " : "↑ "}{fmtShort(Math.abs(diff))} vs prev month
+                        </span>
+                      );
+                    })()}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setSelectedYm(null)}
+                  className="rounded-full p-1 text-gray-400 hover:bg-red-100 hover:text-gray-600"
+                  aria-label="Close"
+                >
+                  <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M4 4l8 8M12 4l-8 8" />
+                  </svg>
+                </button>
+              </div>
+              <div className="space-y-2">
+                {selectedRows.map((r) => {
+                  const paidDown = r.delta !== null && r.delta < 0;
+                  const increased = r.delta !== null && r.delta > 0;
+                  return (
+                    <div key={r.slug} className="flex items-center gap-3 rounded-lg bg-white px-3 py-2 shadow-sm">
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: r.color }} />
+                      <div className="flex-1 min-w-0">
+                        <p className="truncate text-sm font-medium text-gray-800">{r.label}</p>
+                        {r.accountId && (
+                          <p className="text-xs font-mono text-gray-400">{r.accountId}</p>
+                        )}
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-sm font-semibold tabular-nums text-gray-800">{fmt(r.balanceThisMonth!)}</p>
+                        {r.delta !== null ? (
+                          <p className={`text-xs font-medium tabular-nums ${paidDown ? "text-green-600" : increased ? "text-red-500" : "text-gray-400"}`}>
+                            {paidDown ? "↓ " : increased ? "↑ " : ""}{r.delta === 0 ? "no change" : fmtShort(Math.abs(r.delta))}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-gray-300">new</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* By account with sparklines */}
+      {accountMonthly.length > 0 && (
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <div className="px-5 py-3 border-b border-gray-100">
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">By account</p>
+          </div>
+          <div className="divide-y divide-gray-50">
+                    {accountMonthly.sort((a, b) => b.currentBalance - a.currentBalance).map((a) => {
+                      const paidDown = (a.delta ?? 0) < 0;
+                      const sparkVals = a.months.map((m) => m.balance);
+                      return (
+                        <div key={a.slug} className="flex items-center gap-3 px-5 py-3">
+                          <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: a.color }} />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-800 truncate">{a.label}</p>
+                            <p className="text-xs text-gray-400">
+                              {CATEGORY_META[a.category].label}
+                              {a.accountId && <span className="ml-1.5 font-mono text-gray-300">{a.accountId}</span>}
+                            </p>
+                          </div>
+                  <div className="shrink-0">
+                    <Sparkline values={sparkVals} color={a.color} good="down" />
+                  </div>
+                  <div className="shrink-0 text-right w-28">
+                    <p className="text-sm font-semibold text-gray-800 tabular-nums">{fmt(a.currentBalance)}</p>
+                    {a.delta !== null && Math.abs(a.delta) > 0 && (
+                      <p className={`text-xs font-medium tabular-nums ${paidDown ? "text-green-600" : "text-red-500"}`}>
+                        {paidDown ? "↓ " : "↑ "}{fmtShort(Math.abs(a.delta))} MoM
+                      </p>
+                    )}
+                    {(a.delta === null || Math.abs(a.delta) === 0) && (
+                      <p className="text-xs text-gray-400">unchanged</p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -684,6 +905,7 @@ function LiabilitiesPageInner() {
   const [accountRates, setAccountRates] = useState<AccountRateEntry[]>([]);
   const [yearMonth, setYearMonth]       = useState<string | null>(null);
   const [debtHistory, setDebtHistory]   = useState<DebtHistoryPoint[]>([]);
+  const [accountMonthly, setAccountMonthly] = useState<AccountMonthlyData[]>([]);
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState<string | null>(null);
 
@@ -726,6 +948,45 @@ function LiabilitiesPageInner() {
           return { ym: h.yearMonth, label, total: h.debtTotal };
         });
       setDebtHistory(hist);
+
+      // Per-account monthly balance history (from all completed statements)
+      const allStmts: UserStatementSummary[] = (sJson.statements ?? []).filter(
+        (s: UserStatementSummary) => s.status === "completed" && !s.superseded
+      );
+      const DEBT_TYPES_SET = new Set(["credit", "mortgage", "loan"]);
+      const debtStmts = allStmts.filter(
+        (s) => DEBT_TYPES_SET.has(s.accountType ?? "") || (s.netWorth ?? 0) < 0
+      );
+      // Group by slug → sorted months
+      const acctMap = new Map<string, { label: string; accountId?: string; category: LiabilityCategory; color: string; months: { ym: string; balance: number }[] }>();
+      for (const s of debtStmts) {
+        const slug = accountSlug(s);
+        const ym = (s.statementDate ?? s.uploadedAt).slice(0, 7);
+        const bal = Math.abs(s.netWorth ?? 0);
+        const cat: LiabilityCategory = ACCT_TYPE_TO_CAT[s.accountType ?? ""] ?? "other";
+        if (!acctMap.has(slug)) {
+          acctMap.set(slug, {
+            label: s.accountName ?? s.bankName ?? "Account",
+            accountId: s.accountId,
+            category: cat,
+            color: CATEGORY_CHART_COLOR[cat],
+            months: [],
+          });
+        }
+        const entry = acctMap.get(slug)!;
+        if (!entry.months.find((m) => m.ym === ym)) entry.months.push({ ym, balance: bal });
+      }
+      const acctMonthly: AccountMonthlyData[] = Array.from(acctMap.entries()).map(([slug, e]) => {
+        const sorted = [...e.months].sort((a, b) => a.ym.localeCompare(b.ym));
+        const cur = sorted.at(-1)?.balance ?? 0;
+        const prev = sorted.length >= 2 ? sorted[sorted.length - 2].balance : null;
+        return {
+          slug, label: e.label, accountId: e.accountId, category: e.category, color: e.color,
+          months: sorted, currentBalance: cur, prevBalance: prev,
+          delta: prev !== null ? cur - prev : null,
+        };
+      });
+      setAccountMonthly(acctMonthly);
 
       const manual: ManualLiability[] = mJson.liabilities ?? [];
       setManualLibs(manual);
@@ -858,7 +1119,7 @@ function LiabilitiesPageInner() {
       </div>
 
       {/* Tab content */}
-      {activeTab === "overview" && <OverviewTab libs={displayLibs} debtHistory={debtHistory} />}
+      {activeTab === "overview" && <OverviewTab libs={displayLibs} debtHistory={debtHistory} accountMonthly={accountMonthly} />}
       {activeTab === "accounts" && (
         <AccountsTab
           libs={displayLibs} manualLibs={manualLibs} deletingId={deletingId}

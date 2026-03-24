@@ -3,6 +3,7 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { consolidateStatements, getYearMonth } from "@/lib/consolidate";
 import type { ParsedStatementData } from "@/lib/types";
+import { buildAccountSlug } from "@/lib/accountSlug";
 
 // ── types ──────────────────────────────────────────────────────────────────────
 
@@ -21,9 +22,7 @@ function fmt(v: number) {
 }
 
 function accountSlug(parsed: ParsedStatementData): string {
-  const bank = (parsed.bankName ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  const acct = (parsed.accountId ?? "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return acct !== "unknown" ? `${bank}-${acct}` : bank;
+  return buildAccountSlug(parsed.bankName, parsed.accountId);
 }
 
 function docYearMonth(d: FirebaseFirestore.DocumentData): string {

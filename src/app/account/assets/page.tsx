@@ -11,6 +11,7 @@ import {
 } from "recharts";
 import Link from "next/link";
 import type { ManualAsset, AssetCategory, UserStatementSummary, Insight } from "@/lib/types";
+import { buildAccountSlug } from "@/lib/accountSlug";
 import type { BalanceSnapshot } from "@/app/api/user/balance-snapshots/route";
 
 // ── constants ─────────────────────────────────────────────────────────────────
@@ -70,9 +71,7 @@ function timeAgo(iso: string) {
   return `${Math.floor(days / 365)}y ago`;
 }
 function accountSlug(s: UserStatementSummary) {
-  const bank = (s.bankName ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  const acct = (s.accountId ?? "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return acct !== "unknown" ? `${bank}-${acct}` : bank;
+  return buildAccountSlug(s.bankName, s.accountId);
 }
 
 // Freshness: days since a YYYY-MM string (treated as 1st of that month)
@@ -94,6 +93,39 @@ function freshnessGlyph(days: number | null): string {
   if (days === null || days < 35) return "";
   if (days < 65) return "⚠ ";
   return "⚠ ";
+}
+
+// ── per-account monthly history ───────────────────────────────────────────────
+
+interface AssetAccountMonthly {
+  slug: string;
+  label: string;
+  accountType: string;
+  color: string;
+  months: { ym: string; balance: number }[];
+  currentBalance: number;
+  prevBalance: number | null;
+  delta: number | null; // positive = grew (good), negative = shrunk
+}
+
+function Sparkline({ values, good }: { values: number[]; good: "up" | "down" }) {
+  if (values.length < 2) return null;
+  const W = 64, H = 24, PAD = 2;
+  const min = Math.min(...values), max = Math.max(...values);
+  const range = max - min || 1;
+  const xs = values.map((_, i) => PAD + (i / (values.length - 1)) * (W - PAD * 2));
+  const ys = values.map((v) => H - PAD - ((v - min) / range) * (H - PAD * 2));
+  const pts = xs.map((x, i) => `${x},${ys[i]}`).join(" ");
+  const first = values[0], last = values[values.length - 1];
+  const trending = good === "up" ? last >= first : last <= first;
+  const strokeColor = trending ? "#16a34a" : "#dc2626";
+  return (
+    <svg width={W} height={H} className="overflow-visible">
+      <polyline points={pts} fill="none" stroke={strokeColor} strokeWidth={1.5}
+        strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={xs[xs.length - 1]} cy={ys[ys.length - 1]} r={2.5} fill={strokeColor} />
+    </svg>
+  );
 }
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -171,6 +203,8 @@ export function AssetsPage() {
   const [insights, setInsights]               = useState<Insight[]>([]);
   const [yearMonth, setYearMonth]             = useState<string | null>(null);
   const [assetHistory, setAssetHistory]       = useState<{ ym: string; label: string; total: number; debt: number }[]>([]);
+  const [accountMonthly, setAccountMonthly]   = useState<AssetAccountMonthly[]>([]);
+  const [selectedAssetYm, setSelectedAssetYm] = useState<string | null>(null);
   const [loading, setLoading]                 = useState(true);
   const [error, setError]                     = useState<string | null>(null);
   const [token, setToken]                     = useState<string | null>(null);
@@ -265,6 +299,42 @@ export function AssetsPage() {
         }
       }
       setAccountBalances(balances);
+
+      // Per-account monthly balance history (asset accounts only)
+      const ASSET_TYPES = new Set(["checking", "savings", "investment", "other"]);
+      const assetStmts = (sJson.statements ?? [] as UserStatementSummary[]).filter(
+        (s: UserStatementSummary) => s.status === "completed" && !s.superseded && ASSET_TYPES.has(s.accountType ?? "")
+      );
+      const GROUP_COLORS: Record<string, string> = {
+        checking: "#f59e0b", savings: "#f59e0b", investment: "#3b82f6", other: "#94a3b8",
+      };
+      const acctMonthMap = new Map<string, { label: string; accountType: string; months: { ym: string; balance: number }[] }>();
+      for (const s of assetStmts) {
+        const slug = accountSlug(s);
+        const ym   = (s.statementDate ?? s.uploadedAt).slice(0, 7);
+        const bal  = s.netWorth ?? 0;
+        if (!acctMonthMap.has(slug)) {
+          acctMonthMap.set(slug, {
+            label: s.accountName ?? s.bankName ?? "Account",
+            accountType: s.accountType ?? "other",
+            months: [],
+          });
+        }
+        const entry = acctMonthMap.get(slug)!;
+        if (!entry.months.find((m) => m.ym === ym)) entry.months.push({ ym, balance: bal });
+      }
+      const acctMonthly: AssetAccountMonthly[] = Array.from(acctMonthMap.entries()).map(([slug, e]) => {
+        const sorted = [...e.months].sort((a, b) => a.ym.localeCompare(b.ym));
+        const cur  = sorted.at(-1)?.balance ?? 0;
+        const prev = sorted.length >= 2 ? sorted[sorted.length - 2].balance : null;
+        return {
+          slug, label: e.label, accountType: e.accountType,
+          color: GROUP_COLORS[e.accountType] ?? "#94a3b8",
+          months: sorted, currentBalance: cur, prevBalance: prev,
+          delta: prev !== null ? cur - prev : null,
+        };
+      });
+      setAccountMonthly(acctMonthly);
 
       const seen = new Set<string>();
       const groups: AccountGroup[] = [];
@@ -391,6 +461,24 @@ export function AssetsPage() {
   const growthPct    = firstHist && latestHist && firstHist.total > 0
     ? ((latestHist.total - firstHist.total) / firstHist.total) * 100 : null;
 
+  // Selected month breakdown (for chart click)
+  const selAssetIdx  = selectedAssetYm ? assetHistory.findIndex((p) => p.ym === selectedAssetYm) : -1;
+  const selAssetPt   = selAssetIdx >= 0 ? assetHistory[selAssetIdx] : null;
+  const prevAssetPtYm = selAssetIdx > 0 ? assetHistory[selAssetIdx - 1].ym : null;
+  const latestBalanceAtOrBefore = (a: AssetAccountMonthly, ym: string) => {
+    const pts = a.months.filter((m) => m.ym <= ym);
+    return pts.length > 0 ? pts[pts.length - 1].balance : null;
+  };
+  const selAssetRows = accountMonthly
+    .map((a) => {
+      const bal     = selectedAssetYm ? latestBalanceAtOrBefore(a, selectedAssetYm) : null;
+      const prevBal = prevAssetPtYm   ? latestBalanceAtOrBefore(a, prevAssetPtYm)   : null;
+      const delta   = bal !== null && prevBal !== null ? bal - prevBal : null;
+      return { ...a, balanceThisMonth: bal, delta };
+    })
+    .filter((r) => r.balanceThisMonth !== null)
+    .sort((a, b) => (b.balanceThisMonth ?? 0) - (a.balanceThisMonth ?? 0));
+
   const liquidTags   = liquidAccounts.map((a) => a.accountName.toLowerCase()).slice(0, 4);
   const illiquidTags = assets
     .filter((a) => !LIQUID_ASSET_CATEGORIES.has(a.category))
@@ -501,6 +589,40 @@ export function AssetsPage() {
                 </div>
               )}
 
+              {/* What changed this month */}
+              {accountMonthly.some((a) => a.delta !== null) && (() => {
+                const changed = accountMonthly
+                  .filter((a) => a.delta !== null && Math.abs(a.delta!) > 0)
+                  .sort((a, b) => Math.abs(b.delta!) - Math.abs(a.delta!));
+                const netChange = changed.reduce((s, a) => s + a.delta!, 0);
+                if (changed.length === 0) return null;
+                return (
+                  <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">What changed this month</p>
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${netChange >= 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
+                        {netChange >= 0 ? "▲ " : "▼ "}{fmtShort(Math.abs(netChange))} net
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      {changed.map((a) => {
+                        const grew = (a.delta ?? 0) >= 0;
+                        return (
+                          <div key={a.slug} className="flex items-center gap-3">
+                            <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: a.color }} />
+                            <span className="flex-1 truncate text-sm text-gray-700">{a.label}</span>
+                            <span className={`text-sm font-semibold tabular-nums ${grew ? "text-green-600" : "text-red-500"}`}>
+                              {grew ? "▲ " : "▼ "}{fmtShort(Math.abs(a.delta!))}
+                            </span>
+                            <span className="w-20 text-right text-xs text-gray-400 tabular-nums">{fmt(a.currentBalance)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Asset Growth chart */}
               {assetHistory.length >= 2 && (
                 <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -522,6 +644,7 @@ export function AssetsPage() {
                       </div>
                     )}
                   </div>
+                  <p className="mb-2 text-xs text-gray-400">Click a point to see per-account breakdown</p>
                   <div className="h-44">
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={assetHistory} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
@@ -546,10 +669,127 @@ export function AssetsPage() {
                         <Area
                           type="monotone" dataKey="total"
                           stroke="#7c3aed" strokeWidth={2}
-                          fill="url(#assetGrad)" dot={false} activeDot={{ r: 4, fill: "#7c3aed" }}
+                          fill="url(#assetGrad)"
+                          dot={(props) => {
+                            const { cx, cy, payload } = props as { cx: number; cy: number; payload: { ym: string } };
+                            const selected = payload.ym === selectedAssetYm;
+                            return (
+                              <circle
+                                key={payload.ym}
+                                cx={cx} cy={cy}
+                                r={selected ? 7 : 5}
+                                fill={selected ? "#7c3aed" : "#fff"}
+                                stroke="#7c3aed"
+                                strokeWidth={selected ? 2 : 1.5}
+                                style={{ cursor: "pointer", outline: "none" }}
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedAssetYm((prev) => prev === payload.ym ? null : payload.ym);
+                                }}
+                              />
+                            );
+                          }}
+                          activeDot={false}
                         />
                       </AreaChart>
                     </ResponsiveContainer>
+                  </div>
+
+                  {/* Month breakdown panel */}
+                  {selAssetPt && (
+                    <div className="mt-4 rounded-lg border border-purple-100 bg-purple-50/40 p-4">
+                      <div className="mb-3 flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-gray-800">{selAssetPt.label}</p>
+                          <p className="text-xs text-gray-400">
+                            Total assets: <span className="font-medium text-gray-700">{fmt(selAssetPt.total)}</span>
+                            {prevAssetPtYm && (() => {
+                              const prevTotal = assetHistory.find((p) => p.ym === prevAssetPtYm)?.total ?? null;
+                              if (prevTotal === null) return null;
+                              const diff = selAssetPt.total - prevTotal;
+                              return (
+                                <span className={`ml-2 font-semibold ${diff >= 0 ? "text-green-600" : "text-red-500"}`}>
+                                  {diff >= 0 ? "↑ " : "↓ "}{fmtShort(Math.abs(diff))} vs prev month
+                                </span>
+                              );
+                            })()}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => setSelectedAssetYm(null)}
+                          className="rounded-full p-1 text-gray-400 hover:bg-purple-100 hover:text-gray-600"
+                          aria-label="Close"
+                        >
+                          <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M4 4l8 8M12 4l-8 8" />
+                          </svg>
+                        </button>
+                      </div>
+                      <div className="space-y-2">
+                        {selAssetRows.map((r) => {
+                          const grew = r.delta !== null && r.delta > 0;
+                          const shrank = r.delta !== null && r.delta < 0;
+                          return (
+                            <div key={r.slug} className="flex items-center gap-3 rounded-lg bg-white px-3 py-2 shadow-sm">
+                              <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: r.color }} />
+                              <div className="flex-1 min-w-0">
+                                <p className="truncate text-sm font-medium text-gray-800">{r.label}</p>
+                                <p className="text-xs text-gray-400 capitalize">{r.accountType}</p>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <p className="text-sm font-semibold tabular-nums text-gray-800">{fmt(r.balanceThisMonth!)}</p>
+                                {r.delta !== null ? (
+                                  <p className={`text-xs font-medium tabular-nums ${grew ? "text-green-600" : shrank ? "text-red-500" : "text-gray-400"}`}>
+                                    {grew ? "↑ " : shrank ? "↓ " : ""}{r.delta === 0 ? "no change" : fmtShort(Math.abs(r.delta))}
+                                  </p>
+                                ) : (
+                                  <p className="text-xs text-gray-300">new</p>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* By account with sparklines */}
+              {accountMonthly.length > 0 && (
+                <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                  <div className="px-5 py-3 border-b border-gray-100">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">By account</p>
+                  </div>
+                  <div className="divide-y divide-gray-50">
+                    {[...accountMonthly].sort((a, b) => b.currentBalance - a.currentBalance).map((a) => {
+                      const grew = (a.delta ?? 0) >= 0;
+                      const sparkVals = a.months.map((m) => m.balance);
+                      return (
+                        <div key={a.slug} className="flex items-center gap-3 px-5 py-3">
+                          <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: a.color }} />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-800 truncate">{a.label}</p>
+                            <p className="text-xs text-gray-400 capitalize">{a.accountType}</p>
+                          </div>
+                          <div className="shrink-0">
+                            <Sparkline values={sparkVals} good="up" />
+                          </div>
+                          <div className="shrink-0 text-right w-28">
+                            <p className="text-sm font-semibold text-gray-800 tabular-nums">{fmt(a.currentBalance)}</p>
+                            {a.delta !== null && Math.abs(a.delta) > 0 && (
+                              <p className={`text-xs font-medium tabular-nums ${grew ? "text-green-600" : "text-red-500"}`}>
+                                {grew ? "▲ " : "▼ "}{fmtShort(Math.abs(a.delta))} MoM
+                              </p>
+                            )}
+                            {(a.delta === null || Math.abs(a.delta) === 0) && (
+                              <p className="text-xs text-gray-400">unchanged</p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}

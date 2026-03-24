@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import type { ParsedStatementData } from "@/lib/types";
+import { buildAccountSlug } from "@/lib/accountSlug";
 
 export type PaymentFrequency = "weekly" | "biweekly" | "semi-monthly" | "monthly";
 
@@ -20,9 +21,7 @@ function authToken(req: NextRequest): string | null {
 }
 
 function toAccountKey(p: ParsedStatementData): string {
-  const bank = (p.bankName ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-  const acct = (p.accountId ?? "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-  return acct !== "unknown" ? `${bank}__${acct}` : bank;
+  return buildAccountSlug(p.bankName, p.accountId);
 }
 
 export interface AccountRateEntry {

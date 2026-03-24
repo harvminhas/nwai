@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { consolidateStatements, getYearMonth } from "@/lib/consolidate";
 import { applyRulesAndRecalculate, merchantSlug } from "@/lib/applyRules";
+import { buildAccountSlug } from "@/lib/accountSlug";
 import type { ParsedStatementData, ManualAsset, AssetCategory } from "@/lib/types";
 import type { BalanceSnapshot } from "@/app/api/user/balance-snapshots/route";
 
@@ -22,9 +23,7 @@ function docYearMonth(d: FirebaseFirestore.DocumentData): string {
 }
 
 function accountSlug(parsed: ParsedStatementData): string {
-  const bank = (parsed.bankName ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  const acct = (parsed.accountId ?? "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return acct !== "unknown" ? `${bank}-${acct}` : bank;
+  return buildAccountSlug(parsed.bankName, parsed.accountId);
 }
 
 function matchesBank(parsed: ParsedStatementData, bankFilter: string | null): boolean {
