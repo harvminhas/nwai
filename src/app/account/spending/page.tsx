@@ -689,7 +689,7 @@ function SpendingPageInner() {
                                       <div key={i} className="flex items-center gap-3 rounded-lg bg-white px-3 py-2 shadow-sm">
                                         <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: categoryColor(txn.category || "Other") }} />
                                     <div className="flex-1 min-w-0">
-                                      <p className="text-sm font-medium text-gray-800 truncate">{txn.merchant || txn.description}</p>
+                                      <p className="text-sm font-medium text-gray-800 truncate">{txn.merchant}</p>
                                       <p className="text-xs text-gray-400">
                                         {txn.category || "Other"}
                                         {txn.date ? ` · ${txn.date.slice(5)}` : ""}
