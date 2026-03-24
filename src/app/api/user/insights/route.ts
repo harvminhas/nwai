@@ -3,6 +3,7 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { consolidateStatements, getYearMonth } from "@/lib/consolidate";
 import type { ParsedStatementData } from "@/lib/types";
 import { buildAccountSlug } from "@/lib/accountSlug";
+import { merchantSlug } from "@/lib/applyRules";
 
 async function getUid(req: NextRequest): Promise<string | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
@@ -423,7 +424,7 @@ export async function GET(req: NextRequest) {
       subtitle: subtitleParts.join(" · "),
       amount: sub.amount,
       type: "subscription",
-      href: "/account/spending?tab=subscriptions",
+      href: `/account/spending/merchant/${merchantSlug(sub.name)}`,
       isOverdue: false,
       isThisMonth: !hasExactDate,
       predictedDate: !hasExactDate && occ ? occ.date : undefined,
@@ -447,7 +448,7 @@ export async function GET(req: NextRequest) {
       subtitle: subtitleParts.join(" · "),
       amount: rule.amount,
       type: "subscription",
-      href: "/account/spending?tab=subscriptions",
+      href: `/account/spending/merchant/${rule.slug}`,
       isOverdue: false,
       isThisMonth: !hasExactDate,
       predictedDate: !hasExactDate && occ ? occ.date : undefined,
