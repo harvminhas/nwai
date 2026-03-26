@@ -519,6 +519,19 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   const assetDelta = previousMonth != null ? assets   - previousMonth.assets   : null;
   const debtDelta  = previousMonth != null ? debts    - previousMonth.debts    : null;
 
+  // Onboarding: ≤3 months of real history
+  const isOnboarding = history.filter((h) => !h.isEstimate).length <= 3;
+
+  // Detect "new account added" vs genuine financial loss.
+  // Primary signal: debt jumped significantly while net worth dropped
+  //   → almost always means a mortgage, loan, or CC was just added.
+  // Secondary signal: any negative delta during onboarding (incomplete data).
+  const isLikelyNewAccount =
+    nwDelta !== null && nwDelta < 0 && (
+      (debtDelta !== null && debtDelta > 10_000) ||
+      isOnboarding
+    );
+
   const assetSubLabel = assetLabels.map((l) => ASSET_TYPE_LABEL[l] ?? l).slice(0, 3).join(", ") || null;
   const debtSubLabel  = debtLabels.map((l) => DEBT_TYPE_LABEL[l] ?? l).slice(0, 3).join(" + ")   || null;
 
@@ -603,15 +616,36 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
               {fmtNW(netWorth)}
             </p>
             {nwDelta != null && (
-              <span className={`mb-1 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-sm font-semibold ${
-                nwDelta >= 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-600"
-              }`}>
-                {nwDelta >= 0
-                  ? <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg>
-                  : <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
-                }
-                {fmtShort(nwDelta)} this month
-              </span>
+              <div className="relative mb-1 group/nwbadge">
+                <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-sm font-semibold cursor-default ${
+                  nwDelta >= 0
+                    ? "bg-green-100 text-green-700"
+                    : isLikelyNewAccount
+                      ? "bg-amber-50 text-amber-700"   // soften — likely new account added
+                      : "bg-red-100 text-red-600"
+                }`}>
+                  {nwDelta >= 0
+                    ? <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg>
+                    : <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                  }
+                  {fmtShort(nwDelta)} this month
+                  {isLikelyNewAccount && (
+                    <svg className="h-3.5 w-3.5 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  )}
+                </span>
+                {/* Tooltip — shown on hover when new account likely added */}
+                {isLikelyNewAccount && (
+                  <div className="pointer-events-none absolute left-0 top-full mt-2 z-10 hidden group-hover/nwbadge:block w-64">
+                    <div className="rounded-xl border border-amber-200 bg-white px-3 py-2.5 shadow-lg text-xs text-gray-600 leading-relaxed">
+                      <p className="font-semibold text-gray-800 mb-0.5">Why the drop?</p>
+                      <p>Your debt increased this month — likely because a new account was added (mortgage, loan, or credit card), not an actual financial loss.</p>
+                      <p className="mt-1 text-gray-400">Upload prior statements to fill in the history.</p>
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
           </div>
           {saved !== 0 && income > 0 && (

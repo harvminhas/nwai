@@ -285,39 +285,60 @@ export default function IncomePage() {
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
             total received · {selectedMonth ? longMonth(selectedMonth) : ""}
           </p>
-          <p className="mt-2 font-bold text-4xl text-gray-900">{fmt(income?.total ?? 0)}</p>
 
-          {incomeDelta !== null && incomeDelta !== 0 && (
-            <p className={`mt-1 text-xs font-medium ${incomeDelta > 0 ? "text-green-600" : "text-red-500"}`}>
-              {incomeDelta > 0 ? "↑" : "↓"} {fmtShort(Math.abs(incomeDelta))} vs {prevPoint ? shortMonth(prevPoint.yearMonth) : "last month"}
-            </p>
-          )}
-          {incomeDelta === null && <p className="mt-1 text-xs text-gray-400">First month tracked</p>}
-
-          {/* One-time note */}
-          {oneTimeTotal > 0 && (
-            <p className="mt-1 text-xs text-amber-600">
-              Includes {fmt(oneTimeTotal)} one-time deposit{oneTimeSources.length > 1 ? "s" : ""} — excluded from averages
-            </p>
-          )}
-
-          {/* Surplus / spent / savings rate pills */}
-          {regularTotal > 0 && (
-            <div className="mt-4 flex flex-wrap gap-2">
-              <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${surplus >= 0 ? "border-green-200 bg-green-50 text-green-700" : "border-red-200 bg-red-50 text-red-700"}`}>
-                {surplus >= 0 ? "surplus" : "deficit"} {surplus >= 0 ? "+" : ""}{fmt(surplus)}
-              </span>
-              {expensesTotal > 0 && (
-                <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-600">
-                  spent {fmt(expensesTotal)}
-                </span>
-              )}
-              {savingsRate > 0 && (
-                <span className="rounded-full border border-purple-200 bg-purple-50 px-3 py-1 text-xs font-semibold text-purple-700">
-                  savings rate {savingsRate}%
-                </span>
-              )}
+          {/* No income for this month but we have history — data gap, not a financial problem */}
+          {(income?.total ?? 0) === 0 && avgIncome > 0 ? (
+            <div className="mt-3">
+              <p className="font-semibold text-gray-500 text-lg">No deposits detected</p>
+              <p className="mt-1 text-xs text-gray-400 leading-relaxed">
+                No chequing or savings statement uploaded for {selectedMonth ? longMonth(selectedMonth) : "this period"}.
+                Your {regularHistoryPoints.length}-month average is{" "}
+                <span className="font-semibold text-gray-600">{fmt(avgIncome)}/mo</span>.
+              </p>
+              <Link
+                href="/upload"
+                className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-700 hover:bg-purple-100 transition"
+              >
+                Upload a statement →
+              </Link>
             </div>
+          ) : (
+            <>
+              <p className="mt-2 font-bold text-4xl text-gray-900">{fmt(income?.total ?? 0)}</p>
+
+              {incomeDelta !== null && incomeDelta !== 0 && (
+                <p className={`mt-1 text-xs font-medium ${incomeDelta > 0 ? "text-green-600" : "text-amber-500"}`}>
+                  {incomeDelta > 0 ? "↑" : "↓"} {fmtShort(Math.abs(incomeDelta))} vs {prevPoint ? shortMonth(prevPoint.yearMonth) : "last month"}
+                </p>
+              )}
+              {incomeDelta === null && <p className="mt-1 text-xs text-gray-400">First month tracked</p>}
+
+              {/* One-time note */}
+              {oneTimeTotal > 0 && (
+                <p className="mt-1 text-xs text-amber-600">
+                  Includes {fmt(oneTimeTotal)} one-time deposit{oneTimeSources.length > 1 ? "s" : ""} — excluded from averages
+                </p>
+              )}
+
+              {/* Surplus / spent / savings rate pills */}
+              {regularTotal > 0 && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${surplus >= 0 ? "border-green-200 bg-green-50 text-green-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+                    {surplus >= 0 ? "surplus" : "deficit"} {surplus >= 0 ? "+" : ""}{fmt(surplus)}
+                  </span>
+                  {expensesTotal > 0 && (
+                    <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-600">
+                      spent {fmt(expensesTotal)}
+                    </span>
+                  )}
+                  {savingsRate > 0 && (
+                    <span className="rounded-full border border-purple-200 bg-purple-50 px-3 py-1 text-xs font-semibold text-purple-700">
+                      savings rate {savingsRate}%
+                    </span>
+                  )}
+                </div>
+              )}
+            </>
           )}
         </div>
 

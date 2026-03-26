@@ -91,6 +91,10 @@ export default function NetWorthChart({
   const [range, setRange] = useState(3);
   const [selectedYm, setSelectedYm] = useState<string | null>(null);
 
+  // Onboarding: first 3 real months of data — avoid alarming red colours
+  const realPoints = history.filter((h) => !h.isEstimate);
+  const isOnboarding = realPoints.length <= 3;
+
   const allPoints: Point[] = history.map(({ yearMonth, netWorth, isEstimate }) => ({
     yearMonth,
     label: shortMonthLabel(yearMonth),
@@ -126,6 +130,10 @@ export default function NetWorthChart({
   const prevPt   = selIdx > 0  ? data[selIdx - 1] : null;
   const selDelta = selPt && prevPt ? selPt.netWorth - prevPt.netWorth : null;
   const deltaGood = selDelta !== null ? (isDebt ? selDelta < 0 : selDelta > 0) : null;
+
+  // A jump is "large" when it's >25% of the previous value — likely a new account being added
+  const baseline = prevPt ? Math.abs(prevPt.netWorth) || Math.abs(selPt?.netWorth ?? 0) : 0;
+  const isLargeJump = selDelta !== null && baseline > 0 && Math.abs(selDelta) / baseline > 0.25;
 
   function handleSelect(ym: string) {
     setSelectedYm((prev) => prev === ym ? null : ym);
@@ -272,13 +280,32 @@ export default function NetWorthChart({
                 )}
               </p>
               {selDelta !== null && prevPt ? (
-                <p className={`mt-1 text-xs font-semibold ${deltaGood ? "text-green-600" : "text-red-500"}`}>
-                  {selDelta > 0 ? "↑ " : "↓ "}{formatCurrency(Math.abs(selDelta))} vs {shortMonthLabel(prevPt.yearMonth)}
-                  {isDebt && selDelta < 0 && <span className="ml-1 font-normal text-green-500">(paid down)</span>}
-                  {isDebt && selDelta > 0 && <span className="ml-1 font-normal text-red-400">(increased)</span>}
-                  {!isDebt && selDelta > 0 && <span className="ml-1 font-normal text-green-500">(growth)</span>}
-                  {!isDebt && selDelta < 0 && <span className="ml-1 font-normal text-red-400">(decline)</span>}
-                </p>
+                <>
+                  <p className={`mt-1 text-xs font-semibold ${
+                    isOnboarding
+                      ? "text-gray-500"                                     // muted during onboarding
+                      : deltaGood ? "text-green-600" : "text-amber-600"    // amber, not red
+                  }`}>
+                    {selDelta > 0 ? "↑ " : "↓ "}{formatCurrency(Math.abs(selDelta))} vs {shortMonthLabel(prevPt.yearMonth)}
+                    {isDebt && selDelta < 0 && <span className="ml-1 font-normal">(paid down)</span>}
+                    {isDebt && selDelta > 0 && <span className="ml-1 font-normal">(increased)</span>}
+                    {!isDebt && selDelta > 0 && <span className="ml-1 font-normal">(growth)</span>}
+                    {!isDebt && selDelta < 0 && <span className="ml-1 font-normal">(change)</span>}
+                  </p>
+                  {/* Contextual note for large jumps — likely new account added */}
+                  {isLargeJump && (
+                    <p className="mt-1.5 text-[11px] text-gray-400 flex items-start gap-1">
+                      <span className="shrink-0">ℹ️</span>
+                      <span>
+                        Large {selDelta! < 0 ? "drop" : "jump"} may reflect a new account being added.
+                        {isOnboarding && " Normal during setup."}
+                      </span>
+                    </p>
+                  )}
+                  {isOnboarding && !isLargeJump && (
+                    <p className="mt-1 text-[11px] text-gray-400">Still building your history</p>
+                  )}
+                </>
               ) : (
                 <p className="mt-1 text-xs text-gray-400">First tracked month</p>
               )}
