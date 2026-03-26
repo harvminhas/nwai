@@ -73,8 +73,29 @@ export async function GET(request: NextRequest) {
       .where("status", "==", "completed")
       .get();
 
-    // Aggregate by merchant slug across all statements
-    // Key: merchant slug, Value: accumulator
+    // Deduplicate: keep only the most-recently-uploaded doc per account × statement-month.
+    // This mirrors extractAllTransactions and prevents double-counting re-uploads.
+    const bestDocPerSlugYm = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+    for (const doc of stmtSnap.docs) {
+      const d = doc.data();
+      const parsed = d.parsedData as ParsedStatementData | undefined;
+      if (!parsed) continue;
+      const stmtYm = docYearMonth(d);
+      if (!stmtYm) continue;
+      const acctSlug = buildAccountSlug(parsed.bankName, parsed.accountId);
+      const key = `${acctSlug}|${stmtYm}`;
+      const existing = bestDocPerSlugYm.get(key);
+      if (!existing) {
+        bestDocPerSlugYm.set(key, doc);
+      } else {
+        const existTs = existing.data().uploadedAt?.toDate?.()?.getTime() ?? 0;
+        const thisTs  = d.uploadedAt?.toDate?.()?.getTime() ?? 0;
+        if (thisTs > existTs) bestDocPerSlugYm.set(key, doc);
+      }
+    }
+
+    // Aggregate by merchant slug across deduplicated statements.
+    // Monthly buckets use the transaction's own date, not the statement period.
     const map = new Map<string, {
       names: Record<string, number>;   // name → occurrence count
       category: string;
@@ -85,12 +106,10 @@ export async function GET(request: NextRequest) {
       transactions: (ExpenseTransaction & { ym: string })[];
     }>();
 
-    for (const doc of stmtSnap.docs) {
+    for (const doc of bestDocPerSlugYm.values()) {
       const d = doc.data();
-      if (!d.parsedData) continue;
       const parsed = d.parsedData as ParsedStatementData;
-      const ym = docYearMonth(d);
-      if (!ym) continue;
+      const stmtYm = docYearMonth(d);
 
       // Apply category rules
       const withRules = applyRulesAndRecalculate(parsed, rulesMap);
@@ -101,6 +120,10 @@ export async function GET(request: NextRequest) {
         const slug = merchantSlug(txn.merchant);
         if (!slug) continue;
         if (slugFilter && slug !== slugFilter) continue;
+
+        // Use the transaction's own date for the monthly bucket (transaction-date principle).
+        // Fall back to the statement month only when the transaction has no date.
+        const txYm = txn.date ? txn.date.slice(0, 7) : stmtYm;
 
         let entry = map.get(slug);
         if (!entry) {
@@ -123,12 +146,12 @@ export async function GET(request: NextRequest) {
         entry.count += 1;
         if (txn.date) entry.dates.push(txn.date);
 
-        const mo = entry.monthly.get(ym) ?? { total: 0, count: 0 };
+        const mo = entry.monthly.get(txYm) ?? { total: 0, count: 0 };
         mo.total += Math.abs(txn.amount);
         mo.count += 1;
-        entry.monthly.set(ym, mo);
+        entry.monthly.set(txYm, mo);
 
-        entry.transactions.push({ ...txn, ym });
+        entry.transactions.push({ ...txn, ym: txYm });
       }
     }
 

@@ -284,8 +284,8 @@ export default function GoalsPage() {
           setNetWorth(consolidated.data?.netWorth ?? 0);
           setLiquidAssets(consolidated.liquidAssets ?? 0);
           setDebts(consolidated.data?.debts ?? 0);
-          setMonthlyIncome(consolidated.data?.income?.total ?? 0);
-          setMonthlyExpenses(consolidated.data?.expenses?.total ?? 0);
+          setMonthlyIncome(consolidated.txMonthlyIncome ?? consolidated.data?.income?.total ?? 0);
+          setMonthlyExpenses(consolidated.txMonthlyExpenses ?? consolidated.data?.expenses?.total ?? 0);
           setHistory(Array.isArray(consolidated.history) ? consolidated.history : []);
         }
         if (ratesRes.ok) setRates(ratesJson.rates ?? []);

@@ -747,8 +747,8 @@ function WhatIfInner() {
         const json = await res.json();
         // Financial data lives under json.data; top-level has liquidAssets etc.
         const d               = json.data ?? {};
-        const monthlyIncome   = d.income?.total      ?? 0;
-        const monthlyExpenses = d.expenses?.total    ?? 0;
+        const monthlyIncome   = json.txMonthlyIncome   ?? d.income?.total   ?? 0;
+        const monthlyExpenses = json.txMonthlyExpenses ?? d.expenses?.total ?? 0;
         const assets          = d.assets             ?? Math.max(0, d.netWorth ?? 0);
         const debts           = d.debts              ?? 0;
         const netWorth        = assets - debts;

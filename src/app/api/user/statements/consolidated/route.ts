@@ -298,7 +298,16 @@ export async function GET(request: NextRequest) {
         const hAssets = (c.assets ?? Math.max(0, c.netWorth)) + manualAssetsTotal;
         const hNetWorth = hAssets - (c.debts ?? Math.max(0, -c.netWorth));
         const hDebts = c.debts ?? Math.max(0, -c.netWorth);
-        history.push({ yearMonth: ym, netWorth: hNetWorth, expensesTotal: c.expenses?.total ?? 0, incomeTotal: c.income?.total ?? 0, debtTotal: hDebts });
+        // Expenses use transaction-date filtering to avoid billing-period double-counting.
+        // Income uses the statement-level aggregate (see below).
+        const txDateExpenses = (c.expenses?.transactions ?? [])
+          .filter((t) => (t.date ?? `${ym}-15`).slice(0, 7) === ym && !/transfer|payment/i.test(t.category ?? ""))
+          .reduce((s, t) => s + t.amount, 0);
+        // Income uses the statement-level total: the AI parser correctly attributes income
+        // to its statement period. Unlike expenses (billing periods can span months),
+        // income has no double-counting risk — use the aggregate directly.
+        const txDateIncome = c.income?.total ?? 0;
+        history.push({ yearMonth: ym, netWorth: hNetWorth, expensesTotal: txDateExpenses, incomeTotal: txDateIncome, debtTotal: hDebts });
 
         // Build per-source income history — only for months that had real statements
         const hasRealIncome = allCompleted.some((doc) => {
@@ -482,6 +491,15 @@ export async function GET(request: NextRequest) {
       ? ((sortedByCreated[0].data() as FirebaseFirestore.DocumentData).createdAt?.toDate?.()?.toISOString() ?? null)
       : null;
 
+    // Transaction-date-based income/expense for the requested month.
+    // Use these instead of data.income?.total / data.expenses?.total in all pages.
+    const txMonthlyExpenses = (enrichedConsolidated.expenses?.transactions ?? [])
+      .filter((t) => (t.date ?? `${month}-15`).slice(0, 7) === month && !/transfer|payment/i.test(t.category ?? ""))
+      .reduce((s, t) => s + t.amount, 0);
+    // Income uses the statement-level total: no double-counting risk for deposits,
+    // and the AI parser correctly attributes income to the statement period.
+    const txMonthlyIncome = enrichedConsolidated.income?.total ?? 0;
+
     return NextResponse.json({
       data: enrichedConsolidated,
       /** Total payments made toward credit/loan/mortgage accounts this month.
@@ -491,6 +509,8 @@ export async function GET(request: NextRequest) {
       previousMonth,
       yearMonth: month,
       history,
+      txMonthlyIncome,
+      txMonthlyExpenses,
       manualAssets: relevantManualAssets,
       incompleteMonths,
       accountStatementHistory: Object.fromEntries(accountStatementHistory),

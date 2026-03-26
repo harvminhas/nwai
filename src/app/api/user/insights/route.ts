@@ -5,6 +5,7 @@ import type { ParsedStatementData } from "@/lib/types";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { merchantSlug } from "@/lib/applyRules";
 import type * as FirebaseFirestore from "firebase-admin/firestore";
+import { extractAllTransactions, expenseTotalForMonth } from "@/lib/extractTransactions";
 
 async function getUid(req: NextRequest): Promise<string | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
@@ -246,48 +247,44 @@ export async function GET(req: NextRequest) {
     return { date: dateStr, daysFromNow: diff, account };
   }
 
-  // ── derived values ─────────────────────────────────────────────────────────
-  const income   = consolidated?.income?.total   ?? 0;
-  const expenses = consolidated?.expenses?.total ?? 0;
-  const debts    = consolidated?.debts           ?? 0;
+  // ── Transaction-date-based financial data (single source of truth) ─────────
+  // Statements are ingestion only — all financial totals use actual tx dates.
+  const txData = await extractAllTransactions(uid, db);
+  const { expenseTxns, incomeTxns, accountSnapshots: txSnapshots, allTxMonths } = txData;
+
+  // Override liquid assets from latest account snapshots (balance data is point-in-time,
+  // but we use extractAllTransactions so we have a single fetch for all account data).
+  if (txSnapshots.length > 0) {
+    liquidAssets = txSnapshots
+      .filter((a) => /checking|savings|cash/i.test(a.accountType))
+      .reduce((s, a) => s + Math.max(0, a.balance), 0);
+  }
+
   const dayOfMonth   = now.getDate();
   const daysInMonth  = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const monthFraction = dayOfMonth / daysInMonth;
 
-  // Whether the consolidated data is actually from the current calendar month.
-  // Alerts that extrapolate this-month data (e.g. spending pace) must only fire
-  // when the data is current — otherwise we'd be projecting December's spike
-  // into March's fraction, producing nonsense numbers.
-  const dataIsCurrentMonth = !!consolidated && (() => {
-    const ym = consolidated.statementDate?.slice(0, 7);
-    return ym === thisMonth;
-  })();
+  // Current-month income & expenses from transaction dates only.
+  const income   = incomeTxns.filter((t) => t.txMonth === thisMonth).reduce((s, t) => s + t.amount, 0);
+  const expenses = expenseTxns.filter((t) => t.txMonth === thisMonth && !/transfer|payment/i.test(t.category)).reduce((s, t) => s + t.amount, 0);
+  const debts    = txSnapshots.reduce((s, a) => s + Math.max(0, -a.balance), 0);
 
-  // Typical monthly expenses: median of all months we have data for.
-  // Used for cash-buffer calculation so one outlier month doesn't skew the
-  // "days of runway" figure.
+  // "Data is current month" if we have at least one transaction dated in thisMonth.
+  const dataIsCurrentMonth = allTxMonths.includes(thisMonth);
+
+  // Typical monthly expenses: median of per-month tx totals across all historical months.
   const typicalMonthlyExpenses = (() => {
-    const monthlyTotals: number[] = [];
-    const seenYm = new Set<string>();
-    for (const doc of stmtSnap.docs) {
-      const p = doc.data().parsedData as ParsedStatementData | undefined;
-      if (!p) continue;
-      let ym = p.statementDate ? getYearMonth(p.statementDate) : "";
-      if (!ym) {
-        const raw = doc.data().uploadedAt?.toDate?.() ?? doc.data().uploadedAt;
-        if (raw) ym = (typeof raw === "object" && "toISOString" in raw
-          ? (raw as Date).toISOString() : String(raw)).slice(0, 7);
-      }
-      if (!ym || seenYm.has(ym)) continue;
-      // Exclude transfers/payments to avoid double-counting CC payments
-      const transfersAmt = (p.expenses?.categories ?? [])
-        .filter((c) => /transfer|payment/i.test(c.name))
-        .reduce((s, c) => s + (c.amount ?? 0), 0);
-      const realTotal = Math.max(0, (p.expenses?.total ?? 0) - transfersAmt);
-      if (realTotal > 0) { seenYm.add(ym); monthlyTotals.push(realTotal); }
-    }
-    if (monthlyTotals.length === 0) return expenses;
-    const sorted = [...monthlyTotals].sort((a, b) => a - b);
+    const historicalMonths = allTxMonths.filter((m) => m < thisMonth);
+    if (historicalMonths.length === 0) return expenses;
+    const monthTotals = historicalMonths
+      .map((m) =>
+        expenseTxns
+          .filter((t) => t.txMonth === m && !/transfer|payment/i.test(t.category))
+          .reduce((s, t) => s + t.amount, 0)
+      )
+      .filter((v) => v > 0);
+    if (monthTotals.length === 0) return expenses;
+    const sorted = [...monthTotals].sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
     return sorted.length % 2 !== 0
       ? sorted[mid]
@@ -331,24 +328,13 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Spending pace — only meaningful when the expense data is from THIS calendar
-  // month. Using last month's (or December's) expenses with today's month-fraction
-  // produces wildly inflated projections.
-  //
-  // Also exclude "Transfers & Payments" from the expense total — those are
-  // credit card payments / inter-account transfers that are already counted as
-  // spending on the receiving account (credit card statement). Including them
-  // here would double-count and massively inflate the projected spend.
+  // Spending pace — fires when this calendar month has transaction data and we're
+  // ≥40% through the month. `expenses` is already transfer-free (tx-date-based).
   if (dataIsCurrentMonth && income > 0 && expenses > 0 && monthFraction >= 0.40) {
-    const transfersAmount = (consolidated?.expenses?.categories ?? [])
-      .filter((c) => /transfer|payment/i.test(c.name))
-      .reduce((s, c) => s + (c.amount ?? 0), 0);
-    const realExpenses = Math.max(0, expenses - transfersAmount);
-
     // Require income to be reasonably captured (≥ 20% of real spending) to
     // avoid false alerts when only a credit card statement was uploaded.
-    if (realExpenses > 0 && income >= realExpenses * 0.20) {
-      const projected = realExpenses / monthFraction;
+    if (income >= expenses * 0.20) {
+      const projected = expenses / monthFraction;
       const overshoot = projected - income;
       if (overshoot > income * 0.10) {
         alerts.push({
@@ -613,42 +599,11 @@ export async function GET(req: NextRequest) {
   // ── build today insights (deterministic, from transaction dates) ─────────────
   const todayInsights: TodayInsight[] = [];
 
-  // Compute current-month spending directly from transaction dates
-  const spentThisMonth = (() => {
-    let total = 0;
-    const seen = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>(); // best doc per slug+stmtYm
-    for (const doc of stmtSnap.docs) {
-      const d   = doc.data();
-      const p   = d.parsedData as ParsedStatementData | undefined;
-      if (!p) continue;
-      let ym = p.statementDate ? getYearMonth(p.statementDate) : "";
-      if (!ym) {
-        const raw = d.uploadedAt?.toDate?.() ?? d.uploadedAt;
-        if (raw) ym = (typeof raw === "object" && "toISOString" in raw
-          ? (raw as Date).toISOString() : String(raw)).slice(0, 7);
-      }
-      const slug = buildAccountSlug(p.bankName, p.accountId);
-      const key  = `${slug}|${ym}`;
-      const ex   = seen.get(key);
-      if (!ex) { seen.set(key, doc); continue; }
-      const exTs = ex.data().uploadedAt?.toDate?.()?.getTime() ?? 0;
-      const ts   = d.uploadedAt?.toDate?.()?.getTime() ?? 0;
-      if (ts > exTs) seen.set(key, doc);
-    }
-    for (const doc of seen.values()) {
-      const p = doc.data().parsedData as ParsedStatementData;
-      for (const txn of p.expenses?.transactions ?? []) {
-        if (!txn.date || txn.date.slice(0, 7) !== thisMonth) continue;
-        // Exclude transfers/payments
-        if (/transfer|payment/i.test(txn.category ?? "")) continue;
-        total += txn.amount ?? 0;
-      }
-    }
-    return total;
-  })();
-
-  const dayOfMonthNow = now.getDate();
-  const daysInMonthNow = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  // txData / expenseTxns / incomeTxns / allTxMonths already computed above.
+  // Re-use `expenses` (current-month tx total) as `spentThisMonth` for insights.
+  const spentThisMonth = expenses;
+  const dayOfMonthNow  = dayOfMonth;
+  const daysInMonthNow = daysInMonth;
 
   // 1. Spending pace insight
   if (spentThisMonth > 0 && typicalMonthlyExpenses > 0) {
@@ -726,7 +681,7 @@ export async function GET(req: NextRequest) {
           ? `${fmt(next7In)} expected in — net ${net >= 0 ? "+" : ""}${fmt(net)}`
           : `Check your ${fmt(liquidAssets)} balance is enough`,
         tone: "caution",
-        href: "/account/dashboard",
+        href: "/account/spending",
       });
     } else if (next7Out > 0) {
       todayInsights.push({
@@ -735,7 +690,7 @@ export async function GET(req: NextRequest) {
         title: `${fmt(next7Out)} in bills this week`,
         subtitle: next7In > 0 ? `${fmt(next7In)} income expected — net ${net >= 0 ? "+" : ""}${fmt(net)}` : "Upcoming charges this week",
         tone: "neutral",
-        href: "/account/dashboard",
+        href: "/account/spending",
       });
     }
   }

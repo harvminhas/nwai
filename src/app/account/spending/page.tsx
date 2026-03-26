@@ -535,15 +535,24 @@ function SpendingPageInner() {
     })),
   ];
 
-  // Derive total and categories from live txns
-  const total = txns.length > 0
-    ? txns.reduce((s, t) => s + t.amount, 0)
+  // Transactions matching the selected calendar month, transfers excluded.
+  // Statement billing periods can span two calendar months — we only count
+  // transactions whose DATE falls in the selected month (transaction-date principle).
+  const filterMonth = selectedMonth ?? yearMonth ?? "";
+  const monthTxns = txns.filter(
+    (t) =>
+      (!t.date || t.date.startsWith(filterMonth)) &&
+      !/transfer|payment/i.test(t.category ?? "")
+  );
+
+  const total = monthTxns.length > 0
+    ? monthTxns.reduce((s, t) => s + t.amount, 0)
     : (data?.expenses?.total ?? 0);
 
   const categories = (() => {
-    if (txns.length === 0) return (data?.expenses?.categories ?? []).slice().sort((a, b) => b.amount - a.amount);
+    if (monthTxns.length === 0) return (data?.expenses?.categories ?? []).slice().sort((a, b) => b.amount - a.amount);
     const map = new Map<string, number>();
-    for (const tx of txns) {
+    for (const tx of monthTxns) {
       const key = tx.category || "Other";
       map.set(key, (map.get(key) ?? 0) + tx.amount);
     }

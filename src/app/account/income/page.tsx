@@ -66,6 +66,9 @@ interface ConsolidatedData {
   income: { total: number; sources: IncomeSource[]; transactions?: IncomeTransaction[] };
   expenses: { total: number };
   savingsRate: number;
+  /** Transaction-date-based totals (statements are ingestion only) */
+  txIncome?: number;
+  txExpenses?: number;
 }
 
 // ── page ──────────────────────────────────────────────────────────────────────
@@ -114,6 +117,9 @@ export default function IncomePage() {
               income: json.data.income ?? { total: 0, sources: [], transactions: [] },
               expenses: json.data.expenses ?? { total: 0 },
               savingsRate: json.data.savingsRate ?? 0,
+              // Transaction-date-based totals (statements are ingestion only)
+              txIncome: json.txMonthlyIncome ?? json.data.income?.total ?? 0,
+              txExpenses: json.txMonthlyExpenses ?? json.data.expenses?.total ?? 0,
             },
           });
         }
@@ -140,6 +146,8 @@ export default function IncomePage() {
             income: json.data.income ?? { total: 0, sources: [], transactions: [] },
             expenses: json.data.expenses ?? { total: 0 },
             savingsRate: json.data.savingsRate ?? 0,
+            txIncome: json.txMonthlyIncome ?? json.data.income?.total ?? 0,
+            txExpenses: json.txMonthlyExpenses ?? json.data.expenses?.total ?? 0,
           },
         }));
       }
@@ -153,7 +161,8 @@ export default function IncomePage() {
   const income          = current?.income;
   const sources         = income?.sources ?? [];
   const transactions    = income?.transactions ?? [];
-  const expensesTotal   = current?.expenses?.total ?? 0;
+  // Use transaction-date-based totals (statements are ingestion only)
+  const expensesTotal   = current?.txExpenses ?? current?.expenses?.total ?? 0;
   const savingsRate     = current?.savingsRate ?? 0;
 
   // Derive sources from transactions (ground truth) when available;
@@ -180,7 +189,7 @@ export default function IncomePage() {
   const scoredSources = mergedSources.map((src, i) => {
     const hist = sourceHistory[src.description] ?? [];
     const result = scoreSource(src.description, hist, totalMonths);
-    const totalIncome = income?.total ?? 0;
+    const totalIncome = current?.txIncome ?? income?.total ?? 0;
     const pct = totalIncome > 0 ? Math.round((src.amount / totalIncome) * 100) : 0;
 
     // Frequency: gather ALL dated transactions for this source across all months
@@ -221,7 +230,7 @@ export default function IncomePage() {
   // Previous month delta
   const currentIdx = selectedMonth ? sortedHistory.findIndex((h) => h.yearMonth === selectedMonth) : -1;
   const prevPoint  = currentIdx > 0 ? sortedHistory[currentIdx - 1] : null;
-  const incomeDelta = prevPoint != null ? (income?.total ?? 0) - prevPoint.incomeTotal : null;
+  const incomeDelta = prevPoint != null ? (current?.txIncome ?? income?.total ?? 0) - prevPoint.incomeTotal : null;
 
   const tabMonths      = sortedHistory.slice(-6).map((h) => h.yearMonth);
   const visibleTxns    = showAllTxns ? transactions : transactions.slice(0, 6);
@@ -287,7 +296,7 @@ export default function IncomePage() {
           </p>
 
           {/* No income for this month but we have history — data gap, not a financial problem */}
-          {(income?.total ?? 0) === 0 && avgIncome > 0 ? (
+          {(current?.txIncome ?? income?.total ?? 0) === 0 && avgIncome > 0 ? (
             <div className="mt-3">
               <p className="font-semibold text-gray-500 text-lg">No deposits detected</p>
               <p className="mt-1 text-xs text-gray-400 leading-relaxed">
@@ -304,7 +313,7 @@ export default function IncomePage() {
             </div>
           ) : (
             <>
-              <p className="mt-2 font-bold text-4xl text-gray-900">{fmt(income?.total ?? 0)}</p>
+              <p className="mt-2 font-bold text-4xl text-gray-900">{fmt(current?.txIncome ?? income?.total ?? 0)}</p>
 
               {incomeDelta !== null && incomeDelta !== 0 && (
                 <p className={`mt-1 text-xs font-medium ${incomeDelta > 0 ? "text-green-600" : "text-amber-500"}`}>
