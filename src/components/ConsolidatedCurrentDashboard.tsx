@@ -85,8 +85,8 @@ function computeSignals(
       weight: 30, status: "skip",
       detail: "Not enough history yet",
     };
-    const delta = cur.netWorth - prev.netWorth;
-    const pct   = prev.netWorth !== 0 ? delta / Math.abs(prev.netWorth) : 0;
+    const delta = (cur.netWorth ?? 0) - (prev.netWorth ?? 0);
+    const pct   = (prev.netWorth ?? 0) !== 0 ? delta / Math.abs(prev.netWorth ?? 0) : 0;
     if (pct > 0.005) return {
       id: "nw_trend", name: "Net worth trend",
       description: "Growing month-over-month",

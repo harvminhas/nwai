@@ -19,7 +19,7 @@ export default function NetWorthCard({ data }: { data: ParsedStatementData }) {
         <div>
           <p className="text-sm font-medium text-gray-500">Current Net Worth</p>
           <p className="font-bold text-5xl text-gray-900">
-            {formatCurrency(data.netWorth)}
+            {formatCurrency(data.netWorth ?? 0)}
           </p>
           <p className="mt-1 text-sm text-gray-500">
             As of {data.statementDate}

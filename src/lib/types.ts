@@ -105,7 +105,7 @@ export type AccountType =
   | "other";
 
 export interface ParsedStatementData {
-  netWorth: number;
+  netWorth?: number;
   /** When statement shows breakdown; else derived from netWorth (positive = assets, negative = debts). */
   assets?: number;
   /** When statement shows breakdown; else derived from netWorth. */

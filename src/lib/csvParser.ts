@@ -73,7 +73,7 @@ export async function parseCSV(csvText: string): Promise<CsvParseResult> {
     rawResponse = await sendTextRequest(SYSTEM_PROMPT, `Parse this bank CSV:\n\n${truncated}`);
   } catch (err) {
     return {
-      rows: [], detectedFormat: "error", dateRange: null,
+      rows: [], detectedFormat: "error", dateRange: null, closingBalance: null,
       errors: [`AI parsing failed: ${err instanceof Error ? err.message : "Unknown error"}`],
     };
   }

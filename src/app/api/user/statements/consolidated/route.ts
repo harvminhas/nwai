@@ -275,8 +275,8 @@ export async function GET(request: NextRequest) {
       ? applyRulesAndRecalculate(consolidated, categoryRulesMap)
       : consolidated;
 
-    const totalAssets = (consolidatedWithRules.assets ?? Math.max(0, consolidatedWithRules.netWorth)) + manualAssetsTotal;
-    const adjustedNetWorth = totalAssets - (consolidatedWithRules.debts ?? Math.max(0, -consolidatedWithRules.netWorth));
+    const totalAssets = (consolidatedWithRules.assets ?? Math.max(0, consolidatedWithRules.netWorth ?? 0)) + manualAssetsTotal;
+    const adjustedNetWorth = totalAssets - (consolidatedWithRules.debts ?? Math.max(0, -(consolidatedWithRules.netWorth ?? 0)));
 
     let enrichedConsolidated: ParsedStatementData = {
       ...consolidatedWithRules,
@@ -297,8 +297,8 @@ export async function GET(request: NextRequest) {
       if (prevStatements.length > 0) {
         const prev = consolidateStatements(prevStatements, prevMonth);
         const prevManualTotal = relevantManualAssets.reduce((sum, a) => sum + a.value, 0);
-        const prevAssets = (prev.assets ?? Math.max(0, prev.netWorth)) + prevManualTotal;
-        const prevDebts = prev.debts ?? Math.max(0, -prev.netWorth);
+        const prevAssets = (prev.assets ?? Math.max(0, prev.netWorth ?? 0)) + prevManualTotal;
+        const prevDebts = prev.debts ?? Math.max(0, -(prev.netWorth ?? 0));
         previousMonth = {
           netWorth: prevAssets - prevDebts,
           assets: prevAssets,
@@ -327,9 +327,9 @@ export async function GET(request: NextRequest) {
       const forMonth = carryForwardStatements(allCompleted, ym);
       if (forMonth.length > 0) {
         const c = consolidateStatements(forMonth, ym);
-        const hAssets = (c.assets ?? Math.max(0, c.netWorth)) + manualAssetsTotal;
-        const hNetWorth = hAssets - (c.debts ?? Math.max(0, -c.netWorth));
-        const hDebts = c.debts ?? Math.max(0, -c.netWorth);
+        const hAssets = (c.assets ?? Math.max(0, c.netWorth ?? 0)) + manualAssetsTotal;
+        const hNetWorth = hAssets - (c.debts ?? Math.max(0, -(c.netWorth ?? 0)));
+        const hDebts = c.debts ?? Math.max(0, -(c.netWorth ?? 0));
         // Expenses use transaction-date filtering to avoid billing-period double-counting.
         // Income uses the statement-level aggregate (see below).
         const txDateExpenses = (c.expenses?.transactions ?? [])
