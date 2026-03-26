@@ -271,6 +271,8 @@ export function AssetsPage() {
       );
       const latestBySlug = new Map<string, UserStatementSummary>();
       for (const s of stmts) {
+        // Only consider statements that carry a real account balance
+        if (s.netWorth == null) continue;
         const slug = accountSlug(s);
         const existing = latestBySlug.get(slug);
         if (!existing || (s.statementDate ?? s.uploadedAt) > (existing.statementDate ?? existing.uploadedAt)) {
@@ -303,7 +305,8 @@ export function AssetsPage() {
       // Per-account monthly balance history (asset accounts only)
       const ASSET_TYPES = new Set(["checking", "savings", "investment", "other"]);
       const assetStmts = (sJson.statements ?? [] as UserStatementSummary[]).filter(
-        (s: UserStatementSummary) => s.status === "completed" && !s.superseded && ASSET_TYPES.has(s.accountType ?? "")
+        (s: UserStatementSummary) => s.status === "completed" && !s.superseded &&
+          ASSET_TYPES.has(s.accountType ?? "") && s.source !== "csv"
       );
       const GROUP_COLORS: Record<string, string> = {
         checking: "#f59e0b", savings: "#f59e0b", investment: "#3b82f6", other: "#94a3b8",

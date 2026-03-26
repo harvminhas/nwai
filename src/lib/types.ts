@@ -160,6 +160,10 @@ export interface StatementDocument {
   parsedData?: ParsedStatementData;
   status: "processing" | "completed" | "error";
   errorMessage?: string;
+  /** How the data was ingested: "pdf" (default) or "csv" */
+  source?: "pdf" | "csv";
+  /** For CSV imports: the date range of transactions in the file */
+  csvDateRange?: { from: string; to: string };
 }
 
 // API response types
@@ -188,4 +192,7 @@ export interface UserStatementSummary {
   superseded?: boolean;
   supersededBy?: string;
   fileHash?: string;
+  source?: "pdf" | "csv";
+  csvDateRange?: { from: string; to: string };
+  txCount?: number;
 }

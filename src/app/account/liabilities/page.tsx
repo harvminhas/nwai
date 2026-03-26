@@ -1058,6 +1058,8 @@ function LiabilitiesPageInner() {
       );
       const latestBySlug = new Map<string, UserStatementSummary>();
       for (const s of stmts) {
+        // Only consider statements that carry a real account balance
+        if (s.netWorth == null) continue;
         const slug = accountSlug(s);
         const existing = latestBySlug.get(slug);
         if (!existing || (s.statementDate ?? s.uploadedAt) > (existing.statementDate ?? existing.uploadedAt)) {

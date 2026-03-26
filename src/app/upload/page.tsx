@@ -193,15 +193,19 @@ export default function UploadPage() {
           <div className="lg:hidden h-14" />
           <div className="mx-auto max-w-xl px-4 py-12 sm:px-6">
 
+            {/* Page header */}
+            <div className="mb-6 flex items-center justify-between">
+              <h1 className="font-bold text-xl text-gray-900">Upload statement</h1>
+              <Link href="/account/statements" className="text-xs text-gray-400 hover:text-gray-600 transition">
+                Manage uploads →
+              </Link>
+            </div>
+
             {/* Single file mode — shows ProcessingAnimation after upload */}
             {!canMulti && (
               <>
                 {!statementId ? (
                   <>
-                    <div className="mb-6 flex items-center justify-between">
-                      <h1 className="font-bold text-xl text-gray-900">Upload statement</h1>
-                      <Link href="/account/dashboard" className="text-sm text-gray-400 hover:text-gray-600">✕</Link>
-                    </div>
                     <UploadZone onFileSelect={handleFileSelect} />
                     {uploadError && <p className="mt-3 text-sm text-red-600">{uploadError}</p>}
 

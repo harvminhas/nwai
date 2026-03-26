@@ -72,48 +72,80 @@ function carryForwardStatements(
   allDocs: FirebaseFirestore.QueryDocumentSnapshot[],
   targetMonth: string
 ): ParsedStatementData[] {
-  // Build map: slug → latest doc whose yearMonth <= targetMonth
-  const latestPerAccount = new Map<string, { ym: string; parsed: ParsedStatementData }>();
+  // Build map: slug → latest doc whose yearMonth <= targetMonth.
+  // PDF statements are preferred over CSV imports for the same month because only
+  // PDFs carry a real account balance; CSV imports have no reliable netWorth.
+  const latestPerAccount = new Map<string, { ym: string; parsed: ParsedStatementData; isCSV: boolean; uploadedAt: number }>();
 
   for (const doc of allDocs) {
     const d = doc.data();
     const ym = docYearMonth(d);
-    if (!ym || ym > targetMonth) continue; // ignore future statements
+    if (!ym || ym > targetMonth) continue;
 
-    const parsed = d.parsedData as ParsedStatementData;
-    const slug = accountSlug(parsed);
-    const existing = latestPerAccount.get(slug);
+    const parsed     = d.parsedData as ParsedStatementData;
+    const isCSV      = (d.source as string | undefined) === "csv";
+    const uploadedAt = d.uploadedAt?.toDate?.()?.getTime() ?? 0;
+    const slug       = accountSlug(parsed);
+    const existing   = latestPerAccount.get(slug);
 
     if (!existing || ym > existing.ym) {
-      latestPerAccount.set(slug, { ym, parsed });
+      latestPerAccount.set(slug, { ym, parsed, isCSV, uploadedAt });
     } else if (ym === existing.ym) {
-      // Same month: prefer the one uploaded most recently
-      const existingUpload = (allDocs.find(
-        (x) => accountSlug(x.data().parsedData as ParsedStatementData) === slug &&
-                docYearMonth(x.data()) === ym &&
-                x.data().parsedData === existing.parsed
-      )?.data().uploadedAt?.toDate?.()?.getTime() ?? 0);
+      // Same month: PDF beats CSV (PDF has a real balance); within the same source
+      // type, the more recently uploaded document wins.
+      const existingWins = existing.isCSV === false && isCSV === true;
+      if (existingWins) continue;
+
+      const thisWins = existing.isCSV === true && isCSV === false;
+      if (thisWins) {
+        latestPerAccount.set(slug, { ym, parsed, isCSV, uploadedAt });
+        continue;
+      }
+
+      // Same source type — prefer most recently uploaded
+      const existingUpload = existing.uploadedAt;
       const thisUpload = d.uploadedAt?.toDate?.()?.getTime() ?? 0;
       if (thisUpload > existingUpload) {
-        latestPerAccount.set(slug, { ym, parsed });
+        latestPerAccount.set(slug, { ym, parsed, isCSV, uploadedAt: thisUpload });
       }
     }
   }
 
-  return Array.from(latestPerAccount.values()).map(({ ym, parsed }) => {
+  // For accounts whose winning doc is a CSV, inherit netWorth from the most recent
+  // PDF statement (CSV imports don't carry a real account balance).
+  const latestPdfNetWorth = new Map<string, { ym: string; netWorth: number }>();
+  for (const doc of allDocs) {
+    const d = doc.data();
+    if ((d.source as string | undefined) === "csv") continue;
+    const ym = docYearMonth(d);
+    if (!ym || ym > targetMonth) continue;
+    const parsed = d.parsedData as ParsedStatementData;
+    const slug   = accountSlug(parsed);
+    const cur    = latestPdfNetWorth.get(slug);
+    if (!cur || ym >= cur.ym) {
+      latestPdfNetWorth.set(slug, { ym, netWorth: parsed.netWorth ?? 0 });
+    }
+  }
+
+  return Array.from(latestPerAccount.values()).map(({ ym, parsed, isCSV }) => {
+    // For CSV imports: use the CSV's own closing balance if available; otherwise
+    // fall back to the most recent PDF statement's balance so the account doesn't show $0.
+    const patchedParsed = isCSV
+      ? { ...parsed, netWorth: parsed.netWorth ?? latestPdfNetWorth.get(accountSlug(parsed))?.netWorth ?? 0 }
+      : parsed;
+
     // When carrying a statement forward to a different month, strip transaction-level
-    // data so October's transactions don't pollute March's spending view.
-    // Only the balance / net-worth is meaningful when carried forward.
+    // data so older transactions don't pollute the target month's spending view.
     if (ym !== targetMonth) {
       return {
-        ...parsed,
+        ...patchedParsed,
         income:        { total: 0, sources: [], transactions: [] },
         expenses:      { total: 0, categories: [], transactions: [] },
         subscriptions: [],
         savingsRate:   0,
       };
     }
-    return parsed;
+    return patchedParsed;
   });
 }
 
@@ -362,10 +394,24 @@ export async function GET(request: NextRequest) {
           return docYearMonth(d) === ym &&
             accountSlug(d.parsedData as ParsedStatementData) === slug;
         });
-        const sourceDoc = allCompleted.find((doc) => {
-          const d = doc.data();
-          return (d.parsedData as ParsedStatementData) === parsed;
-        });
+        // Find the source document by slug+month with the same priority as carryForwardStatements:
+        // prefer non-CSV over CSV; within same source type prefer most recently uploaded.
+        // (Avoid reference equality which breaks when carryForwardStatements returns patched objects.)
+        const sourceDoc = allCompleted
+          .filter((doc) => {
+            const d = doc.data();
+            return docYearMonth(d) === ym &&
+              accountSlug(d.parsedData as ParsedStatementData) === slug;
+          })
+          .sort((a, b) => {
+            const aIsCSV = (a.data().source as string | undefined) === "csv";
+            const bIsCSV = (b.data().source as string | undefined) === "csv";
+            if (!aIsCSV && bIsCSV) return -1; // PDF first
+            if (aIsCSV && !bIsCSV) return 1;
+            const aTime = a.data().uploadedAt?.toDate?.()?.getTime() ?? 0;
+            const bTime = b.data().uploadedAt?.toDate?.()?.getTime() ?? 0;
+            return bTime - aTime; // most recently uploaded first within same type
+          })[0] ?? null;
         const uploadedAt = sourceDoc?.data().uploadedAt?.toDate?.()?.toISOString?.() ?? "";
         // Only include interestRate for real uploads (not carry-forward copies)
         const interestRate = realForThisMonth && typeof parsed.interestRate === "number"

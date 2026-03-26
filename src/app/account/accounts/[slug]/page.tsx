@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useRouter, useParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
-import ConsolidatedProgressHero from "@/components/ConsolidatedProgressHero";
 import NetWorthChart from "@/components/NetWorthChart";
 import IncomeCard from "@/components/IncomeCard";
 import ExpensesCard from "@/components/ExpensesCard";
@@ -14,6 +13,7 @@ import SubscriptionsCard from "@/components/SubscriptionsCard";
 import InsightsSection from "@/components/InsightsSection";
 import type { ParsedStatementData, ManualAsset } from "@/lib/types";
 import { buildAccountSlug } from "@/lib/accountSlug";
+import CsvImportPanel from "@/components/CsvImportPanel";
 import type { PaymentFrequency } from "@/app/api/user/account-rates/route";
 
 // ── constants ─────────────────────────────────────────────────────────────────
@@ -192,6 +192,7 @@ export default function AccountDetailPage() {
   const [idToken, setIdToken]             = useState<string | null>(null);
   const [deletingId, setDeletingId]       = useState<string | null>(null);
   const [reparsingId, setReparsingId]     = useState<string | null>(null);
+  const [showCsvImport, setShowCsvImport] = useState(false);
 
   // Transactions section state
   const [txMonth, setTxMonth]         = useState<string | null>(null);
@@ -216,90 +217,88 @@ export default function AccountDetailPage() {
   const [snapError,         setSnapError]         = useState<string | null>(null);
   const [deletingSnap,      setDeletingSnap]      = useState<string | null>(null);
 
+  const loadAccountData = useCallback(async (token: string) => {
+    setLoading(true); setError(null);
+    try {
+      const res = await fetch(
+        `/api/user/statements/consolidated?account=${encodeURIComponent(slug)}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) { setError(json.error || "Failed to load account"); return; }
+      setData(json.data ?? null);
+      setStatementCount(json.count ?? 0);
+      setPreviousMonth(json.previousMonth ?? null);
+      setYearMonth(json.yearMonth ?? null);
+      setManualAssets(Array.isArray(json.manualAssets) ? json.manualAssets : []);
+      setTxMonth(json.yearMonth ?? null);
+      setTxData((json.data as ParsedStatementData | null)?.expenses ?? null);
+      setTxPayments(json.paymentsMade ?? 0);
+
+      const acctHistory: StatementHistoryEntry[] = json.accountStatementHistory?.[slug] ?? [];
+      setStmtHistory(acctHistory);
+
+      const monthMap = new Map<string, { yearMonth: string; netWorth: number; isEstimate: boolean; priority: number }>();
+      for (const e of acctHistory) {
+        const priority = e.isCarryForward ? 0 : e.isManualSnapshot ? 1 : 2;
+        const existing = monthMap.get(e.yearMonth);
+        if (!existing || priority > existing.priority) {
+          monthMap.set(e.yearMonth, {
+            yearMonth: e.yearMonth,
+            netWorth: e.netWorth,
+            isEstimate: e.isCarryForward,
+            priority,
+          });
+        }
+      }
+      const chartHistory = Array.from(monthMap.values())
+        .sort((a, b) => a.yearMonth.localeCompare(b.yearMonth))
+        .map(({ yearMonth, netWorth, isEstimate }) => ({ yearMonth, netWorth, isEstimate }));
+      setHistory(chartHistory);
+
+      const saved = localStorage.getItem(`baseline-${slug}`);
+      if (saved) setBaselineMonth(saved);
+
+      // Load APR for this account
+      const parsed = json.data as ParsedStatementData | null;
+      if (parsed?.bankName) {
+        const key = toAccountKey(parsed.bankName, parsed.accountId);
+        setAccountKey(key);
+
+        const ratesRes = await fetch("/api/user/account-rates", { headers: { Authorization: `Bearer ${token}` } });
+        const ratesJson = await ratesRes.json().catch(() => ({}));
+        const entry = (ratesJson.rates ?? []).find(
+          (r: { accountKey: string }) => r.accountKey === key
+        );
+        if (entry) {
+          setEffectiveRate(entry.effectiveRate ?? null);
+          setExtractedRate(entry.extractedRate ?? null);
+          if (entry.paymentFrequency) setPaymentFrequency(entry.paymentFrequency as PaymentFrequency);
+        } else {
+          setExtractedRate(typeof parsed.interestRate === "number" ? parsed.interestRate : null);
+          setEffectiveRate(typeof parsed.interestRate === "number" ? parsed.interestRate : null);
+        }
+
+        const histRes = await fetch(
+          `/api/user/account-rates/history?accountKey=${encodeURIComponent(key)}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const histJson = await histRes.json().catch(() => ({}));
+        setRateHistory(histJson.history ?? []);
+      }
+    } catch { setError("Failed to load account"); }
+    finally { setLoading(false); }
+  }, [slug]);
+
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
       if (!user) { router.push("/login"); return; }
       const token = await user.getIdToken();
       setIdToken(token);
-      setLoading(true); setError(null);
-      try {
-        const res = await fetch(
-          `/api/user/statements/consolidated?account=${encodeURIComponent(slug)}`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) { setError(json.error || "Failed to load account"); return; }
-        setData(json.data ?? null);
-        setStatementCount(json.count ?? 0);
-        setPreviousMonth(json.previousMonth ?? null);
-        setYearMonth(json.yearMonth ?? null);
-        setManualAssets(Array.isArray(json.manualAssets) ? json.manualAssets : []);
-        // Seed transaction section with latest month
-        setTxMonth(json.yearMonth ?? null);
-        setTxData((json.data as ParsedStatementData | null)?.expenses ?? null);
-        setTxPayments(json.paymentsMade ?? 0);
-
-        const acctHistory: StatementHistoryEntry[] = json.accountStatementHistory?.[slug] ?? [];
-        setStmtHistory(acctHistory);
-
-        // Build chart from acctHistory (statements + manual snapshots + carry-forwards).
-        // One entry per month: prefer real statement > manual snapshot > carry-forward.
-        const monthMap = new Map<string, { yearMonth: string; netWorth: number; isEstimate: boolean; priority: number }>();
-        for (const e of acctHistory) {
-          const priority = e.isCarryForward ? 0 : e.isManualSnapshot ? 1 : 2;
-          const existing = monthMap.get(e.yearMonth);
-          if (!existing || priority > existing.priority) {
-            monthMap.set(e.yearMonth, {
-              yearMonth: e.yearMonth,
-              netWorth: e.netWorth,
-              isEstimate: e.isCarryForward,
-              priority,
-            });
-          }
-        }
-        const chartHistory = Array.from(monthMap.values())
-          .sort((a, b) => a.yearMonth.localeCompare(b.yearMonth))
-          .map(({ yearMonth, netWorth, isEstimate }) => ({ yearMonth, netWorth, isEstimate }));
-        setHistory(chartHistory);
-
-        const saved = localStorage.getItem(`baseline-${slug}`);
-        if (saved) setBaselineMonth(saved);
-
-        // Load APR for this account
-        const parsed = json.data as ParsedStatementData | null;
-        if (parsed?.bankName) {
-          const key = toAccountKey(parsed.bankName, parsed.accountId);
-          setAccountKey(key);
-
-          // Fetch current effective rate
-          const ratesRes = await fetch("/api/user/account-rates", { headers: { Authorization: `Bearer ${token}` } });
-          const ratesJson = await ratesRes.json().catch(() => ({}));
-          const entry = (ratesJson.rates ?? []).find(
-            (r: { accountKey: string }) => r.accountKey === key
-          );
-          if (entry) {
-            setEffectiveRate(entry.effectiveRate ?? null);
-            setExtractedRate(entry.extractedRate ?? null);
-            if (entry.paymentFrequency) setPaymentFrequency(entry.paymentFrequency as PaymentFrequency);
-          } else {
-            // Fall back to rate embedded in parsed data
-            setExtractedRate(typeof parsed.interestRate === "number" ? parsed.interestRate : null);
-            setEffectiveRate(typeof parsed.interestRate === "number" ? parsed.interestRate : null);
-          }
-
-          // Fetch user rate change history
-          const histRes = await fetch(
-            `/api/user/account-rates/history?accountKey=${encodeURIComponent(key)}`,
-            { headers: { Authorization: `Bearer ${token}` } }
-          );
-          const histJson = await histRes.json().catch(() => ({}));
-          setRateHistory(histJson.history ?? []);
-        }
-      } catch { setError("Failed to load account"); }
-      finally { setLoading(false); }
+      await loadAccountData(token);
     });
-  }, [router, slug]);
+  }, [router, slug, loadAccountData]);
 
   async function handleDelete(statementId: string) {
     if (!idToken || !confirm("Delete this statement?")) return;
@@ -618,12 +617,48 @@ export default function AccountDetailPage() {
           </div>
         </div>
       ) : (
-        /* Standard KPI cards for non-debt accounts */
-        <ConsolidatedProgressHero
-          data={data}
-          previousMonth={previousMonth}
-          monthLabel={monthLabel(yearMonth)}
-        />
+        /* Per-account KPIs: Balance · Income · Spent */
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-6">
+          {/* Balance */}
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Balance</p>
+            <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(data.netWorth ?? 0)}</p>
+            {(() => {
+              const delta = previousMonth != null ? (data.netWorth ?? 0) - previousMonth.netWorth : null;
+              if (delta === null) return <p className="mt-1.5 text-xs text-gray-400">First month tracked</p>;
+              if (delta === 0)    return <p className="mt-1.5 text-xs text-gray-400">No change</p>;
+              const abs = Math.abs(delta);
+              const label = abs >= 1000 ? `${delta > 0 ? "+" : "−"}$${Math.round(abs / 1000)}k` : `${delta > 0 ? "+" : "−"}${fmt(abs)}`;
+              return <p className={`mt-1.5 text-xs font-medium ${delta > 0 ? "text-green-600" : "text-red-500"}`}>{delta > 0 ? "↑" : "↓"} {label} vs last month</p>;
+            })()}
+          </div>
+
+          {/* Income — only for accounts that receive deposits */}
+          {hasIncome && (
+            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Income this month</p>
+              <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(data.income?.total ?? 0)}</p>
+              {data.income?.total ? (
+                <p className="mt-1.5 text-xs text-gray-400">deposits &amp; transfers in</p>
+              ) : (
+                <p className="mt-1.5 text-xs text-gray-400">No deposits this month</p>
+              )}
+            </div>
+          )}
+
+          {/* Spent */}
+          {hasSpending && (
+            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Spent this month</p>
+              <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(data.expenses?.total ?? 0)}</p>
+              {data.expenses?.total ? (
+                <p className="mt-1.5 text-xs text-gray-400">{(data.expenses.transactions?.length ?? 0)} transactions</p>
+              ) : (
+                <p className="mt-1.5 text-xs text-gray-400">No expenses this month</p>
+              )}
+            </div>
+          )}
+        </div>
       )}
 
       {/* ── APR / Interest Rate card ──────────────────────────────────────── */}
@@ -762,6 +797,12 @@ export default function AccountDetailPage() {
                 </button>
               )}
               <button
+                onClick={() => setShowCsvImport((v) => !v)}
+                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${showCsvImport ? "border-teal-300 bg-teal-50 text-teal-700 hover:bg-teal-100" : "border-gray-200 text-gray-600 hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700"}`}
+              >
+                {showCsvImport ? "✕ Cancel import" : "+ Import CSV"}
+              </button>
+              <button
                 onClick={openSnapshotForm}
                 className="rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-600 hover:bg-purple-100 transition"
               >
@@ -769,6 +810,18 @@ export default function AccountDetailPage() {
               </button>
             </div>
           </div>
+
+          {/* Inline CSV import panel */}
+          {showCsvImport && idToken && (
+            <div className="mb-5 rounded-xl border border-teal-200 bg-teal-50/30 p-5">
+              <CsvImportPanel
+                idToken={idToken}
+                preselectedAccountSlug={slug}
+                onReset={() => setShowCsvImport(false)}
+                onImportComplete={() => idToken && loadAccountData(idToken)}
+              />
+            </div>
+          )}
           {baselineMonth && (
             <p className="mb-3 text-xs text-gray-400">
               Trend starts from <span className="font-medium text-gray-600">{shortMonth(baselineMonth)}</span>.

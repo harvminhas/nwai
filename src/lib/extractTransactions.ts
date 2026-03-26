@@ -13,6 +13,7 @@ import type * as Firestore from "firebase-admin/firestore";
 import type { ParsedStatementData } from "./types";
 import { buildAccountSlug } from "./accountSlug";
 import { getYearMonth } from "./consolidate";
+import { txFingerprint } from "./txFingerprint";
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -119,46 +120,72 @@ export async function extractAllTransactions(
   }
 
   // ── 2. Extract expense transactions using actual transaction dates ─────────
+  // Two-pass: statements first (preferred source), then CSV.
+  // Fingerprint dedup catches any cross-source overlap that slips past
+  // the account×month dedup above (e.g. a CSV that spans a month already
+  // covered by a PDF statement).
   const expenseTxns: ExpenseTxnRecord[] = [];
-  for (const doc of bestDocPerSlugYm.values()) {
-    const d = doc.data();
-    const stmtYm = docYearMonth(d);
-    const parsed = d.parsedData as ParsedStatementData;
-    const slug = buildAccountSlug(parsed.bankName, parsed.accountId);
-    for (const txn of parsed.expenses?.transactions ?? []) {
-      const date = txn.date ?? `${stmtYm}-15`;
-      const txMonth = date.slice(0, 7);
-      expenseTxns.push({
-        date,
-        txMonth,
-        amount: txn.amount,
-        merchant: txn.merchant ?? "Unknown",
-        category: txn.category ?? "Other",
-        accountSlug: slug,
-        recurring: txn.recurring,
-      });
+  const expFingerprintsFromStmt = new Set<string>();
+
+  for (const pass of ["stmt", "csv"] as const) {
+    for (const doc of bestDocPerSlugYm.values()) {
+      const d = doc.data();
+      const isCSV = (d.source as string | undefined) === "csv";
+      if (pass === "stmt" && isCSV) continue;
+      if (pass === "csv" && !isCSV) continue;
+
+      const stmtYm = docYearMonth(d);
+      const parsed = d.parsedData as ParsedStatementData;
+      const slug = buildAccountSlug(parsed.bankName, parsed.accountId);
+      for (const txn of parsed.expenses?.transactions ?? []) {
+        const date = txn.date ?? `${stmtYm}-15`;
+        const txMonth = date.slice(0, 7);
+        const fp = txFingerprint(parsed.accountId ?? slug, date, txn.amount, txn.merchant ?? "");
+        if (isCSV && expFingerprintsFromStmt.has(fp)) continue; // duplicate — skip CSV copy
+        if (!isCSV) expFingerprintsFromStmt.add(fp);
+        expenseTxns.push({
+          date,
+          txMonth,
+          amount: txn.amount,
+          merchant: txn.merchant ?? "Unknown",
+          category: txn.category ?? "Other",
+          accountSlug: slug,
+          recurring: txn.recurring,
+        });
+      }
     }
   }
   expenseTxns.sort((a, b) => b.date.localeCompare(a.date));
 
   // ── 3. Extract income transactions using actual transaction dates ──────────
   const incomeTxns: IncomeTxnRecord[] = [];
-  for (const doc of bestDocPerSlugYm.values()) {
-    const d = doc.data();
-    const stmtYm = docYearMonth(d);
-    const parsed = d.parsedData as ParsedStatementData;
-    const slug = buildAccountSlug(parsed.bankName, parsed.accountId);
-    for (const txn of parsed.income?.transactions ?? []) {
-      const date = txn.date ?? `${stmtYm}-01`;
-      const txMonth = date.slice(0, 7);
-      incomeTxns.push({
-        date,
-        txMonth,
-        amount: txn.amount,
-        source: txn.source ?? "Income",
-        description: txn.description ?? txn.source ?? "Income",
-        accountSlug: slug,
-      });
+  const incFingerprintsFromStmt = new Set<string>();
+
+  for (const pass of ["stmt", "csv"] as const) {
+    for (const doc of bestDocPerSlugYm.values()) {
+      const d = doc.data();
+      const isCSV = (d.source as string | undefined) === "csv";
+      if (pass === "stmt" && isCSV) continue;
+      if (pass === "csv" && !isCSV) continue;
+
+      const stmtYm = docYearMonth(d);
+      const parsed = d.parsedData as ParsedStatementData;
+      const slug = buildAccountSlug(parsed.bankName, parsed.accountId);
+      for (const txn of parsed.income?.transactions ?? []) {
+        const date = txn.date ?? `${stmtYm}-01`;
+        const txMonth = date.slice(0, 7);
+        const fp = txFingerprint(parsed.accountId ?? slug, date, txn.amount, txn.description ?? txn.source ?? "");
+        if (isCSV && incFingerprintsFromStmt.has(fp)) continue;
+        if (!isCSV) incFingerprintsFromStmt.add(fp);
+        incomeTxns.push({
+          date,
+          txMonth,
+          amount: txn.amount,
+          source: txn.source ?? "Income",
+          description: txn.description ?? txn.source ?? "Income",
+          accountSlug: slug,
+        });
+      }
     }
   }
   incomeTxns.sort((a, b) => b.date.localeCompare(a.date));

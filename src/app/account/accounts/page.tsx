@@ -95,11 +95,12 @@ export default function AccountsPage() {
       }
       const group = map.get(slug)!;
       group.statements.push(s);
-      // Keep latest net worth
+      // Keep latest net worth — only from statements that carry a real balance
       if (s.netWorth != null) {
         const date = s.statementDate ?? s.uploadedAt;
+        // Compare only against other balance-bearing statements (not CSV imports)
         const prevDate = group.statements
-          .filter((x) => x !== s)
+          .filter((x) => x !== s && x.netWorth != null)
           .map((x) => x.statementDate ?? x.uploadedAt)
           .sort()
           .reverse()[0] ?? "";

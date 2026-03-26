@@ -38,6 +38,12 @@ export async function GET(request: NextRequest) {
         status: d.status ?? "processing",
         superseded: d.superseded === true,
         supersededBy: d.supersededBy,
+        source: d.source ?? "pdf",
+        csvDateRange: d.csvDateRange,
+        txCount: (
+          (d.parsedData?.expenses?.transactions?.length ?? 0) +
+          (d.parsedData?.income?.transactions?.length ?? 0)
+        ) || undefined,
       };
     });
 

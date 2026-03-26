@@ -111,7 +111,7 @@ export default function UploadZone({ onFileSelect, onFilesSelect, multiple = fal
     error === "size"
       ? "One or more files exceed the 10MB limit"
       : error === "type"
-        ? "Please upload a PDF or photo (PNG/JPG) of your bank statement"
+        ? "Please upload a PDF or photo (PNG/JPG) of your bank statement."
         : null;
 
   const baseClasses = isPremium
