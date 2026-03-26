@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
-import type { DashboardAlert, UpcomingItem } from "@/app/api/user/insights/route";
+import type { DashboardAlert, UpcomingItem, TodayInsight } from "@/app/api/user/insights/route";
 import ParseStatusBanner from "@/components/ParseStatusBanner";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -146,10 +146,17 @@ function UpcomingGroup({ title, items, emptySlot }: { title: string; items: Upco
 
 // ── page ──────────────────────────────────────────────────────────────────────
 
+const INSIGHT_TONE: Record<string, { bg: string; border: string; text: string; sub: string }> = {
+  positive: { bg: "bg-green-50",  border: "border-green-100", text: "text-green-800",  sub: "text-green-600" },
+  caution:  { bg: "bg-amber-50",  border: "border-amber-100", text: "text-amber-800",  sub: "text-amber-600" },
+  neutral:  { bg: "bg-gray-50",   border: "border-gray-100",  text: "text-gray-700",   sub: "text-gray-500"  },
+};
+
 export default function TodayPage() {
   const router = useRouter();
   const [alerts,   setAlerts]   = useState<DashboardAlert[]>([]);
   const [upcoming, setUpcoming] = useState<UpcomingItem[]>([]);
+  const [insights, setInsights] = useState<TodayInsight[]>([]);
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState<string | null>(null);
   const [token,    setToken]    = useState<string | null>(null);
@@ -162,6 +169,7 @@ export default function TodayPage() {
       if (!res.ok) { setError(json.error || "Failed to load"); return; }
       setAlerts(json.alerts ?? []);
       setUpcoming(json.upcoming ?? []);
+      setInsights(json.insights ?? []);
     } catch { setError("Failed to load today view"); }
     finally { setLoading(false); }
   }, []);
@@ -190,7 +198,7 @@ export default function TodayPage() {
   const thisMonth = upcoming.filter((i) => i.isThisMonth);
 
   const urgentAlerts = alerts.filter((a) => a.severity === "high" || a.severity === "medium");
-  const hasContent   = upcoming.length > 0 || urgentAlerts.length > 0;
+  const hasContent   = upcoming.length > 0 || urgentAlerts.length > 0 || insights.length > 0;
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
@@ -226,6 +234,35 @@ export default function TodayPage() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ── Today insights ───────────────────────────────────────────────── */}
+      {insights.length > 0 && (
+        <div className="mb-6">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Your finances right now</p>
+          <div className="space-y-2">
+            {insights.map((ins) => {
+              const sty = INSIGHT_TONE[ins.tone] ?? INSIGHT_TONE.neutral;
+              const inner = (
+                <div className={`flex items-start gap-3 rounded-xl border ${sty.border} ${sty.bg} px-4 py-3.5`}>
+                  <span className="text-xl leading-none mt-0.5">{ins.emoji}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-sm font-semibold ${sty.text}`}>{ins.title}</p>
+                    <p className={`mt-0.5 text-xs ${sty.sub}`}>{ins.subtitle}</p>
+                  </div>
+                  {ins.href && (
+                    <svg className={`h-4 w-4 shrink-0 mt-0.5 ${sty.sub}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                  )}
+                </div>
+              );
+              return ins.href
+                ? <Link key={ins.id} href={ins.href}>{inner}</Link>
+                : <div key={ins.id}>{inner}</div>;
+            })}
+          </div>
         </div>
       )}
 

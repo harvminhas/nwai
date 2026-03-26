@@ -4,6 +4,7 @@ import { consolidateStatements, getYearMonth } from "@/lib/consolidate";
 import type { ParsedStatementData } from "@/lib/types";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { merchantSlug } from "@/lib/applyRules";
+import type * as FirebaseFirestore from "firebase-admin/firestore";
 
 async function getUid(req: NextRequest): Promise<string | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
@@ -31,6 +32,16 @@ export interface DashboardAlert {
   severity: AlertSeverity;
   title: string;
   body: string;
+  href?: string;
+}
+
+export interface TodayInsight {
+  id: string;
+  emoji: string;
+  title: string;
+  subtitle: string;
+  /** positive = green, caution = amber, neutral = gray */
+  tone: "positive" | "caution" | "neutral";
   href?: string;
 }
 
@@ -599,6 +610,136 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── build today insights (deterministic, from transaction dates) ─────────────
+  const todayInsights: TodayInsight[] = [];
+
+  // Compute current-month spending directly from transaction dates
+  const spentThisMonth = (() => {
+    let total = 0;
+    const seen = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>(); // best doc per slug+stmtYm
+    for (const doc of stmtSnap.docs) {
+      const d   = doc.data();
+      const p   = d.parsedData as ParsedStatementData | undefined;
+      if (!p) continue;
+      let ym = p.statementDate ? getYearMonth(p.statementDate) : "";
+      if (!ym) {
+        const raw = d.uploadedAt?.toDate?.() ?? d.uploadedAt;
+        if (raw) ym = (typeof raw === "object" && "toISOString" in raw
+          ? (raw as Date).toISOString() : String(raw)).slice(0, 7);
+      }
+      const slug = buildAccountSlug(p.bankName, p.accountId);
+      const key  = `${slug}|${ym}`;
+      const ex   = seen.get(key);
+      if (!ex) { seen.set(key, doc); continue; }
+      const exTs = ex.data().uploadedAt?.toDate?.()?.getTime() ?? 0;
+      const ts   = d.uploadedAt?.toDate?.()?.getTime() ?? 0;
+      if (ts > exTs) seen.set(key, doc);
+    }
+    for (const doc of seen.values()) {
+      const p = doc.data().parsedData as ParsedStatementData;
+      for (const txn of p.expenses?.transactions ?? []) {
+        if (!txn.date || txn.date.slice(0, 7) !== thisMonth) continue;
+        // Exclude transfers/payments
+        if (/transfer|payment/i.test(txn.category ?? "")) continue;
+        total += txn.amount ?? 0;
+      }
+    }
+    return total;
+  })();
+
+  const dayOfMonthNow = now.getDate();
+  const daysInMonthNow = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+
+  // 1. Spending pace insight
+  if (spentThisMonth > 0 && typicalMonthlyExpenses > 0) {
+    const paceProjected = (spentThisMonth / dayOfMonthNow) * daysInMonthNow;
+    const pctOfTypical  = paceProjected / typicalMonthlyExpenses;
+    if (pctOfTypical <= 0.90) {
+      todayInsights.push({
+        id: "pace_good",
+        emoji: "✅",
+        title: `On track — ${fmt(spentThisMonth)} spent so far`,
+        subtitle: `On pace for ${fmt(Math.round(paceProjected))}, below your typical ${fmt(Math.round(typicalMonthlyExpenses))}/mo`,
+        tone: "positive",
+        href: "/account/spending",
+      });
+    } else if (pctOfTypical >= 1.20) {
+      todayInsights.push({
+        id: "pace_high",
+        emoji: "📈",
+        title: `Spending running high — ${fmt(spentThisMonth)} this month`,
+        subtitle: `On pace for ${fmt(Math.round(paceProjected))} vs typical ${fmt(Math.round(typicalMonthlyExpenses))}/mo`,
+        tone: "caution",
+        href: "/account/spending",
+      });
+    } else {
+      todayInsights.push({
+        id: "pace_normal",
+        emoji: "💳",
+        title: `${fmt(spentThisMonth)} spent in ${new Date().toLocaleDateString("en-US", { month: "long" })}`,
+        subtitle: `On pace for ${fmt(Math.round(paceProjected))} — typical month is ${fmt(Math.round(typicalMonthlyExpenses))}`,
+        tone: "neutral",
+        href: "/account/spending",
+      });
+    }
+  }
+
+  // 2. Cash runway insight
+  if (liquidAssets > 0 && typicalMonthlyExpenses > 0) {
+    const runwayDays = Math.round(liquidAssets / (typicalMonthlyExpenses / 30));
+    if (runwayDays >= 90) {
+      todayInsights.push({
+        id: "runway_strong",
+        emoji: "🏦",
+        title: `${Math.round(runwayDays / 30)} months of cash on hand`,
+        subtitle: `${fmt(liquidAssets)} in checking/savings — solid buffer`,
+        tone: "positive",
+        href: "/account/assets",
+      });
+    } else if (runwayDays < 30 && runwayDays >= 7) {
+      todayInsights.push({
+        id: "runway_low",
+        emoji: "⚠️",
+        title: `${runwayDays} days of cash runway`,
+        subtitle: `${fmt(liquidAssets)} in checking/savings vs typical ${fmt(Math.round(typicalMonthlyExpenses))}/mo spend`,
+        tone: "caution",
+        href: "/account/assets",
+      });
+    }
+  }
+
+  // 3. Upcoming 7-day net cash flow
+  const next7Out = upcoming
+    .filter((i) => !i.isThisMonth && i.daysFromNow >= 0 && i.daysFromNow <= 7 && i.type !== "cash-in")
+    .reduce((s, i) => s + i.amount, 0);
+  const next7In  = upcoming
+    .filter((i) => !i.isThisMonth && i.daysFromNow >= 0 && i.daysFromNow <= 7 && i.type === "cash-in")
+    .reduce((s, i) => s + i.amount, 0);
+  if (next7Out > 0 || next7In > 0) {
+    const net = next7In - next7Out;
+    if (next7Out > 0 && liquidAssets > 0 && next7Out > liquidAssets * 0.30) {
+      todayInsights.push({
+        id: "cashflow_week",
+        emoji: "📅",
+        title: `${fmt(next7Out)} due in the next 7 days`,
+        subtitle: next7In > 0
+          ? `${fmt(next7In)} expected in — net ${net >= 0 ? "+" : ""}${fmt(net)}`
+          : `Check your ${fmt(liquidAssets)} balance is enough`,
+        tone: "caution",
+        href: "/account/dashboard",
+      });
+    } else if (next7Out > 0) {
+      todayInsights.push({
+        id: "cashflow_week",
+        emoji: "📅",
+        title: `${fmt(next7Out)} in bills this week`,
+        subtitle: next7In > 0 ? `${fmt(next7In)} income expected — net ${net >= 0 ? "+" : ""}${fmt(net)}` : "Upcoming charges this week",
+        tone: "neutral",
+        href: "/account/dashboard",
+      });
+    }
+  }
+
   // ── sort: overdue → dated (asc) → this-month (cash-out first, income last) ─
   upcoming.sort((a, b) => {
     if (a.isOverdue && !b.isOverdue) return -1;
@@ -614,5 +755,5 @@ export async function GET(req: NextRequest) {
     return a.date.localeCompare(b.date);
   });
 
-  return NextResponse.json({ alerts: cappedAlerts, upcoming, today });
+  return NextResponse.json({ alerts: cappedAlerts, upcoming, today, insights: todayInsights });
 }

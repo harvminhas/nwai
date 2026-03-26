@@ -4,9 +4,12 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
+import { collection, query, orderBy, limit, onSnapshot } from "firebase/firestore";
 import { getFirebaseClient } from "@/lib/firebase";
 import NetWorthChart from "@/components/NetWorthChart";
+import AgentInsightCards from "@/components/AgentInsightCards";
 import type { ParsedStatementData } from "@/lib/types";
+import type { AgentCard } from "@/lib/agentTypes";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -422,6 +425,9 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   const [debtLabels, setDebtLabels]   = useState<string[]>([]);
   const [liquidAssets, setLiquidAssets] = useState(0);
   const [modalOpen, setModalOpen]     = useState(false);
+  const [agentCards, setAgentCards]   = useState<AgentCard[]>([]);
+  const [idToken, setIdToken]         = useState<string | null>(null);
+  const [uid, setUid]                 = useState<string | null>(null);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -430,6 +436,8 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
       setLoading(true); setError(null);
       try {
         const token = await user.getIdToken();
+        setIdToken(token);
+        setUid(user.uid);
         const res = await fetch("/api/user/statements/consolidated", { headers: { Authorization: `Bearer ${token}` } });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) { setError(json.error || "Failed to load"); return; }
@@ -459,6 +467,29 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
     });
     return () => unsub();
   }, [router, refreshKey]);
+
+  // Real-time listener for agent insight cards — fires immediately with cached
+  // data and again whenever the pipeline writes new cards after an upload.
+  useEffect(() => {
+    if (!uid) return;
+    const { db } = getFirebaseClient();
+    const q = query(
+      collection(db, `users/${uid}/agentInsights`),
+      orderBy("createdAt", "desc"),
+      limit(20)
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const cards = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() } as AgentCard))
+          .filter((c) => !c.dismissed);
+        setAgentCards(cards);
+      },
+      () => {} // ignore listener errors silently
+    );
+    return unsub;
+  }, [uid]);
 
   if (loading) return (
     <div className="flex min-h-[40vh] items-center justify-center">
@@ -653,6 +684,11 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
             )}
           </Link>
         </div>
+
+        {/* ── Agent insight cards ───────────────────────────────────────────── */}
+        {agentCards.length > 0 && idToken && (
+          <AgentInsightCards cards={agentCards} token={idToken} />
+        )}
 
         {/* ── Net worth chart ───────────────────────────────────────────────── */}
         {chartHistory.length >= 2 && <NetWorthChart history={chartHistory} />}

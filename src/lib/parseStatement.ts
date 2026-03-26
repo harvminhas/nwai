@@ -3,21 +3,26 @@ import { sendVisionRequest, sendPdfRequest, sendTextRequest } from "./ai";
 
 const SYSTEM_PROMPT = `You are a financial analysis expert. Analyze this bank statement and extract structured data.
 
+**CRITICAL — NO FABRICATION RULE:**
+Every value you return MUST be copied verbatim from the document. Do NOT guess, infer, calculate, or invent any value that is not explicitly printed on the statement. If a field is not present, use the fallback specified (null, 0, "unknown", or []). This rule applies especially to account numbers, balances, dates, and interest rates.
+
 **Instructions:**
 1. Extract the account details:
-   - bankName: the name of the bank or financial institution
-   - accountId: the masked account number as shown on the statement (e.g. "••••1234" or "****5678"). Use the last 4 digits if shown. If not present, use "unknown".
+   - bankName: the name of the bank or financial institution as printed on the statement.
+   - accountId: copy the account number or ID EXACTLY as printed on the statement. It may appear as a fully visible number (e.g. "28215846"), a partially masked number (e.g. "••••1234", "****5678"), or a card number (e.g. "5223 XXXX XXXX 0773"). Copy the value character-for-character — do NOT reformat, truncate, mask, unmask, or alter it in any way. Do NOT derive it from other numbers on the page. Do NOT invent digits. If no account number appears anywhere on the statement, return "unknown".
    - accountName: the account product name or nickname shown on the statement (e.g. "Chase Sapphire Reserve", "Everyday Savings", "Home Mortgage"). If not present, infer from context.
    - accountType: classify as exactly one of: "checking", "savings", "credit", "mortgage", "investment", "loan", "other"
-   - interestRate: the annual interest or return rate as a plain number (e.g. 4.25 for 4.25%). For debt accounts extract the APR/interest rate shown. For savings/investment accounts extract the APY/annual return shown. If no rate is stated anywhere on the statement, return null.
+   - interestRate: the annual interest or return rate as a plain number (e.g. 4.25 for 4.25%). For debt accounts extract the APR/interest rate shown. For savings/investment accounts extract the APY/annual return shown. If no rate is stated anywhere on the statement, return null. Do NOT guess or calculate a rate.
 
 2. Extract the total balance as "netWorth":
+   - Copy balances EXACTLY as printed — do NOT estimate or calculate.
    - For asset accounts (checking, savings, investment): use the closing/ending balance as a POSITIVE number.
    - For debt accounts (credit, mortgage, loan, HELOC, line of credit): use the total outstanding balance as a NEGATIVE number.
    - IMPORTANT — Multi-segment statements (e.g. TD Home Equity FlexLine, Scotia Total Equity Plan, or any combined mortgage + line of credit product): these contain multiple sub-accounts (e.g. a revolving portion AND one or more term/fixed portions). You MUST sum ALL sub-account closing/principal balances together as one total debt. Example: revolving $34,717 + term 1 $444,469 + term 2 $37,805 = total −$517,991. Do NOT report only one segment.
    - Also set "assets" and "debts" explicitly:
      - For asset accounts: assets = closing balance, debts = 0
      - For debt accounts: assets = 0, debts = total outstanding balance (positive number)
+   - statementDate: use the last day of the statement period (the period end date printed on the statement). Copy it directly — do NOT guess or use today's date.
 
 3. Identify transactions if present (date, description, amount).
    - CRITICAL: List EVERY transaction individually. Do NOT deduplicate, merge, or omit repeated payees. If the same employer pays twice in a month, list both entries separately.
@@ -114,7 +119,8 @@ For a mortgage/loan (income, expenses, subscriptions will be empty; paymentsMade
   ]
 }
 
-For a checking/savings/credit account:
+For a checking/savings/credit account.
+accountId examples: TD statement printing "••••3156" → use "••••3156". Wealthsimple printing "28215846" → use "28215846". Always copy verbatim.
 {
   "netWorth": 7148.01,
   "assets": 7148.01,

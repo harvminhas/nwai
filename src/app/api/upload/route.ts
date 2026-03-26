@@ -35,9 +35,6 @@ const ALLOWED_TYPES = [
   "image/png",
   "image/jpeg",
   "image/jpg",
-  "text/csv",
-  "application/csv",
-  "text/comma-separated-values",
 ];
 
 export async function POST(request: NextRequest) {
@@ -75,11 +72,10 @@ export async function POST(request: NextRequest) {
       nameLower.endsWith(".pdf") ||
       nameLower.endsWith(".png") ||
       nameLower.endsWith(".jpg") ||
-      nameLower.endsWith(".jpeg") ||
-      nameLower.endsWith(".csv");
+      nameLower.endsWith(".jpeg");
     if (!ALLOWED_TYPES.some((t) => t === type) && !extOk) {
       return NextResponse.json(
-        { error: "Please upload PDF, CSV, PNG, or JPG" },
+        { error: "Please upload a PDF or image of your bank statement." },
         { status: 400 }
       );
     }

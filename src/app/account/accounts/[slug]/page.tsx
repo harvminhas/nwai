@@ -191,6 +191,7 @@ export default function AccountDetailPage() {
   const [statementCount, setStatementCount] = useState(0);
   const [idToken, setIdToken]             = useState<string | null>(null);
   const [deletingId, setDeletingId]       = useState<string | null>(null);
+  const [reparsingId, setReparsingId]     = useState<string | null>(null);
 
   // Transactions section state
   const [txMonth, setTxMonth]         = useState<string | null>(null);
@@ -323,6 +324,33 @@ export default function AccountDetailPage() {
         })
       ));
     } finally { setDeletingId(null); }
+  }
+
+  async function handleReparse(statementId: string) {
+    if (!idToken) return;
+    setReparsingId(statementId);
+    try {
+      const res = await fetch("/api/parse", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ statementId }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(j.error || "Re-parse failed");
+        return;
+      }
+      // If the account slug changed (e.g. wrong account number was corrected),
+      // navigate to the new account page; otherwise just reload in place.
+      const newSlug: string | undefined = j.accountSlug;
+      if (newSlug && newSlug !== slug) {
+        router.push(`/account/accounts/${encodeURIComponent(newSlug)}`);
+      } else {
+        window.location.reload();
+      }
+    } finally {
+      setReparsingId(null);
+    }
   }
 
   async function handleTxMonthSelect(ym: string) {
@@ -833,8 +861,16 @@ export default function AccountDetailPage() {
                           <div className="flex items-center justify-end gap-2">
                             <Link href={`/dashboard/${entry.statementId}`} className="text-xs text-purple-500 hover:underline">View</Link>
                             <button
+                              onClick={() => handleReparse(entry.statementId)}
+                              disabled={reparsingId === entry.statementId || deletingId === entry.statementId}
+                              className="text-xs text-blue-400 hover:text-blue-600 disabled:opacity-40"
+                              title="Re-extract data from the original PDF"
+                            >
+                              {reparsingId === entry.statementId ? "…" : "Re-parse"}
+                            </button>
+                            <button
                               onClick={() => handleDelete(entry.statementId)}
-                              disabled={deletingId === entry.statementId}
+                              disabled={deletingId === entry.statementId || reparsingId === entry.statementId}
                               className="text-xs text-gray-400 hover:text-red-500 disabled:opacity-40"
                             >
                               {deletingId === entry.statementId ? "…" : "Delete"}

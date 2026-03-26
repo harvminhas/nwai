@@ -3,8 +3,7 @@
 import { useCallback, useState } from "react";
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
-const ACCEPT =
-  "application/pdf,text/csv,application/csv,image/png,image/jpeg,image/jpg,.csv";
+const ACCEPT = "application/pdf,image/png,image/jpeg,image/jpg";
 
 export type UploadZoneProps = {
   /** Called for single-file mode (default). */
@@ -50,18 +49,10 @@ export default function UploadZone({ onFileSelect, onFilesSelect, multiple = fal
   const validate = useCallback((file: File): ErrorType => {
     if (file.size > MAX_SIZE_BYTES) return "size";
     const type = file.type.toLowerCase();
-    const allowed = [
-      "application/pdf",
-      "image/png",
-      "image/jpeg",
-      "image/jpg",
-      "text/csv",
-      "application/csv",
-      "text/comma-separated-values",
-    ];
+    const allowed = ["application/pdf", "image/png", "image/jpeg", "image/jpg"];
     const name = file.name.toLowerCase();
-    if (!allowed.some((t) => type === t) && !name.endsWith(".csv"))
-      return "type";
+    const extOk = name.endsWith(".pdf") || name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg");
+    if (!allowed.some((t) => type === t) && !extOk) return "type";
     return null;
   }, []);
 
@@ -120,7 +111,7 @@ export default function UploadZone({ onFileSelect, onFilesSelect, multiple = fal
     error === "size"
       ? "One or more files exceed the 10MB limit"
       : error === "type"
-        ? "Please upload PDF, CSV, PNG, or JPG files only"
+        ? "Please upload a PDF or photo (PNG/JPG) of your bank statement"
         : null;
 
   const baseClasses = isPremium
@@ -158,8 +149,8 @@ export default function UploadZone({ onFileSelect, onFilesSelect, multiple = fal
         </p>
         <p className="mt-1 text-sm text-gray-400">
           {isPremium
-            ? "PDF or CSV · up to 20 files · auto-sorted by account"
-            : "or click to browse · PDF or CSV · 1 file"}
+            ? "PDF or photo · up to 20 files · auto-sorted by account"
+            : "or click to browse · PDF or photo · 1 file"}
         </p>
       </label>
       {errorMessage && (
