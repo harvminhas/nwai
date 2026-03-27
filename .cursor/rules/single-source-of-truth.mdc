@@ -39,6 +39,29 @@ When a field is needed on the client, add it to the API response **once** and ad
 - `interestRate` → `UserStatementSummary` + `statements/route.ts`
 - `source`, `csvDateRange`, `txCount` → already in `UserStatementSummary`
 
-## Transaction Logic
+## Transaction Logic — Transfers & Payments vs Payments Made
 
-Outgoing = expense, incoming to debt = `paymentsMade`. This rule is defined once in `csv-import/route.ts` and `csvParser.ts`. Do not re-implement sign logic elsewhere.
+These are **two sides of the same transaction** and must never be confused:
+
+| Field | Where recorded | What it means |
+|-------|---------------|---------------|
+| `Debt Payments` category | Expense on the **asset** account (checking/savings) | CC/loan payment sent FROM checking — e.g. "VISA PAYMENT" |
+| `Transfers` category | Expense on the **asset** account | Inter-account or e-transfer to a person/business — NOT a debt payment |
+| `paymentsMade` | Separate field on the **debt** account (CC/loan) | Money received by the debt account — tracked for reconciliation |
+| `Transfers & Payments` | Legacy only — old statements before the split | Treat as equivalent to `Transfers` in display |
+
+**Design rule**: `Debt Payments` on the asset side offsets `paymentsMade` on the debt side. True discretionary spending = `This Month total − paymentsMade`. Always show both AND the net when `paymentsMade > 0`.
+
+**Category taxonomy** (canonical, used in both `csvParser.ts` and `parseStatement.ts`):
+`Dining`, `Groceries`, `Shopping`, `Transportation`, `Entertainment`, `Subscriptions`, `Healthcare`, `Fees`, `Debt Payments`, `Investments & Savings`, `Transfers`, `Cash & ATM`, `Other`, `Income`
+
+- `Fees` — bank/account/NSF/overdraft fees (O.D.P. FEE, MONTHLY ACCOUNT FEE), service charges, annual card fees
+
+- `Debt Payments` — CC/loan/mortgage payments FROM a checking account (matches `paymentsMade` on debt side)
+- `Investments & Savings` — RRSP/TFSA/mutual fund contributions, life insurance premiums, investment-linked insurance
+- `Transfers` — inter-account or e-transfers to people/businesses (not debt or investment)
+- `Transfers & Payments` — legacy label only; treat as `Transfers` in display
+
+**Sign rules** (defined once in `csv-import/route.ts` and `csvParser.ts` — never re-implement elsewhere):
+- Asset account (checking/savings): outgoing = expense, incoming = income
+- Debt account (CC/loan/mortgage): outgoing = expense, incoming = `paymentsMade` (NOT income)

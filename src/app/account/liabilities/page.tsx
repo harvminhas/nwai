@@ -6,7 +6,7 @@ import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { Suspense } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
-import type { UserStatementSummary, ManualLiability, LiabilityCategory } from "@/lib/types";
+import type { UserStatementSummary, ManualLiability, LiabilityCategory, SubAccount } from "@/lib/types";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import type { AccountRateEntry } from "@/app/api/user/account-rates/route";
 import { usePlan } from "@/contexts/PlanContext";
@@ -189,6 +189,7 @@ interface DisplayLiability {
   id: string; label: string; subLabel?: string; category: LiabilityCategory;
   balance: number; interestRate?: number; statementDate?: string;
   source: "manual" | "statement"; accountSlug?: string;
+  subAccounts?: SubAccount[];
 }
 
 // ── modal ─────────────────────────────────────────────────────────────────────
@@ -834,41 +835,61 @@ function AccountsTab({
             </div>
             <div className="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white shadow-sm">
               {group.map((l) => (
-                <div key={l.id} className="flex items-center justify-between px-4 py-3.5">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <CategoryIcon cat={l.category} />
-                    <div className="min-w-0">
-                      <p className="font-medium text-sm text-gray-800 truncate">
-                        {l.label}
-                        {l.subLabel && l.subLabel !== l.label && <span className="ml-1 font-normal text-gray-400">— {l.subLabel}</span>}
-                      </p>
-                      <p className="text-xs text-gray-400">
-                        {l.statementDate
-                          ? `as of ${new Date(l.statementDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
-                          : l.interestRate != null ? `${l.interestRate}% APR` : "manually added"}
-                      </p>
+                <div key={l.id}>
+                  <div className="flex items-center justify-between px-4 py-3.5">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <CategoryIcon cat={l.category} />
+                      <div className="min-w-0">
+                        <p className="font-medium text-sm text-gray-800 truncate">
+                          {l.label}
+                          {l.subLabel && l.subLabel !== l.label && <span className="ml-1 font-normal text-gray-400">— {l.subLabel}</span>}
+                        </p>
+                        <p className="text-xs text-gray-400">
+                          {l.statementDate
+                            ? `as of ${new Date(l.statementDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
+                            : l.interestRate != null ? `${l.interestRate}% APR` : "manually added"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="ml-4 flex shrink-0 items-center gap-3">
+                      <p className="font-semibold text-sm text-gray-900 tabular-nums">{fmt(l.balance)}</p>
+                      {l.source === "statement" && l.accountSlug && (
+                        <Link href={`/account/accounts/${l.accountSlug}`} className="text-gray-300 hover:text-purple-500 transition" title="View account">
+                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                        </Link>
+                      )}
+                      {l.source === "manual" && (
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => { const m = manualLibs.find((x) => x.id === l.id); if (m) onEdit(m); }}
+                            className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600" title="Edit">
+                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                          </button>
+                          <button onClick={() => onDelete(l.id)} disabled={deletingId === l.id}
+                            className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500 disabled:opacity-40" title="Delete">
+                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
-                  <div className="ml-4 flex shrink-0 items-center gap-3">
-                    <p className="font-semibold text-sm text-gray-900 tabular-nums">{fmt(l.balance)}</p>
-                    {l.source === "statement" && l.accountSlug && (
-                      <Link href={`/account/accounts/${l.accountSlug}`} className="text-gray-300 hover:text-purple-500 transition" title="View account">
-                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
-                      </Link>
-                    )}
-                    {l.source === "manual" && (
-                      <div className="flex items-center gap-1">
-                        <button onClick={() => { const m = manualLibs.find((x) => x.id === l.id); if (m) onEdit(m); }}
-                          className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600" title="Edit">
-                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                        </button>
-                        <button onClick={() => onDelete(l.id)} disabled={deletingId === l.id}
-                          className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500 disabled:opacity-40" title="Delete">
-                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                  {/* Sub-account breakdown (e.g. HELOC revolving + mortgage term portions) */}
+                  {l.subAccounts && l.subAccounts.length > 0 && (
+                    <div className="mx-4 mb-3 rounded-lg border border-gray-100 bg-gray-50 divide-y divide-gray-100">
+                      {l.subAccounts.map((sub) => (
+                        <div key={sub.id} className="flex items-center justify-between px-3 py-2">
+                          <div className="min-w-0">
+                            <p className="text-xs font-medium text-gray-700">{sub.label}</p>
+                            <p className="text-[11px] text-gray-400 mt-0.5">
+                              {sub.apr != null ? `${sub.apr}% APR` : "rate unknown"}
+                              {sub.maturityDate ? ` · matures ${new Date(sub.maturityDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })}` : ""}
+                              {" · "}<span className="capitalize">{sub.type}</span>
+                            </p>
+                          </div>
+                          <p className="ml-3 shrink-0 text-xs font-semibold text-gray-700 tabular-nums">{fmt(sub.balance)}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -1187,6 +1208,7 @@ function LiabilitiesPageInner() {
           balance: Math.abs(s.netWorth ?? 0), statementDate: s.statementDate,
           interestRate: typeof s.interestRate === "number" ? s.interestRate : undefined,
           source: "statement" as const, accountSlug: accountSlug(s),
+          subAccounts: s.subAccounts,
         }));
 
       const fromManual: DisplayLiability[] = manual.map((m) => ({

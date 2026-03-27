@@ -265,8 +265,9 @@ export async function GET(req: NextRequest) {
   const monthFraction = dayOfMonth / daysInMonth;
 
   // Current-month income & expenses from transaction dates only.
+  // No category filter — must match the spending page exactly so users never see discrepancies.
   const income   = incomeTxns.filter((t) => t.txMonth === thisMonth).reduce((s, t) => s + t.amount, 0);
-  const expenses = expenseTxns.filter((t) => t.txMonth === thisMonth && !/transfer|payment/i.test(t.category)).reduce((s, t) => s + t.amount, 0);
+  const expenses = expenseTxns.filter((t) => t.txMonth === thisMonth).reduce((s, t) => s + t.amount, 0);
   const debts    = txSnapshots.reduce((s, a) => s + Math.max(0, -a.balance), 0);
 
   // "Data is current month" if we have at least one transaction dated in thisMonth.
@@ -279,7 +280,7 @@ export async function GET(req: NextRequest) {
     const monthTotals = historicalMonths
       .map((m) =>
         expenseTxns
-          .filter((t) => t.txMonth === m && !/transfer|payment/i.test(t.category))
+          .filter((t) => t.txMonth === m)
           .reduce((s, t) => s + t.amount, 0)
       )
       .filter((v) => v > 0);

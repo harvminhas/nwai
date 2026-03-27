@@ -3,6 +3,7 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { consolidateStatements, getYearMonth } from "@/lib/consolidate";
 import { applyRulesAndRecalculate, merchantSlug } from "@/lib/applyRules";
 import { buildAccountSlug } from "@/lib/accountSlug";
+import { isBalanceMarker } from "@/lib/balanceMarkers";
 import type { ParsedStatementData, ManualAsset, AssetCategory } from "@/lib/types";
 import type { BalanceSnapshot } from "@/app/api/user/balance-snapshots/route";
 
@@ -309,7 +310,7 @@ export async function GET(request: NextRequest) {
     }
 
     // ── History + income source history + recurring expense history ──────────
-    const history: { yearMonth: string; netWorth: number; expensesTotal: number; incomeTotal: number; debtTotal: number }[] = [];
+    const history: { yearMonth: string; netWorth: number; expensesTotal: number; coreExpensesTotal: number; incomeTotal: number; debtTotal: number }[] = [];
 
     // incomeSourceHistory: source description → per-month amounts + transaction dates
     const incomeSourceHistory: Record<string, {
@@ -332,14 +333,20 @@ export async function GET(request: NextRequest) {
         const hDebts = c.debts ?? Math.max(0, -(c.netWorth ?? 0));
         // Expenses use transaction-date filtering to avoid billing-period double-counting.
         // Income uses the statement-level aggregate (see below).
-        const txDateExpenses = (c.expenses?.transactions ?? [])
+        const monthTxns = (c.expenses?.transactions ?? [])
           .filter((t) => (t.date ?? `${ym}-15`).slice(0, 7) === ym)
+          .filter((t) => !isBalanceMarker(t.merchant));
+        const txDateExpenses = monthTxns.reduce((s, t) => s + t.amount, 0);
+        // Core expenses excludes transfers, debt payments, and investment transfers
+        // so the dashboard can optionally show discretionary-only spending.
+        const txDateCoreExpenses = monthTxns
+          .filter((t) => !/^(transfers|transfers & payments|debt payments|investments & savings)$/i.test((t.category ?? "").trim()))
           .reduce((s, t) => s + t.amount, 0);
         // Income uses the statement-level total: the AI parser correctly attributes income
         // to its statement period. Unlike expenses (billing periods can span months),
         // income has no double-counting risk — use the aggregate directly.
         const txDateIncome = c.income?.total ?? 0;
-        history.push({ yearMonth: ym, netWorth: hNetWorth, expensesTotal: txDateExpenses, incomeTotal: txDateIncome, debtTotal: hDebts });
+        history.push({ yearMonth: ym, netWorth: hNetWorth, expensesTotal: txDateExpenses, coreExpensesTotal: txDateCoreExpenses, incomeTotal: txDateIncome, debtTotal: hDebts });
 
         // Build per-source income history — only for months that had real statements
         const hasRealIncome = allCompleted.some((doc) => {
@@ -382,6 +389,7 @@ export async function GET(request: NextRequest) {
     const accountStatementHistory = new Map<string, {
       yearMonth: string; netWorth: number; uploadedAt: string;
       statementId: string; isCarryForward: boolean; interestRate: number | null;
+      source?: "pdf" | "csv";
       isManualSnapshot?: boolean; snapshotId?: string; note?: string;
     }[]>();
 
@@ -425,6 +433,7 @@ export async function GET(request: NextRequest) {
           statementId: sourceDoc?.id ?? "",
           isCarryForward: !realForThisMonth,
           interestRate,
+          source: (sourceDoc?.data().source as "pdf" | "csv" | undefined) ?? "pdf",
         });
       }
     }

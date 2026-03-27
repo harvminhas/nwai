@@ -45,6 +45,9 @@ export async function GET(request: NextRequest) {
           (d.parsedData?.income?.transactions?.length ?? 0)
         ) || undefined,
         interestRate: typeof d.parsedData?.interestRate === "number" ? d.parsedData.interestRate : null,
+        subAccounts: Array.isArray(d.parsedData?.subAccounts) && d.parsedData.subAccounts.length > 0
+          ? d.parsedData.subAccounts
+          : undefined,
       };
     });
 

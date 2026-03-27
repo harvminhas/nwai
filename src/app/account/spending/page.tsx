@@ -4,8 +4,10 @@ import { useEffect, useState, useRef, useCallback, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 import { getFirebaseClient } from "@/lib/firebase";
 import type { ParsedStatementData, ExpenseTransaction, Subscription } from "@/lib/types";
+import { isBalanceMarker, txIgnoreKey } from "@/lib/balanceMarkers";
 import { merchantSlug } from "@/lib/applyRules";
 import { detectFrequency, FREQUENCY_CONFIG, type Frequency } from "@/lib/incomeEngine";
 import {
@@ -35,18 +37,19 @@ function Toast({ message, onDone }: { message: string; onDone: () => void }) {
 
 // ── Monthly spending chart ────────────────────────────────────────────────────
 
-function SpendingChart({ history, avg, median, selectedMonth }: {
+function SpendingChart({ history, avg, median, selectedMonth, effectiveExp }: {
   history: HistoryPoint[];
   avg: number | null;
   median: number | null;
   selectedMonth: string | null;
+  effectiveExp: (h: HistoryPoint) => number;
 }) {
   const data = history
     .filter((h) => (h.expensesTotal ?? 0) > 0)
     .map((h) => ({
       ym: h.yearMonth,
       label: shortMonth(h.yearMonth),
-      amount: h.expensesTotal ?? 0,
+      amount: effectiveExp(h),
     }));
 
   if (data.length === 0) return null;
@@ -193,7 +196,7 @@ function fmtDate(iso: string) {
   return new Date(iso + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-type HistoryPoint = { yearMonth: string; netWorth: number; expensesTotal?: number };
+type HistoryPoint = { yearMonth: string; netWorth: number; expensesTotal?: number; coreExpensesTotal?: number };
 
 // ── inner page ────────────────────────────────────────────────────────────────
 
@@ -214,6 +217,12 @@ function SpendingPageInner() {
   const [history, setHistory]           = useState<HistoryPoint[]>([]);
   const [prevExpenses, setPrevExpenses] = useState<number | null>(null);
   const [loading, setLoading]           = useState(true);
+  const [excludeTransfers, setExcludeTransfers] = useState<boolean>(() => {
+    if (typeof window !== "undefined") return localStorage.getItem("excludeTransfersFromTypical") === "true";
+    return false;
+  });
+  const [ignoredTxKeys, setIgnoredTxKeys] = useState<Set<string>>(new Set());
+  const [uid, setUid]                     = useState<string | null>(null);
   const [monthLoading, setMonthLoading] = useState(false);
   const [chartExpanded, setChartExpanded] = useState(false);
   const [error, setError]               = useState<string | null>(null);
@@ -296,10 +305,18 @@ function SpendingPageInner() {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
       if (!user) { router.push("/login"); return; }
+      setUid(user.uid);
       setLoading(true); setError(null);
       try {
         const tok = await user.getIdToken();
         setToken(tok);
+        // Load ignored transaction keys from Firestore prefs
+        const { db } = getFirebaseClient();
+        const prefsSnap = await getDoc(doc(db, `users/${user.uid}/prefs/ignoredTxs`));
+        if (prefsSnap.exists()) {
+          const keys: string[] = prefsSnap.data()?.keys ?? [];
+          setIgnoredTxKeys(new Set(keys));
+        }
         const [res] = await Promise.all([
           fetch("/api/user/statements/consolidated", { headers: { Authorization: `Bearer ${tok}` } }),
           loadRecurring(tok),
@@ -381,6 +398,21 @@ function SpendingPageInner() {
   }
 
   // ── recurring toggle ──────────────────────────────────────────────────────
+
+  async function handleIgnoreTx(txn: ExpenseTransaction) {
+    const key = txIgnoreKey(txn.date, txn.amount, txn.merchant);
+    const next = new Set(ignoredTxKeys);
+    if (next.has(key)) {
+      next.delete(key);
+    } else {
+      next.add(key);
+    }
+    setIgnoredTxKeys(next);
+    if (uid) {
+      const { db } = getFirebaseClient();
+      await setDoc(doc(db, `users/${uid}/prefs/ignoredTxs`), { keys: Array.from(next) });
+    }
+  }
 
   function handleRecurringToggle(txn: ExpenseTransaction, anchorEl: HTMLElement) {
     if (!token) return;
@@ -540,12 +572,21 @@ function SpendingPageInner() {
   // transactions whose DATE falls in the selected month (transaction-date principle).
   const filterMonth = selectedMonth ?? yearMonth ?? "";
   const monthTxns = txns.filter(
-    (t) => !t.date || t.date.startsWith(filterMonth)
+    (t) => (!t.date || t.date.startsWith(filterMonth))
+      && !isBalanceMarker(t.merchant)
+      && !ignoredTxKeys.has(txIgnoreKey(t.date, t.amount, t.merchant))
   );
 
   const total = monthTxns.length > 0
     ? monthTxns.reduce((s, t) => s + t.amount, 0)
     : (data?.expenses?.total ?? 0);
+
+  const TRANSFER_CATS_RE = /^(transfers|transfers & payments|debt payments|investments & savings)$/i;
+  const displayTotal = excludeTransfers
+    ? (monthTxns.length > 0
+        ? monthTxns.filter((t) => !TRANSFER_CATS_RE.test((t.category ?? "").trim())).reduce((s, t) => s + t.amount, 0)
+        : (data?.expenses?.total ?? 0))
+    : total;
 
   const categories = (() => {
     if (monthTxns.length === 0) return (data?.expenses?.categories ?? []).slice().sort((a, b) => b.amount - a.amount);
@@ -563,12 +604,14 @@ function SpendingPageInner() {
   })();
 
   const monthsTracked = history.length;
+  const effectiveExp = (h: HistoryPoint) =>
+    excludeTransfers && h.coreExpensesTotal !== undefined ? h.coreExpensesTotal : (h.expensesTotal ?? 0);
   const avgExpenses = monthsTracked > 0
-    ? Math.round(history.reduce((s, h) => s + (h.expensesTotal ?? 0), 0) / monthsTracked)
+    ? Math.round(history.reduce((s, h) => s + effectiveExp(h), 0) / monthsTracked)
     : null;
   const medianExpenses = (() => {
     if (monthsTracked === 0) return null;
-    const sorted = [...history].map((h) => h.expensesTotal ?? 0).sort((a, b) => a - b);
+    const sorted = [...history].map(effectiveExp).sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
     return sorted.length % 2 !== 0
       ? sorted[mid]
@@ -591,14 +634,31 @@ function SpendingPageInner() {
     <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
 
       {/* Header */}
-      <div className="mb-1">
-        <h1 className="font-bold text-3xl text-gray-900">Spending</h1>
-        {selectedMonth && (
-          <p className="mt-0.5 text-sm text-gray-400">
-            {total > 0 && <>{fmt(total)} · </>}{monthLabel(selectedMonth)}
-            {monthLoading && <span className="ml-2 text-xs text-gray-300">loading…</span>}
-          </p>
-        )}
+      <div className="mb-1 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-bold text-3xl text-gray-900">Spending</h1>
+          {selectedMonth && (
+            <p className="mt-0.5 text-sm text-gray-400">
+              {displayTotal > 0 && <>{fmt(displayTotal)} · </>}{monthLabel(selectedMonth)}
+              {monthLoading && <span className="ml-2 text-xs text-gray-300">loading…</span>}
+            </p>
+          )}
+        </div>
+        <label
+          className="mt-2 flex items-center gap-1.5 cursor-pointer select-none shrink-0"
+          title="Exclude transfers, debt payments &amp; investments from all spending totals"
+        >
+          <input
+            type="checkbox"
+            checked={excludeTransfers}
+            onChange={(e) => {
+              setExcludeTransfers(e.target.checked);
+              localStorage.setItem("excludeTransfersFromTypical", String(e.target.checked));
+            }}
+            className="w-3.5 h-3.5 accent-purple-600 cursor-pointer"
+          />
+          <span className="text-xs text-gray-400">excl. transfers</span>
+        </label>
       </div>
 
       {/* Month pills */}
@@ -674,6 +734,7 @@ function SpendingPageInner() {
                     avg={avgExpenses}
                     median={medianExpenses}
                     selectedMonth={selectedMonth}
+                    effectiveExp={effectiveExp}
                   />
 
                   {/* Expand toggle — centered chevron below chart */}
@@ -763,37 +824,62 @@ function SpendingPageInner() {
                 </>
               )}
               {total > 0 && (
-                <div className={`grid gap-4 ${paymentsMade > 0 ? "grid-cols-3" : "grid-cols-2"}`}>
-                  <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">This Month</p>
-                    <p className="mt-2 font-bold text-2xl text-gray-900">{fmt(total)}</p>
-                    {expDelta !== null && (
-                      <p className={`mt-1 text-xs font-medium ${expDelta > 0 ? "text-red-500" : "text-green-600"}`}>
-                        {expDelta > 0 ? "↑" : "↓"} {fmt(Math.abs(expDelta))} vs{" "}
-                        {yearMonth ? shortMonth(history.filter(h => h.yearMonth < yearMonth).slice(-1)[0]?.yearMonth ?? "") : "last month"}
-                      </p>
+                <>
+                  <div className={`grid gap-4 ${paymentsMade > 0 ? "grid-cols-3" : "grid-cols-2"}`}>
+                    {/* Total outflows this month */}
+                    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">This Month</p>
+                      <p className="mt-2 font-bold text-2xl text-gray-900">{fmt(displayTotal)}</p>
+                      {expDelta !== null && (
+                        <p className={`mt-1 text-xs font-medium ${expDelta > 0 ? "text-red-500" : "text-green-600"}`}>
+                          {expDelta > 0 ? "↑" : "↓"} {fmt(Math.abs(expDelta))} vs{" "}
+                          {yearMonth ? shortMonth(history.filter(h => h.yearMonth < yearMonth).slice(-1)[0]?.yearMonth ?? "") : "last month"}
+                        </p>
+                      )}
+                      {paymentsMade > 0 && !excludeTransfers && (
+                        <p className="mt-1 text-xs text-gray-400">incl. {fmt(paymentsMade)} debt payments</p>
+                      )}
+                    </div>
+
+                    {/* Payments Made — the debt-side receipt of transfers already counted above */}
+                    {paymentsMade > 0 && (
+                      <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-5 shadow-sm">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-blue-400">Payments Made</p>
+                        <p className="mt-2 font-bold text-2xl text-gray-900">{fmt(paymentsMade)}</p>
+                        <p className="mt-1 text-xs text-gray-400">received by CC / loans</p>
+                        <p className="mt-1 text-[10px] text-gray-400">matches "Debt Payments" in the category list below — offsets on consolidation</p>
+                      </div>
                     )}
+
+                    {/* Typical month */}
+                    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Typical Month</p>
+                      <p className="mt-2 font-bold text-2xl text-gray-900">{medianExpenses !== null ? fmt(medianExpenses) : "—"}</p>
+                      <p className="mt-1 text-xs text-gray-400">
+                        {monthsTracked > 0
+                          ? <>median · {monthsTracked} month{monthsTracked !== 1 ? "s" : ""} tracked</>
+                          : "No history yet"}
+                      </p>
+                      {avgExpenses !== null && medianExpenses !== null && avgExpenses !== medianExpenses && (
+                        <p className="mt-1 text-xs text-gray-400">avg {fmt(avgExpenses)}</p>
+                      )}
+                    </div>
                   </div>
+
+                  {/* Net spending callout — shows true discretionary spend after netting out debt payments */}
                   {paymentsMade > 0 && (
-                    <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-5 shadow-sm">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-blue-400">Payments Made</p>
-                      <p className="mt-2 font-bold text-2xl text-gray-900">{fmt(paymentsMade)}</p>
-                      <p className="mt-1 text-xs text-gray-400">to CC / loans</p>
+                    <div className="rounded-xl border border-gray-100 bg-gray-50 px-5 py-3 flex items-center justify-between gap-4">
+                      <div>
+                        <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">Net Spending </span>
+                        <span className="text-xs text-gray-400">(excl. debt payments)</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="font-bold text-lg text-gray-900">{fmt(Math.max(0, total - paymentsMade))}</span>
+                        <span className="ml-2 text-xs text-gray-400">= {fmt(total)} − {fmt(paymentsMade)}</span>
+                      </div>
                     </div>
                   )}
-                  <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Typical Month</p>
-                    <p className="mt-2 font-bold text-2xl text-gray-900">{medianExpenses !== null ? fmt(medianExpenses) : "—"}</p>
-                    <p className="mt-1 text-xs text-gray-400">
-                      {monthsTracked > 0
-                        ? <>median · {monthsTracked} month{monthsTracked !== 1 ? "s" : ""} tracked</>
-                        : "No history yet"}
-                    </p>
-                    {avgExpenses !== null && medianExpenses !== null && avgExpenses !== medianExpenses && (
-                      <p className="mt-1 text-xs text-gray-400">avg {fmt(avgExpenses)}</p>
-                    )}
-                  </div>
-                </div>
+                </>
               )}
 
               {categories.length > 0 && (
@@ -804,7 +890,7 @@ function SpendingPageInner() {
                       const color = categoryColor(cat.name);
                       return (
                         <Link key={cat.name}
-                          href={`/account/spending/category/${encodeURIComponent(cat.name.toLowerCase())}`}
+                          href={`/account/spending/category/${encodeURIComponent(cat.name.toLowerCase())}${filterMonth ? `?month=${filterMonth}` : ""}`}
                           className="flex items-center gap-4 px-5 py-3.5 group hover:bg-gray-50 transition">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between mb-1.5">
@@ -1028,13 +1114,39 @@ function SpendingPageInner() {
                               })()}
                             </div>
                           </div>
-                          <p className="ml-4 shrink-0 text-sm font-medium text-gray-700 tabular-nums">
-                            −{fmtDec(Math.abs(txn.amount))}
-                          </p>
+                          <div className="ml-4 flex items-center gap-2 shrink-0">
+                            <p className="text-sm font-medium text-gray-700 tabular-nums">
+                              −{fmtDec(Math.abs(txn.amount))}
+                            </p>
+                            <button
+                              onClick={() => handleIgnoreTx(txn)}
+                              title="Hide this transaction"
+                              className="text-gray-300 hover:text-red-400 transition text-base leading-none"
+                            >
+                              ✕
+                            </button>
+                          </div>
                         </div>
                       );
                     })}
                   </div>
+                  {ignoredTxKeys.size > 0 && (
+                    <p className="px-5 py-2 text-[11px] text-gray-400 border-t border-gray-100">
+                      {ignoredTxKeys.size} transaction{ignoredTxKeys.size !== 1 ? "s" : ""} hidden ·{" "}
+                      <button
+                        className="underline hover:text-gray-600"
+                        onClick={async () => {
+                          setIgnoredTxKeys(new Set());
+                          if (uid) {
+                            const { db } = getFirebaseClient();
+                            await setDoc(doc(db, `users/${uid}/prefs/ignoredTxs`), { keys: [] });
+                          }
+                        }}
+                      >
+                        show all
+                      </button>
+                    </p>
+                  )}
                 </>
                 );
               })()}

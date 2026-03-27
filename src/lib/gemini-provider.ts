@@ -24,12 +24,10 @@ function getModel(systemPrompt: string) {
   return genAI.getGenerativeModel({
     model: modelName,
     systemInstruction: systemPrompt,
-    ...(is25 && {
-      generationConfig: {
-        // @ts-expect-error thinkingConfig is a preview field not yet in the type defs
-        thinkingConfig: { thinkingBudget: 0 },
-      },
-    }),
+    generationConfig: {
+      maxOutputTokens: 16000,
+      ...(is25 && { thinkingConfig: { thinkingBudget: 0 } }),
+    },
   });
 }
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
-import { useRouter, useParams } from "next/navigation";
+import { useRouter, useParams, useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import {
@@ -69,8 +69,11 @@ interface Subscription {
 export default function SpendingCategoryPage() {
   const router = useRouter();
   const params = useParams();
+  const searchParams = useSearchParams();
   const rawName     = decodeURIComponent(params.name as string);
   const categoryName = rawName.replace(/\b\w/g, (c) => c.toUpperCase());
+  // Month context passed from the spending page (e.g. "2025-12")
+  const monthParam  = searchParams.get("month") ?? null;
 
   const [token, setToken]                   = useState<string | null>(null);
   const [transactions, setTransactions]     = useState<ExpenseTxn[]>([]);
@@ -99,12 +102,15 @@ export default function SpendingCategoryPage() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  const loadPage = useCallback(async (tok: string, name: string) => {
+  const loadPage = useCallback(async (tok: string, name: string, month: string | null) => {
     setLoading(true); setError(null);
     try {
+      const consolidatedUrl = month
+        ? `/api/user/statements/consolidated?month=${month}`
+        : "/api/user/statements/consolidated";
       const [consolidatedRes, recurringRes] = await Promise.all([
-        fetch("/api/user/statements/consolidated", { headers: { Authorization: `Bearer ${tok}` } }),
-        fetch("/api/user/recurring-rules",          { headers: { Authorization: `Bearer ${tok}` } }),
+        fetch(consolidatedUrl, { headers: { Authorization: `Bearer ${tok}` } }),
+        fetch("/api/user/recurring-rules", { headers: { Authorization: `Bearer ${tok}` } }),
       ]);
       const json   = await consolidatedRes.json().catch(() => ({}));
       const rJson  = recurringRes.ok ? await recurringRes.json().catch(() => ({})) : {};
@@ -161,9 +167,9 @@ export default function SpendingCategoryPage() {
       if (!user) { router.push("/login"); return; }
       const tok = await user.getIdToken();
       setToken(tok);
-      loadPage(tok, rawName);
+      loadPage(tok, rawName, monthParam);
     });
-  }, [router, rawName, loadPage]);
+  }, [router, rawName, monthParam, loadPage]);
 
   // ── category change ─────────────────────────────────────────────────────────
 
@@ -249,7 +255,7 @@ export default function SpendingCategoryPage() {
     <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
 
       {/* Back nav */}
-      <Link href="/account/spending" className="mb-5 inline-flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-700 transition">
+      <Link href={monthParam ? `/account/spending?month=${monthParam}` : "/account/spending"} className="mb-5 inline-flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-700 transition">
         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
         </svg>
@@ -274,7 +280,7 @@ export default function SpendingCategoryPage() {
         {/* KPI strip */}
         <div className="grid grid-cols-3 gap-3">
           {[
-            { label: "This month",    value: fmt(categoryTotal) },
+            { label: yearMonth ? new Date(parseInt(yearMonth.slice(0,4)), parseInt(yearMonth.slice(5,7)) - 1, 1).toLocaleDateString("en-US", { month: "short", year: "numeric" }) : "This month", value: fmt(categoryTotal) },
             { label: "Monthly avg",   value: avg > 0 ? fmt(avg) : "—" },
             { label: "% of spending", value: `${pctOfTotal}%` },
           ].map(({ label, value }) => (

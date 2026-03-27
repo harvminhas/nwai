@@ -14,7 +14,11 @@ export const CATEGORY_COLORS: Record<string, string> = {
   entertainment: "#ec4899",
   subscriptions: "#94a3b8",
   healthcare: "#14b8a6",
-  "transfers & payments": "#06b6d4",
+  fees: "#f97316",
+  "debt payments": "#ef4444",
+  "investments & savings": "#10b981",
+  "transfers": "#06b6d4",
+  "transfers & payments": "#06b6d4", // legacy
   "cash & atm": "#f87171",
   other: "#d1d5db",
 };
@@ -31,7 +35,12 @@ export const ALL_CATEGORIES = [
   "Shopping",
   "Entertainment",
   "Healthcare",
-  "Transfers & Payments",
+  "Subscriptions",
+  "Fees",
+  "Debt Payments",
+  "Investments & Savings",
+  "Transfers",
+  "Transfers & Payments", // legacy — old statements
   "Cash & ATM",
   "Other",
 ] as const;

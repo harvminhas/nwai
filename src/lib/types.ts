@@ -104,6 +104,25 @@ export type AccountType =
   | "loan"
   | "other";
 
+/**
+ * A single segment of a multi-part statement (e.g. revolving HELOC + term
+ * mortgage portions inside one TD FlexLine PDF).
+ */
+export interface SubAccount {
+  /** Sub-account number / ID as printed on the statement */
+  id: string;
+  /** Human-readable label from the statement, e.g. "Revolving Portion", "Term Portion 1" */
+  label: string;
+  /** Account sub-type */
+  type: "heloc" | "mortgage" | "loan" | "credit";
+  /** Outstanding balance (positive number) */
+  balance: number;
+  /** Annual interest rate %; null if not stated */
+  apr: number | null;
+  /** Maturity / renewal date for fixed-term segments (YYYY-MM-DD) */
+  maturityDate?: string;
+}
+
 export interface ParsedStatementData {
   netWorth?: number;
   /** When statement shows breakdown; else derived from netWorth (positive = assets, negative = debts). */
@@ -139,6 +158,12 @@ export interface ParsedStatementData {
   subscriptions: Subscription[];
   savingsRate: number;
   insights: Insight[];
+  /**
+   * For multi-segment statements (e.g. HELOC + mortgage term portions in one PDF).
+   * Each segment gets its own balance, APR, and type so the liabilities view
+   * can show accurate per-tranche breakdowns and payoff calculations.
+   */
+  subAccounts?: SubAccount[];
 }
 
 // Firestore document types (timestamps as Date or Firestore Timestamp depending on context)
@@ -196,4 +221,5 @@ export interface UserStatementSummary {
   csvDateRange?: { from: string; to: string };
   txCount?: number;
   interestRate?: number | null;
+  subAccounts?: SubAccount[];
 }

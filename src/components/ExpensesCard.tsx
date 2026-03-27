@@ -6,12 +6,17 @@ import type { Expenses, ExpenseCategory } from "@/lib/types";
 const CATEGORIES = [
   "Housing",
   "Dining",
+  "Groceries",
   "Shopping",
   "Transportation",
   "Entertainment",
   "Subscriptions",
   "Healthcare",
-  "Transfers & Payments",
+  "Fees",
+  "Debt Payments",
+  "Investments & Savings",
+  "Transfers",
+  "Transfers & Payments", // legacy
   "Cash & ATM",
   "Other",
 ];
@@ -19,12 +24,17 @@ const CATEGORIES = [
 const CATEGORY_COLORS: Record<string, string> = {
   housing: "bg-blue-500",
   dining: "bg-orange-400",
+  groceries: "bg-green-500",
   shopping: "bg-purple-500",
   transportation: "bg-yellow-500",
   entertainment: "bg-pink-500",
   subscriptions: "bg-indigo-500",
-  healthcare: "bg-green-500",
-  "transfers & payments": "bg-cyan-500",
+  healthcare: "bg-teal-500",
+  fees: "bg-orange-400",
+  "debt payments": "bg-red-400",
+  "investments & savings": "bg-emerald-500",
+  "transfers": "bg-cyan-500",
+  "transfers & payments": "bg-cyan-500", // legacy
   "cash & atm": "bg-red-400",
   other: "bg-gray-400",
 };

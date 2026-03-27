@@ -73,6 +73,7 @@ interface StatementHistoryEntry {
   statementId: string;
   isCarryForward: boolean;
   interestRate: number | null;
+  source?: "pdf" | "csv";
   isManualSnapshot?: boolean;
   snapshotId?: string;
   note?: string;
@@ -193,6 +194,7 @@ export default function AccountDetailPage() {
   const [deletingId, setDeletingId]       = useState<string | null>(null);
   const [reparsingId, setReparsingId]     = useState<string | null>(null);
   const [showCsvImport, setShowCsvImport] = useState(false);
+  const [activeTab, setActiveTab] = useState<"overview" | "transactions" | "history">("overview");
 
   // Transactions section state
   const [txMonth, setTxMonth]         = useState<string | null>(null);
@@ -216,6 +218,7 @@ export default function AccountDetailPage() {
   const [snapMonth,         setSnapMonth]         = useState("");
   const [snapNote,          setSnapNote]          = useState("");
   const [snapSaving,        setSnapSaving]        = useState(false);
+  const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const [snapError,         setSnapError]         = useState<string | null>(null);
   const [deletingSnap,      setDeletingSnap]      = useState<string | null>(null);
 
@@ -330,6 +333,11 @@ export default function AccountDetailPage() {
     } finally { setDeletingId(null); }
   }
 
+  function showToast(msg: string, ok: boolean) {
+    setToast({ msg, ok });
+    setTimeout(() => setToast(null), 4000);
+  }
+
   async function handleReparse(statementId: string) {
     if (!idToken) return;
     setReparsingId(statementId);
@@ -341,16 +349,15 @@ export default function AccountDetailPage() {
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
-        alert(j.error || "Re-parse failed");
+        showToast(j.error || "Re-parse failed", false);
         return;
       }
-      // If the account slug changed (e.g. wrong account number was corrected),
-      // navigate to the new account page; otherwise just reload in place.
       const newSlug: string | undefined = j.accountSlug;
       if (newSlug && newSlug !== slug) {
         router.push(`/account/accounts/${encodeURIComponent(newSlug)}`);
       } else {
-        window.location.reload();
+        showToast("Re-parsed successfully — categories updated", true);
+        if (idToken) loadAccountData(idToken);
       }
     } finally {
       setReparsingId(null);
@@ -494,7 +501,8 @@ export default function AccountDetailPage() {
   const accountType    = data.accountType ?? "other";
   const isDebtAccount  = DEBT_TYPES.has(accountType);
   const hasIncome      = accountType === "checking" || accountType === "savings" || (data.income?.total ?? 0) > 0;
-  const hasSpending    = ["checking", "savings", "credit"].includes(accountType) ||
+  // "loan" included because HELOC/LOC accounts have revolving consumer transactions
+  const hasSpending    = ["checking", "savings", "credit", "loan"].includes(accountType) ||
     (data.expenses?.total ?? 0) > 0 || (data.subscriptions?.length ?? 0) > 0;
 
   // "Spent this month" = all expense transactions on this account, matching ExpensesCard below.
@@ -502,9 +510,12 @@ export default function AccountDetailPage() {
   const spentThisMonthCount = data.expenses?.transactions?.length ?? 0;
   const linkedAssets      = manualAssets.filter((a) => a.linkedAccountSlug === slug);
   const linkedAssetsTotal = linkedAssets.reduce((s, a) => s + a.value, 0);
-  const outstandingDebt   = Math.abs(data.netWorth ?? 0);
+  // Use data.debts (raw debt balance, never inflated by linked assets) rather than
+  // Math.abs(data.netWorth) which becomes the equity value once an asset is linked.
+  const outstandingDebt   = data.debts ?? Math.abs(data.netWorth ?? 0);
   const equity            = linkedAssetsTotal - outstandingDebt;
-  const prevDebt          = previousMonth ? Math.abs(previousMonth.debts ?? previousMonth.netWorth) : null;
+  // previousMonth.debts is already a positive number — no Math.abs needed.
+  const prevDebt          = previousMonth ? (previousMonth.debts ?? Math.abs(previousMonth.netWorth)) : null;
   const paidDown          = prevDebt !== null ? prevDebt - outstandingDebt : null;
   const carryForwardCount = stmtHistory.filter((e) => e.isCarryForward).length;
 
@@ -513,35 +524,81 @@ export default function AccountDetailPage() {
     ? (outstandingDebt * effectiveRate) / 100 / freqConfig.perYear
     : null;
 
+  // Months with real uploaded statements — used for pills + transaction tab
+  const realMonths = stmtHistory
+    .filter((e) => !e.isCarryForward && !e.isManualSnapshot)
+    .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth));
+  const txns = txData?.transactions ?? [];
+
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
+    <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
+
+      {/* Toast notification */}
+      {toast && (
+        <div className={`fixed bottom-6 left-1/2 z-50 -translate-x-1/2 flex items-center gap-3 rounded-xl px-5 py-3 shadow-lg text-sm font-medium transition-all ${
+          toast.ok ? "bg-green-600 text-white" : "bg-red-600 text-white"
+        }`}>
+          <span>{toast.ok ? "✓" : "✕"}</span>
+          <span>{toast.msg}</span>
+        </div>
+      )}
 
       {/* Breadcrumb */}
-      <div className="mb-4 flex items-center gap-2 text-sm text-gray-500">
-        <Link
-          href={isDebtAccount ? "/account/liabilities?tab=accounts" : "/account/assets?tab=accounts"}
-          className="hover:text-purple-600"
-        >
-          Accounts
-        </Link>
+      <div className="mb-3 flex items-center gap-2 text-sm text-gray-500">
+        <Link href={isDebtAccount ? "/account/liabilities?tab=accounts" : "/account/assets?tab=accounts"} className="hover:text-purple-600">Accounts</Link>
         <span>/</span>
         <span className="font-medium text-gray-700">{data.accountName ?? data.bankName ?? slug}</span>
       </div>
 
-      {/* Account meta */}
+      {/* Account header */}
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${TYPE_COLOR[accountType] ?? TYPE_COLOR.other}`}>
           {TYPE_LABEL[accountType] ?? accountType}
         </span>
         {data.bankName && <span className="text-sm text-gray-500">{data.bankName}</span>}
-        {data.accountId && data.accountId !== "unknown" && (
-          <span className="text-sm text-gray-400">{data.accountId}</span>
-        )}
+        {data.accountId && data.accountId !== "unknown" && <span className="text-sm text-gray-400">{data.accountId}</span>}
       </div>
-      <p className="mb-6 text-sm text-gray-500">
+      <p className="text-sm text-gray-500">
         As of {monthLabel(yearMonth)}
         {statementCount > 0 && ` · ${statementCount} statement${statementCount !== 1 ? "s" : ""}`}
       </p>
+
+      {/* Month pills */}
+      {realMonths.length > 1 && (
+        <div className="mt-4 -mx-1 flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+          {realMonths.map((e) => (
+            <button key={e.yearMonth} onClick={() => handleTxMonthSelect(e.yearMonth)}
+              className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                txMonth === e.yearMonth ? "bg-purple-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+              }`}>
+              {shortMonth(e.yearMonth)} {e.yearMonth.slice(2, 4)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Tab bar */}
+      <div className="mt-5 mb-6 flex border-b border-gray-200">
+        {([
+          { id: "overview",     label: "Overview" },
+          { id: "transactions", label: "Transactions", count: txns.length },
+          { id: "history",      label: "History", count: stmtHistory.length },
+        ] as { id: string; label: string; count?: number }[]).map((tab) => (
+          <button key={tab.id} onClick={() => setActiveTab(tab.id as "overview" | "transactions" | "history")}
+            className={`relative mr-5 pb-3 text-sm font-medium transition-colors ${
+              activeTab === tab.id
+                ? "text-gray-900 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:rounded-full after:bg-gray-900 after:content-['']"
+                : "text-gray-400 hover:text-gray-600"
+            }`}>
+            {tab.label}
+            {tab.count !== undefined && tab.count > 0 && (
+              <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">{tab.count}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "overview" && <>
 
       {/* Incomplete months banner */}
       {carryForwardCount > 0 && (
@@ -617,15 +674,25 @@ export default function AccountDetailPage() {
             )}
           </div>
 
-          {/* Paid Down */}
+          {/* Payments Made / Paid Down */}
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-              {paidDown !== null && paidDown > 0 ? "Paid Down" : "Monthly Payment"}
+              {txPayments > 0 ? "Payments Made" : paidDown !== null && paidDown > 0 ? "Principal Paid" : "Balance Change"}
             </p>
             <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">
-              {paidDown !== null ? fmt(Math.abs(paidDown)) : (data.expenses?.total ? fmt(data.expenses.total) : "—")}
+              {txPayments > 0
+                ? fmt(txPayments)
+                : paidDown !== null
+                  ? fmt(Math.abs(paidDown))
+                  : (data.expenses?.total ? fmt(data.expenses.total) : "—")}
             </p>
-            <p className="mt-1.5 text-xs text-gray-400">vs previous statement</p>
+            <p className="mt-1.5 text-xs text-gray-400">
+              {txPayments > 0
+                ? "total paid this period"
+                : paidDown !== null && paidDown > 0
+                  ? "principal reduction"
+                  : "vs previous statement"}
+            </p>
           </div>
 
           {/* Interest Rate — compact card with history popover */}
@@ -776,6 +843,33 @@ export default function AccountDetailPage() {
         </div>
       )}
 
+      {/* Sub-account breakdown (e.g. HELOC revolving + mortgage term portions) */}
+      {isDebtAccount && data.subAccounts && data.subAccounts.length > 0 && (
+        <div className="mb-6 rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <p className="px-5 pt-4 pb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Breakdown</p>
+          <div className="divide-y divide-gray-100">
+            {data.subAccounts.map((sub) => (
+              <div key={sub.id} className="flex items-center justify-between px-5 py-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-800">{sub.label}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    <span className="capitalize">{sub.type}</span>
+                    {sub.apr != null ? ` · ${sub.apr}% APR` : ""}
+                    {sub.maturityDate ? ` · matures ${new Date(sub.maturityDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })}` : ""}
+                  </p>
+                </div>
+                <div className="ml-4 text-right shrink-0">
+                  <p className="text-sm font-semibold text-gray-900 tabular-nums">{fmt(sub.balance)}</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">
+                    {data.netWorth ? `${Math.round((sub.balance / Math.abs(data.netWorth)) * 100)}% of total` : ""}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Balance trend chart */}
       {filteredHistory.length >= 2 && (
         <div className="mt-2 mb-6">
@@ -783,21 +877,30 @@ export default function AccountDetailPage() {
         </div>
       )}
 
-      {/* ── Statement history table ─────────────────────────────────────────── */}
-      {stmtHistory.length > 0 && (
-        <div className="mt-4">
-          <div className="mb-3 flex items-center justify-between">
-            <button
-              onClick={() => setShowAllStatements((v) => !v)}
-              className="flex items-center gap-1.5 group"
-            >
-              <span className="text-xs text-gray-400 transition group-hover:text-gray-600">
-                {showAllStatements ? "▲" : "▼"}
-              </span>
-              <h2 className="font-semibold text-gray-900 group-hover:text-purple-700 transition">Statement history</h2>
-              <span className="text-xs text-gray-400">({stmtHistory.length})</span>
-            </button>
-            <div className="flex items-center gap-3">
+      {/* Spending cards */}
+      {hasSpending && (
+        <div className="mt-4 grid gap-6 lg:grid-cols-2">
+          <div className="space-y-6">
+            {hasIncome && <IncomeCard income={data.income} />}
+            <ExpensesCard expenses={data.expenses} />
+          </div>
+          <div className="space-y-6">
+            {hasIncome && <SavingsRateCard data={data} />}
+            <SubscriptionsCard subscriptions={data.subscriptions ?? []} />
+          </div>
+        </div>
+      )}
+
+      <InsightsSection insights={data.insights ?? []} />
+
+      </> /* end overview tab */}
+
+      {/* ── HISTORY TAB ──────────────────────────────────────────────────── */}
+      {activeTab === "history" && stmtHistory.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <p className="text-sm text-gray-500">{stmtHistory.length} entr{stmtHistory.length !== 1 ? "ies" : "y"}</p>
+            <div className="flex items-center gap-2">
               {baselineMonth && (
                 <button onClick={() => handleSetBaseline(baselineMonth)} className="text-xs text-purple-600 hover:underline">
                   Clear baseline
@@ -820,17 +923,14 @@ export default function AccountDetailPage() {
 
           {/* Inline CSV import panel */}
           {showCsvImport && idToken && (
-            <div className="mb-5 rounded-xl border border-teal-200 bg-teal-50/30 p-5">
-              <CsvImportPanel
-                idToken={idToken}
-                preselectedAccountSlug={slug}
+            <div className="rounded-xl border border-teal-200 bg-teal-50/30 p-5">
+              <CsvImportPanel idToken={idToken} preselectedAccountSlug={slug}
                 onReset={() => setShowCsvImport(false)}
-                onImportComplete={() => idToken && loadAccountData(idToken)}
-              />
+                onImportComplete={() => idToken && loadAccountData(idToken)} />
             </div>
           )}
-          {baselineMonth && showAllStatements && (
-            <p className="mb-3 text-xs text-gray-400">
+          {baselineMonth && (
+            <p className="text-xs text-gray-400">
               Trend starts from <span className="font-medium text-gray-600">{shortMonth(baselineMonth)}</span>.
             </p>
           )}
@@ -849,7 +949,7 @@ export default function AccountDetailPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {[...stmtHistory].reverse().slice(0, showAllStatements ? undefined : 3).map((entry) => {
+                {[...stmtHistory].reverse().map((entry) => {
                   const isBaseline    = baselineMonth === entry.yearMonth;
                   const beforeBaseline = baselineMonth != null && entry.yearMonth < baselineMonth;
                   // Determine if APR changed from previous row
@@ -859,7 +959,7 @@ export default function AccountDetailPage() {
                     entry.interestRate !== prevReal?.interestRate;
                   return (
                     <tr key={entry.isManualSnapshot ? `snap-${entry.snapshotId}` : entry.yearMonth}
-                      className={`transition ${beforeBaseline ? "opacity-40" : ""} ${entry.isManualSnapshot ? "bg-purple-50/30" : ""}`}>
+                      className={`transition ${beforeBaseline ? "opacity-40" : ""} ${entry.isManualSnapshot ? "bg-purple-50/30" : ""} ${reparsingId === entry.statementId ? "bg-yellow-50 opacity-60" : ""}`}>
                       <td className="px-4 py-3 font-medium text-gray-800">{shortMonth(entry.yearMonth)}</td>
                       <td className="px-4 py-3 text-right tabular-nums font-medium text-gray-900">
                         <span className={entry.isCarryForward ? "text-gray-400" : ""}>
@@ -919,15 +1019,23 @@ export default function AccountDetailPage() {
                           </button>
                         ) : !entry.isCarryForward && entry.statementId ? (
                           <div className="flex items-center justify-end gap-2">
-                            <Link href={`/dashboard/${entry.statementId}`} className="text-xs text-purple-500 hover:underline">View</Link>
-                            <button
-                              onClick={() => handleReparse(entry.statementId)}
-                              disabled={reparsingId === entry.statementId || deletingId === entry.statementId}
-                              className="text-xs text-blue-400 hover:text-blue-600 disabled:opacity-40"
-                              title="Re-extract data from the original PDF"
-                            >
-                              {reparsingId === entry.statementId ? "…" : "Re-parse"}
-                            </button>
+                            {entry.source !== "csv" && (
+                              <Link href={`/dashboard/${entry.statementId}`} className="text-xs text-purple-500 hover:underline">View</Link>
+                            )}
+                            {entry.source === "csv" ? (
+                              <span className="text-[10px] rounded-full bg-teal-50 border border-teal-200 px-2 py-0.5 text-teal-600 font-medium">CSV</span>
+                            ) : (
+                              <button
+                                onClick={() => handleReparse(entry.statementId)}
+                                disabled={reparsingId === entry.statementId || deletingId === entry.statementId}
+                                className="text-xs text-blue-400 hover:text-blue-600 disabled:opacity-40 flex items-center gap-1"
+                                title="Re-extract data from the original PDF with latest AI logic"
+                              >
+                                {reparsingId === entry.statementId
+                                  ? <><span className="animate-spin inline-block">↻</span> Parsing…</>
+                                  : "Re-parse"}
+                              </button>
+                            )}
                             <button
                               onClick={() => handleDelete(entry.statementId)}
                               disabled={deletingId === entry.statementId || reparsingId === entry.statementId}
@@ -943,132 +1051,56 @@ export default function AccountDetailPage() {
                 })}
               </tbody>
             </table>
-            {stmtHistory.length > 3 && (
-              <button
-                onClick={() => setShowAllStatements((v) => !v)}
-                className="w-full py-2.5 text-xs font-medium text-gray-400 hover:text-purple-600 hover:bg-gray-50 transition border-t border-gray-100"
-              >
-                {showAllStatements
-                  ? "▲ Show less"
-                  : `▼ Show all ${stmtHistory.length} statements`}
-              </button>
-            )}
           </div>
-          {showAllStatements && (
-            <p className="mt-2 text-xs text-gray-400">
-              <span className="font-medium text-gray-500">Set baseline</span> to exclude older months from the trend chart.
-            </p>
-          )}
+          <p className="text-xs text-gray-400">
+            <span className="font-medium text-gray-500">Set baseline</span> to exclude older months from the trend chart.
+          </p>
         </div>
       )}
 
-      {/* Spending section (checking/savings/credit only) */}
-      {hasSpending && (
-        <>
-          <div className="mb-6 mt-10">
-            <h2 className="font-semibold text-lg text-gray-900">
-              {hasIncome ? "Income & spending" : "Spending"}
-            </h2>
-            <p className="text-sm text-gray-500">From latest statements for this account</p>
-          </div>
-          <div className="grid gap-6 lg:grid-cols-2">
-            <div className="space-y-6">
-              {hasIncome && <IncomeCard income={data.income} />}
-              <ExpensesCard expenses={data.expenses} />
+      {/* ── TRANSACTIONS TAB ──────────────────────────────────────────────── */}
+      {activeTab === "transactions" && (
+        <div>
+          {txPayments > 0 && (
+            <div className="mb-4 rounded-lg bg-blue-50 border border-blue-100 px-4 py-2.5 flex items-center justify-between">
+              <span className="text-xs font-medium text-blue-700">Payments received</span>
+              <span className="text-sm font-semibold text-blue-900">{fmt(txPayments)}</span>
             </div>
-            <div className="space-y-6">
-              {hasIncome && <SavingsRateCard data={data} />}
-              <SubscriptionsCard subscriptions={data.subscriptions ?? []} />
+          )}
+          {txLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <div className="h-6 w-6 animate-spin rounded-full border-2 border-purple-600 border-t-transparent" />
             </div>
-          </div>
-        </>
-      )}
-
-      <InsightsSection insights={data.insights ?? []} />
-
-      {/* ── Transactions section ─────────────────────────────────────────── */}
-      {["credit", "checking", "savings"].includes(accountType) && (() => {
-        const realMonths = stmtHistory
-          .filter((e) => !e.isCarryForward && !e.isManualSnapshot)
-          .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth));
-        if (realMonths.length === 0) return null;
-        const txns = txData?.transactions ?? [];
-        const hasTxns = txns.length > 0;
-        return (
-          <div className="mt-10">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <h2 className="font-semibold text-lg text-gray-900">Transactions</h2>
-              {txPayments > 0 && (
-                <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-600">
-                  {fmt(txPayments)} payment{txPayments > 0 ? "s" : ""} made
-                </span>
-              )}
+          ) : txns.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 py-12 text-center">
+              <p className="text-sm text-gray-400">No transactions for {txMonth ? shortMonth(txMonth) : "this month"}.</p>
+              <p className="mt-1 text-xs text-gray-400">Upload a statement or select a different month above.</p>
             </div>
-
-            {/* Month pills */}
-            <div className="mb-4 flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-              {realMonths.map((e) => (
-                <button
-                  key={e.yearMonth}
-                  onClick={() => handleTxMonthSelect(e.yearMonth)}
-                  className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                    txMonth === e.yearMonth
-                      ? "bg-gray-900 text-white"
-                      : "border border-gray-200 text-gray-500 hover:border-gray-400 hover:text-gray-700"
-                  }`}
-                >
-                  {shortMonth(e.yearMonth)}
-                </button>
-              ))}
-            </div>
-
-            {txLoading ? (
-              <div className="flex items-center justify-center py-10">
-                <div className="h-6 w-6 animate-spin rounded-full border-2 border-purple-600 border-t-transparent" />
-              </div>
-            ) : !hasTxns ? (
-              <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 py-10 text-center">
-                <p className="text-sm text-gray-400">No transactions found for {txMonth ? shortMonth(txMonth) : "this month"}.</p>
-                <p className="mt-1 text-xs text-gray-400">Upload a statement to see itemized charges.</p>
-              </div>
-            ) : (
-              <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-                <div className="divide-y divide-gray-100">
-                  {txns.map((txn, i) => (
-                    <div key={i} className="flex items-center gap-3 px-4 py-3">
-                      <div className="flex-1 min-w-0">
-                        <p className="truncate text-sm font-medium text-gray-900">{txn.merchant}</p>
-                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                          {txn.date && (
-                            <span className="text-xs text-gray-400">{fmtDate(txn.date)}</span>
-                          )}
-                          {txn.category && (
-                            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500">
-                              {txn.category}
-                            </span>
-                          )}
-                          {txn.recurring && (
-                            <span className="rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-medium text-teal-600">
-                              ↻ {txn.recurring}
-                            </span>
-                          )}
-                        </div>
+          ) : (
+            <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+              <div className="divide-y divide-gray-100">
+                {txns.map((txn, i) => (
+                  <div key={i} className="flex items-center gap-3 px-4 py-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="truncate text-sm font-medium text-gray-900">{txn.merchant}</p>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        {txn.date && <span className="text-xs text-gray-400">{fmtDate(txn.date)}</span>}
+                        {txn.category && <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500">{txn.category}</span>}
+                        {txn.recurring && <span className="rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-medium text-teal-600">↻ {txn.recurring}</span>}
                       </div>
-                      <p className="shrink-0 text-sm font-semibold tabular-nums text-gray-900">
-                        {fmt(txn.amount)}
-                      </p>
                     </div>
-                  ))}
-                </div>
-                <div className="border-t border-gray-100 bg-gray-50 px-4 py-2.5 flex items-center justify-between">
-                  <span className="text-xs text-gray-400">{txns.length} transaction{txns.length !== 1 ? "s" : ""}</span>
-                  <span className="text-xs font-semibold text-gray-700">{fmt(txData?.total ?? 0)} total</span>
-                </div>
+                    <p className="shrink-0 text-sm font-semibold tabular-nums text-gray-900">{fmt(txn.amount)}</p>
+                  </div>
+                ))}
               </div>
-            )}
-          </div>
-        );
-      })()}
+              <div className="border-t border-gray-100 bg-gray-50 px-4 py-2.5 flex items-center justify-between">
+                <span className="text-xs text-gray-400">{txns.length} transaction{txns.length !== 1 ? "s" : ""}</span>
+                <span className="text-xs font-semibold text-gray-700">{fmt(txData?.total ?? 0)} total</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Add balance entry modal ────────────────────────────────────────── */}
       {showSnapshotForm && (
