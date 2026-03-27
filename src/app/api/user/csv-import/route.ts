@@ -58,18 +58,11 @@ export async function POST(request: NextRequest) {
   if (!file) return NextResponse.json({ error: "No file provided" }, { status: 400 });
 
   const csvText = await file.text();
-  const parsed  = await parseCSV(csvText);
-
-  if (parsed.rows.length === 0) {
-    return NextResponse.json({
-      error: parsed.errors[0] ?? "No transactions found in CSV",
-      parseErrors: parsed.errors,
-    }, { status: 422 });
-  }
 
   const { db } = getFirebaseAdmin();
 
   // ── Load existing statements for this user ──────────────────────────────
+  // Do this BEFORE parsing so we know the account type and can pass it to the AI parser.
   const stmtSnap = await db
     .collection("statements")
     .where("userId", "==", uid)
@@ -108,6 +101,20 @@ export async function POST(request: NextRequest) {
         accountType: p.accountType ?? "checking", lastMonth: ym,
       });
     }
+  }
+
+  // Resolve account type before calling the AI parser so it can apply the correct
+  // sign convention (credit card charges are positive = expense, not positive = income).
+  const preselectedAccount = accountSlug ? knownAccounts.find((a) => a.slug === accountSlug) : null;
+  const preselectedAccountType = preselectedAccount?.accountType ?? undefined;
+
+  const parsed = await parseCSV(csvText, preselectedAccountType);
+
+  if (parsed.rows.length === 0) {
+    return NextResponse.json({
+      error: parsed.errors[0] ?? "No transactions found in CSV",
+      parseErrors: parsed.errors,
+    }, { status: 422 });
   }
 
   // ── Apply gap filter ────────────────────────────────────────────────────
@@ -188,6 +195,10 @@ export async function POST(request: NextRequest) {
   let totalAdded = 0;
   let totalDuplicates = 0;
 
+  // Debt accounts (credit cards, loans, mortgages) store netWorth as a negative value
+  // so consolidate.ts correctly counts them as debts rather than assets.
+  const isDebtAccount = ["credit", "loan", "mortgage"].includes(accountType.toLowerCase());
+
   // The CSV closing balance (last running-balance value) applies to the most recent month only
   const sortedMonthEntries = Array.from(monthGroups.entries()).sort();
   const lastYm = sortedMonthEntries[sortedMonthEntries.length - 1]?.[0];
@@ -203,16 +214,25 @@ export async function POST(request: NextRequest) {
       if (existingFingerprints.has(fp)) { totalDuplicates++; continue; }
       expTxns.push({ merchant: r.description, amount: r.amount, date: r.date, category: r.category ?? "Other" });
     }
+
+    // For asset accounts (checking / savings): incoming transactions are regular income.
+    // For debt accounts (CC / loan / mortgage): incoming transactions are payments towards
+    // the debt — stored in paymentsMade, NOT as income.
     const incTxns: IncomeTransaction[] = [];
+    let paymentsMade = 0;
     for (const r of incRows) {
       const fp = txFingerprint(accountId, r.date, r.amount, r.description);
       if (existingFingerprints.has(fp)) { totalDuplicates++; continue; }
-      incTxns.push({ description: r.description, amount: r.amount, date: r.date, source: "Income" });
+      if (isDebtAccount) {
+        paymentsMade += r.amount;
+      } else {
+        incTxns.push({ description: r.description, amount: r.amount, date: r.date, source: "Income" });
+      }
     }
 
-    totalAdded += expTxns.length + incTxns.length;
+    totalAdded += expTxns.length + incTxns.length + (paymentsMade > 0 ? 1 : 0);
 
-    if (expTxns.length === 0 && incTxns.length === 0) continue;
+    if (expTxns.length === 0 && incTxns.length === 0 && paymentsMade === 0) continue;
 
     const expTotal = expTxns.reduce((s, t) => s + t.amount, 0);
     const incTotal = incTxns.reduce((s, t) => s + t.amount, 0);
@@ -220,12 +240,15 @@ export async function POST(request: NextRequest) {
     // Use the CSV's closing balance as netWorth for the most recent month.
     // For earlier months in a multi-month CSV, leave netWorth undefined so
     // the consolidated route carries forward the PDF statement balance instead.
+    // Debt accounts (credit/loan/mortgage) must store netWorth as a negative value
+    // so consolidate.ts counts them as debts, not assets.
     const csvNetWorth = (ym === lastYm && parsed.closingBalance != null)
-      ? parsed.closingBalance
+      ? (isDebtAccount ? -Math.abs(parsed.closingBalance) : parsed.closingBalance)
       : undefined;
 
     const parsedData: ParsedStatementData = {
       ...(csvNetWorth != null ? { netWorth: csvNetWorth } : {}),
+      ...(paymentsMade > 0 ? { paymentsMade } : {}),
       statementDate: `${ym}-01`,
       bankName,
       accountId,

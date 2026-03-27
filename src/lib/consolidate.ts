@@ -8,6 +8,46 @@ import type {
 } from "./types";
 
 /**
+ * Build the subscription list by merging:
+ * 1. The AI-detected `subscriptions` list from each statement (PDF-sourced).
+ * 2. Any expense transactions whose category is "Subscriptions" — so CSV-imported
+ *    subscription charges are always counted even when the dedicated list is empty.
+ */
+function buildSubscriptions(
+  statements: ParsedStatementData[],
+  allExpenseTxns: import("./types").ExpenseTransaction[]
+): Subscription[] {
+  const subsMap = new Map<string, { name: string; amount: number }>();
+
+  // 1. AI-detected subscriptions from statements
+  for (const s of statements) {
+    for (const sub of s.subscriptions ?? []) {
+      const key = (sub.name || "").trim().toUpperCase() || "OTHER";
+      const existing = subsMap.get(key);
+      if (existing) {
+        existing.amount += sub.amount ?? 0;
+      } else {
+        subsMap.set(key, { name: (sub.name || "").trim() || "Other", amount: sub.amount ?? 0 });
+      }
+    }
+  }
+
+  // 2. Expense transactions categorised as "Subscriptions"
+  for (const txn of allExpenseTxns) {
+    if ((txn.category ?? "").toLowerCase() !== "subscriptions") continue;
+    const key = (txn.merchant || "").trim().toUpperCase() || "OTHER";
+    if (!subsMap.has(key)) {
+      subsMap.set(key, { name: (txn.merchant || "").trim() || "Other", amount: txn.amount ?? 0 });
+    }
+    // If already present via the AI-detected list, trust that amount; don't double-add.
+  }
+
+  return Array.from(subsMap.values()).map(
+    (v) => ({ name: v.name, amount: v.amount, frequency: "monthly" })
+  );
+}
+
+/**
  * Derive year-month (YYYY-MM) from statementDate for grouping.
  * Falls back to first 7 chars of statementDate or empty.
  */
@@ -49,6 +89,7 @@ export function consolidateStatements(
       debts: s.debts ?? Math.max(0, -nw),
       income: { ...s.income, total: s.income?.total ?? 0, sources: s.income?.sources ?? [], transactions: incomeTxns },
       expenses: { ...s.expenses, total: s.expenses?.total ?? 0, categories: s.expenses?.categories ?? [], transactions: txns },
+      subscriptions: buildSubscriptions(statements, txns),
     };
   }
 
@@ -128,24 +169,7 @@ export function consolidateStatements(
 
   const totalPaymentsMade = statements.reduce((sum, s) => sum + (s.paymentsMade ?? 0), 0);
 
-  const subsMap = new Map<string, { name: string; amount: number }>();
-  for (const s of statements) {
-    for (const sub of s.subscriptions ?? []) {
-      const key = (sub.name || "").trim().toUpperCase() || "OTHER";
-      const existing = subsMap.get(key);
-      if (existing) {
-        existing.amount += sub.amount ?? 0;
-      } else {
-        subsMap.set(key, {
-          name: (sub.name || "").trim() || "Other",
-          amount: sub.amount ?? 0,
-        });
-      }
-    }
-  }
-  const subscriptions: Subscription[] = Array.from(subsMap.values()).map(
-    (v) => ({ name: v.name, amount: v.amount, frequency: "monthly" })
-  );
+  const subscriptions = buildSubscriptions(statements, allTransactions);
 
   const savingsRate =
     incomeTotal > 0

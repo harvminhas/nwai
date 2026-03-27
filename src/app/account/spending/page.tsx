@@ -540,9 +540,7 @@ function SpendingPageInner() {
   // transactions whose DATE falls in the selected month (transaction-date principle).
   const filterMonth = selectedMonth ?? yearMonth ?? "";
   const monthTxns = txns.filter(
-    (t) =>
-      (!t.date || t.date.startsWith(filterMonth)) &&
-      !/transfer|payment/i.test(t.category ?? "")
+    (t) => !t.date || t.date.startsWith(filterMonth)
   );
 
   const total = monthTxns.length > 0

@@ -44,6 +44,7 @@ export async function GET(request: NextRequest) {
           (d.parsedData?.expenses?.transactions?.length ?? 0) +
           (d.parsedData?.income?.transactions?.length ?? 0)
         ) || undefined,
+        interestRate: typeof d.parsedData?.interestRate === "number" ? d.parsedData.interestRate : null,
       };
     });
 

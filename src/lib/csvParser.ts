@@ -39,12 +39,12 @@ Format:
 }
 
 Rules for transactions:
-- isExpense = true  → money going OUT (debit, withdrawal, purchase, fee, payment)
-- isExpense = false → money coming IN  (credit, deposit, income, refund, transfer in)
+- isExpense = true  → money going OUT of the account (purchase, charge, fee, withdrawal, debit)
+- isExpense = false → money coming IN  to the account (deposit, payment received, credit, refund)
 - Skip non-transaction rows: headers, opening/closing balance lines, totals, blank lines
 - Normalize all dates to YYYY-MM-DD regardless of source format
-- If the CSV uses separate Debit and Credit columns, use whichever is populated to set isExpense
-- If the CSV uses a single signed amount, negative = expense, positive = income
+- If the CSV uses separate Debit and Credit columns: Debit column populated = isExpense=true, Credit column populated = isExpense=false
+- If the CSV uses a single amount column: use the running balance direction and transaction description to determine direction — do NOT assume positive always means income or negative always means expense; instead use context (e.g. a purchase at a merchant = isExpense=true regardless of sign)
 - Clean up descriptions: remove extra whitespace, keep merchant/payee name readable
 - For income transactions (isExpense=false), set category to "Income"
 
@@ -60,17 +60,30 @@ Category must be one of these exact values (for expenses):
 - "Other"             — anything that doesn't fit the above
 
 Rules for closingBalance:
-- If the CSV has a running balance column, set closingBalance to the balance on the LAST (most recent) transaction row
-- If no balance column exists, set closingBalance to null`;
+- If the CSV has a running balance column, set closingBalance to the balance on the transaction row with the MOST RECENT DATE (the highest date value) — regardless of which physical row position it appears at in the file (CSVs may be sorted newest-first or oldest-first)
+- If no balance column exists, set closingBalance to null
+- Always return closingBalance as a positive number (absolute value of the balance shown)`;
 
-export async function parseCSV(csvText: string): Promise<CsvParseResult> {
+export async function parseCSV(csvText: string, accountType?: string): Promise<CsvParseResult> {
   // Truncate to keep token usage reasonable
   const lines = csvText.split("\n");
   const truncated = lines.slice(0, MAX_ROWS).join("\n");
 
+  const isDebtType = accountType ? ["credit", "loan", "mortgage"].includes(accountType.toLowerCase()) : false;
+  const accountTypeNote = accountType
+    ? `\n\nAccount type: ${accountType}. ` + (
+        isDebtType
+          ? "This is a credit card / loan / mortgage. Every purchase or charge (money going OUT, i.e. a merchant transaction, fee, interest) is isExpense=true. A payment received (money coming IN to reduce the balance) is isExpense=false."
+          : "This is a checking or savings account. Deposits and incoming transfers are isExpense=false. Withdrawals, purchases, and outgoing transfers are isExpense=true."
+      )
+    : "";
+
   let rawResponse: string;
   try {
-    rawResponse = await sendTextRequest(SYSTEM_PROMPT, `Parse this bank CSV:\n\n${truncated}`);
+    rawResponse = await sendTextRequest(
+      SYSTEM_PROMPT + accountTypeNote,
+      `Parse this bank CSV:\n\n${truncated}`
+    );
   } catch (err) {
     return {
       rows: [], detectedFormat: "error", dateRange: null, closingBalance: null,

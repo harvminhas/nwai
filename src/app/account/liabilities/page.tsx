@@ -71,6 +71,32 @@ function addMonths(n: number): string {
   return d.toLocaleDateString("en-US", { month: "short", year: "numeric" });
 }
 
+// ── APR resolution — single source of truth ───────────────────────────────────
+// Priority: (1) rate extracted from the statement itself, (2) stored rate from
+// the account-rates API matched by exact accountKey, (3) category default.
+// This mirrors exactly what the account detail page does — no fuzzy name guessing.
+
+const APR_CATEGORY_DEFAULTS: Partial<Record<LiabilityCategory, number>> = {
+  credit_card: 19.99, line_of_credit: 9.99, mortgage: 4.5,
+  auto_loan: 6.5, student_loan: 5.5, personal_loan: 8.99,
+};
+
+function resolveApr(
+  lib: DisplayLiability,
+  accountRates: AccountRateEntry[],
+): { apr: number | null; estimated: boolean } {
+  // 1. Rate on the statement itself (most authoritative)
+  if (lib.interestRate != null) return { apr: lib.interestRate, estimated: false };
+
+  // 2. Stored rate from account-rates API — exact accountKey match
+  const stored = accountRates.find((r) => r.accountKey === lib.accountSlug);
+  if (stored?.effectiveRate != null) return { apr: stored.effectiveRate, estimated: false };
+
+  // 3. Category default (flag as estimated so UI can warn the user)
+  const def = APR_CATEGORY_DEFAULTS[lib.category] ?? null;
+  return { apr: def, estimated: def != null };
+}
+
 // ── payoff math ───────────────────────────────────────────────────────────────
 
 function calcAmortisedPayment(balance: number, apr: number, months: number): number {
@@ -289,11 +315,12 @@ function Sparkline({ values, color, good }: { values: number[]; color: string; g
 
 interface DebtHistoryPoint { ym: string; label: string; total: number }
 
-function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade }: {
+function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountRates }: {
   libs: DisplayLiability[];
   debtHistory: DebtHistoryPoint[];
   accountMonthly: AccountMonthlyData[];
   paymentsMade: number;
+  accountRates: AccountRateEntry[];
 }) {
   const total = libs.reduce((s, l) => s + l.balance, 0);
   const [selectedYm, setSelectedYm] = useState<string | null>(null);
@@ -348,6 +375,29 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade }: {
   const growthTotal = firstPt && latestPt ? firstPt.total - latestPt.total : null; // positive = net reduction
   const growthPct   = firstPt && latestPt && firstPt.total > 0
     ? ((firstPt.total - latestPt.total) / firstPt.total) * 100 : null;
+
+  // ── Debt insight numbers ────────────────────────────────────────────────────
+  const insightDebts: PayoffDebt[] = libs.filter((l) => l.balance > 0).map((l) => {
+    const { apr, estimated } = resolveApr(l, accountRates);
+    return { id: l.id, label: l.label, category: l.category, balance: l.balance, apr, aprEstimated: estimated, minPayment: estimateMinPayment(l.balance, apr, l.category) };
+  });
+  const insightOrder = [...insightDebts]
+    .sort((a, b) => (b.apr ?? 0) - (a.apr ?? 0))
+    .map((d) => d.id);
+
+  const monthlyInterest = insightDebts.reduce((s, d) => {
+    if (d.apr == null) return s;
+    return s + (d.balance * d.apr) / 100 / 12;
+  }, 0);
+  // Only count truly unknown APRs (not resolved from rates or defaults)
+  const unratedCount = insightDebts.filter((d) => d.apr == null).length;
+  const estimatedCount = insightDebts.filter((d) => d.aprEstimated).length;
+
+  const simMin = insightDebts.length > 0 ? simulate(insightDebts, 0, insightOrder) : null;
+  const payoffMonths = simMin?.totalMonths ?? null;
+  const payoffYears  = payoffMonths != null ? Math.floor(payoffMonths / 12) : null;
+  const payoffRemMo  = payoffMonths != null ? payoffMonths % 12 : null;
+  const totalInterestIfMin = simMin?.totalInterestPaid ?? null;
 
   return (
     <div className="space-y-5">
@@ -420,6 +470,79 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade }: {
           <p className="mt-1 text-xs text-gray-400">{paymentsMade > 0 ? "this month" : "re-upload for data"}</p>
         </div>
       </div>
+
+      {/* ── Debt cost insight cards ───────────────────────────────────────── */}
+      {insightDebts.length > 0 && (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {/* Monthly interest cost */}
+          <div className="rounded-xl border border-red-100 bg-gradient-to-br from-red-50 to-white p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-red-400">Interest costing you</p>
+                <p className="mt-1.5 font-bold text-3xl text-red-600">
+                  {monthlyInterest > 0 ? fmt(Math.round(monthlyInterest)) : "—"}
+                  {monthlyInterest > 0 && <span className="ml-1 text-base font-normal text-red-400">/mo</span>}
+                </p>
+                {monthlyInterest > 0 && (
+                  <p className="mt-1 text-xs text-red-400">
+                    {fmt(Math.round(monthlyInterest * 12))} per year lost to interest
+                  </p>
+                )}
+                {estimatedCount > 0 && (
+                  <p className="mt-1.5 text-[10px] text-gray-400">
+                    {estimatedCount} account{estimatedCount !== 1 ? "s" : ""} using typical category rate — set APR on the account page for exact figures
+                  </p>
+                )}
+                {unratedCount > 0 && (
+                  <p className="mt-1.5 text-[10px] text-gray-400">
+                    {unratedCount} account{unratedCount !== 1 ? "s" : ""} missing APR entirely
+                  </p>
+                )}
+              </div>
+              <div className="shrink-0 rounded-full bg-red-100 p-2.5">
+                <svg className="h-5 w-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          {/* Debt-free estimate */}
+          <div className="rounded-xl border border-green-100 bg-gradient-to-br from-green-50 to-white p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-green-600">Debt-free estimate</p>
+                {payoffYears != null && payoffMonths! < 600 ? (
+                  <>
+                    <p className="mt-1.5 font-bold text-3xl text-gray-900">
+                      {payoffYears > 0 ? `${payoffYears}y` : ""}{payoffRemMo! > 0 ? ` ${payoffRemMo}m` : ""}
+                    </p>
+                    <p className="mt-1 text-xs text-gray-400">at minimum payments</p>
+                    {totalInterestIfMin != null && totalInterestIfMin > 0 && (
+                      <p className="mt-1 text-xs text-red-400">
+                        {fmt(totalInterestIfMin)} in interest if you take that long
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <p className="mt-1.5 font-bold text-2xl text-gray-900">—</p>
+                  <p className="mt-1 text-xs text-gray-400">Set APR on accounts for an exact estimate</p>
+                  </>
+                )}
+                <Link href="/account/liabilities?tab=payoff" className="mt-2.5 inline-flex items-center gap-1 text-xs font-semibold text-green-600 hover:underline">
+                  See payoff plan →
+                </Link>
+              </div>
+              <div className="shrink-0 rounded-full bg-green-100 p-2.5">
+                <svg className="h-5 w-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+                </svg>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* What changed this month */}
       {accountMonthly.some((a) => a.delta !== null) && (() => {
@@ -775,25 +898,8 @@ function PayoffTab({ libs, accountRates }: { libs: DisplayLiability[]; accountRa
   const [customOrder, setCustomOrder] = useState<string[]>([]);
 
   const payoffDebts: PayoffDebt[] = libs.filter((d) => d.balance > 0).map((d) => {
-    let apr: number | null = d.interestRate ?? null;
-    let aprEstimated = false;
-    if (apr == null) {
-      const match = accountRates.find((r) =>
-        normalizeName(r.bankName).includes(normalizeName(d.subLabel ?? d.label)) ||
-        normalizeName(d.label).includes(normalizeName(r.bankName))
-      );
-      if (match?.effectiveRate != null) {
-        apr = match.effectiveRate;
-      } else {
-        const defaults: Partial<Record<LiabilityCategory, number>> = {
-          credit_card: 19.99, line_of_credit: 9.99, mortgage: 4.5,
-          auto_loan: 6.5, student_loan: 5.5, personal_loan: 8.99,
-        };
-        apr = defaults[d.category] ?? null;
-        aprEstimated = apr != null;
-      }
-    }
-    return { id: d.id, label: d.label, bankName: d.subLabel, category: d.category, balance: d.balance, apr, aprEstimated, minPayment: estimateMinPayment(d.balance, apr, d.category) };
+    const { apr, estimated } = resolveApr(d, accountRates);
+    return { id: d.id, label: d.label, bankName: d.subLabel, category: d.category, balance: d.balance, apr, aprEstimated: estimated, minPayment: estimateMinPayment(d.balance, apr, d.category) };
   });
 
   function strategyOrder(s: Strategy, custom: string[]): string[] {
@@ -959,6 +1065,12 @@ function LiabilitiesPageInner() {
     return TABS.some((tb) => tb.id === t) ? (t as TabId) : "overview";
   });
 
+  // Keep activeTab in sync when the URL changes (e.g. <Link> navigation or browser back/forward)
+  useEffect(() => {
+    const t = searchParams.get("tab");
+    if (t && TABS.some((tb) => tb.id === t)) setActiveTab(t as TabId);
+  }, [searchParams]);
+
   const [idToken, setIdToken]           = useState<string | null>(null);
   const [manualLibs, setManualLibs]     = useState<ManualLiability[]>([]);
   const [displayLibs, setDisplayLibs]   = useState<DisplayLiability[]>([]);
@@ -1073,6 +1185,7 @@ function LiabilitiesPageInner() {
           id: `stmt-${accountSlug(s)}`, label: s.accountName ?? s.bankName ?? "Account",
           subLabel: s.bankName, category: ACCT_TYPE_TO_CAT[s.accountType ?? ""] ?? "other",
           balance: Math.abs(s.netWorth ?? 0), statementDate: s.statementDate,
+          interestRate: typeof s.interestRate === "number" ? s.interestRate : undefined,
           source: "statement" as const, accountSlug: accountSlug(s),
         }));
 
@@ -1182,7 +1295,7 @@ function LiabilitiesPageInner() {
       </div>
 
       {/* Tab content */}
-      {activeTab === "overview" && <OverviewTab libs={displayLibs} debtHistory={debtHistory} accountMonthly={accountMonthly} paymentsMade={paymentsMade} />}
+      {activeTab === "overview" && <OverviewTab libs={displayLibs} debtHistory={debtHistory} accountMonthly={accountMonthly} paymentsMade={paymentsMade} accountRates={accountRates} />}
       {activeTab === "accounts" && (
         <AccountsTab
           libs={displayLibs} manualLibs={manualLibs} deletingId={deletingId}

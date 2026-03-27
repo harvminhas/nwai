@@ -1,0 +1,44 @@
+---
+description: Single source of truth for shared data and logic in nwai
+alwaysApply: true
+---
+
+# Single Source of Truth
+
+Never duplicate data-fetching or derivation logic across components or pages. If two places need the same data, extract a shared utility.
+
+## Account / Rate Data
+
+**APR resolution** has one function: `resolveApr(lib, accountRates)` in `src/app/account/liabilities/page.tsx`.
+- Priority: (1) `lib.interestRate` from statement, (2) `accountRates` matched by **exact** `accountKey === lib.accountSlug`, (3) `APR_CATEGORY_DEFAULTS`
+- Never do fuzzy bank-name matching. Both `accountKey` and `accountSlug` are produced by `buildAccountSlug(bankName, accountId)` — they are identical.
+- `PayoffTab` and `OverviewTab` both call `resolveApr()`. Do not add a third copy.
+
+**Account balance** comes from the `/api/user/statements` response (`UserStatementSummary.netWorth`). Do not re-derive it on individual pages from raw transaction sums.
+
+**Stored rates** come from `/api/user/account-rates`. Match by `accountKey` only. The account detail page, the liabilities overview, and the payoff planner all use this same API — they must all match the same way.
+
+## Shared Computations
+
+If the same calculation exists in more than one component, extract it:
+
+```typescript
+// ✅ GOOD — one module-level function used by all tabs
+function resolveApr(lib, accountRates) { ... }
+
+// ❌ BAD — PayoffTab and OverviewTab each have their own copy
+const apr = accountRates.find(r =>
+  normalizeName(r.bankName).includes(normalizeName(d.label)) // fuzzy, wrong
+);
+```
+
+## API Response Fields
+
+When a field is needed on the client, add it to the API response **once** and add it to the TypeScript interface. Do not re-fetch or re-derive it in each component.
+
+- `interestRate` → `UserStatementSummary` + `statements/route.ts`
+- `source`, `csvDateRange`, `txCount` → already in `UserStatementSummary`
+
+## Transaction Logic
+
+Outgoing = expense, incoming to debt = `paymentsMade`. This rule is defined once in `csv-import/route.ts` and `csvParser.ts`. Do not re-implement sign logic elsewhere.

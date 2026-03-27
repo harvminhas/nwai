@@ -195,4 +195,5 @@ export interface UserStatementSummary {
   source?: "pdf" | "csv";
   csvDateRange?: { from: string; to: string };
   txCount?: number;
+  interestRate?: number | null;
 }

@@ -205,6 +205,8 @@ export default function AccountDetailPage() {
   const [extractedRate, setExtractedRate]       = useState<number | null>(null);
   const [accountKey, setAccountKey]             = useState<string>("");
   const [rateHistory, setRateHistory]           = useState<RateHistoryEntry[]>([]);
+  const [showRateHistory, setShowRateHistory]     = useState(false);
+  const [showAllStatements, setShowAllStatements] = useState(false);
   const [paymentFrequency, setPaymentFrequency] = useState<PaymentFrequency>("monthly");
   const [savingFreq, setSavingFreq]             = useState(false);
 
@@ -259,33 +261,36 @@ export default function AccountDetailPage() {
       const saved = localStorage.getItem(`baseline-${slug}`);
       if (saved) setBaselineMonth(saved);
 
-      // Load APR for this account
+      // Load APR for this account.
+      // The URL slug IS the accountKey (both built with buildAccountSlug), so we
+      // can always use it — even when parsedData.bankName is missing.
       const parsed = json.data as ParsedStatementData | null;
-      if (parsed?.bankName) {
-        const key = toAccountKey(parsed.bankName, parsed.accountId);
-        setAccountKey(key);
+      const key = parsed?.bankName
+        ? toAccountKey(parsed.bankName, parsed.accountId)
+        : slug; // fall back to URL slug which equals the accountKey
+      setAccountKey(key);
 
-        const ratesRes = await fetch("/api/user/account-rates", { headers: { Authorization: `Bearer ${token}` } });
-        const ratesJson = await ratesRes.json().catch(() => ({}));
-        const entry = (ratesJson.rates ?? []).find(
-          (r: { accountKey: string }) => r.accountKey === key
-        );
-        if (entry) {
-          setEffectiveRate(entry.effectiveRate ?? null);
-          setExtractedRate(entry.extractedRate ?? null);
-          if (entry.paymentFrequency) setPaymentFrequency(entry.paymentFrequency as PaymentFrequency);
-        } else {
-          setExtractedRate(typeof parsed.interestRate === "number" ? parsed.interestRate : null);
-          setEffectiveRate(typeof parsed.interestRate === "number" ? parsed.interestRate : null);
-        }
-
-        const histRes = await fetch(
-          `/api/user/account-rates/history?accountKey=${encodeURIComponent(key)}`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        const histJson = await histRes.json().catch(() => ({}));
-        setRateHistory(histJson.history ?? []);
+      const ratesRes = await fetch("/api/user/account-rates", { headers: { Authorization: `Bearer ${token}` } });
+      const ratesJson = await ratesRes.json().catch(() => ({}));
+      const entry = (ratesJson.rates ?? []).find(
+        (r: { accountKey: string }) => r.accountKey === key
+      );
+      if (entry) {
+        setEffectiveRate(entry.effectiveRate ?? null);
+        setExtractedRate(entry.extractedRate ?? null);
+        if (entry.paymentFrequency) setPaymentFrequency(entry.paymentFrequency as PaymentFrequency);
+      } else {
+        const fromStmt = typeof parsed?.interestRate === "number" ? parsed.interestRate : null;
+        setExtractedRate(fromStmt);
+        setEffectiveRate(fromStmt);
       }
+
+      const histRes = await fetch(
+        `/api/user/account-rates/history?accountKey=${encodeURIComponent(key)}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const histJson = await histRes.json().catch(() => ({}));
+      setRateHistory(histJson.history ?? []);
     } catch { setError("Failed to load account"); }
     finally { setLoading(false); }
   }, [slug]);
@@ -491,6 +496,10 @@ export default function AccountDetailPage() {
   const hasIncome      = accountType === "checking" || accountType === "savings" || (data.income?.total ?? 0) > 0;
   const hasSpending    = ["checking", "savings", "credit"].includes(accountType) ||
     (data.expenses?.total ?? 0) > 0 || (data.subscriptions?.length ?? 0) > 0;
+
+  // "Spent this month" = all expense transactions on this account, matching ExpensesCard below.
+  const spentThisMonth = data.expenses?.total ?? 0;
+  const spentThisMonthCount = data.expenses?.transactions?.length ?? 0;
   const linkedAssets      = manualAssets.filter((a) => a.linkedAccountSlug === slug);
   const linkedAssetsTotal = linkedAssets.reduce((s, a) => s + a.value, 0);
   const outstandingDebt   = Math.abs(data.netWorth ?? 0);
@@ -592,8 +601,9 @@ export default function AccountDetailPage() {
 
       {/* ── KPI cards ────────────────────────────────────────────────────────── */}
       {isDebtAccount ? (
-        /* Debt-specific KPIs: Outstanding Balance + Paid Down */
-        <div className="grid grid-cols-2 gap-4 mb-6">
+        /* Debt-specific KPIs: Outstanding Balance | Paid Down | Interest Rate */
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          {/* Outstanding Balance */}
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Outstanding Balance</p>
             <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(outstandingDebt)}</p>
@@ -606,15 +616,96 @@ export default function AccountDetailPage() {
               <p className="mt-1.5 text-xs text-gray-400">First month tracked</p>
             )}
           </div>
+
+          {/* Paid Down */}
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-              {paidDown !== null && paidDown > 0 ? "Paid Down This Period" : "Monthly Payment"}
+              {paidDown !== null && paidDown > 0 ? "Paid Down" : "Monthly Payment"}
             </p>
             <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">
               {paidDown !== null ? fmt(Math.abs(paidDown)) : (data.expenses?.total ? fmt(data.expenses.total) : "—")}
             </p>
             <p className="mt-1.5 text-xs text-gray-400">vs previous statement</p>
           </div>
+
+          {/* Interest Rate — compact card with history popover */}
+          {(isDebtAccount || accountType === "savings" || accountType === "investment") && idToken && accountKey && (
+            <div className="relative rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex items-start justify-between gap-1">
+                <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  {isDebtAccount ? "Interest Rate (APR)" : "Return Rate (APY)"}
+                </p>
+                {combinedRateHistory.length > 0 && (
+                  <button
+                    onClick={() => setShowRateHistory((v) => !v)}
+                    className="shrink-0 rounded-md border border-gray-200 px-1.5 py-0.5 text-[10px] text-gray-400 hover:border-purple-300 hover:text-purple-600 transition"
+                  >
+                    History
+                  </button>
+                )}
+              </div>
+              <AprEditor
+                accountKey={accountKey}
+                currentRate={effectiveRate}
+                extractedRate={extractedRate}
+                token={idToken}
+                onSaved={(rate) => {
+                  setEffectiveRate(rate ?? extractedRate);
+                  fetch(`/api/user/account-rates/history?accountKey=${encodeURIComponent(accountKey)}`, {
+                    headers: { Authorization: `Bearer ${idToken}` },
+                  })
+                    .then((r) => r.json())
+                    .then((j) => setRateHistory(j.history ?? []))
+                    .catch(() => {});
+                }}
+              />
+              {perPaymentInterest !== null ? (
+                <p className="mt-1.5 text-xs text-gray-400">≈ {fmt(perPaymentInterest)} interest/{freqConfig.label.toLowerCase()}</p>
+              ) : (
+                <p className="mt-1.5 text-xs text-gray-400">
+                  {effectiveRate !== null ? "User-set" : extractedRate !== null ? "From statement" : "Not set"}
+                </p>
+              )}
+
+              {/* History popover */}
+              {showRateHistory && combinedRateHistory.length > 0 && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setShowRateHistory(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-20 w-72 rounded-xl border border-gray-200 bg-white shadow-lg p-4">
+                    <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">Rate history</p>
+                    <div className="space-y-2">
+                      {combinedRateHistory.map((entry, i) => {
+                        const prev = combinedRateHistory[i + 1];
+                        const change = prev ? entry.rate - prev.rate : null;
+                        return (
+                          <div key={i} className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className={`h-1.5 w-1.5 shrink-0 rounded-full ${entry.source === "user" ? "bg-purple-400" : "bg-teal-400"}`} />
+                              <span className="text-xs text-gray-500 truncate">
+                                {entry.source === "user" ? "User override" : entry.note ?? "From statement"}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {change !== null && change !== 0 && (
+                                <span className={`text-[10px] font-medium ${change > 0 ? "text-red-500" : "text-green-600"}`}>
+                                  {change > 0 ? "↑" : "↓"}{Math.abs(change).toFixed(2)}%
+                                </span>
+                              )}
+                              <span className="text-xs font-semibold text-gray-900">{entry.rate}%</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-2 text-[10px] text-gray-400 flex items-center gap-3">
+                      <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-teal-400 inline-block" /> From statement</span>
+                      <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-purple-400 inline-block" /> User override</span>
+                    </p>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       ) : (
         /* Per-account KPIs: Balance · Income · Spent */
@@ -650,9 +741,9 @@ export default function AccountDetailPage() {
           {hasSpending && (
             <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Spent this month</p>
-              <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(data.expenses?.total ?? 0)}</p>
-              {data.expenses?.total ? (
-                <p className="mt-1.5 text-xs text-gray-400">{(data.expenses.transactions?.length ?? 0)} transactions</p>
+              <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(spentThisMonth)}</p>
+              {spentThisMonth > 0 ? (
+                <p className="mt-1.5 text-xs text-gray-400">{spentThisMonthCount} transactions incl. transfers</p>
               ) : (
                 <p className="mt-1.5 text-xs text-gray-400">No expenses this month</p>
               )}
@@ -661,120 +752,27 @@ export default function AccountDetailPage() {
         </div>
       )}
 
-      {/* ── APR / Interest Rate card ──────────────────────────────────────── */}
-      {(isDebtAccount || accountType === "savings" || accountType === "investment") && (
-        <div className="mb-6 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-          <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div className="min-w-0">
-              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">
-                {isDebtAccount ? "Interest Rate (APR)" : "Return Rate (APY)"}
-              </p>
-              {idToken && accountKey && (
-                <AprEditor
-                  accountKey={accountKey}
-                  currentRate={effectiveRate}
-                  extractedRate={extractedRate}
-                  token={idToken}
-                  onSaved={(rate) => {
-                    setEffectiveRate(rate ?? extractedRate);
-                    fetch(`/api/user/account-rates/history?accountKey=${encodeURIComponent(accountKey)}`, {
-                      headers: { Authorization: `Bearer ${idToken}` },
-                    })
-                      .then((r) => r.json())
-                      .then((j) => setRateHistory(j.history ?? []))
-                      .catch(() => {});
-                  }}
-                />
-              )}
-              <p className="mt-1.5 text-xs text-gray-400">
-                {effectiveRate !== null && effectiveRate === extractedRate
-                  ? "Extracted from latest statement"
-                  : effectiveRate !== null
-                  ? "User-set override"
-                  : extractedRate !== null
-                  ? `AI detected ${extractedRate}% — click Edit to confirm`
-                  : "Not found in statement — set manually"}
-              </p>
-            </div>
-            {isDebtAccount && perPaymentInterest !== null && (
-              <div className="text-right shrink-0">
-                <p className="text-xs text-gray-400">Est. interest per payment</p>
-                <p className="text-lg font-bold text-red-600">{fmt(perPaymentInterest)}</p>
-                <p className="text-xs text-gray-400">{freqConfig.label} · {freqConfig.perYear}×/yr</p>
-              </div>
-            )}
+      {/* ── Payment frequency strip (debt accounts only) ─────────────────── */}
+      {isDebtAccount && (
+        <div className="mb-6 flex items-center gap-3 flex-wrap">
+          <span className="text-xs font-semibold uppercase tracking-wider text-gray-400 shrink-0">Payment frequency</span>
+          <div className="flex gap-1.5 flex-wrap">
+            {PAYMENT_FREQ_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => handleFrequencyChange(opt.value)}
+                disabled={savingFreq}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition disabled:opacity-50 ${
+                  paymentFrequency === opt.value
+                    ? "bg-purple-600 text-white"
+                    : "border border-gray-200 text-gray-500 hover:border-purple-300 hover:text-purple-600"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
           </div>
-
-          {/* Payment frequency selector (debt accounts only) */}
-          {isDebtAccount && (
-            <div className="mt-4 border-t border-gray-100 pt-4">
-              <div className="flex items-center gap-3 flex-wrap">
-                <span className="text-xs font-semibold uppercase tracking-wider text-gray-400 shrink-0">
-                  Payment frequency
-                </span>
-                <div className="flex gap-1.5 flex-wrap">
-                  {PAYMENT_FREQ_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.value}
-                      onClick={() => handleFrequencyChange(opt.value)}
-                      disabled={savingFreq}
-                      className={`rounded-full px-3 py-1 text-xs font-medium transition disabled:opacity-50 ${
-                        paymentFrequency === opt.value
-                          ? "bg-purple-600 text-white"
-                          : "border border-gray-200 text-gray-500 hover:border-purple-300 hover:text-purple-600"
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-                {savingFreq && <span className="text-xs text-gray-400">Saving…</span>}
-              </div>
-            </div>
-          )}
-
-          {/* APR history timeline */}
-          {combinedRateHistory.length > 0 && (
-            <div className="mt-4 border-t border-gray-100 pt-4">
-              <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">Rate history</p>
-              <div className="space-y-2.5">
-                {combinedRateHistory.map((entry, i) => {
-                  const prev = combinedRateHistory[i + 1];
-                  const change = prev ? entry.rate - prev.rate : null;
-                  return (
-                    <div key={i} className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className={`h-2 w-2 shrink-0 rounded-full ${
-                          entry.source === "user" ? "bg-purple-400" : "bg-teal-400"
-                        }`} />
-                        <span className="text-xs text-gray-500">{fmtDate(entry.changedAt)}</span>
-                        <span className="text-xs text-gray-400 truncate">
-                          {entry.source === "user" ? "User override" : entry.note ?? "From statement"}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {change !== null && change !== 0 && (
-                          <span className={`text-xs font-medium ${change > 0 ? "text-red-500" : "text-green-600"}`}>
-                            {change > 0 ? "↑" : "↓"} {Math.abs(change).toFixed(2)}%
-                          </span>
-                        )}
-                        <span className="text-sm font-semibold text-gray-900">{entry.rate}%</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <p className="mt-2 text-xs text-gray-400">
-                <span className="inline-flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-teal-400 inline-block" /> From statement
-                </span>
-                <span className="mx-2">·</span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-purple-400 inline-block" /> User override
-                </span>
-              </p>
-            </div>
-          )}
+          {savingFreq && <span className="text-xs text-gray-400">Saving…</span>}
         </div>
       )}
 
@@ -789,7 +787,16 @@ export default function AccountDetailPage() {
       {stmtHistory.length > 0 && (
         <div className="mt-4">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="font-semibold text-gray-900">Statement history</h2>
+            <button
+              onClick={() => setShowAllStatements((v) => !v)}
+              className="flex items-center gap-1.5 group"
+            >
+              <span className="text-xs text-gray-400 transition group-hover:text-gray-600">
+                {showAllStatements ? "▲" : "▼"}
+              </span>
+              <h2 className="font-semibold text-gray-900 group-hover:text-purple-700 transition">Statement history</h2>
+              <span className="text-xs text-gray-400">({stmtHistory.length})</span>
+            </button>
             <div className="flex items-center gap-3">
               {baselineMonth && (
                 <button onClick={() => handleSetBaseline(baselineMonth)} className="text-xs text-purple-600 hover:underline">
@@ -822,7 +829,7 @@ export default function AccountDetailPage() {
               />
             </div>
           )}
-          {baselineMonth && (
+          {baselineMonth && showAllStatements && (
             <p className="mb-3 text-xs text-gray-400">
               Trend starts from <span className="font-medium text-gray-600">{shortMonth(baselineMonth)}</span>.
             </p>
@@ -842,7 +849,7 @@ export default function AccountDetailPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {[...stmtHistory].reverse().map((entry) => {
+                {[...stmtHistory].reverse().slice(0, showAllStatements ? undefined : 3).map((entry) => {
                   const isBaseline    = baselineMonth === entry.yearMonth;
                   const beforeBaseline = baselineMonth != null && entry.yearMonth < baselineMonth;
                   // Determine if APR changed from previous row
@@ -936,10 +943,22 @@ export default function AccountDetailPage() {
                 })}
               </tbody>
             </table>
+            {stmtHistory.length > 3 && (
+              <button
+                onClick={() => setShowAllStatements((v) => !v)}
+                className="w-full py-2.5 text-xs font-medium text-gray-400 hover:text-purple-600 hover:bg-gray-50 transition border-t border-gray-100"
+              >
+                {showAllStatements
+                  ? "▲ Show less"
+                  : `▼ Show all ${stmtHistory.length} statements`}
+              </button>
+            )}
           </div>
-          <p className="mt-2 text-xs text-gray-400">
-            <span className="font-medium text-gray-500">Set baseline</span> to exclude older months from the trend chart.
-          </p>
+          {showAllStatements && (
+            <p className="mt-2 text-xs text-gray-400">
+              <span className="font-medium text-gray-500">Set baseline</span> to exclude older months from the trend chart.
+            </p>
+          )}
         </div>
       )}
 

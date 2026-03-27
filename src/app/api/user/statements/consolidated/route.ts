@@ -333,7 +333,7 @@ export async function GET(request: NextRequest) {
         // Expenses use transaction-date filtering to avoid billing-period double-counting.
         // Income uses the statement-level aggregate (see below).
         const txDateExpenses = (c.expenses?.transactions ?? [])
-          .filter((t) => (t.date ?? `${ym}-15`).slice(0, 7) === ym && !/transfer|payment/i.test(t.category ?? ""))
+          .filter((t) => (t.date ?? `${ym}-15`).slice(0, 7) === ym)
           .reduce((s, t) => s + t.amount, 0);
         // Income uses the statement-level total: the AI parser correctly attributes income
         // to its statement period. Unlike expenses (billing periods can span months),
@@ -540,7 +540,7 @@ export async function GET(request: NextRequest) {
     // Transaction-date-based income/expense for the requested month.
     // Use these instead of data.income?.total / data.expenses?.total in all pages.
     const txMonthlyExpenses = (enrichedConsolidated.expenses?.transactions ?? [])
-      .filter((t) => (t.date ?? `${month}-15`).slice(0, 7) === month && !/transfer|payment/i.test(t.category ?? ""))
+      .filter((t) => (t.date ?? `${month}-15`).slice(0, 7) === month)
       .reduce((s, t) => s + t.amount, 0);
     // Income uses the statement-level total: no double-counting risk for deposits,
     // and the AI parser correctly attributes income to the statement period.
