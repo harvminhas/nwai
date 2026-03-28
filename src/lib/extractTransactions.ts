@@ -174,7 +174,7 @@ export async function extractAllTransactions(
       for (const txn of parsed.income?.transactions ?? []) {
         const date = txn.date ?? `${stmtYm}-01`;
         const txMonth = date.slice(0, 7);
-        const fp = txFingerprint(parsed.accountId ?? slug, date, txn.amount, txn.description ?? txn.source ?? "");
+        const fp = txFingerprint(parsed.accountId ?? slug, date, txn.amount, txn.source ?? txn.category ?? "");
         if (isCSV && incFingerprintsFromStmt.has(fp)) continue;
         if (!isCSV) incFingerprintsFromStmt.add(fp);
         incomeTxns.push({
@@ -182,7 +182,7 @@ export async function extractAllTransactions(
           txMonth,
           amount: txn.amount,
           source: txn.source ?? "Income",
-          description: txn.description ?? txn.source ?? "Income",
+          description: txn.source ?? txn.category ?? "Income",
           accountSlug: slug,
         });
       }

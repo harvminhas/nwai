@@ -37,9 +37,23 @@ function accountDisplayLabel(parsed: ParsedStatementData): string {
   return parts.join(" ");
 }
 
-/** Tag every expense transaction in a statement with its account label. */
+/** Tag every expense and income transaction in a statement with its account label.
+ *  When the AI only populated income.sources (no individual transactions), synthesize
+ *  one transaction per source so the account label is preserved through consolidation.
+ */
 function tagTransactions(stmt: ParsedStatementData): ParsedStatementData {
   const label = accountDisplayLabel(stmt);
+
+  const existingIncomeTxns = stmt.income?.transactions ?? [];
+  const incomeTxns = existingIncomeTxns.length > 0
+    ? existingIncomeTxns.map((txn) => ({ ...txn, accountLabel: label }))
+    : (stmt.income?.sources ?? []).map((src) => ({
+        source: src.description,
+        amount: src.amount,
+        category: "Other" as const,
+        accountLabel: label,
+      }));
+
   return {
     ...stmt,
     expenses: {
@@ -47,6 +61,12 @@ function tagTransactions(stmt: ParsedStatementData): ParsedStatementData {
       total: stmt.expenses?.total ?? 0,
       categories: stmt.expenses?.categories ?? [],
       transactions: (stmt.expenses?.transactions ?? []).map((txn) => ({ ...txn, accountLabel: label })),
+    },
+    income: {
+      ...stmt.income,
+      total: stmt.income?.total ?? 0,
+      sources: stmt.income?.sources ?? [],
+      transactions: incomeTxns,
     },
   };
 }
@@ -357,7 +377,7 @@ export async function GET(request: NextRequest) {
           for (const src of c.income?.sources ?? []) {
             if (!incomeSourceHistory[src.description]) incomeSourceHistory[src.description] = [];
             const srcTxns = (c.income?.transactions ?? [])
-              .filter((t) => t.source === src.description || t.description === src.description)
+              .filter((t) => t.source === src.description)
               .map((t) => ({ date: t.date, amount: t.amount }));
             incomeSourceHistory[src.description].push({ yearMonth: ym, amount: src.amount, transactions: srcTxns });
           }

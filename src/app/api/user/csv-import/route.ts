@@ -226,7 +226,7 @@ export async function POST(request: NextRequest) {
       if (isDebtAccount) {
         paymentsMade += r.amount;
       } else {
-        incTxns.push({ description: r.description, amount: r.amount, date: r.date, source: "Income" });
+        incTxns.push({ source: r.description, amount: r.amount, date: r.date, category: "Other" });
       }
     }
 

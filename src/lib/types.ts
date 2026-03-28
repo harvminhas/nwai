@@ -41,10 +41,14 @@ export interface IncomeSource {
 }
 
 export interface IncomeTransaction {
-  description: string;
+  /** Payee / description as it appears on the statement (e.g. "MAM Pay", "CRA Deposit"). Mirrors `merchant` on ExpenseTransaction. */
+  source: string;
   amount: number;
   date?: string; // ISO YYYY-MM-DD
-  source?: string; // which income source (e.g. "Salary", "Freelance")
+  /** Income type: "Salary" | "Government" | "Transfer In" | "Other" */
+  category?: string;
+  /** Human-readable account label e.g. "TD ••••7780". Populated at API aggregation time. */
+  accountLabel?: string;
 }
 
 export interface Income {
@@ -157,7 +161,8 @@ export interface ParsedStatementData {
   paymentsMade?: number;
   subscriptions: Subscription[];
   savingsRate: number;
-  insights: Insight[];
+  /** @deprecated Insights are now generated from history, not per-statement. Kept for backward compat with older stored documents. */
+  insights?: Insight[];
   /**
    * For multi-segment statements (e.g. HELOC + mortgage term portions in one PDF).
    * Each segment gets its own balance, APR, and type so the liabilities view

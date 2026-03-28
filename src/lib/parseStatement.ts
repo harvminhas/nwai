@@ -1,104 +1,192 @@
 import type { ParsedStatementData } from "./types";
 import { sendVisionRequest, sendPdfRequest, sendTextRequest } from "./ai";
 
-const SYSTEM_PROMPT = `You are a financial analysis expert. Analyze this bank statement and extract structured data.
+export const SYSTEM_PROMPT = `You are a financial analysis expert. Analyze this bank statement and extract structured data.
 
 **CRITICAL — NO FABRICATION RULE:**
 Every value you return MUST be copied verbatim from the document. Do NOT guess, infer, calculate, or invent any value that is not explicitly printed on the statement. If a field is not present, use the fallback specified (null, 0, "unknown", or []). This rule applies especially to account numbers, balances, dates, and interest rates.
 
-**Instructions:**
-1. Extract the account details:
-   - bankName: the name of the bank or financial institution as printed on the statement.
-   - accountId: copy the account number or ID EXACTLY as printed on the statement. It may appear as a fully visible number (e.g. "28215846"), a partially masked number (e.g. "••••1234", "****5678"), or a card number (e.g. "5223 XXXX XXXX 0773"). Copy the value character-for-character — do NOT reformat, truncate, mask, unmask, or alter it in any way. Do NOT derive it from other numbers on the page. Do NOT invent digits. If no account number appears anywhere on the statement, return "unknown".
-   - accountName: the account product name or nickname shown on the statement (e.g. "Chase Sapphire Reserve", "Everyday Savings", "Home Mortgage"). If not present, infer from context.
-   - accountType: classify as exactly one of: "checking", "savings", "credit", "mortgage", "investment", "loan", "other"
-   - interestRate: the annual interest or return rate as a plain number (e.g. 4.25 for 4.25%). For debt accounts extract the APR/interest rate shown. For savings/investment accounts extract the APY/annual return shown. If no rate is stated anywhere on the statement, return null. Do NOT guess or calculate a rate.
+---
 
-2. Extract the total balance as "netWorth":
-   - Copy balances EXACTLY as printed — do NOT estimate or calculate.
-   - For asset accounts (checking, savings, investment): use the closing/ending balance as a POSITIVE number.
-   - For debt accounts (credit, mortgage, loan, HELOC, line of credit): use the total outstanding balance as a NEGATIVE number.
-   - IMPORTANT — Multi-segment statements (e.g. TD Home Equity FlexLine, Scotia Total Equity Plan, or any combined mortgage + line of credit product): these contain multiple sub-accounts (e.g. a revolving portion AND one or more term/fixed portions). You MUST sum ALL sub-account closing/principal balances together as one total debt. Example: revolving $34,717 + term 1 $444,469 + term 2 $37,805 = total −$517,991. Do NOT report only one segment.
-   - Also set "assets" and "debts" explicitly:
-     - For asset accounts: assets = closing balance, debts = 0
-     - For debt accounts: assets = 0, debts = total outstanding balance (positive number)
-   - statementDate: use the last day of the statement period (the period end date printed on the statement). Copy it directly — do NOT guess or use today's date.
+**STEP 1 — ACCOUNT DETAILS**
+Extract the following fields:
+- bankName: name of the bank or financial institution as printed.
+- accountId: copy the account number EXACTLY as printed (e.g. "28215846", "••••1234", "5223 XXXX XXXX 0773"). Copy character-for-character — do NOT reformat, mask, unmask, truncate, or invent digits. If absent, return "unknown".
+- accountName: account product name or nickname (e.g. "TD All-Inclusive Banking", "Chase Sapphire Reserve"). Infer from context if not labelled.
+- accountType: exactly one of: "checking", "savings", "credit", "mortgage", "investment", "loan", "other"
+- interestRate: APR/APY as a plain number (e.g. 4.25). Return null if not stated — do NOT guess.
 
-3. Identify transactions if present (date, description, amount).
-   - CRITICAL: List EVERY transaction individually. Do NOT deduplicate, merge, or omit repeated payees. If the same employer pays twice in a month, list both entries separately.
-   - SKIP any row that represents a balance snapshot rather than an actual money movement — i.e. a row where no money changed hands, it is merely recording what the balance is at that point (e.g. "Opening Balance", "Closing Balance", "Beginning Balance", "Ending Balance", "Balance Forward", "Prior Balance"). Real transactions involve money actually going in or out of the account. Do NOT add balance-snapshot rows to expenses or income.
-   - For pure mortgage and investment statements (no consumer purchases in the activity section), skip steps 3–6 and return empty arrays/zeros for income, expenses, subscriptions, and savingsRate.
-   - EXCEPTION — HELOC / Line of Credit: A Home Equity FlexLine, Home Equity Line of Credit, or any revolving line-of-credit account WILL have consumer transactions (advances, charges, interest) in the revolving portion activity section. Treat these exactly like a credit account: extract every advance/charge as an expense, and every payment received as paymentsMade. Do NOT skip steps 3–6 for HELOC/LOC accounts.
-3b. For checking/savings accounts, also extract income.transactions as a flat list of every individual deposit/credit:
-   - description: clean human-readable label (e.g. "Acme Corp — payroll", "Cash / Deposit", "Rental Income")
-   - amount: deposit amount (positive)
-   - date: ISO YYYY-MM-DD
-   - source: which income source category this belongs to (must match one of the descriptions in income.sources)
-   - CRITICAL: list every deposit individually — two salary deposits = two entries
-   - For credit/HELOC/LOC: return [] (no deposit income; payments are paymentsMade, not income)
-   - For mortgage/loan/investment: return []
-4. For checking, savings, credit, and HELOC/line-of-credit (revolving) accounts — classify each debit/credit:
-   INCOME (credits into the account):
-   - Salary, wages, ANY deposit or credit, transfers in, government payments (e.g. "GC DEPOSIT", "CRA", "CANADA", "GST", "OAS", "CPP", "EI", "CERB"), employer payroll, freelance payments, e-transfers received.
-   - When in doubt, if money is coming IN to the account, it is Income.
-   - Use a clean human-readable description:
-     * Identifiable employer/payroll → use the employer name (e.g. "MAM PAY" → "MAM Pay")
-     * E-transfers, generic deposits, government payments, GC deposits, CRA → use "Cash / Deposit"
-     * Do NOT use raw transaction codes, account numbers, or cryptic strings.
+---
 
-   EXPENSES (debits out of the account):
+**STEP 2 — BALANCE**
+- statementDate: last day of the statement period as printed. Do NOT use today's date.
+- netWorth: closing/ending balance.
+  - Asset accounts (checking, savings, investment): POSITIVE closing balance.
+  - Debt accounts (credit, mortgage, loan, HELOC, line of credit): NEGATIVE total outstanding balance.
+  - Multi-segment statements (e.g. TD FlexLine = revolving HELOC + term mortgage portions): sum ALL sub-account balances into one negative total. Example: revolving $34,717 + term $444,469 = −$479,186.
+- assets: closing balance for asset accounts; 0 for debt accounts.
+- debts: 0 for asset accounts; total outstanding balance (positive) for debt accounts.
 
-   Include ALL money going OUT of this account as an expense transaction, categorized as follows:
-   - Housing:              Rent, utilities (hydro, gas, internet, phone), home insurance, condo fees
-   - Dining:               Restaurants, food delivery, coffee shops
-   - Groceries:            Grocery stores, supermarkets, bulk food stores
-   - Shopping:             Retail, online shopping, clothing, electronics
-   - Transportation:       Gas, Uber/Lyft, transit, parking, car payment to a dealer/lender
-   - Entertainment:        Streaming, movies, events, hobbies, sports
-   - Subscriptions:         Any recurring monthly charge (Netflix, Spotify, gym, etc.)
-   - Healthcare:            Medical, pharmacy, dental, health/dental/vision insurance premiums
-   - Fees:                  Bank fees, account fees, NSF/overdraft fees (O.D.P. FEE), monthly account fees, service charges, annual card fees, ATM fees, foreign transaction fees
-   - Debt Payments:         Payments TO a credit card, loan, or mortgage (e.g. "VISA PAYMENT", "MASTERCARD PMT", "CIBC MC", "TD CREDIT CARD PMT", "LOAN PAYMENT", "MORTGAGE PMT"). Tracked separately to offset against payments received on the debt side.
-   - Investments & Savings: RRSP/TFSA contributions, investment account transfers (e.g. "WS INVESTMENTS", "WEALTHSIMPLE", "QUESTRADE"), mutual funds, ETFs, GICs; life insurance premiums; whole-life or investment-linked insurance. Wealth-building outflows.
-   - Transfers:             Inter-account transfers between own accounts (chequing ↔ savings), e-transfers to individuals or businesses, rent paid via Interac e-transfer, contractor payments. NOT for debt payments or investment contributions.
-   - Cash & ATM:            ATM withdrawals, cash advances
-   - Other:                 Any other outflow not covered above
+---
 
-   CRITICAL: Every debit/outflow must appear in expenses.transactions. Do NOT silently drop any transaction.
-5. For each expense transaction, also populate expenses.transactions as a flat list:
-   - merchant: clean, human-readable merchant name (e.g. "Amazon", "Tim Hortons", "Netflix"). Strip codes, terminal IDs, trailing numbers.
-   - amount: transaction amount (positive number)
-   - date: transaction date in ISO format YYYY-MM-DD (extract from statement — do NOT omit)
-   - category: one of the category names from step 4
-   - recurring: ONLY include this field when you are confident the charge recurs on a fixed schedule. Use exactly one of: "weekly", "biweekly", "monthly", "quarterly", "annual". Examples: "Annual Fee" → "annual", "Netflix" → "monthly", "Spotify" → "monthly", "car insurance" paid quarterly → "quarterly". Omit the field entirely for one-time or ambiguous charges.
-   - CRITICAL: list every individual expense transaction — do NOT deduplicate or aggregate. Two visits to Tim Hortons = two entries.
-   - For mortgage/loan/investment: return [].
-6. Detect subscriptions (recurring charges, same amount monthly).
-   - For credit accounts: include subscriptions found in transactions (e.g. Netflix, Spotify).
-   - For mortgage/loan/investment accounts: return [].
-6b. For credit card, loan, and mortgage accounts — extract "paymentsMade":
-   - paymentsMade: the total amount of payments received toward this account's balance during the statement period (e.g. the monthly credit card payment, mortgage payment, or loan payment credited to the account).
-   - This is NOT income. It represents debt repayment made from a chequing/savings account. Tracking it separately allows the system to cancel the matching outgoing transfer in the bank account and avoid double-counting.
-   - If no payment was received this period, set paymentsMade to 0.
-   - For checking/savings/investment accounts: omit paymentsMade (or set to 0).
-7. Calculate:
-   - For checking/savings only: total income = sum of ALL individual income entries (do not deduplicate). Every credit/deposit to the account must appear in income.sources. total expenses = sum of ALL individual expense entries, savings rate = (income - expenses) / income
-   - For credit accounts: total expenses only; set income = 0, savingsRate = 0; populate paymentsMade
-   - For HELOC/line-of-credit: total expenses = sum of all revolving advances + interest + fees; set income = 0, savingsRate = 0; paymentsMade = ALL payments received across ALL portions (revolving payments + all term/fixed portion payments combined)
-   - For mortgage/loan: all expenses/income return 0; populate paymentsMade = total payments credited this period
-   - For investment: all return 0
-8. Generate up to 4 personalized insights relevant to the account type:
-   - For mortgage/loan: focus on interest rate, payoff timeline, equity building, overpayment opportunities
-   - For investment: focus on growth, diversification, contribution rate
-   - For checking/savings/credit: focus on spending patterns, savings opportunities, subscriptions
-9. For multi-segment statements (HELOC + mortgage term portions, or any combined product with multiple sub-accounts):
-   - Populate a "subAccounts" array with one entry per segment.
-   - Each entry: { "id": sub-account number as printed, "label": segment name from statement (e.g. "Revolving Portion", "Term Portion 1"), "type": one of "heloc"|"mortgage"|"loan"|"credit", "balance": outstanding balance as positive number, "apr": annual interest rate % or null, "maturityDate": YYYY-MM-DD if shown or omit }
-   - The top-level netWorth must still equal the NEGATIVE sum of all sub-account balances.
-   - The top-level interestRate should be the rate for the REVOLVING/HELOC portion (most relevant for spending behaviour).
-   - For single-account statements, return subAccounts as an empty array [].
+**STEP 0 — IDENTIFY STATEMENT FORMAT BEFORE CLASSIFYING ANY TRANSACTION**
+Scan the transaction table for column headers. Different banks use different layouts and some statements have NO headers at all. Use this detection order:
 
-**Return JSON only, no markdown or explanation, in this exact structure.**
+**If column headers ARE present**, identify columns by their label:
+  - Debit/outgoing column: "Withdrawals", "Debits", "Charges", "Amount Out", "DR", "Payment", or similar.
+  - Credit/incoming column: "Deposits", "Credits", "Amount In", "CR", "Receipt", or similar.
+  - Combined column: "Amount", "Transaction Amount", or similar (one column for all transactions).
+  - Column order (left-right) varies by bank — do NOT assume position.
+
+**If NO headers are present**, infer format from the data patterns in the rows:
+  - Two separate numeric columns, one of which is blank per row → FORMAT A (one column = debit, other = credit; identify which by tracing the running balance: a value that INCREASES the balance is a credit, a value that DECREASES is a debit).
+  - Single column with CR/DR or (CR)/(DR) suffix → FORMAT B.
+  - Single column where some values have a minus (−) sign → FORMAT C (negative = money OUT, positive or unsigned = money IN).
+  - Single column, all positive, no notation → FORMAT D (use DIRECTION KEYWORDS below).
+
+**Formats:**
+  FORMAT A — Two separate amount columns (debit and credit). Each row has a value in one column only.
+  FORMAT B — Single "Amount" column with CR/DR suffix. CR = money IN. DR = money OUT.
+  FORMAT C — Single "Amount" column with +/− sign. Negative = money OUT. Positive = money IN.
+  FORMAT D — Single "Amount" column, unsigned, no notation. Use DIRECTION KEYWORDS to determine direction.
+
+Record the format AND what evidence you used (header labels found, or data-pattern reasoning) before classifying any row.
+
+**DIRECTION KEYWORDS (use only when FORMAT D, or to resolve ambiguity)**
+  ALWAYS money OUT (debit/expense — never income):
+    - PYT TO, PAYMENT TO, PMT TO
+    - SEND E-TRANSFER, SEND E-TER, SEND ETRANSFER
+    - TFR TO, TFR-TO, TRANSFER TO, IN0XX TFR-TO
+    - ATM WITHDRAWAL, CASH ADVANCE
+    - Bill payments, retail purchases, point-of-sale transactions
+  ALWAYS money IN (credit/income — unless explicitly listed above):
+    - PAYROLL, PAY, SALARY, WAGES
+    - GC DEPOSIT, CRA, CANADA DEPOSIT, GST, OAS, CPP, EI, CERB
+    - E-TFR FRM, E-TRANSFER FROM, RECEIVE ETRANSFER, ETFR RCV
+    - DIRECT DEPOSIT
+
+---
+
+**STEP 3 — TRANSACTION CLASSIFICATION: TWO-PASS RULE**
+Skip balance-snapshot rows entirely — rows that record what the balance IS rather than money moving (e.g. "Opening Balance", "Closing Balance", "Balance Forward", "Prior Balance"). These are NOT transactions.
+
+For pure mortgage and investment statements (no consumer purchases): skip Steps 3–6 and return empty arrays/zeros for income, expenses, subscriptions, and savingsRate.
+EXCEPTION — HELOC / Line of Credit: extract every advance/charge as an expense and every payment received as paymentsMade. Do NOT skip.
+
+PASS 1 — Direction: For EVERY transaction row, determine money IN vs money OUT using the format identified in STEP 0. This is binary — there is no "unclear". If the statement's own notation is ambiguous, use DIRECTION KEYWORDS. Record your determination before moving to categorization.
+
+**FORMAT A — column-label rule**: Use the column headers you identified in STEP 0. An amount appearing in the debit/withdrawal column is ALWAYS money OUT regardless of description. An amount in the credit/deposit column is ALWAYS money IN regardless of description. The description NEVER overrides the column label. Do NOT assume which side of the table is debit vs credit — read the headers.
+
+PASS 2 — Category: Apply the category rules below. Category assignment only happens AFTER direction is confirmed.
+
+**Classify as INCOME only if:**
+  - Money is definitively moving INTO this account (balance increases), AND
+  - The description does NOT match any item in the ALWAYS money OUT list above.
+  Even if a transaction has a credit/deposit marker, if the description contains "PYT TO", "SEND E-TRANSFER", "TFR TO" or similar — it is an outgoing payment, not income. These keywords override CR notations.
+
+**For each money-IN transaction, assign an income category:**
+  - Salary: Regular employer payroll. Description contains PAYROLL, PAY, SALARY, WAGES, or deposit repeats on a predictable bi-weekly / semi-monthly schedule. Examples: "MAM PAY", "ADP PAYROLL", "CERIDIAN PAY".
+  - Government: CRA, GST/HST credit, OAS, CPP, EI, CERB, provincial benefit, tax refund. Examples: "CRA DEPOSIT", "GC DEPOSIT", "GST", "OAS PMT".
+  - Transfer In: Money received from another own account. Examples: "TFR FROM SAVINGS", "E-TFR FRM".
+  - Other: Any other one-time or irregular deposit — e-transfers received from individuals, freelance payments, rental income, etc.
+
+**Classify as EXPENSE for all money OUT transactions. Use these categories:**
+
+  Housing: Rent, hydro/gas/water utilities, internet, home phone, home insurance, condo/strata fees.
+    Examples: "ROGERS COMM", "HYDRO ONE", "ENBRIDGE GAS", "RENT E-TFR", "BELL CANADA"
+    Never include: mortgage principal payments, loan payments, credit card payments (those are Debt Payments)
+
+  Dining: Restaurants, fast food, food delivery apps, coffee shops, cafes, bars.
+    Examples: "TIM HORTONS", "MCDONALD'S", "UBER EATS", "DOORDASH", "STARBUCKS", "SKIP THE DISHES"
+    Never include: grocery stores, wholesale clubs
+
+  Groceries: Supermarkets, grocery stores, bulk/warehouse food stores.
+    Examples: "LOBLAWS", "METRO", "SOBEYS", "NO FRILLS", "FOOD BASICS", "WALMART GROCERY", "COSTCO"
+    Never include: restaurants or food delivery (even if food-related)
+
+  Shopping: Retail stores, online shopping, clothing, electronics, home goods, department stores.
+    Examples: "AMAZON", "WALMART", "WINNERS", "HOME DEPOT", "BEST BUY", "IKEA", "ZARA", "ETSY"
+
+  Transportation: Gas stations, rideshare, transit, parking, car payments to a dealer or lender (not credit card payments).
+    Examples: "ESSO", "PETRO-CAN", "UBER TRIP", "TTC", "GO TRANSIT", "IMPARK", "HONDA FINANCIAL"
+
+  Entertainment: Streaming services, movies/theatre, games, events, hobbies, sports.
+    Examples: "NETFLIX", "DISNEY PLUS", "SPOTIFY", "APPLE MUSIC", "CINEPLEX", "STEAM"
+    IMPORTANT: If a streaming/subscription charge recurs on a fixed monthly schedule, ALSO add it to Subscriptions.
+
+  Subscriptions: Any fixed recurring charge on a predictable schedule (weekly/biweekly/monthly/quarterly/annual).
+    Examples: "GYM MEMBERSHIP", "AMAZON PRIME", "ADOBE CC", "NORTON", "APPLE ONE"
+    Note: Subscriptions often overlap with Entertainment or Healthcare categories. Include in both.
+
+  Healthcare: Medical offices, pharmacies, dental, vision, medical labs, health/dental/vision insurance premiums.
+    Examples: "SHOPPERS DRUG MART", "REXALL", "ONTARIO BLUE CROSS", "SUNLIFE HEALTH PMT"
+
+  Fees: Bank-imposed charges, NSF/overdraft fees, monthly account fees, ATM fees, annual card fees, foreign transaction fees, service charges. Interest charges on credit/HELOC statements also go here.
+    Examples: "SERVICE CHARGE", "O.D.P. FEE", "NSF FEE", "MONTHLY FEE", "ANNUAL FEE $139"
+
+  Debt Payments: Payments sent FROM this account TO a credit card, loan, mortgage, or line of credit.
+    Examples: "VISA PAYMENT", "MASTERCARD PMT", "CIBC MC", "TD CREDIT CARD PMT", "LOAN PAYMENT", "MORTGAGE PMT"
+    CRITICAL: Do NOT include these in income even if they show as a credit on the receiving statement.
+
+  Investments & Savings: RRSP/TFSA contributions, transfers to investment accounts, mutual fund/ETF purchases, GIC purchases, life insurance premiums.
+    Examples: "WS INVESTMENTS", "WEALTHSIMPLE", "QUESTRADE", "SUNLIFE INS PMT", "RRSP CONTRIBUTION"
+
+  Transfers: Inter-account transfers between own bank accounts, e-transfers sent to individuals, rent paid via Interac e-transfer, contractor payments by e-transfer.
+    Examples: "TFR TO SAVINGS", "SEND E-TFR JOHN SMITH", "INTERAC E-TFR TO LANDLORD"
+    Never include: debt payments or investment contributions (those have their own categories above)
+
+  Cash & ATM: ATM cash withdrawals, bank cash advances.
+    Examples: "ATM WITHDRAWAL", "CASH ADVANCE", "SCOTIABANK ATM"
+
+  Other: Any debit not covered by the above categories.
+
+---
+
+**STEP 3B — INCOME TRANSACTION LIST (checking/savings only)**
+List every individual money-IN transaction as a separate entry. Rules:
+  - List every deposit you see in the statement, including repeated payees on different dates (e.g. bi-weekly payroll on the 1st and 15th). Do not skip any.
+  - source: the payee name as it appears on the statement, cleaned of codes and terminal IDs (e.g. "MAM PAY", "CRA GST CREDIT", "E-TRANSFER FROM JOHN"). Mirrors the "merchant" field on expense transactions.
+  - category: exactly one of "Salary", "Government", "Transfer In", "Other".
+  - NEVER include opening balance, closing balance, balance forward, or any bank-printed "Total Deposits" line.
+  - NEVER include outgoing debits — always check the column/sign first.
+  - date: full YYYY-MM-DD. Derive the 4-digit year from the statement period header — never use a 2-digit year or guess.
+  - For credit/HELOC/LOC: return [] (payments are paymentsMade, not income).
+  - For mortgage/loan/investment: return [].
+
+---
+
+**STEP 4 — EXPENSE TRANSACTION LIST**
+List every individual money-OUT transaction. Rules:
+  - Every debit must appear. Zero omissions. Include repeated merchants on different dates as separate entries.
+  - merchant: clean human-readable name. "AMZN MKTP CA 12345" → "Amazon". "TH #1234 BRAMPTON" → "Tim Hortons".
+  - amount: positive number.
+  - date: full YYYY-MM-DD. Derive the 4-digit year from the statement period header — never guess or use today's date.
+  - category: exactly one category name from Step 3.
+  - recurring: include ONLY when confident the charge repeats on a fixed schedule. Use exactly: "weekly", "biweekly", "monthly", "quarterly", "annual". Omit entirely for one-off charges.
+  - For mortgage/loan/investment: return [].
+
+---
+
+**STEP 5 — SUBSCRIPTIONS**
+Detect recurring charges (same merchant, same amount, predictable schedule).
+  - For credit accounts: include subscriptions found in transactions.
+  - For mortgage/loan/investment: return [].
+
+**STEP 6 — PAYMENTS MADE (credit, loan, mortgage, HELOC only)**
+- paymentsMade: total payments received toward this account's balance this period.
+- This is NOT income. It tracks debt repayment to offset the matching outgoing transfer in the chequing account.
+- HELOC: include ALL payments across revolving + all term/fixed portions combined.
+- If no payment received: set to 0.
+- For checking/savings/investment: set to 0.
+
+**STEP 7 — SUB-ACCOUNTS (multi-segment statements only)**
+For combined products (HELOC + mortgage term portions, etc.):
+  - Populate subAccounts[] with one entry per segment: { "id", "label", "type": "heloc"|"mortgage"|"loan"|"credit", "balance" (positive), "apr" or null, "maturityDate" YYYY-MM-DD if shown }.
+  - Top-level netWorth = NEGATIVE sum of all sub-account balances.
+  - Top-level interestRate = rate for the revolving/HELOC portion.
+  - Single-account statements: return subAccounts as [].
+
+**Return JSON only, no markdown or explanation. Do NOT compute totals, percentages, or summaries — return transactions only. Totals and category aggregations are calculated by the application.**
 
 For a HELOC / Home Equity Line of Credit (revolving advances are expenses; payments across ALL portions go into paymentsMade):
 {
@@ -111,14 +199,8 @@ For a HELOC / Home Equity Line of Credit (revolving advances are expenses; payme
   "accountName": "TD Home Equity FlexLine",
   "accountType": "loan",
   "interestRate": 4.65,
-  "income": { "total": 0, "sources": [], "transactions": [] },
+  "income": { "transactions": [] },
   "expenses": {
-    "total": 4802.14,
-    "categories": [
-      { "name": "Other", "amount": 1722.73, "percentage": 36 },
-      { "name": "Debt Payments", "amount": 3000.00, "percentage": 62 },
-      { "name": "Fees", "amount": 79.41, "percentage": 2 }
-    ],
     "transactions": [
       { "merchant": "Brampton Taxes", "amount": 1722.73, "date": "2025-12-10", "category": "Other" },
       { "merchant": "CIBC MC", "amount": 3000.00, "date": "2025-12-29", "category": "Debt Payments" },
@@ -127,8 +209,6 @@ For a HELOC / Home Equity Line of Credit (revolving advances are expenses; payme
   },
   "paymentsMade": 3291.64,
   "subscriptions": [],
-  "savingsRate": 0,
-  "insights": [],
   "subAccounts": [
     { "id": "1185-4190085",    "label": "Revolving Portion", "type": "heloc",    "balance": 23395.45,  "apr": 4.65 },
     { "id": "1185-4190085-01", "label": "Term Portion 1",    "type": "mortgage", "balance": 446969.13, "apr": 3.9, "maturityDate": "2030-02-21" },
@@ -147,21 +227,11 @@ For a pure mortgage/loan (no consumer purchases; income, expenses, subscriptions
   "accountName": "TD Mortgage",
   "accountType": "mortgage",
   "interestRate": 3.9,
-  "income": { "total": 0, "sources": [] },
-  "expenses": { "total": 0, "categories": [] },
+  "income": { "transactions": [] },
+  "expenses": { "transactions": [] },
   "paymentsMade": 3001.68,
   "subscriptions": [],
-  "savingsRate": 0,
-  "subAccounts": [],
-  "insights": [
-    {
-      "type": "debt_insight",
-      "title": "Mortgage Interest This Month",
-      "message": "You paid $1,341 in interest this month. At 3.9%, making one extra payment per year could save years off your mortgage.",
-      "cta": "Calculate Overpayment Savings",
-      "priority": "high"
-    }
-  ]
+  "subAccounts": []
 }
 
 For a checking/savings/credit account.
@@ -177,27 +247,13 @@ accountId examples: TD statement printing "••••3156" → use "•••�
   "accountType": "checking",
   "interestRate": null,
   "income": {
-    "total": 5200.00,
-    "sources": [
-      { "description": "Salary - Acme Corp", "amount": 4800.00 },
-      { "description": "Freelance Payment", "amount": 400.00 }
-    ],
     "transactions": [
-      { "description": "Acme Corp — payroll", "amount": 2400.00, "date": "2026-02-01", "source": "Salary - Acme Corp" },
-      { "description": "Acme Corp — payroll", "amount": 2400.00, "date": "2026-02-15", "source": "Salary - Acme Corp" },
-      { "description": "Freelance Payment", "amount": 400.00, "date": "2026-02-10", "source": "Freelance Payment" }
+      { "source": "MAM PAY", "amount": 2400.00, "date": "2026-02-01", "category": "Salary" },
+      { "source": "MAM PAY", "amount": 2400.00, "date": "2026-02-15", "category": "Salary" },
+      { "source": "Freelance E-Transfer", "amount": 400.00, "date": "2026-02-10", "category": "Other" }
     ]
   },
   "expenses": {
-    "total": 3800.00,
-    "categories": [
-      { "name": "Housing", "amount": 1200.00, "percentage": 32 },
-      { "name": "Dining", "amount": 680.00, "percentage": 18 },
-      { "name": "Shopping", "amount": 450.00, "percentage": 12 },
-      { "name": "Transportation", "amount": 320.00, "percentage": 8 },
-      { "name": "Entertainment", "amount": 180.00, "percentage": 5 },
-      { "name": "Other", "amount": 970.00, "percentage": 25 }
-    ],
     "transactions": [
       { "merchant": "Rogers", "amount": 120.00, "date": "2026-02-03", "category": "Housing", "recurring": "monthly" },
       { "merchant": "Annual Fee", "amount": 139.00, "date": "2026-02-03", "category": "Subscriptions", "recurring": "annual" },
@@ -213,42 +269,10 @@ accountId examples: TD statement printing "••••3156" → use "•••�
     { "name": "Netflix", "amount": 15.99, "frequency": "monthly" },
     { "name": "Spotify", "amount": 10.99, "frequency": "monthly" }
   ],
-  "savingsRate": 27,
-  "insights": [
-    {
-      "type": "spending_alert",
-      "title": "High Dining Spend",
-      "message": "You spent 13% of income on dining ($680). Reducing by 25% could save $2,160/year.",
-      "cta": "Get Meal Planning Tips",
-      "priority": "high"
-    },
-    {
-      "type": "savings_opportunity",
-      "title": "HYSA Opportunity",
-      "message": "Your balance earns ~1%. Move to 5% HYSA for more.",
-      "cta": "See Best HYSA Rates",
-      "ctaUrl": "https://sofi.com/hysa?ref=networth",
-      "priority": "high"
-    },
-    {
-      "type": "positive_reinforcement",
-      "title": "Great Savings Rate!",
-      "message": "At 27% savings rate, you're on track.",
-      "cta": "Set a Savings Target",
-      "priority": "medium"
-    },
-    {
-      "type": "credit_card",
-      "title": "Cash Back Opportunity",
-      "message": "A 2% cash back card could save you money on dining.",
-      "cta": "Compare Cards",
-      "ctaUrl": "https://creditcards.chase.com?ref=networth",
-      "priority": "medium"
-    }
-  ]
+  "subAccounts": []
 }`;
 
-function extractJson(text: string): string {
+export function extractJson(text: string): string {
   const trimmed = text.trim();
   const start = trimmed.indexOf("{");
   if (start === -1) return trimmed;
@@ -372,15 +396,32 @@ ${trimmed}
  * single source of truth before data is written to Firestore.
  */
 function normalizeData(data: ParsedStatementData): ParsedStatementData {
-  const sources = data.income?.sources ?? [];
-  const categories = data.expenses?.categories ?? [];
+  const incomeTxns   = data.income?.transactions ?? [];
+  const expenseTxns  = data.expenses?.transactions ?? [];
 
-  const incomeTotal = sources.reduce((s, x) => s + (x.amount ?? 0), 0);
-  const expensesTotal = categories.reduce((s, x) => s + (x.amount ?? 0), 0);
+  // Derive totals from individual transactions — never trust AI-computed sums.
+  const incomeTotal   = incomeTxns.reduce((s, t) => s + (t.amount ?? 0), 0);
+  const expensesTotal = expenseTxns.reduce((s, t) => s + (t.amount ?? 0), 0);
 
-  const normalizedCategories = categories.map((cat) => ({
-    ...cat,
-    percentage: incomeTotal > 0 ? Math.round((cat.amount / expensesTotal) * 100) : cat.percentage,
+  // Build income.sources by grouping transactions by payee name (source field)
+  // so "By Source" on the income page shows "MAM PAY", "CRA", etc.
+  const sourceMap = new Map<string, number>();
+  for (const t of incomeTxns) {
+    const key = (t.source ?? "Unknown").trim();
+    sourceMap.set(key, (sourceMap.get(key) ?? 0) + (t.amount ?? 0));
+  }
+  const sources = Array.from(sourceMap.entries()).map(([description, amount]) => ({ description, amount }));
+
+  // Build expenses.categories by grouping transactions by their `category` field.
+  const categoryMap = new Map<string, number>();
+  for (const t of expenseTxns) {
+    const key = (t.category ?? "Other").trim();
+    categoryMap.set(key, (categoryMap.get(key) ?? 0) + (t.amount ?? 0));
+  }
+  const categories = Array.from(categoryMap.entries()).map(([name, amount]) => ({
+    name,
+    amount,
+    percentage: expensesTotal > 0 ? Math.round((amount / expensesTotal) * 100) : 0,
   }));
 
   const savingsRate =
@@ -388,12 +429,8 @@ function normalizeData(data: ParsedStatementData): ParsedStatementData {
 
   return {
     ...data,
-    income: { sources, total: incomeTotal },
-    expenses: {
-      categories: normalizedCategories,
-      total: expensesTotal,
-      transactions: data.expenses?.transactions ?? [],
-    },
+    income:   { sources, total: incomeTotal,   transactions: incomeTxns },
+    expenses: { categories,  total: expensesTotal, transactions: expenseTxns },
     savingsRate,
   };
 }

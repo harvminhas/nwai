@@ -503,7 +503,7 @@ export async function GET(req: NextRequest) {
       if (!txn.date) continue;
       const day = parseInt(txn.date.slice(8, 10));
       if (isNaN(day) || day < 1 || day > 31) continue;
-      const srcKey = normKey(txn.source || txn.description || "income");
+      const srcKey = normKey(txn.source || txn.category || "income");
       if (!incomeSourcePatterns.has(srcKey)) {
         incomeSourcePatterns.set(srcKey, { days: [], totalPerOccurrence: [], account: acctLabel });
       }

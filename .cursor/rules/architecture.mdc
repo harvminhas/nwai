@@ -1,0 +1,50 @@
+---
+description: Core architecture and data-flow rules for nwai
+alwaysApply: true
+---
+
+# Architecture & Separation of Concerns
+
+## Layer Diagram
+
+```
+PDF/CSV/Image
+     ↓
+[ Parser ]          src/lib/parseStatement.ts, src/lib/csv-import.ts
+     ↓ ParsedStatementData (JSON)
+[ API Route ]       src/app/api/parse/route.ts  ← only layer that writes to DB
+     ↓
+[ Firestore ]       statements/{id}.parsedData
+     ↓
+[ Aggregation ]     src/lib/consolidate.ts, src/lib/extractTransactions.ts
+     ↓ ParsedStatementData (JSON)
+[ Business Rules ]  src/lib/applyRules.ts, src/lib/balanceMarkers.ts, src/lib/incomeEngine.ts
+     ↓
+[ UI / API Routes ] src/app/account/**, src/app/api/user/**
+```
+
+## Rules
+
+### 1. Parser is read-only
+- `parseStatement.ts` and CSV import helpers MUST NOT import from `firebase-admin` or any DB client.
+- The parser receives raw bytes and returns `ParsedStatementData` JSON. Nothing else.
+
+### 2. Only API routes write to the database
+- DB reads/writes live exclusively in `src/app/api/**` route handlers.
+- `src/lib/**` modules are pure functions — they accept and return plain data.
+
+### 3. Standard data contract
+- All data passed between layers uses `ParsedStatementData` (and its sub-types) from `src/lib/types.ts`.
+- Never invent ad-hoc shapes inside a route and pass them raw to another layer.
+
+### 4. Business rules are separate from aggregation
+- `applyRules.ts` applies user category rules to already-parsed data. It MUST NOT re-parse or call the DB.
+- `consolidate.ts` aggregates multiple `ParsedStatementData` objects. It MUST NOT apply UI logic.
+
+### 5. Cross-layer changes require permission
+- If a fix requires modifying **two or more layers** (e.g. parser + DB route, or aggregation + UI), 
+  stop and ask the user for permission before writing any code.
+
+### 6. Income is never modified by expense rules
+- `applyRulesAndRecalculate` (business rules layer) only touches `expenses`. 
+- `income` data is owned by the parser output and must be preserved as-is through aggregation.

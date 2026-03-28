@@ -21,6 +21,9 @@ export const CATEGORY_COLORS: Record<string, string> = {
   "transfers & payments": "#06b6d4", // legacy
   "cash & atm": "#f87171",
   other: "#d1d5db",
+  // Income re-assignment categories (move tx out of expenses → income)
+  "income - salary": "#16a34a",
+  "income - other": "#4ade80",
 };
 
 export function categoryColor(name: string): string {
@@ -43,6 +46,9 @@ export const ALL_CATEGORIES = [
   "Transfers & Payments", // legacy — old statements
   "Cash & ATM",
   "Other",
+  // ── Income re-assignment (moves the transaction out of expenses → income) ──
+  "Income - Salary",
+  "Income - Other",
 ] as const;
 
 export type CashFrequency = "weekly" | "biweekly" | "monthly" | "quarterly" | "annual" | "once";
@@ -108,17 +114,28 @@ export function CategoryPicker({ anchorRef, current, onSelect, onClose }: Catego
         Change category · saves as rule
       </p>
       {ALL_CATEGORIES.map((cat) => {
+        const isIncomeCat = cat.toLowerCase().startsWith("income");
         const color = categoryColor(cat.toLowerCase());
         const isActive = cat.toLowerCase() === current.toLowerCase();
+        const showDivider = cat === "Income - Salary"; // first income entry
         return (
-          <button key={cat} onClick={() => onSelect(cat)}
-            className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition hover:bg-gray-50 ${
-              isActive ? "font-semibold text-gray-900" : "text-gray-700"
-            }`}>
-            <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
-            {cat}
-            {isActive && <span className="ml-auto text-xs text-gray-400">current</span>}
-          </button>
+          <div key={cat}>
+            {showDivider && (
+              <div className="mx-3 my-1 border-t border-gray-100 pt-1">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-green-600 pb-1">
+                  Move to Income
+                </p>
+              </div>
+            )}
+            <button onClick={() => onSelect(cat)}
+              className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition hover:bg-gray-50 ${
+                isActive ? "font-semibold text-gray-900" : isIncomeCat ? "text-green-700" : "text-gray-700"
+              }`}>
+              <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+              {cat}
+              {isActive && <span className="ml-auto text-xs text-gray-400">current</span>}
+            </button>
+          </div>
         );
       })}
     </div>,

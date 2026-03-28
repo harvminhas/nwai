@@ -308,6 +308,23 @@ export default function AccountDetailPage() {
     });
   }, [router, slug, loadAccountData]);
 
+  async function handleViewFile(statementId: string) {
+    if (!idToken) return;
+    try {
+      const res = await fetch(`/api/user/statements/${statementId}/file`, {
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      if (!res.ok) { alert("Could not load the original document."); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener");
+      // revoke after a short delay to allow the new tab to load
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch {
+      alert("Could not load the original document.");
+    }
+  }
+
   async function handleDelete(statementId: string) {
     if (!idToken || !confirm("Delete this statement?")) return;
     setDeletingId(statementId);
@@ -374,6 +391,10 @@ export default function AccountDetailPage() {
         { headers: { Authorization: `Bearer ${idToken}` } }
       );
       const json = await res.json().catch(() => ({}));
+      // Update all account state so KPI cards, equity, sub-accounts etc. reflect the selected month
+      if (json.data) setData(json.data as ParsedStatementData);
+      if (json.previousMonth !== undefined) setPreviousMonth(json.previousMonth);
+      if (json.yearMonth) setYearMonth(json.yearMonth);
       setTxData((json.data as ParsedStatementData | null)?.expenses ?? null);
       setTxPayments(json.paymentsMade ?? 0);
     } finally {
@@ -918,6 +939,13 @@ export default function AccountDetailPage() {
               >
                 + Update balance
               </button>
+              <Link
+                href="/account/debug"
+                className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-400 hover:border-amber-300 hover:bg-amber-50 hover:text-amber-600 transition"
+                title="Open parse debugger"
+              >
+                🔍 Debug parse
+              </Link>
             </div>
           </div>
 
@@ -1020,7 +1048,13 @@ export default function AccountDetailPage() {
                         ) : !entry.isCarryForward && entry.statementId ? (
                           <div className="flex items-center justify-end gap-2">
                             {entry.source !== "csv" && (
-                              <Link href={`/dashboard/${entry.statementId}`} className="text-xs text-purple-500 hover:underline">View</Link>
+                              <button
+                                onClick={() => handleViewFile(entry.statementId)}
+                                className="text-xs text-purple-500 hover:underline"
+                                title="Open original uploaded document"
+                              >
+                                View
+                              </button>
                             )}
                             {entry.source === "csv" ? (
                               <span className="text-[10px] rounded-full bg-teal-50 border border-teal-200 px-2 py-0.5 text-teal-600 font-medium">CSV</span>

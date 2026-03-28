@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis,
   CartesianGrid, Tooltip,
@@ -59,6 +60,15 @@ const SOURCE_COLORS = [
   "#7c3aed", "#f59e0b", "#10b981", "#3b82f6", "#f97316", "#ec4899", "#06b6d4", "#84cc16",
 ];
 
+// Inter-account transfer patterns — auto-excluded from income display.
+// Also catches the AI-assigned category "Transfer In" for cleaner detection.
+const TRANSFER_SOURCE_RE = /\bTFR[-\s]?(TO|FROM)\b|^IN\d+\s+TFR|inter[-\s]?account|^transfer\s+(to|from)\b|^income\s*\(transfer\s+in\)/i;
+function isTransferSource(description: string, txns?: { category?: string }[]): boolean {
+  if (TRANSFER_SOURCE_RE.test(description)) return true;
+  if (txns && txns.length > 0 && txns.every((t) => t.category === "Transfer In")) return true;
+  return false;
+}
+
 // ── types ─────────────────────────────────────────────────────────────────────
 
 interface HistoryPoint { yearMonth: string; incomeTotal: number; expensesTotal: number }
@@ -84,13 +94,22 @@ export default function IncomePage() {
   const [loading, setLoading]             = useState(true);
   const [error, setError]                 = useState<string | null>(null);
   const [showAllTxns, setShowAllTxns]     = useState(false);
+  const [uid, setUid]                     = useState<string | null>(null);
+  const [excludedSources, setExcludedSources] = useState<Set<string>>(new Set());
+  const [showOneTime, setShowOneTime]     = useState(false);
 
   useEffect(() => {
-    const { auth } = getFirebaseClient();
+    const { auth, db } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
       if (!user) { router.push("/login"); return; }
+      setUid(user.uid);
       setLoading(true); setError(null);
       try {
+        // Load excluded income sources from Firestore
+        const prefDoc = await getDoc(doc(db, `users/${user.uid}/prefs/excludedIncomeSources`));
+        if (prefDoc.exists()) {
+          setExcludedSources(new Set(prefDoc.data()?.keys ?? []));
+        }
         const token = await user.getIdToken();
         const res = await fetch("/api/user/statements/consolidated", {
           headers: { Authorization: `Bearer ${token}` },
@@ -155,6 +174,24 @@ export default function IncomePage() {
     setSelectedMonth(ym);
   }
 
+  async function handleExcludeSource(description: string) {
+    const next = new Set(excludedSources);
+    next.add(description);
+    setExcludedSources(next);
+    if (!uid) return;
+    const { db } = getFirebaseClient();
+    await setDoc(doc(db, `users/${uid}/prefs/excludedIncomeSources`), { keys: Array.from(next) });
+  }
+
+  async function handleRestoreSource(description: string) {
+    const next = new Set(excludedSources);
+    next.delete(description);
+    setExcludedSources(next);
+    if (!uid) return;
+    const { db } = getFirebaseClient();
+    await setDoc(doc(db, `users/${uid}/prefs/excludedIncomeSources`), { keys: Array.from(next) });
+  }
+
   // ── derived ──────────────────────────────────────────────────────────────────
 
   const current         = selectedMonth ? dataByMonth[selectedMonth] : null;
@@ -169,21 +206,26 @@ export default function IncomePage() {
   // fall back to income.sources only if no transactions exist.
   const mergedSourceMap = new Map<string, number>();
   if (transactions.length > 0) {
-    // Group transactions by their source field
     for (const txn of transactions) {
-      const key = (txn.source ?? txn.description ?? "Other").trim();
+      const key = (txn.source ?? "Other").trim();
       mergedSourceMap.set(key, (mergedSourceMap.get(key) ?? 0) + txn.amount);
     }
   } else {
-    // Fallback: merge income.sources by description (case-insensitive)
     for (const src of sources) {
       const key = src.description.trim();
       mergedSourceMap.set(key, (mergedSourceMap.get(key) ?? 0) + src.amount);
     }
   }
-  const mergedSources = Array.from(mergedSourceMap.entries())
+  const allMergedSources = Array.from(mergedSourceMap.entries())
     .map(([description, amount]) => ({ description, amount }))
     .sort((a, b) => b.amount - a.amount);
+
+  // Auto-filter inter-account transfers + user-excluded sources
+  const mergedSources = allMergedSources.filter(
+    (s) => !isTransferSource(s.description, transactions.filter((t) => t.source === s.description)) && !excludedSources.has(s.description)
+  );
+  const autoFilteredSources = allMergedSources.filter((s) => isTransferSource(s.description, transactions.filter((t) => t.source === s.description)));
+  const manuallyExcludedSources = allMergedSources.filter((s) => excludedSources.has(s.description));
 
   // Score each consolidated source using cross-month history
   const scoredSources = mergedSources.map((src, i) => {
@@ -322,11 +364,35 @@ export default function IncomePage() {
               )}
               {incomeDelta === null && <p className="mt-1 text-xs text-gray-400">First month tracked</p>}
 
-              {/* One-time note */}
+              {/* One-time deposits — collapsed expandable row */}
               {oneTimeTotal > 0 && (
-                <p className="mt-1 text-xs text-amber-600">
-                  Includes {fmt(oneTimeTotal)} one-time deposit{oneTimeSources.length > 1 ? "s" : ""} — excluded from averages
-                </p>
+                <div className="mt-1">
+                  <button
+                    onClick={() => setShowOneTime((v) => !v)}
+                    className="flex items-center gap-1 text-xs text-amber-600 hover:text-amber-700 transition"
+                  >
+                    <span>{fmt(oneTimeTotal)} in one-time deposits — excluded from averages</span>
+                    <svg className={`h-3 w-3 transition-transform ${showOneTime ? "rotate-180" : ""}`}
+                      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {showOneTime && (
+                    <div className="mt-1.5 space-y-0.5 pl-2 border-l-2 border-amber-100">
+                      {oneTimeSources.map((s) => {
+                        const acct = transactions.find(
+                          (t) => (t.source ?? "Other").trim() === s.description
+                        )?.accountLabel;
+                        return (
+                          <p key={s.description} className="text-xs text-amber-500">
+                            {fmt(s.amount)} · {s.description}
+                            {acct ? <span className="text-amber-400"> · {acct}</span> : ""}
+                          </p>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               )}
 
               {/* Surplus / spent / savings rate pills */}
@@ -397,8 +463,10 @@ export default function IncomePage() {
                   : null;
                 // Individual deposits for this source in the selected month
                 const srcTxns     = transactions
-                  .filter((t) => (t.source ?? t.description ?? "Other").trim() === src.description)
+                  .filter((t) => (t.source ?? "Other").trim() === src.description)
                   .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
+                // Unique accounts this source was deposited into
+                const srcAccounts = [...new Set(srcTxns.map((t) => t.accountLabel).filter(Boolean))];
                 return (
                   <div key={src.description} className={src.reliability === "one-time" ? "opacity-60" : ""}>
                     <Link
@@ -411,6 +479,20 @@ export default function IncomePage() {
                           <span className="font-medium text-sm text-gray-800 truncate group-hover:text-purple-600 transition-colors">
                             {src.description}
                           </span>
+                          {srcAccounts.length > 0 && (
+                            <span className="text-[10px] text-gray-400 truncate">
+                              → {srcAccounts.join(", ")}
+                            </span>
+                          )}
+                          <button
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleExcludeSource(src.description); }}
+                            title="Exclude from income"
+                            className="ml-auto shrink-0 rounded-full p-0.5 text-gray-300 hover:text-red-400 hover:bg-red-50 transition opacity-0 group-hover:opacity-100"
+                          >
+                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
                         </div>
                         <div className="shrink-0 flex items-center gap-2">
                           <div className="text-right">
@@ -448,6 +530,33 @@ export default function IncomePage() {
                 );
               })}
             </div>
+
+            {/* Hidden sources footer */}
+            {(autoFilteredSources.length > 0 || manuallyExcludedSources.length > 0) && (
+              <div className="mt-4 border-t border-gray-100 pt-3 space-y-1">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">Not counted as income</p>
+                {autoFilteredSources.map((s) => (
+                  <div key={s.description} className="flex items-center justify-between text-xs text-gray-400">
+                    <span className="flex items-center gap-1.5">
+                      <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium">transfer</span>
+                      {s.description}
+                      <span className="text-gray-300">{fmt(s.amount)}</span>
+                    </span>
+                  </div>
+                ))}
+                {manuallyExcludedSources.map((s) => (
+                  <div key={s.description} className="flex items-center justify-between text-xs text-gray-400">
+                    <span>{s.description} <span className="text-gray-300">{fmt(s.amount)}</span></span>
+                    <button
+                      onClick={() => handleRestoreSource(s.description)}
+                      className="text-[10px] text-purple-400 hover:text-purple-600 hover:underline"
+                    >
+                      restore
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -532,15 +641,15 @@ export default function IncomePage() {
             </div>
             <div className="divide-y divide-gray-100">
               {visibleTxns.map((txn, i) => {
-                const srcEntry = scoredSources.find((s) => s.description === (txn.source ?? txn.description ?? "Other").trim());
+                const srcEntry = scoredSources.find((s) => s.description === (txn.source ?? "Other").trim());
                 const cfg = srcEntry ? RELIABILITY_CONFIG[srcEntry.reliability] : null;
                 return (
                   <div key={i} className="flex items-center justify-between py-3">
                     <div>
-                      <p className="text-sm font-medium text-gray-800">{txn.description}</p>
+                      <p className="text-sm font-medium text-gray-800">{txn.source}</p>
                       <p className="text-xs text-gray-400 flex items-center gap-1.5">
                         {txn.date && <span>{fmtDate(txn.date)}</span>}
-                        {txn.source && <><span>·</span><span className="text-purple-500">{txn.source}</span></>}
+                        {txn.category && <><span>·</span><span className="text-purple-500">{txn.category}</span></>}
                         {cfg && (
                           <><span>·</span>
                           <span className={`rounded px-1.5 py-0.5 text-[9px] font-semibold border ${cfg.badge}`}>

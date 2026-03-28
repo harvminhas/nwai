@@ -559,7 +559,7 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   })();
 
   // Current-month expenses filtered by the same rule
-  const TRANSFER_CATS = /^(transfers|transfers & payments|debt payments|investments & savings)$/i;
+  const TRANSFER_CATS = /^transfers$/i;
   const expenses = excludeTransfers
     ? (data?.expenses?.transactions ?? [])
         .filter((t) => !TRANSFER_CATS.test((t.category ?? "").trim()))

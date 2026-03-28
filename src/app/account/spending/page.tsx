@@ -581,7 +581,7 @@ function SpendingPageInner() {
     ? monthTxns.reduce((s, t) => s + t.amount, 0)
     : (data?.expenses?.total ?? 0);
 
-  const TRANSFER_CATS_RE = /^(transfers|transfers & payments|debt payments|investments & savings)$/i;
+  const TRANSFER_CATS_RE = /^transfers$/i;
   const displayTotal = excludeTransfers
     ? (monthTxns.length > 0
         ? monthTxns.filter((t) => !TRANSFER_CATS_RE.test((t.category ?? "").trim())).reduce((s, t) => s + t.amount, 0)

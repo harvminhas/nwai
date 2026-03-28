@@ -12,6 +12,9 @@ export function merchantSlug(merchant: string): string {
  * Apply a map of { merchantSlug → category } rules to all expense transactions,
  * then re-aggregate expense categories and totals from the updated transactions.
  *
+ * income is never touched — income data comes from the AI extraction and is
+ * preserved as-is. Only expense categories and totals are recalculated.
+ *
  * Priority: user rules > AI-assigned category.
  */
 export function applyRulesAndRecalculate(

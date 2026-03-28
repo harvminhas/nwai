@@ -101,7 +101,7 @@ export function inferFinancialDNA(docs: StatementDoc[]): FinancialDNA {
 
   // ── RRSP / TFSA detection ─────────────────────────────────────────────────
   const allTransactionDescs = docs.flatMap((d) => [
-    ...(d.parsed.income?.transactions ?? []).map((t) => t.description ?? ""),
+    ...(d.parsed.income?.transactions ?? []).map((t) => t.source ?? ""),
     ...(d.parsed.income?.sources ?? []).map((s) => s.description ?? ""),
     ...(d.parsed.expenses?.transactions ?? []).map((t) => t.merchant ?? ""),
   ]);
