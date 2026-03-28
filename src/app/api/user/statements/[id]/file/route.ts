@@ -44,7 +44,7 @@ export async function GET(
 
     const fileName = (data.fileName as string | undefined) || fileUrl.split("/").pop() || "document";
 
-    return new NextResponse(contents, {
+    return new NextResponse(contents as unknown as BodyInit, {
       status: 200,
       headers: {
         "Content-Type": contentType,

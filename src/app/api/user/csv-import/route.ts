@@ -141,7 +141,7 @@ export async function POST(request: NextRequest) {
       }
       for (const txn of p.income?.transactions ?? []) {
         if (!txn.date) continue;
-        existingFingerprints.add(txFingerprint(accountId, txn.date, txn.amount, txn.description ?? ""));
+        existingFingerprints.add(txFingerprint(accountId, txn.date, txn.amount, txn.source ?? ""));
       }
     }
   }

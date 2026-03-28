@@ -120,7 +120,11 @@ export default function DebugParsePage() {
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
       )}
 
-      {result && (
+      {result && (() => {
+        const parsedObj = result.parsed && typeof result.parsed === "object" ? result.parsed as Record<string, unknown> : null;
+        const expTxnCount = (parsedObj?.expenses as { transactions?: unknown[] } | undefined)?.transactions?.length ?? 0;
+        const incTxnCount = (parsedObj?.income  as { transactions?: unknown[] } | undefined)?.transactions?.length ?? 0;
+        return (
         <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
           {/* Tab bar */}
           <div className="flex border-b border-gray-100">
@@ -172,20 +176,10 @@ export default function DebugParsePage() {
           <div className="flex flex-wrap gap-4 border-t border-gray-100 px-5 py-3 text-xs text-gray-400">
             <span>Statement: <span className="font-medium text-gray-600">{result.fileName}</span></span>
             <span>Raw length: <span className="font-medium text-gray-600">{result.rawResponse?.length?.toLocaleString()} chars</span></span>
-            {result.parsed && typeof result.parsed === "object" && (
+            {parsedObj && (
               <>
-                <span>
-                  Expense txns:{" "}
-                  <span className="font-medium text-gray-600">
-                    {((result.parsed as Record<string, unknown>).expenses as { transactions?: unknown[] } | undefined)?.transactions?.length ?? 0}
-                  </span>
-                </span>
-                <span>
-                  Income txns:{" "}
-                  <span className="font-medium text-gray-600">
-                    {((result.parsed as Record<string, unknown>).income as { transactions?: unknown[] } | undefined)?.transactions?.length ?? 0}
-                  </span>
-                </span>
+                <span>Expense txns: <span className="font-medium text-gray-600">{expTxnCount}</span></span>
+                <span>Income txns: <span className="font-medium text-gray-600">{incTxnCount}</span></span>
               </>
             )}
             {result.parseError && (
@@ -193,7 +187,8 @@ export default function DebugParsePage() {
             )}
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
