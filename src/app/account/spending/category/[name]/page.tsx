@@ -6,7 +6,7 @@ import { useRouter, useParams, useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis,
+  ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis,
   CartesianGrid, Tooltip, ReferenceLine,
 } from "recharts";
 import { merchantSlug } from "@/lib/applyRules";
@@ -291,13 +291,18 @@ export default function SpendingCategoryPage() {
           ))}
         </div>
 
-        {/* Monthly trend chart */}
+        {/* Monthly trend chart — click a bar to see that month's detail */}
         {monthlyHistory.filter((m) => m.amount > 0).length >= 2 && (
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-            <p className="mb-4 text-xs font-semibold uppercase tracking-wider text-gray-400">Monthly trend</p>
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-gray-400">Monthly trend</p>
+            <p className="mb-4 text-[11px] text-gray-400">Tap a bar to view that month</p>
             <div className="h-44">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={monthlyHistory} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                <BarChart
+                  data={monthlyHistory}
+                  margin={{ top: 4, right: 8, left: 0, bottom: 0 }}
+                  style={{ outline: "none" }}
+                >
                   <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
                   <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
                   <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={48} />
@@ -305,12 +310,30 @@ export default function SpendingCategoryPage() {
                     formatter={(v) => [typeof v === "number" ? fmt(v) : String(v), categoryName]}
                     contentStyle={{ borderRadius: "8px", border: "1px solid #e5e7eb", fontSize: "13px" }}
                     labelStyle={{ fontWeight: 600, color: "#111827" }}
+                    cursor={{ fill: "rgba(0,0,0,0.04)" }}
                   />
                   {avg > 0 && (
                     <ReferenceLine y={avg} stroke="#d1d5db" strokeDasharray="4 4"
                       label={{ value: "avg", position: "insideTopRight", fontSize: 10, fill: "#9ca3af" }} />
                   )}
-                  <Bar dataKey="amount" fill={color} radius={[4, 4, 0, 0]} maxBarSize={48} />
+                  <Bar
+                    dataKey="amount"
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={48}
+                    style={{ cursor: "pointer" }}
+                    onClick={(data) => {
+                      const ym = (data as unknown as { ym?: string })?.ym;
+                      if (ym) router.push(`/account/spending/category/${encodeURIComponent(rawName)}?month=${ym}`);
+                    }}
+                  >
+                    {monthlyHistory.map((entry) => (
+                      <Cell
+                        key={entry.ym}
+                        fill={color}
+                        opacity={entry.ym === (monthParam ?? yearMonth) ? 1 : 0.45}
+                      />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>

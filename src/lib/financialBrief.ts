@@ -18,6 +18,7 @@ import {
   expenseTotalForMonth,
 } from "@/lib/extractTransactions";
 import type { ParsedStatementData } from "@/lib/types";
+import type { SubscriptionRecord } from "@/lib/insights/types";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -68,12 +69,13 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat")
 
   const month = latestTxMonth;
 
-  const [manualSnap, manualLiabSnap, ratesSnap, cashSnap, goalsSnap] = await Promise.all([
+  const [manualSnap, manualLiabSnap, ratesSnap, cashSnap, goalsSnap, confirmedSubsSnap] = await Promise.all([
     db.collection("users").doc(uid).collection("manualAssets").get(),
     db.collection("users").doc(uid).collection("manualLiabilities").get(),
     db.collection("users").doc(uid).collection("accountRates").get(),
     db.collection(`users/${uid}/cashCommitments`).get(),
     db.collection("users").doc(uid).collection("goals").get(),
+    db.collection("users").doc(uid).collection("subscriptions").get(),
   ]);
 
   const manualTotal     = manualSnap.docs.reduce((s, d) => s + (d.data().value ?? 0), 0);
@@ -185,10 +187,35 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat")
     ? `  (showing most recent ${TOKEN_BUDGET} of ${expenseTxns.length} total expense transactions)`
     : "";
 
-  // Subscriptions
-  const subs = subscriptions
-    .map((s) => `  ${s.name}: ${fmt(s.amount)}/mo`)
-    .join("\n");
+  // Subscriptions — prefer code-detected records (with validated frequency) over AI-suggested ones
+  const confirmedSubs = confirmedSubsSnap.docs
+    .map((d) => d.data() as SubscriptionRecord)
+    .filter((s) => s.status === "confirmed" || s.status === "user_confirmed");
+
+  const suggestedSubs = confirmedSubsSnap.docs
+    .map((d) => d.data() as SubscriptionRecord)
+    .filter((s) => s.status === "suggested");
+
+  const confirmedSubsSection = confirmedSubs.length > 0
+    ? confirmedSubs
+        .map((s) => {
+          const amount = s.amount ?? s.suggestedAmount;
+          const freq   = s.frequency ?? s.suggestedFrequency;
+          return `  ${s.name} [${freq}]: ${fmt(amount)}/${freq} — confirmed ${s.occurrenceCount} occurrences`;
+        })
+        .join("\n")
+    : "";
+
+  const suggestedSubsSection = suggestedSubs.length > 0
+    ? suggestedSubs
+        .map((s) => `  ${s.name}: ${fmt(s.suggestedAmount)}/${s.suggestedFrequency} — unconfirmed (${s.occurrenceCount} occurrence${s.occurrenceCount !== 1 ? "s" : ""})`)
+        .join("\n")
+    : "";
+
+  // Fallback to AI-extracted subscriptions if detector hasn't run yet
+  const subs = confirmedSubs.length === 0 && suggestedSubs.length === 0
+    ? subscriptions.map((s) => `  ${s.name}: ${fmt(s.amount)}/mo`).join("\n")
+    : "";
 
   // Cash commitments
   const cashSection = cashSnap.docs.map((d) => {
@@ -242,7 +269,7 @@ ${incomeSection || "  No income data found"}
 == ALL EXPENSE TRANSACTIONS (grouped by merchant, newest first) ==
 ${truncationNote}
 ${expenseSection || "  No expense transactions found"}
-${subs ? `\n== SUBSCRIPTIONS / RECURRING ==\n${subs}\n` : ""}${cashSection ? `\n== CASH COMMITMENTS (off-statement, est. ${fmt(cashMonthly)}/mo) ==\n${cashSection}\n` : ""}${goalsSection ? `\n== GOALS ==\n${goalsSection}\n` : ""}
+${confirmedSubsSection ? `\n== CONFIRMED SUBSCRIPTIONS (code-verified frequency) ==\n${confirmedSubsSection}\n` : ""}${suggestedSubsSection ? `\n== UNCONFIRMED SUBSCRIPTIONS (pending more data) ==\n${suggestedSubsSection}\n` : ""}${subs ? `\n== SUBSCRIPTIONS / RECURRING (AI-extracted, frequency unverified) ==\n${subs}\n` : ""}${cashSection ? `\n== CASH COMMITMENTS (off-statement, est. ${fmt(cashMonthly)}/mo) ==\n${cashSection}\n` : ""}${goalsSection ? `\n== GOALS ==\n${goalsSection}\n` : ""}
 == MONTHLY TREND (by transaction date) ==
 ${historyLines.join("\n") || "  Not enough history yet"}`;
 }

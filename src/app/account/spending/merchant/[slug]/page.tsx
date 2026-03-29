@@ -55,8 +55,9 @@ export default function MerchantDetailPage() {
   const [merchant, setMerchant] = useState<MerchantSummary | null>(null);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);
-  const [sortField, setSortField] = useState<"date" | "amount">("date");
-  const [sortDir, setSortDir]     = useState<"asc" | "desc">("desc");
+  const [sortField, setSortField]   = useState<"date" | "amount">("date");
+  const [sortDir, setSortDir]       = useState<"asc" | "desc">("desc");
+  const [selectedYm, setSelectedYm] = useState<string | null>(null);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -116,8 +117,11 @@ export default function MerchantDetailPage() {
   }));
   const maxMonthly = Math.max(...merchant.monthly.map((m) => m.total), 1);
 
-  // Sort transactions
-  const sortedTxns = [...merchant.transactions].sort((a, b) => {
+  // Sort + filter transactions
+  const filteredTxns = selectedYm
+    ? merchant.transactions.filter((t) => t.ym === selectedYm)
+    : merchant.transactions;
+  const sortedTxns = [...filteredTxns].sort((a, b) => {
     if (sortField === "date") {
       const cmp = (a.date ?? a.ym).localeCompare(b.date ?? b.ym);
       return sortDir === "desc" ? -cmp : cmp;
@@ -128,8 +132,15 @@ export default function MerchantDetailPage() {
   });
 
   const activeMonths = merchant.monthly.length;
+  const monthlyAvg   = activeMonths > 0 ? merchant.total / activeMonths : 0;
   const firstSeen = merchant.firstDate ? fmtDate(merchant.firstDate) : (merchant.monthly[0]?.ym ? shortMonth(merchant.monthly[0].ym) : "—");
   const lastSeen  = merchant.lastDate  ? fmtDate(merchant.lastDate)  : (merchant.monthly.at(-1)?.ym ? shortMonth(merchant.monthly.at(-1)!.ym) : "—");
+
+  const selectedEntry = selectedYm ? chartData.find((e) => e.ym === selectedYm) : null;
+  const selectedAvg   = selectedEntry && selectedEntry.count > 0
+    ? selectedEntry.total / selectedEntry.count : 0;
+  const vsAvgPct = monthlyAvg > 0 && selectedEntry
+    ? Math.round(((selectedEntry.total - monthlyAvg) / monthlyAvg) * 100) : 0;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-8">
@@ -158,63 +169,114 @@ export default function MerchantDetailPage() {
         </div>
       </div>
 
-      {/* KPI cards */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {[
-          { label: "Total spent", value: fmt(merchant.total) },
-          { label: "Transactions", value: merchant.count.toString() },
-          { label: "Avg per visit", value: fmtDec(merchant.avgAmount) },
-          { label: "Active months", value: activeMonths.toString() },
-        ].map(({ label, value }) => (
-          <div key={label} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-            <p className="text-xs text-gray-500">{label}</p>
-            <p className="mt-1 text-xl font-bold text-gray-900">{value}</p>
+      {/* KPI overview — switches between all-time and selected-month view */}
+      {selectedEntry ? (
+        /* ── Selected month hero ── */
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <div className="px-5 pt-5 pb-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
+              {shortMonth(selectedYm!)}
+            </p>
+            <p className="mt-1 text-4xl font-bold text-gray-900">{fmt(selectedEntry.total)}</p>
+            <p className={`mt-1 text-sm font-medium ${vsAvgPct > 0 ? "text-red-500" : vsAvgPct < 0 ? "text-green-600" : "text-gray-400"}`}>
+              {vsAvgPct > 0 ? "↑" : vsAvgPct < 0 ? "↓" : "="}{" "}
+              {Math.abs(vsAvgPct)}% vs {fmt(monthlyAvg)} avg
+            </p>
           </div>
-        ))}
-      </div>
+          <div className="grid grid-cols-3 divide-x divide-gray-100 border-t border-gray-100">
+            {[
+              { label: "Transactions",  value: selectedEntry.count.toString() },
+              { label: "Avg per visit", value: fmtDec(selectedAvg) },
+              { label: "of total",      value: `${Math.round((selectedEntry.total / merchant.total) * 100)}%` },
+            ].map(({ label, value }) => (
+              <div key={label} className="px-4 py-3">
+                <p className="text-[11px] text-gray-400">{label}</p>
+                <p className="mt-0.5 text-base font-bold text-gray-800">{value}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        /* ── All-time overview ── */
+        <>
+          <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+            <div className="px-5 pt-5 pb-4">
+              <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Total spent</p>
+              <p className="mt-1 text-4xl font-bold text-gray-900">{fmt(merchant.total)}</p>
+              <p className="mt-1 text-sm text-gray-400">{fmt(monthlyAvg)}/mo avg · {activeMonths} active months</p>
+            </div>
+            <div className="grid grid-cols-3 divide-x divide-gray-100 border-t border-gray-100">
+              {[
+                { label: "Transactions",  value: merchant.count.toString() },
+                { label: "Avg per visit", value: fmtDec(merchant.avgAmount) },
+                { label: "Active months", value: activeMonths.toString() },
+              ].map(({ label, value }) => (
+                <div key={label} className="px-4 py-3">
+                  <p className="text-[11px] text-gray-400">{label}</p>
+                  <p className="mt-0.5 text-base font-bold text-gray-800">{value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
 
-      {/* Timeline KPIs */}
-      <div className="flex gap-6 rounded-xl border border-gray-200 bg-white px-5 py-4 shadow-sm text-sm">
-        <div>
-          <p className="text-xs text-gray-500">First seen</p>
-          <p className="mt-0.5 font-medium text-gray-800">{firstSeen}</p>
-        </div>
-        <div>
-          <p className="text-xs text-gray-500">Last seen</p>
-          <p className="mt-0.5 font-medium text-gray-800">{lastSeen}</p>
-        </div>
-        <div className="ml-auto text-right">
-          <p className="text-xs text-gray-500">Monthly avg (active months)</p>
-          <p className="mt-0.5 font-medium text-gray-800">
-            {fmt(activeMonths > 0 ? merchant.total / activeMonths : 0)}
-          </p>
-        </div>
-      </div>
+          {/* Timeline row */}
+          <div className="flex gap-6 rounded-xl border border-gray-200 bg-white px-5 py-4 shadow-sm text-sm">
+            <div>
+              <p className="text-xs text-gray-500">First seen</p>
+              <p className="mt-0.5 font-medium text-gray-800">{firstSeen}</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-500">Last seen</p>
+              <p className="mt-0.5 font-medium text-gray-800">{lastSeen}</p>
+            </div>
+          </div>
+        </>
+      )}
 
-      {/* Monthly bar chart */}
+      {/* Monthly bar chart — click to filter transactions */}
       {chartData.length >= 2 && (
         <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-          <p className="mb-4 text-sm font-semibold text-gray-700">Monthly spending</p>
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-gray-700">Monthly spending</p>
+              <p className="text-[11px] text-gray-400">Tap a bar to filter transactions</p>
+            </div>
+            {selectedYm && (
+              <button
+                onClick={() => setSelectedYm(null)}
+                className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-200 transition"
+              >
+                {shortMonth(selectedYm)} ✕
+              </button>
+            )}
+          </div>
           <div className="h-44">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+              <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }} style={{ outline: "none" }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
                 <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
                 <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={48} />
                 <Tooltip
                   formatter={(v) => [fmtDec(Number(v)), "Spent"]}
                   contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb" }}
+                  cursor={{ fill: "rgba(0,0,0,0.04)" }}
                 />
-                <Bar dataKey="total" radius={[4, 4, 0, 0]}>
-                  {chartData.map((entry, idx) => {
-                    const isMax = entry.total === maxMonthly;
-                    return (
-                      <Cell
-                        key={idx}
-                        fill={isMax ? color : color + "66"}
-                      />
-                    );
-                  })}
+                <Bar
+                  dataKey="total"
+                  radius={[4, 4, 0, 0]}
+                  style={{ cursor: "pointer" }}
+                  onClick={(data) => {
+                    const ym = (data as unknown as { ym?: string })?.ym ?? null;
+                    setSelectedYm((prev) => prev === ym ? null : ym);
+                  }}
+                >
+                  {chartData.map((entry) => (
+                    <Cell
+                      key={entry.ym}
+                      fill={color}
+                      opacity={!selectedYm || entry.ym === selectedYm ? 1 : 0.35}
+                    />
+                  ))}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
@@ -226,7 +288,8 @@ export default function MerchantDetailPage() {
       <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
         <div className="flex items-center justify-between px-5 pt-4 pb-2">
           <p className="text-sm font-semibold text-gray-700">
-            All transactions <span className="ml-1 text-xs font-normal text-gray-400">({merchant.count})</span>
+            {selectedYm ? `${shortMonth(selectedYm)} transactions` : "All transactions"}
+            <span className="ml-1 text-xs font-normal text-gray-400">({sortedTxns.length})</span>
           </p>
           <div className="flex items-center gap-1">
             <span className="text-xs text-gray-400">Sort:</span>

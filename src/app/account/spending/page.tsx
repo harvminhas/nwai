@@ -12,7 +12,7 @@ import { merchantSlug } from "@/lib/applyRules";
 import { detectFrequency, FREQUENCY_CONFIG, type Frequency } from "@/lib/incomeEngine";
 import {
   BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
-  ReferenceLine, ResponsiveContainer,
+  ReferenceLine, ResponsiveContainer, PieChart, Pie,
 } from "recharts";
 import { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon } from "./shared";
 import type { CashFrequency } from "./shared";
@@ -252,7 +252,8 @@ function SpendingPageInner() {
   const [pendingRecurring, setPendingRecurring] = useState<{ txn: ExpenseTransaction; anchor: HTMLElement } | null>(null);
   const [pendingFreq, setPendingFreq] = useState<CashFrequency>("monthly");
 
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast]         = useState<string | null>(null);
+  const [catExpanded, setCatExpanded] = useState(false);
 
   // ── cash commitments ────────────────────────────────────────────────────────
   const [cashItems, setCashItems] = useState<CashCommitment[]>([]);
@@ -362,6 +363,7 @@ function SpendingPageInner() {
     setSelectedMonth(ym);
     setChartExpanded(false);
     setShowAllTxns(false);
+    setCatExpanded(false);
     setMonthLoading(true);
     try {
       const url = ym === yearMonth
@@ -882,37 +884,101 @@ function SpendingPageInner() {
                 </>
               )}
 
-              {categories.length > 0 && (
-                <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-                  <p className="px-5 pt-5 pb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">By Category</p>
-                  <div className="divide-y divide-gray-100">
-                    {categories.map((cat) => {
-                      const color = categoryColor(cat.name);
-                      return (
-                        <Link key={cat.name}
-                          href={`/account/spending/category/${encodeURIComponent(cat.name.toLowerCase())}${filterMonth ? `?month=${filterMonth}` : ""}`}
-                          className="flex items-center gap-4 px-5 py-3.5 group hover:bg-gray-50 transition">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between mb-1.5">
-                              <span className="text-sm font-medium text-gray-800 group-hover:text-purple-600 transition-colors">{cat.name}</span>
-                              <div className="flex items-center gap-2 shrink-0">
-                                <span className="text-sm font-semibold text-gray-700 tabular-nums">{fmt(cat.amount)}</span>
-                                <span className="text-xs text-gray-400 w-8 text-right">{cat.percentage}%</span>
-                                <svg className="h-4 w-4 text-gray-300 group-hover:text-purple-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                                </svg>
+              {categories.length > 0 && (() => {
+                const COLLAPSE_CAT = 5;
+                const pieData = categories.map((cat) => ({
+                  name: cat.name,
+                  value: cat.amount,
+                  color: categoryColor(cat.name),
+                }));
+                const visibleCats = catExpanded ? categories : categories.slice(0, COLLAPSE_CAT);
+                const hiddenCount = Math.max(0, categories.length - COLLAPSE_CAT);
+                return (
+                  <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                    {/* Donut chart */}
+                    <div className="px-5 pt-5 pb-2">
+                      <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">By Category</p>
+                      <div className="relative h-44">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart style={{ outline: "none" }}>
+                            <Pie
+                              data={pieData}
+                              cx="50%"
+                              cy="50%"
+                              innerRadius="52%"
+                              outerRadius="76%"
+                              dataKey="value"
+                              paddingAngle={2}
+                              stroke="none"
+                            >
+                              {pieData.map((entry) => (
+                                <Cell key={entry.name} fill={entry.color} />
+                              ))}
+                            </Pie>
+                            <Tooltip
+                              formatter={(value, name) => [fmt(Number(value)), String(name)]}
+                              contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb" }}
+                            />
+                          </PieChart>
+                        </ResponsiveContainer>
+                        {/* Centre label */}
+                        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                          <p className="text-[11px] text-gray-400">Total</p>
+                          <p className="text-xl font-bold text-gray-900">{fmt(displayTotal)}</p>
+                          {categories.length > 0 && (
+                            <p className="text-[11px] text-gray-400">{categories.length} categories</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Category rows */}
+                    <div className="divide-y divide-gray-100 border-t border-gray-100">
+                      {visibleCats.map((cat) => {
+                        const color = categoryColor(cat.name);
+                        return (
+                          <Link key={cat.name}
+                            href={`/account/spending/category/${encodeURIComponent(cat.name.toLowerCase())}${filterMonth ? `?month=${filterMonth}` : ""}`}
+                            className="flex items-center gap-4 px-5 py-3 group hover:bg-gray-50 transition">
+                            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-sm font-medium text-gray-800 group-hover:text-purple-600 transition-colors">{cat.name}</span>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span className="text-sm font-semibold text-gray-700 tabular-nums">{fmt(cat.amount)}</span>
+                                  <span className="text-xs text-gray-400 w-8 text-right">{cat.percentage}%</span>
+                                  <svg className="h-4 w-4 text-gray-300 group-hover:text-purple-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                  </svg>
+                                </div>
+                              </div>
+                              <div className="h-1 overflow-hidden rounded-full bg-gray-100">
+                                <div className="h-full rounded-full" style={{ width: `${Math.min(cat.percentage, 100)}%`, backgroundColor: color }} />
                               </div>
                             </div>
-                            <div className="h-1.5 overflow-hidden rounded-full bg-gray-100">
-                              <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(cat.percentage, 100)}%`, backgroundColor: color }} />
-                            </div>
-                          </div>
-                        </Link>
-                      );
-                    })}
+                          </Link>
+                        );
+                      })}
+                    </div>
+
+                    {/* Expand / collapse */}
+                    {hiddenCount > 0 && (
+                      <button
+                        onClick={() => setCatExpanded((v) => !v)}
+                        className="flex w-full items-center justify-center gap-1.5 border-t border-gray-100 py-3 text-xs font-medium text-gray-400 hover:bg-gray-50 hover:text-gray-600 transition"
+                      >
+                        {catExpanded ? "Show less" : `Show ${hiddenCount} more`}
+                        <svg
+                          className={`h-3.5 w-3.5 transition-transform ${catExpanded ? "rotate-180" : ""}`}
+                          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                    )}
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
           )}
 

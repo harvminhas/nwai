@@ -31,3 +31,9 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Recharts SVG gets browser focus after a bar/area click — suppress the ring globally */
+.recharts-wrapper svg:focus,
+.recharts-wrapper svg:focus-visible {
+  outline: none;
+}
