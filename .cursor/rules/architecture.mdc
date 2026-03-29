@@ -12,7 +12,7 @@ PDF/CSV/Image
      ↓
 [ Parser ]          src/lib/parseStatement.ts, src/lib/csv-import.ts
      ↓ ParsedStatementData (JSON)
-[ API Route ]       src/app/api/parse/route.ts  ← only layer that writes to DB
+[ API Route ]       src/app/api/parse/route.ts  ← only layer that writes parsedData
      ↓
 [ Firestore ]       statements/{id}.parsedData
      ↓
@@ -21,6 +21,17 @@ PDF/CSV/Image
 [ Business Rules ]  src/lib/applyRules.ts, src/lib/balanceMarkers.ts, src/lib/incomeEngine.ts
      ↓
 [ UI / API Routes ] src/app/account/**, src/app/api/user/**
+
+                    ── orthogonal, event-driven layer ──
+
+[ Insights Layer ]  src/lib/insights/
+     ↑ fireInsightEvent(event, uid, db)   ← called fire-and-forget from parse/route.ts
+     │                                      or explicitly from POST /api/user/insights/generate
+     ├─ registry.ts     maps event types → detectors
+     ├─ pipeline.ts     orchestrates: detectors → AI writer → persist cards
+     └─ detectors/      one file per domain (subscriptions, cashflow, alert, savings…)
+          writes to: users/{uid}/subscriptions, users/{uid}/agentInsights, users/{uid}.financialDNA
+          NEVER writes to: statements/{id}.parsedData
 ```
 
 ## Rules
@@ -48,3 +59,76 @@ PDF/CSV/Image
 ### 6. Income is never modified by expense rules
 - `applyRulesAndRecalculate` (business rules layer) only touches `expenses`. 
 - `income` data is owned by the parser output and must be preserved as-is through aggregation.
+
+### 7. AI extraction layer — review required before any change
+The AI extraction layer consists of:
+- `src/lib/parseStatement.ts` — `SYSTEM_PROMPT`, `normalizeData`, `parseJsonResponse`, `extractJson`
+
+**Do NOT modify this layer without explicit user review**, because:
+- The prompt defines the data contract (field names, categories, JSON shape) between the AI and all downstream code.
+- Changes to `SYSTEM_PROMPT` affect every statement ever re-parsed; old Firestore data becomes inconsistent.
+- `normalizeData` is the single source of truth for all derived totals — silent bugs here corrupt all financial figures.
+
+### 8. Firestore write layer — review required before any change
+The Firestore write layer consists of:
+- `src/app/api/parse/route.ts` — writes `parsedData` to `statements/{id}`
+- `src/app/api/upload/route.ts` — creates the statement document and enforces duplicate detection
+- `src/app/api/user/csv-import/route.ts` — writes CSV-sourced transactions
+
+**Do NOT modify this layer without explicit user review**, because:
+- These are the only paths that persist financial data; bugs here silently corrupt or lose user data.
+- Deduplication logic (`txFingerprint`) lives here and must match across PDF and CSV paths.
+- The `status` field lifecycle (`processing → completed | error`) is relied upon by every read query.
+
+### 9. `parsedData` ownership — only two legitimate writers
+`statements/{id}.parsedData` may only be written by:
+
+1. **AI extraction pipeline** — `src/app/api/parse/route.ts` after a successful AI parse.
+2. **User-initiated updates** — e.g. `PATCH /api/user/statements/[id]` when the user explicitly re-categorizes transactions or applies a rule.
+
+**Never write to `parsedData` from:**
+- Background jobs or pipelines (insights generation, agent pipeline, DNA inference)
+- Aggregation/consolidation code (`consolidate.ts`, `applyRules.ts` in-memory use is fine)
+- Any automated process the user did not directly trigger
+
+Category rules are applied **in-memory at read time** by the consolidated route — they do not need to be baked back into Firestore unless the user explicitly triggers a re-categorization.
+
+### 10. Insights layer is isolated from extraction and ingestion
+
+The insights layer (`src/lib/insights/`) is a separate, orthogonal concern:
+- It is **never imported by** `parseStatement.ts`, `consolidate.ts`, `applyRules.ts`, or any ingestion route.
+- The only connection from the ingestion side is a single fire-and-forget call in `parse/route.ts`:
+  ```ts
+  fireInsightEvent({ type: "statement.parsed" }, uid, db).catch(console.error)
+  ```
+- Insights write exclusively to `users/{uid}/agentInsights`, `users/{uid}/subscriptions`, and `users/{uid}.financialDNA`.
+- **Never** write `parsedData` or any field on `statements/{id}` from the insights layer.
+
+### 11. Detector pattern — how to add a new insight domain
+
+Each insight domain is a single file implementing `InsightDetector` (from `src/lib/insights/types.ts`).
+
+**To add a new detector:**
+1. Create `src/lib/insights/detectors/<domain>.ts`
+2. Implement the `InsightDetector` interface:
+   ```ts
+   export const myDetector: InsightDetector = {
+     name: "my-domain",
+     handles: ["statement.parsed", "full.refresh"],   // which events trigger it
+     minMonths: 3,                                     // skip if not enough data
+     async run(ctx, event): Promise<DetectedSignal[]> {
+       // detect signals from ctx.expenseTxns / ctx.incomeTxns
+       // may write to insights-owned Firestore collections
+       // return DetectedSignal[] — facts only, no prose
+     },
+   };
+   ```
+3. Import and add it to `ALL_DETECTORS` in `src/lib/insights/registry.ts`.
+
+That is the only change required. Nothing else in the codebase needs to know about the new detector.
+
+**Detector rules:**
+- Return `DetectedSignal[]` — quantified facts, no card prose (AI or code writers handle that).
+- Gate on `minMonths` — do not generate low-confidence signals with insufficient history.
+- Respect `lockedFields` on any master data records (subscriptions, etc.) the user has explicitly set.
+- Never touch `parsedData`.

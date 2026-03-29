@@ -154,12 +154,13 @@ const INSIGHT_TONE: Record<string, { bg: string; border: string; text: string; s
 
 export default function TodayPage() {
   const router = useRouter();
-  const [alerts,   setAlerts]   = useState<DashboardAlert[]>([]);
-  const [upcoming, setUpcoming] = useState<UpcomingItem[]>([]);
-  const [insights, setInsights] = useState<TodayInsight[]>([]);
-  const [loading,  setLoading]  = useState(true);
-  const [error,    setError]    = useState<string | null>(null);
-  const [token,    setToken]    = useState<string | null>(null);
+  const [alerts,     setAlerts]     = useState<DashboardAlert[]>([]);
+  const [upcoming,   setUpcoming]   = useState<UpcomingItem[]>([]);
+  const [insights,   setInsights]   = useState<TodayInsight[]>([]);
+  const [loading,    setLoading]    = useState(true);
+  const [error,      setError]      = useState<string | null>(null);
+  const [token,      setToken]      = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async (tok: string) => {
     setLoading(true); setError(null);
@@ -173,6 +174,20 @@ export default function TodayPage() {
     } catch { setError("Failed to load today view"); }
     finally { setLoading(false); }
   }, []);
+
+  const handleRefresh = useCallback(async () => {
+    if (!token) return;
+    setRefreshing(true);
+    try {
+      await fetch("/api/user/insights/generate", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ event: "full.refresh" }),
+      });
+      await load(token);
+    } catch { /* silent */ }
+    finally { setRefreshing(false); }
+  }, [token, load]);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -207,9 +222,26 @@ export default function TodayPage() {
       {token && <ParseStatusBanner onRefresh={() => load(token)} />}
 
       {/* ── Header ───────────────────────────────────────────────────────── */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Today</h1>
-        <p className="mt-0.5 text-sm text-gray-400">{todayLabel()}</p>
+      <div className="mb-6 flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Today</h1>
+          <p className="mt-0.5 text-sm text-gray-400">{todayLabel()}</p>
+        </div>
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          title="Refresh insights"
+          className="mt-1 flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-500 shadow-sm hover:border-purple-300 hover:text-purple-600 disabled:opacity-40 transition"
+        >
+          <svg
+            className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round"
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          {refreshing ? "Refreshing…" : "Refresh"}
+        </button>
       </div>
 
       {error && <p className="mb-4 text-sm text-red-600">{error}</p>}

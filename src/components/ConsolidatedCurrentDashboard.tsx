@@ -757,7 +757,7 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
         </div>
 
         {/* ── Agent insight cards ───────────────────────────────────────────── */}
-        {agentCards.length > 0 && idToken && (
+        {idToken && (
           <AgentInsightCards cards={agentCards} token={idToken} />
         )}
 

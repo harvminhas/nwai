@@ -11,17 +11,8 @@ import {
 import { merchantSlug, applyRulesAndRecalculate } from "@/lib/applyRules";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { getYearMonth } from "@/lib/consolidate";
-import { inferFinancialDNA } from "@/lib/financialDNA";
-import { generateAgentInsights } from "@/lib/agentInsights";
-import {
-  extractAllTransactions,
-  categoryTotalsForMonth,
-  incomeTotalForMonth,
-  expenseTotalForMonth,
-  buildMonthlyTrend,
-} from "@/lib/extractTransactions";
+import { fireInsightEvent } from "@/lib/insights/index";
 import type { ParsedStatementData } from "@/lib/types";
-import type { AgentContext } from "@/lib/agentInsights";
 
 export const maxDuration = 120;
 
@@ -152,11 +143,11 @@ export async function POST(request: NextRequest) {
       if (hasBatchOps) await batch.commit();
     }
 
-    // ── Agent pipeline (fire-and-forget — never blocks parse response) ──────
-    if (userId && slug && yearMonth) {
-      runAgentPipeline(userId, statementId!, db).catch((e) =>
-        console.error("[agent] Pipeline failed:", e)
-      );
+    // Fire insight event — fire-and-forget, never blocks the parse response.
+    // Insights layer decides which detectors to run based on event type.
+    if (userId) {
+      fireInsightEvent({ type: "statement.parsed", meta: { statementId } }, userId, db)
+        .catch((e) => console.error("[insights] statement.parsed event failed:", e));
     }
 
     return NextResponse.json({ ok: true, status: "completed", accountSlug: slug });
@@ -204,145 +195,4 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ error: friendlyMessage }, { status: isFirebaseCredError || isFirestoreNotFound ? 503 : 500 });
   }
-}
-
-// ── Agent pipeline ─────────────────────────────────────────────────────────────
-// Runs after parse completes. Builds Financial DNA and generates insight cards.
-// All spending/income figures are derived from ACTUAL TRANSACTION DATES —
-// statements are only used as ingestion vehicles.
-
-async function runAgentPipeline(
-  uid: string,
-  statementId: string,
-  db: FirebaseFirestore.Firestore
-): Promise<void> {
-  // 1. Extract all transactions using actual transaction dates (not statement dates)
-  const txData = await extractAllTransactions(uid, db);
-  const { expenseTxns, incomeTxns, accountSnapshots, subscriptions, latestTxMonth, allTxMonths } = txData;
-
-  if (!latestTxMonth) {
-    // No transactions at all yet — still build DNA from balances if possible
-    const allSnap = await db
-      .collection("statements")
-      .where("userId", "==", uid)
-      .where("status", "==", "completed")
-      .get();
-    type DocEntry = { yearMonth: string; parsed: ParsedStatementData };
-    const allDocs: DocEntry[] = [];
-    for (const doc of allSnap.docs) {
-      const d = doc.data();
-      const parsed = d.parsedData as ParsedStatementData | undefined;
-      if (!parsed) continue;
-      let ym = parsed.statementDate ? getYearMonth(parsed.statementDate) : "";
-      if (!ym) {
-        const raw = d.uploadedAt?.toDate?.() ?? d.uploadedAt;
-        if (raw) {
-          const t = typeof raw === "object" && "toISOString" in raw
-            ? (raw as Date).toISOString() : String(raw);
-          ym = t.slice(0, 7);
-        }
-      }
-      if (ym) allDocs.push({ yearMonth: ym, parsed });
-    }
-    const dna = inferFinancialDNA(allDocs);
-    await db.collection("users").doc(uid).set({ financialDNA: dna }, { merge: true });
-    return;
-  }
-
-  // 2. Build Financial DNA from all statements (uses statement dates for inferred profile)
-  const allSnap = await db
-    .collection("statements")
-    .where("userId", "==", uid)
-    .where("status", "==", "completed")
-    .get();
-  type DocEntry = { yearMonth: string; parsed: ParsedStatementData };
-  const allDocs: DocEntry[] = [];
-  for (const doc of allSnap.docs) {
-    const d = doc.data();
-    const parsed = d.parsedData as ParsedStatementData | undefined;
-    if (!parsed) continue;
-    let ym = parsed.statementDate ? getYearMonth(parsed.statementDate) : "";
-    if (!ym) {
-      const raw = d.uploadedAt?.toDate?.() ?? d.uploadedAt;
-      if (raw) {
-        const t = typeof raw === "object" && "toISOString" in raw
-          ? (raw as Date).toISOString() : String(raw);
-        ym = t.slice(0, 7);
-      }
-    }
-    if (ym) allDocs.push({ yearMonth: ym, parsed });
-  }
-  const dna = inferFinancialDNA(allDocs);
-  await db.collection("users").doc(uid).set({ financialDNA: dna }, { merge: true });
-
-  // 3. Build agent context from transaction-date-based data
-  const currentMonth = latestTxMonth;
-
-  // Net worth from carry-forward account balances + manual assets/liabilities
-  const [manualAssetsSnap, manualLiabSnap, goalsSnap] = await Promise.all([
-    db.collection("users").doc(uid).collection("manualAssets").get(),
-    db.collection("users").doc(uid).collection("manualLiabilities").get(),
-    db.collection("users").doc(uid).collection("goals").get(),
-  ]);
-  const manualAssetsTotal = manualAssetsSnap.docs.reduce((s, d) => s + (d.data().value ?? 0), 0);
-  const manualLiabTotal   = manualLiabSnap.docs.reduce((s, d) => s + (d.data().balance ?? 0), 0);
-  const assetsTotal = accountSnapshots.reduce((s, a) => s + Math.max(0, a.balance), 0) + manualAssetsTotal;
-  const debtsTotal  = accountSnapshots.reduce((s, a) => s + Math.max(0, -a.balance), 0) + manualLiabTotal;
-
-  // Spending and income for current month — from actual transaction dates
-  const topCategories  = categoryTotalsForMonth(expenseTxns, currentMonth).slice(0, 8);
-  const monthlyIncome  = incomeTotalForMonth(incomeTxns, currentMonth);
-  const monthlyExpenses = expenseTotalForMonth(expenseTxns, currentMonth);
-
-  // Monthly trend: last 6 months by transaction date
-  const recentMonths = allTxMonths.slice(-6);
-  const history = buildMonthlyTrend(expenseTxns, incomeTxns, recentMonths);
-
-  const goals = goalsSnap.docs.map((d) => {
-    const g = d.data();
-    return {
-      title: g.title ?? "Goal",
-      targetAmount: g.targetAmount ?? 0,
-      currentAmount: g.currentAmount ?? 0,
-      emoji: g.emoji ?? "🎯",
-    };
-  });
-
-  const ctx: AgentContext = {
-    dna,
-    currentMonth,
-    spendingMonth: currentMonth,
-    netWorth: assetsTotal - debtsTotal,
-    monthlyIncome,
-    monthlyExpenses,
-    topExpenseCategories: topCategories,
-    subscriptions,
-    goalsProgress: goals,
-    history,
-    accounts: accountSnapshots.map((a) => ({
-      label: `${a.bankName}${a.accountId ? ` ••••${a.accountId.slice(-4)}` : ""}`,
-      type: a.accountType,
-      balance: a.balance,
-      apr: a.interestRate ?? undefined,
-    })),
-  };
-
-  // 4. Generate insight cards
-  const cards = await generateAgentInsights(ctx, statementId);
-  if (cards.length === 0) return;
-
-  // 5. Persist cards (replace any existing undismissed cards from previous runs)
-  const userRef = db.collection("users").doc(uid);
-  const existingSnap = await userRef.collection("agentInsights")
-    .where("dismissed", "==", false)
-    .get();
-
-  const batch = db.batch();
-  for (const doc of existingSnap.docs) batch.delete(doc.ref);
-  for (const card of cards) {
-    batch.set(userRef.collection("agentInsights").doc(card.id), card);
-  }
-  await batch.commit();
-
-  console.log(`[agent] Generated ${cards.length} insight cards for uid=${uid}`);
 }

@@ -1,128 +1,18 @@
 /**
  * Agent insight generation.
  *
- * Calls the AI provider with a rich financial context and returns
- * 3-5 specific, actionable AgentCard objects.
+ * Calls the AI provider with the full financial brief (same context used by
+ * AI Chat) and returns 3-5 specific, actionable AgentCard objects.
  * Pure function — no Firestore access. Caller is responsible for persisting.
  */
 
 import { sendTextRequest } from "./ai";
 import { merchantSlug } from "./applyRules";
-import type { FinancialDNA } from "./agentTypes";
 import type { AgentCard, AgentCardAction } from "./agentTypes";
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-function fmt(v: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency", currency: "USD",
-    minimumFractionDigits: 0, maximumFractionDigits: 0,
-  }).format(v);
-}
-
-// ── context builder ───────────────────────────────────────────────────────────
-
-export interface AgentContext {
-  dna: FinancialDNA;
-  currentMonth: string; // "YYYY-MM" — most recent month with any data
-  /** Month the spending breakdown actually covers. null = no current-month statements uploaded yet (data is carried forward from a prior month). */
-  spendingMonth: string | null;
-  netWorth: number;
-  monthlyIncome: number;
-  monthlyExpenses: number;
-  topExpenseCategories: { name: string; amount: number }[];
-  subscriptions: { name: string; amount: number; frequency: string }[];
-  goalsProgress: { title: string; targetAmount: number; currentAmount: number; emoji: string }[];
-  /** Recent months for trend analysis: newest first */
-  history: { yearMonth: string; income: number; expenses: number }[];
-  /** All current account balances */
-  accounts: { label: string; type: string; balance: number; apr?: number }[];
-}
-
-function buildContextPrompt(ctx: AgentContext): string {
-  const { dna } = ctx;
-  const monthStr = new Date(ctx.currentMonth + "-15").toLocaleDateString("en-US", {
-    month: "long", year: "numeric",
-  });
-
-  const lines: string[] = [
-    `## User Financial Profile — ${monthStr}`,
-    "",
-    "### Current Snapshot",
-    `Net worth: ${fmt(ctx.netWorth)}`,
-    `Monthly income: ${fmt(ctx.monthlyIncome)}`,
-    `Monthly expenses: ${fmt(ctx.monthlyExpenses)}`,
-    `Savings rate: ${ctx.monthlyIncome > 0 ? Math.round(((ctx.monthlyIncome - ctx.monthlyExpenses) / ctx.monthlyIncome) * 100) : 0}%`,
-    `Liquid cash: ${fmt(dna.liquidCash)}`,
-    "",
-    "### Debt Profile",
-  ];
-
-  if (dna.hasMortgage) lines.push(`Mortgage: ${fmt(dna.mortgageBalance)} (${dna.mortgageType} rate)`);
-  if (dna.hasCreditCard) lines.push(`Credit card debt: ${fmt(dna.totalCreditCardDebt)}${dna.highestCreditCardAPR ? ` at up to ${dna.highestCreditCardAPR}% APR` : ""}`);
-  if (dna.hasLoan) lines.push(`Loans: ${fmt(dna.totalLoanDebt)}`);
-  if (!dna.hasMortgage && !dna.hasCreditCard && !dna.hasLoan) lines.push("No significant debt detected.");
-  if (dna.debtToIncomeRatio != null) lines.push(`Debt-to-income: ${dna.debtToIncomeRatio.toFixed(1)}x monthly income`);
-
-  lines.push("", "### Accounts");
-  for (const acct of ctx.accounts) {
-    lines.push(`${acct.label} [${acct.type}]: ${fmt(acct.balance)}${acct.apr ? ` @ ${acct.apr}% APR` : ""}`);
-  }
-
-  const spendLabel = ctx.spendingMonth
-    ? new Date(ctx.spendingMonth + "-15").toLocaleDateString("en-US", { month: "long", year: "numeric" })
-    : null;
-
-  if (ctx.topExpenseCategories.length > 0 && spendLabel) {
-    lines.push(``, `### Spending Breakdown (${spendLabel})`);
-    for (const cat of ctx.topExpenseCategories) {
-      lines.push(`${cat.name}: ${fmt(cat.amount)}`);
-    }
-  } else if (ctx.topExpenseCategories.length > 0) {
-    lines.push(``, `### Spending Breakdown (prior month — no current-month statements uploaded yet)`);
-    lines.push(`NOTE: This data is from a prior period. Do NOT generate "this month" spending insights — only trend-based or balance-based insights are appropriate.`);
-    for (const cat of ctx.topExpenseCategories) {
-      lines.push(`${cat.name}: ${fmt(cat.amount)}`);
-    }
-  }
-
-  if (ctx.subscriptions.length > 0) {
-    lines.push("", "### Recurring Subscriptions");
-    for (const sub of ctx.subscriptions) {
-      lines.push(`${sub.name}: ${fmt(sub.amount)}/${sub.frequency}`);
-    }
-    const subTotal = ctx.subscriptions.reduce((s, sub) => s + sub.amount, 0);
-    lines.push(`Total subscriptions: ${fmt(subTotal)}/mo`);
-  }
-
-  if (ctx.history.length >= 2) {
-    lines.push("", "### Monthly Trends (recent first)");
-    for (const h of ctx.history.slice(0, 4)) {
-      lines.push(`${h.yearMonth}: Income ${fmt(h.income)}, Expenses ${fmt(h.expenses)}`);
-    }
-  }
-
-  if (ctx.goalsProgress.length > 0) {
-    lines.push("", "### Goals Progress");
-    for (const g of ctx.goalsProgress) {
-      const pct = g.targetAmount > 0 ? Math.round((g.currentAmount / g.targetAmount) * 100) : 0;
-      lines.push(`${g.emoji} ${g.title}: ${fmt(g.currentAmount)} / ${fmt(g.targetAmount)} (${pct}%)`);
-    }
-  }
-
-  lines.push("", "### Inferred Profile");
-  lines.push(`Income type: ${dna.incomeType}`);
-  lines.push(`Province: ${dna.inferredProvince ?? "unknown"}`);
-  lines.push(`Has RRSP: ${dna.hasRRSP}, Has TFSA: ${dna.hasTFSA}`);
-  lines.push(`Has children (inferred): ${dna.hasChildren}`);
-  lines.push(`Months of data: ${dna.statementMonthsCovered}`);
-
-  return lines.join("\n");
-}
 
 // ── system prompt ─────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are an AI financial agent — a smart, direct financial advisor who tells users exactly what to do with their money.
+export const SYSTEM_PROMPT = `You are an AI financial agent — a smart, direct financial advisor who tells users exactly what to do with their money.
 
 Your job is to analyze the user's financial data and generate 3-5 specific, actionable insight cards.
 
@@ -181,10 +71,10 @@ For tier: 1 = read-only/navigate (no approval needed), 2 = modifies data (requir
 // ── main function ─────────────────────────────────────────────────────────────
 
 export async function generateAgentInsights(
-  ctx: AgentContext,
+  brief: string,
   sourceStatementId: string | null
 ): Promise<AgentCard[]> {
-  const contextPrompt = buildContextPrompt(ctx);
+  const contextPrompt = brief;
 
   let raw: string;
   try {

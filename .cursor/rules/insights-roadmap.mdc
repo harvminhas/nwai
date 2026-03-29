@@ -1,0 +1,132 @@
+---
+description: Insights roadmap, country-awareness strategy, and external data architecture for nwai
+alwaysApply: true
+---
+
+# Insights Roadmap & Country Strategy
+
+## The app serves both Canada and the United States — always design with both markets in mind.
+
+---
+
+## Country Detection
+
+Country is **inferred from data**, not assumed. Detect from:
+- `parsedData.bankName` — "TD", "RBC", "Scotiabank", "CIBC", "BMO" → Canada; "Chase", "Wells Fargo", "Bank of America", "Citi" → US
+- Merchant names — Tim Hortons, Loblaws, LCBO → Canada; Walgreens, Target, Costco US → US
+- Income sources — "CRA DEPOSIT", "GC DEPOSIT" → Canada; "IRS TREAS" → US
+
+Stored in `users/{uid}/profile.country` ("CA" | "US") on first parse. User can override.
+Also store `region` (province or state), `familySize`, `birthYear` in the same profile document.
+
+---
+
+## Insights Architecture (two data sources, one insights engine)
+
+```
+User Data                     External Reference Data
+──────────────────────        ──────────────────────────────────
+statements/{id}.parsedData    referenceData/{country}/taxCalendar
+users/{uid}/profile           referenceData/{country}/benchmarks
+users/{uid}/goals             referenceData/{country}/rates
+users/{uid}/cashCommitments   referenceData/{country}/productOffers
+        │                              │
+        └──────────────┬───────────────┘
+                       ▼
+              [ Insights Engine ]
+              (reads only — never writes back to either source)
+                       │
+                       ▼
+              users/{uid}/agentInsights   (insight cards)
+              API response               (alerts, upcoming, today)
+```
+
+The insights engine is a **pure reader**. It never writes to `parsedData` or any user financial record.
+
+---
+
+## 10-Category Insights Roadmap
+
+### 1. What Happened — ✅ Built
+Spending, income, subscriptions, merchant frequency. Pure transaction data.
+
+### 2. How You're Doing — 🟡 Needs benchmark data
+- Savings rate vs. Canadian/US average
+- Grocery spend vs. average household (requires `familySize` from profile)
+- Debt-to-income vs. national median
+- Mortgage payment as % of income vs. regional affordability index
+- **Data needed:** StatsCan (CA) / US Census Bureau + Fed Survey of Consumer Finances (US)
+
+### 3. What's Coming — 🟡 Partially built, needs external signals
+- Interest rate announcements → BoC meeting calendar (CA) / FOMC calendar (US)
+- Seasonal utility spikes based on location + weather
+- Tax deadlines: RRSP Mar 1 / TFSA Jan 1 / CRA instalments (CA); 401k/IRA limits / IRS deadlines (US)
+- **Data needed:** Country-keyed tax calendar (can be hardcoded), weather API, BoC/Fed calendars
+
+### 4. What's at Risk — 🟡 Partial, needs macro feeds
+- Variable mortgage rate history vs. when user started
+- Grocery inflation vs. user's actual grocery spend change
+- Gas price movements by region
+- **Data needed:** Statistics Canada CPI (CA) / BLS CPI (US); regional gas price feeds
+
+### 5. Long-Term Projections — ❌ Not built
+- Mortgage payoff scenarios using current posted vs. locked rate (`interestRate` field already in parsedData)
+- Investment growth using real index averages (TSX for CA, S&P for US)
+- RRSP/TFSA projections (CA) / 401k/IRA projections (US) with actual contribution room
+- **Data needed:** Live BoC overnight rate (CA) / Fed funds rate (US); index return history
+
+### 6. What You Should Do — 🟡 Partial, needs live product offers
+- Fixed vs. variable break-even at current rates
+- "You have $X earning 0% — EQ Bank offers 4.5%" (CA) / "Ally offers 4.8%" (US)
+- RRSP/TFSA deadline countdown (CA) / IRA deadline (US)
+- Balance transfer offers for high-APR cards
+- **Data needed:** HISA rate feed (refreshed weekly); country-specific product offers
+
+### 7. Life Context — ❌ Not built (internal data only needed)
+- Spending shift to baby/child category → surface parental leave, RESP+CCB (CA) / 529+dependent credits (US)
+- New city merchant pattern → cost-of-living comparison
+- Income drop → EI eligibility (CA) / unemployment signal (US)
+- **Data needed:** Pattern detection on existing transactions (no external API needed for triggers)
+
+### 8. Comparative — ❌ Not built
+- Spending by category vs. StatsCan household survey (CA) / US Consumer Expenditure Survey (US)
+- Net worth trajectory vs. age-group medians (requires `birthYear` from profile)
+- Mortgage rate vs. current best available — refinance gap
+- **Data needed:** StatsCan / BLS household expenditure surveys; posted mortgage rate feeds
+
+### 9. Market-Aware Asset Tracking — ❌ Not built
+- Investment accounts: holdings vs. current prices, unrealized gains
+- Real estate: purchase price vs. estimated current value (HouseSigma/Zolo for CA; Zillow/Redfin for US)
+- Car: depreciation curve for make/model/year
+- **Data needed:** Market data API; real estate estimate APIs; user-provided holdings
+
+### 10. News & Policy Signals — ❌ Not built
+- Budget announcements that affect user personally (FHSA changes, tax law changes)
+- Employer-specific news if salary source is a public company
+- **Data needed:** Government budget feeds; news API with financial filter
+
+---
+
+## Country-Specific Mappings (reference)
+
+| Concept | Canada | United States |
+|---|---|---|
+| Tax-advantaged savings | RRSP, TFSA, RESP, FHSA | 401k, IRA, HSA, 529 |
+| Government benefits | CCB, EI, OAS, GST credit | Social Security, Medicaid, SNAP |
+| Rate authority | Bank of Canada | Federal Reserve |
+| Inflation data | Statistics Canada CPI | Bureau of Labor Statistics CPI |
+| Household benchmarks | StatsCan Survey of Household Spending | US Consumer Expenditure Survey |
+| Real estate data | HouseSigma, Zolo, CMHC | Zillow, Redfin, FHFA |
+| HISA products | EQ Bank, Oaken, Wealthsimple | Ally, Marcus, SoFi |
+| Mortgage context | CMHC, stress test, 5yr renewal cycle | 30yr fixed dominant, refi triggers |
+| Investment index | TSX Composite | S&P 500 |
+
+---
+
+## Implementation Priority (when ready to build)
+
+1. **`userProfile` document** — country, region, familySize, birthYear (unlocks categories 2, 3, 7, 8)
+2. **Country inference on first parse** — auto-set profile.country from bank name
+3. **Hardcode tax calendar** — RRSP/TFSA/CRA (CA) and IRA/401k/IRS (US) deadlines — free wins for category 3
+4. **`referenceData/{country}` collection** — shared, not per-user; refreshed by scheduled job
+5. **Pass country into insights prompt** — one prompt, country-aware AI output (not two separate prompts)
