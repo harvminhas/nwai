@@ -10,6 +10,7 @@ import NetWorthChart from "@/components/NetWorthChart";
 import AgentInsightCards from "@/components/AgentInsightCards";
 import type { ParsedStatementData } from "@/lib/types";
 import type { AgentCard } from "@/lib/agentTypes";
+import { isBalanceMarker } from "@/lib/balanceMarkers";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -50,10 +51,12 @@ type TrackStatus  = "on-track" | "watch" | "off-track";
 interface Signal {
   id: string;
   name: string;
+  shortName: string; // abbreviated label for the strip card
   description: string;
-  weight: number;   // nominal weight, will be redistributed if skipped
+  weight: number;    // nominal weight, redistributed if skipped
   status: SignalStatus;
-  detail: string;   // one-line explanation of result
+  detail: string;    // one-line explanation of result
+  fillPct: number;   // 0–100 meter fill, pre-computed
 }
 
 interface HistoryPoint {
@@ -80,170 +83,75 @@ function computeSignals(
 
   // ── 1. Net worth trend (30%) ──────────────────────────────────────────────
   const nwSignal: Signal = (() => {
-    if (!cur || !prev) return {
-      id: "nw_trend", name: "Net worth trend",
-      description: "Growing month-over-month",
-      weight: 30, status: "skip",
-      detail: "Not enough history yet",
-    };
+    const base = { id: "nw_trend", name: "Net worth trend", shortName: "Net worth", description: "Growing month-over-month", weight: 30 };
+    if (!cur || !prev) return { ...base, status: "skip", detail: "Not enough history yet", fillPct: 0 };
     const delta = (cur.netWorth ?? 0) - (prev.netWorth ?? 0);
     const pct   = (prev.netWorth ?? 0) !== 0 ? delta / Math.abs(prev.netWorth ?? 0) : 0;
-    if (pct > 0.005) return {
-      id: "nw_trend", name: "Net worth trend",
-      description: "Growing month-over-month",
-      weight: 30, status: "pass",
-      detail: `Up ${fmtShort(delta)} vs last month`,
-    };
-    if (pct >= -0.005) return {
-      id: "nw_trend", name: "Net worth trend",
-      description: "Growing month-over-month",
-      weight: 30, status: "warning",
-      detail: "Flat this month (within 0.5%)",
-    };
-    return {
-      id: "nw_trend", name: "Net worth trend",
-      description: "Growing month-over-month",
-      weight: 30, status: "fail",
-      detail: `Down ${fmtShort(Math.abs(delta))} vs last month`,
-    };
+    // fillPct: map [-10%, +10%] → [0, 100]; 0% = 50, +5% = 75, -5% = 25
+    const fillPct = Math.round(Math.min(100, Math.max(0, (pct * 500 + 1) * 50)));
+    if (pct > 0.005) return { ...base, status: "pass",    detail: `Up ${fmtShort(delta)} vs last month`,          fillPct };
+    if (pct >= -0.005) return { ...base, status: "warning", detail: "Flat this month (within 0.5%)",               fillPct: 50 };
+    return              { ...base, status: "fail",    detail: `Down ${fmtShort(Math.abs(delta))} vs last month`, fillPct };
   })();
 
   // ── 2. Savings rate (25%) ─────────────────────────────────────────────────
   const srSignal: Signal = (() => {
-    if (!cur || cur.incomeTotal <= 0) return {
-      id: "savings_rate", name: "Savings rate",
-      description: "Saving ≥ 10% of take-home income this month",
-      weight: 25, status: "skip",
-      detail: "No income data this month",
-    };
+    const base = { id: "savings_rate", name: "Savings rate", shortName: "Savings rate", description: "Saving ≥ 10% of take-home income this month", weight: 25 };
+    if (!cur || cur.incomeTotal <= 0) return { ...base, status: "skip", detail: "No income data this month", fillPct: 0 };
     const rate = (cur.incomeTotal - cur.expensesTotal) / cur.incomeTotal;
-    if (rate >= 0.10) return {
-      id: "savings_rate", name: "Savings rate",
-      description: "Saving ≥ 10% of take-home income this month",
-      weight: 25, status: "pass",
-      detail: `Saving ${Math.round(rate * 100)}% of income`,
-    };
-    if (rate >= 0) return {
-      id: "savings_rate", name: "Savings rate",
-      description: "Saving ≥ 10% of take-home income this month",
-      weight: 25, status: "warning",
-      detail: `Saving ${Math.round(rate * 100)}% — target is 10%`,
-    };
-    return {
-      id: "savings_rate", name: "Savings rate",
-      description: "Saving ≥ 10% of take-home income this month",
-      weight: 25, status: "fail",
-      detail: `Spending ${fmt(cur.expensesTotal - cur.incomeTotal)} more than earned`,
-    };
+    // fillPct: map [-50%, +50%] → [0, 100]; 10% target ≈ 75% fill
+    const fillPct = Math.round(Math.min(100, Math.max(0, (rate + 0.5) / 0.8 * 100)));
+    if (rate >= 0.10) return { ...base, status: "pass",    detail: `Saving ${Math.round(rate * 100)}% of income`,                        fillPct };
+    if (rate >= 0)   return { ...base, status: "warning", detail: `Saving ${Math.round(rate * 100)}% — target is 10%`,                   fillPct };
+    return            { ...base, status: "fail",    detail: `Spending ${fmt(cur.expensesTotal - cur.incomeTotal)} more than earned`, fillPct };
   })();
 
   // ── 3. Debt plan adherence (20%) ──────────────────────────────────────────
   const debtSignal: Signal = (() => {
-    if (!hasDebts || !cur || cur.debtTotal <= 0) return {
-      id: "debt_plan", name: "Debt plan adherence",
-      description: "Debt balance decreasing month-over-month",
-      weight: 20, status: "skip",
-      detail: "No active debts — signal skipped",
-    };
-    if (!prev) return {
-      id: "debt_plan", name: "Debt plan adherence",
-      description: "Debt balance decreasing month-over-month",
-      weight: 20, status: "skip",
-      detail: "Not enough history yet",
-    };
-    const delta = cur.debtTotal - prev.debtTotal;
-    if (delta < -10) return {
-      id: "debt_plan", name: "Debt plan adherence",
-      description: "Debt balance decreasing month-over-month",
-      weight: 20, status: "pass",
-      detail: `Paid down ${fmt(Math.abs(delta))} this month`,
-    };
-    if (delta <= 50) return {
-      id: "debt_plan", name: "Debt plan adherence",
-      description: "Debt balance decreasing month-over-month",
-      weight: 20, status: "warning",
-      detail: "Debt unchanged this month",
-    };
-    return {
-      id: "debt_plan", name: "Debt plan adherence",
-      description: "Debt balance decreasing month-over-month",
-      weight: 20, status: "fail",
-      detail: `Debt increased by ${fmt(delta)} this month`,
-    };
+    const base = { id: "debt_plan", name: "Debt plan adherence", shortName: "Debt", description: "Debt balance decreasing month-over-month", weight: 20 };
+    if (!hasDebts || !cur || cur.debtTotal <= 0) return { ...base, status: "skip", detail: "No active debts — signal skipped", fillPct: 0 };
+    if (!prev)                                    return { ...base, status: "skip", detail: "Not enough history yet",           fillPct: 0 };
+    const delta   = cur.debtTotal - prev.debtTotal;
+    // fillPct: paid-down ratio vs total debt; clamp [-10%, +10%] change → [0, 100]
+    const changePct = cur.debtTotal > 0 ? delta / cur.debtTotal : 0;
+    const fillPct = Math.round(Math.min(100, Math.max(0, (-changePct * 500 + 1) * 50)));
+    if (delta < -10) return { ...base, status: "pass",    detail: `Paid down ${fmt(Math.abs(delta))} this month`,  fillPct };
+    if (delta <= 50) return { ...base, status: "warning", detail: "Debt unchanged this month",                     fillPct: 50 };
+    return            { ...base, status: "fail",    detail: `Debt increased by ${fmt(delta)} this month`,   fillPct };
   })();
 
   // ── 4. Spending vs budget (15%) ───────────────────────────────────────────
   const spendSignal: Signal = (() => {
-    if (!cur || cur.expensesTotal <= 0 || prev3.length < 2) return {
-      id: "spending_vs_budget", name: "Spending vs budget",
-      description: "Total spend within 110% of 3-month average",
-      weight: 15, status: "skip",
-      detail: "Not enough history to set a baseline",
-    };
-    const avg = prev3.reduce((s, h) => s + h.expensesTotal, 0) / prev3.length;
+    const base = { id: "spending_vs_budget", name: "Spending vs budget", shortName: "Spending", description: "Total spend within 110% of 3-month average", weight: 15 };
+    if (!cur || cur.expensesTotal <= 0 || prev3.length < 2) return { ...base, status: "skip", detail: "Not enough history to set a baseline", fillPct: 0 };
+    const avg   = prev3.reduce((s, h) => s + h.expensesTotal, 0) / prev3.length;
     const ratio = avg > 0 ? cur.expensesTotal / avg : 1;
-    if (ratio <= 1.0) return {
-      id: "spending_vs_budget", name: "Spending vs budget",
-      description: "Total spend within 110% of 3-month average",
-      weight: 15, status: "pass",
-      detail: `Spending at ${Math.round(ratio * 100)}% of avg — on target`,
-    };
-    if (ratio <= 1.10) return {
-      id: "spending_vs_budget", name: "Spending vs budget",
-      description: "Total spend within 110% of 3-month average",
-      weight: 15, status: "warning",
-      detail: `Spending at ${Math.round(ratio * 100)}% of avg — slightly elevated`,
-    };
-    return {
-      id: "spending_vs_budget", name: "Spending vs budget",
-      description: "Total spend within 110% of 3-month average",
-      weight: 15, status: "fail",
-      detail: `Spending at ${Math.round(ratio * 100)}% of avg — ${fmt(cur.expensesTotal - avg)} over`,
-    };
+    // fillPct: ratio ≤ 1 = full; each 10% over cuts 20pts; clamped 0–100
+    const fillPct = Math.round(Math.min(100, Math.max(0, 100 - Math.max(0, ratio - 1) * 200)));
+    if (ratio <= 1.0)  return { ...base, status: "pass",    detail: `Spending at ${Math.round(ratio * 100)}% of avg — on target`,         fillPct };
+    if (ratio <= 1.10) return { ...base, status: "warning", detail: `Spending at ${Math.round(ratio * 100)}% of avg — slightly elevated`, fillPct };
+    return              { ...base, status: "fail",    detail: `Spending at ${Math.round(ratio * 100)}% of avg — ${fmt(cur.expensesTotal - avg)} over`, fillPct };
   })();
 
   // ── 5. Goal trajectory (5%) ───────────────────────────────────────────────
-  // Skipped until Goals feature is built
   const goalSignal: Signal = {
-    id: "goal_trajectory", name: "Goal trajectory",
+    id: "goal_trajectory", name: "Goal trajectory", shortName: "Goals",
     description: "FI date within 12 months of original plan",
     weight: 5, status: "skip",
-    detail: "Goals not set up yet",
+    detail: "Goals not set up yet", fillPct: 0,
   };
 
   // ── 6. Emergency fund buffer (5%) ─────────────────────────────────────────
   const efSignal: Signal = (() => {
-    if (!cur || cur.expensesTotal <= 0) return {
-      id: "emergency_fund", name: "Emergency fund buffer",
-      description: "Liquid savings ≥ 1 month of expenses",
-      weight: 5, status: "skip",
-      detail: "No expense data to set benchmark",
-    };
-    if (liquidAssets <= 0) return {
-      id: "emergency_fund", name: "Emergency fund buffer",
-      description: "Liquid savings ≥ 1 month of expenses",
-      weight: 5, status: "skip",
-      detail: "No linked savings/chequing account",
-    };
-    const months = liquidAssets / cur.expensesTotal;
-    if (months >= 1) return {
-      id: "emergency_fund", name: "Emergency fund buffer",
-      description: "Liquid savings ≥ 1 month of expenses",
-      weight: 5, status: "pass",
-      detail: `${months.toFixed(1)} months of expenses in liquid savings`,
-    };
-    if (months >= 0.5) return {
-      id: "emergency_fund", name: "Emergency fund buffer",
-      description: "Liquid savings ≥ 1 month of expenses",
-      weight: 5, status: "warning",
-      detail: `${months.toFixed(1)} months covered — target is 1 month`,
-    };
-    return {
-      id: "emergency_fund", name: "Emergency fund buffer",
-      description: "Liquid savings ≥ 1 month of expenses",
-      weight: 5, status: "fail",
-      detail: `Only ${months.toFixed(1)} months covered — needs attention`,
-    };
+    const base = { id: "emergency_fund", name: "Emergency fund buffer", shortName: "Emergency fund", description: "Liquid savings ≥ 1 month of expenses", weight: 5 };
+    if (!cur || cur.expensesTotal <= 0) return { ...base, status: "skip", detail: "No expense data to set benchmark",      fillPct: 0 };
+    if (liquidAssets <= 0)              return { ...base, status: "skip", detail: "No linked savings/chequing account",    fillPct: 0 };
+    const months  = liquidAssets / cur.expensesTotal;
+    // fillPct: 0 mo = 0%, 1 mo = 33%, 3 mo = 100% (capped)
+    const fillPct = Math.round(Math.min(100, Math.max(0, months / 3 * 100)));
+    if (months >= 1)   return { ...base, status: "pass",    detail: `${months.toFixed(1)} months of expenses in liquid savings`, fillPct };
+    if (months >= 0.5) return { ...base, status: "warning", detail: `${months.toFixed(1)} months covered — target is 1 month`,  fillPct };
+    return              { ...base, status: "fail",    detail: `Only ${months.toFixed(1)} months covered — needs attention`, fillPct };
   })();
 
   return [nwSignal, srSignal, debtSignal, spendSignal, goalSignal, efSignal];
@@ -310,6 +218,108 @@ const ASSET_TYPE_LABEL: Record<string, string> = {
 const DEBT_TYPE_LABEL: Record<string, string> = {
   CC: "CC", mortgage: "mortgage", loan: "loan",
 };
+
+// ── signal strip ─────────────────────────────────────────────────────────────
+
+const STRIP_BAR: Record<SignalStatus, string> = {
+  pass:    "bg-green-500",
+  warning: "bg-amber-400",
+  fail:    "bg-red-500",
+  skip:    "bg-gray-200",
+};
+const STRIP_LABEL: Record<SignalStatus, { text: string; cls: string }> = {
+  pass:    { text: "Pass",    cls: "text-green-600" },
+  warning: { text: "Watch",   cls: "text-amber-500" },
+  fail:    { text: "Fail",    cls: "text-red-500"   },
+  skip:    { text: "N/A",     cls: "text-gray-300"  },
+};
+
+function SignalStrip({ signals, score, status, onOpenModal }: {
+  signals: Signal[];
+  score: number;
+  status: TrackStatus | null;
+  onOpenModal: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const active = signals.filter((s) => s.status !== "skip");
+  if (active.length < 2) return null;
+
+  const scoreColor = score >= 75 ? "text-green-600" : score >= 50 ? "text-amber-500" : "text-red-500";
+  const scoreBar   = score >= 75 ? "bg-green-500"   : score >= 50 ? "bg-amber-400"   : "bg-red-500";
+  const trackCfg   = status ? TRACK_CONFIG[status] : null;
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+      {/* Header row — always visible */}
+      <div className="flex items-center gap-3 px-4 py-3">
+        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mr-auto">Financial health</p>
+
+        {/* Status badge */}
+        {trackCfg && (
+          <span className={`shrink-0 flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${trackCfg.badge}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${trackCfg.dot}`} />
+            {trackCfg.label}
+          </span>
+        )}
+
+        {/* Score + expand toggle */}
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-gray-50 transition"
+        >
+          <div className="flex items-center gap-1.5">
+            <div className="h-1.5 w-16 rounded-full bg-gray-100 overflow-hidden">
+              <div className={`h-full rounded-full ${scoreBar} transition-all`} style={{ width: `${score}%` }} />
+            </div>
+            <span className={`text-xs font-bold tabular-nums ${scoreColor}`}>{score}/100</span>
+          </div>
+          <svg
+            className={`h-3.5 w-3.5 text-gray-400 transition-transform ${expanded ? "rotate-180" : ""}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Signal grid — only when expanded */}
+      {expanded && (
+        <>
+          <div className="grid grid-cols-2 gap-px bg-gray-100 border-t border-gray-100 sm:grid-cols-4">
+            {active.map((sig) => {
+              const lb = STRIP_LABEL[sig.status];
+              return (
+                <div key={sig.id} className="bg-white px-3.5 py-3 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] font-semibold text-gray-500 leading-tight truncate pr-1">{sig.shortName}</p>
+                    <span className={`text-[10px] font-bold shrink-0 ${lb.cls}`}>{lb.text}</span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${STRIP_BAR[sig.status]}`}
+                      style={{ width: `${sig.fillPct}%` }}
+                    />
+                  </div>
+                  <p className="text-[11px] text-gray-400 leading-tight line-clamp-2">{sig.detail}</p>
+                </div>
+              );
+            })}
+          </div>
+          {/* Full breakdown link */}
+          <button
+            onClick={onOpenModal}
+            className="flex w-full items-center justify-center gap-1 border-t border-gray-100 py-2.5 text-xs font-medium text-purple-600 hover:bg-purple-50 transition"
+          >
+            View full breakdown
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
 
 // ── signal breakdown modal ────────────────────────────────────────────────────
 
@@ -517,8 +527,6 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   const assets     = data.assets ?? Math.max(0, netWorth);
   const debts      = data.debts ?? Math.max(0, -netWorth);
   const income     = data.income?.total ?? 0;
-  const rawExpenses = data.expenses?.total ?? 0;
-  const saved      = income - rawExpenses;
   const hasDebts   = debts > 0;
 
   const nwDelta    = previousMonth != null ? netWorth - previousMonth.netWorth : null;
@@ -558,13 +566,25 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
     return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
   })();
 
-  // Current-month expenses filtered by the same rule
+  // Current-month expenses — same filtering as the spending page:
+  // only transactions dated within the current calendar month, no balance markers.
   const TRANSFER_CATS = /^transfers$/i;
+  const allExpenseTxns = data?.expenses?.transactions ?? [];
+  const calendarMonthTxns = allExpenseTxns.filter(
+    (t) => (!t.date || t.date.startsWith(yearMonth)) && !isBalanceMarker(t.merchant ?? "")
+  );
+  // Fall back to pre-computed total only when no dated transactions exist
+  const monthRawTotal = calendarMonthTxns.length > 0
+    ? calendarMonthTxns.reduce((s, t) => s + t.amount, 0)
+    : (data?.expenses?.total ?? 0);
   const expenses = excludeTransfers
-    ? (data?.expenses?.transactions ?? [])
+    ? calendarMonthTxns
         .filter((t) => !TRANSFER_CATS.test((t.category ?? "").trim()))
         .reduce((s, t) => s + t.amount, 0)
-    : (data?.expenses?.total ?? 0);
+    : monthRawTotal;
+
+  // saved uses the same filtered expense figure so the hero card stays consistent
+  const saved = income - expenses;
 
   // ── scoring ────────────────────────────────────────────────────────────────
   const signals   = computeSignals(yearMonth, history, liquidAssets, hasDebts);
@@ -584,52 +604,48 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
 
   return (
     <>
-      <div className="space-y-5">
+      <div className="space-y-4">
 
-        {/* ── Header ───────────────────────────────────────────────────────── */}
-        <div className="flex items-start justify-between">
-          <p className="text-sm text-gray-400">
-            {monthLabel(yearMonth)}
-            {accountCount > 0 && (
-              <> · <span className="text-gray-500">{accountCount} account{accountCount !== 1 ? "s" : ""} synced</span></>
-            )}
-            {statementCount > 0 && (
-              <> · {statementCount} statement{statementCount !== 1 ? "s" : ""} combined</>
-            )}
-          </p>
-          {/* On track badge — only shown after ≥2 statements, click opens modal */}
-          {trackStatus && statementCount >= 2 && (
-            <button
-              onClick={() => setModalOpen(true)}
-              className={`shrink-0 flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition hover:opacity-80 ${TRACK_CONFIG[trackStatus].badge}`}
-              title="Click to see health check breakdown"
-            >
-              <span className={`h-1.5 w-1.5 rounded-full ${TRACK_CONFIG[trackStatus].dot}`} />
-              {TRACK_CONFIG[trackStatus].label}
-            </button>
-          )}
-        </div>
+        {/* ── Incomplete months banner — only shown when current month is estimated
+             or the majority of history is estimated (suppressed for isolated
+             historical gaps which are normal with multi-account setups) ───── */}
+        {(() => {
+          const currentIncomplete = yearMonth ? incompleteMonths.includes(yearMonth) : false;
+          const totalMonths       = history.length;
+          // Show only if current month is estimated, or >40% of history is estimated
+          const manyIncomplete    = totalMonths > 0 && incompleteMonths.length / totalMonths > 0.4;
+          if (!currentIncomplete && !manyIncomplete) return null;
 
-        {/* ── Incomplete months banner ──────────────────────────────────────── */}
-        {incompleteMonths.length > 0 && (
-          <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-            <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-            </svg>
-            <div className="text-sm">
-              <p className="font-medium text-amber-800">Trends still building</p>
-              <p className="mt-0.5 text-amber-700 text-xs">
-                {incompleteMonths.length} month{incompleteMonths.length !== 1 ? "s" : ""} use estimated balances.{" "}
-                <Link href="/account/accounts" className="font-medium underline hover:text-amber-900">Review accounts →</Link>
-              </p>
+          return (
+            <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+              <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+              </svg>
+              <div className="text-sm">
+                <p className="font-medium text-amber-800">
+                  {currentIncomplete ? "Current balance is estimated" : "Some months use estimated balances"}
+                </p>
+                <p className="mt-0.5 text-amber-700 text-xs">
+                  {currentIncomplete
+                    ? "Upload a statement for all accounts this month for an accurate net worth."
+                    : `${incompleteMonths.length} month${incompleteMonths.length !== 1 ? "s" : ""} are missing a statement for at least one account.`}{" "}
+                  <Link href="/account/accounts" className="font-medium underline hover:text-amber-900">Review accounts →</Link>
+                </p>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
 
         {/* ── NET WORTH hero ────────────────────────────────────────────────── */}
         <div className="rounded-2xl border border-gray-200 bg-white px-6 py-5 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">Net worth</p>
+          <div className="flex items-baseline gap-2">
+            <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">Net worth</p>
+            <p className="text-xs text-gray-400">
+              {monthLabel(yearMonth)}
+              {statementCount > 0 && <> · {statementCount} statement{statementCount !== 1 ? "s" : ""}</>}
+            </p>
+          </div>
           <div className="mt-2 flex items-end gap-4">
             <p className="text-5xl font-extrabold tracking-tight text-gray-900 tabular-nums leading-none">
               {fmtNW(netWorth)}
@@ -676,6 +692,11 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
             </p>
           )}
         </div>
+
+        {/* ── Health signals strip ──────────────────────────────────────────── */}
+        {statementCount >= 2 && (
+          <SignalStrip signals={signals} score={score} status={trackStatus} onOpenModal={() => setModalOpen(true)} />
+        )}
 
         {/* ── 4 KPI cards ───────────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

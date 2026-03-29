@@ -703,10 +703,17 @@ export async function GET(req: NextRequest) {
     if (!a.isThisMonth && b.isThisMonth) return -1;
     if (a.isThisMonth && !b.isThisMonth) return 1;
     if (a.isThisMonth && b.isThisMonth) {
-      // income at bottom of this-month group
-      if (a.type === "cash-in" && b.type !== "cash-in") return 1;
-      if (a.type !== "cash-in" && b.type === "cash-in") return -1;
-      return a.title.localeCompare(b.title);
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const aDate = a.predictedDate ?? "";
+      const bDate = b.predictedDate ?? "";
+      const aIsPast = aDate && aDate < todayStr;
+      const bIsPast = bDate && bDate < todayStr;
+      // upcoming before past
+      if (!aIsPast && bIsPast) return -1;
+      if (aIsPast && !bIsPast) return 1;
+      // both upcoming → soonest first; both past → most recent first
+      if (!aIsPast && !bIsPast) return aDate.localeCompare(bDate);
+      return bDate.localeCompare(aDate);
     }
     return a.date.localeCompare(b.date);
   });
