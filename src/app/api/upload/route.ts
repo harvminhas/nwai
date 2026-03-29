@@ -99,12 +99,21 @@ export async function POST(request: NextRequest) {
         .get();
       if (!dupSnap.empty) {
         const dup = dupSnap.docs[0];
+        const existingStatus = dup.data().status as string | undefined;
+
+        // If the previous attempt failed, reset it so the client can re-trigger parsing.
+        // Do NOT create a second storage copy — reuse the original file.
+        if (existingStatus === "error") {
+          await dup.ref.update({ status: "processing", errorMessage: null });
+          return NextResponse.json({ statementId: dup.id, retrying: true });
+        }
+
         return NextResponse.json(
           {
             error: "duplicate",
             message: "You've already uploaded this exact file.",
             existingStatementId: dup.id,
-            existingStatus: dup.data().status,
+            existingStatus,
           },
           { status: 409 }
         );

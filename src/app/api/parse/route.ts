@@ -187,14 +187,18 @@ export async function POST(request: NextRequest) {
       friendlyMessage = "Firestore not set up. Create a Firestore database in Firebase Console.";
     }
 
-    // Always mark statement as error so the client stops polling
+    // Mark statement as error so the client stops polling.
+    // IMPORTANT: only overwrite if the document is NOT already "completed" —
+    // a failed re-parse must never destroy previously-parsed good data.
     if (statementId) {
       try {
         const { db } = getFirebaseAdmin();
-        await db.collection("statements").doc(statementId).update({
-          status: "error",
-          errorMessage: friendlyMessage,
-        });
+        const ref = db.collection("statements").doc(statementId);
+        const snap = await ref.get();
+        const currentStatus = snap.exists ? (snap.data()?.status as string | undefined) : undefined;
+        if (currentStatus !== "completed") {
+          await ref.update({ status: "error", errorMessage: friendlyMessage });
+        }
       } catch (_) {}
     }
 

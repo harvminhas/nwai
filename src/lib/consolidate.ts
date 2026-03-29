@@ -7,27 +7,6 @@ import type {
   Subscription,
   Insight,
 } from "./types";
-import { txFingerprint } from "./txFingerprint";
-
-function deduplicateExpenseTxns(txns: ExpenseTransaction[]): ExpenseTransaction[] {
-  const seen = new Set<string>();
-  return txns.filter((t) => {
-    const h = txFingerprint(t.accountLabel ?? "", t.date ?? "no-date", t.amount, t.merchant ?? "");
-    if (seen.has(h)) return false;
-    seen.add(h);
-    return true;
-  });
-}
-
-function deduplicateIncomeTxns(txns: IncomeTransaction[]): IncomeTransaction[] {
-  const seen = new Set<string>();
-  return txns.filter((t) => {
-    const h = txFingerprint(t.accountLabel ?? "", t.date ?? "no-date", t.amount, t.source ?? "");
-    if (seen.has(h)) return false;
-    seen.add(h);
-    return true;
-  });
-}
 
 /**
  * Build the subscription list by merging:
@@ -97,18 +76,14 @@ export function consolidateStatements(
   if (statements.length === 1) {
     const s = statements[0];
     const nw = s.netWorth ?? 0;
-    const txns = deduplicateExpenseTxns(
-      (s.expenses?.transactions ?? []).slice().sort((a, b) => {
-        if (a.date && b.date) return b.date.localeCompare(a.date);
-        return 0;
-      })
-    );
-    const incomeTxns = deduplicateIncomeTxns(
-      (s.income?.transactions ?? []).slice().sort((a, b) => {
-        if (a.date && b.date) return b.date.localeCompare(a.date);
-        return 0;
-      })
-    );
+    const txns = (s.expenses?.transactions ?? []).slice().sort((a, b) => {
+      if (a.date && b.date) return b.date.localeCompare(a.date);
+      return 0;
+    });
+    const incomeTxns = (s.income?.transactions ?? []).slice().sort((a, b) => {
+      if (a.date && b.date) return b.date.localeCompare(a.date);
+      return 0;
+    });
     return {
       ...s,
       assets: s.assets ?? Math.max(0, nw),
@@ -221,7 +196,7 @@ export function consolidateStatements(
     income: {
       total: incomeTotal,
       sources: incomeSources,
-      transactions: deduplicateIncomeTxns(allIncomeTransactions).sort((a, b) => {
+      transactions: allIncomeTransactions.sort((a, b) => {
         if (a.date && b.date) return b.date.localeCompare(a.date);
         return 0;
       }),
@@ -229,7 +204,7 @@ export function consolidateStatements(
     expenses: {
       total: expensesTotal,
       categories: expenseCategories,
-      transactions: deduplicateExpenseTxns(allTransactions).sort((a, b) => {
+      transactions: allTransactions.sort((a, b) => {
         if (a.date && b.date) return b.date.localeCompare(a.date);
         return 0;
       }),

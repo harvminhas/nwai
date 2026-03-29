@@ -437,6 +437,13 @@ function normalizeData(data: ParsedStatementData): ParsedStatementData {
 
 function parseJsonResponse(raw: string): ParsedStatementData {
   const jsonStr = extractJson(raw);
+
+  // AI returned plain text instead of JSON (e.g. "I encountered an error..." or a refusal).
+  if (!jsonStr.trimStart().startsWith("{")) {
+    const preview = raw.slice(0, 300).replace(/\n/g, " ");
+    throw new Error(`AI returned text instead of JSON: "${preview}"`);
+  }
+
   let parsed: unknown;
   try {
     parsed = JSON.parse(jsonStr);

@@ -45,6 +45,7 @@ export default function StatementsPage() {
   const [error, setError]             = useState<string | null>(null);
   const [deletingId, setDeletingId]   = useState<string | null>(null);
   const [confirmId, setConfirmId]     = useState<string | null>(null);
+  const [reparsingId, setReparsingId] = useState<string | null>(null);
   const [token, setToken]             = useState<string | null>(null);
 
   const loadStatements = useCallback(async (tok: string) => {
@@ -84,6 +85,31 @@ export default function StatementsPage() {
       setStatements((prev) => prev.filter((s) => s.id !== id));
     } catch { alert("Delete failed. Please try again."); }
     finally { setDeletingId(null); setConfirmId(null); }
+  }
+
+  async function handleReparse(id: string) {
+    if (!token) return;
+    setReparsingId(id);
+    try {
+      const resetRes = await fetch(`/api/user/statements/${id}/reparse`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!resetRes.ok) { alert("Could not retry. Please try again."); return; }
+
+      setStatements((prev) =>
+        prev.map((s) => s.id === id ? { ...s, status: "processing" } : s)
+      );
+
+      fetch("/api/parse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ statementId: id }),
+      }).then(() => {
+        if (token) loadStatements(token);
+      }).catch(() => {});
+    } catch { alert("Retry failed. Please try again."); }
+    finally { setReparsingId(null); }
   }
 
   // ── group by account slug ────────────────────────────────────────────────
@@ -165,8 +191,9 @@ export default function StatementsPage() {
                       : s.statementDate
                         ? fmtMonth(s.statementDate.slice(0, 7))
                         : "Unknown period";
-                    const isDeleting = deletingId === s.id;
-                    const isConfirm  = confirmId === s.id;
+                    const isDeleting  = deletingId === s.id;
+                    const isConfirm   = confirmId === s.id;
+                    const isReparsing = reparsingId === s.id;
 
                     return (
                       <div key={s.id} className="flex items-center justify-between gap-4 px-5 py-3.5">
@@ -187,8 +214,21 @@ export default function StatementsPage() {
                           </div>
                         </div>
 
-                        {/* Delete action */}
-                        <div className="shrink-0">
+                        {/* Actions */}
+                        <div className="shrink-0 flex items-center gap-2">
+                          {/* Retry button — shown only for failed statements */}
+                          {s.status === "error" && (
+                            <button
+                              onClick={() => handleReparse(s.id)}
+                              disabled={isReparsing}
+                              className="rounded px-2.5 py-1 text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 disabled:opacity-50 transition"
+                              title="Retry parsing this statement"
+                            >
+                              {isReparsing ? "Retrying…" : "↺ Retry"}
+                            </button>
+                          )}
+
+                          {/* Delete action */}
                           {isConfirm ? (
                             <div className="flex items-center gap-2">
                               <span className="text-xs text-gray-500">Remove?</span>
