@@ -511,7 +511,7 @@ export default function AccountDetailPage() {
     </div>
   );
   if (error || !data || !yearMonth) return (
-    <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
+    <div className="mx-auto max-w-4xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
       <div className="rounded-lg border border-gray-200 bg-white p-8 text-center">
         <p className="text-gray-800">{error || "No data for this account."}</p>
         <Link href="/account/accounts" className="mt-4 inline-block text-purple-600 hover:underline">Back to accounts</Link>
@@ -552,7 +552,7 @@ export default function AccountDetailPage() {
   const txns = txData?.transactions ?? [];
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
+    <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
       {/* Toast notification */}
       {toast && (

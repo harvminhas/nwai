@@ -206,13 +206,13 @@ export default function ForecastPage() {
     <UpgradePrompt feature="forecast" description="See where your net worth is heading with 1, 5, and 10-year projections." />
   );
   if (error) return (
-    <div className="mx-auto max-w-3xl px-4 py-8">
+    <div className="mx-auto max-w-3xl px-4 pt-4 pb-8 sm:py-8">
       <p className="text-red-600">{error}</p>
     </div>
   );
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
+    <div className="mx-auto max-w-3xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
       {/* Header */}
       <div className="mb-6">

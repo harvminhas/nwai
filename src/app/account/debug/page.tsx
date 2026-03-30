@@ -172,7 +172,7 @@ export default function DebugParsePage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 space-y-6">
+    <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8 space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Parse Debugger</h1>
         <p className="mt-1 text-sm text-gray-500">

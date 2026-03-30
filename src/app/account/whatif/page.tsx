@@ -790,7 +790,7 @@ function WhatIfInner() {
   const canRunMode = isPro || (modeConfig?.free ?? false);
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
+    <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
       {/* Header */}
       <div className="mb-6">
         <div className="flex items-center gap-2.5">

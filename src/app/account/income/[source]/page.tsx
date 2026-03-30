@@ -121,13 +121,13 @@ export default function IncomeSourcePage() {
     </div>
   );
   if (error) return (
-    <div className="mx-auto max-w-2xl px-4 py-8">
+    <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8">
       <p className="text-red-600">{error}</p>
     </div>
   );
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
+    <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
       {/* Back nav */}
       <Link

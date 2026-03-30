@@ -46,7 +46,6 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
     <div className="min-h-screen bg-gray-50">
       <Sidebar collapsed={collapsed} onToggle={toggle} />
       <div className={`transition-all duration-200 ${collapsed ? "lg:pl-14" : "lg:pl-56"}`}>
-        <div className="lg:hidden h-14" />
         {children}
       </div>
       <ChatBubble />

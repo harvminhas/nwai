@@ -137,7 +137,7 @@ export default function AccountsPage() {
 
   return (
     <div>
-      <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-6xl px-4 pt-4 pb-8 sm:py-8 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="font-bold text-3xl text-gray-900">Accounts</h1>

@@ -285,12 +285,12 @@ export default function IncomePage() {
     </div>
   );
   if (error) return (
-    <div className="mx-auto max-w-2xl px-4 py-8">
+    <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8">
       <p className="text-red-600">{error}</p>
     </div>
   );
   if (history.length === 0) return (
-    <div className="mx-auto max-w-2xl px-4 py-8">
+    <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8">
       <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-12 text-center">
         <p className="text-sm text-gray-500">No income data yet.</p>
         <p className="mt-1 text-xs text-gray-400">Upload a chequing or savings statement to see your income breakdown.</p>
@@ -302,7 +302,7 @@ export default function IncomePage() {
   );
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
+    <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
       {/* Header */}
       <div className="mb-1">
