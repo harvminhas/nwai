@@ -396,8 +396,12 @@ ${trimmed}
  * single source of truth before data is written to Firestore.
  */
 function normalizeData(data: ParsedStatementData): ParsedStatementData {
-  const incomeTxns   = data.income?.transactions ?? [];
-  const expenseTxns  = data.expenses?.transactions ?? [];
+  const incomeTxns  = (data.income?.transactions ?? []).filter((t) => (t.amount ?? 0) > 0);
+
+  // Expense amounts must always be positive (money out). The AI prompt says so,
+  // but the AI occasionally returns negative amounts for credits/refunds.
+  // Drop them here — the bucket (expenses vs income) is the canonical direction signal.
+  const expenseTxns = (data.expenses?.transactions ?? []).filter((t) => (t.amount ?? 0) > 0);
 
   // Derive totals from individual transactions — never trust AI-computed sums.
   const incomeTotal   = incomeTxns.reduce((s, t) => s + (t.amount ?? 0), 0);

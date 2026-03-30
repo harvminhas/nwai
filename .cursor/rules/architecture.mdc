@@ -10,17 +10,20 @@ alwaysApply: true
 ```
 PDF/CSV/Image
      ↓
-[ Parser ]          src/lib/parseStatement.ts, src/lib/csv-import.ts
+[ Parser ]              src/lib/parseStatement.ts, src/lib/csv-import.ts
      ↓ ParsedStatementData (JSON)
-[ API Route ]       src/app/api/parse/route.ts  ← only layer that writes parsedData
+[ API Route ]           src/app/api/parse/route.ts  ← only layer that writes parsedData
      ↓
-[ Firestore ]       statements/{id}.parsedData
+[ Firestore ]           statements/{id}.parsedData
      ↓
-[ Aggregation ]     src/lib/consolidate.ts, src/lib/extractTransactions.ts
-     ↓ ParsedStatementData (JSON)
-[ Business Rules ]  src/lib/applyRules.ts, src/lib/balanceMarkers.ts, src/lib/incomeEngine.ts
+[ Aggregation ]         src/lib/consolidate.ts, src/lib/extractTransactions.ts
      ↓
-[ UI / API Routes ] src/app/account/**, src/app/api/user/**
+[ Financial Profile ]   src/lib/financialProfile.ts  ← SINGLE SOURCE OF TRUTH for all spending data
+     ↓ FinancialProfileCache (cached in users/{uid}/financialProfile)
+[ Business Rules ]      src/lib/applyRules.ts, src/lib/spendingMetrics.ts
+     ↓
+[ UI / API Routes ]     src/app/account/**, src/app/api/user/**
+                        ALL pages read from getFinancialProfile() — never from extractAllTransactions() directly
 
                     ── orthogonal, event-driven layer ──
 
@@ -29,6 +32,7 @@ PDF/CSV/Image
      │                                      or explicitly from POST /api/user/insights/generate
      ├─ registry.ts     maps event types → detectors
      ├─ pipeline.ts     orchestrates: detectors → AI writer → persist cards
+     │                  also calls buildAndCacheFinancialProfile() to warm the cache
      └─ detectors/      one file per domain (subscriptions, cashflow, alert, savings…)
           writes to: users/{uid}/subscriptions, users/{uid}/agentInsights, users/{uid}.financialDNA
           NEVER writes to: statements/{id}.parsedData

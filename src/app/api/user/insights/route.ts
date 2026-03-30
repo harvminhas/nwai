@@ -4,8 +4,8 @@ import { consolidateStatements, getYearMonth } from "@/lib/consolidate";
 import type { ParsedStatementData } from "@/lib/types";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { merchantSlug } from "@/lib/applyRules";
-import type * as FirebaseFirestore from "firebase-admin/firestore";
-import { extractAllTransactions, expenseTotalForMonth } from "@/lib/extractTransactions";
+import { getFinancialProfile } from "@/lib/financialProfile";
+import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
 
 async function getUid(req: NextRequest): Promise<string | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
@@ -247,50 +247,30 @@ export async function GET(req: NextRequest) {
     return { date: dateStr, daysFromNow: diff, account };
   }
 
-  // ── Transaction-date-based financial data (single source of truth) ─────────
-  // Statements are ingestion only — all financial totals use actual tx dates.
-  const txData = await extractAllTransactions(uid, db);
-  const { expenseTxns, incomeTxns, accountSnapshots: txSnapshots, allTxMonths } = txData;
+  // ── Financial profile (single source of truth — same data as spending page) ──
+  // Category rules are pre-applied. typicalMonthly computed over full history.
+  const profile = await getFinancialProfile(uid, db);
+  const { expenseTxns, incomeTxns, accountSnapshots: txSnapshots, allTxMonths } = profile;
 
-  // Override liquid assets from latest account snapshots (balance data is point-in-time,
-  // but we use extractAllTransactions so we have a single fetch for all account data).
+  // Override liquid assets from profile snapshots
   if (txSnapshots.length > 0) {
     liquidAssets = txSnapshots
       .filter((a) => /checking|savings|cash/i.test(a.accountType))
       .reduce((s, a) => s + Math.max(0, a.balance), 0);
   }
 
-  const dayOfMonth   = now.getDate();
-  const daysInMonth  = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const dayOfMonth    = now.getDate();
+  const daysInMonth   = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const monthFraction = dayOfMonth / daysInMonth;
 
-  // Current-month income & expenses from transaction dates only.
-  // No category filter — must match the spending page exactly so users never see discrepancies.
   const income   = incomeTxns.filter((t) => t.txMonth === thisMonth).reduce((s, t) => s + t.amount, 0);
-  const expenses = expenseTxns.filter((t) => t.txMonth === thisMonth).reduce((s, t) => s + t.amount, 0);
-  const debts    = txSnapshots.reduce((s, a) => s + Math.max(0, -a.balance), 0);
+  const expenses = expenseTxns
+    .filter((t) => t.txMonth === thisMonth && !CORE_EXCLUDE_RE.test((t.category ?? "").trim()))
+    .reduce((s, t) => s + t.amount, 0);
+  const debts = txSnapshots.reduce((s, a) => s + Math.max(0, -a.balance), 0);
 
-  // "Data is current month" if we have at least one transaction dated in thisMonth.
-  const dataIsCurrentMonth = allTxMonths.includes(thisMonth);
-
-  // Typical monthly expenses: median of per-month tx totals across all historical months.
-  const typicalMonthlyExpenses = (() => {
-    const historicalMonths = allTxMonths.filter((m) => m < thisMonth);
-    if (historicalMonths.length === 0) return expenses;
-    const monthTotals = historicalMonths
-      .map((m) =>
-        expenseTxns
-          .filter((t) => t.txMonth === m)
-          .reduce((s, t) => s + t.amount, 0)
-      )
-      .filter((v) => v > 0);
-    if (monthTotals.length === 0) return expenses;
-    const sorted = [...monthTotals].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 !== 0
-      ? sorted[mid]
-      : (sorted[mid - 1] + sorted[mid]) / 2;
-  })();
+  const dataIsCurrentMonth     = allTxMonths.includes(thisMonth);
+  const typicalMonthlyExpenses = profile.typicalMonthly.median;
 
   // ── build alerts ──────────────────────────────────────────────────────────
   const alerts: DashboardAlert[] = [];

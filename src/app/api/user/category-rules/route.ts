@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { merchantSlug } from "@/lib/applyRules";
+import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
 
 async function getUid(request: NextRequest): Promise<string | null> {
   const token = request.headers.get("authorization")?.replace("Bearer ", "");
@@ -44,6 +45,10 @@ export async function PUT(request: NextRequest) {
     slug,
     updatedAt: new Date(),
   });
+
+  // Invalidate the financial profile cache so the next consolidated/insights
+  // request rebuilds with the new category rule applied.
+  await invalidateFinancialProfileCache(uid, db);
 
   return NextResponse.json({ ok: true, slug });
 }

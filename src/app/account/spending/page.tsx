@@ -8,6 +8,7 @@ import { doc, getDoc, setDoc } from "firebase/firestore";
 import { getFirebaseClient } from "@/lib/firebase";
 import type { ParsedStatementData, ExpenseTransaction, Subscription } from "@/lib/types";
 import { isBalanceMarker, txIgnoreKey } from "@/lib/balanceMarkers";
+import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
 import { merchantSlug } from "@/lib/applyRules";
 import { detectFrequency, FREQUENCY_CONFIG, type Frequency } from "@/lib/incomeEngine";
 import {
@@ -583,10 +584,9 @@ function SpendingPageInner() {
     ? monthTxns.reduce((s, t) => s + t.amount, 0)
     : (data?.expenses?.total ?? 0);
 
-  const TRANSFER_CATS_RE = /^transfers$/i;
   const displayTotal = excludeTransfers
     ? (monthTxns.length > 0
-        ? monthTxns.filter((t) => !TRANSFER_CATS_RE.test((t.category ?? "").trim())).reduce((s, t) => s + t.amount, 0)
+        ? monthTxns.filter((t) => !CORE_EXCLUDE_RE.test((t.category ?? "").trim())).reduce((s, t) => s + t.amount, 0)
         : (data?.expenses?.total ?? 0))
     : total;
 

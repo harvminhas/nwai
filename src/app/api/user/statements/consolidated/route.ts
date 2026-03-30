@@ -3,34 +3,15 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { consolidateStatements, getYearMonth } from "@/lib/consolidate";
 import { applyRulesAndRecalculate, merchantSlug } from "@/lib/applyRules";
 import { buildAccountSlug } from "@/lib/accountSlug";
-import { isBalanceMarker } from "@/lib/balanceMarkers";
+import { docYearMonth, carryForwardStatements } from "@/lib/spendHistory";
+import { getFinancialProfile } from "@/lib/financialProfile";
 import type { ParsedStatementData, ManualAsset, AssetCategory } from "@/lib/types";
 import type { BalanceSnapshot } from "@/app/api/user/balance-snapshots/route";
-
-function docYearMonth(d: FirebaseFirestore.DocumentData): string {
-  const parsed = d.parsedData as ParsedStatementData | undefined;
-  let ym = parsed?.statementDate ? getYearMonth(parsed.statementDate) : "";
-  if (!ym) {
-    const raw = d.uploadedAt?.toDate?.() ?? d.uploadedAt;
-    if (raw) {
-      const t =
-        typeof raw === "object" && "toISOString" in raw
-          ? (raw as Date).toISOString()
-          : String(raw);
-      ym = t.slice(0, 7);
-    }
-  }
-  return ym;
-}
-
-function accountSlug(parsed: ParsedStatementData): string {
-  return buildAccountSlug(parsed.bankName, parsed.accountId);
-}
 
 /** Human-readable label for a statement's account, e.g. "TD ••••7780" */
 function accountDisplayLabel(parsed: ParsedStatementData): string {
   if (parsed.accountName) return parsed.accountName;
-  const slug = accountSlug(parsed);
+  const slug = buildAccountSlug(parsed.bankName, parsed.accountId);
   const bank = (parsed.bankName ?? "").trim();
   if (slug === "unknown") return bank || "Unknown Account";
   const parts = [bank, `••••${slug}`].filter(Boolean);
@@ -78,97 +59,9 @@ function matchesBank(parsed: ParsedStatementData, bankFilter: string | null): bo
 
 function matchesAccount(parsed: ParsedStatementData, accountFilter: string | null): boolean {
   if (!accountFilter) return true;
-  return accountSlug(parsed) === accountFilter;
+  return buildAccountSlug(parsed.bankName, parsed.accountId) === accountFilter;
 }
 
-/**
- * For a given target month, return the "best" statement for each account:
- * - If the account has a statement for that exact month → use it.
- * - Otherwise carry forward the most recent statement from any earlier month.
- *
- * This ensures a mortgage uploaded in Jan still appears in Feb/Mar totals
- * even if no new statement was uploaded.
- */
-function carryForwardStatements(
-  allDocs: FirebaseFirestore.QueryDocumentSnapshot[],
-  targetMonth: string
-): ParsedStatementData[] {
-  // Build map: slug → latest doc whose yearMonth <= targetMonth.
-  // PDF statements are preferred over CSV imports for the same month because only
-  // PDFs carry a real account balance; CSV imports have no reliable netWorth.
-  const latestPerAccount = new Map<string, { ym: string; parsed: ParsedStatementData; isCSV: boolean; uploadedAt: number }>();
-
-  for (const doc of allDocs) {
-    const d = doc.data();
-    const ym = docYearMonth(d);
-    if (!ym || ym > targetMonth) continue;
-
-    const parsed     = d.parsedData as ParsedStatementData;
-    const isCSV      = (d.source as string | undefined) === "csv";
-    const uploadedAt = d.uploadedAt?.toDate?.()?.getTime() ?? 0;
-    const slug       = accountSlug(parsed);
-    const existing   = latestPerAccount.get(slug);
-
-    if (!existing || ym > existing.ym) {
-      latestPerAccount.set(slug, { ym, parsed, isCSV, uploadedAt });
-    } else if (ym === existing.ym) {
-      // Same month: PDF beats CSV (PDF has a real balance); within the same source
-      // type, the more recently uploaded document wins.
-      const existingWins = existing.isCSV === false && isCSV === true;
-      if (existingWins) continue;
-
-      const thisWins = existing.isCSV === true && isCSV === false;
-      if (thisWins) {
-        latestPerAccount.set(slug, { ym, parsed, isCSV, uploadedAt });
-        continue;
-      }
-
-      // Same source type — prefer most recently uploaded
-      const existingUpload = existing.uploadedAt;
-      const thisUpload = d.uploadedAt?.toDate?.()?.getTime() ?? 0;
-      if (thisUpload > existingUpload) {
-        latestPerAccount.set(slug, { ym, parsed, isCSV, uploadedAt: thisUpload });
-      }
-    }
-  }
-
-  // For accounts whose winning doc is a CSV, inherit netWorth from the most recent
-  // PDF statement (CSV imports don't carry a real account balance).
-  const latestPdfNetWorth = new Map<string, { ym: string; netWorth: number }>();
-  for (const doc of allDocs) {
-    const d = doc.data();
-    if ((d.source as string | undefined) === "csv") continue;
-    const ym = docYearMonth(d);
-    if (!ym || ym > targetMonth) continue;
-    const parsed = d.parsedData as ParsedStatementData;
-    const slug   = accountSlug(parsed);
-    const cur    = latestPdfNetWorth.get(slug);
-    if (!cur || ym >= cur.ym) {
-      latestPdfNetWorth.set(slug, { ym, netWorth: parsed.netWorth ?? 0 });
-    }
-  }
-
-  return Array.from(latestPerAccount.values()).map(({ ym, parsed, isCSV }) => {
-    // For CSV imports: use the CSV's own closing balance if available; otherwise
-    // fall back to the most recent PDF statement's balance so the account doesn't show $0.
-    const patchedParsed = isCSV
-      ? { ...parsed, netWorth: parsed.netWorth ?? latestPdfNetWorth.get(accountSlug(parsed))?.netWorth ?? 0 }
-      : parsed;
-
-    // When carrying a statement forward to a different month, strip transaction-level
-    // data so older transactions don't pollute the target month's spending view.
-    if (ym !== targetMonth) {
-      return {
-        ...patchedParsed,
-        income:        { total: 0, sources: [], transactions: [] },
-        expenses:      { total: 0, categories: [], transactions: [] },
-        subscriptions: [],
-        savingsRate:   0,
-      };
-    }
-    return patchedParsed;
-  });
-}
 
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
@@ -278,6 +171,7 @@ export async function GET(request: NextRequest) {
     }
 
     // ── Load category rules for this user ────────────────────────────────────
+    // Still needed for applyRulesAndRecalculate on the consolidated statement view.
     const rulesSnap = await db.collection(`users/${uid}/categoryRules`).get();
     const categoryRulesMap = new Map<string, string>();
     for (const ruleDoc of rulesSnap.docs) {
@@ -286,6 +180,11 @@ export async function GET(request: NextRequest) {
         categoryRulesMap.set(merchantSlug(r.merchant as string), r.category as string);
       }
     }
+
+    // ── Financial profile cache — single source of truth for all spending data ─
+    // Category rules are pre-applied. Numbers guaranteed to match insights route.
+    const profile = await getFinancialProfile(uid, db);
+    const { expenseTxns } = profile;
 
     // ── Current month: carry-forward balances for all accounts ──────────────
     const currentStatements = carryForwardStatements(allCompleted, month);
@@ -351,21 +250,12 @@ export async function GET(request: NextRequest) {
         const hAssets = (c.assets ?? Math.max(0, c.netWorth ?? 0)) + manualAssetsTotal;
         const hNetWorth = hAssets - (c.debts ?? Math.max(0, -(c.netWorth ?? 0)));
         const hDebts = c.debts ?? Math.max(0, -(c.netWorth ?? 0));
-        // Expenses use transaction-date filtering to avoid billing-period double-counting.
-        // Income uses the statement-level aggregate (see below).
-        const monthTxns = (c.expenses?.transactions ?? [])
-          .filter((t) => (t.date ?? `${ym}-15`).slice(0, 7) === ym)
-          .filter((t) => !isBalanceMarker(t.merchant));
-        const txDateExpenses = monthTxns.reduce((s, t) => s + t.amount, 0);
-        // Core expenses excludes transfers, debt payments, and investment transfers
-        // so the dashboard can optionally show discretionary-only spending.
-        const txDateCoreExpenses = monthTxns
-          .filter((t) => !/^(transfers|transfers & payments|debt payments|investments & savings)$/i.test((t.category ?? "").trim()))
-          .reduce((s, t) => s + t.amount, 0);
-        // Income uses the statement-level total: the AI parser correctly attributes income
-        // to its statement period. Unlike expenses (billing periods can span months),
-        // income has no double-counting risk — use the aggregate directly.
-        const txDateIncome = c.income?.total ?? 0;
+        // Expenses: read from profile cache (transaction-date-based, category rules applied)
+        // so the chart numbers are identical to what the insights route and Spending page show.
+        const cached = profile.monthlyHistory.find((h) => h.yearMonth === ym);
+        const txDateExpenses     = cached?.expensesTotal     ?? 0;
+        const txDateCoreExpenses = cached?.coreExpensesTotal ?? 0;
+        const txDateIncome       = cached?.incomeTotal       ?? c.income?.total ?? 0;
         history.push({ yearMonth: ym, netWorth: hNetWorth, expensesTotal: txDateExpenses, coreExpensesTotal: txDateCoreExpenses, incomeTotal: txDateIncome, debtTotal: hDebts });
 
         // Build per-source income history — only for months that had real statements
@@ -416,20 +306,17 @@ export async function GET(request: NextRequest) {
     for (const ym of Array.from(yearMonths).sort()) {
       const carried = carryForwardStatements(allCompleted, ym);
       for (const parsed of carried) {
-        const slug = accountSlug(parsed);
+        const slug = buildAccountSlug(parsed.bankName, parsed.accountId);
         const realForThisMonth = allCompleted.some((doc) => {
           const d = doc.data();
           return docYearMonth(d) === ym &&
-            accountSlug(d.parsedData as ParsedStatementData) === slug;
+            buildAccountSlug((d.parsedData as ParsedStatementData).bankName, (d.parsedData as ParsedStatementData).accountId) === slug;
         });
-        // Find the source document by slug+month with the same priority as carryForwardStatements:
-        // prefer non-CSV over CSV; within same source type prefer most recently uploaded.
-        // (Avoid reference equality which breaks when carryForwardStatements returns patched objects.)
         const sourceDoc = allCompleted
           .filter((doc) => {
             const d = doc.data();
             return docYearMonth(d) === ym &&
-              accountSlug(d.parsedData as ParsedStatementData) === slug;
+              buildAccountSlug((d.parsedData as ParsedStatementData).bankName, (d.parsedData as ParsedStatementData).accountId) === slug;
           })
           .sort((a, b) => {
             const aIsCSV = (a.data().source as string | undefined) === "csv";
@@ -566,14 +453,31 @@ export async function GET(request: NextRequest) {
       ? ((sortedByCreated[0].data() as FirebaseFirestore.DocumentData).createdAt?.toDate?.()?.toISOString() ?? null)
       : null;
 
-    // Transaction-date-based income/expense for the requested month.
-    // Use these instead of data.income?.total / data.expenses?.total in all pages.
-    const txMonthlyExpenses = (enrichedConsolidated.expenses?.transactions ?? [])
-      .filter((t) => (t.date ?? `${month}-15`).slice(0, 7) === month)
-      .reduce((s, t) => s + t.amount, 0);
+    // Transaction-date-based expenses for the requested month — from extracted data.
+    // Replaces the statement-level aggregate so this matches the insights route exactly.
+    const monthExpTxns = expenseTxns.filter((t) => t.txMonth === month);
+    const txMonthlyExpenses = monthExpTxns.reduce((s, t) => s + t.amount, 0);
     // Income uses the statement-level total: no double-counting risk for deposits,
     // and the AI parser correctly attributes income to the statement period.
     const txMonthlyIncome = enrichedConsolidated.income?.total ?? 0;
+
+    // Override enrichedConsolidated.expenses.transactions with extracted data so the
+    // spending page transaction list matches the insights route's transaction set.
+    enrichedConsolidated = {
+      ...enrichedConsolidated,
+      expenses: {
+        ...enrichedConsolidated.expenses,
+        total: txMonthlyExpenses,
+        transactions: monthExpTxns.map((t) => ({
+          date: t.date,
+          merchant: t.merchant,
+          amount: t.amount,
+          category: t.category,
+          accountLabel: t.accountLabel,
+          recurring: t.recurring,
+        })),
+      },
+    };
 
     return NextResponse.json({
       data: enrichedConsolidated,

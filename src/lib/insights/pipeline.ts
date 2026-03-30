@@ -19,7 +19,7 @@ import { getYearMonth } from "@/lib/consolidate";
 import { inferFinancialDNA } from "@/lib/financialDNA";
 import { generateAgentInsights } from "@/lib/agentInsights";
 import { buildFinancialBrief, type BriefMode } from "@/lib/financialBrief";
-import { extractAllTransactions } from "@/lib/extractTransactions";
+import { buildAndCacheFinancialProfile } from "@/lib/financialProfile";
 import type { ParsedStatementData } from "@/lib/types";
 import { getDetectorsForEvent } from "./registry";
 import type { DetectorContext, InsightEvent } from "./types";
@@ -30,9 +30,11 @@ export async function runInsightsPipeline(
   db: Firestore.Firestore,
   event: InsightEvent = { type: "full.refresh" }
 ): Promise<void> {
-  // ── 1. Extract all transaction data ────────────────────────────────────────
-  const txData = await extractAllTransactions(uid, db);
-  const { expenseTxns, incomeTxns, accountSnapshots, subscriptions, latestTxMonth, allTxMonths } = txData;
+  // ── 1. Build (or refresh) the financial profile cache ──────────────────────
+  // This is the single-source computation. All API routes that call
+  // getFinancialProfile() will pick up the freshly built cache automatically.
+  const profile = await buildAndCacheFinancialProfile(uid, db);
+  const { expenseTxns, incomeTxns, accountSnapshots, latestTxMonth, allTxMonths } = profile;
 
   const relevantMonths = allTxMonths.slice(-INSIGHTS_MAX_MONTHS);
 

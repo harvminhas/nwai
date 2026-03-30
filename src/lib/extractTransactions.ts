@@ -14,6 +14,7 @@ import type { ParsedStatementData } from "./types";
 import { buildAccountSlug } from "./accountSlug";
 import { getYearMonth } from "./consolidate";
 import { txFingerprint } from "./txFingerprint";
+import { isBalanceMarker } from "./balanceMarkers";
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,7 @@ export interface ExpenseTxnRecord {
   merchant: string;
   category: string;
   accountSlug: string;
+  accountLabel: string; // e.g. "TD ••••7780" — for display in transaction lists
   recurring?: string;
 }
 
@@ -137,12 +139,17 @@ export async function extractAllTransactions(
       const stmtYm = docYearMonth(d);
       const parsed = d.parsedData as ParsedStatementData;
       const slug = buildAccountSlug(parsed.bankName, parsed.accountId);
+      const bank  = (parsed.bankName ?? "").trim();
+      const label = parsed.accountName
+        ?? (slug === "unknown" ? bank || "Unknown Account" : [bank, `••••${slug}`].filter(Boolean).join(" "));
       for (const txn of parsed.expenses?.transactions ?? []) {
         const date = txn.date ?? `${stmtYm}-15`;
         const txMonth = date.slice(0, 7);
         const fp = txFingerprint(parsed.accountId ?? slug, date, txn.amount, txn.merchant ?? "");
         if (isCSV && expFingerprintsFromStmt.has(fp)) continue; // duplicate — skip CSV copy
         if (!isCSV) expFingerprintsFromStmt.add(fp);
+        if (isBalanceMarker(txn.merchant ?? "")) continue; // skip AI-leaked balance rows
+        if ((txn.amount ?? 0) <= 0) continue; // expense amounts must be positive (money out)
         expenseTxns.push({
           date,
           txMonth,
@@ -150,6 +157,7 @@ export async function extractAllTransactions(
           merchant: txn.merchant ?? "Unknown",
           category: txn.category ?? "Other",
           accountSlug: slug,
+          accountLabel: label,
           recurring: txn.recurring,
         });
       }
