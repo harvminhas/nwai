@@ -108,7 +108,66 @@ The insights layer (`src/lib/insights/`) is a separate, orthogonal concern:
 - Insights write exclusively to `users/{uid}/agentInsights`, `users/{uid}/subscriptions`, and `users/{uid}.financialDNA`.
 - **Never** write `parsedData` or any field on `statements/{id}` from the insights layer.
 
-### 11. Detector pattern — how to add a new insight domain
+### 11. Financial Profile is the single source of truth for all spending data
+
+All API routes and pages that need spending, income, or balance data **must** call
+`getFinancialProfile(uid, db)` from `src/lib/financialProfile.ts`. Direct calls to
+`extractAllTransactions()` from routes or UI are not allowed.
+
+**Why:** `getFinancialProfile` is the single computation path that:
+- Applies user category rules to every transaction
+- Enforces `CORE_EXCLUDE_RE` consistently (transfers excluded, all other expenses included)
+- Filters out invalid data (negative-amount expense transactions)
+- Pre-computes `typicalMonthly` (median/avg) and `monthlyHistory` for all months
+- Caches results in `users/{uid}/financialProfile` so every route sees identical numbers
+
+**Cache freshness strategy — Time + Version + Schema:**
+- `< 5 min` old → return immediately (hot path)
+- `5 min – 24 h` → check source version hash; rebuild only if statements changed
+- `> 24 h` → always rebuild
+- `schemaVersion` mismatch → always rebuild (bump `SCHEMA_VERSION` in `financialProfile.ts` when computation logic changes)
+
+**Cache invalidation triggers:**
+- Statement parsed → `insights/pipeline.ts` calls `buildAndCacheFinancialProfile`
+- Category rule saved → `category-rules/route.ts` calls `invalidateFinancialProfileCache`
+- Manual refresh → any caller invokes `buildAndCacheFinancialProfile` directly
+
+**`CORE_EXCLUDE_RE`** in `src/lib/spendingMetrics.ts` is the single definition of what
+"Excl. transfers" means. Currently: inter-account transfers only (`transfers`, `transfers & payments`).
+Debt payments, investments, and all other categories are counted as real spending.
+Do not change this regex without user review — it affects every spending total everywhere.
+
+### 12. External Data Layer is orthogonal — `getFinancialProfile` is its only dependency
+
+```
+[ Scheduled Job ]        POST /api/cron/refresh-external-data  (daily/weekly)
+     ↓
+[ External Data Layer ]  src/lib/external/
+     ├─ fetchers/        one file per data source (Bank of Canada, FRED, etc.)
+     ├─ store.ts         read/write  externalData/{dataType}  in Firestore (global, not per-user)
+     ├─ registry.ts      maps dataType → { country, relevant(profile) }
+     └─ pipeline.ts      for each affected user:
+                           1. getFinancialProfile(uid, db)   ← ONLY dependency on other layers
+                           2. relevance check (country + account types)
+                           3. emit signal if relevant → persist to users/{uid}/agentInsights
+```
+
+**Rules:**
+- The external data layer MUST NOT import from `parseStatement.ts`, `consolidate.ts`,
+  `extractAllTransactions.ts`, `insights/`, or any ingestion route.
+- Its only permitted cross-layer call is `getFinancialProfile(uid, db)`.
+- Global market/rate data lives in `externalData/{dataType}` — one document per data type,
+  shared across all users. Never stored per-user.
+- Relevance is checked at pipeline time, not at fetch time. Fetch first, filter per user second.
+- Country is auto-detected from `profile.accountSnapshots` bank names (TD/RBC/BMO → CA;
+  Chase/BofA → US). A user-set `profile.country` field overrides auto-detection when added.
+
+**To add a new external data source:**
+1. Add a fetcher in `src/lib/external/fetchers/<source>.ts`
+2. Register it in `src/lib/external/registry.ts` with its `country` and `relevant()` function
+3. Nothing else in the codebase needs to change
+
+### 13. Detector pattern — how to add a new insight domain
 
 Each insight domain is a single file implementing `InsightDetector` (from `src/lib/insights/types.ts`).
 

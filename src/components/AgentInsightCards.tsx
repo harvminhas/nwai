@@ -92,7 +92,7 @@ function InsightRow({ card, token, onDismiss, onComplete }: RowProps) {
         <p className="flex-1 min-w-0 truncate text-sm font-medium text-gray-800">{card.title}</p>
 
         {/* dollar impact — hide when zero (AI placeholder) */}
-        {card.dollarImpact !== null && card.dollarImpact !== 0 && (
+        {card.dollarImpact != null && card.dollarImpact !== 0 && (
           <span className="shrink-0 text-xs font-semibold text-gray-500 tabular-nums">
             {fmt(card.dollarImpact)}{card.impactLabel ? ` ${card.impactLabel}` : ""}
           </span>
@@ -144,7 +144,7 @@ function InsightRow({ card, token, onDismiss, onComplete }: RowProps) {
             {/* action buttons + dismiss */}
             {!confirming && !result && (
               <div className="mt-3 flex items-center gap-2 flex-wrap">
-                {card.actions.map((action) => (
+                {(card.actions ?? []).map((action) => (
                   <button
                     key={action.id}
                     onClick={() => executeAction(action)}

@@ -66,6 +66,10 @@ export default function DebugParsePage() {
   const [spendError, setSpendError]             = useState<string | null>(null);
   const [spendTab, setSpendTab]                 = useState<"summary" | "txns" | "history">("summary");
 
+  const [cronLoading, setCronLoading]           = useState(false);
+  const [cronResult, setCronResult]             = useState<Record<string, unknown> | null>(null);
+  const [cronError, setCronError]               = useState<string | null>(null);
+
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
@@ -125,6 +129,24 @@ export default function DebugParsePage() {
       setInsightsError(e instanceof Error ? e.message : "Unknown error");
     } finally {
       setInsightsLoading(false);
+    }
+  }
+
+  async function runCron() {
+    if (!idToken) return;
+    setCronLoading(true); setCronError(null); setCronResult(null);
+    try {
+      const res  = await fetch("/api/cron/refresh-external-data", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) { setCronError(json.error || "Failed"); return; }
+      setCronResult(json);
+    } catch (e) {
+      setCronError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setCronLoading(false);
     }
   }
 
@@ -353,6 +375,50 @@ export default function DebugParsePage() {
               <span className="text-red-500">{insightsResult.parseError}</span>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ── External Data Refresh ───────────────────────────────────────────── */}
+      <div>
+        <h2 className="text-xl font-bold text-gray-900">External Data Refresh</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          Fetches Bank of Canada rates and CPI, then pushes personalized insight cards to all relevant users.
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm flex items-center justify-between gap-4">
+        <p className="text-sm text-gray-500">Only runs sources that are due for refresh. Safe to trigger manually.</p>
+        <button
+          onClick={runCron}
+          disabled={cronLoading || !idToken}
+          className="rounded-lg bg-green-600 px-5 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50 transition flex items-center gap-2 shrink-0"
+        >
+          {cronLoading && <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />}
+          {cronLoading ? "Running…" : "▶ Run External Refresh"}
+        </button>
+      </div>
+
+      {cronError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{cronError}</div>
+      )}
+
+      {cronResult && (
+        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Result</p>
+          <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+            <span className="text-gray-500">Users checked: <span className="font-medium text-gray-800">{String(cronResult.users ?? "—")}</span></span>
+            <span className="text-gray-500">Users notified: <span className="font-medium text-gray-800">{String(cronResult.usersNotified ?? "—")}</span></span>
+            <span className="text-gray-500">Refreshed: <span className="font-medium text-gray-800">{Array.isArray(cronResult.refreshed) ? (cronResult.refreshed as string[]).join(", ") || "none" : "—"}</span></span>
+            <span className="text-gray-500">Skipped (not due): <span className="font-medium text-gray-800">{Array.isArray(cronResult.skipped) ? (cronResult.skipped as string[]).join(", ") || "none" : "—"}</span></span>
+          </div>
+          {Array.isArray(cronResult.fetchErrors) && (cronResult.fetchErrors as string[]).length > 0 && (
+            <div className="mt-3 space-y-1">
+              <p className="text-xs font-semibold text-red-500">Fetch errors:</p>
+              {(cronResult.fetchErrors as string[]).map((e, i) => (
+                <p key={i} className="text-xs text-red-600 font-mono">{e}</p>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

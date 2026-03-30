@@ -104,6 +104,16 @@ export interface AgentCard {
   completedAt: string | null;
   /** Statement ID that triggered generation of this card */
   sourceStatementId: string | null;
+
+  // ── External data cards (source === "external") ──────────────────────────
+  /** "agent" for AI-generated cards; "external" for macro/market data cards */
+  source?: "agent" | "external";
+  /** ExternalDataPoint.dataType, e.g. "canada-overnight-rate" */
+  dataType?: string;
+  /** Direct link to the source (used instead of actions for external cards) */
+  href?: string | null;
+  /** ISO date or YYYY-MM string of the data release */
+  releaseDate?: string;
 }
 
 // ── Action Queue ──────────────────────────────────────────────────────────────
