@@ -593,6 +593,44 @@ export default function TodayPage() {
     );
   }
 
+  // ── MobileCardShell — fixed-height clamp with expand/collapse for the mobile strip ──
+  function MobileCardShell({ children }: { children: React.ReactNode }) {
+    const [expanded, setExpanded] = useState(false);
+    return (
+      <div className="relative">
+        <div className={`overflow-hidden rounded-xl transition-[max-height] duration-300 ease-in-out ${expanded ? "max-h-[600px]" : "max-h-36"}`}>
+          {children}
+        </div>
+        {!expanded && (
+          <button
+            onClick={() => setExpanded(true)}
+            className="absolute bottom-0 inset-x-0 flex items-end justify-center pt-8 pb-2 bg-gradient-to-t from-white via-white/80 to-transparent rounded-b-xl"
+          >
+            <span className="text-[10px] font-semibold text-gray-400 flex items-center gap-0.5">
+              More
+              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </span>
+          </button>
+        )}
+        {expanded && (
+          <button
+            onClick={() => setExpanded(false)}
+            className="mt-1 w-full flex justify-center"
+          >
+            <span className="text-[10px] font-semibold text-gray-400 flex items-center gap-0.5">
+              Less
+              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+              </svg>
+            </span>
+          </button>
+        )}
+      </div>
+    );
+  }
+
   // ── MarketContextStub ─────────────────────────────────────────────────────────
   function MarketContextStub() {
     return (
@@ -631,32 +669,29 @@ export default function TodayPage() {
       {token && <ParseStatusBanner onRefresh={() => load(token)} />}
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="mb-5 flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Today</h1>
-          <p className="mt-0.5 text-sm text-gray-400">{todayLabel()}</p>
-        </div>
-        <div className="flex items-center gap-2 mt-1">
-          <button
-            onClick={handleRefresh} disabled={refreshing}
-            className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-500 shadow-sm hover:border-gray-300 hover:text-gray-700 disabled:opacity-40 transition"
-          >
-            <svg className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            {refreshing ? "Refreshing…" : "Preview scenario"}
-          </button>
-          <Link href="/account/upload"
-            className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-500 shadow-sm hover:border-gray-300 hover:text-gray-700 transition">
-            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-            </svg>
-            Upload statement
-          </Link>
-        </div>
+      <div className="mb-5">
+        <h1 className="text-2xl font-bold text-gray-900">Today</h1>
+        <p className="mt-0.5 text-sm text-gray-400">{todayLabel()}</p>
       </div>
 
       {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
+
+      {/* ── Mobile sidebar strip (horizontal scroll, hidden on desktop) ──────── */}
+      <div className="lg:hidden -mx-4 px-4 mb-5">
+        <div className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory scrollbar-hide">
+          <div className="snap-start shrink-0 w-64">
+            <MobileCardShell><NetWorthCard /></MobileCardShell>
+          </div>
+          {agentCards.map((card) => (
+            <div key={card.id} className="snap-start shrink-0 w-64">
+              <MobileCardShell><SidebarSignalCard card={card} /></MobileCardShell>
+            </div>
+          ))}
+          <div className="snap-start shrink-0 w-64">
+            <MobileCardShell><MarketContextStub /></MobileCardShell>
+          </div>
+        </div>
+      </div>
 
       {/* ── Two-column layout ────────────────────────────────────────────────── */}
       <div className="flex gap-6 items-start">
