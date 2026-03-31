@@ -12,8 +12,9 @@
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getYearMonth } from "@/lib/consolidate";
 import { buildAccountSlug } from "@/lib/accountSlug";
+import { getFinancialProfile } from "@/lib/financialProfile";
+import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
 import {
-  extractAllTransactions,
   incomeTotalForMonth,
   expenseTotalForMonth,
 } from "@/lib/extractTransactions";
@@ -62,8 +63,10 @@ export type BriefMode = "chat" | "insights";
 export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat"): Promise<string> {
   const { db } = getFirebaseAdmin();
 
-  const txData = await extractAllTransactions(uid, db);
-  const { expenseTxns, incomeTxns, accountSnapshots, subscriptions, latestTxMonth, allTxMonths } = txData;
+  // Use the financial profile cache — same data source as the Spending page and Today insights.
+  // Category rules and CORE_EXCLUDE_RE are pre-applied; numbers will match what the user sees.
+  const profile = await getFinancialProfile(uid, db);
+  const { expenseTxns, incomeTxns, accountSnapshots, latestTxMonth, allTxMonths } = profile;
 
   if (!latestTxMonth) return "No financial data available yet.";
 
@@ -97,10 +100,10 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat")
     .filter((a) => /checking|savings|cash/i.test(a.accountType))
     .reduce((s, a) => s + Math.max(0, a.balance), 0);
 
-  // Monthly figures
+  // Monthly figures — use CORE_EXCLUDE_RE so these match the Spending page's "core expenses" total
   const monthlyIncome = incomeTotalForMonth(incomeTxns, month);
   const monthlyExp    = expenseTxns
-    .filter((t) => t.txMonth === month && !/transfer|payment/i.test(t.category))
+    .filter((t) => t.txMonth === month && !CORE_EXCLUDE_RE.test((t.category ?? "").trim()))
     .reduce((s, t) => s + t.amount, 0);
   const monthlySav  = monthlyIncome - monthlyExp;
   const savingsRate = monthlyIncome > 0 ? (monthlySav / monthlyIncome) * 100 : 0;
@@ -212,10 +215,8 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat")
         .join("\n")
     : "";
 
-  // Fallback to AI-extracted subscriptions if detector hasn't run yet
-  const subs = confirmedSubs.length === 0 && suggestedSubs.length === 0
-    ? subscriptions.map((s) => `  ${s.name}: ${fmt(s.amount)}/mo`).join("\n")
-    : "";
+  // No AI-extracted subscription fallback — confirmed/suggested subs from Firestore are authoritative
+  const subs = "";
 
   // Cash commitments
   const cashSection = cashSnap.docs.map((d) => {
@@ -241,10 +242,12 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat")
     return `  ${g.emoji ?? "🎯"} ${g.title}: ${fmt(g.currentAmount ?? 0)} / ${fmt(g.targetAmount ?? 0)} (${pct}%)`;
   }).join("\n");
 
-  // Monthly trend (all months, newest first)
+  // Monthly trend — use pre-computed profile history so figures match the Spending page exactly
+  const historyByMonth = new Map(profile.monthlyHistory.map((h) => [h.yearMonth, h]));
   const historyLines = allTxMonths.map((ym) => {
-    const inc = incomeTotalForMonth(incomeTxns, ym);
-    const exp = expenseTotalForMonth(expenseTxns, ym);
+    const h = historyByMonth.get(ym);
+    const inc = h?.incomeTotal   ?? incomeTotalForMonth(incomeTxns, ym);
+    const exp = h?.coreExpensesTotal ?? expenseTotalForMonth(expenseTxns, ym);
     return `  ${ym}: Income ${fmt(inc)}, Expenses ${fmt(exp)}, Net ${fmt(inc - exp)}`;
   }).reverse();
 
