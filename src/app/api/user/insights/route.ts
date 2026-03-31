@@ -5,7 +5,12 @@ import type { ParsedStatementData } from "@/lib/types";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { merchantSlug } from "@/lib/applyRules";
 import { getFinancialProfile } from "@/lib/financialProfile";
+import { getNetWorth } from "@/lib/profileMetrics";
 import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
+import { detectFrequency } from "@/lib/incomeEngine";
+import { projectNextDates, nextUpcoming, toDateStr } from "@/lib/projectionEngine";
+import { computeRadarItems } from "@/lib/today/computeRadarItems";
+import type { RadarItem, CalendarEvent, FreshnessData, NetWorthSnapshot } from "@/lib/today/types";
 
 async function getUid(req: NextRequest): Promise<string | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
@@ -465,115 +470,84 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // ── E. Expected income (from historical deposit-day patterns) ─────────────
-  // Build per-source deposit day patterns using income.sources across all statements
-  interface IncomeSourcePattern {
-    days: number[];
-    totalPerOccurrence: number[];
-    account: string;
+  // ── E. Expected income — frequency-aware projection ─────────────────────────
+  // Group incomeTxns by source, detect frequency, project next dates using
+  // medianGap instead of day-of-month (which breaks for biweekly pay).
+  const incomeBySource = new Map<string, typeof incomeTxns>();
+  for (const txn of incomeTxns) {
+    const key = normKey(txn.source || txn.description || "income");
+    const arr = incomeBySource.get(key) ?? [];
+    arr.push(txn);
+    incomeBySource.set(key, arr);
   }
-  const incomeSourcePatterns = new Map<string, IncomeSourcePattern>();
 
-  for (const doc of stmtSnap.docs.slice(0, 8)) {
-    const p = doc.data().parsedData as ParsedStatementData | undefined;
-    if (!p) continue;
-    const acctLabel = [p.bankName ?? "", p.accountId ? `*${p.accountId.slice(-4)}` : ""]
-      .filter(Boolean).join(" ");
-    for (const txn of (p.income?.transactions ?? [])) {
-      if (!txn.date) continue;
-      const day = parseInt(txn.date.slice(8, 10));
-      if (isNaN(day) || day < 1 || day > 31) continue;
-      const srcKey = normKey(txn.source || txn.category || "income");
-      if (!incomeSourcePatterns.has(srcKey)) {
-        incomeSourcePatterns.set(srcKey, { days: [], totalPerOccurrence: [], account: acctLabel });
+  for (const [srcKey, txns] of incomeBySource) {
+    if (txns.length < 1) continue;
+
+    const sortedByDate = [...txns].sort((a, b) => b.date.localeCompare(a.date));
+    const lastDate     = sortedByDate[0].date;
+    const allDates     = txns.map((t) => t.date).filter(Boolean).sort();
+    const freq         = detectFrequency(allDates);
+
+    const amounts      = txns.map((t) => t.amount).filter((a) => a > 0);
+    const medianAmt    = amounts.length > 0
+      ? [...amounts].sort((a, b) => a - b)[Math.floor(amounts.length / 2)]
+      : 0;
+    if (medianAmt <= 0) continue;
+
+    const sourceName = txns[0].source || txns[0].description ||
+      srcKey.replace(/\b\w/g, (c) => c.toUpperCase());
+
+    if (freq.frequency !== "irregular" && freq.medianGap && freq.medianGap >= 5) {
+      // Frequency-aware: project from last date using gap
+      const projections = projectNextDates(lastDate, freq.medianGap, 4, true);
+      const seenDates   = new Set<string>();
+
+      for (const p of projections) {
+        if (p.daysFromToday > LOOK_AHEAD) break;
+        if (p.daysFromToday < -3) continue;
+        if (seenDates.has(p.dateStr)) continue;
+        seenDates.add(p.dateStr);
+
+        const patternLabel = `Predicted from ${freq.medianGap}-day pattern`;
+        upcoming.push({
+          id: `income-proj-${srcKey}-${p.dateStr}`,
+          date: p.dateStr,
+          daysFromNow: p.daysFromToday,
+          title: sourceName,
+          subtitle: p.daysFromToday < 0
+            ? `May have already arrived · ${patternLabel}`
+            : patternLabel,
+          amount: Math.round(medianAmt),
+          type: "cash-in",
+          href: "/account/income",
+          isOverdue: p.daysFromToday < 0,
+          isThisMonth: false,
+          predictedDate: p.dateStr,
+        });
       }
-      const pat = incomeSourcePatterns.get(srcKey)!;
-      pat.days.push(day);
-      if (txn.amount) pat.totalPerOccurrence.push(txn.amount);
-    }
-  }
-
-  // For each income source, predict next deposit date
-  const addedIncomeDays = new Set<number>(); // avoid duplicates for same-day multi-source
-  for (const [srcKey, pat] of incomeSourcePatterns) {
-    if (pat.days.length < 1) continue;
-    const sorted = [...pat.days].sort((a, b) => a - b);
-    const medianDay = sorted[Math.floor(sorted.length / 2)];
-    if (addedIncomeDays.has(medianDay)) continue;
-
-    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    const targetDay   = Math.min(medianDay, daysInMonth);
-    const mm  = String(now.getMonth() + 1).padStart(2, "0");
-    const dd  = String(targetDay).padStart(2, "0");
-    const expectedDate = `${now.getFullYear()}-${mm}-${dd}`;
-    const diff = daysBetween(today, expectedDate);
-
-    // Show if within look-ahead or up to 3 days past
-    if (diff > LOOK_AHEAD || diff < -3) continue;
-
-    const avgAmount = pat.totalPerOccurrence.length > 0
-      ? pat.totalPerOccurrence.reduce((s, v) => s + v, 0) / pat.totalPerOccurrence.length
-      : income / Math.max(incomeSourcePatterns.size, 1);
-    if (avgAmount <= 0) continue;
-
-    // Try to get a readable source name from consolidated income sources
-    const sourceName = consolidated?.income?.sources?.find((s) =>
-      normKey(s.description ?? "").slice(0, 6) === srcKey.slice(0, 6)
-    )?.description ?? srcKey.replace(/\b\w/g, (c) => c.toUpperCase());
-
-    addedIncomeDays.add(medianDay);
-    upcoming.push({
-      id: `income-${srcKey}`,
-      date: expectedDate,
-      daysFromNow: diff,
-      title: sourceName,
-      subtitle: diff < 0 ? `${pat.account ? pat.account + " · " : ""}May have already arrived` : `${pat.account ? pat.account + " · " : ""}Based on ${pat.days.length} deposit${pat.days.length !== 1 ? "s" : ""}`,
-      amount: Math.round(avgAmount),
-      type: "cash-in",
-      href: "/account/income",
-      isOverdue: false,
-      isThisMonth: diff < -3,
-    });
-  }
-
-  // Fallback: if no income transaction-level data, use aggregate deposit day from all txns
-  if (incomeSourcePatterns.size === 0) {
-    const incomeDepositDays: number[] = [];
-    for (const d of stmtSnap.docs.slice(0, 6)) {
-      const txns = (d.data().parsedData as ParsedStatementData | undefined)?.income?.transactions ?? [];
-      for (const t of txns) {
-        if (t.date) {
-          const day = parseInt(t.date.slice(8, 10));
-          if (!isNaN(day)) incomeDepositDays.push(day);
-        }
+    } else {
+      // Fallback: day-of-month median for monthly/irregular
+      const days      = allDates.map((d) => parseInt(d.slice(8, 10)));
+      const medianDay = [...days].sort((a, b) => a - b)[Math.floor(days.length / 2)];
+      const daysInMo  = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      const targetDay = Math.min(medianDay, daysInMo);
+      const expectedDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(targetDay).padStart(2, "0")}`;
+      const diff      = daysBetween(today, expectedDate);
+      if (diff <= LOOK_AHEAD && diff >= -3) {
+        upcoming.push({
+          id: `income-${srcKey}`,
+          date: expectedDate,
+          daysFromNow: diff,
+          title: sourceName,
+          subtitle: diff < 0 ? "May have already arrived" : `Based on ${txns.length} deposit${txns.length !== 1 ? "s" : ""}`,
+          amount: Math.round(medianAmt),
+          type: "cash-in",
+          href: "/account/income",
+          isOverdue: diff < 0,
+          isThisMonth: diff < -3,
+        });
       }
-    }
-    const dayCounts: Record<number, number> = {};
-    for (const d of incomeDepositDays) dayCounts[d] = (dayCounts[d] ?? 0) + 1;
-    const topDays = Object.entries(dayCounts)
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, 2)
-      .map(([day]) => parseInt(day));
-
-    for (const day of topDays) {
-      const paddedDay = String(day).padStart(2, "0");
-      const expectedDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${paddedDay}`;
-      const diff = daysBetween(today, expectedDate);
-      if (diff > LOOK_AHEAD || diff < -3) continue;
-      const avgIncome = income > 0 ? income / Math.max(topDays.length, 1) : 0;
-      if (avgIncome <= 0) continue;
-      upcoming.push({
-        id: `income-${day}`,
-        date: expectedDate,
-        daysFromNow: diff,
-        title: "Income expected",
-        subtitle: diff < 0 ? "May have already arrived" : "Based on historical pattern",
-        amount: Math.round(avgIncome),
-        type: "cash-in",
-        href: "/account/income",
-        isOverdue: false,
-        isThisMonth: diff < -3,
-      });
     }
   }
 
@@ -688,15 +662,208 @@ export async function GET(req: NextRequest) {
       const bDate = b.predictedDate ?? "";
       const aIsPast = aDate && aDate < todayStr;
       const bIsPast = bDate && bDate < todayStr;
-      // upcoming before past
       if (!aIsPast && bIsPast) return -1;
       if (aIsPast && !bIsPast) return 1;
-      // both upcoming → soonest first; both past → most recent first
       if (!aIsPast && !bIsPast) return aDate.localeCompare(bDate);
       return bDate.localeCompare(aDate);
     }
     return a.date.localeCompare(b.date);
   });
 
-  return NextResponse.json({ alerts: cappedAlerts, upcoming, today, insights: todayInsights });
+  // ── F. Radar (calendar collision detection) ───────────────────────────────
+  // Build merchantPatternDates map for annual bill detection
+  const merchantPatternDates = new Map<string, { dates: string[]; amounts: number[] }>();
+  for (const doc of stmtSnap.docs) {
+    const p = doc.data().parsedData as ParsedStatementData | undefined;
+    if (!p) continue;
+    for (const txn of (p.expenses?.transactions ?? [])) {
+      if (!txn.date || !txn.merchant) continue;
+      const key = normKey(txn.merchant);
+      if (!merchantPatternDates.has(key)) merchantPatternDates.set(key, { dates: [], amounts: [] });
+      const entry = merchantPatternDates.get(key)!;
+      entry.dates.push(txn.date);
+      if (txn.amount) entry.amounts.push(Math.abs(txn.amount));
+    }
+  }
+
+  const radar: RadarItem[] = computeRadarItems({
+    incomeTxns,
+    expenseTxns,
+    cashCommitments: cashItems,
+    aiSubs: consolidated?.subscriptions ?? [],
+    merchantPatternDates,
+  });
+
+  // ── G. Calendar events (overdue + this month) ─────────────────────────────
+  // Convert upcoming items into the richer CalendarEvent format
+  function upcomingToCalendarEvent(item: UpcomingItem): CalendarEvent {
+    const tags: CalendarEvent["tags"] = [];
+    if (item.isOverdue) tags.push({ type: "overdue", text: `${Math.abs(item.daysFromNow)}d overdue` });
+    const patternTag = item.predictedDate
+      ? (() => {
+          // Extract the gap hint from the subtitle if present
+          const m = item.subtitle?.match(/(\d+)-day pattern/);
+          return m ? `Predicted from ${m[1]}-day pattern` : "Predicted";
+        })()
+      : undefined;
+
+    const timing = item.isOverdue
+      ? `Expected ${new Date(item.date + "T00:00:00").toLocaleDateString("en-CA", { month: "short", day: "numeric" })}`
+      : item.daysFromNow === 0 ? "Today"
+      : item.daysFromNow === 1 ? "due tomorrow"
+      : item.predictedDate
+        ? `Predicted · ${new Date(item.predictedDate + "T00:00:00").toLocaleDateString("en-CA", { month: "short", day: "numeric" })}`
+        : item.isThisMonth ? "this month"
+        : `due ${new Date(item.date + "T00:00:00").toLocaleDateString("en-CA", { month: "short", day: "numeric" })}`;
+
+    const iconBg = item.type === "cash-in"      ? "#dcfce7"
+                 : item.type === "debt"          ? "#fee2e2"
+                 : item.type === "subscription"  ? "#f3e8ff"
+                 : "#fef3c7";
+    const icon   = item.type === "cash-in"      ? "💵"
+                 : item.type === "debt"          ? "📋"
+                 : item.type === "subscription"  ? "🔄"
+                 : "💸";
+
+    const amtFmt = new Intl.NumberFormat("en-CA", {
+      style: "currency", currency: "CAD",
+      minimumFractionDigits: 0, maximumFractionDigits: 0,
+    }).format(item.amount);
+
+    return {
+      id: item.id,
+      icon,
+      iconBg,
+      title: item.title,
+      tags,
+      sub: item.subtitle ?? "",
+      patternTag,
+      amount: item.type === "cash-in" ? `+${amtFmt}` : `−${amtFmt}`,
+      amountClass: item.type === "cash-in" ? "income" : "expense",
+      timing,
+      status: item.isOverdue ? "overdue" : item.predictedDate ? "predicted" : "confirmed",
+      dueDate: item.date,
+      daysFromToday: item.daysFromNow,
+      href: item.href,
+    };
+  }
+
+  const overdueEvents: CalendarEvent[]    = upcoming.filter((i) => i.isOverdue).map(upcomingToCalendarEvent);
+  const thisMonthEvents: CalendarEvent[]  = upcoming.filter((i) => !i.isOverdue).map(upcomingToCalendarEvent);
+  const thisMonthCollapsedCount           = thisMonthEvents.filter(
+    (e) => e.dueDate < today && e.status !== "confirmed",
+  ).length;
+
+  // ── H. Freshness ──────────────────────────────────────────────────────────
+  // Build per-account upload dates from statement metadata
+  const acctUploadMap = new Map<string, string>(); // slug → ISO date
+  for (const doc of stmtSnap.docs) {
+    const p = doc.data().parsedData as ParsedStatementData | undefined;
+    if (!p) continue;
+    const slug    = buildAccountSlug(p.bankName, p.accountId);
+    const rawTs   = doc.data().uploadedAt?.toDate?.() ?? doc.data().uploadedAt;
+    const isoDate = rawTs instanceof Date ? rawTs.toISOString().slice(0, 10)
+                  : typeof rawTs === "string" ? rawTs.slice(0, 10) : today;
+    if (!acctUploadMap.has(slug) || isoDate > acctUploadMap.get(slug)!) {
+      acctUploadMap.set(slug, isoDate);
+    }
+  }
+
+  // Friendly account label per slug
+  const acctLabelMap = new Map<string, string>();
+  for (const doc of stmtSnap.docs) {
+    const p = doc.data().parsedData as ParsedStatementData | undefined;
+    if (!p) continue;
+    const slug  = buildAccountSlug(p.bankName, p.accountId);
+    if (!acctLabelMap.has(slug)) {
+      const label = p.accountType
+        ? p.accountType.charAt(0).toUpperCase() + p.accountType.slice(1).toLowerCase()
+        : p.bankName ?? "Account";
+      acctLabelMap.set(slug, label);
+    }
+  }
+
+  const freshnessAccounts = Array.from(acctUploadMap.entries()).map(([slug, date]) => ({
+    name:       acctLabelMap.get(slug) ?? slug,
+    uploadedAt: date,
+  }));
+
+  const mostRecentUpload = freshnessAccounts.length > 0
+    ? freshnessAccounts.map((a) => a.uploadedAt).sort().pop()!
+    : today;
+  const daysSinceUpload  = Math.max(0, Math.round(
+    (new Date(today + "T00:00:00").getTime() - new Date(mostRecentUpload + "T00:00:00").getTime()) / 86_400_000,
+  ));
+  const freshnessState   = daysSinceUpload <= 3 ? "fresh" : daysSinceUpload <= 14 ? "aging" : "stale";
+  const freshness: FreshnessData = {
+    state: freshnessState,
+    daysSinceUpload,
+    accounts: freshnessAccounts.sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt)),
+  };
+
+  // ── I. Net worth snapshot ─────────────────────────────────────────────────
+  const nw = getNetWorth(profile, thisMonth);
+  const netWorth: NetWorthSnapshot = {
+    total:           nw.total,
+    calculatedLabel: nw.calculatedLabel,
+    isStale:         nw.isStale,
+    accounts:        nw.accounts,
+  };
+
+  // ── Status banner ─────────────────────────────────────────────────────────
+  // Derive a single top-level status message from the most important condition.
+  // This replaces the old alerts[] for the banner position (alerts are still returned
+  // for backwards compat).
+  let statusText   = "";
+  let statusDetail = "";
+  let statusType: "ok" | "warn" | "alert" = "ok";
+
+  if (freshnessState === "stale") {
+    statusType   = "alert";
+    statusText   = `Statements are ${daysSinceUpload} days old — predictions are unreliable`;
+    statusDetail = "Upload your latest bank statement to get accurate predictions. Most predictions use data from your last upload.";
+  } else if (alerts.some((a) => a.type === "spending_pace")) {
+    statusType   = "warn";
+    statusText   = "Spending ahead of income";
+    statusDetail = alerts.find((a) => a.type === "spending_pace")?.body ?? "";
+  } else if (alerts.some((a) => a.type === "low_liquid")) {
+    statusType   = "warn";
+    statusText   = alerts.find((a) => a.type === "low_liquid")!.title;
+    statusDetail = alerts.find((a) => a.type === "low_liquid")!.body;
+  } else if (radar.some((r) => r.type === "warn" && r.targetMonthKey >= thisMonth)) {
+    const highWarn = radar.find((r) => r.type === "warn");
+    statusType   = "warn";
+    statusText   = `${highWarn?.when ?? "Upcoming month"} is a high-expense month — plan ahead`;
+    statusDetail = highWarn?.sub ?? "";
+  } else if (radar.some((r) => r.type === "windfall" && r.targetMonthKey >= thisMonth)) {
+    const windfall = radar.find((r) => r.type === "windfall");
+    statusType = "ok";
+    statusText   = `${windfall?.when ?? "Next month"} is a strong month — ${windfall?.amount ?? ""} extra`;
+    statusDetail = windfall?.sub ?? "";
+  } else if (spentThisMonth > 0 && typicalMonthlyExpenses > 0) {
+    const pace = (spentThisMonth / dayOfMonth) * daysInMonth;
+    if (pace <= typicalMonthlyExpenses * 0.95) {
+      statusType   = "ok";
+      statusText   = `On track — ${fmt(spentThisMonth)} spent so far`;
+      statusDetail = `On pace for ${fmt(Math.round(pace))}, below your typical ${fmt(Math.round(typicalMonthlyExpenses))}/mo`;
+    }
+  }
+
+  return NextResponse.json({
+    // Legacy fields (kept for backwards compat with existing UI consumers)
+    alerts: cappedAlerts,
+    upcoming,
+    today,
+    insights: todayInsights,
+    // New fields for redesigned Today page
+    radar,
+    overdueEvents,
+    thisMonthEvents,
+    thisMonthCollapsedCount,
+    freshness,
+    netWorth,
+    statusBanner: statusText
+      ? { type: statusType, text: statusText, detail: statusDetail }
+      : null,
+  });
 }

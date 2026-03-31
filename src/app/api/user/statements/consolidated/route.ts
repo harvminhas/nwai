@@ -5,6 +5,7 @@ import { applyRulesAndRecalculate, merchantSlug } from "@/lib/applyRules";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { docYearMonth, carryForwardStatements } from "@/lib/spendHistory";
 import { getFinancialProfile } from "@/lib/financialProfile";
+import { getNetWorth } from "@/lib/profileMetrics";
 import type { ParsedStatementData, ManualAsset, AssetCategory } from "@/lib/types";
 import type { BalanceSnapshot } from "@/app/api/user/balance-snapshots/route";
 
@@ -195,13 +196,16 @@ export async function GET(request: NextRequest) {
       ? applyRulesAndRecalculate(consolidated, categoryRulesMap)
       : consolidated;
 
-    const totalAssets = (consolidatedWithRules.assets ?? Math.max(0, consolidatedWithRules.netWorth ?? 0)) + manualAssetsTotal;
-    const adjustedNetWorth = totalAssets - (consolidatedWithRules.debts ?? Math.max(0, -(consolidatedWithRules.netWorth ?? 0)));
+    // Net worth — delegate to getNetWorth() which uses the profile cache and mirrors
+    // the consolidateStatements formula (parsedAssets/parsedDebts with sign-split fallback).
+    // This is the single authoritative computation — same number shown on the Today page.
+    const nw = getNetWorth(profile);
 
     let enrichedConsolidated: ParsedStatementData = {
       ...consolidatedWithRules,
-      assets: totalAssets,
-      netWorth: adjustedNetWorth,
+      assets:   nw.totalAssets,
+      debts:    nw.totalDebts,
+      netWorth: nw.total,
     };
 
     // ── Previous month (for delta calculations) ──────────────────────────────
@@ -370,36 +374,8 @@ export async function GET(request: NextRequest) {
       entries.sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
     }
 
-    // ── Apply snapshot overrides to consolidated net worth ───────────────────
-    // If any account has a snapshot more recent than its latest statement,
-    // replace that account's contribution to net worth with the snapshot balance.
-    // This keeps the dashboard accurate without mutating any statement document.
-    let snapshotNetWorthDelta = 0;
-    for (const [slug, entries] of accountStatementHistory) {
-      const latestStatement = [...entries].reverse().find((e) => !e.isManualSnapshot);
-      const latestSnapshot  = [...entries].reverse().find((e) =>  e.isManualSnapshot);
-      if (
-        latestSnapshot && latestStatement &&
-        latestSnapshot.yearMonth > latestStatement.yearMonth
-      ) {
-        snapshotNetWorthDelta += latestSnapshot.netWorth - latestStatement.netWorth;
-      } else if (latestSnapshot && !latestStatement) {
-        // Account known only via snapshots (no statement ever uploaded)
-        snapshotNetWorthDelta += latestSnapshot.netWorth;
-      }
-    }
-    if (snapshotNetWorthDelta !== 0) {
-      const adjAssets = Math.max(0, (enrichedConsolidated.assets ?? 0) + Math.max(0, snapshotNetWorthDelta));
-      const adjDebts  = Math.max(0, (enrichedConsolidated.debts  ?? 0) - Math.min(0, snapshotNetWorthDelta));
-      enrichedConsolidated = {
-        ...enrichedConsolidated,
-        netWorth: (enrichedConsolidated.netWorth ?? 0) + snapshotNetWorthDelta,
-        assets:   adjAssets,
-        debts:    adjDebts,
-      };
-    }
-
-    // ── Incomplete months detection ──────────────────────────────────────────    // A month is "incomplete" if at least one account that exists today used
+    // ── Incomplete months detection ──────────────────────────────────────────
+    // A month is "incomplete" if at least one account that exists today used
     // a carry-forward (i.e. had no real statement uploaded for that month).
     const allSlugs = new Set(Array.from(accountStatementHistory.keys()));
     const incompleteMonths: string[] = [];

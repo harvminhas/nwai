@@ -7,6 +7,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import type { DashboardAlert, UpcomingItem, TodayInsight } from "@/app/api/user/insights/route";
 import type { AgentCard } from "@/lib/agentTypes";
+import type { RadarItem, FreshnessData, NetWorthSnapshot } from "@/lib/today/types";
 import ParseStatusBanner from "@/components/ParseStatusBanner";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -224,26 +225,27 @@ export default function TodayPage() {
   const [upcoming,    setUpcoming]    = useState<UpcomingItem[]>([]);
   const [insights,    setInsights]    = useState<TodayInsight[]>([]);
   const [agentCards,  setAgentCards]  = useState<AgentCard[]>([]);
+  const [radar,       setRadar]       = useState<RadarItem[]>([]);
+  const [freshness,   setFreshness]   = useState<FreshnessData | null>(null);
+  const [netWorth,    setNetWorth]    = useState<NetWorthSnapshot | null>(null);
+  const [statusBanner,setStatusBanner]= useState<{ type: string; text: string; detail: string } | null>(null);
   const [loading,     setLoading]     = useState(true);
   const [error,       setError]       = useState<string | null>(null);
   const [token,       setToken]       = useState<string | null>(null);
   const [refreshing,  setRefreshing]  = useState(false);
-  const [expandedInsights, setExpandedInsights] = useState<Set<string>>(new Set());
   const [expandedAlerts,   setExpandedAlerts]   = useState<Set<string>>(new Set());
+  const [expandedRadar,    setExpandedRadar]    = useState<Set<string>>(new Set());
+  const [dismissedRadar,   setDismissedRadar]   = useState<Set<string>>(new Set());
+  const [statusOpen,       setStatusOpen]       = useState(false);
 
-  function toggleInsight(id: string) {
-    setExpandedInsights((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  }
   function toggleAlert(id: string) {
-    setExpandedAlerts((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
+    setExpandedAlerts((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+  function toggleRadar(id: string) {
+    setExpandedRadar((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+  function dismissRadar(id: string) {
+    setDismissedRadar((prev) => new Set([...prev, id]));
   }
 
   const load = useCallback(async (tok: string) => {
@@ -260,7 +262,10 @@ export default function TodayPage() {
       setAlerts(insJson.alerts ?? []);
       setUpcoming(insJson.upcoming ?? []);
       setInsights(insJson.insights ?? []);
-      // Sort: high first, then medium, then low; external cards come after AI cards at same priority
+      setRadar(insJson.radar ?? []);
+      setFreshness(insJson.freshness ?? null);
+      setNetWorth(insJson.netWorth ?? null);
+      setStatusBanner(insJson.statusBanner ?? null);
       const sorted = (cardJson.cards ?? [] as AgentCard[]).sort((a: AgentCard, b: AgentCard) => {
         const pri = { high: 0, medium: 1, low: 2 };
         const pd = (pri[a.priority] ?? 2) - (pri[b.priority] ?? 2);
@@ -304,41 +309,26 @@ export default function TodayPage() {
 
   // Segment upcoming items
   const overdue    = upcoming.filter((i) => !i.isThisMonth && i.daysFromNow < 0);
-  const todayItems = upcoming.filter((i) => !i.isThisMonth && i.daysFromNow === 0);
-  const thisWeek   = upcoming.filter((i) => !i.isThisMonth && i.daysFromNow > 0 && i.daysFromNow <= 7);
-  const later      = upcoming.filter((i) => !i.isThisMonth && i.daysFromNow > 7);
   const thisMonth  = upcoming.filter((i) => i.isThisMonth);
+  const dateItems  = upcoming.filter((i) => !i.isThisMonth && i.daysFromNow >= 0);
 
-  const urgentAlerts = alerts.filter((a) => a.severity === "high" || a.severity === "medium");
-  const hasContent   = upcoming.length > 0 || urgentAlerts.length > 0 || insights.length > 0;
+  // Visible (non-dismissed) radar items
+  const visibleRadar = radar.filter((r) => !dismissedRadar.has(r.id));
 
-  // Derive a rate pill from the prime-rate agent card (if one exists)
+  // Derive a rate pill from the prime-rate agent card
   const primeCard = agentCards.find((c) => c.dataType === "canada-prime-rate" || c.dataType === "canada-overnight-rate");
   const ratePill: RatePill | undefined = primeCard
     ? {
         label: (() => {
-          // Extract e.g. "4.45%" from title like "Canadian Prime Rate cut to 4.45%"
           const match = primeCard.title.match(/(\d+\.\d+%)/);
-          const rate  = match ? match[1] : "";
-          return `Prime ${rate}`.trim();
+          return `Prime ${match ? match[1] : ""}`.trim();
         })(),
         direction: primeCard.title.toLowerCase().includes("raised") || primeCard.title.toLowerCase().includes("up")
           ? "up"
           : primeCard.title.toLowerCase().includes("cut") || primeCard.title.toLowerCase().includes("down")
-          ? "down"
-          : "unchanged",
+          ? "down" : "unchanged",
       }
     : undefined;
-
-  // Helper: badge style per card source/priority
-  function cardBadgeStyle(card: AgentCard) {
-    if (card.source === "external") return "bg-blue-50 text-blue-600 border-blue-100";
-    if (card.priority === "high")   return "bg-red-50 text-red-600 border-red-100";
-    return "bg-purple-50 text-purple-600 border-purple-100";
-  }
-  function cardBadgeLabel(card: AgentCard) {
-    return card.source === "external" ? "Market Signal" : "AI Insight";
-  }
 
   async function dismissCard(id: string) {
     setAgentCards((prev) => prev.filter((c) => c.id !== id));
@@ -350,19 +340,227 @@ export default function TodayPage() {
     }).catch(() => {});
   }
 
-  // ── Sidebar signal card ──────────────────────────────────────────────────────
+  // ── Radar pill styles ────────────────────────────────────────────────────────
+  const RADAR_STYLE = {
+    warn:     { bg: "bg-amber-50",  border: "border-amber-200",  pill: "bg-amber-100 text-amber-800",  amount: "text-amber-700" },
+    windfall: { bg: "bg-green-50",  border: "border-green-200",  pill: "bg-green-100 text-green-800",  amount: "text-green-700" },
+    neutral:  { bg: "bg-blue-50",   border: "border-blue-100",   pill: "bg-blue-100 text-blue-700",    amount: "text-blue-700"  },
+  };
+
+  // ── RadarCard ────────────────────────────────────────────────────────────────
+  function RadarCard({ item }: { item: RadarItem }) {
+    const sty      = RADAR_STYLE[item.type] ?? RADAR_STYLE.neutral;
+    const expanded = expandedRadar.has(item.id);
+
+    return (
+      <div className={`rounded-xl border ${sty.border} ${sty.bg} overflow-hidden`}>
+        {/* Header row */}
+        <div
+          role="button" tabIndex={0}
+          className="flex items-start gap-3 px-4 py-3.5 cursor-pointer"
+          onClick={() => toggleRadar(item.id)}
+          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && toggleRadar(item.id)}
+        >
+          <span className="text-xl leading-none mt-0.5 shrink-0">{item.icon}</span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5 mb-0.5">
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${sty.pill}`}>
+                {item.pill}
+              </span>
+              <span className="text-[11px] text-gray-400 font-medium">{item.when}</span>
+            </div>
+            <p className="text-sm font-semibold text-gray-900 leading-snug">{item.title}</p>
+            <p className="mt-0.5 text-xs text-gray-500">{item.sub}</p>
+          </div>
+          <div className="shrink-0 text-right ml-2">
+            <p className={`text-sm font-bold tabular-nums ${sty.amount}`}>{item.amount}</p>
+            <p className="text-[10px] text-gray-400 mt-0.5 whitespace-nowrap">{item.amountLabel}</p>
+          </div>
+          <button
+            aria-label="Dismiss"
+            onClick={(e) => { e.stopPropagation(); dismissRadar(item.id); }}
+            className="shrink-0 text-gray-300 hover:text-gray-500 transition ml-1 -mt-0.5"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Expanded detail */}
+        {expanded && (
+          <div className="border-t border-gray-100 bg-white px-4 py-3 space-y-3">
+            {/* Breakdown table */}
+            <table className="w-full text-xs">
+              <tbody className="divide-y divide-gray-50">
+                {item.expand.breakdown.map((row, i) => (
+                  <tr key={i}>
+                    <td className="py-1 text-gray-500 pr-4">{row.label}</td>
+                    <td className="py-1 text-right font-semibold text-gray-800 tabular-nums">{row.value}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {item.expand.note && (
+              <p className="text-xs text-gray-500 leading-relaxed">{item.expand.note}</p>
+            )}
+            <div className="flex items-center justify-between pt-1">
+              <span className={`text-[10px] rounded-full px-2 py-0.5 font-medium ${
+                item.expand.confidence.level === "high"   ? "bg-green-100 text-green-700" :
+                item.expand.confidence.level === "medium" ? "bg-amber-100 text-amber-700" :
+                "bg-gray-100 text-gray-500"
+              }`}>
+                {item.expand.confidence.text}
+              </span>
+              {item.expand.primaryAction.href && (
+                <Link href={item.expand.primaryAction.href}
+                  className="text-xs font-semibold text-purple-600 hover:underline">
+                  {item.expand.primaryAction.label} →
+                </Link>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── FreshnessBar ─────────────────────────────────────────────────────────────
+  function FreshnessBar() {
+    if (!freshness) return null;
+    const { state, daysSinceUpload, accounts } = freshness;
+    const isFresh = state === "fresh";
+    const isStale = state === "stale";
+    const bg      = isFresh ? "bg-green-50 border-green-200" : isStale ? "bg-red-50 border-red-200" : "bg-amber-50 border-amber-200";
+    const text    = isFresh ? "text-green-800" : isStale ? "text-red-700" : "text-amber-800";
+    const sub     = isFresh ? "text-green-600" : isStale ? "text-red-600" : "text-amber-600";
+    const icon    = isFresh
+      ? <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+      : <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
+
+    const headline = isFresh
+      ? "Statements up to date"
+      : isStale
+      ? `Statements are ${daysSinceUpload} days old — predictions are unreliable`
+      : `Statements last uploaded ${daysSinceUpload} days ago`;
+
+    const subline = accounts.slice(0, 4).map((a) => {
+      const d = new Date(a.uploadedAt + "T00:00:00");
+      return `${a.name} · ${d.toLocaleDateString("en-CA", { month: "short", day: "numeric" })}`;
+    }).join("  ·  ");
+
+    return (
+      <div className={`mb-4 flex items-start justify-between gap-3 rounded-xl border px-4 py-3 ${bg}`}>
+        <div className={`flex items-start gap-2.5 ${text}`}>
+          {icon}
+          <div>
+            <p className="text-sm font-semibold">{headline}</p>
+            {subline && <p className={`mt-0.5 text-xs ${sub}`}>{subline}</p>}
+          </div>
+        </div>
+        <Link
+          href="/account/upload"
+          className={`shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+            isFresh
+              ? "border-green-200 text-green-700 hover:bg-green-100"
+              : "border-amber-300 bg-white text-amber-700 hover:bg-amber-50"
+          }`}
+        >
+          {isFresh ? "View coverage" : "Upload now"}
+        </Link>
+      </div>
+    );
+  }
+
+  // ── StatusBanner ──────────────────────────────────────────────────────────────
+  function StatusBannerBar() {
+    if (!statusBanner) return null;
+    const isWarn   = statusBanner.type === "warn" || statusBanner.type === "alert";
+    const isOk     = statusBanner.type === "ok";
+    const bg       = isOk ? "bg-green-50 border-green-200" : "bg-amber-50 border-amber-200";
+    const text     = isOk ? "text-green-800" : "text-amber-800";
+    return (
+      <button
+        onClick={() => setStatusOpen((v) => !v)}
+        className={`mb-4 w-full text-left flex items-center gap-3 rounded-xl border px-4 py-3 transition ${bg}`}
+      >
+        <svg className={`h-4 w-4 shrink-0 ${isOk ? "text-green-500" : "text-amber-500"}`}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          {isOk
+            ? <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            : <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          }
+        </svg>
+        <div className="flex-1 min-w-0">
+          <p className={`text-sm font-semibold ${text}`}>{statusBanner.text}</p>
+          {statusOpen && statusBanner.detail && (
+            <p className={`mt-0.5 text-xs ${isOk ? "text-green-600" : "text-amber-700"}`}>{statusBanner.detail}</p>
+          )}
+        </div>
+        <svg className={`h-3.5 w-3.5 shrink-0 transition-transform ${text} opacity-50 ${statusOpen ? "rotate-180" : ""}`}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+    );
+  }
+
+  // ── NetWorthCard ──────────────────────────────────────────────────────────────
+  function NetWorthCard() {
+    if (!netWorth) return null;
+    const totalFmt = new Intl.NumberFormat("en-CA", {
+      style: "currency", currency: "CAD",
+      minimumFractionDigits: 0, maximumFractionDigits: 0,
+    }).format(netWorth.total);
+
+    return (
+      <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+        <div className="px-4 pt-4 pb-3">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Net Worth</p>
+          <p className="text-2xl font-bold text-gray-900 tabular-nums">{totalFmt}</p>
+          <p className={`text-xs mt-0.5 font-medium ${netWorth.isStale ? "text-amber-500" : "text-green-600"}`}>
+            {netWorth.calculatedLabel}
+          </p>
+        </div>
+        {netWorth.accounts.length > 0 && (
+          <div className="border-t border-gray-100 divide-y divide-gray-50">
+            {netWorth.accounts.map((acc, i) => {
+              const valFmt = new Intl.NumberFormat("en-CA", {
+                style: "currency", currency: "CAD",
+                minimumFractionDigits: 0, maximumFractionDigits: 0,
+              }).format(Math.abs(acc.value));
+              return (
+                <div key={i} className="flex items-center justify-between px-4 py-2">
+                  <span className="text-xs text-gray-500">{acc.label}</span>
+                  <span className={`text-xs font-semibold tabular-nums ${acc.isEstimated ? "text-gray-400" : "text-gray-800"}`}>
+                    {acc.isEstimated ? "~" : ""}{valFmt}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── SidebarSignalCard ─────────────────────────────────────────────────────────
   function SidebarSignalCard({ card }: { card: AgentCard }) {
     const [expanded, setExpanded] = useState(false);
+    const isExternal = card.source === "external";
     return (
       <div className="rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
         <div className="px-3.5 pt-3 pb-0 flex items-start justify-between gap-2">
-          <span className={`inline-flex shrink-0 items-center rounded-full border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${cardBadgeStyle(card)}`}>
-            {cardBadgeLabel(card)}
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-purple-500 shrink-0" />
+            <span className="text-[10px] font-bold text-purple-600 uppercase tracking-wider">
+              {isExternal ? "Market Signal" : "AI Insight"}
+            </span>
+          </div>
           <button
             onClick={() => dismissCard(card.id)}
+            aria-label="Dismiss"
             className="shrink-0 text-gray-300 hover:text-gray-500 transition -mt-0.5"
-            title="Dismiss"
           >
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -371,26 +569,22 @@ export default function TodayPage() {
         </div>
         <div className="px-3.5 pt-2 pb-3">
           <p className="text-[13px] font-semibold text-gray-900 leading-snug">{card.title}</p>
-          <p className={`mt-1 text-[11px] text-gray-500 leading-relaxed ${expanded ? "" : "line-clamp-2"}`}>
+          <p className={`mt-1.5 text-[12px] text-gray-500 leading-relaxed ${expanded ? "" : "line-clamp-3"}`}>
             {card.body}
           </p>
           <div className="mt-2 flex items-center gap-3">
-            {card.body.length > 120 && (
+            {card.body.length > 100 && (
               <button
                 onClick={() => setExpanded((v) => !v)}
-                className="text-[11px] font-medium text-gray-400 hover:text-gray-600 transition"
+                className="text-[11px] font-medium text-gray-400 hover:text-gray-600"
               >
-                {expanded ? "Less" : "More"}
+                {expanded ? "Less" : "More →"}
               </button>
             )}
             {card.href && (
-              <Link
-                href={card.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[11px] font-semibold text-blue-600 hover:underline"
-              >
-                {card.source === "external" ? "Source ↗" : "View →"}
+              <Link href={card.href} target="_blank" rel="noopener noreferrer"
+                className="text-[11px] font-semibold text-purple-600 hover:underline">
+                {isExternal ? "Source ↗" : "View →"}
               </Link>
             )}
           </div>
@@ -399,212 +593,140 @@ export default function TodayPage() {
     );
   }
 
-  // ── Premium stub (used in sidebar) ──────────────────────────────────────────
+  // ── MarketContextStub ─────────────────────────────────────────────────────────
   function MarketContextStub() {
     return (
       <div className="rounded-xl border border-gray-200 bg-gray-50 overflow-hidden">
         <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-gray-200">
-          <div className="flex items-center gap-1.5">
-            <svg className="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <div className="flex items-center gap-1.5 text-gray-400">
+            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
             </svg>
-            <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Market Context</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wider">Market Context</p>
           </div>
-          <span className="rounded-full bg-gray-200 px-1.5 py-0.5 text-[9px] font-bold text-gray-500 uppercase tracking-wider">
-            Premium
-          </span>
+          <span className="rounded-full bg-gray-800 px-2 py-0.5 text-[9px] font-bold text-white uppercase tracking-wider">Premium</span>
         </div>
-        <div className="px-3.5 py-3 space-y-2 select-none">
-          {["BoC rate history", "CPI inflation trend", "Rate impact on debt"].map((item) => (
-            <div key={item} className="flex items-center gap-2 opacity-40">
-              <div className="h-5 w-5 rounded bg-gray-200 shrink-0" />
-              <div className="flex-1 space-y-1">
-                <div className="h-2 rounded bg-gray-200 w-3/4" />
-                <div className="h-1.5 rounded bg-gray-200 w-1/2" />
-              </div>
+        <div className="px-3.5 py-3 space-y-2 select-none opacity-60">
+          {["BoC rate history", "CPI trend", "Rate impact on your debt"].map((item) => (
+            <div key={item} className="flex items-center gap-2">
+              <div className="h-4 w-4 rounded bg-gray-200 shrink-0" />
+              <div className="h-2 rounded bg-gray-200 flex-1" />
             </div>
           ))}
-          <p className="pt-0.5 text-center text-[10px] text-gray-400">Unlock with Market Context</p>
+        </div>
+        <div className="px-3.5 pb-3">
+          <button className="w-full rounded-lg bg-gray-900 px-3 py-2 text-xs font-semibold text-white hover:bg-gray-800 transition">
+            Upgrade to unlock
+          </button>
         </div>
       </div>
     );
   }
 
+  const hasUpcoming = upcoming.length > 0;
+
   return (
-    // Wider outer container to accommodate sidebar
     <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
-      {/* ── Pending parse banner ─────────────────────────────────────────────── */}
       {token && <ParseStatusBanner onRefresh={() => load(token)} />}
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="mb-6 flex items-start justify-between">
+      <div className="mb-5 flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Today</h1>
           <p className="mt-0.5 text-sm text-gray-400">{todayLabel()}</p>
         </div>
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          title="Refresh insights"
-          className="mt-1 flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-500 shadow-sm hover:border-purple-300 hover:text-purple-600 disabled:opacity-40 transition"
-        >
-          <svg className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
-            viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
-            <path strokeLinecap="round" strokeLinejoin="round"
-              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-          {refreshing ? "Refreshing…" : "Refresh"}
-        </button>
+        <div className="flex items-center gap-2 mt-1">
+          <button
+            onClick={handleRefresh} disabled={refreshing}
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-500 shadow-sm hover:border-gray-300 hover:text-gray-700 disabled:opacity-40 transition"
+          >
+            <svg className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            {refreshing ? "Refreshing…" : "Preview scenario"}
+          </button>
+          <Link href="/account/upload"
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-500 shadow-sm hover:border-gray-300 hover:text-gray-700 transition">
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+            Upload statement
+          </Link>
+        </div>
       </div>
 
       {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
 
-      {/* ── Mobile signal strip (hidden on lg+) ──────────────────────────────── */}
-      {agentCards.length > 0 && (
-        <div className="mb-5 lg:hidden">
-          <div className="flex gap-3 overflow-x-auto pb-1 -mx-4 px-4 snap-x snap-mandatory scrollbar-none">
-            {agentCards.map((card) => (
-              <div key={card.id}
-                className="snap-start shrink-0 w-72 rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-                <div className="px-3.5 pt-3 pb-0 flex items-start justify-between gap-2">
-                  <span className={`inline-flex shrink-0 items-center rounded-full border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${cardBadgeStyle(card)}`}>
-                    {cardBadgeLabel(card)}
-                  </span>
-                  <button onClick={() => dismissCard(card.id)} className="text-gray-300 hover:text-gray-500 transition -mt-0.5">
-                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-                <div className="px-3.5 pt-2 pb-3">
-                  <p className="text-[13px] font-semibold text-gray-900 leading-snug line-clamp-1">{card.title}</p>
-                  <p className="mt-1 text-[11px] text-gray-500 leading-relaxed line-clamp-2">{card.body}</p>
-                  {card.href && (
-                    <Link href={card.href} target="_blank" rel="noopener noreferrer"
-                      className="mt-1.5 inline-block text-[11px] font-semibold text-blue-600 hover:underline">
-                      {card.source === "external" ? "Source ↗" : "View →"}
-                    </Link>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ── Two-column layout (desktop) ──────────────────────────────────────── */}
+      {/* ── Two-column layout ────────────────────────────────────────────────── */}
       <div className="flex gap-6 items-start">
 
-        {/* ── Main column ──────────────────────────────────────────────────── */}
+        {/* ── Main feed ─────────────────────────────────────────────────────── */}
         <div className="min-w-0 flex-1">
 
-          {/* Alerts */}
-          {urgentAlerts.length > 0 && (
-            <div className="mb-6 space-y-2">
-              {urgentAlerts.map((a) => {
-                const sty  = ALERT_STYLE[a.severity] ?? ALERT_STYLE.medium;
-                const open = expandedAlerts.has(a.id);
-                return (
-                  <button key={a.id} onClick={() => toggleAlert(a.id)}
-                    className={`w-full text-left flex items-center gap-3 rounded-xl border ${sty.border} ${sty.bg} px-4 py-3 transition`}
-                  >
-                    {sty.icon}
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-sm font-semibold ${sty.text}`}>{a.title}</p>
-                      {open && <p className={`mt-0.5 text-xs ${sty.text} opacity-80`}>{a.body}</p>}
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      {open && a.href && (
-                        <Link href={a.href} onClick={(e) => e.stopPropagation()}
-                          className={`text-xs font-semibold ${sty.text} underline opacity-70 hover:opacity-100`}>
-                          View →
-                        </Link>
-                      )}
-                      <svg className={`h-3.5 w-3.5 transition-transform ${sty.text} opacity-50 ${open ? "rotate-180" : ""}`}
-                        fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
+          {/* Freshness bar */}
+          <FreshnessBar />
 
-          {/* Quick-stat insights */}
-          {insights.length > 0 && (
+          {/* Status banner */}
+          <StatusBannerBar />
+
+          {/* On your radar */}
+          {visibleRadar.length > 0 && (
             <div className="mb-6">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Your finances right now</p>
-              <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden divide-y divide-gray-100">
-                {insights.map((ins) => {
-                  const sty  = INSIGHT_TONE[ins.tone] ?? INSIGHT_TONE.neutral;
-                  const open = expandedInsights.has(ins.id);
-                  return (
-                    <button key={ins.id} onClick={() => toggleInsight(ins.id)}
-                      className="w-full text-left flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition">
-                      <span className="text-lg leading-none shrink-0">{ins.emoji}</span>
-                      <div className="min-w-0 flex-1">
-                        <p className={`text-sm font-semibold ${sty.text}`}>{ins.title}</p>
-                        {open && <p className={`mt-0.5 text-xs ${sty.sub}`}>{ins.subtitle}</p>}
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        {open && ins.href && (
-                          <Link href={ins.href} onClick={(e) => e.stopPropagation()}
-                            className="text-xs font-semibold text-purple-600 hover:underline">
-                            View →
-                          </Link>
-                        )}
-                        <svg className={`h-3.5 w-3.5 text-gray-300 transition-transform ${open ? "rotate-180" : ""}`}
-                          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                        </svg>
-                      </div>
-                    </button>
-                  );
-                })}
+              <div className="mb-2 flex items-center gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">On your radar</p>
+                <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-500">
+                  {visibleRadar.length}
+                </span>
+              </div>
+              <div className="space-y-2">
+                {visibleRadar.map((item) => <RadarCard key={item.id} item={item} />)}
               </div>
             </div>
           )}
 
-          {/* Upcoming schedule */}
-          {hasContent ? (
-            <div className="space-y-6">
-              <UpcomingGroup title="Overdue"   items={overdue}    ratePill={ratePill} />
-              <UpcomingGroup title="Today"     items={todayItems} ratePill={ratePill} />
-              <UpcomingGroup title="This week" items={thisWeek}   ratePill={ratePill} />
-              <UpcomingGroup title="Coming up" items={later}      ratePill={ratePill} />
-              <ThisMonthGroup items={thisMonth} ratePill={ratePill} />
+          {/* Overdue events */}
+          {overdue.length > 0 && (
+            <UpcomingGroup title="Overdue" items={overdue} ratePill={ratePill} />
+          )}
+
+          {/* Date-sorted upcoming */}
+          {dateItems.length > 0 && (
+            <div className="mb-6">
+              <UpcomingGroup
+                title={overdue.length > 0 ? "Upcoming" : "Next up"}
+                items={dateItems}
+                ratePill={ratePill}
+              />
             </div>
-          ) : (
+          )}
+
+          {/* Also this month */}
+          {thisMonth.length > 0 && (
+            <ThisMonthGroup items={thisMonth} ratePill={ratePill} />
+          )}
+
+          {/* Caught-up empty state */}
+          {!hasUpcoming && visibleRadar.length === 0 && !statusBanner && (
             <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-5 py-12 text-center">
               <svg className="mx-auto mb-2 h-8 w-8 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <p className="text-sm font-medium text-gray-600">All clear</p>
-              <p className="mt-1 text-xs text-gray-400">Nothing urgent or upcoming right now.</p>
-              <Link href="/upload" className="mt-3 inline-block text-xs font-medium text-purple-600 hover:underline">
-                Upload a statement →
-              </Link>
-            </div>
-          )}
-
-          {/* Footer */}
-          {hasContent && (
-            <div className="mt-8 border-t border-gray-100 pt-5 text-center">
-              <Link href="/account/overview" className="text-sm font-medium text-purple-600 hover:underline">
-                See your full financial overview →
-              </Link>
+              <p className="text-sm font-semibold text-gray-700">You&apos;re all caught up</p>
+              <p className="mt-1 text-xs text-gray-400">Nothing overdue. Check back tomorrow.</p>
             </div>
           )}
         </div>
 
-        {/* ── Sidebar (desktop only) ───────────────────────────────────────── */}
+        {/* ── Right sidebar ─────────────────────────────────────────────────── */}
         <div className="hidden lg:block w-72 shrink-0">
           <div className="sticky top-6 space-y-3">
 
-            {/* Section header */}
-            <div className="flex items-center justify-between">
+            {/* Net worth card */}
+            <NetWorthCard />
+
+            {/* Signals section */}
+            <div className="flex items-center justify-between mt-2">
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Signals</p>
               {agentCards.length > 0 && (
                 <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-gray-500">
@@ -613,17 +735,16 @@ export default function TodayPage() {
               )}
             </div>
 
-            {/* Signal cards — stacked */}
             {agentCards.length > 0
               ? agentCards.map((card) => <SidebarSignalCard key={card.id} card={card} />)
               : (
-                <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center">
+                <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-5 text-center">
                   <p className="text-xs text-gray-400">No active signals</p>
                 </div>
               )
             }
 
-            {/* Premium stub */}
+            {/* Market context premium stub */}
             <MarketContextStub />
 
           </div>

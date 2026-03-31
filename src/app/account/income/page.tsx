@@ -230,13 +230,15 @@ export default function IncomePage() {
   // Score each consolidated source using cross-month history
   const scoredSources = mergedSources.map((src, i) => {
     const hist = sourceHistory[src.description] ?? [];
-    const result = scoreSource(src.description, hist, totalMonths);
+
+    // Detect frequency first — passed to scoreSource so bi-weekly/weekly sources
+    // use gap-based scoring instead of (broken) monthly-total scoring.
+    const allDates   = hist.flatMap((h) => h.transactions.map((t) => t.date).filter(Boolean) as string[]);
+    const freqResult = detectFrequency(allDates);
+
+    const result = scoreSource(src.description, hist, totalMonths, freqResult);
     const totalIncome = current?.txIncome ?? income?.total ?? 0;
     const pct = totalIncome > 0 ? Math.round((src.amount / totalIncome) * 100) : 0;
-
-    // Frequency: gather ALL dated transactions for this source across all months
-    const allDates = hist.flatMap((h) => h.transactions.map((t) => t.date).filter(Boolean) as string[]);
-    const freqResult = detectFrequency(allDates);
 
     return {
       ...src,

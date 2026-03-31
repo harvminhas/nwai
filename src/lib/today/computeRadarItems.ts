@@ -1,0 +1,498 @@
+/**
+ * Radar (calendar collision) detection.
+ *
+ * Looks 60 days forward and identifies when detected patterns produce
+ * unusual outcomes vs a typical month:
+ *
+ *   A. Three-occurrence month — biweekly income / expense with 3 hits in one month
+ *   B. Bill timing collision — large annual/quarterly fee lands between paydays
+ *   C. Subscription cluster — 4+ subs renewing within a 7-day window
+ *
+ * Sorting: warn current month → warn next month → windfall current →
+ *           windfall next → neutral
+ */
+
+import { detectFrequency } from "@/lib/incomeEngine";
+import {
+  projectNextDates,
+  datesInMonth,
+  nextUpcoming,
+  toDateStr,
+} from "@/lib/projectionEngine";
+import type { RadarItem, RadarBreakdownRow } from "./types";
+import type { IncomeTxnRecord, ExpenseTxnRecord } from "@/lib/extractTransactions";
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+function fmtCurrency(v: number): string {
+  return new Intl.NumberFormat("en-CA", {
+    style: "currency", currency: "CAD",
+    minimumFractionDigits: 0, maximumFractionDigits: 0,
+  }).format(Math.abs(v));
+}
+
+function fmtMonthName(ym: string): string {
+  const [y, m] = ym.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString("en-CA", { month: "long" });
+}
+
+function fmtDate(dateStr: string): string {
+  const d = new Date(dateStr + "T00:00:00");
+  return d.toLocaleDateString("en-CA", { month: "short", day: "numeric" });
+}
+
+function monthKeyOffset(offset: number): string {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + offset);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+// ── A. Three-occurrence month ─────────────────────────────────────────────────
+
+interface RecurringPattern {
+  id: string;
+  label: string;
+  isIncome: boolean;
+  lastDateStr: string;
+  medianGapDays: number;
+  typicalAmount: number;   // per-occurrence median
+  occurrenceCount: number;
+  icon: string;
+  href?: string;
+}
+
+function detectThreeOccurrenceMonths(
+  pattern: RecurringPattern,
+  currentMonthKey: string,
+  nextMonthKey: string,
+): RadarItem[] {
+  const items: RadarItem[] = [];
+
+  for (const targetYM of [currentMonthKey, nextMonthKey]) {
+    const [y, m] = targetYM.split("-").map(Number);
+    const projections = projectNextDates(pattern.lastDateStr, pattern.medianGapDays, 12, true);
+    const hitsInMonth = datesInMonth(projections, targetYM);
+
+    // Also count confirmed transactions already in that month
+    // (passed in as occurrenceCount in the caller, but here we just use projection)
+    if (hitsInMonth.length < 3) continue;
+
+    const monthName  = fmtMonthName(targetYM);
+    const extra      = pattern.typicalAmount; // one extra vs normal 2
+    const typical    = pattern.typicalAmount * 2;
+    const total      = pattern.typicalAmount * 3;
+
+    const breakdown: RadarBreakdownRow[] = hitsInMonth.slice(0, 3).map((hit, i) => ({
+      label: `${fmtDate(hit.dateStr)}${i === 2 ? " (predicted)" : ""}`,
+      value: fmtCurrency(pattern.typicalAmount),
+    }));
+    breakdown.push(
+      { label: "Typical month total",          value: fmtCurrency(typical) },
+      { label: `${monthName} total`,            value: fmtCurrency(total)   },
+      { label: "Extra vs typical",              value: pattern.isIncome ? `+${fmtCurrency(extra)}` : `−${fmtCurrency(extra)}` },
+    );
+
+    items.push({
+      id: `three-occ-${pattern.id}-${targetYM}`,
+      type: pattern.isIncome ? "windfall" : "warn",
+      icon: pattern.icon,
+      pill: pattern.isIncome ? "Extra income" : "Cash flow pressure",
+      when: monthName,
+      targetMonthKey: targetYM,
+      title: pattern.isIncome
+        ? `3 paydays in ${monthName} — an extra ${fmtCurrency(extra)} coming in`
+        : `3 ${pattern.label} payments in ${monthName} — ${fmtCurrency(extra)} more than usual`,
+      sub: `${fmtCurrency(total)} total vs typical ${fmtCurrency(typical)}`,
+      amount: pattern.isIncome ? `+${fmtCurrency(extra)}` : `−${fmtCurrency(extra)}`,
+      amountLabel: "extra this month",
+      expand: {
+        breakdown,
+        note: pattern.isIncome
+          ? `Because ${pattern.label} pays every 14 days, some months contain 3 paycheques. This is one of them — the extra ${fmtCurrency(extra)} is a good moment to top up savings or accelerate a debt payoff.`
+          : `Because ${pattern.label} is collected every 14 days, some months have 3 withdrawals instead of the usual 2. Budget an extra ${fmtCurrency(extra)} in ${monthName}.`,
+        confidence: {
+          level: pattern.occurrenceCount >= 12 ? "high" : pattern.occurrenceCount >= 6 ? "medium" : "low",
+          text: `Based on ${pattern.occurrenceCount} consecutive detections`,
+        },
+        primaryAction: {
+          label: pattern.isIncome ? "Plan the extra" : "Model in What If",
+          href: pattern.isIncome ? "/account/goals" : "/account/spending",
+        },
+      },
+    });
+  }
+
+  return items;
+}
+
+// ── B. Bill timing collision ──────────────────────────────────────────────────
+
+interface AnnualBill {
+  id: string;
+  label: string;
+  amount: number;
+  nextDateStr: string;
+  icon: string;
+  href?: string;
+}
+
+function detectBillTimingCollision(
+  bill: AnnualBill,
+  incomePatterns: RecurringPattern[],
+): RadarItem | null {
+  if (!bill.nextDateStr) return null;
+
+  const billDate = new Date(bill.nextDateStr + "T00:00:00Z");
+  const billYM   = bill.nextDateStr.slice(0, 7);
+
+  // Find the nearest payday before and after the bill date
+  let daysToPrevPay = Infinity;
+  let daysToNextPay = Infinity;
+
+  for (const pat of incomePatterns) {
+    const projections = projectNextDates(pat.lastDateStr, pat.medianGapDays, 12, true);
+    for (const p of projections) {
+      const d = new Date(p.dateStr + "T00:00:00Z");
+      const diff = Math.round((billDate.getTime() - d.getTime()) / 86_400_000);
+      if (diff >= 0 && diff < daysToPrevPay) daysToPrevPay = diff;
+      if (diff < 0 && Math.abs(diff) < daysToNextPay) daysToNextPay = Math.abs(diff);
+    }
+  }
+
+  // Flag if bill lands more than 5 days after last payday AND 5+ days before next
+  if (daysToPrevPay < 5 || daysToNextPay < 5) return null;
+  if (daysToPrevPay + daysToNextPay < 12) return null;
+
+  const monthName  = fmtMonthName(billYM);
+  const billFmt    = fmtDate(bill.nextDateStr);
+
+  return {
+    id: `bill-timing-${bill.id}`,
+    type: "warn",
+    icon: bill.icon,
+    pill: "Bill timing",
+    when: billFmt,
+    targetMonthKey: billYM,
+    title: `${bill.label} lands on a low-balance day`,
+    sub: `${billFmt} is between paydays — chequing may be below $500`,
+    amount: `−${fmtCurrency(bill.amount)}`,
+    amountLabel: `due ${billFmt}`,
+    expand: {
+      breakdown: [
+        { label: "Bill amount",            value: fmtCurrency(bill.amount) },
+        { label: "Days since last payday", value: `${daysToPrevPay}d` },
+        { label: "Days to next payday",    value: `${daysToNextPay}d` },
+      ],
+      note: `${bill.label} (${fmtCurrency(bill.amount)}) is due on ${billFmt}, which falls roughly ${daysToPrevPay} days after your last payday and ${daysToNextPay} days before the next one. Make sure chequing has enough buffer.`,
+      confidence: {
+        level: "medium",
+        text: "Based on detected payment pattern",
+      },
+      primaryAction: {
+        label: "View bill",
+        href: bill.href ?? "/account/spending",
+      },
+    },
+  };
+}
+
+// ── C. Subscription cluster ───────────────────────────────────────────────────
+
+interface SubItem {
+  name: string;
+  amount: number;
+  predictedDate?: string; // "YYYY-MM-DD"
+}
+
+function detectSubscriptionCluster(
+  subs: SubItem[],
+  currentMonthKey: string,
+): RadarItem | null {
+  if (subs.length < 4) return null;
+
+  // Group subs with a known date into 7-day windows
+  const dated = subs.filter((s) => s.predictedDate);
+  if (dated.length < 4) return null;
+
+  // Sort by date
+  dated.sort((a, b) => (a.predictedDate! > b.predictedDate! ? 1 : -1));
+
+  // Sliding window: find best 7-day cluster
+  let bestStart = 0;
+  let bestCount = 0;
+  let bestTotal = 0;
+  let bestWindowStart = dated[0].predictedDate!;
+
+  for (let i = 0; i < dated.length; i++) {
+    const windowStart = new Date(dated[i].predictedDate! + "T00:00:00Z");
+    const windowEnd   = new Date(windowStart.getTime() + 6 * 86_400_000);
+    const inWindow    = dated.filter((s) => {
+      const d = new Date(s.predictedDate! + "T00:00:00Z");
+      return d >= windowStart && d <= windowEnd;
+    });
+    if (inWindow.length > bestCount) {
+      bestCount        = inWindow.length;
+      bestStart        = i;
+      bestTotal        = inWindow.reduce((s, x) => s + x.amount, 0);
+      bestWindowStart  = dated[i].predictedDate!;
+    }
+  }
+
+  if (bestCount < 4) return null;
+
+  const windowEnd = new Date(new Date(bestWindowStart + "T00:00:00Z").getTime() + 6 * 86_400_000);
+  const startFmt  = fmtDate(bestWindowStart);
+  const endFmt    = fmtDate(toDateStr(windowEnd));
+  const ym        = bestWindowStart.slice(0, 7);
+
+  const clusterSubs = dated.slice(bestStart, bestStart + bestCount);
+
+  return {
+    id: `sub-cluster-${ym}`,
+    type: "warn",
+    icon: "💳",
+    pill: "Subscription cluster",
+    when: `${startFmt}–${endFmt}`,
+    targetMonthKey: ym,
+    title: `${bestCount} subscriptions renew in the first week of ${fmtMonthName(ym)}`,
+    sub: `All detected from statement history — ${fmtCurrency(bestTotal)} total clustered in 7 days`,
+    amount: `−${fmtCurrency(bestTotal)}`,
+    amountLabel: `week of ${startFmt}`,
+    expand: {
+      breakdown: clusterSubs.map((s) => ({
+        label: s.name,
+        value: fmtCurrency(s.amount),
+      })).concat([
+        { label: "7-day total", value: fmtCurrency(bestTotal) },
+      ]),
+      confidence: {
+        level: "medium",
+        text: "Based on recurring subscription detections",
+      },
+      primaryAction: {
+        label: "Review subscriptions",
+        href: "/account/spending?tab=subscriptions",
+      },
+    },
+  };
+}
+
+// ── D. Net-effect annotation ──────────────────────────────────────────────────
+
+/**
+ * When the same month has both a 3-payday windfall AND a 3-payment warn,
+ * annotate both with the net effect so the user sees the full picture.
+ */
+function annotateNetEffect(items: RadarItem[]): RadarItem[] {
+  // Group by targetMonthKey
+  const byMonth = new Map<string, RadarItem[]>();
+  for (const item of items) {
+    const arr = byMonth.get(item.targetMonthKey) ?? [];
+    arr.push(item);
+    byMonth.set(item.targetMonthKey, arr);
+  }
+
+  for (const [, monthItems] of byMonth) {
+    const windfalls = monthItems.filter((i) => i.type === "windfall" && i.id.startsWith("three-occ"));
+    const warnings  = monthItems.filter((i) => i.type === "warn"     && i.id.startsWith("three-occ"));
+    if (windfalls.length === 0 || warnings.length === 0) continue;
+
+    const totalIn  = windfalls.reduce((s, i) => s + parseFloat(i.amount.replace(/[^0-9.]/g, "")), 0);
+    const totalOut = warnings.reduce( (s, i) => s + parseFloat(i.amount.replace(/[^0-9.]/g, "")), 0);
+    const net      = totalIn - totalOut;
+    const netNote  = net > 0
+      ? `Net effect: despite the 3-payment warning, the 3-payday windfall more than offsets it. Your ${fmtMonthName(windfalls[0].targetMonthKey)} net cash position is projected to be ${fmtCurrency(net)} stronger than a typical month.`
+      : `Net effect: the 3-payment pressure outweighs the 3-payday boost by ${fmtCurrency(Math.abs(net))} this month.`;
+
+    for (const item of [...windfalls, ...warnings]) {
+      if (!item.expand.note) item.expand.note = netNote;
+      else item.expand.note += " " + netNote;
+    }
+  }
+
+  return items;
+}
+
+// ── sort ──────────────────────────────────────────────────────────────────────
+
+function sortRadar(items: RadarItem[], currentMonthKey: string): RadarItem[] {
+  const order = (item: RadarItem) => {
+    const isCurrent = item.targetMonthKey === currentMonthKey;
+    if (item.type === "warn"     && isCurrent)  return 0;
+    if (item.type === "warn"     && !isCurrent) return 1;
+    if (item.type === "windfall" && isCurrent)  return 2;
+    if (item.type === "windfall" && !isCurrent) return 3;
+    return 4; // neutral
+  };
+  return [...items].sort((a, b) => order(a) - order(b));
+}
+
+// ── main entry ────────────────────────────────────────────────────────────────
+
+export interface RadarInput {
+  incomeTxns: IncomeTxnRecord[];
+  expenseTxns: ExpenseTxnRecord[];
+  cashCommitments: {
+    id: string; name: string; amount: number;
+    frequency: string; nextDate?: string; category?: string;
+  }[];
+  aiSubs: { name: string; amount: number; frequency?: string }[];
+  merchantPatternDates: Map<string, { dates: string[]; amounts: number[] }>;
+}
+
+export function computeRadarItems(input: RadarInput): RadarItem[] {
+  const now             = new Date();
+  const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const nextMonthKey    = monthKeyOffset(1);
+  const items: RadarItem[] = [];
+
+  // ── A. Three-occurrence months ─────────────────────────────────────────────
+
+  // ─ Income sources ─
+  // Group incomeTxns by source
+  const incomeBySource = new Map<string, IncomeTxnRecord[]>();
+  for (const txn of input.incomeTxns) {
+    const key = (txn.source || txn.description || "income").toLowerCase().trim().slice(0, 40);
+    const arr = incomeBySource.get(key) ?? [];
+    arr.push(txn);
+    incomeBySource.set(key, arr);
+  }
+
+  const incomePatterns: RecurringPattern[] = [];
+
+  for (const [key, txns] of incomeBySource) {
+    if (txns.length < 3) continue;
+    const dates  = txns.map((t) => t.date).filter(Boolean).sort();
+    const freq   = detectFrequency(dates);
+    if (freq.frequency !== "bi-weekly" && freq.frequency !== "weekly") continue;
+    if (!freq.medianGap || freq.medianGap < 5) continue;
+
+    const sorted  = [...txns].sort((a, b) => b.date.localeCompare(a.date));
+    const lastDate = sorted[0].date;
+    const amounts  = txns.map((t) => t.amount).filter((a) => a > 0);
+    const median   = amounts.sort((a, b) => a - b)[Math.floor(amounts.length / 2)];
+
+    const pattern: RecurringPattern = {
+      id: key,
+      label: sorted[0].source || sorted[0].description || key,
+      isIncome: true,
+      lastDateStr: lastDate,
+      medianGapDays: freq.medianGap,
+      typicalAmount: median,
+      occurrenceCount: txns.length,
+      icon: "💵",
+      href: "/account/income",
+    };
+
+    incomePatterns.push(pattern);
+    items.push(...detectThreeOccurrenceMonths(pattern, currentMonthKey, nextMonthKey));
+  }
+
+  // ─ Recurring expense sources ─
+  // Build per-merchant date+amount lists from all expense transactions
+  const expByMerchant = new Map<string, ExpenseTxnRecord[]>();
+  for (const txn of input.expenseTxns) {
+    const key = txn.merchant.toLowerCase().trim().slice(0, 40);
+    const arr = expByMerchant.get(key) ?? [];
+    arr.push(txn);
+    expByMerchant.set(key, arr);
+  }
+
+  for (const [key, txns] of expByMerchant) {
+    if (txns.length < 3) continue;
+    const dates = txns.map((t) => t.date).filter(Boolean).sort();
+    const freq  = detectFrequency(dates);
+    if (freq.frequency !== "bi-weekly" && freq.frequency !== "weekly") continue;
+    if (!freq.medianGap || freq.medianGap < 5) continue;
+
+    const sorted   = [...txns].sort((a, b) => b.date.localeCompare(a.date));
+    const lastDate = sorted[0].date;
+    const amounts  = txns.map((t) => t.amount).filter((a) => a > 0);
+    const median   = amounts.sort((a, b) => a - b)[Math.floor(amounts.length / 2)];
+
+    const cat  = sorted[0].category?.toLowerCase() ?? "";
+    const icon = cat.includes("mortgage") || cat.includes("housing")  ? "🏠"
+               : cat.includes("loan") || cat.includes("debt")         ? "📋"
+               : cat.includes("insurance")                            ? "🛡️"
+               : "📅";
+
+    const pattern: RecurringPattern = {
+      id: key,
+      label: sorted[0].merchant,
+      isIncome: false,
+      lastDateStr: lastDate,
+      medianGapDays: freq.medianGap,
+      typicalAmount: median,
+      occurrenceCount: txns.length,
+      icon,
+      href: "/account/spending",
+    };
+
+    items.push(...detectThreeOccurrenceMonths(pattern, currentMonthKey, nextMonthKey));
+  }
+
+  // ── B. Bill timing collision ───────────────────────────────────────────────
+  // Annual/quarterly large expenses in the next 60 days
+  const todayStr = toDateStr(new Date());
+
+  // Find candidate annual bills: merchantPatternDates with 1 hit/year pattern
+  for (const [name, data] of input.merchantPatternDates) {
+    if (data.dates.length < 1 || data.amounts.length < 1) continue;
+    if (data.dates.length > 6) continue; // too many = not annual
+
+    const latestDate = [...data.dates].sort().pop()!;
+    // Next occurrence ~1 year from the last one
+    const lastTs   = new Date(latestDate + "T00:00:00Z").getTime();
+    const nextTs   = lastTs + 365 * 86_400_000;
+    const nextDate = toDateStr(new Date(nextTs));
+
+    if (nextDate < todayStr) continue; // already past
+    const daysAway = Math.round((new Date(nextDate + "T00:00:00Z").getTime() - new Date(todayStr + "T00:00:00Z").getTime()) / 86_400_000);
+    if (daysAway > 60) continue;
+
+    const avgAmt = data.amounts.reduce((s, a) => s + a, 0) / data.amounts.length;
+    if (avgAmt < 100) continue; // too small to bother flagging
+
+    const bill: AnnualBill = {
+      id: name.replace(/\s+/g, "-").toLowerCase().slice(0, 30),
+      label: name,
+      amount: Math.round(avgAmt),
+      nextDateStr: nextDate,
+      icon: "📄",
+      href: "/account/spending",
+    };
+
+    const radarItem = detectBillTimingCollision(bill, incomePatterns);
+    if (radarItem) items.push(radarItem);
+  }
+
+  // ── C. Subscription cluster ────────────────────────────────────────────────
+  // Combine aiSubs + cashCommitments into dated sub items for next month
+  const subItems: SubItem[] = [];
+
+  for (const sub of input.aiSubs) {
+    // Try to find predicted date from merchantPatternDates
+    const key = sub.name.toLowerCase().trim().slice(0, 40);
+    const pat = input.merchantPatternDates.get(key);
+    if (!pat || pat.dates.length === 0) {
+      subItems.push({ name: sub.name, amount: sub.amount });
+      continue;
+    }
+    const days = pat.dates.map((d) => parseInt(d.slice(8, 10)));
+    const medianDay = days.sort((a, b) => a - b)[Math.floor(days.length / 2)];
+    // Next month occurrence
+    const nm   = new Date(); nm.setMonth(nm.getMonth() + 1); nm.setDate(1);
+    const maxD = new Date(nm.getFullYear(), nm.getMonth() + 1, 0).getDate();
+    const dd   = String(Math.min(medianDay, maxD)).padStart(2, "0");
+    const mm   = String(nm.getMonth() + 1).padStart(2, "0");
+    subItems.push({ name: sub.name, amount: sub.amount, predictedDate: `${nm.getFullYear()}-${mm}-${dd}` });
+  }
+
+  const clusterItem = detectSubscriptionCluster(subItems, nextMonthKey);
+  if (clusterItem) items.push(clusterItem);
+
+  // ── Annotate net effect & sort ─────────────────────────────────────────────
+  const annotated = annotateNetEffect(items);
+  return sortRadar(annotated, currentMonthKey);
+}

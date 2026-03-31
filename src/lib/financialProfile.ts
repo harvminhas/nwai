@@ -25,6 +25,20 @@ import { computeTypicalSpend, CORE_EXCLUDE_RE } from "./spendingMetrics";
 import { merchantSlug } from "./applyRules";
 import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
 import type { TypicalSpend } from "./spendingMetrics";
+import type { ManualAsset } from "./types";
+
+// ── Balance snapshot shape (mirrors /api/user/balance-snapshots) ──────────────
+export interface BalanceSnapshot {
+  id: string;
+  accountSlug: string;
+  accountName: string;
+  accountType: string;
+  /** Positive for assets, negative for debts */
+  balance: number;
+  /** YYYY-MM */
+  yearMonth: string;
+  note?: string;
+}
 
 // ── constants ──────────────────────────────────────────────────────────────────
 const HOT_WINDOW_MS  =  5 * 60 * 1000;   // 5 min — never re-check version this often
@@ -34,7 +48,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "3";
+const SCHEMA_VERSION = "6";
 
 // ── types ──────────────────────────────────────────────────────────────────────
 
@@ -59,6 +73,17 @@ export interface FinancialProfileCache {
   monthlyHistory: MonthlyHistoryEntry[];
   /** Pre-computed typical monthly spend (median + avg) */
   typicalMonthly: TypicalSpend;
+  /**
+   * Manually added assets (house, car, business, etc.) from users/{uid}/manualAssets.
+   * Same data as /api/user/assets — included here so net worth is computed once.
+   */
+  manualAssets: ManualAsset[];
+  /**
+   * Manual balance snapshots (overrides for statement-derived balances).
+   * Latest snapshot per account wins over the statement balance.
+   * Same data as /api/user/balance-snapshots.
+   */
+  balanceSnapshots: BalanceSnapshot[];
   /**
    * Raw expense transactions — last 12 months, with user category rules applied.
    * Used for transaction-list queries (spending page) and current-month calculations.
@@ -107,12 +132,19 @@ export async function buildAndCacheFinancialProfile(
   uid: string,
   db: Firestore.Firestore,
 ): Promise<FinancialProfileCache> {
-  // Single Firestore query for all transactions (extractAllTransactions fetches completed stmts)
-  const txData = await extractAllTransactions(uid, db);
+  // Fetch all data sources in parallel — same collections the assets page uses.
+  const [txData, rulesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap] =
+    await Promise.all([
+      extractAllTransactions(uid, db),
+      db.collection(`users/${uid}/categoryRules`).get(),
+      db.collection("statements").where("userId", "==", uid).where("status", "==", "completed").get(),
+      db.collection(`users/${uid}/manualAssets`).orderBy("updatedAt", "desc").get(),
+      db.collection(`users/${uid}/balanceSnapshots`).orderBy("yearMonth", "desc").get(),
+    ]);
+
   const { incomeTxns: allIncomeTxns, accountSnapshots, latestTxMonth, allTxMonths } = txData;
 
   // Apply user category rules to expense transactions
-  const rulesSnap = await db.collection(`users/${uid}/categoryRules`).get();
   const rulesMap = new Map<string, string>();
   for (const doc of rulesSnap.docs) {
     const r = doc.data();
@@ -122,6 +154,75 @@ export async function buildAndCacheFinancialProfile(
     ...t,
     category: rulesMap.get(merchantSlug(t.merchant)) ?? t.category,
   }));
+
+  // Manual assets — same shape as /api/user/assets response
+  const manualAssets: ManualAsset[] = manualAssetsSnap.docs.map((d) => {
+    const data = d.data();
+    return {
+      id: d.id,
+      label: data.label ?? "",
+      category: data.category ?? "other",
+      value: data.value ?? 0,
+      linkedAccountSlug: data.linkedAccountSlug ?? undefined,
+      updatedAt: data.updatedAt?.toDate?.()?.toISOString?.() ?? new Date().toISOString(),
+    };
+  });
+
+  // Balance snapshots — keep latest per account slug (same logic as assets page)
+  const latestSnapBySlug = new Map<string, BalanceSnapshot>();
+  for (const d of balanceSnapshotsSnap.docs) {
+    const data = d.data();
+    const snap: BalanceSnapshot = {
+      id: d.id,
+      accountSlug: data.accountSlug ?? "",
+      accountName: data.accountName ?? "",
+      accountType: data.accountType ?? "other",
+      balance: data.balance ?? 0,
+      yearMonth: data.yearMonth ?? "",
+      note: data.note,
+    };
+    const existing = latestSnapBySlug.get(snap.accountSlug);
+    if (!existing || snap.yearMonth > existing.yearMonth) {
+      latestSnapBySlug.set(snap.accountSlug, snap);
+    }
+  }
+  const balanceSnapshots = Array.from(latestSnapBySlug.values());
+
+  // Apply snapshot overrides to accountSnapshots (same logic as assets page).
+  // When overriding balance, also derive parsedAssets/parsedDebts from the new balance
+  // so the net worth formula (mirror of consolidateStatements) stays consistent.
+  const accountSnapshotsWithOverrides: AccountSnapshot[] = accountSnapshots.map((snap) => {
+    const override = latestSnapBySlug.get(snap.slug);
+    if (override && override.yearMonth > snap.statementMonth) {
+      const b = override.balance;
+      return {
+        ...snap,
+        balance:      b,
+        parsedAssets: Math.max(0, b),
+        parsedDebts:  Math.max(0, -b),
+        statementMonth: override.yearMonth,
+        accountName: override.accountName || snap.accountName,
+      };
+    }
+    return snap;
+  });
+  // Also add snapshots for accounts that only exist in balance-snapshots (no statement)
+  const slugsInSnapshots  = new Set(accountSnapshots.map((s) => s.slug));
+  const snapshotOnlyAccts: AccountSnapshot[] = balanceSnapshots
+    .filter((s) => !slugsInSnapshots.has(s.accountSlug))
+    .map((s) => ({
+      slug:         s.accountSlug,
+      bankName:     s.accountName,
+      accountId:    "",
+      accountName:  s.accountName,
+      accountType:  s.accountType,
+      balance:      s.balance,
+      parsedAssets: Math.max(0, s.balance),
+      parsedDebts:  Math.max(0, -s.balance),
+      statementMonth: s.yearMonth,
+      interestRate: null,
+    }));
+  const mergedSnapshots = [...accountSnapshotsWithOverrides, ...snapshotOnlyAccts];
 
   // Compute per-month aggregated history from ALL months
   const monthlyHistory: MonthlyHistoryEntry[] = allTxMonths.map((ym) => {
@@ -140,14 +241,7 @@ export async function buildAndCacheFinancialProfile(
   const now = new Date();
   const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   const typicalMonthly = computeTypicalSpend(allExpenseTxns, thisMonth);
-
-  // Compute source version
-  const completedSnap = await db
-    .collection("statements")
-    .where("userId", "==", uid)
-    .where("status", "==", "completed")
-    .get();
-  const sourceVersion = computeSourceVersion(completedSnap.docs);
+  const sourceVersion  = computeSourceVersion(completedSnap.docs);
 
   // Keep only last 12 months of raw transactions to stay well within 1 MB limit
   const cutoff12 = allTxMonths.slice(-12)[0] ?? thisMonth;
@@ -163,9 +257,11 @@ export async function buildAndCacheFinancialProfile(
     typicalMonthly,
     expenseTxns,
     incomeTxns,
-    accountSnapshots,
+    accountSnapshots: mergedSnapshots,
     allTxMonths,
     latestTxMonth,
+    manualAssets,
+    balanceSnapshots,
   };
 
   // Persist — JSON round-trip strips `undefined` fields (Firestore rejects them)

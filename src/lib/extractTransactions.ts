@@ -42,8 +42,22 @@ export interface AccountSnapshot {
   slug: string;
   bankName: string;
   accountId: string;
+  /** Human-readable account name from the statement (e.g. "TD TFSA", "RBC RRSP") */
+  accountName?: string;
   accountType: string;
+  /** = parsedData.netWorth — the signed balance (negative for liabilities) */
   balance: number;
+  /**
+   * Explicit asset portion as set by the AI parser (parsedData.assets).
+   * Undefined when the AI didn't set it — fall back to max(0, balance).
+   * Mirrors the `consolidateStatements` logic used by the Overview page.
+   */
+  parsedAssets?: number;
+  /**
+   * Explicit debt/liability portion as set by the AI parser (parsedData.debts).
+   * Undefined when the AI didn't set it — fall back to max(0, -balance).
+   */
+  parsedDebts?: number;
   statementMonth: string; // YYYY-MM of the statement this balance came from
   interestRate: number | null;
 }
@@ -217,8 +231,11 @@ export async function extractAllTransactions(
       slug,
       bankName: parsed.bankName ?? "Bank",
       accountId: parsed.accountId ?? "",
+      accountName: parsed.accountName ?? undefined,
       accountType: parsed.accountType ?? "other",
       balance: parsed.netWorth ?? 0,
+      parsedAssets: parsed.assets,
+      parsedDebts:  parsed.debts,
       statementMonth: stmtYm,
       interestRate: typeof parsed.interestRate === "number" ? parsed.interestRate : null,
     })

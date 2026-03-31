@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { randomUUID } from "crypto";
+import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
 
 function authToken(req: NextRequest): string | null {
   const h = req.headers.get("authorization");
@@ -84,7 +85,7 @@ export async function POST(req: NextRequest) {
     };
 
     await db.collection("users").doc(uid).collection("balanceSnapshots").doc(id).set(record);
-
+    await invalidateFinancialProfileCache(uid, db);
     return NextResponse.json({ id, ...record });
   } catch (e) {
     console.error("[balance-snapshots POST]", e);
@@ -103,7 +104,7 @@ export async function DELETE(req: NextRequest) {
     if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
     await db.collection("users").doc(uid).collection("balanceSnapshots").doc(id).delete();
-
+    await invalidateFinancialProfileCache(uid, db);
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error("[balance-snapshots DELETE]", e);

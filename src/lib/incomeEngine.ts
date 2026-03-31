@@ -25,6 +25,8 @@ export interface FrequencyResult {
   frequency: Frequency;
   medianGap: number | null;
   stdDev: number | null;
+  /** stdDev after filtering outlier gaps — used for scoring; stdDev above is kept for display */
+  trimmedStdDev: number | null;
   sampleCount: number;
 }
 
@@ -44,6 +46,9 @@ export function scoreSource(
   description: string,
   history: SourceMonthData[],
   totalMonthsTracked: number,
+  /** Pass the already-computed FrequencyResult to avoid re-scanning dates and to enable
+   *  sub-monthly (bi-weekly / weekly) scoring which is fundamentally different from monthly. */
+  knownFreq?: FrequencyResult,
 ): ReliabilityResult {
   const desc = description.toLowerCase();
   const n = history.length;
@@ -61,6 +66,48 @@ export function scoreSource(
     if (freq >= 0.2 && freq <= 0.4) {
       return { reliability: "quarterly", score: 70, amountScore: 80, timingScore: 70, frequencyScore: 50 };
     }
+  }
+
+  // ── Sub-monthly fast-path (bi-weekly / weekly) ──────────────────────────────
+  // Standard scoring uses day-of-month and monthly totals — both are meaningless
+  // for sub-monthly pay that drifts through the calendar (day-of-month varies ±14d)
+  // and whose monthly totals oscillate between 1–3 paydays.
+  // Instead: score gap consistency + per-paycheck amount consistency.
+  const freq = knownFreq ?? detectFrequency(
+    history.flatMap((h) => h.transactions.map((t) => t.date ?? "")).filter(Boolean)
+  );
+  // Trigger for confirmed sub-monthly frequency, OR when median gap is clearly in
+  // weekly/biweekly range but detectFrequency was downgraded to "irregular" due to
+  // outlier gaps (e.g. statement artifacts inflating stdDev).
+  const isSubMonthlyPattern =
+    (freq.frequency === "bi-weekly" || freq.frequency === "weekly") ||
+    (freq.medianGap !== null && freq.medianGap >= 5 && freq.medianGap <= 19 && freq.sampleCount >= 5);
+
+  if (isSubMonthlyPattern && freq.medianGap !== null && freq.sampleCount >= 3) {
+    // Gap consistency: use trimmedStdDev (outlier gaps removed) so statement artifacts
+    // (e.g. a month with many clustered transactions) don't destroy the timing score.
+    const scoringStdDev = freq.trimmedStdDev ?? freq.stdDev ?? 0;
+    const cvGap         = freq.medianGap > 0 ? scoringStdDev / freq.medianGap : 1;
+    const timingScore   = Math.max(0, Math.min(100, 100 - cvGap * 150));
+
+    // Per-paycheck amount consistency — also trimmed to ignore outlier paychecks
+    // (e.g. a catch-up or bonus payment in one statement period).
+    const allAmounts = history.flatMap((h) => h.transactions.map((t) => t.amount)).filter((a) => a > 0);
+    let amountScore  = 80;
+    if (allAmounts.length >= 2) {
+      const roughMean    = allAmounts.reduce((s, a) => s + a, 0) / allAmounts.length;
+      const trimmedAmts  = allAmounts.filter((a) => a >= roughMean * 0.3 && a <= roughMean * 2.5);
+      const useAmounts   = trimmedAmts.length >= 2 ? trimmedAmts : allAmounts;
+      const mean         = useAmounts.reduce((s, a) => s + a, 0) / useAmounts.length;
+      const stdAmt       = Math.sqrt(useAmounts.reduce((s, a) => s + (a - mean) ** 2, 0) / useAmounts.length);
+      const cvAmt        = mean > 0 ? stdAmt / mean : 1;
+      amountScore        = Math.max(0, Math.min(100, 100 - cvAmt * 333));
+    }
+
+    const frequencyScore = 100; // confirmed sub-monthly pattern
+    const score = Math.round(amountScore * 0.5 + timingScore * 0.3 + frequencyScore * 0.2);
+    const reliability: Reliability = score >= 88 ? "very stable" : score >= 70 ? "stable" : "irregular";
+    return { reliability, score, amountScore: Math.round(amountScore), timingScore: Math.round(timingScore), frequencyScore };
   }
 
   // Amount consistency (50% weight)
@@ -122,7 +169,7 @@ export function scoreSource(
 
 export function detectFrequency(allDates: string[]): FrequencyResult {
   const dated = allDates.filter(Boolean).sort();
-  if (dated.length < 2) return { frequency: "irregular", medianGap: null, stdDev: null, sampleCount: dated.length };
+  if (dated.length < 2) return { frequency: "irregular", medianGap: null, stdDev: null, trimmedStdDev: null, sampleCount: dated.length };
 
   const timestamps = dated.map((d) => new Date(d + "T12:00:00").getTime());
   const gaps: number[] = [];
@@ -143,9 +190,26 @@ export function detectFrequency(allDates: string[]): FrequencyResult {
   else if (median <= 200) bucket = "semi-annual";
   else                    bucket = "irregular";
 
-  if (bucket !== "irregular" && stdDev > 0.5 * median) bucket = "irregular";
+  // Use a trimmed stdDev (drop gaps < 40% or > 250% of median) for the consistency check.
+  // Raw stdDev is inflated by outlier short/long gaps that come from statement boundary
+  // artifacts or the occasional 3-paycheck month — they don't represent the true cadence.
+  const trimmedGaps = gaps.filter((g) => g >= median * 0.4 && g <= median * 2.5);
+  const trimmedAvg  = trimmedGaps.length > 0
+    ? trimmedGaps.reduce((s, g) => s + g, 0) / trimmedGaps.length
+    : avg;
+  const trimmedStdDev = trimmedGaps.length >= 2
+    ? Math.sqrt(trimmedGaps.reduce((s, g) => s + (g - trimmedAvg) ** 2, 0) / trimmedGaps.length)
+    : stdDev;
 
-  return { frequency: bucket, medianGap: median, stdDev: Math.round(stdDev), sampleCount: dated.length };
+  if (bucket !== "irregular" && trimmedStdDev > 0.5 * median) bucket = "irregular";
+
+  return {
+    frequency: bucket,
+    medianGap: median,
+    stdDev: Math.round(stdDev),
+    trimmedStdDev: Math.round(trimmedStdDev),
+    sampleCount: dated.length,
+  };
 }
 
 // ── visual config ─────────────────────────────────────────────────────────────
