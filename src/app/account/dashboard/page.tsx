@@ -228,6 +228,7 @@ export default function TodayPage() {
   const [radar,       setRadar]       = useState<RadarItem[]>([]);
   const [freshness,   setFreshness]   = useState<FreshnessData | null>(null);
   const [netWorth,    setNetWorth]    = useState<NetWorthSnapshot | null>(null);
+  const [savingsRate, setSavingsRate] = useState<{ rate: number; income: number; expenses: number; month: string } | null>(null);
   const [statusBanner,setStatusBanner]= useState<{ type: string; text: string; detail: string } | null>(null);
   const [loading,     setLoading]     = useState(true);
   const [error,       setError]       = useState<string | null>(null);
@@ -265,6 +266,7 @@ export default function TodayPage() {
       setRadar(insJson.radar ?? []);
       setFreshness(insJson.freshness ?? null);
       setNetWorth(insJson.netWorth ?? null);
+      setSavingsRate(insJson.savingsRate ?? null);
       setStatusBanner(insJson.statusBanner ?? null);
       const sorted = (cardJson.cards ?? [] as AgentCard[]).sort((a: AgentCard, b: AgentCard) => {
         const pri = { high: 0, medium: 1, low: 2 };
@@ -627,6 +629,59 @@ export default function TodayPage() {
     );
   }
 
+  // ── SavingsRateCard ───────────────────────────────────────────────────────────
+  function SavingsRateCard() {
+    if (!savingsRate || savingsRate.income <= 0) return null;
+    const { rate, income, expenses, month } = savingsRate;
+    const cad = (n: number) => new Intl.NumberFormat("en-CA", {
+      style: "currency", currency: "CAD", minimumFractionDigits: 0, maximumFractionDigits: 0,
+    }).format(n);
+    const monthLabel = month
+      ? new Date(month + "-01").toLocaleDateString("en-CA", { month: "short", year: "numeric" })
+      : "";
+    const clampedRate = Math.max(-100, Math.min(100, rate));
+    const barPct      = Math.max(0, Math.min(100, clampedRate));
+    const isNeg       = rate < 0;
+    const color       = rate >= 20 ? "bg-green-500"
+                      : rate >= 10 ? "bg-emerald-400"
+                      : rate >= 0  ? "bg-amber-400"
+                      : "bg-red-400";
+    const textColor   = rate >= 10 ? "text-green-600"
+                      : rate >= 0  ? "text-amber-500"
+                      : "text-red-500";
+
+    return (
+      <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+        <div className="px-4 pt-4 pb-3">
+          <div className="flex items-start justify-between">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Savings Rate</p>
+            {monthLabel && <span className="text-[10px] text-gray-400">{monthLabel}</span>}
+          </div>
+          <div className="mt-1 flex items-end gap-2">
+            <p className={`text-2xl font-bold tabular-nums ${textColor}`}>
+              {isNeg ? "" : "+"}{rate}%
+            </p>
+            <p className="text-xs text-gray-400 mb-0.5">of income</p>
+          </div>
+          {/* Bar */}
+          <div className="mt-2.5 h-1.5 w-full rounded-full bg-gray-100">
+            <div className={`h-1.5 rounded-full transition-all ${color}`} style={{ width: `${barPct}%` }} />
+          </div>
+        </div>
+        <div className="border-t border-gray-100 divide-y divide-gray-50">
+          <div className="flex items-center justify-between px-4 py-2">
+            <span className="text-xs text-gray-500">Income</span>
+            <span className="text-xs font-semibold tabular-nums text-gray-800">{cad(income)}</span>
+          </div>
+          <div className="flex items-center justify-between px-4 py-2">
+            <span className="text-xs text-gray-500">Expenses</span>
+            <span className="text-xs font-semibold tabular-nums text-gray-800">{cad(expenses)}</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ── MobileCardShell — fixed-height clamp with expand/collapse for the mobile strip ──
   function MobileCardShell({ children }: { children: React.ReactNode }) {
     const [expanded, setExpanded] = useState(false);
@@ -716,6 +771,11 @@ export default function TodayPage() {
           <div className="snap-start shrink-0 w-64">
             <MobileCardShell><NetWorthCard /></MobileCardShell>
           </div>
+          {savingsRate && savingsRate.income > 0 && (
+            <div className="snap-start shrink-0 w-64">
+              <MobileCardShell><SavingsRateCard /></MobileCardShell>
+            </div>
+          )}
           {agentCards.map((card) => (
             <div key={card.id} className="snap-start shrink-0 w-64">
               <MobileCardShell><SidebarSignalCard card={card} /></MobileCardShell>
@@ -793,6 +853,9 @@ export default function TodayPage() {
 
             {/* Net worth card */}
             <NetWorthCard />
+
+            {/* Savings rate card */}
+            <SavingsRateCard />
 
             {/* Signals section */}
             <div className="flex items-center justify-between mt-2">

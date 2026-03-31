@@ -55,9 +55,6 @@ export interface NetWorthResult {
 
 const ASSET_TYPES = new Set(["checking", "savings", "cash", "investment"]);
 
-const LABEL_ORDER: Record<string, number> = {
-  Chequing: 0, Savings: 1, Cash: 2, FHSA: 3, TFSA: 4, RRSP: 5, RESP: 6, Investments: 7,
-};
 
 type Snap = FinancialProfileCache["accountSnapshots"][0];
 
@@ -163,11 +160,7 @@ export function getNetWorth(
 
   const accounts: NetWorthAccount[] = Array.from(rowMap.entries())
     .map(([label, { value, isEstimated }]) => ({ label, value, isEstimated }))
-    .sort((a, b) => {
-      const oa = LABEL_ORDER[a.label] ?? 10;
-      const ob = LABEL_ORDER[b.label] ?? 10;
-      return oa !== ob ? oa - ob : b.value - a.value;
-    });
+    .sort((a, b) => b.value - a.value);
 
   // ── Debt account rows (display only) ────────────────────────────────────
   // Each snapshot contributes its debt portion (parsedDebts when set, otherwise
