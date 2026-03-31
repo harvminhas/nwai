@@ -808,6 +808,7 @@ export async function GET(req: NextRequest) {
     calculatedLabel: nw.calculatedLabel,
     isStale:         nw.isStale,
     accounts:        nw.accounts,
+    debtAccounts:    nw.debtAccounts,
   };
 
   // ── Status banner ─────────────────────────────────────────────────────────

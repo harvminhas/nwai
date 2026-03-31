@@ -120,7 +120,10 @@ export interface NetWorthSnapshot {
   /** "Updated today" | "Last calculated Mar 23" */
   calculatedLabel: string;
   isStale: boolean;
+  /** Asset accounts + manual assets, sorted for display */
   accounts: NetWorthAccount[];
+  /** Liability accounts (mortgage, credit, loans), sorted by value desc */
+  debtAccounts: NetWorthAccount[];
 }
 
 // ── Full page data shape ──────────────────────────────────────────────────────

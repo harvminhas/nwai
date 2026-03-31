@@ -37,9 +37,14 @@ export interface NetWorthResult {
   totalDebts: number;
   /**
    * Asset accounts + manual assets consolidated by canonical label,
-   * ordered for display in the Net Worth card.
+   * sorted by value descending.
    */
   accounts: NetWorthAccount[];
+  /**
+   * Liability accounts (mortgage, credit cards, loans) sorted by value descending.
+   * Values are positive — they represent what is owed.
+   */
+  debtAccounts: NetWorthAccount[];
   /** Human-readable freshness string, e.g. "Updated today" or "Last calculated Jan 15" */
   calculatedLabel: string;
   /** True when the most recent account data is older than referenceMonth */
@@ -54,7 +59,9 @@ const LABEL_ORDER: Record<string, number> = {
   Chequing: 0, Savings: 1, Cash: 2, FHSA: 3, TFSA: 4, RRSP: 5, RESP: 6, Investments: 7,
 };
 
-function accountLabel(snap: FinancialProfileCache["accountSnapshots"][0]): string {
+type Snap = FinancialProfileCache["accountSnapshots"][0];
+
+function accountLabel(snap: Snap): string {
   const name = (snap.accountName ?? snap.bankName ?? "").toLowerCase();
   const type = (snap.accountType ?? "").toLowerCase();
   if (name.includes("tfsa"))  return "TFSA";
@@ -66,6 +73,27 @@ function accountLabel(snap: FinancialProfileCache["accountSnapshots"][0]): strin
   if (type === "investment")  return "Investments";
   if (type === "cash")        return "Cash";
   return snap.bankName || "Account";
+}
+
+function debtLabel(snap: Snap): string {
+  const type = (snap.accountType ?? "").toLowerCase();
+  const name = (snap.accountName ?? snap.bankName ?? "").toLowerCase();
+  const last4 = snap.accountId?.slice(-4);
+  const suffix = last4 ? ` ••••${last4}` : "";
+  if (type === "mortgage")                          return `Mortgage${suffix}`;
+  if (type === "heloc")                             return `HELOC${suffix}`;
+  if (type === "loc" || type === "line of credit")  return `Line of Credit${suffix}`;
+  if (type === "loan")                              return `Loan${suffix}`;
+  if (type === "credit" || type === "credit card") {
+    if (name.includes("visa"))       return `Visa${suffix}`;
+    if (name.includes("mastercard")) return `Mastercard${suffix}`;
+    if (name.includes("amex"))       return `Amex${suffix}`;
+    return `Credit Card${suffix}`;
+  }
+  if (name.includes("mortgage")) return `Mortgage${suffix}`;
+  if (name.includes("visa"))     return `Visa${suffix}`;
+  if (name.includes("loan"))     return `Loan${suffix}`;
+  return snap.bankName || "Debt";
 }
 
 // ── getNetWorth ───────────────────────────────────────────────────────────────
@@ -141,6 +169,29 @@ export function getNetWorth(
       return oa !== ob ? oa - ob : b.value - a.value;
     });
 
+  // ── Debt account rows (display only) ────────────────────────────────────
+  // Each snapshot contributes its debt portion (parsedDebts when set, otherwise
+  // max(0, -balance)) as a named row sorted by value descending.
+  const debtRowMap = new Map<string, { value: number; isEstimated: boolean }>();
+  for (const snap of profile.accountSnapshots) {
+    const debtAmt = snap.parsedDebts != null
+      ? snap.parsedDebts
+      : Math.max(0, -snap.balance);
+    if (debtAmt <= 0) continue;
+    const label     = debtLabel(snap);
+    const estimated = snap.statementMonth < refMonth;
+    const existing  = debtRowMap.get(label);
+    if (existing) {
+      existing.value      += debtAmt;
+      existing.isEstimated = existing.isEstimated && estimated;
+    } else {
+      debtRowMap.set(label, { value: debtAmt, isEstimated: estimated });
+    }
+  }
+  const debtAccounts: NetWorthAccount[] = Array.from(debtRowMap.entries())
+    .map(([label, { value, isEstimated }]) => ({ label, value, isEstimated }))
+    .sort((a, b) => b.value - a.value);
+
   // ── Freshness ─────────────────────────────────────────────────────────────
   const latestMonth = profile.accountSnapshots
     .filter((s) => ASSET_TYPES.has((s.accountType ?? "").toLowerCase()) && s.balance > 0)
@@ -152,7 +203,7 @@ export function getNetWorth(
     ? `Last calculated ${new Date(latestMonth + "-01").toLocaleDateString("en-CA", { month: "short", day: "numeric" })}`
     : "Updated today";
 
-  return { total, totalAssets, totalDebts, accounts, calculatedLabel, isStale };
+  return { total, totalAssets, totalDebts, accounts, debtAccounts, calculatedLabel, isStale };
 }
 
 // ── getSavingsRate ─────────────────────────────────────────────────────────────

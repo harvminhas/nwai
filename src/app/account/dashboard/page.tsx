@@ -507,38 +507,72 @@ export default function TodayPage() {
 
   // ── NetWorthCard ──────────────────────────────────────────────────────────────
   function NetWorthCard() {
+    const [expanded, setExpanded] = useState(false);
     if (!netWorth) return null;
-    const totalFmt = new Intl.NumberFormat("en-CA", {
+
+    const cad = (n: number) => new Intl.NumberFormat("en-CA", {
       style: "currency", currency: "CAD",
       minimumFractionDigits: 0, maximumFractionDigits: 0,
-    }).format(netWorth.total);
+    }).format(n);
+
+    const PREVIEW = 3;
+    const assets      = netWorth.accounts;
+    const debts       = netWorth.debtAccounts ?? [];
+    const showAssets  = expanded ? assets : assets.slice(0, PREVIEW);
+    const showDebts   = expanded ? debts  : debts.slice(0, PREVIEW);
+    const hasMore     = assets.length > PREVIEW || debts.length > PREVIEW;
+
+    function AccountRow({ acc, isDebt = false }: { acc: { label: string; value: number; isEstimated: boolean }; isDebt?: boolean }) {
+      return (
+        <div className="flex items-center justify-between px-4 py-2">
+          <span className="text-xs text-gray-500 truncate mr-2">{acc.label}</span>
+          <span className={`text-xs font-semibold tabular-nums shrink-0 ${acc.isEstimated ? "text-gray-400" : isDebt ? "text-red-500" : "text-gray-800"}`}>
+            {isDebt ? "−" : ""}{cad(Math.abs(acc.value))}
+            {acc.isEstimated && <span className="ml-1 text-[10px] font-normal text-gray-400">est.</span>}
+          </span>
+        </div>
+      );
+    }
 
     return (
       <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+        {/* Header */}
         <div className="px-4 pt-4 pb-3">
           <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Net Worth</p>
-          <p className="text-2xl font-bold text-gray-900 tabular-nums">{totalFmt}</p>
+          <p className="text-2xl font-bold text-gray-900 tabular-nums">{cad(netWorth.total)}</p>
           <p className={`text-xs mt-0.5 font-medium ${netWorth.isStale ? "text-amber-500" : "text-green-600"}`}>
             {netWorth.calculatedLabel}
           </p>
         </div>
-        {netWorth.accounts.length > 0 && (
-          <div className="border-t border-gray-100 divide-y divide-gray-50">
-            {netWorth.accounts.map((acc, i) => {
-              const valFmt = new Intl.NumberFormat("en-CA", {
-                style: "currency", currency: "CAD",
-                minimumFractionDigits: 0, maximumFractionDigits: 0,
-              }).format(Math.abs(acc.value));
-              return (
-                <div key={i} className="flex items-center justify-between px-4 py-2">
-                  <span className="text-xs text-gray-500">{acc.label}</span>
-                  <span className={`text-xs font-semibold tabular-nums ${acc.isEstimated ? "text-gray-400" : "text-gray-800"}`}>
-                    {acc.isEstimated ? "~" : ""}{valFmt}
-                  </span>
-                </div>
-              );
-            })}
+
+        {/* Assets section */}
+        {showAssets.length > 0 && (
+          <div className="border-t border-gray-100">
+            <p className="px-4 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Assets</p>
+            <div className="divide-y divide-gray-50">
+              {showAssets.map((acc, i) => <AccountRow key={i} acc={acc} />)}
+            </div>
           </div>
+        )}
+
+        {/* Debts section */}
+        {showDebts.length > 0 && (
+          <div className="border-t border-gray-100 mt-1">
+            <p className="px-4 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Liabilities</p>
+            <div className="divide-y divide-gray-50">
+              {showDebts.map((acc, i) => <AccountRow key={i} acc={acc} isDebt />)}
+            </div>
+          </div>
+        )}
+
+        {/* Expand / collapse */}
+        {hasMore && (
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="w-full border-t border-gray-100 px-4 py-2 text-[11px] font-medium text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition text-center"
+          >
+            {expanded ? "Show less ↑" : `Show all (${assets.length + debts.length} accounts) ↓`}
+          </button>
         )}
       </div>
     );
