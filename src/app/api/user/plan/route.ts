@@ -3,18 +3,18 @@
  * Returns the user's resolved plan ID.
  *
  * Resolution priority:
- *   1. users/{uid}.manualPro === true  → "pro"  (admin override — set directly in Firestore)
- *   2. users/{uid}.subscription.status === "active" | "trialing"  → "pro"  (Stripe webhook writes this)
- *   3. Otherwise → "free"
+ *   1. users/{uid}.manualPro === true  → "pro"  (admin override)
+ *   2. users/{uid}.subscription.status === "active" | "trialing"  → "pro"  (written by webhook / billing-info)
+ *   3. Live Stripe lookup (fallback when webhook hasn't fired yet)
+ *   4. Otherwise → "free"
  *
- * PUT /api/user/plan
+ * PUT /api/user/plan  (dev/test only)
  * Body: { plan: "free" | "pro" }
- * Used in dev/test only (PlanContext test switcher). In production the plan is
- * written exclusively by the Stripe webhook and the manualPro admin flag.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
+import { stripe } from "@/lib/stripe";
 import { PLAN_ORDER, type PlanId } from "@/lib/plans";
 
 function authToken(req: NextRequest): string | null {
@@ -22,22 +22,24 @@ function authToken(req: NextRequest): string | null {
   return h?.startsWith("Bearer ") ? h.slice(7) : null;
 }
 
-/** Resolve plan from raw Firestore user doc data. */
-export function resolvePlan(data: Record<string, unknown> | undefined): PlanId {
+/** Resolve plan from raw Firestore user doc data. Returns null if a live Stripe check is needed. */
+export function resolvePlan(data: Record<string, unknown> | undefined): PlanId | null {
   if (!data) return "free";
 
-  // 1. Admin manual override — set manualPro: true directly in Firestore
+  // 1. Admin manual override
   if (data.manualPro === true) return "pro";
 
-  // 2. Active Stripe subscription
+  // 2. Firestore subscription (written by webhook or billing-info)
   const sub = data.subscription as { status?: string } | undefined;
   if (sub?.status === "active" || sub?.status === "trialing") return "pro";
+  if (sub?.status && sub.status !== "") return "free"; // explicitly inactive
 
-  // 3. Fallback (also covers legacy `plan` field written in test mode)
+  // 3. Legacy plan field (test mode)
   const legacy = data.plan as PlanId | undefined;
   if (legacy && PLAN_ORDER.includes(legacy)) return legacy;
 
-  return "free";
+  // null = no subscription info at all → caller should do live Stripe check
+  return null;
 }
 
 export async function GET(req: NextRequest) {
@@ -48,7 +50,33 @@ export async function GET(req: NextRequest) {
     const { auth, db } = getFirebaseAdmin();
     const { uid } = await auth.verifyIdToken(token);
     const doc  = await db.collection("users").doc(uid).get();
-    const plan = resolvePlan(doc.data() as Record<string, unknown> | undefined);
+    const data = doc.data() as Record<string, unknown> | undefined;
+
+    let plan = resolvePlan(data);
+
+    // Firestore has no subscription data yet — check Stripe directly
+    if (plan === null) {
+      const customerId = data?.stripeCustomerId as string | undefined;
+      if (customerId) {
+        try {
+          const subs = await stripe.subscriptions.list({ customer: customerId, limit: 1, status: "all" });
+          const sub  = subs.data[0];
+          if (sub?.status === "active" || sub?.status === "trialing") {
+            plan = "pro";
+            // Backfill Firestore so future calls are fast
+            db.collection("users").doc(uid).set(
+              { plan: "pro", subscription: { id: sub.id, status: sub.status } },
+              { merge: true },
+            ).catch(() => {});
+          } else {
+            plan = "free";
+          }
+        } catch { plan = "free"; }
+      } else {
+        plan = "free";
+      }
+    }
+
     return NextResponse.json({ plan });
   } catch (err) {
     console.error("GET /api/user/plan error:", err);

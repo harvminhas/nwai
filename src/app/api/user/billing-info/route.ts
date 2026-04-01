@@ -1,8 +1,9 @@
 /**
  * GET /api/user/billing-info
- * Returns live subscription detail for the billing page.
- * Fetches directly from the Stripe API using the stored stripeCustomerId
- * so the data is always fresh, regardless of webhook delivery timing.
+ * Returns live subscription detail fetched directly from the Stripe API.
+ *
+ * In Stripe API 2024-09-30+ (acacia), `current_period_end` was removed from the
+ * top-level Subscription object. Renewal date is obtained from the upcoming invoice.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -24,7 +25,6 @@ export async function GET(req: NextRequest) {
     const doc  = await db.collection("users").doc(uid).get();
     const data = doc.data() ?? {};
 
-    // Admin manual override — no Stripe data needed
     if (data.manualPro === true) {
       return NextResponse.json({ manualPro: true, status: null, currentPeriodEnd: null, cancelAtPeriodEnd: false });
     }
@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ manualPro: false, status: null, currentPeriodEnd: null, cancelAtPeriodEnd: false });
     }
 
-    // Fetch active subscriptions directly from Stripe — always fresh
+    // Fetch the most-recent subscription directly from Stripe
     const subscriptions = await stripe.subscriptions.list({
       customer: customerId,
       limit:    1,
@@ -46,16 +46,57 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ manualPro: false, status: null, currentPeriodEnd: null, cancelAtPeriodEnd: false });
     }
 
-    // current_period_end exists in the wire format; access via raw object
-    const subRaw            = sub as unknown as Record<string, unknown>;
-    const periodEndSecs     = subRaw.current_period_end as number | undefined;
-    const cancelAtPeriodEnd = (subRaw.cancel_at_period_end as boolean | undefined) ?? false;
-    const currentPeriodEnd  = periodEndSecs
-      ? new Date(periodEndSecs * 1000).toISOString()
-      : null;
+    const subAny            = sub as Record<string, unknown>;
+    const cancelAtPeriodEnd = Boolean(subAny.cancel_at_period_end);
+    const isActive          = sub.status === "active" || sub.status === "trialing";
 
-    // Keep Firestore in sync while we're here (best-effort, don't await)
-    const isActive = sub.status === "active" || sub.status === "trialing";
+    // In Stripe API 2024-09-30+, current_period_end was removed from the top-level
+    // subscription. We fall back through a chain of options:
+    let currentPeriodEnd: string | null = null;
+
+    // 1. Still try the old field in case it exists (older API or beta flag)
+    const legacyPeriodEnd = subAny.current_period_end as number | undefined;
+    if (legacyPeriodEnd && legacyPeriodEnd > 0) {
+      currentPeriodEnd = new Date(legacyPeriodEnd * 1000).toISOString();
+    }
+
+    // 2. For cancelling subscriptions, cancel_at is the expiry date
+    if (!currentPeriodEnd && cancelAtPeriodEnd) {
+      const cancelAt = subAny.cancel_at as number | undefined;
+      if (cancelAt && cancelAt > 0) {
+        currentPeriodEnd = new Date(cancelAt * 1000).toISOString();
+      }
+    }
+
+    // 3. For active subscriptions, fetch the upcoming invoice for the next charge date
+    if (!currentPeriodEnd && isActive) {
+      try {
+        const upcoming = await stripe.invoices.retrieveUpcoming({ customer: customerId });
+        const upAny = upcoming as Record<string, unknown>;
+        // period_end = end of the current billing cycle = next charge date
+        const periodEnd = upAny.period_end as number | undefined;
+        if (periodEnd && periodEnd > 0) {
+          currentPeriodEnd = new Date(periodEnd * 1000).toISOString();
+        }
+      } catch {
+        // No upcoming invoice — may happen if sub is cancelled
+      }
+    }
+
+    // 4. Last resort: billing_cycle_anchor (start of current cycle — approximate)
+    if (!currentPeriodEnd) {
+      const anchor = subAny.billing_cycle_anchor as number | undefined;
+      if (anchor && anchor > 0) {
+        currentPeriodEnd = new Date(anchor * 1000).toISOString();
+      }
+    }
+
+    console.log(
+      `[billing-info] uid=${uid} status=${sub.status} cancelAtPeriodEnd=${cancelAtPeriodEnd} currentPeriodEnd=${currentPeriodEnd}`,
+      "raw keys:", Object.keys(subAny).filter((k) => k.includes("period") || k.includes("cancel") || k.includes("billing")),
+    );
+
+    // Best-effort Firestore sync
     db.collection("users").doc(uid).set(
       {
         plan: isActive ? "pro" : "free",
@@ -64,12 +105,7 @@ export async function GET(req: NextRequest) {
       { merge: true },
     ).catch(() => {});
 
-    return NextResponse.json({
-      manualPro: false,
-      status:    sub.status,
-      currentPeriodEnd,
-      cancelAtPeriodEnd,
-    });
+    return NextResponse.json({ manualPro: false, status: sub.status, currentPeriodEnd, cancelAtPeriodEnd });
   } catch (err) {
     console.error("GET /api/user/billing-info error:", err);
     return NextResponse.json({ error: "Failed to load billing info" }, { status: 500 });

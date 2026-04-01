@@ -47,6 +47,11 @@ function BillingContent() {
     const res  = await fetch("/api/user/billing-info", { headers: { Authorization: `Bearer ${tok}` } });
     const json = res.ok ? await res.json().catch(() => ({})) : {};
     setSubInfo(json);
+    // billing-info syncs Firestore as a side-effect; refresh PlanContext so
+    // isPro reflects the live Stripe status even if the webhook never fired.
+    if (json.status === "active" || json.status === "trialing" || json.manualPro) {
+      await refresh();
+    }
     return json;
   };
 
@@ -316,6 +321,14 @@ function BillingContent() {
       <p className="mt-6 text-center text-xs text-gray-400">
         Payments are securely processed by Stripe. Cancel anytime.
       </p>
+
+      {/* Temporary debug — remove once confirmed working */}
+      {process.env.NODE_ENV !== "production" || true ? (
+        <details className="mt-8 rounded-xl border border-gray-200 bg-gray-50 p-4 text-xs text-gray-500">
+          <summary className="cursor-pointer font-mono font-semibold">Debug: subInfo</summary>
+          <pre className="mt-2 whitespace-pre-wrap break-all">{JSON.stringify(subInfo, null, 2)}</pre>
+        </details>
+      ) : null}
     </div>
   );
 }
