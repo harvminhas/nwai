@@ -8,7 +8,7 @@ import Sidebar from "@/components/Sidebar";
 import UploadZone from "@/components/UploadZone";
 import ProcessingAnimation from "@/components/ProcessingAnimation";
 import { usePlan } from "@/contexts/PlanContext";
-import { addPendingParse } from "@/components/ParseStatusBanner";
+import ParseStatusBanner, { addPendingParse } from "@/components/ParseStatusBanner";
 
 const checklist = [
   "Your current net worth",
@@ -183,6 +183,7 @@ export default function UploadPage() {
   const anyDone      = queue.some((q) => q.status === "done");
   const showQueue = queue.length > 0;
 
+
   // ── Logged-in layout ─────────────────────────────────────────────────────
 
   if (authChecked && isLoggedIn) {
@@ -200,6 +201,9 @@ export default function UploadPage() {
                 Manage uploads →
               </Link>
             </div>
+
+            {/* Shows backfill age-bucket prompt when a new account is detected */}
+            <ParseStatusBanner onRefresh={() => {}} />
 
             {/* Single file mode — shows ProcessingAnimation after upload */}
             {!canMulti && (

@@ -11,7 +11,7 @@ import ExpensesCard from "@/components/ExpensesCard";
 import SavingsRateCard from "@/components/SavingsRateCard";
 import SubscriptionsCard from "@/components/SubscriptionsCard";
 import InsightsSection from "@/components/InsightsSection";
-import type { ParsedStatementData, ManualAsset } from "@/lib/types";
+import type { ParsedStatementData, ManualAsset, InvestmentHolding } from "@/lib/types";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import CsvImportPanel from "@/components/CsvImportPanel";
 import type { PaymentFrequency } from "@/app/api/user/account-rates/route";
@@ -84,6 +84,123 @@ interface RateHistoryEntry {
   source: "user" | "ai";
   changedAt: string;
   note: string | null;
+}
+
+// ── Holdings card (investment accounts) ──────────────────────────────────────
+
+const HOLDING_TYPE_LABEL: Record<string, string> = {
+  stock:       "Stock",
+  etf:         "ETF",
+  mutual_fund: "Mutual Fund",
+  bond:        "Bond",
+  gic:         "GIC",
+  cash:        "Cash",
+  other:       "Other",
+};
+const HOLDING_TYPE_COLOR: Record<string, string> = {
+  stock:       "bg-blue-100 text-blue-700",
+  etf:         "bg-indigo-100 text-indigo-700",
+  mutual_fund: "bg-purple-100 text-purple-700",
+  bond:        "bg-green-100 text-green-700",
+  gic:         "bg-teal-100 text-teal-700",
+  cash:        "bg-gray-100 text-gray-500",
+  other:       "bg-gray-100 text-gray-500",
+};
+
+function HoldingsCard({ holdings, totalValue }: { holdings: InvestmentHolding[]; totalValue: number }) {
+  const [expanded, setExpanded] = useState(false);
+  const PREVIEW = 6;
+  const sorted  = [...holdings].sort((a, b) => b.value - a.value);
+  const visible = expanded ? sorted : sorted.slice(0, PREVIEW);
+  const hasMore = sorted.length > PREVIEW;
+
+  const fmt$ = (n: number) =>
+    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD",
+      minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
+
+  // Aggregate by type for the mini summary bar
+  const byType = holdings.reduce<Record<string, number>>((acc, h) => {
+    acc[h.type] = (acc[h.type] ?? 0) + h.value;
+    return acc;
+  }, {});
+  const typeOrder: string[] = ["stock", "etf", "mutual_fund", "bond", "gic", "cash", "other"];
+  const barSegments = typeOrder
+    .filter((t) => byType[t])
+    .map((t) => ({ type: t, value: byType[t], pct: totalValue > 0 ? (byType[t] / totalValue) * 100 : 0 }));
+
+  return (
+    <div className="mb-6 rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+      <div className="px-5 pt-4 pb-3 border-b border-gray-100">
+        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Holdings</p>
+
+        {/* Stacked composition bar */}
+        {barSegments.length > 0 && (
+          <div className="mb-3">
+            <div className="flex h-2.5 w-full rounded-full overflow-hidden gap-px">
+              {barSegments.map((seg) => (
+                <div
+                  key={seg.type}
+                  style={{ width: `${seg.pct}%` }}
+                  className={`h-full ${HOLDING_TYPE_COLOR[seg.type]?.split(" ")[0] ?? "bg-gray-200"}`}
+                  title={`${HOLDING_TYPE_LABEL[seg.type]}: ${fmt$(seg.value)} (${seg.pct.toFixed(1)}%)`}
+                />
+              ))}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+              {barSegments.map((seg) => (
+                <span key={seg.type} className="flex items-center gap-1 text-[11px] text-gray-500">
+                  <span className={`h-2 w-2 rounded-sm inline-block ${HOLDING_TYPE_COLOR[seg.type]?.split(" ")[0] ?? "bg-gray-200"}`} />
+                  {HOLDING_TYPE_LABEL[seg.type]} {seg.pct.toFixed(0)}%
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Holdings list */}
+      <div className="divide-y divide-gray-50">
+        {visible.map((h, i) => {
+          const pct = h.percentOfPortfolio ?? (totalValue > 0 ? (h.value / totalValue) * 100 : 0);
+          return (
+            <div key={i} className="flex items-center gap-3 px-5 py-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-sm font-medium text-gray-900 truncate">{h.name}</p>
+                  {h.symbol && (
+                    <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-mono font-semibold text-gray-600">
+                      {h.symbol}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${HOLDING_TYPE_COLOR[h.type] ?? HOLDING_TYPE_COLOR.other}`}>
+                    {HOLDING_TYPE_LABEL[h.type] ?? h.type}
+                  </span>
+                  {h.units !== undefined && (
+                    <span className="text-xs text-gray-400">{h.units.toLocaleString()} units</span>
+                  )}
+                </div>
+              </div>
+              <div className="shrink-0 text-right">
+                <p className="text-sm font-semibold tabular-nums text-gray-900">{fmt$(h.value)}</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">{pct.toFixed(1)}%</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {hasMore && (
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="w-full border-t border-gray-100 px-5 py-2.5 text-xs font-medium text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition text-center"
+        >
+          {expanded ? "Show less ↑" : `Show all ${sorted.length} holdings ↓`}
+        </button>
+      )}
+    </div>
+  );
 }
 
 // ── APR inline editor ────────────────────────────────────────────────────────
@@ -212,6 +329,14 @@ export default function AccountDetailPage() {
   const [paymentFrequency, setPaymentFrequency] = useState<PaymentFrequency>("monthly");
   const [savingFreq, setSavingFreq]             = useState(false);
 
+  // FX rates from the financial profile cache (currency → CAD rate)
+  const [fxRates, setFxRates] = useState<Record<string, number>>({});
+
+  // Currency override modal state
+  const [showCurrencyModal, setShowCurrencyModal] = useState(false);
+  const [selectedCurrency, setSelectedCurrency]   = useState<string>("CAD");
+  const [savingCurrency, setSavingCurrency]       = useState(false);
+
   // Balance snapshot state
   const [showSnapshotForm,  setShowSnapshotForm]  = useState(false);
   const [snapBalance,       setSnapBalance]       = useState("");
@@ -245,13 +370,15 @@ export default function AccountDetailPage() {
 
       const monthMap = new Map<string, { yearMonth: string; netWorth: number; isEstimate: boolean; priority: number }>();
       for (const e of acctHistory) {
-        const priority = e.isCarryForward ? 0 : e.isManualSnapshot ? 1 : 2;
+        const isBackfill = e.note === "Estimated (backfilled)";
+        // Priority: carry-forward=0 (worst), backfill/snapshot=1, real upload=2 (best)
+        const priority = e.isCarryForward ? 0 : (isBackfill || e.isManualSnapshot) ? 1 : 2;
         const existing = monthMap.get(e.yearMonth);
         if (!existing || priority > existing.priority) {
           monthMap.set(e.yearMonth, {
             yearMonth: e.yearMonth,
             netWorth: e.netWorth,
-            isEstimate: e.isCarryForward,
+            isEstimate: e.isCarryForward || isBackfill,
             priority,
           });
         }
@@ -260,6 +387,8 @@ export default function AccountDetailPage() {
         .sort((a, b) => a.yearMonth.localeCompare(b.yearMonth))
         .map(({ yearMonth, netWorth, isEstimate }) => ({ yearMonth, netWorth, isEstimate }));
       setHistory(chartHistory);
+
+      setFxRates(typeof json.fxRates === "object" && json.fxRates !== null ? json.fxRates : {});
 
       const saved = localStorage.getItem(`baseline-${slug}`);
       if (saved) setBaselineMonth(saved);
@@ -342,9 +471,10 @@ export default function AccountDetailPage() {
       const acctHistory: StatementHistoryEntry[] = json.accountStatementHistory?.[slug] ?? [];
       setStmtHistory(acctHistory);
       setHistory((Array.isArray(json.history) ? json.history : []).map(
-        (h: { yearMonth: string; netWorth: number; expensesTotal?: number }) => ({
+        (h: { yearMonth: string; netWorth: number; expensesTotal?: number; isEstimate?: boolean }) => ({
           ...h,
-          isEstimate: acctHistory.find((e) => e.yearMonth === h.yearMonth)?.isCarryForward ?? false,
+          isEstimate: h.isEstimate ??
+            (acctHistory.find((e) => e.yearMonth === h.yearMonth)?.isCarryForward ?? false),
         })
       ));
     } finally { setDeletingId(null); }
@@ -464,9 +594,10 @@ export default function AccountDetailPage() {
       const rJson = await refreshed.json().catch(() => ({}));
       const acctHistory: StatementHistoryEntry[] = rJson.accountStatementHistory?.[slug] ?? [];
       setStmtHistory(acctHistory);
-      setHistory((rJson.history ?? []).map((h: { yearMonth: string; netWorth: number; expensesTotal?: number }) => ({
+      setHistory((rJson.history ?? []).map((h: { yearMonth: string; netWorth: number; expensesTotal?: number; isEstimate?: boolean }) => ({
         ...h,
-        isEstimate: acctHistory.find((e) => e.yearMonth === h.yearMonth)?.isCarryForward ?? false,
+        isEstimate: h.isEstimate ??
+          (acctHistory.find((e) => e.yearMonth === h.yearMonth)?.isCarryForward ?? false),
       })));
     } finally { setSnapSaving(false); }
   }
@@ -480,6 +611,26 @@ export default function AccountDetailPage() {
       });
       setStmtHistory((prev) => prev.filter((e) => e.snapshotId !== snapshotId));
     } finally { setDeletingSnap(null); }
+  }
+
+  async function saveCurrency(newCurrency: string) {
+    if (!idToken) return;
+    setSavingCurrency(true);
+    try {
+      const res = await fetch("/api/user/account-currencies", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ accountSlug: slug, currency: newCurrency }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      setShowCurrencyModal(false);
+      showToast(`Currency set to ${newCurrency}. Rebuilding profile…`, true);
+      await loadAccountData(idToken);
+    } catch {
+      showToast("Failed to save currency", false);
+    } finally {
+      setSavingCurrency(false);
+    }
   }
 
   // Merge AI rate history from stmtHistory with user rate history
@@ -519,12 +670,23 @@ export default function AccountDetailPage() {
     </div>
   );
 
-  const accountType    = data.accountType ?? "other";
-  const isDebtAccount  = DEBT_TYPES.has(accountType);
-  const hasIncome      = accountType === "checking" || accountType === "savings" || (data.income?.total ?? 0) > 0;
-  // "loan" included because HELOC/LOC accounts have revolving consumer transactions
-  const hasSpending    = ["checking", "savings", "credit", "loan"].includes(accountType) ||
-    (data.expenses?.total ?? 0) > 0 || (data.subscriptions?.length ?? 0) > 0;
+  const accountType      = data.accountType ?? "other";
+  const isDebtAccount    = DEBT_TYPES.has(accountType);
+  const isInvestment     = accountType === "investment";
+  const currency         = (data as ParsedStatementData & { currency?: string }).currency ?? "CAD";
+  const isForeignCurrency = currency !== "CAD";
+  // Live FX rate for this account's currency (undefined if CAD or rate not yet fetched)
+  const fxRate           = isForeignCurrency ? fxRates[currency.toUpperCase()] : undefined;
+  const rawBalance       = data.netWorth ?? 0;
+  const cadEquivalent    = fxRate ? rawBalance * fxRate : null;
+  const hasIncome        = !isInvestment && (accountType === "checking" || accountType === "savings" || (data.income?.total ?? 0) > 0);
+  // Investment accounts contain fund transactions (buys, sells, dividends) that the
+  // parser may surface as "expenses" — these are portfolio activity, not spending.
+  // Exclude them entirely so the Expenses card / Spent KPI don't show for investments.
+  const hasSpending      = !isInvestment && (
+    ["checking", "savings", "credit", "loan"].includes(accountType) ||
+    (data.expenses?.total ?? 0) > 0 || (data.subscriptions?.length ?? 0) > 0
+  );
 
   // "Spent this month" = all expense transactions on this account, matching ExpensesCard below.
   const spentThisMonth = data.expenses?.total ?? 0;
@@ -539,6 +701,7 @@ export default function AccountDetailPage() {
   const prevDebt          = previousMonth ? (previousMonth.debts ?? Math.abs(previousMonth.netWorth)) : null;
   const paidDown          = prevDebt !== null ? prevDebt - outstandingDebt : null;
   const carryForwardCount = stmtHistory.filter((e) => e.isCarryForward).length;
+  const backfillCount     = stmtHistory.filter((e) => e.note === "Estimated (backfilled)").length;
 
   const freqConfig = PAYMENT_FREQ_OPTIONS.find((f) => f.value === paymentFrequency) ?? PAYMENT_FREQ_OPTIONS[3];
   const perPaymentInterest = effectiveRate !== null && outstandingDebt > 0
@@ -578,7 +741,92 @@ export default function AccountDetailPage() {
         </span>
         {data.bankName && <span className="text-sm text-gray-500">{data.bankName}</span>}
         {data.accountId && data.accountId !== "unknown" && <span className="text-sm text-gray-400">{data.accountId}</span>}
+        {/* Currency badge — always shown, clickable to change */}
+        <button
+          onClick={() => { setSelectedCurrency(currency); setShowCurrencyModal(true); }}
+          className={`rounded-full px-2.5 py-0.5 text-xs font-semibold transition hover:ring-2 hover:ring-offset-1 ${
+            isForeignCurrency
+              ? "bg-amber-100 text-amber-700 hover:ring-amber-300"
+              : "bg-gray-100 text-gray-500 hover:ring-gray-300"
+          }`}
+          title="Change account currency"
+        >
+          {currency}
+        </button>
       </div>
+
+      {/* Foreign currency banner */}
+      {isForeignCurrency && (
+        <div className="mt-3 mb-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+          <svg className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+          </svg>
+          <div className="text-xs text-amber-800 space-y-0.5">
+            {fxRate && cadEquivalent !== null ? (
+              <>
+                <p>
+                  <strong>{currency}</strong> account · balance {fmt(rawBalance)} {currency}
+                  {" "}= <strong>{fmt(cadEquivalent)} CAD</strong>{" "}
+                  <span className="text-amber-600">(rate: 1 {currency} = {fxRate.toFixed(4)} CAD, refreshed daily)</span>
+                </p>
+                <p className="text-amber-700">Your net worth already includes this account converted to CAD.</p>
+              </>
+            ) : (
+              <p>
+                Balances are in <strong>{currency}</strong>. Net worth will be converted to CAD.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Currency change modal */}
+      {showCurrencyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+            <h2 className="text-base font-semibold text-gray-900 mb-1">Set account currency</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Choose the currency this account is denominated in. Balances will be converted to CAD for net worth calculations using a daily exchange rate.
+            </p>
+            <div className="grid grid-cols-3 gap-2 mb-5">
+              {["CAD", "USD", "EUR", "GBP", "AUD", "CHF"].map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setSelectedCurrency(c)}
+                  className={`rounded-lg border py-2 text-sm font-semibold transition ${
+                    selectedCurrency === c
+                      ? "border-purple-500 bg-purple-50 text-purple-700"
+                      : "border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50"
+                  }`}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+            {selectedCurrency !== currency && (
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                Changing currency will rebuild your financial profile. Net worth and history will update within a few seconds.
+              </div>
+            )}
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setShowCurrencyModal(false)}
+                className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => saveCurrency(selectedCurrency)}
+                disabled={savingCurrency || selectedCurrency === currency}
+                className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-40 transition flex items-center gap-2"
+              >
+                {savingCurrency && <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />}
+                {savingCurrency ? "Saving…" : "Confirm"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <p className="text-sm text-gray-500">
         As of {monthLabel(yearMonth)}
         {statementCount > 0 && ` · ${statementCount} statement${statementCount !== 1 ? "s" : ""}`}
@@ -620,6 +868,27 @@ export default function AccountDetailPage() {
       </div>
 
       {activeTab === "overview" && <>
+
+      {/* Backfill estimated history banner */}
+      {backfillCount > 0 && (
+        <div className="mb-6 flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+          <svg className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <div className="flex-1 min-w-0 text-sm">
+            <p className="font-medium text-blue-900">
+              {backfillCount} month{backfillCount !== 1 ? "s" : ""} of estimated history
+            </p>
+            <p className="mt-0.5 text-blue-700">
+              Shown as a dashed line on the chart. Based on the balance from your first uploaded statement.{" "}
+              <Link href="/upload" className="font-medium underline hover:text-blue-900">
+                Upload older statements
+              </Link>{" "}
+              to make it accurate.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Incomplete months banner */}
       {carryForwardCount > 0 && (
@@ -795,6 +1064,57 @@ export default function AccountDetailPage() {
             </div>
           )}
         </div>
+      ) : isInvestment ? (
+        /* Investment account KPIs: Portfolio Value · Change · Return Rate */
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-6">
+          {/* Portfolio Value */}
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Portfolio Value</p>
+            <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(data.netWorth ?? 0)}</p>
+            {(() => {
+              const delta = previousMonth != null ? (data.netWorth ?? 0) - previousMonth.netWorth : null;
+              if (delta === null) return <p className="mt-1.5 text-xs text-gray-400">First month tracked</p>;
+              if (delta === 0)    return <p className="mt-1.5 text-xs text-gray-400">No change</p>;
+              const abs = Math.abs(delta);
+              const label = abs >= 1000 ? `${delta > 0 ? "+" : "−"}$${Math.round(abs / 1000)}k` : `${delta > 0 ? "+" : "−"}${fmt(abs)}`;
+              return <p className={`mt-1.5 text-xs font-medium ${delta > 0 ? "text-green-600" : "text-red-500"}`}>{delta > 0 ? "↑" : "↓"} {label} vs last month</p>;
+            })()}
+          </div>
+
+          {/* Contributions this period (income = contributions/transfers in) */}
+          {(data.income?.total ?? 0) > 0 && (
+            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Contributions</p>
+              <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(data.income?.total ?? 0)}</p>
+              <p className="mt-1.5 text-xs text-gray-400">deposits &amp; transfers in</p>
+            </div>
+          )}
+
+          {/* Return Rate (APY) */}
+          {idToken && accountKey && (
+            <div className="relative rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Return Rate (APY)</p>
+              <AprEditor
+                accountKey={accountKey}
+                currentRate={effectiveRate}
+                extractedRate={extractedRate}
+                token={idToken}
+                onSaved={(rate) => {
+                  setEffectiveRate(rate ?? extractedRate);
+                  fetch(`/api/user/account-rates/history?accountKey=${encodeURIComponent(accountKey)}`, {
+                    headers: { Authorization: `Bearer ${idToken}` },
+                  })
+                    .then((r) => r.json())
+                    .then((j) => setRateHistory(j.history ?? []))
+                    .catch(() => {});
+                }}
+              />
+              <p className="mt-1.5 text-xs text-gray-400">
+                {effectiveRate !== null ? "User-set" : extractedRate !== null ? "From statement" : "Not set"}
+              </p>
+            </div>
+          )}
+        </div>
       ) : (
         /* Per-account KPIs: Balance · Income · Spent */
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-6">
@@ -889,6 +1209,11 @@ export default function AccountDetailPage() {
             ))}
           </div>
         </div>
+      )}
+
+      {/* ── Investment holdings breakdown ────────────────────────────────── */}
+      {isInvestment && (data.holdings ?? []).length > 0 && (
+        <HoldingsCard holdings={data.holdings!} totalValue={data.netWorth ?? 0} />
       )}
 
       {/* Balance trend chart */}
@@ -1011,6 +1336,10 @@ export default function AccountDetailPage() {
                           <span className="inline-flex items-center gap-1 rounded-full bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-600">
                             ✎ manual
                           </span>
+                        ) : entry.note === "Estimated (backfilled)" ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600">
+                            ⟵ backfilled
+                          </span>
                         ) : entry.isCarryForward ? (
                           <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-600">
                             ~ estimated
@@ -1020,7 +1349,7 @@ export default function AccountDetailPage() {
                             ✓ uploaded
                           </span>
                         )}
-                        {entry.note && (
+                        {entry.note && entry.note !== "Estimated (backfilled)" && (
                           <span className="ml-1.5 text-xs text-gray-400 italic" title={entry.note}>"{entry.note}"</span>
                         )}
                       </td>
@@ -1095,6 +1424,13 @@ export default function AccountDetailPage() {
       {/* ── TRANSACTIONS TAB ──────────────────────────────────────────────── */}
       {activeTab === "transactions" && (
         <div>
+          {isInvestment && (
+            <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50 px-4 py-2.5">
+              <p className="text-xs text-blue-700">
+                <span className="font-semibold">Portfolio activity</span> — these are fund transactions (buys, sells, dividends, transfers), not personal expenses.
+              </p>
+            </div>
+          )}
           {txPayments > 0 && (
             <div className="mb-4 rounded-lg bg-blue-50 border border-blue-100 px-4 py-2.5 flex items-center justify-between">
               <span className="text-xs font-medium text-blue-700">Payments received</span>

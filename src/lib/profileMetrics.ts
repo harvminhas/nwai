@@ -118,16 +118,25 @@ export function getNetWorth(
 ): NetWorthResult {
   const refMonth = referenceMonth ?? todayYearMonth();
 
+  // ── FX helper: convert a balance in any currency to CAD ─────────────────
+  const fxRates = profile.fxRates ?? {};
+  function toCAD(amount: number, currency?: string): number {
+    if (!currency || currency === "CAD") return amount;
+    const rate = fxRates[currency.toUpperCase()];
+    return rate ? amount * rate : amount; // fall back to 1:1 if rate missing
+  }
+
   // ── Net worth total (mirrors consolidateStatements logic exactly) ────────
   let totalAssets = 0;
   let totalDebts  = 0;
   for (const snap of profile.accountSnapshots) {
+    const cur = snap.currency ?? "CAD";
     if (snap.parsedAssets != null || snap.parsedDebts != null) {
-      totalAssets += snap.parsedAssets ?? 0;
-      totalDebts  += snap.parsedDebts  ?? 0;
+      totalAssets += toCAD(snap.parsedAssets ?? 0, cur);
+      totalDebts  += toCAD(snap.parsedDebts  ?? 0, cur);
     } else {
-      totalAssets += Math.max(0,  snap.balance);
-      totalDebts  += Math.max(0, -snap.balance);
+      totalAssets += toCAD(Math.max(0,  snap.balance), cur);
+      totalDebts  += toCAD(Math.max(0, -snap.balance), cur);
     }
   }
   const manualTotal = (profile.manualAssets ?? []).reduce((s, a) => s + a.value, 0);
@@ -142,12 +151,13 @@ export function getNetWorth(
     if (snap.balance <= 0) continue;
     const label     = accountLabel(snap);
     const estimated = snap.statementMonth < refMonth;
+    const cadBalance = toCAD(snap.balance, snap.currency ?? "CAD");
     const existing  = rowMap.get(label);
     if (existing) {
-      existing.value      += snap.balance;
+      existing.value      += cadBalance;
       existing.isEstimated = existing.isEstimated && estimated;
     } else {
-      rowMap.set(label, { value: snap.balance, isEstimated: estimated });
+      rowMap.set(label, { value: cadBalance, isEstimated: estimated });
     }
   }
   for (const asset of (profile.manualAssets ?? [])) {
@@ -167,10 +177,11 @@ export function getNetWorth(
   // max(0, -balance)) as a named row sorted by value descending.
   const debtRowMap = new Map<string, { value: number; isEstimated: boolean }>();
   for (const snap of profile.accountSnapshots) {
-    const debtAmt = snap.parsedDebts != null
+    const rawDebt = snap.parsedDebts != null
       ? snap.parsedDebts
       : Math.max(0, -snap.balance);
-    if (debtAmt <= 0) continue;
+    if (rawDebt <= 0) continue;
+    const debtAmt   = toCAD(rawDebt, snap.currency ?? "CAD");
     const label     = debtLabel(snap);
     const estimated = snap.statementMonth < refMonth;
     const existing  = debtRowMap.get(label);

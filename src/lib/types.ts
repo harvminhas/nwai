@@ -127,6 +127,30 @@ export interface SubAccount {
   maturityDate?: string;
 }
 
+export type HoldingType =
+  | "stock"
+  | "etf"
+  | "mutual_fund"
+  | "bond"
+  | "gic"
+  | "cash"
+  | "other";
+
+export interface InvestmentHolding {
+  /** Ticker / fund symbol as printed (e.g. "AAPL", "FXAIX", "VFV"). Omit if not on statement. */
+  symbol?: string;
+  /** Full name as printed on the statement. */
+  name: string;
+  /** Asset class — exactly one of the HoldingType values. */
+  type: HoldingType;
+  /** Current market value in dollars. */
+  value: number;
+  /** Number of shares / units held. Omit if not stated. */
+  units?: number;
+  /** Portfolio weight 0–100. Omit if not stated; derived from value/total when available. */
+  percentOfPortfolio?: number;
+}
+
 export interface ParsedStatementData {
   netWorth?: number;
   /** When statement shows breakdown; else derived from netWorth (positive = assets, negative = debts). */
@@ -169,6 +193,16 @@ export interface ParsedStatementData {
    * can show accurate per-tranche breakdowns and payoff calculations.
    */
   subAccounts?: SubAccount[];
+  /**
+   * ISO 4217 currency code as printed on the statement (e.g. "CAD", "USD").
+   * Defaults to "CAD" if not stated (most Canadian bank statements don't print it).
+   */
+  currency?: string;
+  /**
+   * Investment holdings extracted from the statement (investment accounts only).
+   * Each entry represents one fund, stock, ETF, bond, or other position.
+   */
+  holdings?: InvestmentHolding[];
 }
 
 // Firestore document types (timestamps as Date or Firestore Timestamp depending on context)

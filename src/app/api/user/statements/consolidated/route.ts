@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
-import { consolidateStatements, getYearMonth } from "@/lib/consolidate";
+import { consolidateStatements } from "@/lib/consolidate";
 import { applyRulesAndRecalculate, merchantSlug } from "@/lib/applyRules";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { docYearMonth, carryForwardStatements } from "@/lib/spendHistory";
@@ -8,6 +8,14 @@ import { getFinancialProfile } from "@/lib/financialProfile";
 import { getNetWorth } from "@/lib/profileMetrics";
 import type { ParsedStatementData, ManualAsset, AssetCategory } from "@/lib/types";
 import type { BalanceSnapshot } from "@/app/api/user/balance-snapshots/route";
+import type { AccountBackfill } from "@/app/api/user/account-backfills/route";
+
+/** Subtract n months from a YYYY-MM string */
+function subtractMonths(ym: string, n: number): string {
+  const [y, m] = ym.split("-").map(Number);
+  const date = new Date(y, m - 1 - n, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
 
 /** Human-readable label for a statement's account, e.g. "TD ••••7780" */
 function accountDisplayLabel(parsed: ParsedStatementData): string {
@@ -196,17 +204,32 @@ export async function GET(request: NextRequest) {
       ? applyRulesAndRecalculate(consolidated, categoryRulesMap)
       : consolidated;
 
-    // Net worth — delegate to getNetWorth() which uses the profile cache and mirrors
-    // the consolidateStatements formula (parsedAssets/parsedDebts with sign-split fallback).
-    // This is the single authoritative computation — same number shown on the Today page.
-    const nw = getNetWorth(profile);
-
-    let enrichedConsolidated: ParsedStatementData = {
-      ...consolidatedWithRules,
-      assets:   nw.totalAssets,
-      debts:    nw.totalDebts,
-      netWorth: nw.total,
-    };
+    // Net worth:
+    // - All-accounts view (no filter): use getNetWorth(profile) so the number
+    //   matches exactly what the Today page shows (single source of truth).
+    // - Per-account view (accountFilter set): use the statement-derived values
+    //   directly — getNetWorth(profile) sums ALL accounts, which would produce
+    //   the wrong total for a single-account detail page.
+    let enrichedConsolidated: ParsedStatementData;
+    if (accountFilter) {
+      // Also carry through currency from the account's snapshot in the profile
+      // (so the detail page can show it even if consolidateStatements dropped it)
+      const snapCurrency = profile.accountSnapshots.find(
+        (s) => s.slug === accountFilter
+      )?.currency;
+      enrichedConsolidated = {
+        ...consolidatedWithRules,
+        ...(snapCurrency && snapCurrency !== "CAD" ? { currency: snapCurrency } : {}),
+      };
+    } else {
+      const nw = getNetWorth(profile);
+      enrichedConsolidated = {
+        ...consolidatedWithRules,
+        assets:   nw.totalAssets,
+        debts:    nw.totalDebts,
+        netWorth: nw.total,
+      };
+    }
 
     // ── Previous month (for delta calculations) ──────────────────────────────
     const priorMonths = Array.from(yearMonths)
@@ -233,7 +256,7 @@ export async function GET(request: NextRequest) {
     }
 
     // ── History + income source history + recurring expense history ──────────
-    const history: { yearMonth: string; netWorth: number; expensesTotal: number; coreExpensesTotal: number; incomeTotal: number; debtTotal: number }[] = [];
+    const history: { yearMonth: string; netWorth: number; expensesTotal: number; coreExpensesTotal: number; incomeTotal: number; debtTotal: number; isEstimate?: boolean }[] = [];
 
     // incomeSourceHistory: source description → per-month amounts + transaction dates
     const incomeSourceHistory: Record<string, {
@@ -374,6 +397,70 @@ export async function GET(request: NextRequest) {
       entries.sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
     }
 
+    // ── Backfill injection ───────────────────────────────────────────────────
+    // For accounts where the user told us they'd had the account longer than
+    // the first uploaded statement, inject flat estimated balance entries into
+    // history going back backfillMonths months. Shown as a dashed line on the chart.
+    if (!accountFilter) {
+      const backfillsSnap = await db
+        .collection("users").doc(uid)
+        .collection("accountBackfills")
+        .get();
+      const backfills: AccountBackfill[] = backfillsSnap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<AccountBackfill, "id">),
+      }));
+
+      if (backfills.length > 0) {
+        const historyIndex = new Map(history.map((h, i) => [h.yearMonth, i]));
+
+        for (const bf of backfills) {
+          if (bf.backfillMonths <= 0) continue;
+          for (let mo = 1; mo <= bf.backfillMonths; mo++) {
+            const ym  = subtractMonths(bf.firstStatementYearMonth, mo);
+            const idx = historyIndex.get(ym);
+            if (idx !== undefined) {
+              history[idx].netWorth  += bf.firstBalance;
+              history[idx].isEstimate = true;
+            } else {
+              const newIdx = history.length;
+              history.push({
+                yearMonth: ym, netWorth: bf.firstBalance,
+                expensesTotal: 0, coreExpensesTotal: 0,
+                incomeTotal: 0, debtTotal: 0, isEstimate: true,
+              });
+              historyIndex.set(ym, newIdx);
+            }
+          }
+
+          // Inject into accountStatementHistory for the account detail page
+          if (!accountStatementHistory.has(bf.accountSlug)) {
+            accountStatementHistory.set(bf.accountSlug, []);
+          }
+          for (let mo = 1; mo <= bf.backfillMonths; mo++) {
+            const ym = subtractMonths(bf.firstStatementYearMonth, mo);
+            const already = accountStatementHistory.get(bf.accountSlug)!.some((e) => e.yearMonth === ym);
+            if (!already) {
+              accountStatementHistory.get(bf.accountSlug)!.push({
+                yearMonth: ym, netWorth: bf.firstBalance,
+                uploadedAt: bf.createdAt, statementId: "",
+                isCarryForward: false, interestRate: null,
+                isManualSnapshot: false,
+                note: "Estimated (backfilled)",
+              });
+            }
+          }
+
+          // Re-sort the account's history after injection
+          accountStatementHistory.get(bf.accountSlug)!
+            .sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
+        }
+
+        // Re-sort the global history after injecting backfill months
+        history.sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
+      }
+    }
+
     // ── Incomplete months detection ──────────────────────────────────────────
     // A month is "incomplete" if at least one account that exists today used
     // a carry-forward (i.e. had no real statement uploaded for that month).
@@ -430,8 +517,11 @@ export async function GET(request: NextRequest) {
       : null;
 
     // Transaction-date-based expenses for the requested month — from extracted data.
-    // Replaces the statement-level aggregate so this matches the insights route exactly.
-    const monthExpTxns = expenseTxns.filter((t) => t.txMonth === month);
+    // When accountFilter is set (account detail page), also filter to that account's
+    // slug so transactions from other accounts don't leak into this view.
+    const monthExpTxns = expenseTxns.filter((t) =>
+      t.txMonth === month && (!accountFilter || t.accountSlug === accountFilter)
+    );
     const txMonthlyExpenses = monthExpTxns.reduce((s, t) => s + t.amount, 0);
     // Income uses the statement-level total: no double-counting risk for deposits,
     // and the AI parser correctly attributes income to the statement period.
@@ -477,6 +567,8 @@ export async function GET(request: NextRequest) {
       accountCount: uniqueAccountIds.size,
       lastUploadedAt,
       liquidAssets,
+      /** FX rates used for net worth: currency → CAD rate (e.g. { "USD": 1.42 }) */
+      fxRates: profile.fxRates ?? {},
     });
   } catch (err) {
     console.error("Consolidated statements error:", err);

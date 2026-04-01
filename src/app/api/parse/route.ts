@@ -12,6 +12,7 @@ import { merchantSlug, applyRulesAndRecalculate } from "@/lib/applyRules";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { getYearMonth } from "@/lib/consolidate";
 import { fireInsightEvent } from "@/lib/insights/index";
+import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
 import type { ParsedStatementData } from "@/lib/types";
 
 export const maxDuration = 120;
@@ -116,12 +117,55 @@ export async function POST(request: NextRequest) {
     const slug = computeAccountSlug(parsedData);
     const yearMonth = parsedData.statementDate ? getYearMonth(parsedData.statementDate) : null;
 
+    // ── New-account detection — check before writing "completed" so we can
+    // include backfillPromptNeeded in the SAME update. A separate update would
+    // race against the onSnapshot listener and the flag could arrive after the
+    // listener has already unsubscribed following the "completed" event.
+    let backfillPromptNeeded = false;
+    let backfillOldestMonth: string | null = null;
+    if (userId && slug) {
+      try {
+        const allUserStmts = await db
+          .collection("statements")
+          .where("userId", "==", userId)
+          .where("status", "==", "completed")
+          .select("accountSlug", "yearMonth")
+          .get();
+
+        const existingSlugs = new Set(
+          allUserStmts.docs
+            .map((d) => d.data().accountSlug as string)
+            .filter(Boolean)
+        );
+        // isFirstForSlug: this account has never had a completed statement before
+        const isFirstForSlug = !existingSlugs.has(slug);
+
+        if (isFirstForSlug) {
+          backfillPromptNeeded = true;
+          // Oldest month across all other completed statements — used for the
+          // ">6 months" age bucket to know how far back to estimate.
+          const allMonths = allUserStmts.docs
+            .map((d) => d.data().yearMonth as string)
+            .filter(Boolean)
+            .sort();
+          backfillOldestMonth = allMonths[0] ?? null;
+        }
+      } catch (e) {
+        console.error("[parse] backfill detection failed:", e);
+      }
+    }
+
     await statementRef.update({
       parsedData,
       status: "completed",
       errorMessage: null,
       accountSlug: slug,
       yearMonth: yearMonth ?? null,
+      // Included in this same write so the onSnapshot fires with all fields set:
+      ...(backfillPromptNeeded && {
+        backfillPromptNeeded: true,
+        backfillOldestMonth,
+      }),
     });
 
     // Mark older statements for the same account+month as superseded
@@ -143,8 +187,14 @@ export async function POST(request: NextRequest) {
       if (hasBatchOps) await batch.commit();
     }
 
+    // Invalidate financial profile cache so the next page load picks up the
+    // new parsedData (currency, holdings, balance, etc.) immediately.
+    if (userId) {
+      invalidateFinancialProfileCache(userId, db)
+        .catch((e) => console.error("[parse] cache invalidation failed:", e));
+    }
+
     // Fire insight event — fire-and-forget, never blocks the parse response.
-    // Insights layer decides which detectors to run based on event type.
     if (userId) {
       fireInsightEvent({ type: "statement.parsed", meta: { statementId } }, userId, db)
         .catch((e) => console.error("[insights] statement.parsed event failed:", e));

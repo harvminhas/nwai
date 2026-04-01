@@ -183,6 +183,10 @@ export function consolidateStatements(
 
   const insights: Insight[] = first.insights ?? [];
 
+  // Carry through currency if all statements agree (or there's only one)
+  const firstCurrency = first.currency;
+  const allSameCurrency = statements.every((s) => s.currency === firstCurrency);
+
   return {
     netWorth,
     assets: totalAssets,
@@ -192,6 +196,7 @@ export function consolidateStatements(
     accountId: first.accountId,
     accountName: first.accountName,
     accountType: first.accountType,
+    ...(allSameCurrency && firstCurrency ? { currency: firstCurrency } : {}),
     paymentsMade: totalPaymentsMade > 0 ? totalPaymentsMade : undefined,
     income: {
       total: incomeTotal,

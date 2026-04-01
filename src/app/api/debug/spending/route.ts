@@ -86,6 +86,16 @@ export async function GET(request: NextRequest) {
         monthsInHistory: profile.monthlyHistory.length,
         negativeAmountTxns: negatives.length,
       },
+      accountSnapshots: profile.accountSnapshots.map((s) => ({
+        slug: s.slug,
+        bankName: s.bankName,
+        accountName: s.accountName,
+        accountType: s.accountType,
+        currency: s.currency ?? "CAD",
+        balance: s.balance,
+        statementMonth: s.statementMonth,
+      })),
+      fxRates: profile.fxRates ?? {},
       currentMonth: {
         month: thisMonth,
         totalBefore: +currentAll.toFixed(2),

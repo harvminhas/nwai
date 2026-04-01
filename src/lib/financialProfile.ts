@@ -25,7 +25,9 @@ import { computeTypicalSpend, CORE_EXCLUDE_RE } from "./spendingMetrics";
 import { merchantSlug } from "./applyRules";
 import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
 import type { TypicalSpend } from "./spendingMetrics";
-import type { ManualAsset } from "./types";
+import type { ManualAsset, InvestmentHolding, ParsedStatementData } from "./types";
+import { buildAccountSlug } from "./accountSlug";
+import { getFxRatesForCurrencies } from "./fxRates";
 
 // ── Balance snapshot shape (mirrors /api/user/balance-snapshots) ──────────────
 export interface BalanceSnapshot {
@@ -48,7 +50,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "6";
+const SCHEMA_VERSION = "8";
 
 // ── types ──────────────────────────────────────────────────────────────────────
 
@@ -102,6 +104,25 @@ export interface FinancialProfileCache {
   allTxMonths: string[];
   /** Latest month that has at least one transaction */
   latestTxMonth: string | null;
+  /**
+   * Investment holdings per account, from the most recent uploaded statement.
+   * Only populated for investment-type accounts that have a holdings table.
+   */
+  portfolioHoldings: PortfolioAccountHoldings[];
+  /**
+   * FX rates used for net worth calculation.
+   * Maps ISO 4217 currency code → rate to convert to CAD (e.g. { "USD": 1.42 }).
+   * CAD is always 1.0 and is not stored here (it's implicit).
+   * Refreshed at most once per 24 h via api.frankfurter.app.
+   */
+  fxRates: Record<string, number>;
+}
+
+export interface PortfolioAccountHoldings {
+  accountSlug: string;
+  accountName: string;
+  statementMonth: string;
+  holdings: InvestmentHolding[];
 }
 
 // ── version hash ──────────────────────────────────────────────────────────────
@@ -112,7 +133,15 @@ export interface FinancialProfileCache {
  */
 export function computeSourceVersion(docs: Firestore.QueryDocumentSnapshot[]): string {
   const repr = docs
-    .map((d) => `${d.id}:${d.data().uploadedAt?.toMillis?.() ?? 0}`)
+    .map((d) => {
+      const data = d.data();
+      // Include uploadedAt AND a re-parse signal so that re-parsing an existing
+      // statement (same uploadedAt, new parsedData) invalidates the version hash.
+      // We use the yearMonth + accountSlug from parsedData as a cheap proxy.
+      const pd = data.parsedData as { statementDate?: string; bankName?: string; accountId?: string; currency?: string } | undefined;
+      const reparse = [pd?.statementDate, pd?.bankName, pd?.accountId, pd?.currency ?? ""].join("~");
+      return `${d.id}:${data.uploadedAt?.toMillis?.() ?? 0}:${reparse}`;
+    })
     .sort()
     .join("|");
   let h = 0;
@@ -133,14 +162,21 @@ export async function buildAndCacheFinancialProfile(
   db: Firestore.Firestore,
 ): Promise<FinancialProfileCache> {
   // Fetch all data sources in parallel — same collections the assets page uses.
-  const [txData, rulesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap] =
+  const [txData, rulesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap] =
     await Promise.all([
       extractAllTransactions(uid, db),
       db.collection(`users/${uid}/categoryRules`).get(),
       db.collection("statements").where("userId", "==", uid).where("status", "==", "completed").get(),
       db.collection(`users/${uid}/manualAssets`).orderBy("updatedAt", "desc").get(),
       db.collection(`users/${uid}/balanceSnapshots`).orderBy("yearMonth", "desc").get(),
+      db.collection(`users/${uid}/accountCurrencies`).get(),
     ]);
+
+  // Currency overrides: accountSlug → ISO currency code (e.g. "USD")
+  const currencyOverrides = new Map<string, string>();
+  for (const doc of currencyOverridesSnap.docs) {
+    currencyOverrides.set(doc.id, (doc.data().currency as string).toUpperCase());
+  }
 
   const { incomeTxns: allIncomeTxns, accountSnapshots, latestTxMonth, allTxMonths } = txData;
 
@@ -222,7 +258,10 @@ export async function buildAndCacheFinancialProfile(
       statementMonth: s.yearMonth,
       interestRate: null,
     }));
-  const mergedSnapshots = [...accountSnapshotsWithOverrides, ...snapshotOnlyAccts];
+  const mergedSnapshots = [...accountSnapshotsWithOverrides, ...snapshotOnlyAccts].map((s) => {
+    const override = currencyOverrides.get(s.slug);
+    return override ? { ...s, currency: override } : s;
+  });
 
   // Compute per-month aggregated history from ALL months
   const monthlyHistory: MonthlyHistoryEntry[] = allTxMonths.map((ym) => {
@@ -249,6 +288,39 @@ export async function buildAndCacheFinancialProfile(
   const cutoff6     = allTxMonths.slice(-6)[0] ?? thisMonth;
   const incomeTxns  = allIncomeTxns.filter((t) => t.txMonth >= cutoff6);
 
+  // Collect holdings from the most recent investment statement per account slug
+  const latestHoldingsBySlug = new Map<string, PortfolioAccountHoldings>();
+  for (const doc of completedSnap.docs) {
+    const d = doc.data();
+    const parsed = d.parsedData as ParsedStatementData | undefined;
+    if (!parsed || parsed.accountType !== "investment") continue;
+    const holdings = parsed.holdings;
+    if (!holdings || holdings.length === 0) continue;
+    const slug = buildAccountSlug(parsed.bankName, parsed.accountId);
+    const ym   = d.yearMonth as string | undefined ?? "";
+    const existing = latestHoldingsBySlug.get(slug);
+    if (!existing || ym > existing.statementMonth) {
+      latestHoldingsBySlug.set(slug, {
+        accountSlug:   slug,
+        accountName:   parsed.accountName ?? parsed.bankName ?? slug,
+        statementMonth: ym,
+        holdings,
+      });
+    }
+  }
+  const portfolioHoldings = Array.from(latestHoldingsBySlug.values());
+
+  // Fetch FX rates for any non-CAD account currencies present in the snapshots.
+  const currencySet = new Set<string>(
+    mergedSnapshots.map((s) => (s.currency ?? "CAD").toUpperCase())
+  );
+  const fxRateMap = await getFxRatesForCurrencies(currencySet, db);
+  // Store as a plain object (excluding CAD=1 since it's implicit)
+  const fxRates: Record<string, number> = {};
+  for (const [currency, rate] of fxRateMap.entries()) {
+    if (currency !== "CAD") fxRates[currency] = rate;
+  }
+
   const profile: FinancialProfileCache = {
     updatedAt: now.toISOString(),
     sourceVersion,
@@ -262,6 +334,8 @@ export async function buildAndCacheFinancialProfile(
     latestTxMonth,
     manualAssets,
     balanceSnapshots,
+    portfolioHoldings,
+    fxRates,
   };
 
   // Persist — JSON round-trip strips `undefined` fields (Firestore rejects them)

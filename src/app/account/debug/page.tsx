@@ -37,6 +37,11 @@ type SpendingDebugResult = {
     ageSeconds: number; totalTxns: number; monthsInHistory: number;
     negativeAmountTxns: number;
   };
+  accountSnapshots: {
+    slug: string; bankName: string; accountName?: string;
+    accountType: string; currency: string; balance: number; statementMonth: string;
+  }[];
+  fxRates: Record<string, number>;
   currentMonth: {
     month: string; totalBefore: number; totalAfterExcludingTransfers: number;
     difference: number; excludedByCategory: Record<string, number>;
@@ -470,6 +475,54 @@ export default function DebugParsePage() {
                 <span className="font-semibold text-red-600">⚠ {spendResult.cacheMetadata.negativeAmountTxns} negative-amount txns in cache</span>
               )}
             </div>
+          </div>
+
+          {/* Account snapshots + FX rates */}
+          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">
+              Account Snapshots &amp; FX Rates
+              {Object.keys(spendResult.fxRates ?? {}).length === 0 && (
+                <span className="ml-2 text-amber-500 normal-case font-normal">(no foreign currencies detected)</span>
+              )}
+            </p>
+            {Object.keys(spendResult.fxRates ?? {}).length > 0 && (
+              <div className="mb-3 flex flex-wrap gap-2">
+                {Object.entries(spendResult.fxRates).map(([cur, rate]) => (
+                  <span key={cur} className="rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-800">
+                    1 {cur} = {rate.toFixed(4)} CAD
+                  </span>
+                ))}
+              </div>
+            )}
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50 border-b border-gray-100">
+                <tr>
+                  <th className="text-left px-3 py-2 text-gray-500 font-medium">Account</th>
+                  <th className="text-left px-3 py-2 text-gray-500 font-medium">Type</th>
+                  <th className="text-left px-3 py-2 text-gray-500 font-medium">Currency</th>
+                  <th className="text-right px-3 py-2 text-gray-500 font-medium">Balance</th>
+                  <th className="text-left px-3 py-2 text-gray-500 font-medium">Month</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(spendResult.accountSnapshots ?? []).map((s) => (
+                  <tr key={s.slug} className="border-b border-gray-50 hover:bg-gray-50">
+                    <td className="px-3 py-1.5">
+                      <p className="font-medium text-gray-800">{s.accountName ?? s.bankName}</p>
+                      <p className="text-gray-400 font-mono">{s.slug}</p>
+                    </td>
+                    <td className="px-3 py-1.5 text-gray-600">{s.accountType}</td>
+                    <td className="px-3 py-1.5">
+                      <span className={`rounded-full px-2 py-0.5 font-semibold ${s.currency !== "CAD" ? "bg-amber-100 text-amber-700" : "bg-gray-100 text-gray-500"}`}>
+                        {s.currency}
+                      </span>
+                    </td>
+                    <td className="px-3 py-1.5 text-right font-mono text-gray-800">{s.balance.toLocaleString()}</td>
+                    <td className="px-3 py-1.5 text-gray-500 font-mono">{s.statementMonth}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
 
           {/* Current month summary */}

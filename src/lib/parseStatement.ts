@@ -15,6 +15,7 @@ Extract the following fields:
 - accountName: account product name or nickname (e.g. "TD All-Inclusive Banking", "Chase Sapphire Reserve"). Infer from context if not labelled.
 - accountType: exactly one of: "checking", "savings", "credit", "mortgage", "investment", "loan", "other"
 - interestRate: APR/APY as a plain number (e.g. 4.25). Return null if not stated — do NOT guess.
+- currency: ISO 4217 code as printed on the statement (e.g. "USD", "CAD", "EUR"). If not explicitly stated, infer from context: US banks / US brokerage accounts (Fidelity, Vanguard, Schwab, TD Ameritrade, etc.) → "USD". Canadian banks (TD Canada Trust, RBC, BMO, CIBC, Scotiabank, Desjardins, etc.) → "CAD". Default to "CAD" only if you are confident it is a Canadian-dollar account.
 
 ---
 
@@ -26,6 +27,14 @@ Extract the following fields:
   - Multi-segment statements (e.g. TD FlexLine = revolving HELOC + term mortgage portions): sum ALL sub-account balances into one negative total. Example: revolving $34,717 + term $444,469 = −$479,186.
 - assets: closing balance for asset accounts; 0 for debt accounts.
 - debts: 0 for asset accounts; total outstanding balance (positive) for debt accounts.
+
+**INVESTMENT ACCOUNT BALANCE — CRITICAL RULES:**
+For investment/retirement accounts (401k, RRSP, TFSA, brokerage, pension):
+1. The authoritative balance is the field labelled "Ending Balance", "Account Total", "Closing Balance", "Total Market Value", or "Vested Balance" at the ACCOUNT level (your personal account, not the whole plan).
+2. Do NOT use individual fund prices, share prices, inception-to-date contribution totals, plan-level aggregates, or any calculated/intermediate value.
+3. Do NOT multiply shares × price yourself — only use a dollar total that is explicitly printed.
+4. If the statement shows a table with columns like "Shares / Price / Market Value", use only the MARKET VALUE column total for the ending period.
+5. Ignore any "Plan Total" or company-wide figures — use only the participant's own account balance.
 
 ---
 
@@ -72,6 +81,37 @@ Skip balance-snapshot rows entirely — rows that record what the balance IS rat
 
 For pure mortgage and investment statements (no consumer purchases): skip Steps 3–6 and return empty arrays/zeros for income, expenses, subscriptions, and savingsRate.
 EXCEPTION — HELOC / Line of Credit: extract every advance/charge as an expense and every payment received as paymentsMade. Do NOT skip.
+
+**STEP 2B — INVESTMENT HOLDINGS (investment accounts only)**
+If accountType is "investment", extract every line item from the portfolio/positions/holdings table.
+
+**Multi-period tables (Fidelity NetBenefits and similar):**
+These statements show the SAME metric for two dates side-by-side, e.g.:
+  "Shares as of 01/31 | Shares as of 02/28 | Price as of 01/31 | Price as of 02/28 | Market Value as of 01/31 | Market Value as of 02/28"
+ALWAYS use the LAST / MOST RECENT period column for value, shares, and price.
+Fund names may wrap across multiple lines — reconstruct the full name before moving on.
+
+**For each position:**
+- symbol: ticker exactly as printed (e.g. "FXAIX", "VFV", "AAPL"). Omit if absent.
+- name: full fund / security name, reconstructed from all lines that belong to this row.
+- type: exactly one of "stock" | "etf" | "mutual_fund" | "bond" | "gic" | "cash" | "other".
+  - Name contains "Index Fund", "Mutual Fund", "Fund" (no ETF) → "mutual_fund"
+  - Name contains "ETF" or ticker only, no "Fund" → "etf"
+  - Plain company name or single ticker → "stock"
+  - "Bond", "Fixed Income", "Treasury" → "bond"
+  - "GIC", "Term Deposit" → "gic"
+  - "Cash", "Money Market", uninvested balance → "cash"
+- value: most-recent-period market value in dollars. Must be explicitly printed — do NOT calculate from shares × price.
+- units: shares/units for the most recent period. Omit if not stated.
+- percentOfPortfolio: % weight if printed. Omit if not stated.
+
+**Rules:**
+- Only include rows that represent individual positions with an explicit dollar value.
+- Skip subtotal rows ("Large Cap Total", "Account Totals", "Sub-Total", etc.).
+- Skip header rows and footnote rows.
+- If no holdings table exists, return holdings: [].
+
+Skip Steps 3–6 for investment accounts (return empty arrays/zeros for income, expenses, subscriptions, savingsRate).
 
 PASS 1 — Direction: For EVERY transaction row, determine money IN vs money OUT using the format identified in STEP 0. This is binary — there is no "unclear". If the statement's own notation is ambiguous, use DIRECTION KEYWORDS. Record your determination before moving to categorization.
 
@@ -185,6 +225,28 @@ For combined products (HELOC + mortgage term portions, etc.):
   - Top-level netWorth = NEGATIVE sum of all sub-account balances.
   - Top-level interestRate = rate for the revolving/HELOC portion.
   - Single-account statements: return subAccounts as [].
+
+For an investment / retirement account (401k, RRSP, TFSA, brokerage):
+{
+  "netWorth": 64510.67,
+  "assets": 64510.67,
+  "debts": 0,
+  "statementDate": "2026-02-28",
+  "bankName": "Fidelity",
+  "accountId": "Z12345678",
+  "accountName": "HPE Hewlett Packard Enterprise 401(k) Plan",
+  "accountType": "investment",
+  "currency": "USD",
+  "interestRate": null,
+  "income": { "transactions": [] },
+  "expenses": { "transactions": [] },
+  "paymentsMade": 0,
+  "subscriptions": [],
+  "subAccounts": [],
+  "holdings": [
+    { "name": "US Large Cap Equity Index", "type": "mutual_fund", "value": 64510.67, "units": 697.073 }
+  ]
+}
 
 **Return JSON only, no markdown or explanation. Do NOT compute totals, percentages, or summaries — return transactions only. Totals and category aggregations are calculated by the application.**
 

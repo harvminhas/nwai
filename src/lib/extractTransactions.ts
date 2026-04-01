@@ -60,6 +60,11 @@ export interface AccountSnapshot {
   parsedDebts?: number;
   statementMonth: string; // YYYY-MM of the statement this balance came from
   interestRate: number | null;
+  /**
+   * ISO 4217 currency code from the statement (e.g. "CAD", "USD").
+   * Defaults to "CAD" when not stated by the parser.
+   */
+  currency?: string;
 }
 
 export interface ExtractedFinancialData {
@@ -238,6 +243,7 @@ export async function extractAllTransactions(
       parsedDebts:  parsed.debts,
       statementMonth: stmtYm,
       interestRate: typeof parsed.interestRate === "number" ? parsed.interestRate : null,
+      currency: parsed.currency ?? "CAD",
     })
   );
 
