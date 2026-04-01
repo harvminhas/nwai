@@ -1,11 +1,13 @@
 /**
  * Plan definitions.
- * When Stripe is integrated, replace the localStorage-based PlanContext
- * with a Firestore fetch of the user's active subscription, then map
- * the Stripe price ID to one of these plan IDs.
+ *
+ * Plan resolution priority (see /api/user/plan GET):
+ *   1. users/{uid}.manualPro === true  → "pro"  (admin override, bypasses Stripe)
+ *   2. users/{uid}.subscription.status === "active" → "pro"
+ *   3. Otherwise → "free"
  */
 
-export type PlanId = "free" | "pro" | "family";
+export type PlanId = "free" | "pro";
 
 export interface PlanFeatures {
   forecast: boolean;
@@ -50,7 +52,7 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
   pro: {
     id: "pro",
     name: "Pro",
-    price: "$9 / mo",
+    price: "$9.99 / mo",
     uploadsPerMonth: -1,
     historyMonths: -1,
     features: {
@@ -65,27 +67,9 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
       aiChat:        true,
     },
   },
-  family: {
-    id: "family",
-    name: "Family",
-    price: "$18 / mo",
-    uploadsPerMonth: -1,
-    historyMonths: -1,
-    features: {
-      forecast:      true,
-      goals:         true,
-      payoffPlanner: true,
-      multiUpload:   true,
-      export:        true,
-      aiInsights:    true,
-      multiUser:     true,
-      whatIf:        true,
-      aiChat:        true,
-    },
-  },
 };
 
-export const PLAN_ORDER: PlanId[] = ["free", "pro", "family"];
+export const PLAN_ORDER: PlanId[] = ["free", "pro"];
 
 /** Returns true if the given plan includes the feature. */
 export function planHas(plan: PlanId, feature: keyof PlanFeatures): boolean {

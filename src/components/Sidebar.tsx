@@ -357,10 +357,40 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
             {!collapsed && <span>Activity & Coverage</span>}
           </Link>
 
-          {/* Test mode plan switcher */}
-          {!collapsed && (
+          {/* Billing / upgrade */}
+          {planId === "free" && !collapsed && (
+            <Link href="/account/billing"
+              className="mt-1 flex items-center gap-2 rounded-lg bg-purple-600 px-3 py-2 text-xs font-semibold text-white hover:bg-purple-700 transition"
+            >
+              <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+              </svg>
+              Upgrade to Pro
+            </Link>
+          )}
+          {planId === "pro" && !collapsed && (
+            <Link href="/account/billing"
+              className="mt-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium text-purple-600 hover:bg-purple-50 transition"
+            >
+              <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+              </svg>
+              Pro · Manage
+            </Link>
+          )}
+          {collapsed && (
+            <Link href="/account/billing" title="Billing"
+              className="flex w-full items-center justify-center rounded-lg px-2 py-2 text-purple-500 hover:bg-purple-50 transition"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+              </svg>
+            </Link>
+          )}
+          {/* Dev-only test plan switcher */}
+          {process.env.NODE_ENV === "development" && !collapsed && (
             <div className="mt-1 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
-              <p className="text-[9px] font-bold uppercase tracking-widest text-amber-500 mb-1.5">🧪 Test plan</p>
+              <p className="text-[9px] font-bold uppercase tracking-widest text-amber-500 mb-1.5">🧪 Dev · Test plan</p>
               <div className="flex gap-1">
                 {PLAN_ORDER.map((id) => (
                   <button key={id}
@@ -376,18 +406,6 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
                 ))}
               </div>
             </div>
-          )}
-          {collapsed && (
-            <button
-              title={`Plan: ${PLANS[planId].name} (click to cycle)`}
-              onClick={() => {
-                const idx = PLAN_ORDER.indexOf(planId);
-                setTestPlan(PLAN_ORDER[(idx + 1) % PLAN_ORDER.length] as PlanId);
-              }}
-              className="flex w-full items-center justify-center rounded-lg px-2 py-2 text-xs font-bold text-amber-500 hover:bg-amber-50 transition"
-            >
-              {planId === "free" ? "F" : planId === "pro" ? "P" : "★"}
-            </button>
           )}
 
           {/* Sign out */}

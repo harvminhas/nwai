@@ -67,9 +67,9 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const setTestPlan = useCallback((id: PlanId) => {
+    if (process.env.NODE_ENV !== "development") return; // no-op in production
     setPlanIdState(id);
     localStorage.setItem(TEST_PLAN_KEY, id);
-    // Also persist to Firestore so server-side API routes (e.g. upload limit) can read it
     const { auth } = getFirebaseClient();
     const user = auth.currentUser;
     if (user) {
