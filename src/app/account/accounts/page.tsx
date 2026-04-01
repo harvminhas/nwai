@@ -34,14 +34,7 @@ function accountSlug(s: UserStatementSummary): string {
   return buildAccountSlug(s.bankName, s.accountId);
 }
 
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(value);
-}
+import { fmt as formatCurrency } from "@/lib/currencyUtils";
 
 interface AccountGroup {
   slug: string;
@@ -56,6 +49,7 @@ interface AccountGroup {
 export default function AccountsPage() {
   const router = useRouter();
   const [statements, setStatements] = useState<UserStatementSummary[]>([]);
+  const [currencyOverrides, setCurrencyOverrides] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -66,12 +60,20 @@ export default function AccountsPage() {
       setLoading(true); setError(null);
       try {
         const token = await user.getIdToken();
-        const res = await fetch("/api/user/statements", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) { setError(json.error || "Failed to load"); return; }
-        setStatements(json.statements ?? []);
+        const headers = { Authorization: `Bearer ${token}` };
+        const [stmtRes, currRes] = await Promise.all([
+          fetch("/api/user/statements", { headers }),
+          fetch("/api/user/account-currencies", { headers }),
+        ]);
+        const [stmtJson, currJson] = await Promise.all([
+          stmtRes.json().catch(() => ({})),
+          currRes.json().catch(() => ({})),
+        ]);
+        if (!stmtRes.ok) { setError(stmtJson.error || "Failed to load"); return; }
+        setStatements(stmtJson.statements ?? []);
+        const overrides = currJson.overrides ?? {};
+        console.log("[accounts] currency overrides:", overrides);
+        setCurrencyOverrides(overrides);
       } catch { setError("Failed to load"); }
       finally { setLoading(false); }
     });
@@ -167,35 +169,38 @@ export default function AccountsPage() {
                   <span className="text-gray-400">{group.length} account{group.length !== 1 ? "s" : ""}</span>
                 </h2>
                 <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {group.map((acct) => (
-                    <li key={acct.slug}>
-                      <Link
-                        href={`/account/accounts/${acct.slug}`}
-                        className="block rounded-xl border border-gray-200 bg-white p-5 shadow-sm transition hover:shadow-md"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="truncate font-semibold text-gray-900">{acct.accountName}</p>
-                            <p className="mt-0.5 text-xs text-gray-500">
-                              {acct.bankName}
-                              {acct.accountId && acct.accountId !== "unknown" && (
-                                <span className="ml-1 text-gray-400">· {acct.accountId}</span>
-                              )}
-                            </p>
-                            <p className="mt-0.5 text-xs text-gray-400">
-                              {acct.statements.length} statement{acct.statements.length !== 1 ? "s" : ""}
-                            </p>
+                  {group.map((acct) => {
+                    const currency = currencyOverrides[acct.slug] ?? "CAD";
+                    return (
+                      <li key={acct.slug}>
+                        <Link
+                          href={`/account/accounts/${acct.slug}`}
+                          className="block rounded-xl border border-gray-200 bg-white p-5 shadow-sm transition hover:shadow-md"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="truncate font-semibold text-gray-900">{acct.accountName}</p>
+                              <p className="mt-0.5 text-xs text-gray-500">
+                                {acct.bankName}
+                                {acct.accountId && acct.accountId !== "unknown" && (
+                                  <span className="ml-1 text-gray-400">· {acct.accountId}</span>
+                                )}
+                              </p>
+                              <p className="mt-0.5 text-xs text-gray-400">
+                                {acct.statements.length} statement{acct.statements.length !== 1 ? "s" : ""}
+                              </p>
+                            </div>
+                            {acct.latestNetWorth != null && (
+                              <p className={`shrink-0 font-bold text-sm ${acct.latestNetWorth < 0 ? "text-red-600" : "text-gray-900"}`}>
+                                {formatCurrency(acct.latestNetWorth, currency)}
+                              </p>
+                            )}
                           </div>
-                          {acct.latestNetWorth != null && (
-                            <p className={`shrink-0 font-bold text-sm ${acct.latestNetWorth < 0 ? "text-red-600" : "text-gray-900"}`}>
-                              {formatCurrency(acct.latestNetWorth)}
-                            </p>
-                          )}
-                        </div>
-                        <p className="mt-3 text-xs text-purple-600 font-medium">View account →</p>
-                      </Link>
-                    </li>
-                  ))}
+                          <p className="mt-3 text-xs text-purple-600 font-medium">View account →</p>
+                        </Link>
+                      </li>
+                    );
+                  })}
                 </ul>
               </section>
             ))}

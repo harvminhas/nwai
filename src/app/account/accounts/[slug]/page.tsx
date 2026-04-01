@@ -51,11 +51,7 @@ function shortMonth(yearMonth: string): string {
   return new Date(parseInt(y, 10), parseInt(m, 10) - 1, 1)
     .toLocaleDateString("en-US", { month: "short", year: "2-digit" });
 }
-function fmt(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0,
-  }).format(value);
-}
+import { fmt, getCurrencySymbol, CURRENCY_SYMBOL } from "@/lib/currencyUtils";
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
@@ -765,9 +761,8 @@ export default function AccountDetailPage() {
             {fxRate && cadEquivalent !== null ? (
               <>
                 <p>
-                  <strong>{currency}</strong> account · balance {fmt(rawBalance)} {currency}
-                  {" "}= <strong>{fmt(cadEquivalent)} CAD</strong>{" "}
-                  <span className="text-amber-600">(rate: 1 {currency} = {fxRate.toFixed(4)} CAD, refreshed daily)</span>
+                  Balance {fmt(rawBalance, currency)} = <strong>{fmt(cadEquivalent, "CAD")} CAD</strong>{" "}
+                  <span className="text-amber-600">(1 {currency} = {fxRate.toFixed(4)} CAD, refreshed daily)</span>
                 </p>
                 <p className="text-amber-700">Your net worth already includes this account converted to CAD.</p>
               </>
@@ -953,10 +948,10 @@ export default function AccountDetailPage() {
           {/* Outstanding Balance */}
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Outstanding Balance</p>
-            <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(outstandingDebt)}</p>
+            <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(outstandingDebt, currency)}</p>
             {paidDown !== null && paidDown !== 0 && (
               <p className={`mt-1.5 text-xs font-medium ${paidDown > 0 ? "text-green-600" : "text-red-500"}`}>
-                {paidDown > 0 ? "↓" : "↑"} {fmt(Math.abs(paidDown))} {paidDown > 0 ? "paid down" : "more debt"} vs prev month
+                {paidDown > 0 ? "↓" : "↑"} {fmt(Math.abs(paidDown), currency)} {paidDown > 0 ? "paid down" : "more debt"} vs prev month
               </p>
             )}
             {paidDown === null && (
@@ -1070,13 +1065,13 @@ export default function AccountDetailPage() {
           {/* Portfolio Value */}
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Portfolio Value</p>
-            <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(data.netWorth ?? 0)}</p>
+            <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(data.netWorth ?? 0, currency)}</p>
             {(() => {
               const delta = previousMonth != null ? (data.netWorth ?? 0) - previousMonth.netWorth : null;
               if (delta === null) return <p className="mt-1.5 text-xs text-gray-400">First month tracked</p>;
               if (delta === 0)    return <p className="mt-1.5 text-xs text-gray-400">No change</p>;
               const abs = Math.abs(delta);
-              const label = abs >= 1000 ? `${delta > 0 ? "+" : "−"}$${Math.round(abs / 1000)}k` : `${delta > 0 ? "+" : "−"}${fmt(abs)}`;
+              const label = abs >= 1000 ? `${delta > 0 ? "+" : "−"}${CURRENCY_SYMBOL[currency] ?? "$"}${Math.round(abs / 1000)}k` : `${delta > 0 ? "+" : "−"}${fmt(abs, currency)}`;
               return <p className={`mt-1.5 text-xs font-medium ${delta > 0 ? "text-green-600" : "text-red-500"}`}>{delta > 0 ? "↑" : "↓"} {label} vs last month</p>;
             })()}
           </div>
@@ -1085,7 +1080,7 @@ export default function AccountDetailPage() {
           {(data.income?.total ?? 0) > 0 && (
             <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Contributions</p>
-              <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(data.income?.total ?? 0)}</p>
+              <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(data.income?.total ?? 0, currency)}</p>
               <p className="mt-1.5 text-xs text-gray-400">deposits &amp; transfers in</p>
             </div>
           )}
@@ -1121,13 +1116,13 @@ export default function AccountDetailPage() {
           {/* Balance */}
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Balance</p>
-            <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(data.netWorth ?? 0)}</p>
+            <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(data.netWorth ?? 0, currency)}</p>
             {(() => {
               const delta = previousMonth != null ? (data.netWorth ?? 0) - previousMonth.netWorth : null;
               if (delta === null) return <p className="mt-1.5 text-xs text-gray-400">First month tracked</p>;
               if (delta === 0)    return <p className="mt-1.5 text-xs text-gray-400">No change</p>;
               const abs = Math.abs(delta);
-              const label = abs >= 1000 ? `${delta > 0 ? "+" : "−"}$${Math.round(abs / 1000)}k` : `${delta > 0 ? "+" : "−"}${fmt(abs)}`;
+              const label = abs >= 1000 ? `${delta > 0 ? "+" : "−"}${CURRENCY_SYMBOL[currency] ?? "$"}${Math.round(abs / 1000)}k` : `${delta > 0 ? "+" : "−"}${fmt(abs, currency)}`;
               return <p className={`mt-1.5 text-xs font-medium ${delta > 0 ? "text-green-600" : "text-red-500"}`}>{delta > 0 ? "↑" : "↓"} {label} vs last month</p>;
             })()}
           </div>
@@ -1136,7 +1131,7 @@ export default function AccountDetailPage() {
           {hasIncome && (
             <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Income this month</p>
-              <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(data.income?.total ?? 0)}</p>
+              <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(data.income?.total ?? 0, currency)}</p>
               {data.income?.total ? (
                 <p className="mt-1.5 text-xs text-gray-400">deposits &amp; transfers in</p>
               ) : (
@@ -1149,7 +1144,7 @@ export default function AccountDetailPage() {
           {hasSpending && (
             <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Spent this month</p>
-              <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(spentThisMonth)}</p>
+              <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(spentThisMonth, currency)}</p>
               {spentThisMonth > 0 ? (
                 <p className="mt-1.5 text-xs text-gray-400">{spentThisMonthCount} transactions incl. transfers</p>
               ) : (
@@ -1316,7 +1311,7 @@ export default function AccountDetailPage() {
                       <td className="px-4 py-3 font-medium text-gray-800">{shortMonth(entry.yearMonth)}</td>
                       <td className="px-4 py-3 text-right tabular-nums font-medium text-gray-900">
                         <span className={entry.isCarryForward ? "text-gray-400" : ""}>
-                          {fmt(entry.netWorth)}
+                          {fmt(entry.netWorth, currency)}
                         </span>
                       </td>
                       {isDebtAccount && (
@@ -1459,13 +1454,13 @@ export default function AccountDetailPage() {
                         {txn.recurring && <span className="rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-medium text-teal-600">↻ {txn.recurring}</span>}
                       </div>
                     </div>
-                    <p className="shrink-0 text-sm font-semibold tabular-nums text-gray-900">{fmt(txn.amount)}</p>
+                    <p className="shrink-0 text-sm font-semibold tabular-nums text-gray-900">{fmt(txn.amount, currency)}</p>
                   </div>
                 ))}
               </div>
               <div className="border-t border-gray-100 bg-gray-50 px-4 py-2.5 flex items-center justify-between">
                 <span className="text-xs text-gray-400">{txns.length} transaction{txns.length !== 1 ? "s" : ""}</span>
-                <span className="text-xs font-semibold text-gray-700">{fmt(txData?.total ?? 0)} total</span>
+                <span className="text-xs font-semibold text-gray-700">{fmt(txData?.total ?? 0, currency)} total</span>
               </div>
             </div>
           )}

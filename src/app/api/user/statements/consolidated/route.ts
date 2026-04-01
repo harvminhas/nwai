@@ -569,6 +569,16 @@ export async function GET(request: NextRequest) {
       liquidAssets,
       /** FX rates used for net worth: currency → CAD rate (e.g. { "USD": 1.42 }) */
       fxRates: profile.fxRates ?? {},
+      /**
+       * Latest balance snapshot per account — pre-processed with currency overrides,
+       * balance-snapshot overrides, and FX metadata. Use instead of /api/user/statements.
+       */
+      accountSnapshots: profile.accountSnapshots ?? [],
+      /**
+       * Full per-account balance history across all statement months — native currency.
+       * Use instead of /api/user/statements for sparklines / monthly series.
+       */
+      accountBalanceHistory: profile.accountBalanceHistory ?? [],
     });
   } catch (err) {
     console.error("Consolidated statements error:", err);

@@ -10,9 +10,10 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
 } from "recharts";
 import Link from "next/link";
-import type { ManualAsset, AssetCategory, UserStatementSummary, Insight } from "@/lib/types";
-import { buildAccountSlug } from "@/lib/accountSlug";
-import type { BalanceSnapshot } from "@/app/api/user/balance-snapshots/route";
+import type { ManualAsset, AssetCategory, Insight } from "@/lib/types";
+import type { AccountSnapshot } from "@/lib/extractTransactions";
+import type { AccountBalanceHistory } from "@/lib/financialProfile";
+import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -51,14 +52,12 @@ type TabId = typeof TABS[number]["id"];
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function fmt(v: number) {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(v);
-}
 function fmtShort(v: number) {
+  const sym = getCurrencySymbol();
   const abs = Math.abs(v);
   const sign = v < 0 ? "-" : "";
-  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000)     return `${sign}$${Math.round(abs / 1_000)}k`;
+  if (abs >= 1_000_000) return `${sign}${sym}${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000)     return `${sign}${sym}${Math.round(abs / 1_000)}k`;
   return fmt(v);
 }
 function timeAgo(iso: string) {
@@ -70,10 +69,6 @@ function timeAgo(iso: string) {
   if (days < 365) return `${Math.floor(days / 30)}mo ago`;
   return `${Math.floor(days / 365)}y ago`;
 }
-function accountSlug(s: UserStatementSummary) {
-  return buildAccountSlug(s.bankName, s.accountId);
-}
-
 // Freshness: days since a YYYY-MM string (treated as 1st of that month)
 function daysSinceYearMonth(ym?: string): number | null {
   if (!ym) return null;
@@ -130,14 +125,8 @@ function Sparkline({ values, good }: { values: number[]; good: "up" | "down" }) 
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
-type AccountGroup = { slug: string; label: string; type: string };
 interface FormState { label: string; category: AssetCategory; value: string; linkedAccountSlug: string; }
 const EMPTY_FORM: FormState = { label: "", category: "property", value: "", linkedAccountSlug: "" };
-
-interface AccountBalance {
-  slug: string; bankName: string; accountName: string; accountType: string;
-  balance: number; statementDate?: string; fromSnapshot?: boolean;
-}
 
 // ── donut chart ───────────────────────────────────────────────────────────────
 
@@ -197,9 +186,12 @@ export function AssetsPage() {
     return TABS.some((tb) => tb.id === t) ? (t as TabId) : "overview";
   });
 
-  const [assets, setAssets]                   = useState<ManualAsset[]>([]);
-  const [accountBalances, setAccountBalances] = useState<AccountBalance[]>([]);
-  const [accounts, setAccounts]               = useState<AccountGroup[]>([]);
+  const [assets, setAssets]                       = useState<ManualAsset[]>([]);
+  const [currencyOverrides, setCurrencyOverrides]   = useState<Record<string, string>>({});
+  const [fxRates, setFxRates]                       = useState<Record<string, number>>({});
+  // Single pipeline: account data comes from the financial profile cache via consolidated API
+  const [accountSnapshots, setAccountSnapshots]     = useState<AccountSnapshot[]>([]);
+  const [accountBalanceHistory, setAccountBalanceHistory] = useState<AccountBalanceHistory[]>([]);
   const [insights, setInsights]               = useState<Insight[]>([]);
   const [yearMonth, setYearMonth]             = useState<string | null>(null);
   const [assetHistory, setAssetHistory]       = useState<{ ym: string; label: string; total: number; debt: number }[]>([]);
@@ -217,8 +209,7 @@ export function AssetsPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
   // Balance snapshot (manual balance update) state
-  const [snapshots,       setSnapshots]       = useState<BalanceSnapshot[]>([]);
-  const [snapshotTarget,  setSnapshotTarget]  = useState<AccountBalance | null>(null);
+  const [snapshotTarget,  setSnapshotTarget]  = useState<AccountSnapshot | null>(null);
   const [snapshotBalance, setSnapshotBalance] = useState("");
   const [snapshotMonth,   setSnapshotMonth]   = useState("");
   const [snapshotNote,    setSnapshotNote]    = useState("");
@@ -235,22 +226,30 @@ export function AssetsPage() {
   const load = useCallback(async (tok: string) => {
     setLoading(true); setError(null);
     try {
-      const [aRes, sRes, cRes, snapRes] = await Promise.all([
-        fetch("/api/user/assets",                 { headers: { Authorization: `Bearer ${tok}` } }),
-        fetch("/api/user/statements",             { headers: { Authorization: `Bearer ${tok}` } }),
-        fetch("/api/user/statements/consolidated",{ headers: { Authorization: `Bearer ${tok}` } }),
-        fetch("/api/user/balance-snapshots",      { headers: { Authorization: `Bearer ${tok}` } }),
+      // Single pipeline: all account data flows through the financial profile cache.
+      // Only /api/user/assets (manual assets) and /api/user/account-currencies are
+      // fetched separately because they are user-edited, not statement-derived.
+      const [aRes, cRes, currRes] = await Promise.all([
+        fetch("/api/user/assets",                  { headers: { Authorization: `Bearer ${tok}` } }),
+        fetch("/api/user/statements/consolidated", { headers: { Authorization: `Bearer ${tok}` } }),
+        fetch("/api/user/account-currencies",      { headers: { Authorization: `Bearer ${tok}` } }),
       ]);
       const aJson    = await aRes.json().catch(() => ({}));
-      const sJson    = await sRes.json().catch(() => ({}));
       const cJson    = cRes.ok ? await cRes.json().catch(() => ({})) : {};
-      const snapJson = snapRes.ok ? await snapRes.json().catch(() => ({})) : {};
+      const currJson = currRes.ok ? await currRes.json().catch(() => ({})) : {};
 
+      setCurrencyOverrides(currJson.overrides ?? {});
+      setFxRates(cJson.fxRates ?? {});
       setAssets(aJson.assets ?? []);
       setInsights(cJson.data?.insights ?? []);
       setYearMonth(cJson.yearMonth ?? null);
 
-      // Build asset history from consolidated monthly history
+      // Account data — from the financial profile cache (already has balance-snapshot
+      // overrides, currency overrides, and FX metadata applied server-side)
+      setAccountSnapshots(cJson.accountSnapshots ?? []);
+      setAccountBalanceHistory(cJson.accountBalanceHistory ?? []);
+
+      // Build asset history from consolidated monthly history (already CAD-converted)
       const rawHistory: { yearMonth: string; netWorth: number; debtTotal: number }[] =
         cJson.history ?? [];
       const hist = rawHistory
@@ -263,95 +262,26 @@ export function AssetsPage() {
         });
       setAssetHistory(hist);
 
-      const snaps: BalanceSnapshot[] = snapJson.snapshots ?? [];
-      setSnapshots(snaps);
-
-      const stmts: UserStatementSummary[] = (sJson.statements ?? []).filter(
-        (s: UserStatementSummary) => s.status === "completed" && !s.superseded
-      );
-      const latestBySlug = new Map<string, UserStatementSummary>();
-      for (const s of stmts) {
-        // Only consider statements that carry a real account balance
-        if (s.netWorth == null) continue;
-        const slug = accountSlug(s);
-        const existing = latestBySlug.get(slug);
-        if (!existing || (s.statementDate ?? s.uploadedAt) > (existing.statementDate ?? existing.uploadedAt)) {
-          latestBySlug.set(slug, s);
-        }
-      }
-      // Build initial balances from statements
-      const balances: AccountBalance[] = Array.from(latestBySlug.values()).map((s) => ({
-        slug: accountSlug(s), bankName: s.bankName ?? "Unknown",
-        accountName: s.accountName ?? s.bankName ?? "Account",
-        accountType: s.accountType ?? "other", balance: s.netWorth ?? 0,
-        statementDate: s.statementDate,
-      }));
-      // Apply snapshot overrides: if a snapshot is newer, use its balance + date
-      const latestSnapBySlug = new Map<string, BalanceSnapshot>();
-      for (const snap of snaps) {
-        const cur = latestSnapBySlug.get(snap.accountSlug);
-        if (!cur || snap.yearMonth > cur.yearMonth) latestSnapBySlug.set(snap.accountSlug, snap);
-      }
-      for (const b of balances) {
-        const snap = latestSnapBySlug.get(b.slug);
-        if (snap && (!b.statementDate || snap.yearMonth > b.statementDate.slice(0, 7))) {
-          b.balance       = snap.balance;
-          b.statementDate = snap.yearMonth + "-01"; // treat as 1st of month
-          b.fromSnapshot  = true;
-        }
-      }
-      setAccountBalances(balances);
-
-      // Per-account monthly balance history (asset accounts only)
+      // Build per-account monthly series from the cache's accountBalanceHistory
       const ASSET_TYPES = new Set(["checking", "savings", "investment", "other"]);
-      const assetStmts = (sJson.statements ?? [] as UserStatementSummary[]).filter(
-        (s: UserStatementSummary) => s.status === "completed" && !s.superseded &&
-          ASSET_TYPES.has(s.accountType ?? "") && s.source !== "csv"
-      );
       const GROUP_COLORS: Record<string, string> = {
         checking: "#f59e0b", savings: "#f59e0b", investment: "#3b82f6", other: "#94a3b8",
       };
-      const acctMonthMap = new Map<string, { label: string; accountType: string; months: { ym: string; balance: number }[] }>();
-      for (const s of assetStmts) {
-        const slug = accountSlug(s);
-        const ym   = (s.statementDate ?? s.uploadedAt).slice(0, 7);
-        const bal  = s.netWorth ?? 0;
-        if (!acctMonthMap.has(slug)) {
-          acctMonthMap.set(slug, {
-            label: s.accountName ?? s.bankName ?? "Account",
-            accountType: s.accountType ?? "other",
-            months: [],
-          });
-        }
-        const entry = acctMonthMap.get(slug)!;
-        if (!entry.months.find((m) => m.ym === ym)) entry.months.push({ ym, balance: bal });
-      }
-      const acctMonthly: AssetAccountMonthly[] = Array.from(acctMonthMap.entries()).map(([slug, e]) => {
-        const sorted = [...e.months].sort((a, b) => a.ym.localeCompare(b.ym));
-        const cur  = sorted.at(-1)?.balance ?? 0;
-        const prev = sorted.length >= 2 ? sorted[sorted.length - 2].balance : null;
-        return {
-          slug, label: e.label, accountType: e.accountType,
-          color: GROUP_COLORS[e.accountType] ?? "#94a3b8",
-          months: sorted, currentBalance: cur, prevBalance: prev,
-          delta: prev !== null ? cur - prev : null,
-        };
-      });
-      setAccountMonthly(acctMonthly);
-
-      const seen = new Set<string>();
-      const groups: AccountGroup[] = [];
-      for (const s of stmts) {
-        if (!["mortgage", "loan"].includes(s.accountType ?? "")) continue;
-        const slug = accountSlug(s);
-        if (seen.has(slug)) continue;
-        seen.add(slug);
-        groups.push({
-          slug, type: s.accountType ?? "other",
-          label: `${s.accountName ?? s.bankName ?? slug}${s.accountId && s.accountId !== "unknown" ? ` (${s.accountId})` : ""}`,
+      const acctMonthly: AssetAccountMonthly[] = (cJson.accountBalanceHistory as AccountBalanceHistory[] ?? [])
+        .filter((h) => ASSET_TYPES.has(h.accountType))
+        .map((h) => {
+          const sorted = h.entries; // already sorted ascending from the server
+          const cur  = sorted.at(-1)?.balance ?? 0;
+          const prev = sorted.length >= 2 ? sorted[sorted.length - 2].balance : null;
+          return {
+            slug: h.slug, label: h.label, accountType: h.accountType,
+            color: GROUP_COLORS[h.accountType] ?? "#94a3b8",
+            months: sorted.map((e) => ({ ym: e.yearMonth, balance: e.balance })),
+            currentBalance: cur, prevBalance: prev,
+            delta: prev !== null ? cur - prev : null,
+          };
         });
-      }
-      setAccounts(groups);
+      setAccountMonthly(acctMonthly);
     } catch { setError("Failed to load"); }
     finally { setLoading(false); }
   }, []);
@@ -372,7 +302,7 @@ export function AssetsPage() {
   }, [loading]);
 
   // ── Balance snapshot handlers ────────────────────────────────────────────
-  function openSnapshot(account: AccountBalance) {
+  function openSnapshot(account: AccountSnapshot) {
     const now = new Date();
     const ym = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
     setSnapshotTarget(account);
@@ -395,7 +325,7 @@ export function AssetsPage() {
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           accountSlug: snapshotTarget.slug,
-          accountName: snapshotTarget.accountName,
+          accountName: snapshotTarget.accountName ?? snapshotTarget.bankName,
           accountType: snapshotTarget.accountType,
           balance,
           yearMonth: snapshotMonth,
@@ -440,18 +370,26 @@ export function AssetsPage() {
 
   // ── derived data ──────────────────────────────────────────────────────────
 
-  const manualTotal       = assets.reduce((s, a) => s + a.value, 0);
-  const liquidAccounts    = accountBalances.filter((a) => LIQUID_ACCOUNT_TYPES.has(a.accountType) && a.balance > 0);
-  const liquidFromStatements = liquidAccounts.reduce((s, a) => s + a.balance, 0);
-  const liquidFromManual  = assets.filter((a) => LIQUID_ASSET_CATEGORIES.has(a.category)).reduce((s, a) => s + a.value, 0);
-  const liquidTotal       = liquidFromStatements + liquidFromManual;
-  const illiquidTotal     = assets.filter((a) => !LIQUID_ASSET_CATEGORIES.has(a.category)).reduce((s, a) => s + a.value, 0);
-  const totalAssets       = manualTotal + liquidFromStatements;
-  const debts             = accountBalances.filter((a) => ["mortgage", "loan", "credit"].includes(a.accountType) || a.balance < 0);
+  // Convert a balance from an account's native currency to CAD.
+  // Uses fxRates from the financial profile cache — same rates used by getNetWorth().
+  function toCAD(amount: number, currency?: string): number {
+    if (!currency || currency === "CAD") return amount;
+    const rate = fxRates[currency.toUpperCase()];
+    return rate ? amount * rate : amount;
+  }
+
+  const manualTotal          = assets.reduce((s, a) => s + a.value, 0);
+  const liquidSnapshots      = accountSnapshots.filter((a) => LIQUID_ACCOUNT_TYPES.has(a.accountType ?? "") && a.balance > 0);
+  const liquidFromStatements = liquidSnapshots.reduce((s, a) => s + toCAD(a.balance, a.currency), 0);
+  const liquidFromManual     = assets.filter((a) => LIQUID_ASSET_CATEGORIES.has(a.category)).reduce((s, a) => s + a.value, 0);
+  const liquidTotal          = liquidFromStatements + liquidFromManual;
+  const illiquidTotal        = assets.filter((a) => !LIQUID_ASSET_CATEGORIES.has(a.category)).reduce((s, a) => s + a.value, 0);
+  const totalAssets          = manualTotal + liquidFromStatements;
+  const debts                = accountSnapshots.filter((a) => ["mortgage", "loan", "credit"].includes(a.accountType ?? "") || a.balance < 0);
 
   const chartRaw = CHART_GROUPS.map((g) => {
     const fromManual     = assets.filter((a) => (g.categories as string[]).includes(a.category)).reduce((s, a) => s + a.value, 0);
-    const fromStatements = accountBalances.filter((a) => g.accountTypes.includes(a.accountType) && a.balance > 0).reduce((s, a) => s + a.balance, 0);
+    const fromStatements = accountSnapshots.filter((a) => g.accountTypes.includes(a.accountType ?? "") && a.balance > 0).reduce((s, a) => s + toCAD(a.balance, a.currency), 0);
     return { label: g.label, value: fromManual + fromStatements, color: g.color };
   }).filter((d) => d.value > 0);
 
@@ -482,7 +420,7 @@ export function AssetsPage() {
     .filter((r) => r.balanceThisMonth !== null)
     .sort((a, b) => (b.balanceThisMonth ?? 0) - (a.balanceThisMonth ?? 0));
 
-  const liquidTags   = liquidAccounts.map((a) => a.accountName.toLowerCase()).slice(0, 4);
+  const liquidTags   = liquidSnapshots.map((a) => (a.accountName ?? a.bankName ?? "").toLowerCase()).slice(0, 4);
   const illiquidTags = assets
     .filter((a) => !LIQUID_ASSET_CATEGORIES.has(a.category))
     .map((a) => CATEGORY_META[a.category].label)
@@ -497,7 +435,7 @@ export function AssetsPage() {
   // All accounts (liquid + debt) for Accounts tab
   // Accounts tab shows only asset-type accounts; debts live on the Liabilities page
   const DEBT_TYPES = new Set(["credit", "mortgage", "loan"]);
-  const allAccounts = accountBalances.filter((a) => !DEBT_TYPES.has(a.accountType));
+  const allAccounts = accountSnapshots.filter((a) => !DEBT_TYPES.has(a.accountType ?? ""));
 
   if (loading) return (
     <div className="flex min-h-[50vh] items-center justify-center">
@@ -592,8 +530,8 @@ export function AssetsPage() {
                 const otherVal      = (chartRaw.find((g) => g.label === "Vehicles")?.value ?? 0)
                                     + (chartRaw.find((g) => g.label === "Business")?.value ?? 0)
                                     + (chartRaw.find((g) => g.label === "Other")?.value ?? 0);
-                const cashAccts     = liquidAccounts.length;
-                const investAccts   = accountBalances.filter((a) => a.accountType === "investment" && a.balance > 0).length
+                const cashAccts     = liquidSnapshots.length;
+                const investAccts   = accountSnapshots.filter((a) => a.accountType === "investment" && a.balance > 0).length
                                     + assets.filter((a) => a.category === "investment" || a.category === "retirement").length;
                 const propertyItems = assets.filter((a) => a.category === "property").length;
                 const otherItems    = assets.filter((a) => ["vehicle", "business", "other"].includes(a.category)).length;
@@ -648,7 +586,7 @@ export function AssetsPage() {
                 const changed = accountMonthly
                   .filter((a) => a.delta !== null && Math.abs(a.delta!) > 0)
                   .sort((a, b) => Math.abs(b.delta!) - Math.abs(a.delta!));
-                const netChange = changed.reduce((s, a) => s + a.delta!, 0);
+                const netChange = changed.reduce((s, a) => s + toCAD(a.delta!, currencyOverrides[a.slug]), 0);
                 if (changed.length === 0) return null;
                 return (
                   <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -668,7 +606,7 @@ export function AssetsPage() {
                             <span className={`text-sm font-semibold tabular-nums ${grew ? "text-green-600" : "text-red-500"}`}>
                               {grew ? "▲ " : "▼ "}{fmtShort(Math.abs(a.delta!))}
                             </span>
-                            <span className="w-20 text-right text-xs text-gray-400 tabular-nums">{fmt(a.currentBalance)}</span>
+                            <span className="w-20 text-right text-xs text-gray-400 tabular-nums">{fmt(a.currentBalance, currencyOverrides[a.slug])}</span>
                           </div>
                         );
                       })}
@@ -792,7 +730,7 @@ export function AssetsPage() {
                                 <p className="text-xs text-gray-400 capitalize">{r.accountType}</p>
                               </div>
                               <div className="text-right shrink-0">
-                                <p className="text-sm font-semibold tabular-nums text-gray-800">{fmt(r.balanceThisMonth!)}</p>
+                                <p className="text-sm font-semibold tabular-nums text-gray-800">{fmt(r.balanceThisMonth!, currencyOverrides[r.slug])}</p>
                                 {r.delta !== null ? (
                                   <p className={`text-xs font-medium tabular-nums ${grew ? "text-green-600" : shrank ? "text-red-500" : "text-gray-400"}`}>
                                     {grew ? "↑ " : shrank ? "↓ " : ""}{r.delta === 0 ? "no change" : fmtShort(Math.abs(r.delta))}
@@ -831,7 +769,7 @@ export function AssetsPage() {
                             <Sparkline values={sparkVals} good="up" />
                           </div>
                           <div className="shrink-0 text-right w-28">
-                            <p className="text-sm font-semibold text-gray-800 tabular-nums">{fmt(a.currentBalance)}</p>
+                            <p className="text-sm font-semibold text-gray-800 tabular-nums">{fmt(a.currentBalance, currencyOverrides[a.slug])}</p>
                             {a.delta !== null && Math.abs(a.delta) > 0 && (
                               <p className={`text-xs font-medium tabular-nums ${grew ? "text-green-600" : "text-red-500"}`}>
                                 {grew ? "▲ " : "▼ "}{fmtShort(Math.abs(a.delta))} MoM
@@ -877,7 +815,7 @@ export function AssetsPage() {
               ) : (
                 <div className="divide-y divide-gray-100">
                   {allAccounts.map((a) => {
-                    const isDebt = a.balance < 0 || ["mortgage", "loan", "credit"].includes(a.accountType);
+                    const isDebt = a.balance < 0 || ["mortgage", "loan", "credit"].includes(a.accountType ?? "");
                     const displayBalance = isDebt ? Math.abs(a.balance) : a.balance;
                     return (
                       <Link
@@ -887,24 +825,22 @@ export function AssetsPage() {
                       >
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-gray-800 group-hover:text-purple-600 transition-colors truncate">
-                            {a.accountName}
+                            {a.accountName ?? a.bankName}
                           </p>
                           <p className="text-xs text-gray-400 mt-0.5">
                             {a.bankName}
                             {a.accountType && <span className="ml-1.5 capitalize text-gray-300">· {a.accountType}</span>}
                             {(() => {
-                              const ym = a.statementDate?.slice(0, 7);
+                              const ym = a.statementMonth;
                               const days = daysSinceYearMonth(ym);
                               const { text, cls } = freshnessLabel(days);
                               return text ? (
                                 <span className={`ml-1.5 ${cls}`} title={ym ? `Data as of ${ym}` : undefined}>
                                   {freshnessGlyph(days)}as of {new Date((ym ?? "") + "-01T12:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })} · {text}
-                                  {a.fromSnapshot && <span className="ml-1 italic text-gray-400">(manual)</span>}
                                 </span>
                               ) : ym ? (
                                 <span className="ml-1.5 text-gray-400">
                                   as of {new Date(ym + "-01T12:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })}
-                                  {a.fromSnapshot && <span className="ml-1 italic">(manual)</span>}
                                 </span>
                               ) : null;
                             })()}
@@ -912,7 +848,7 @@ export function AssetsPage() {
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <span className={`font-semibold text-sm ${isDebt ? "text-red-600" : "text-gray-900"}`}>
-                            {isDebt ? "−" : ""}{fmt(displayBalance)}
+                            {isDebt ? "−" : ""}{fmt(displayBalance, a.currency)}
                           </span>
                           <button
                             onClick={(e) => { e.preventDefault(); e.stopPropagation(); openSnapshot(a); }}
@@ -968,13 +904,13 @@ export function AssetsPage() {
                       </div>
                       <div className="divide-y divide-gray-100">
                         {catAssets.map((asset) => {
-                          const linked = accounts.find((a) => a.slug === asset.linkedAccountSlug);
+                          const linked = accountSnapshots.find((a) => a.slug === asset.linkedAccountSlug);
                           return (
                             <div key={asset.id} className="flex items-center justify-between gap-3 px-5 py-3.5">
                               <div className="min-w-0">
                                 <p className="truncate text-sm font-medium text-gray-800">{asset.label}</p>
                                 <p className="text-xs text-gray-400">
-                                  {linked && <span className="text-purple-500">linked to {linked.label} · </span>}
+                                  {linked && <span className="text-purple-500">linked to {linked.accountName ?? linked.bankName} · </span>}
                                   updated {timeAgo(asset.updatedAt)}
                                 </p>
                               </div>
@@ -1034,7 +970,7 @@ export function AssetsPage() {
                   className="w-full rounded-lg border border-gray-300 py-2 pl-7 pr-3 text-sm outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500" />
               </div>
             </div>
-            {accounts.length > 0 && (
+            {accountSnapshots.some((a) => ["mortgage", "loan"].includes(a.accountType ?? "")) && (
               <div className="mb-5">
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">
                   Link to loan / mortgage <span className="font-normal normal-case text-gray-400">(optional)</span>
@@ -1042,7 +978,9 @@ export function AssetsPage() {
                 <select value={form.linkedAccountSlug} onChange={(e) => setForm((f) => ({ ...f, linkedAccountSlug: e.target.value }))}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500">
                   <option value="">None</option>
-                  {accounts.map((a) => <option key={a.slug} value={a.slug}>{a.label}</option>)}
+                  {accountSnapshots.filter((a) => ["mortgage", "loan"].includes(a.accountType ?? "")).map((a) => (
+                    <option key={a.slug} value={a.slug}>{a.accountName ?? a.bankName}</option>
+                  ))}
                 </select>
                 {form.linkedAccountSlug && <p className="mt-1 text-xs text-purple-600">Equity = this value − outstanding balance on that account</p>}
               </div>

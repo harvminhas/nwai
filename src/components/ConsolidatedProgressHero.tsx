@@ -1,20 +1,13 @@
 import type { ParsedStatementData } from "@/lib/types";
-
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(value);
-}
+import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
 
 function formatDelta(value: number): string {
+  const sym = getCurrencySymbol();
   const abs = Math.abs(value);
   const sign = value >= 0 ? "+" : "−";
-  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000) return `${sign}$${Math.round(abs / 1_000)}k`;
-  return `${sign}${formatCurrency(abs)}`;
+  if (abs >= 1_000_000) return `${sign}${sym}${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sign}${sym}${Math.round(abs / 1_000)}k`;
+  return `${sign}${fmt(abs)}`;
 }
 
 export type PreviousMonth = {
@@ -48,7 +41,7 @@ function KpiCard({
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">{label}</p>
-      <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{formatCurrency(value)}</p>
+      <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(value)}</p>
       {delta !== null && delta !== 0 && (
         <p className={`mt-1.5 text-xs font-medium ${isGood ? "text-green-600" : "text-red-500"}`}>
           {arrow} {formatDelta(Math.abs(delta))} {resolvedLabel}

@@ -3,13 +3,7 @@
 import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import type { AgentCard, AgentCardAction } from "@/lib/agentTypes";
-
-function fmt(v: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency", currency: "USD",
-    minimumFractionDigits: 0, maximumFractionDigits: 0,
-  }).format(v);
-}
+import { fmt } from "@/lib/currencyUtils";
 
 const PRIORITY_DOT: Record<string, string> = {
   high:   "bg-red-400",

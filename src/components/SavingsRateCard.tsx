@@ -1,13 +1,5 @@
 import type { ParsedStatementData } from "@/lib/types";
-
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(value);
-}
+import { fmt } from "@/lib/currencyUtils";
 
 export default function SavingsRateCard({ data }: { data: ParsedStatementData }) {
   // Derive totals from line items to guard against AI miscalculation
@@ -46,8 +38,8 @@ export default function SavingsRateCard({ data }: { data: ParsedStatementData })
         </p>
       </div>
       <ul className="mt-4 space-y-1 border-t border-gray-100 pt-4 text-sm text-gray-700">
-        <li>Monthly savings: {formatCurrency(monthlySavings)}</li>
-        <li>Annual projection: {formatCurrency(annualProjection)}</li>
+        <li>Monthly savings: {fmt(monthlySavings)}</li>
+        <li>Annual projection: {fmt(annualProjection)}</li>
       </ul>
     </div>
   );

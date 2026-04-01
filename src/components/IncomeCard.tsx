@@ -1,13 +1,5 @@
 import type { Income, IncomeSource } from "@/lib/types";
-
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
-}
+import { fmt } from "@/lib/currencyUtils";
 
 const DEPOSIT_PATTERNS = [
   /e[-\s]?transfer/i,
@@ -60,7 +52,7 @@ export default function IncomeCard({ income }: { income: Income }) {
         <div>
           <p className="text-sm font-medium text-gray-500">Income</p>
           <p className="font-bold text-2xl text-gray-900">
-            {formatCurrency(income.total)}
+            {fmt(income.total)}
           </p>
         </div>
       </div>
@@ -72,7 +64,7 @@ export default function IncomeCard({ income }: { income: Income }) {
               className="flex justify-between text-sm text-gray-700"
             >
               <span>{item.label}</span>
-              <span className="font-medium">{formatCurrency(item.amount)}</span>
+              <span className="font-medium">{fmt(item.amount)}</span>
             </li>
           ))}
         </ul>

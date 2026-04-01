@@ -11,26 +11,23 @@ import AgentInsightCards from "@/components/AgentInsightCards";
 import type { ParsedStatementData } from "@/lib/types";
 import type { AgentCard } from "@/lib/agentTypes";
 import { isBalanceMarker } from "@/lib/balanceMarkers";
+import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function fmt(v: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency", currency: "USD",
-    minimumFractionDigits: 0, maximumFractionDigits: 0,
-  }).format(v);
-}
 function fmtShort(v: number) {
+  const sym = getCurrencySymbol();
   const abs = Math.abs(v);
   const sign = v < 0 ? "-" : "+";
-  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(2)}M`;
-  if (abs >= 1_000)     return `${sign}$${Math.round(abs / 1_000)}k`;
+  if (abs >= 1_000_000) return `${sign}${sym}${(abs / 1_000_000).toFixed(2)}M`;
+  if (abs >= 1_000)     return `${sign}${sym}${Math.round(abs / 1_000)}k`;
   return `${sign}${fmt(Math.abs(v))}`;
 }
 function fmtNW(v: number) {
+  const sym = getCurrencySymbol();
   const abs = Math.abs(v);
-  if (abs >= 1_000_000) return `$${(abs / 1_000_000).toFixed(2)}M`;
-  if (abs >= 1_000)     return `$${Math.round(abs / 1_000)}k`;
+  if (abs >= 1_000_000) return `${sym}${(abs / 1_000_000).toFixed(2)}M`;
+  if (abs >= 1_000)     return `${sym}${Math.round(abs / 1_000)}k`;
   return fmt(v);
 }
 function monthLabel(ym: string) {

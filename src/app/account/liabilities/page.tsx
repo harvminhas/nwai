@@ -6,8 +6,9 @@ import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { Suspense } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
-import type { UserStatementSummary, ManualLiability, LiabilityCategory, SubAccount } from "@/lib/types";
-import { buildAccountSlug } from "@/lib/accountSlug";
+import type { ManualLiability, LiabilityCategory, SubAccount } from "@/lib/types";
+import type { AccountSnapshot } from "@/lib/extractTransactions";
+import type { AccountBalanceHistory } from "@/lib/financialProfile";
 import type { AccountRateEntry } from "@/app/api/user/account-rates/route";
 import { usePlan } from "@/contexts/PlanContext";
 import UpgradePrompt from "@/components/UpgradePrompt";
@@ -15,6 +16,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
 } from "recharts";
+import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -49,20 +51,12 @@ type TabId = typeof TABS[number]["id"];
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function fmt(v: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency", currency: "USD",
-    minimumFractionDigits: 0, maximumFractionDigits: 0,
-  }).format(v);
-}
 function fmtShort(v: number) {
+  const sym = getCurrencySymbol();
   const abs = Math.abs(v);
-  if (abs >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000)     return `$${Math.round(abs / 1_000)}k`;
+  if (abs >= 1_000_000) return `${sym}${(v / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000)     return `${sym}${Math.round(abs / 1_000)}k`;
   return fmt(v);
-}
-function accountSlug(s: UserStatementSummary) {
-  return buildAccountSlug(s.bankName, s.accountId);
 }
 function normalizeName(s: string) { return s.toLowerCase().replace(/[^a-z0-9]/g, ""); }
 function addMonths(n: number): string {
@@ -1117,13 +1111,12 @@ function LiabilitiesPageInner() {
   const loadData = useCallback(async (token: string) => {
     setLoading(true); setError(null);
     try {
-      const [sRes, cRes, mRes, rRes] = await Promise.all([
-        fetch("/api/user/statements",              { headers: { Authorization: `Bearer ${token}` } }),
+      // Single pipeline: all account data flows through the financial profile cache.
+      const [cRes, mRes, rRes] = await Promise.all([
         fetch("/api/user/statements/consolidated", { headers: { Authorization: `Bearer ${token}` } }),
         fetch("/api/user/liabilities",             { headers: { Authorization: `Bearer ${token}` } }),
         fetch("/api/user/account-rates",           { headers: { Authorization: `Bearer ${token}` } }),
       ]);
-      const sJson = await sRes.json().catch(() => ({}));
       const cJson = cRes.ok ? await cRes.json().catch(() => ({})) : {};
       const mJson = await mRes.json().catch(() => ({}));
       const rJson = rRes.ok ? await rRes.json().catch(() => ({})) : {};
@@ -1131,7 +1124,7 @@ function LiabilitiesPageInner() {
       setYearMonth(cJson.yearMonth ?? null);
       setPaymentsMade(cJson.paymentsMade ?? 0);
 
-      // Build debt history from consolidated monthly history
+      // Build debt history from consolidated monthly history (already CAD-converted)
       const rawHistory: { yearMonth: string; netWorth: number; debtTotal: number }[] = cJson.history ?? [];
       const hist: DebtHistoryPoint[] = rawHistory
         .filter((h) => h.debtTotal > 0)
@@ -1143,72 +1136,40 @@ function LiabilitiesPageInner() {
         });
       setDebtHistory(hist);
 
-      // Per-account monthly balance history (from all completed statements)
-      const allStmts: UserStatementSummary[] = (sJson.statements ?? []).filter(
-        (s: UserStatementSummary) => s.status === "completed" && !s.superseded
-      );
+      // Per-account monthly balance history — from the financial profile cache
       const DEBT_TYPES_SET = new Set(["credit", "mortgage", "loan"]);
-      const debtStmts = allStmts.filter(
-        (s) => DEBT_TYPES_SET.has(s.accountType ?? "") || (s.netWorth ?? 0) < 0
-      );
-      // Group by slug → sorted months
-      const acctMap = new Map<string, { label: string; accountId?: string; category: LiabilityCategory; color: string; months: { ym: string; balance: number }[] }>();
-      for (const s of debtStmts) {
-        const slug = accountSlug(s);
-        const ym = (s.statementDate ?? s.uploadedAt).slice(0, 7);
-        const bal = Math.abs(s.netWorth ?? 0);
-        const cat: LiabilityCategory = ACCT_TYPE_TO_CAT[s.accountType ?? ""] ?? "other";
-        if (!acctMap.has(slug)) {
-          acctMap.set(slug, {
-            label: s.accountName ?? s.bankName ?? "Account",
-            accountId: s.accountId,
-            category: cat,
+      const acctMonthly: AccountMonthlyData[] = (cJson.accountBalanceHistory as AccountBalanceHistory[] ?? [])
+        .filter((h) => DEBT_TYPES_SET.has(h.accountType) || h.entries.some((e) => e.balance < 0))
+        .map((h) => {
+          const sorted = h.entries; // already sorted ascending
+          const cur = sorted.at(-1)?.balance ?? 0;
+          const prev = sorted.length >= 2 ? sorted[sorted.length - 2].balance : null;
+          const cat: LiabilityCategory = ACCT_TYPE_TO_CAT[h.accountType] ?? "other";
+          return {
+            slug: h.slug, label: h.label, accountId: undefined, category: cat,
             color: CATEGORY_CHART_COLOR[cat],
-            months: [],
-          });
-        }
-        const entry = acctMap.get(slug)!;
-        if (!entry.months.find((m) => m.ym === ym)) entry.months.push({ ym, balance: bal });
-      }
-      const acctMonthly: AccountMonthlyData[] = Array.from(acctMap.entries()).map(([slug, e]) => {
-        const sorted = [...e.months].sort((a, b) => a.ym.localeCompare(b.ym));
-        const cur = sorted.at(-1)?.balance ?? 0;
-        const prev = sorted.length >= 2 ? sorted[sorted.length - 2].balance : null;
-        return {
-          slug, label: e.label, accountId: e.accountId, category: e.category, color: e.color,
-          months: sorted, currentBalance: cur, prevBalance: prev,
-          delta: prev !== null ? cur - prev : null,
-        };
-      });
+            months: sorted.map((e) => ({ ym: e.yearMonth, balance: Math.abs(e.balance) })),
+            currentBalance: Math.abs(cur), prevBalance: prev !== null ? Math.abs(prev) : null,
+            delta: prev !== null ? Math.abs(cur) - Math.abs(prev) : null,
+          };
+        });
       setAccountMonthly(acctMonthly);
 
       const manual: ManualLiability[] = mJson.liabilities ?? [];
       setManualLibs(manual);
       setAccountRates(rJson.rates ?? []);
 
-      const stmts: UserStatementSummary[] = (sJson.statements ?? []).filter(
-        (s: UserStatementSummary) => s.status === "completed" && !s.superseded
-      );
-      const latestBySlug = new Map<string, UserStatementSummary>();
-      for (const s of stmts) {
-        // Only consider statements that carry a real account balance
-        if (s.netWorth == null) continue;
-        const slug = accountSlug(s);
-        const existing = latestBySlug.get(slug);
-        if (!existing || (s.statementDate ?? s.uploadedAt) > (existing.statementDate ?? existing.uploadedAt)) {
-          latestBySlug.set(slug, s);
-        }
-      }
+      // Build display liabilities from the profile cache's accountSnapshots
       const DEBT_TYPES = new Set(["credit", "mortgage", "loan"]);
-      const fromStatements: DisplayLiability[] = Array.from(latestBySlug.values())
-        .filter((s) => DEBT_TYPES.has(s.accountType ?? "") || (s.netWorth ?? 0) < 0)
+      const snapshots: AccountSnapshot[] = cJson.accountSnapshots ?? [];
+      const fromStatements: DisplayLiability[] = snapshots
+        .filter((s) => DEBT_TYPES.has(s.accountType ?? "") || s.balance < 0)
         .map((s) => ({
-          id: `stmt-${accountSlug(s)}`, label: s.accountName ?? s.bankName ?? "Account",
+          id: `stmt-${s.slug}`, label: s.accountName ?? s.bankName ?? "Account",
           subLabel: s.bankName, category: ACCT_TYPE_TO_CAT[s.accountType ?? ""] ?? "other",
-          balance: Math.abs(s.netWorth ?? 0), statementDate: s.statementDate,
+          balance: Math.abs(s.balance), statementDate: s.statementMonth,
           interestRate: typeof s.interestRate === "number" ? s.interestRate : undefined,
-          source: "statement" as const, accountSlug: accountSlug(s),
-          subAccounts: s.subAccounts,
+          source: "statement" as const, accountSlug: s.slug,
         }));
 
       const fromManual: DisplayLiability[] = manual.map((m) => ({

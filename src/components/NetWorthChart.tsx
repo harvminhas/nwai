@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { getCurrencySymbol } from "@/lib/currencyUtils";
 import {
   ResponsiveContainer,
   LineChart,
@@ -33,10 +34,11 @@ function formatCurrency(value: number): string {
 }
 
 function formatAxis(v: number): string {
+  const sym = getCurrencySymbol();
   const abs = Math.abs(v);
   const sign = v < 0 ? "-" : "";
-  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000) return `${sign}$${Math.round(abs / 1_000)}k`;
+  if (abs >= 1_000_000) return `${sign}${sym}${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sign}${sym}${Math.round(abs / 1_000)}k`;
   return formatCurrency(v);
 }
 

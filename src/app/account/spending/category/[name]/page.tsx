@@ -14,15 +14,10 @@ import {
   categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon,
   type CashFrequency,
 } from "@/app/account/spending/shared";
+import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function fmt(v: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency", currency: "USD",
-    minimumFractionDigits: 0, maximumFractionDigits: 0,
-  }).format(v);
-}
 function fmtDec(v: number) {
   return new Intl.NumberFormat("en-US", {
     style: "currency", currency: "USD",
@@ -30,8 +25,9 @@ function fmtDec(v: number) {
   }).format(v);
 }
 function fmtAxis(v: number) {
-  if (v >= 1000) return `$${Math.round(v / 1000)}k`;
-  return v === 0 ? "$0" : fmt(v);
+  const sym = getCurrencySymbol();
+  if (v >= 1000) return `${sym}${Math.round(v / 1000)}k`;
+  return v === 0 ? `${sym}0` : fmt(v);
 }
 function shortMonth(ym: string) {
   const [y, m] = ym.split("-");

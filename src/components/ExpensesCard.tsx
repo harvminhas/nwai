@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { Expenses, ExpenseCategory } from "@/lib/types";
+import { fmt } from "@/lib/currencyUtils";
 
 const CATEGORIES = [
   "Housing",
@@ -43,14 +44,6 @@ function barColor(name: string): string {
   return CATEGORY_COLORS[name.toLowerCase()] ?? "bg-purple-500";
 }
 
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
-}
 
 function groupExpenseCategories(
   categories: ExpenseCategory[],
@@ -181,7 +174,7 @@ function MerchantRow({
         )}
 
         <span className="w-16 text-right text-sm font-semibold text-gray-900">
-          {formatCurrency(row.amount)}
+          {fmt(row.amount)}
         </span>
       </div>
     </div>
@@ -232,7 +225,7 @@ export default function ExpensesCard({
           <span className="text-3xl" role="img" aria-hidden>💳</span>
           <div>
             <p className="text-sm font-medium text-gray-500">Expenses</p>
-            <p className="font-bold text-2xl text-gray-900">{formatCurrency(localExpenses.total)}</p>
+            <p className="font-bold text-2xl text-gray-900">{fmt(localExpenses.total)}</p>
           </div>
         </div>
 
@@ -262,7 +255,7 @@ export default function ExpensesCard({
               <div className="flex justify-between text-sm">
                 <span className="text-gray-700">{cat.name}</span>
                 <span className="font-medium text-gray-900">
-                  {formatCurrency(cat.amount)} ({cat.percentage}%)
+                  {fmt(cat.amount)} ({cat.percentage}%)
                 </span>
               </div>
               <div className="mt-1 h-2 overflow-hidden rounded-full bg-gray-100">

@@ -9,15 +9,10 @@ import type { DashboardAlert, UpcomingItem, TodayInsight } from "@/app/api/user/
 import type { AgentCard } from "@/lib/agentTypes";
 import type { RadarItem, FreshnessData, NetWorthSnapshot } from "@/lib/today/types";
 import ParseStatusBanner from "@/components/ParseStatusBanner";
+import { fmt } from "@/lib/currencyUtils";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function fmt(v: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency", currency: "USD",
-    minimumFractionDigits: 0, maximumFractionDigits: 0,
-  }).format(v);
-}
 
 function todayLabel(): string {
   return new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
@@ -512,10 +507,7 @@ export default function TodayPage() {
     const [expanded, setExpanded] = useState(false);
     if (!netWorth) return null;
 
-    const cad = (n: number) => new Intl.NumberFormat("en-CA", {
-      style: "currency", currency: "CAD",
-      minimumFractionDigits: 0, maximumFractionDigits: 0,
-    }).format(n);
+    const cad = (n: number) => fmt(n);
 
     const PREVIEW = 3;
     const assets      = netWorth.accounts;
@@ -633,9 +625,7 @@ export default function TodayPage() {
   function SavingsRateCard() {
     if (!savingsRate || savingsRate.income <= 0) return null;
     const { rate, income, expenses, month } = savingsRate;
-    const cad = (n: number) => new Intl.NumberFormat("en-CA", {
-      style: "currency", currency: "CAD", minimumFractionDigits: 0, maximumFractionDigits: 0,
-    }).format(n);
+    const cad = (n: number) => fmt(n);
     const monthLabel = month
       ? new Date(month + "-01").toLocaleDateString("en-CA", { month: "short", year: "numeric" })
       : "";

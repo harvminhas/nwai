@@ -1,13 +1,5 @@
 import type { Subscription } from "@/lib/types";
-
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
-}
+import { fmt } from "@/lib/currencyUtils";
 
 /** Group subscriptions by normalized name and sum amounts. */
 function groupSubscriptions(
@@ -49,7 +41,7 @@ export default function SubscriptionsCard({
         </div>
       </div>
       <p className="mt-2 text-sm text-gray-600">
-        Total: {formatCurrency(total)}/mo ({formatCurrency(annual)}/year)
+        Total: {fmt(total)}/mo ({fmt(annual)}/year)
       </p>
       {grouped.length > 0 && (
         <div className="mt-4 max-h-48 overflow-y-auto border-t border-gray-100 pt-4">
@@ -60,7 +52,7 @@ export default function SubscriptionsCard({
                 className="flex justify-between text-sm text-gray-700"
               >
                 <span>{item.name}</span>
-                <span className="font-medium">{formatCurrency(item.amount)}</span>
+                <span className="font-medium">{fmt(item.amount)}</span>
               </li>
             ))}
           </ul>

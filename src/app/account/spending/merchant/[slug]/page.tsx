@@ -11,15 +11,10 @@ import {
 } from "recharts";
 import { categoryColor } from "@/app/account/spending/shared";
 import type { MerchantSummary } from "@/app/api/user/spending/merchants/route";
+import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function fmt(v: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency", currency: "USD",
-    minimumFractionDigits: 0, maximumFractionDigits: 0,
-  }).format(v);
-}
 function fmtDec(v: number) {
   return new Intl.NumberFormat("en-US", {
     style: "currency", currency: "USD",
@@ -27,8 +22,9 @@ function fmtDec(v: number) {
   }).format(v);
 }
 function fmtAxis(v: number) {
-  if (v >= 1_000) return `$${Math.round(v / 1_000)}k`;
-  return v === 0 ? "$0" : `$${Math.round(v)}`;
+  const sym = getCurrencySymbol();
+  if (v >= 1_000) return `${sym}${Math.round(v / 1_000)}k`;
+  return v === 0 ? `${sym}0` : `${sym}${Math.round(v)}`;
 }
 function shortMonth(ym: string) {
   const [y, m] = ym.split("-");

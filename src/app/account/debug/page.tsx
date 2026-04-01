@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import type { UserStatementSummary } from "@/lib/types";
+import { fmt } from "@/lib/currencyUtils";
 
 type DebugResult = {
   statementId: string;
@@ -170,10 +171,6 @@ export default function DebugParsePage() {
     } finally {
       setSpendLoading(false);
     }
-  }
-
-  function fmt(n: number) {
-    return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
   }
 
   return (

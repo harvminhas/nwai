@@ -16,26 +16,23 @@ import {
   FREQUENCY_CONFIG, RELIABILITY_CONFIG,
 } from "@/lib/incomeEngine";
 import type { SourceMonthData } from "@/lib/incomeEngine";
+import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function fmt(v: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency", currency: "USD",
-    minimumFractionDigits: 0, maximumFractionDigits: 0,
-  }).format(v);
-}
 function fmtShort(v: number) {
+  const sym = getCurrencySymbol();
   const abs = Math.abs(v);
-  if (abs >= 1_000_000) return `$${(abs / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000) return `$${Math.round(abs / 1_000)}k`;
+  if (abs >= 1_000_000) return `${sym}${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sym}${Math.round(abs / 1_000)}k`;
   return fmt(v);
 }
 function fmtAxis(v: number) {
+  const sym = getCurrencySymbol();
   const abs = Math.abs(v);
-  if (abs >= 1_000_000) return `$${(abs / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000) return `$${Math.round(abs / 1_000)}k`;
-  return v === 0 ? "$0" : fmt(v);
+  if (abs >= 1_000_000) return `${sym}${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sym}${Math.round(abs / 1_000)}k`;
+  return v === 0 ? `${sym}0` : fmt(v);
 }
 function shortMonth(ym: string) {
   const [y, m] = ym.split("-");

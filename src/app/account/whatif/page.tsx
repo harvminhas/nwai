@@ -5,6 +5,7 @@ import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { usePlan } from "@/contexts/PlanContext";
+import { fmt } from "@/lib/currencyUtils";
 
 // ── types ──────────────────────────────────────────────────────────────────────
 
@@ -20,13 +21,6 @@ interface FinancialSnapshot {
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────────
-
-function fmt(v: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency", currency: "USD",
-    minimumFractionDigits: 0, maximumFractionDigits: 0,
-  }).format(v);
-}
 
 function fmtDelta(v: number) {
   return `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;

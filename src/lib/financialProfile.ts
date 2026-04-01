@@ -50,7 +50,23 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "8";
+const SCHEMA_VERSION = "9";
+
+// ── Per-account monthly balance history ───────────────────────────────────────
+/**
+ * Full balance history for a single account across all available statement months.
+ * Balances are in the account's native currency (see `currency` field).
+ * Use fxRates from the profile to convert to home currency for aggregates.
+ */
+export interface AccountBalanceHistory {
+  slug:        string;
+  label:       string;
+  accountType: string;
+  /** ISO 4217 currency code — native to this account (after user override applied) */
+  currency:    string;
+  /** One entry per uploaded statement month, sorted ascending */
+  entries:     { yearMonth: string; balance: number }[];
+}
 
 // ── types ──────────────────────────────────────────────────────────────────────
 
@@ -116,6 +132,12 @@ export interface FinancialProfileCache {
    * Refreshed at most once per 24 h via api.frankfurter.app.
    */
   fxRates: Record<string, number>;
+  /**
+   * Per-account balance history across all uploaded statement months.
+   * Balances are in the account's native currency.
+   * Use this instead of fetching /api/user/statements — single pipeline.
+   */
+  accountBalanceHistory: AccountBalanceHistory[];
 }
 
 export interface PortfolioAccountHoldings {
@@ -310,6 +332,43 @@ export async function buildAndCacheFinancialProfile(
   }
   const portfolioHoldings = Array.from(latestHoldingsBySlug.values());
 
+  // Build per-account monthly balance history from ALL completed statement docs.
+  // This replaces the need for pages to fetch /api/user/statements directly.
+  const balanceHistoryMap = new Map<string, { label: string; accountType: string; entries: Map<string, number> }>();
+  for (const doc of completedSnap.docs) {
+    const d = doc.data();
+    const parsed = d.parsedData as ParsedStatementData | undefined;
+    if (!parsed || parsed.netWorth == null) continue;
+    const slug = buildAccountSlug(parsed.bankName, parsed.accountId);
+    const ym   = (d.yearMonth as string | undefined) ?? (parsed.statementDate ?? "").slice(0, 7);
+    if (!ym) continue;
+    if (!balanceHistoryMap.has(slug)) {
+      balanceHistoryMap.set(slug, {
+        label:       parsed.accountName ?? parsed.bankName ?? slug,
+        accountType: parsed.accountType ?? "other",
+        entries:     new Map(),
+      });
+    }
+    // Keep the highest-date entry per yearMonth (handles multiple uploads same month)
+    const entry = balanceHistoryMap.get(slug)!;
+    const existingUploadedAt = entry.entries.get(ym);
+    if (existingUploadedAt == null) entry.entries.set(ym, parsed.netWorth);
+  }
+  const accountBalanceHistory: AccountBalanceHistory[] = Array.from(balanceHistoryMap.entries()).map(([slug, e]) => {
+    const currencyOverride = currencyOverrides.get(slug);
+    // Derive currency: prefer user override, else look up from mergedSnapshots
+    const snapCurrency = mergedSnapshots.find((s) => s.slug === slug)?.currency ?? "CAD";
+    return {
+      slug,
+      label:       e.label,
+      accountType: e.accountType,
+      currency:    currencyOverride ?? snapCurrency,
+      entries:     Array.from(e.entries.entries())
+        .map(([yearMonth, balance]) => ({ yearMonth, balance }))
+        .sort((a, b) => a.yearMonth.localeCompare(b.yearMonth)),
+    };
+  });
+
   // Fetch FX rates for any non-CAD account currencies present in the snapshots.
   const currencySet = new Set<string>(
     mergedSnapshots.map((s) => (s.currency ?? "CAD").toUpperCase())
@@ -336,6 +395,7 @@ export async function buildAndCacheFinancialProfile(
     balanceSnapshots,
     portfolioHoldings,
     fxRates,
+    accountBalanceHistory,
   };
 
   // Persist — JSON round-trip strips `undefined` fields (Firestore rejects them)

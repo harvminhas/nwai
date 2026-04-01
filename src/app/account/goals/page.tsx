@@ -7,6 +7,7 @@ import { getFirebaseClient } from "@/lib/firebase";
 import type { AccountRateEntry } from "@/app/api/user/account-rates/route";
 import { usePlan } from "@/contexts/PlanContext";
 import UpgradePrompt from "@/components/UpgradePrompt";
+import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -17,16 +18,11 @@ const EF_MONTHS_TARGET = 6;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function fmt(v: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency", currency: "USD",
-    minimumFractionDigits: 0, maximumFractionDigits: 0,
-  }).format(v);
-}
 function fmtShort(v: number) {
+  const sym = getCurrencySymbol();
   const abs = Math.abs(v);
-  if (abs >= 1_000_000) return `$${(abs / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000)     return `$${Math.round(abs / 1_000)}k`;
+  if (abs >= 1_000_000) return `${sym}${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000)     return `${sym}${Math.round(abs / 1_000)}k`;
   return fmt(v);
 }
 function addMonths(months: number): string {

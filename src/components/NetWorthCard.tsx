@@ -1,13 +1,5 @@
 import type { ParsedStatementData } from "@/lib/types";
-
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
-}
+import { fmt } from "@/lib/currencyUtils";
 
 export default function NetWorthCard({ data }: { data: ParsedStatementData }) {
   return (
@@ -19,7 +11,7 @@ export default function NetWorthCard({ data }: { data: ParsedStatementData }) {
         <div>
           <p className="text-sm font-medium text-gray-500">Current Net Worth</p>
           <p className="font-bold text-5xl text-gray-900">
-            {formatCurrency(data.netWorth ?? 0)}
+            {fmt(data.netWorth ?? 0)}
           </p>
           <p className="mt-1 text-sm text-gray-500">
             As of {data.statementDate}

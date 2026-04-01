@@ -17,6 +17,7 @@ import {
 } from "recharts";
 import { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon } from "./shared";
 import type { CashFrequency } from "./shared";
+import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
 
 // Re-export shared items for other pages that used to import from this file
 export { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon } from "./shared";
@@ -84,7 +85,7 @@ function SpendingChart({ history, avg, median, selectedMonth, effectiveExp }: {
             <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#f3f4f6" />
             <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
             <YAxis tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false}
-              tickFormatter={(v: number) => v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${v}`} />
+              tickFormatter={(v: number) => { const s = getCurrencySymbol(); return v >= 1000 ? `${s}${Math.round(v / 1000)}k` : `${s}${v}`; }} />
             <Tooltip content={<CustomTooltip />} cursor={{ fill: "#f5f3ff" }} />
             {median !== null && (
               <ReferenceLine y={median} stroke="#a78bfa" strokeDasharray="4 3" strokeWidth={1.5}
@@ -177,9 +178,6 @@ function toMonthly(amount: number, freq: CashFrequency): number {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function fmt(v: number) {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(v);
-}
 function fmtDec(v: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
 }
@@ -1292,11 +1290,11 @@ function SpendingPageInner() {
                             </div>
                             <div className="col-span-2 text-center text-sm text-gray-600">{m.count}</div>
                             <div className="col-span-2 text-right text-sm text-gray-600 tabular-nums">
-                              {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(m.avgAmount)}
+                              {fmt(m.avgAmount)}
                             </div>
                             <div className="col-span-3 text-right">
                               <span className="text-sm font-semibold text-gray-800 tabular-nums">
-                                {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(m.total)}
+                                {fmt(m.total)}
                               </span>
                               <svg className="ml-1 inline h-3.5 w-3.5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
