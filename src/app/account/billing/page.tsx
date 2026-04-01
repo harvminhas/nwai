@@ -39,8 +39,16 @@ function BillingContent() {
   const [subInfo, setSubInfo] = useState<{
     status?: string;
     currentPeriodEnd?: string;
+    cancelAtPeriodEnd?: boolean;
     manualPro?: boolean;
   } | null>(null);
+
+  const fetchSubInfo = async (tok: string) => {
+    const res  = await fetch("/api/user/billing-info", { headers: { Authorization: `Bearer ${tok}` } });
+    const json = res.ok ? await res.json().catch(() => ({})) : {};
+    setSubInfo(json);
+    return json;
+  };
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -48,13 +56,28 @@ function BillingContent() {
       if (!user) { router.push("/login"); return; }
       const tok = await user.getIdToken();
       setToken(tok);
-
-      // Fetch subscription detail
-      const res  = await fetch("/api/user/billing-info", { headers: { Authorization: `Bearer ${tok}` } });
-      const json = res.ok ? await res.json().catch(() => ({})) : {};
-      setSubInfo(json);
+      await fetchSubInfo(tok);
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
+
+  // Re-fetch billing info when returning from the Stripe portal (no session_id, no canceled)
+  // The portal redirects back with no query params, so we detect a fresh page visit
+  useEffect(() => {
+    const isFreshReturn = !searchParams.get("session_id") && !searchParams.get("canceled");
+    if (!isFreshReturn) return;
+    // Small delay to allow webhook to land before we fetch
+    const t = setTimeout(async () => {
+      const { auth } = getFirebaseClient();
+      const user = auth.currentUser;
+      if (!user) return;
+      const tok = await user.getIdToken();
+      await fetchSubInfo(tok);
+      await refresh();
+    }, 1500);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Handle return from Stripe Checkout — poll until webhook updates Firestore
   useEffect(() => {
@@ -122,9 +145,10 @@ function BillingContent() {
     }
   }
 
-  const isPro        = planId === "pro";
-  const isManualPro  = subInfo?.manualPro === true;
-  const periodEnd    = subInfo?.currentPeriodEnd
+  const isPro             = planId === "pro";
+  const isManualPro       = subInfo?.manualPro === true;
+  const cancelAtPeriodEnd = subInfo?.cancelAtPeriodEnd === true;
+  const periodEnd         = subInfo?.currentPeriodEnd
     ? new Date(subInfo.currentPeriodEnd).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
     : null;
 
@@ -151,15 +175,24 @@ function BillingContent() {
       )}
 
       {/* Current plan banner */}
-      <div className={`rounded-2xl border p-5 mb-6 ${isPro ? "border-purple-200 bg-purple-50" : "border-gray-200 bg-white"}`}>
+      <div className={`rounded-2xl border p-5 mb-6 ${
+        isPro && !cancelAtPeriodEnd ? "border-purple-200 bg-purple-50"
+        : cancelAtPeriodEnd ? "border-amber-200 bg-amber-50"
+        : "border-gray-200 bg-white"
+      }`}>
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">Current plan</p>
             <div className="flex items-center gap-2">
               <p className="text-xl font-bold text-gray-900">{PLANS[planId].name}</p>
-              {isPro && (
+              {isPro && !cancelAtPeriodEnd && (
                 <span className="rounded-full bg-purple-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
                   Active
+                </span>
+              )}
+              {cancelAtPeriodEnd && (
+                <span className="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+                  Cancelling
                 </span>
               )}
               {isManualPro && (
@@ -170,26 +203,47 @@ function BillingContent() {
             </div>
             {isPro && !isManualPro && periodEnd && (
               <p className="mt-1 text-xs text-gray-500">
-                {subInfo?.status === "canceled" ? "Access until" : "Renews"} {periodEnd}
+                {cancelAtPeriodEnd
+                  ? `Pro access until ${periodEnd} — you won't be charged again`
+                  : `Renews ${periodEnd}`}
               </p>
             )}
           </div>
           <div className="text-right shrink-0">
-            <p className="text-2xl font-bold text-gray-900">
-              {isPro ? "$9.99" : "$0"}
-            </p>
+            <p className="text-2xl font-bold text-gray-900">{isPro ? "$9.99" : "$0"}</p>
             <p className="text-xs text-gray-400">{isPro ? "/ month" : "free"}</p>
           </div>
         </div>
 
         {isPro && !isManualPro && (
-          <button
-            onClick={handleManage}
-            disabled={working}
-            className="mt-4 w-full rounded-lg border border-purple-300 bg-white py-2.5 text-sm font-semibold text-purple-700 hover:bg-purple-50 transition disabled:opacity-60"
-          >
-            {working ? "Opening portal…" : "Manage subscription →"}
-          </button>
+          <div className="mt-4 flex gap-2">
+            {cancelAtPeriodEnd ? (
+              <>
+                <button
+                  onClick={handleManage}
+                  disabled={working}
+                  className="flex-1 rounded-lg bg-purple-600 py-2.5 text-sm font-semibold text-white hover:bg-purple-700 transition disabled:opacity-60"
+                >
+                  {working ? "Opening portal…" : "Resume subscription"}
+                </button>
+                <button
+                  onClick={handleManage}
+                  disabled={working}
+                  className="rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-500 hover:bg-gray-50 transition disabled:opacity-60"
+                >
+                  Manage
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={handleManage}
+                disabled={working}
+                className="w-full rounded-lg border border-purple-300 bg-white py-2.5 text-sm font-semibold text-purple-700 hover:bg-purple-50 transition disabled:opacity-60"
+              >
+                {working ? "Opening portal…" : "Manage subscription →"}
+              </button>
+            )}
+          </div>
         )}
       </div>
 

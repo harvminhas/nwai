@@ -57,17 +57,22 @@ async function syncSubscription(
     return;
   }
 
-  const isActive = sub.status === "active" || sub.status === "trialing";
-  const priceId  = sub.items.data[0]?.price.id ?? "";
+  const isActive        = sub.status === "active" || sub.status === "trialing";
+  const priceId         = sub.items.data[0]?.price.id ?? "";
+  const subRaw          = sub as unknown as Record<string, unknown>;
+  const periodEndSecs   = (subRaw.current_period_end as number | undefined) ?? 0;
+  const cancelAtPeriodEnd = (subRaw.cancel_at_period_end as boolean | undefined) ?? false;
 
   await db.collection("users").doc(uid).set(
     {
+      // Keep plan: "pro" even if cancel_at_period_end is true — access continues until period ends
       plan: isActive ? "pro" : "free",
       subscription: {
-        id:               sub.id,
-        status:           sub.status,
+        id:                 sub.id,
+        status:             sub.status,
         priceId,
-        currentPeriodEnd: new Date(((sub as unknown as Record<string, number>).current_period_end ?? 0) * 1000).toISOString(),
+        currentPeriodEnd:   periodEndSecs ? new Date(periodEndSecs * 1000).toISOString() : null,
+        cancelAtPeriodEnd,
       },
     },
     { merge: true },

@@ -28,11 +28,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No Stripe customer found" }, { status: 404 });
     }
 
-    const origin = req.headers.get("origin") ?? process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000";
+    const base = process.env.NEXT_PUBLIC_BASE_URL
+      ?? req.headers.get("origin")
+      ?? "http://localhost:3000";
 
     const session = await stripe.billingPortal.sessions.create({
-      customer:    customerId,
-      return_url:  `${origin}/account/billing`,
+      customer:   customerId,
+      return_url: `${base}/account/billing`,
     });
 
     return NextResponse.json({ url: session.url });

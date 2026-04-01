@@ -25,12 +25,14 @@ export async function GET(req: NextRequest) {
     const sub = data.subscription as {
       status?: string;
       currentPeriodEnd?: string;
+      cancelAtPeriodEnd?: boolean;
     } | undefined;
 
     return NextResponse.json({
-      manualPro:        data.manualPro === true,
-      status:           sub?.status ?? null,
-      currentPeriodEnd: sub?.currentPeriodEnd ?? null,
+      manualPro:          data.manualPro === true,
+      status:             sub?.status ?? null,
+      currentPeriodEnd:   sub?.currentPeriodEnd ?? null,
+      cancelAtPeriodEnd:  sub?.cancelAtPeriodEnd ?? false,
     });
   } catch (err) {
     console.error("GET /api/user/billing-info error:", err);
