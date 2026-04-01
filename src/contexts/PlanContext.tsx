@@ -27,6 +27,8 @@ interface PlanContextValue {
   can: (feature: keyof PlanFeatures) => boolean;
   /** For test mode only — switch to a different plan. */
   setTestPlan: (id: PlanId) => void;
+  /** Re-fetch the plan from the server (call after successful checkout). */
+  refresh: () => Promise<void>;
   /** True while the plan is being resolved (prevents flash of locked content). */
   loading: boolean;
 }
@@ -36,6 +38,7 @@ const PlanContext = createContext<PlanContextValue>({
   plan: PLANS.free,
   can: () => false,
   setTestPlan: () => {},
+  refresh: async () => {},
   loading: true,
 });
 
@@ -83,13 +86,28 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const refresh = useCallback(async () => {
+    const { auth } = getFirebaseClient();
+    const user = auth.currentUser;
+    if (!user) return;
+    try {
+      const token = await user.getIdToken(/* forceRefresh */ true);
+      const res   = await fetch("/api/user/plan", { headers: { Authorization: `Bearer ${token}` } });
+      const json  = await res.json().catch(() => ({}));
+      if (res.ok && json.plan && PLAN_ORDER.includes(json.plan as PlanId)) {
+        setPlanIdState(json.plan as PlanId);
+        localStorage.setItem(TEST_PLAN_KEY, json.plan);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
   const can = useCallback(
     (feature: keyof PlanFeatures) => PLANS[planId].features[feature],
     [planId]
   );
 
   return (
-    <PlanContext.Provider value={{ planId, plan: PLANS[planId], can, setTestPlan, loading }}>
+    <PlanContext.Provider value={{ planId, plan: PLANS[planId], can, setTestPlan, refresh, loading }}>
       {children}
     </PlanContext.Provider>
   );

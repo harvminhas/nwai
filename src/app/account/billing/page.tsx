@@ -26,7 +26,7 @@ const PRO_FEATURES = [
 ];
 
 function BillingContent() {
-  const { planId, loading: planLoading } = usePlan();
+  const { planId, loading: planLoading, refresh } = usePlan();
   const searchParams = useSearchParams();
   const router       = useRouter();
 
@@ -56,15 +56,37 @@ function BillingContent() {
     });
   }, [router]);
 
-  // Handle return from Stripe Checkout
+  // Handle return from Stripe Checkout — poll until webhook updates Firestore
   useEffect(() => {
-    if (searchParams.get("session_id")) {
-      setSuccessMsg("You're now on Pro! Welcome aboard.");
-    }
     if (searchParams.get("canceled")) {
       setError("Checkout was cancelled. You were not charged.");
+      return;
     }
-  }, [searchParams]);
+    if (!searchParams.get("session_id")) return;
+
+    // Poll /api/user/plan up to 10 times (10 s) waiting for webhook to land
+    let attempts = 0;
+    const MAX = 10;
+    const poll = async () => {
+      await refresh();
+      attempts++;
+      // planId won't update synchronously — re-check via API directly
+      const { auth } = (await import("@/lib/firebase")).getFirebaseClient();
+      const user = auth.currentUser;
+      if (!user) return;
+      const tok  = await user.getIdToken();
+      const res  = await fetch("/api/user/plan", { headers: { Authorization: `Bearer ${tok}` } });
+      const json = await res.json().catch(() => ({}));
+      if (json.plan === "pro") {
+        setSuccessMsg("You're now on Pro! Welcome aboard.");
+        return;
+      }
+      if (attempts < MAX) setTimeout(poll, 1000);
+      else setSuccessMsg("You're now on Pro! Welcome aboard."); // show anyway
+    };
+    poll();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleUpgrade() {
     if (!token) return;

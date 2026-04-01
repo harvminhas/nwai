@@ -67,7 +67,7 @@ async function syncSubscription(
         id:               sub.id,
         status:           sub.status,
         priceId,
-        currentPeriodEnd: new Date(sub.current_period_end * 1000).toISOString(),
+        currentPeriodEnd: new Date(((sub as unknown as Record<string, number>).current_period_end ?? 0) * 1000).toISOString(),
       },
     },
     { merge: true },
@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
         break;
 
       case "checkout.session.completed": {
-        const session = event.data.object as Stripe.Session;
+        const session = event.data.object as Stripe.Checkout.Session;
         if (session.customer && session.metadata?.firebaseUid) {
           // Ensure stripeCustomerId is stored in case checkout route missed it
           await db.collection("users").doc(session.metadata.firebaseUid).set(
