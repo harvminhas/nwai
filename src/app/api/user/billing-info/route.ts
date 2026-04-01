@@ -1,9 +1,6 @@
 /**
  * GET /api/user/billing-info
  * Returns live subscription detail fetched directly from the Stripe API.
- *
- * In Stripe API 2024-09-30+ (acacia), `current_period_end` was removed from the
- * top-level Subscription object. Renewal date is obtained from the upcoming invoice.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -46,66 +43,96 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ manualPro: false, status: null, currentPeriodEnd: null, cancelAtPeriodEnd: false });
     }
 
-    const subAny            = sub as unknown as Record<string, unknown>;
-    const cancelAtPeriodEnd = Boolean(subAny.cancel_at_period_end);
-    const isActive          = sub.status === "active" || sub.status === "trialing";
+    // Cast to plain object so we can read any field regardless of TS type version
+    const raw = sub as unknown as Record<string, unknown>;
 
-    // In Stripe API 2024-09-30+, current_period_end was removed from the top-level
-    // subscription. We fall back through a chain of options:
+    // --- Detect cancellation ---
+    // Stripe sets cancel_at (unix ts) when a subscription is scheduled to cancel.
+    // cancel_at_period_end may also be true in older API versions.
+    const cancelAt          = raw.cancel_at as number | null | undefined;
+    const cancelAtPeriodEnd =
+      Boolean(raw.cancel_at_period_end) ||  // older API field
+      (cancelAt != null && cancelAt > 0);    // newer API: cancel_at timestamp set
+
+    const isActive = sub.status === "active" || sub.status === "trialing";
+
+    // Helper: unix seconds → ISO string
+    const fromSecs = (n: number | undefined | null): string | null =>
+      n && n > 0 ? new Date(n * 1000).toISOString() : null;
+
+    // --- Determine end/renewal date ---
     let currentPeriodEnd: string | null = null;
 
-    // 1. Still try the old field in case it exists (older API or beta flag)
-    const legacyPeriodEnd = subAny.current_period_end as number | undefined;
-    if (legacyPeriodEnd && legacyPeriodEnd > 0) {
-      currentPeriodEnd = new Date(legacyPeriodEnd * 1000).toISOString();
+    // 1. If cancelling, cancel_at IS the access-until date
+    if (cancelAtPeriodEnd && cancelAt) {
+      currentPeriodEnd = fromSecs(cancelAt);
     }
 
-    // 2. For cancelling subscriptions, cancel_at is the expiry date
-    if (!currentPeriodEnd && cancelAtPeriodEnd) {
-      const cancelAt = subAny.cancel_at as number | undefined;
-      if (cancelAt && cancelAt > 0) {
-        currentPeriodEnd = new Date(cancelAt * 1000).toISOString();
+    // 2. Subscription item's current_period_end (Stripe API 2024-09-30+)
+    if (!currentPeriodEnd) {
+      const firstItem = raw.items as { data?: Record<string, unknown>[] } | undefined;
+      const item      = firstItem?.data?.[0];
+      currentPeriodEnd ??= fromSecs(item?.current_period_end as number | undefined);
+    }
+
+    // 3. Top-level current_period_end (older API versions)
+    currentPeriodEnd ??= fromSecs(raw.current_period_end as number | undefined);
+
+    // 4. billing_cycle_anchor + interval math
+    if (!currentPeriodEnd) {
+      const anchor   = raw.billing_cycle_anchor as number | undefined;
+      const rawItems = raw.items as { data?: Record<string, unknown>[] } | undefined;
+      const plan     = rawItems?.data?.[0]?.plan as Record<string, unknown> | undefined;
+      const interval      = plan?.interval as string | undefined;
+      const intervalCount = (plan?.interval_count as number | undefined) ?? 1;
+      if (anchor && anchor > 0 && interval) {
+        const d   = new Date(anchor * 1000);
+        const now = new Date();
+        while (d <= now) {
+          if (interval === "month") d.setMonth(d.getMonth() + intervalCount);
+          else if (interval === "year") d.setFullYear(d.getFullYear() + intervalCount);
+          else d.setDate(d.getDate() + intervalCount);
+        }
+        currentPeriodEnd = d.toISOString();
       }
     }
 
-    // 3. For active subscriptions, preview the next invoice for the next charge date
-    //    (Stripe SDK v21 renamed retrieveUpcoming → createPreview)
+    // 5. Upcoming invoice preview — last resort
     if (!currentPeriodEnd && isActive) {
       try {
         const preview = await stripe.invoices.createPreview({ customer: customerId });
-        const previewAny = preview as unknown as Record<string, unknown>;
-        const periodEnd  = previewAny.period_end as number | undefined;
-        if (periodEnd && periodEnd > 0) {
-          currentPeriodEnd = new Date(periodEnd * 1000).toISOString();
-        }
-      } catch {
-        // No preview available — sub may be cancelled or have no upcoming invoice
-      }
+        const p       = preview as unknown as Record<string, unknown>;
+        currentPeriodEnd ??= fromSecs(p.period_end as number | undefined);
+      } catch { /* no preview */ }
     }
 
-    // 4. Last resort: billing_cycle_anchor (start of current cycle — approximate)
-    if (!currentPeriodEnd) {
-      const anchor = subAny.billing_cycle_anchor as number | undefined;
-      if (anchor && anchor > 0) {
-        currentPeriodEnd = new Date(anchor * 1000).toISOString();
-      }
-    }
-
+    // Log key fields + all cancel-related raw keys for debugging
     console.log(
-      `[billing-info] uid=${uid} status=${sub.status} cancelAtPeriodEnd=${cancelAtPeriodEnd} currentPeriodEnd=${currentPeriodEnd}`,
-      "raw keys:", Object.keys(subAny).filter((k) => k.includes("period") || k.includes("cancel") || k.includes("billing")),
+      `[billing-info] uid=${uid} status=${sub.status}`,
+      `cancelAtPeriodEnd=${cancelAtPeriodEnd} cancel_at=${cancelAt} cancel_at_period_end=${raw.cancel_at_period_end}`,
+      `currentPeriodEnd=${currentPeriodEnd}`,
+      `raw cancel/period keys:`, Object.keys(raw).filter((k) => k.includes("cancel") || k.includes("period")),
     );
 
     // Best-effort Firestore sync
     db.collection("users").doc(uid).set(
-      {
-        plan: isActive ? "pro" : "free",
-        subscription: { id: sub.id, status: sub.status, cancelAtPeriodEnd, currentPeriodEnd },
-      },
+      { plan: isActive ? "pro" : "free", subscription: { id: sub.id, status: sub.status, cancelAtPeriodEnd, currentPeriodEnd } },
       { merge: true },
     ).catch(() => {});
 
-    return NextResponse.json({ manualPro: false, status: sub.status, currentPeriodEnd, cancelAtPeriodEnd });
+    return NextResponse.json({
+      manualPro: false,
+      status: sub.status,
+      currentPeriodEnd,
+      cancelAtPeriodEnd,
+      // Raw debug fields — visible in the debug section on the billing page
+      _raw: {
+        cancel_at:            raw.cancel_at,
+        cancel_at_period_end: raw.cancel_at_period_end,
+        status:               raw.status,
+        billing_cycle_anchor: raw.billing_cycle_anchor,
+      },
+    });
   } catch (err) {
     console.error("GET /api/user/billing-info error:", err);
     return NextResponse.json({ error: "Failed to load billing info" }, { status: 500 });

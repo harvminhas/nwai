@@ -35,23 +35,21 @@ function BillingContent() {
   const [error,      setError]      = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // Subscription detail fetched from Firestore (via /api/user/billing-info)
   const [subInfo, setSubInfo] = useState<{
     status?: string;
     currentPeriodEnd?: string;
     cancelAtPeriodEnd?: boolean;
     manualPro?: boolean;
+    _raw?: Record<string, unknown>;
   } | null>(null);
 
   const fetchSubInfo = async (tok: string) => {
     const res  = await fetch("/api/user/billing-info", { headers: { Authorization: `Bearer ${tok}` } });
     const json = res.ok ? await res.json().catch(() => ({})) : {};
     setSubInfo(json);
-    // billing-info syncs Firestore as a side-effect; refresh PlanContext so
-    // isPro reflects the live Stripe status even if the webhook never fired.
-    if (json.status === "active" || json.status === "trialing" || json.manualPro) {
-      await refresh();
-    }
+    // Always refresh PlanContext — billing-info syncs Firestore as a side-effect
+    // so /api/user/plan will return the correct plan regardless of webhook status.
+    await refresh();
     return json;
   };
 
@@ -59,28 +57,42 @@ function BillingContent() {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
       if (!user) { router.push("/login"); return; }
-      const tok = await user.getIdToken();
+      const tok = await user.getIdToken(/* forceRefresh */ true);
       setToken(tok);
       await fetchSubInfo(tok);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
-  // Re-fetch billing info when returning from the Stripe portal (no session_id, no canceled)
-  // The portal redirects back with no query params, so we detect a fresh page visit
+  // When returning from Stripe portal via client-side navigation the component
+  // doesn't remount, so onAuthStateChanged won't re-fire. Watch for searchParams
+  // changing while we already have a token (covers the ?from_portal=1 redirect).
   useEffect(() => {
-    const isFreshReturn = !searchParams.get("session_id") && !searchParams.get("canceled");
-    if (!isFreshReturn) return;
-    // Small delay to allow webhook to land before we fetch
-    const t = setTimeout(async () => {
+    if (!token || !searchParams.get("from_portal")) return;
+    fetchSubInfo(token);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, searchParams]);
+
+  // Re-fetch whenever the user returns to this tab/page (covers portal redirect,
+  // bfcache restore, alt-tab back, etc.)
+  useEffect(() => {
+    const refetch = () => {
+      if (document.visibilityState !== "visible") return;
       const { auth } = getFirebaseClient();
       const user = auth.currentUser;
       if (!user) return;
-      const tok = await user.getIdToken();
-      await fetchSubInfo(tok);
-      await refresh();
-    }, 1500);
-    return () => clearTimeout(t);
+      user.getIdToken(true).then((tok) => {
+        setToken(tok);
+        fetchSubInfo(tok);
+      });
+    };
+    document.addEventListener("visibilitychange", refetch);
+    // also covers bfcache (browser back/forward)
+    window.addEventListener("pageshow", refetch);
+    return () => {
+      document.removeEventListener("visibilitychange", refetch);
+      window.removeEventListener("pageshow", refetch);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -150,14 +162,18 @@ function BillingContent() {
     }
   }
 
-  const isPro             = planId === "pro";
   const isManualPro       = subInfo?.manualPro === true;
+  const subStatus         = subInfo?.status ?? null;
   const cancelAtPeriodEnd = subInfo?.cancelAtPeriodEnd === true;
-  const periodEnd         = subInfo?.currentPeriodEnd
+  // When Stripe data is loaded, use it exclusively — never fall back to the
+  // cached planId (which could still say "pro" after cancellation).
+  const isSubActive = subStatus === "active" || subStatus === "trialing";
+  const isPro       = isManualPro || (subInfo !== null ? isSubActive : planId === "pro");
+  const periodEnd   = subInfo?.currentPeriodEnd
     ? new Date(subInfo.currentPeriodEnd).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
     : null;
 
-  if (planLoading) return (
+  if (planLoading && !subInfo) return (
     <div className="flex min-h-[50vh] items-center justify-center">
       <div className="h-10 w-10 animate-spin rounded-full border-4 border-purple-600 border-t-transparent" />
     </div>
@@ -181,23 +197,31 @@ function BillingContent() {
 
       {/* Current plan banner */}
       <div className={`rounded-2xl border p-5 mb-6 ${
-        isPro && !cancelAtPeriodEnd ? "border-purple-200 bg-purple-50"
-        : cancelAtPeriodEnd ? "border-amber-200 bg-amber-50"
+        subStatus === "canceled"  ? "border-gray-300 bg-gray-50"
+        : cancelAtPeriodEnd       ? "border-amber-200 bg-amber-50"
+        : isPro                   ? "border-purple-200 bg-purple-50"
         : "border-gray-200 bg-white"
       }`}>
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">Current plan</p>
             <div className="flex items-center gap-2">
-              <p className="text-xl font-bold text-gray-900">{PLANS[planId].name}</p>
-              {isPro && !cancelAtPeriodEnd && (
+              <p className="text-xl font-bold text-gray-900">
+                {isPro && subStatus !== "canceled" ? "Pro" : "Free"}
+              </p>
+              {isPro && !cancelAtPeriodEnd && subStatus !== "canceled" && (
                 <span className="rounded-full bg-purple-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
                   Active
                 </span>
               )}
-              {cancelAtPeriodEnd && (
+              {cancelAtPeriodEnd && subStatus !== "canceled" && (
                 <span className="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
                   Cancelling
+                </span>
+              )}
+              {subStatus === "canceled" && (
+                <span className="rounded-full bg-gray-400 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+                  Cancelled
                 </span>
               )}
               {isManualPro && (
@@ -206,21 +230,39 @@ function BillingContent() {
                 </span>
               )}
             </div>
-            {isPro && !isManualPro && periodEnd && (
+            {isPro && !isManualPro && subStatus !== "canceled" && periodEnd && (
               <p className="mt-1 text-xs text-gray-500">
                 {cancelAtPeriodEnd
                   ? `Pro access until ${periodEnd} — you won't be charged again`
                   : `Renews ${periodEnd}`}
               </p>
             )}
+            {subStatus === "canceled" && (
+              <p className="mt-1 text-xs text-gray-500">Your subscription has ended.</p>
+            )}
           </div>
-          <div className="text-right shrink-0">
-            <p className="text-2xl font-bold text-gray-900">{isPro ? "$9.99" : "$0"}</p>
-            <p className="text-xs text-gray-400">{isPro ? "/ month" : "free"}</p>
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            <div className="text-right">
+              <p className="text-2xl font-bold text-gray-900">
+                {isPro && subStatus !== "canceled" ? "$9.99" : "$0"}
+              </p>
+              <p className="text-xs text-gray-400">
+                {isPro && subStatus !== "canceled" ? "/ month" : "free"}
+              </p>
+            </div>
+            {/* Manual refresh button */}
+            {token && (
+              <button
+                onClick={() => fetchSubInfo(token)}
+                className="text-[11px] text-gray-400 hover:text-gray-600 underline"
+              >
+                Refresh status
+              </button>
+            )}
           </div>
         </div>
 
-        {isPro && !isManualPro && (
+        {isPro && !isManualPro && subStatus !== "canceled" && (
           <div className="mt-4 flex gap-2">
             {cancelAtPeriodEnd ? (
               <>
@@ -249,6 +291,15 @@ function BillingContent() {
               </button>
             )}
           </div>
+        )}
+        {subStatus === "canceled" && (
+          <button
+            onClick={handleUpgrade}
+            disabled={working}
+            className="mt-4 w-full rounded-xl bg-gradient-to-r from-purple-600 to-purple-700 py-2.5 text-sm font-bold text-white hover:from-purple-700 hover:to-purple-800 transition shadow-sm disabled:opacity-60"
+          >
+            {working ? "Redirecting…" : "Resubscribe to Pro →"}
+          </button>
         )}
       </div>
 
