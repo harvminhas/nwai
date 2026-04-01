@@ -10,6 +10,7 @@ import type { AgentCard } from "@/lib/agentTypes";
 import type { RadarItem, FreshnessData, NetWorthSnapshot } from "@/lib/today/types";
 import ParseStatusBanner from "@/components/ParseStatusBanner";
 import { fmt } from "@/lib/currencyUtils";
+import { usePlan } from "@/contexts/PlanContext";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -216,6 +217,7 @@ const INSIGHT_TONE: Record<string, { bg: string; border: string; text: string; s
 
 export default function TodayPage() {
   const router = useRouter();
+  const { planId } = usePlan();
   const [alerts,      setAlerts]      = useState<DashboardAlert[]>([]);
   const [upcoming,    setUpcoming]    = useState<UpcomingItem[]>([]);
   const [insights,    setInsights]    = useState<TodayInsight[]>([]);
@@ -710,36 +712,6 @@ export default function TodayPage() {
     );
   }
 
-  // ── MarketContextStub ─────────────────────────────────────────────────────────
-  function MarketContextStub() {
-    return (
-      <div className="rounded-xl border border-gray-200 bg-gray-50 overflow-hidden">
-        <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-gray-200">
-          <div className="flex items-center gap-1.5 text-gray-400">
-            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
-            <p className="text-[10px] font-semibold uppercase tracking-wider">Market Context</p>
-          </div>
-          <span className="rounded-full bg-gray-800 px-2 py-0.5 text-[9px] font-bold text-white uppercase tracking-wider">Premium</span>
-        </div>
-        <div className="px-3.5 py-3 space-y-2 select-none opacity-60">
-          {["BoC rate history", "CPI trend", "Rate impact on your debt"].map((item) => (
-            <div key={item} className="flex items-center gap-2">
-              <div className="h-4 w-4 rounded bg-gray-200 shrink-0" />
-              <div className="h-2 rounded bg-gray-200 flex-1" />
-            </div>
-          ))}
-        </div>
-        <div className="px-3.5 pb-3">
-          <button className="w-full rounded-lg bg-gray-900 px-3 py-2 text-xs font-semibold text-white hover:bg-gray-800 transition">
-            Upgrade to unlock
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   const hasUpcoming = upcoming.length > 0;
 
   return (
@@ -771,9 +743,6 @@ export default function TodayPage() {
               <MobileCardShell><SidebarSignalCard card={card} /></MobileCardShell>
             </div>
           ))}
-          <div className="snap-start shrink-0 w-64">
-            <MobileCardShell><MarketContextStub /></MobileCardShell>
-          </div>
         </div>
       </div>
 
@@ -866,8 +835,6 @@ export default function TodayPage() {
               )
             }
 
-            {/* Market context premium stub */}
-            <MarketContextStub />
 
           </div>
         </div>

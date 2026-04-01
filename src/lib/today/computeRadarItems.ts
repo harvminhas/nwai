@@ -62,68 +62,74 @@ interface RecurringPattern {
   href?: string;
 }
 
-function detectThreeOccurrenceMonths(
+function detectExtraOccurrenceMonth(
   pattern: RecurringPattern,
   currentMonthKey: string,
-  nextMonthKey: string,
-): RadarItem[] {
-  const items: RadarItem[] = [];
+): RadarItem | null {
+  // Require at least 6 confirmed occurrences in history for high-confidence detection.
+  // Fewer than 6 means we don't have enough data to trust the frequency.
+  if (pattern.occurrenceCount < 6) return null;
 
-  for (const targetYM of [currentMonthKey, nextMonthKey]) {
-    const [y, m] = targetYM.split("-").map(Number);
-    const projections = projectNextDates(pattern.lastDateStr, pattern.medianGapDays, 12, true);
-    const hitsInMonth = datesInMonth(projections, targetYM);
+  // Compute typical occurrences per month from the gap (e.g. weekly=4, bi-weekly=2)
+  const typicalPerMonth = Math.round(30 / pattern.medianGapDays);
+  if (typicalPerMonth < 1) return null;
 
-    // Also count confirmed transactions already in that month
-    // (passed in as occurrenceCount in the caller, but here we just use projection)
-    if (hitsInMonth.length < 3) continue;
+  // Only check the current month — next-month predictions are too speculative
+  const projections = projectNextDates(pattern.lastDateStr, pattern.medianGapDays, 16, true);
+  const hitsInMonth = datesInMonth(projections, currentMonthKey);
 
-    const monthName  = fmtMonthName(targetYM);
-    const extra      = pattern.typicalAmount; // one extra vs normal 2
-    const typical    = pattern.typicalAmount * 2;
-    const total      = pattern.typicalAmount * 3;
+  // Only flag if there is genuinely an EXTRA occurrence vs the typical count
+  if (hitsInMonth.length <= typicalPerMonth) return null;
 
-    const breakdown: RadarBreakdownRow[] = hitsInMonth.slice(0, 3).map((hit, i) => ({
-      label: `${fmtDate(hit.dateStr)}${i === 2 ? " (predicted)" : ""}`,
-      value: fmtCurrency(pattern.typicalAmount),
-    }));
-    breakdown.push(
-      { label: "Typical month total",          value: fmtCurrency(typical) },
-      { label: `${monthName} total`,            value: fmtCurrency(total)   },
-      { label: "Extra vs typical",              value: pattern.isIncome ? `+${fmtCurrency(extra)}` : `−${fmtCurrency(extra)}` },
-    );
+  const monthName   = fmtMonthName(currentMonthKey);
+  const extra       = pattern.typicalAmount;                         // cost of one extra occurrence
+  const typical     = pattern.typicalAmount * typicalPerMonth;
+  const total       = pattern.typicalAmount * hitsInMonth.length;
+  const extraCount  = hitsInMonth.length - typicalPerMonth;
 
-    items.push({
-      id: `three-occ-${pattern.id}-${targetYM}`,
-      type: pattern.isIncome ? "windfall" : "warn",
-      icon: pattern.icon,
-      pill: pattern.isIncome ? "Extra income" : "Cash flow pressure",
-      when: monthName,
-      targetMonthKey: targetYM,
-      title: pattern.isIncome
-        ? `3 paydays in ${monthName} — an extra ${fmtCurrency(extra)} coming in`
-        : `3 ${pattern.label} payments in ${monthName} — ${fmtCurrency(extra)} more than usual`,
-      sub: `${fmtCurrency(total)} total vs typical ${fmtCurrency(typical)}`,
-      amount: pattern.isIncome ? `+${fmtCurrency(extra)}` : `−${fmtCurrency(extra)}`,
-      amountLabel: "extra this month",
-      expand: {
-        breakdown,
-        note: pattern.isIncome
-          ? `Because ${pattern.label} pays every 14 days, some months contain 3 paycheques. This is one of them — the extra ${fmtCurrency(extra)} is a good moment to top up savings or accelerate a debt payoff.`
-          : `Because ${pattern.label} is collected every 14 days, some months have 3 withdrawals instead of the usual 2. Budget an extra ${fmtCurrency(extra)} in ${monthName}.`,
-        confidence: {
-          level: pattern.occurrenceCount >= 12 ? "high" : pattern.occurrenceCount >= 6 ? "medium" : "low",
-          text: `Based on ${pattern.occurrenceCount} consecutive detections`,
-        },
-        primaryAction: {
-          label: pattern.isIncome ? "Plan the extra" : "Model in What If",
-          href: pattern.isIncome ? "/account/goals" : "/account/spending",
-        },
+  // Skip warn items where the extra amount is trivial
+  if (!pattern.isIncome && extra * extraCount < MIN_EXTRA_WARN) return null;
+
+  const intervalLabel = pattern.medianGapDays <= 10 ? "weekly" : "bi-weekly";
+
+  const breakdown: RadarBreakdownRow[] = hitsInMonth.map((hit, i) => ({
+    label: `${fmtDate(hit.dateStr)}${i >= typicalPerMonth ? " (extra)" : ""}`,
+    value: fmtCurrency(pattern.typicalAmount),
+  }));
+  breakdown.push(
+    { label: "Typical month total", value: fmtCurrency(typical) },
+    { label: `${monthName} total`,  value: fmtCurrency(total)   },
+    { label: "Extra vs typical",    value: pattern.isIncome ? `+${fmtCurrency(extra * extraCount)}` : `−${fmtCurrency(extra * extraCount)}` },
+  );
+
+  return {
+    id: `three-occ-${pattern.id}-${currentMonthKey}`,
+    type: pattern.isIncome ? "windfall" : "warn",
+    icon: pattern.icon,
+    pill: pattern.isIncome ? "Extra income" : "Cash flow pressure",
+    when: monthName,
+    targetMonthKey: currentMonthKey,
+    title: pattern.isIncome
+      ? `${hitsInMonth.length} paydays in ${monthName} — an extra ${fmtCurrency(extra * extraCount)} coming in`
+      : `${hitsInMonth.length} ${pattern.label} payments in ${monthName} — ${fmtCurrency(extra * extraCount)} more than usual`,
+    sub: `${fmtCurrency(total)} total vs typical ${fmtCurrency(typical)}`,
+    amount: pattern.isIncome ? `+${fmtCurrency(extra * extraCount)}` : `−${fmtCurrency(extra * extraCount)}`,
+    amountLabel: "extra this month",
+    expand: {
+      breakdown,
+      note: pattern.isIncome
+        ? `Because ${pattern.label} pays every ${intervalLabel}, some months contain ${hitsInMonth.length} payments instead of the usual ${typicalPerMonth}. The extra ${fmtCurrency(extra * extraCount)} is a good moment to top up savings or accelerate a debt payoff.`
+        : `Because ${pattern.label} is collected every ${intervalLabel}, some months have ${hitsInMonth.length} withdrawals instead of the usual ${typicalPerMonth}. Budget an extra ${fmtCurrency(extra * extraCount)} in ${monthName}.`,
+      confidence: {
+        level: pattern.occurrenceCount >= 12 ? "high" : "medium",
+        text:  `Based on ${pattern.occurrenceCount} confirmed occurrences`,
       },
-    });
-  }
-
-  return items;
+      primaryAction: {
+        label: pattern.isIncome ? "Plan the extra" : "Model in What If",
+        href:  pattern.isIncome ? "/account/goals" : "/account/spending",
+      },
+    },
+  };
 }
 
 // ── B. Bill timing collision ──────────────────────────────────────────────────
@@ -328,6 +334,34 @@ function sortRadar(items: RadarItem[], currentMonthKey: string): RadarItem[] {
   return [...items].sort((a, b) => order(a) - order(b));
 }
 
+// ── constants ─────────────────────────────────────────────────────────────────
+
+/** Minimum extra-vs-typical amount (in native currency) to surface a warn item.
+ *  Prevents flagging trivial variance like a $7 coffee shop with 3 visits. */
+const MIN_EXTRA_WARN = 35;
+
+/**
+ * Variable/discretionary spending categories excluded from three-occurrence detection.
+ * These merchants recur because of habit, not because they're scheduled payments —
+ * predicting "3 Petro-Canada fill-ups in April" is meaningless and confusing.
+ * Only FIXED scheduled payments (loans, utilities, rent, insurance, investments)
+ * are worth surfacing as cash-flow pressure.
+ */
+const VARIABLE_CATEGORY_KEYWORDS = [
+  "gas", "fuel", "petro", "gasoline",
+  "grocer", "grocery", "supermarket", "food store",
+  "restaurant", "dining", "fast food", "coffee", "cafe", "bakery",
+  "retail", "shopping", "clothing", "department store",
+  "entertainment", "streaming", "movie", "bar", "pub",
+  "pharmacy", "drug store",
+  "parking", "transit", "transport",
+];
+
+function isVariableSpending(category: string, merchant: string): boolean {
+  const text = (category + " " + merchant).toLowerCase();
+  return VARIABLE_CATEGORY_KEYWORDS.some((kw) => text.includes(kw));
+}
+
 // ── main entry ────────────────────────────────────────────────────────────────
 
 export interface RadarInput {
@@ -386,7 +420,8 @@ export function computeRadarItems(input: RadarInput): RadarItem[] {
     };
 
     incomePatterns.push(pattern);
-    items.push(...detectThreeOccurrenceMonths(pattern, currentMonthKey, nextMonthKey));
+    const item = detectExtraOccurrenceMonth(pattern, currentMonthKey);
+    if (item) items.push(item);
   }
 
   // ─ Recurring expense sources ─
@@ -401,17 +436,21 @@ export function computeRadarItems(input: RadarInput): RadarItem[] {
 
   for (const [key, txns] of expByMerchant) {
     if (txns.length < 3) continue;
+
+    // Skip variable/discretionary spending — only fixed scheduled payments matter
+    const sorted0  = [...txns].sort((a, b) => b.date.localeCompare(a.date));
+    if (isVariableSpending(sorted0[0].category ?? "", sorted0[0].merchant ?? key)) continue;
+
     const dates = txns.map((t) => t.date).filter(Boolean).sort();
     const freq  = detectFrequency(dates);
     if (freq.frequency !== "bi-weekly" && freq.frequency !== "weekly") continue;
     if (!freq.medianGap || freq.medianGap < 5) continue;
 
-    const sorted   = [...txns].sort((a, b) => b.date.localeCompare(a.date));
-    const lastDate = sorted[0].date;
+    const lastDate = sorted0[0].date;
     const amounts  = txns.map((t) => t.amount).filter((a) => a > 0);
     const median   = amounts.sort((a, b) => a - b)[Math.floor(amounts.length / 2)];
 
-    const cat  = sorted[0].category?.toLowerCase() ?? "";
+    const cat  = sorted0[0].category?.toLowerCase() ?? "";
     const icon = cat.includes("mortgage") || cat.includes("housing")  ? "🏠"
                : cat.includes("loan") || cat.includes("debt")         ? "📋"
                : cat.includes("insurance")                            ? "🛡️"
@@ -419,7 +458,7 @@ export function computeRadarItems(input: RadarInput): RadarItem[] {
 
     const pattern: RecurringPattern = {
       id: key,
-      label: sorted[0].merchant,
+      label: sorted0[0].merchant,
       isIncome: false,
       lastDateStr: lastDate,
       medianGapDays: freq.medianGap,
@@ -429,7 +468,8 @@ export function computeRadarItems(input: RadarInput): RadarItem[] {
       href: "/account/spending",
     };
 
-    items.push(...detectThreeOccurrenceMonths(pattern, currentMonthKey, nextMonthKey));
+    const expItem = detectExtraOccurrenceMonth(pattern, currentMonthKey);
+    if (expItem) items.push(expItem);
   }
 
   // ── B. Bill timing collision ───────────────────────────────────────────────
@@ -492,7 +532,28 @@ export function computeRadarItems(input: RadarInput): RadarItem[] {
   const clusterItem = detectSubscriptionCluster(subItems, nextMonthKey);
   if (clusterItem) items.push(clusterItem);
 
+  // ── Deduplicate: same merchant+month from both income and expense txns ────────
+  // Normalize the key by stripping all non-alphanumeric chars so minor spelling
+  // differences ("WS Investments INV" vs "ws-investments-inv") collapse to one entry.
+  const seen  = new Set<string>();
+  const deduped = items.filter((item) => {
+    const normId = item.id.replace(/[^a-z0-9]/gi, "").toLowerCase();
+    if (seen.has(normId)) return false;
+    seen.add(normId);
+    return true;
+  });
+
   // ── Annotate net effect & sort ─────────────────────────────────────────────
-  const annotated = annotateNetEffect(items);
-  return sortRadar(annotated, currentMonthKey);
+  const annotated = annotateNetEffect(deduped);
+  const sorted    = sortRadar(annotated, currentMonthKey);
+
+  // ── Cap: max 3 warn + 2 windfall per month, 8 total ───────────────────────
+  const warnCurrent   = sorted.filter((i) => i.type === "warn"     && i.targetMonthKey === currentMonthKey).slice(0, 3);
+  const warnNext      = sorted.filter((i) => i.type === "warn"     && i.targetMonthKey === nextMonthKey).slice(0, 2);
+  const windCurrent   = sorted.filter((i) => i.type === "windfall" && i.targetMonthKey === currentMonthKey).slice(0, 2);
+  const windNext      = sorted.filter((i) => i.type === "windfall" && i.targetMonthKey === nextMonthKey).slice(0, 1);
+  const other         = sorted.filter((i) => i.targetMonthKey !== currentMonthKey && i.targetMonthKey !== nextMonthKey);
+
+  const capped = [...warnCurrent, ...warnNext, ...windCurrent, ...windNext, ...other].slice(0, 8);
+  return sortRadar(capped, currentMonthKey);
 }

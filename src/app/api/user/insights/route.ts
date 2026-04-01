@@ -832,14 +832,14 @@ export async function GET(req: NextRequest) {
     statusText   = alerts.find((a) => a.type === "low_liquid")!.title;
     statusDetail = alerts.find((a) => a.type === "low_liquid")!.body;
   } else if (radar.some((r) => r.type === "warn" && r.targetMonthKey >= thisMonth)) {
-    const highWarn = radar.find((r) => r.type === "warn");
+    const highWarn = radar.find((r) => r.type === "warn" && r.targetMonthKey >= thisMonth);
     statusType   = "warn";
-    statusText   = `${highWarn?.when ?? "Upcoming month"} is a high-expense month — plan ahead`;
+    statusText   = highWarn?.title ?? "Upcoming cash flow pressure — plan ahead";
     statusDetail = highWarn?.sub ?? "";
   } else if (radar.some((r) => r.type === "windfall" && r.targetMonthKey >= thisMonth)) {
-    const windfall = radar.find((r) => r.type === "windfall");
+    const windfall = radar.find((r) => r.type === "windfall" && r.targetMonthKey >= thisMonth);
     statusType = "ok";
-    statusText   = `${windfall?.when ?? "Next month"} is a strong month — ${windfall?.amount ?? ""} extra`;
+    statusText   = windfall?.title ?? `${windfall?.when ?? "Next month"} is a strong month`;
     statusDetail = windfall?.sub ?? "";
   } else if (spentThisMonth > 0 && typicalMonthlyExpenses > 0) {
     const pace = (spentThisMonth / dayOfMonth) * daysInMonth;
