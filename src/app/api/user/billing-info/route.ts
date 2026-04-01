@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ manualPro: false, status: null, currentPeriodEnd: null, cancelAtPeriodEnd: false });
     }
 
-    const subAny            = sub as Record<string, unknown>;
+    const subAny            = sub as unknown as Record<string, unknown>;
     const cancelAtPeriodEnd = Boolean(subAny.cancel_at_period_end);
     const isActive          = sub.status === "active" || sub.status === "trialing";
 
@@ -68,18 +68,18 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 3. For active subscriptions, fetch the upcoming invoice for the next charge date
+    // 3. For active subscriptions, preview the next invoice for the next charge date
+    //    (Stripe SDK v21 renamed retrieveUpcoming → createPreview)
     if (!currentPeriodEnd && isActive) {
       try {
-        const upcoming = await stripe.invoices.retrieveUpcoming({ customer: customerId });
-        const upAny = upcoming as Record<string, unknown>;
-        // period_end = end of the current billing cycle = next charge date
-        const periodEnd = upAny.period_end as number | undefined;
+        const preview = await stripe.invoices.createPreview({ customer: customerId });
+        const previewAny = preview as unknown as Record<string, unknown>;
+        const periodEnd  = previewAny.period_end as number | undefined;
         if (periodEnd && periodEnd > 0) {
           currentPeriodEnd = new Date(periodEnd * 1000).toISOString();
         }
       } catch {
-        // No upcoming invoice — may happen if sub is cancelled
+        // No preview available — sub may be cancelled or have no upcoming invoice
       }
     }
 
