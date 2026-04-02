@@ -9,12 +9,20 @@ export type FreshnessState = "fresh" | "aging" | "stale";
 
 export interface FreshnessAccount {
   name: string;
-  uploadedAt: string; // ISO date string
+  /** Date printed on the statement (issued date), not the upload date. */
+  statementDate: string; // ISO date "YYYY-MM-DD"
+  /** Expected issue date this cycle based on the account's typical issue day. */
+  expectedDate: string;  // ISO date "YYYY-MM-DD"
+  /** True if the expected statement hasn't arrived yet. */
+  isOverdue: boolean;
+  /** Days past the expected issue date without a new statement (0 if up to date). */
+  daysOverdue: number;
 }
 
 export interface FreshnessData {
   state: FreshnessState;
-  daysSinceUpload: number;
+  /** Max daysOverdue across all accounts (0 = all up to date). */
+  daysOverdue: number;
   accounts: FreshnessAccount[];
 }
 

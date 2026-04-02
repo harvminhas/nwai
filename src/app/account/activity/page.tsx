@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, Suspense } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import type { ActivityEvent } from "@/app/api/user/activity/route";
@@ -155,6 +155,40 @@ interface AccountCoverage {
   firstMonth: string;
   lastMonth: string;
   uploadedMonths: Set<string>;
+  statementDue: boolean;
+}
+
+/**
+ * Returns whether a new statement is likely available for this account.
+ * Uses the median issue day-of-month from historical statements and an 8-day
+ * grace period (3 days bank delay + 5 days upload window).
+ */
+function isStatementDue(slug: string, statements: UserStatementSummary[]): boolean {
+  const GRACE_DAYS = 8;
+  const acctStmts = statements.filter(
+    (s) => s.status === "completed" && !s.superseded && buildAccountSlug(s.bankName, s.accountId) === slug && s.statementDate,
+  );
+  if (acctStmts.length === 0) return false;
+
+  const dates      = acctStmts.map((s) => s.statementDate!).filter(Boolean).sort();
+  const latestStmt = dates[dates.length - 1];
+
+  // Typical issue day-of-month (median)
+  const issueDays  = dates.map((d) => parseInt(d.slice(8, 10), 10)).filter((n) => n > 0);
+  const sortedDays = [...issueDays].sort((a, b) => a - b);
+  const typicalDay = sortedDays[Math.floor(sortedDays.length / 2)] ?? 1;
+
+  // Expected date = most recent occurrence of typicalDay on or before today
+  const today   = new Date();
+  const todayMs = today.getTime();
+  const exp     = new Date(today);
+  exp.setDate(typicalDay);
+  if (exp.getTime() > todayMs) exp.setMonth(exp.getMonth() - 1);
+
+  const expectedDate = exp.toISOString().slice(0, 10);
+  const daysOverdue  = Math.round((todayMs - exp.getTime()) / 86_400_000);
+
+  return latestStmt < expectedDate && daysOverdue > GRACE_DAYS;
 }
 
 function buildCoverage(statements: UserStatementSummary[]): {
@@ -180,6 +214,7 @@ function buildCoverage(statements: UserStatementSummary[]): {
         firstMonth: ym,
         lastMonth: ym,
         uploadedMonths: new Set(),
+        statementDue: false,
       };
       map.set(slug, entry);
     }
@@ -188,7 +223,13 @@ function buildCoverage(statements: UserStatementSummary[]): {
     if (ym > entry.lastMonth)  entry.lastMonth  = ym;
   }
 
-  const accounts = Array.from(map.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
+  const accounts = Array.from(map.values())
+    .map((a) => ({ ...a, statementDue: isStatementDue(a.slug, statements) }))
+    .sort((a, b) => {
+      // Sort accounts with a due statement to the top
+      if (a.statementDue !== b.statementDue) return a.statementDue ? -1 : 1;
+      return a.displayName.localeCompare(b.displayName);
+    });
 
   // Show only the last 6 months (or fewer if data is newer)
   const sixMonthsAgo = addMonths(currentMonth, -5);
@@ -201,9 +242,16 @@ function buildCoverage(statements: UserStatementSummary[]): {
 
 // ── page ──────────────────────────────────────────────────────────────────────
 
-export default function ActivityPage() {
-  const router = useRouter();
+function ActivityContent() {
+  const router       = useRouter();
+  const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<"timeline" | "coverage">("timeline");
+
+  // Set initial tab from URL param once mounted
+  useEffect(() => {
+    if (searchParams.get("tab") === "coverage") setActiveTab("coverage");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [events, setEvents]       = useState<ActivityEvent[]>([]);
   const [statements, setStatements] = useState<UserStatementSummary[]>([]);
   const [loading, setLoading]     = useState(true);
@@ -308,10 +356,14 @@ export default function ActivityPage() {
     }).length;
   }, 0);
 
+  const dueAccounts = coverageAccounts.filter((a) => a.statementDue);
+
   function getCellStatus(acc: AccountCoverage, mo: string): CoverageStatus {
     if (mo > currentMonth) return "future";
     if (mo < acc.firstMonth) return "future"; // before this account existed
     if (acc.uploadedMonths.has(mo)) return "uploaded";
+    // Current month: treat as a gap if a new statement is due but not yet uploaded
+    if (mo === currentMonth && acc.statementDue) return "gap";
     if (mo > acc.lastMonth) return "carried"; // carried forward from last upload
     return "gap"; // between first and last but no upload
   }
@@ -506,11 +558,36 @@ export default function ActivityPage() {
                 </svg>
                 {refreshing ? "Refreshing…" : "Refresh"}
               </button>
-              <Link href="/upload" className="text-xs font-medium text-purple-600 hover:underline">
+              <Link
+                href="/upload"
+                className="rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 transition"
+              >
                 Upload missing →
               </Link>
             </div>
           </div>
+
+          {/* Due statements banner */}
+          {dueAccounts.length > 0 && (
+            <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3.5">
+              <div className="flex items-start gap-2.5">
+                <svg className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-blue-900">
+                    New statements ready to upload
+                  </p>
+                  <p className="mt-0.5 text-xs text-blue-700">
+                    {dueAccounts.map((a) => a.displayName).join(", ")}
+                  </p>
+                  <Link href="/upload" className="mt-2 inline-block text-xs font-semibold text-blue-800 underline hover:text-blue-900">
+                    Upload now →
+                  </Link>
+                </div>
+              </div>
+            </div>
+          )}
 
           {coverageAccounts.length === 0 ? (
             <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-12 text-center">
@@ -546,15 +623,20 @@ export default function ActivityPage() {
                   {coverageAccounts.map((acc) => {
                     const gaps = coverageMonths.filter((mo) => getCellStatus(acc, mo) === "gap").length;
                     return (
-                      <tr key={acc.slug} className="hover:bg-gray-50/50">
-                        <td className="sticky left-0 z-10 bg-white px-4 py-3 hover:bg-gray-50/50">
+                      <tr key={acc.slug} className={`hover:bg-gray-50/50 ${acc.statementDue ? "bg-blue-50/40" : ""}`}>
+                        <td className={`sticky left-0 z-10 px-4 py-3 hover:bg-blue-50/60 ${acc.statementDue ? "bg-blue-50/40" : "bg-white hover:bg-gray-50/50"}`}>
                           <p className="font-medium text-gray-800 truncate max-w-[160px]" title={acc.displayName}>
                             {acc.displayName}
                           </p>
-                          <div className="flex items-center gap-1.5 mt-0.5">
+                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                             <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] capitalize text-gray-500">
                               {acc.accountType}
                             </span>
+                            {acc.statementDue && (
+                              <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">
+                                New statement ready
+                              </span>
+                            )}
                             {gaps > 0 && (
                               <span className="rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-500">
                                 {gaps} gap{gaps !== 1 ? "s" : ""}
@@ -564,11 +646,14 @@ export default function ActivityPage() {
                         </td>
                         {coverageMonths.map((mo) => {
                           const status = getCellStatus(acc, mo);
+                          const gapTitle = mo === currentMonth && acc.statementDue
+                            ? "New statement available — upload now"
+                            : "Missing — no statement uploaded";
                           const cell = {
                             uploaded: { bg: "bg-green-500",   title: "Statement uploaded" },
                             carried:  { bg: "bg-amber-400",   title: "Carried forward from previous month" },
-                            gap:      { bg: "bg-red-400",     title: "Missing — no statement uploaded" },
-                            future:   { bg: "bg-gray-100 border border-gray-200",    title: "Not applicable" },
+                            gap:      { bg: "bg-red-400",     title: gapTitle },
+                            future:   { bg: "bg-gray-100 border border-gray-200", title: "Not applicable" },
                           }[status];
                           return (
                             <td key={mo} className="px-2 py-3 text-center">
@@ -610,16 +695,12 @@ export default function ActivityPage() {
             </div>
           )}
 
-          {totalGaps === 0 && coverageAccounts.length > 0 && (
-            <div className="flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 px-4 py-3">
-              <svg className="h-4 w-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <p className="text-sm font-medium text-green-700">All accounts are fully covered — no gaps found.</p>
-            </div>
-          )}
         </div>
       )}
     </div>
   );
+}
+
+export default function ActivityPage() {
+  return <Suspense><ActivityContent /></Suspense>;
 }

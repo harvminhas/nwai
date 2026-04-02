@@ -756,49 +756,81 @@ export async function GET(req: NextRequest) {
 
   // ── H. Freshness ──────────────────────────────────────────────────────────
   // Build per-account upload dates from statement metadata
-  const acctUploadMap = new Map<string, string>(); // slug → ISO date
-  for (const doc of stmtSnap.docs) {
-    const p = doc.data().parsedData as ParsedStatementData | undefined;
-    if (!p) continue;
-    const slug    = buildAccountSlug(p.bankName, p.accountId);
-    const rawTs   = doc.data().uploadedAt?.toDate?.() ?? doc.data().uploadedAt;
-    const isoDate = rawTs instanceof Date ? rawTs.toISOString().slice(0, 10)
-                  : typeof rawTs === "string" ? rawTs.slice(0, 10) : today;
-    if (!acctUploadMap.has(slug) || isoDate > acctUploadMap.get(slug)!) {
-      acctUploadMap.set(slug, isoDate);
-    }
-  }
+  // ── Build per-account statement-date history ──────────────────────────────
+  // Key: slug → sorted array of statement dates (from parsedData.statementDate)
+  const acctStmtDatesMap = new Map<string, string[]>();
+  const acctLabelMap     = new Map<string, string>();
 
-  // Friendly account label per slug
-  const acctLabelMap = new Map<string, string>();
   for (const doc of stmtSnap.docs) {
     const p = doc.data().parsedData as ParsedStatementData | undefined;
-    if (!p) continue;
+    if (!p?.statementDate) continue;
     const slug  = buildAccountSlug(p.bankName, p.accountId);
+    const dates = acctStmtDatesMap.get(slug) ?? [];
+    dates.push(p.statementDate);
+    acctStmtDatesMap.set(slug, dates);
+
     if (!acctLabelMap.has(slug)) {
-      const label = p.accountType
-        ? p.accountType.charAt(0).toUpperCase() + p.accountType.slice(1).toLowerCase()
-        : p.bankName ?? "Account";
+      // Prefer specific account name, fall back to "Bank AccountType"
+      const label = p.accountName
+        ?? (p.bankName && p.accountType
+            ? `${p.bankName} ${p.accountType.charAt(0).toUpperCase()}${p.accountType.slice(1).toLowerCase()}`
+            : p.bankName ?? p.accountType ?? "Account");
       acctLabelMap.set(slug, label);
     }
   }
 
-  const freshnessAccounts = Array.from(acctUploadMap.entries()).map(([slug, date]) => ({
-    name:       acctLabelMap.get(slug) ?? slug,
-    uploadedAt: date,
-  }));
+  // ── Determine freshness per account ───────────────────────────────────────
+  // For each account:
+  //   1. Find the typical issue day-of-month (median across all statement dates).
+  //   2. Compute the expected statement date for the current cycle:
+  //      the most recent past occurrence of that day-of-month.
+  //   3. Flag as overdue if we have no statement dated ≥ expected date.
+  //   Give a 5-day grace period so a fresh statement isn't immediately flagged.
+  const GRACE_DAYS = 8; // 5 days for user to upload + 3 days for bank publishing delay
+  const todayMs    = new Date(today + "T00:00:00").getTime();
 
-  const mostRecentUpload = freshnessAccounts.length > 0
-    ? freshnessAccounts.map((a) => a.uploadedAt).sort().pop()!
-    : today;
-  const daysSinceUpload  = Math.max(0, Math.round(
-    (new Date(today + "T00:00:00").getTime() - new Date(mostRecentUpload + "T00:00:00").getTime()) / 86_400_000,
-  ));
-  const freshnessState   = daysSinceUpload <= 3 ? "fresh" : daysSinceUpload <= 14 ? "aging" : "stale";
+  const freshnessAccounts: FreshnessData["accounts"] = [];
+
+  for (const [slug, rawDates] of acctStmtDatesMap) {
+    const sorted    = [...rawDates].filter(Boolean).sort();
+    const latestStmt = sorted[sorted.length - 1];
+
+    // Typical issue day-of-month (median)
+    const issueDays = sorted.map((d) => parseInt(d.slice(8, 10), 10)).filter((n) => n > 0 && n <= 31);
+    const sortedDays = [...issueDays].sort((a, b) => a - b);
+    const typicalDay = sortedDays[Math.floor(sortedDays.length / 2)] ?? 1;
+
+    // Expected date = most recent occurrence of typicalDay on or before today
+    const todayDate = new Date(today + "T00:00:00");
+    const exp       = new Date(todayDate);
+    exp.setDate(typicalDay);
+    // If this month's issue day hasn't passed yet, use last month
+    if (exp.getTime() > todayMs) {
+      exp.setMonth(exp.getMonth() - 1);
+    }
+    const expectedDate = exp.toISOString().slice(0, 10);
+
+    // Grace period: only flag overdue after GRACE_DAYS past expected date
+    const daysOverdue = Math.max(0, Math.round((todayMs - exp.getTime()) / 86_400_000) - GRACE_DAYS);
+    const isOverdue   = latestStmt < expectedDate && daysOverdue > 0;
+
+    freshnessAccounts.push({
+      name:         acctLabelMap.get(slug) ?? slug,
+      statementDate: latestStmt,
+      expectedDate,
+      isOverdue,
+      daysOverdue:  isOverdue ? daysOverdue : 0,
+    });
+  }
+
+  const maxDaysOverdue = freshnessAccounts.reduce((m, a) => Math.max(m, a.daysOverdue), 0);
+  const freshnessState: FreshnessState = maxDaysOverdue === 0 ? "fresh"
+                                       : maxDaysOverdue <= 14 ? "aging"
+                                       : "stale";
   const freshness: FreshnessData = {
-    state: freshnessState,
-    daysSinceUpload,
-    accounts: freshnessAccounts.sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt)),
+    state:      freshnessState,
+    daysOverdue: maxDaysOverdue,
+    accounts:   freshnessAccounts.sort((a, b) => b.statementDate.localeCompare(a.statementDate)),
   };
 
   // ── I. Net worth snapshot ─────────────────────────────────────────────────
@@ -821,7 +853,10 @@ export async function GET(req: NextRequest) {
 
   if (freshnessState === "stale") {
     statusType   = "alert";
-    statusText   = `Statements are ${daysSinceUpload} days old — predictions are unreliable`;
+    const overdueAccounts = freshness.accounts.filter((a) => a.isOverdue).map((a) => a.name);
+    statusText   = overdueAccounts.length > 0
+      ? `${overdueAccounts.join(", ")} statement${overdueAccounts.length > 1 ? "s" : ""} overdue — upload to refresh predictions`
+      : `Statements overdue — predictions may be unreliable`;
     statusDetail = "Upload your latest bank statement to get accurate predictions. Most predictions use data from your last upload.";
   } else if (alerts.some((a) => a.type === "spending_pace")) {
     statusType   = "warn";

@@ -427,7 +427,7 @@ export default function TodayPage() {
   // ── FreshnessBar ─────────────────────────────────────────────────────────────
   function FreshnessBar() {
     if (!freshness) return null;
-    const { state, daysSinceUpload, accounts } = freshness;
+    const { state, daysOverdue, accounts } = freshness;
     const isFresh = state === "fresh";
     const isStale = state === "stale";
     const bg      = isFresh ? "bg-green-50 border-green-200" : isStale ? "bg-red-50 border-red-200" : "bg-amber-50 border-amber-200";
@@ -437,16 +437,16 @@ export default function TodayPage() {
       ? <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
       : <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
 
+    const overdueAccounts = accounts.filter((a) => a.isOverdue);
     const headline = isFresh
       ? "Statements up to date"
-      : isStale
-      ? `Statements are ${daysSinceUpload} days old — predictions are unreliable`
-      : `Statements last uploaded ${daysSinceUpload} days ago`;
+      : overdueAccounts.length > 0
+      ? `Latest statements ready to upload: ${overdueAccounts.map((a) => a.name).join(", ")}`
+      : "Some statements may be due soon";
 
-    const subline = accounts.slice(0, 4).map((a) => {
-      const d = new Date(a.uploadedAt + "T00:00:00");
-      return `${a.name} · ${d.toLocaleDateString("en-CA", { month: "short", day: "numeric" })}`;
-    }).join("  ·  ");
+    const subline = isFresh
+      ? accounts.slice(0, 5).map((a) => a.name).join("  ·  ")
+      : "";
 
     return (
       <div className={`mb-4 flex items-start justify-between gap-3 rounded-xl border px-4 py-3 ${bg}`}>
@@ -458,14 +458,14 @@ export default function TodayPage() {
           </div>
         </div>
         <Link
-          href="/account/upload"
+          href={isFresh ? "/account/activity?tab=coverage" : "/account/activity?tab=coverage"}
           className={`shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
             isFresh
               ? "border-green-200 text-green-700 hover:bg-green-100"
               : "border-amber-300 bg-white text-amber-700 hover:bg-amber-50"
           }`}
         >
-          {isFresh ? "View coverage" : "Upload now"}
+          {isFresh ? "View coverage" : "View & upload"}
         </Link>
       </div>
     );
