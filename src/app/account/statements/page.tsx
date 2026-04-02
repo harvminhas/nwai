@@ -88,7 +88,7 @@ export default function StatementsPage() {
   }
 
   async function handleReparse(id: string) {
-    if (!token) return;
+    if (!token || reparsingId !== null) return;  // block if any parse already running
     setReparsingId(id);
     try {
       const resetRes = await fetch(`/api/user/statements/${id}/reparse`, {
@@ -194,6 +194,7 @@ export default function StatementsPage() {
                     const isDeleting  = deletingId === s.id;
                     const isConfirm   = confirmId === s.id;
                     const isReparsing = reparsingId === s.id;
+                    const anyReparsing = reparsingId !== null;
 
                     return (
                       <div key={s.id} className="flex items-center justify-between gap-4 px-5 py-3.5">
@@ -220,9 +221,9 @@ export default function StatementsPage() {
                           {s.status === "error" && (
                             <button
                               onClick={() => handleReparse(s.id)}
-                              disabled={isReparsing}
+                              disabled={anyReparsing}
                               className="rounded px-2.5 py-1 text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 disabled:opacity-50 transition"
-                              title="Retry parsing this statement"
+                              title={anyReparsing && !isReparsing ? "Another statement is being parsed — please wait" : "Retry parsing this statement"}
                             >
                               {isReparsing ? "Retrying…" : "↺ Retry"}
                             </button>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
@@ -13,7 +13,7 @@ import {
 import type { IncomeTransaction, IncomeSource } from "@/lib/types";
 import {
   scoreSource, detectFrequency,
-  FREQUENCY_CONFIG, RELIABILITY_CONFIG,
+  FREQUENCY_CONFIG, RELIABILITY_CONFIG, GENERIC_SOURCE_NAMES,
 } from "@/lib/incomeEngine";
 import type { SourceMonthData } from "@/lib/incomeEngine";
 import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
@@ -66,6 +66,70 @@ function isTransferSource(description: string, txns?: { category?: string }[]): 
   return false;
 }
 
+function isGenericSourceName(description: string): boolean {
+  const d = description.trim().toLowerCase();
+  return GENERIC_SOURCE_NAMES.some((g) => d === g);
+}
+
+/**
+ * When all income is labeled with a generic name (e.g. "Income"), split
+ * transactions into amount clusters for better scoring.
+ *
+ * The description stays as the original bank name — we never invent labels.
+ * When a generic source has multiple distinguishable amount clusters we create
+ * separate virtual entries keyed by a stable cluster id (original_name#N) so
+ * the scoring engine treats them independently. The user can then rename each.
+ */
+function clusterByAmount(
+  description: string,
+  txns: IncomeTransaction[],
+): { description: string; transactions: IncomeTransaction[] }[] {
+  if (!isGenericSourceName(description) || txns.length <= 1) {
+    return [{ description, transactions: txns }];
+  }
+
+  const sorted = [...txns].sort((a, b) => b.amount - a.amount);
+  const clusters: { representative: number; txns: IncomeTransaction[] }[] = [];
+
+  for (const txn of sorted) {
+    const match = clusters.find(
+      (c) => Math.abs(c.representative - txn.amount) / Math.max(c.representative, 1) <= 0.15,
+    );
+    if (match) {
+      match.txns.push(txn);
+    } else {
+      clusters.push({ representative: txn.amount, txns: [txn] });
+    }
+  }
+
+  const result: { description: string; transactions: IncomeTransaction[] }[] = [];
+  const miscTxns: IncomeTransaction[] = [];
+
+  for (const cluster of clusters) {
+    const avg = cluster.txns.reduce((s, t) => s + t.amount, 0) / cluster.txns.length;
+    if (avg >= 200 && cluster.txns.length >= 2) {
+      // Use a descriptive fallback label — user can rename to their payee name ("MAM Pay" etc.)
+      result.push({
+        description: `${description} — ${fmt(Math.round(avg))}`,
+        transactions: cluster.txns,
+      });
+    } else {
+      miscTxns.push(...cluster.txns);
+    }
+  }
+
+  if (miscTxns.length > 0) {
+    result.push({ description, transactions: miscTxns });
+  }
+
+  // If there's only one meaningful cluster, just keep the original name
+  if (result.length === 1 && miscTxns.length === 0) {
+    return [{ description, transactions: txns }];
+  }
+
+  return result.length > 0 ? result : [{ description, transactions: txns }];
+}
+
 // ── types ─────────────────────────────────────────────────────────────────────
 
 interface HistoryPoint { yearMonth: string; incomeTotal: number; expensesTotal: number }
@@ -93,6 +157,10 @@ export default function IncomePage() {
   const [showAllTxns, setShowAllTxns]     = useState(false);
   const [uid, setUid]                     = useState<string | null>(null);
   const [excludedSources, setExcludedSources] = useState<Set<string>>(new Set());
+  const [sourceLabels, setSourceLabels]   = useState<Record<string, string>>({});
+  const [editingLabel, setEditingLabel]   = useState<string | null>(null);
+  const [labelDraft, setLabelDraft]       = useState("");
+  const labelInputRef                     = useRef<HTMLInputElement>(null);
   const [showOneTime, setShowOneTime]     = useState(false);
 
   useEffect(() => {
@@ -102,10 +170,16 @@ export default function IncomePage() {
       setUid(user.uid);
       setLoading(true); setError(null);
       try {
-        // Load excluded income sources from Firestore
-        const prefDoc = await getDoc(doc(db, `users/${user.uid}/prefs/excludedIncomeSources`));
+        // Load excluded income sources + custom labels from Firestore
+        const [prefDoc, labelsDoc] = await Promise.all([
+          getDoc(doc(db, `users/${user.uid}/prefs/excludedIncomeSources`)),
+          getDoc(doc(db, `users/${user.uid}/prefs/incomeSourceLabels`)),
+        ]);
         if (prefDoc.exists()) {
           setExcludedSources(new Set(prefDoc.data()?.keys ?? []));
+        }
+        if (labelsDoc.exists()) {
+          setSourceLabels(labelsDoc.data() ?? {});
         }
         const token = await user.getIdToken();
         const res = await fetch("/api/user/statements/consolidated", {
@@ -189,6 +263,32 @@ export default function IncomePage() {
     await setDoc(doc(db, `users/${uid}/prefs/excludedIncomeSources`), { keys: Array.from(next) });
   }
 
+  function startEditLabel(description: string) {
+    setEditingLabel(description);
+    setLabelDraft(sourceLabels[description] ?? description);
+    setTimeout(() => labelInputRef.current?.select(), 30);
+  }
+
+  async function saveLabel(description: string) {
+    const trimmed = labelDraft.trim();
+    const next = { ...sourceLabels };
+    if (trimmed && trimmed !== description) {
+      next[description] = trimmed;
+    } else {
+      delete next[description];
+    }
+    setSourceLabels(next);
+    setEditingLabel(null);
+    if (!uid) return;
+    const { db } = getFirebaseClient();
+    await setDoc(doc(db, `users/${uid}/prefs/incomeSourceLabels`), next);
+  }
+
+  function cancelEditLabel() {
+    setEditingLabel(null);
+    setLabelDraft("");
+  }
+
   // ── derived ──────────────────────────────────────────────────────────────────
 
   const current         = selectedMonth ? dataByMonth[selectedMonth] : null;
@@ -201,32 +301,70 @@ export default function IncomePage() {
 
   // Derive sources from transactions (ground truth) when available;
   // fall back to income.sources only if no transactions exist.
-  const mergedSourceMap = new Map<string, number>();
+  // For generic source names (e.g. "Income"), cluster by amount to surface
+  // meaningful sub-sources (e.g. bi-weekly payroll vs. misc small deposits).
+  const rawSourceMap = new Map<string, IncomeTransaction[]>();
   if (transactions.length > 0) {
     for (const txn of transactions) {
       const key = (txn.source ?? "Other").trim();
-      mergedSourceMap.set(key, (mergedSourceMap.get(key) ?? 0) + txn.amount);
+      if (!rawSourceMap.has(key)) rawSourceMap.set(key, []);
+      rawSourceMap.get(key)!.push(txn);
     }
   } else {
     for (const src of sources) {
-      const key = src.description.trim();
-      mergedSourceMap.set(key, (mergedSourceMap.get(key) ?? 0) + src.amount);
+      rawSourceMap.set(src.description.trim(), []);
     }
   }
-  const allMergedSources = Array.from(mergedSourceMap.entries())
-    .map(([description, amount]) => ({ description, amount }))
+
+  // Expand generic source names into amount clusters
+  const expandedSources: { description: string; amount: number; txns: IncomeTransaction[] }[] = [];
+  for (const [desc, txns] of rawSourceMap.entries()) {
+    if (transactions.length > 0) {
+      const clusters = clusterByAmount(desc, txns);
+      for (const c of clusters) {
+        expandedSources.push({
+          description: c.description,
+          amount: c.transactions.reduce((s, t) => s + t.amount, 0),
+          txns: c.transactions,
+        });
+      }
+    } else {
+      const src = sources.find((s) => s.description.trim() === desc);
+      expandedSources.push({ description: desc, amount: src?.amount ?? 0, txns: [] });
+    }
+  }
+
+  // Build a lookup: expanded description → its transactions (for filtering/display)
+  const expandedTxnMap = new Map(expandedSources.map((s) => [s.description, s.txns]));
+
+  const allMergedSources = expandedSources
+    .map(({ description, amount }) => ({ description, amount }))
     .sort((a, b) => b.amount - a.amount);
 
   // Auto-filter inter-account transfers + user-excluded sources
   const mergedSources = allMergedSources.filter(
-    (s) => !isTransferSource(s.description, transactions.filter((t) => t.source === s.description)) && !excludedSources.has(s.description)
+    (s) => !isTransferSource(s.description, expandedTxnMap.get(s.description) ?? []) && !excludedSources.has(s.description)
   );
-  const autoFilteredSources = allMergedSources.filter((s) => isTransferSource(s.description, transactions.filter((t) => t.source === s.description)));
+  const autoFilteredSources = allMergedSources.filter((s) => isTransferSource(s.description, expandedTxnMap.get(s.description) ?? []));
   const manuallyExcludedSources = allMergedSources.filter((s) => excludedSources.has(s.description));
 
-  // Score each consolidated source using cross-month history
+  // Score each consolidated source using cross-month history.
+  // For clustered sub-sources (e.g. "Regular Deposit ($3,638)") there is no
+  // cross-month history under that key — build a synthetic single-month history
+  // from the current transactions so the sub-monthly scorer can still fire.
   const scoredSources = mergedSources.map((src, i) => {
-    const hist = sourceHistory[src.description] ?? [];
+    const clusterTxns = expandedTxnMap.get(src.description) ?? [];
+    let hist = sourceHistory[src.description] ?? [];
+
+    // If no cross-month history but we have current-month txns (clustered source),
+    // synthesise a single-month history entry so frequency scoring works.
+    if (hist.length === 0 && clusterTxns.length > 0) {
+      hist = [{
+        yearMonth: selectedMonth ?? "",
+        amount: src.amount,
+        transactions: clusterTxns.map((t) => ({ date: t.date, amount: t.amount })),
+      }];
+    }
 
     // Detect frequency first — passed to scoreSource so bi-weekly/weekly sources
     // use gap-based scoring instead of (broken) monthly-total scoring.
@@ -461,32 +599,75 @@ export default function IncomePage() {
                     : `~${src.freqResult.medianGap}d gaps`
                   : null;
                 // Individual deposits for this source in the selected month
-                const srcTxns     = transactions
-                  .filter((t) => (t.source ?? "Other").trim() === src.description)
+                // (use expandedTxnMap so clustered sub-sources resolve correctly)
+                const srcTxns = (expandedTxnMap.get(src.description) ?? transactions
+                  .filter((t) => (t.source ?? "Other").trim() === src.description))
+                  .slice()
                   .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
                 // Unique accounts this source was deposited into
                 const srcAccounts = [...new Set(srcTxns.map((t) => t.accountLabel).filter(Boolean))];
+                // Strip internal cluster suffix (#1, #2) for display
+                const baseDescription = src.description.replace(/#\d+$/, "");
+                const customLabel     = sourceLabels[src.description];
+                const displayName     = customLabel ?? baseDescription;
+                const needsName       = !customLabel && isGenericSourceName(baseDescription);
+                const isEditing  = editingLabel === src.description;
                 return (
                   <div key={src.description} className={src.reliability === "one-time" ? "opacity-60" : ""}>
+                    {/* Label edit row — shown above the link when editing */}
+                    {isEditing && (
+                      <div className="mb-1.5 flex items-center gap-1.5">
+                        <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: src.color }} />
+                        <input
+                          ref={labelInputRef}
+                          value={labelDraft}
+                          onChange={(e) => setLabelDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") saveLabel(src.description);
+                            if (e.key === "Escape") cancelEditLabel();
+                          }}
+                          className="flex-1 rounded border border-purple-300 bg-white px-2 py-0.5 text-sm font-medium text-gray-900 outline-none focus:ring-1 focus:ring-purple-400"
+                          autoFocus
+                        />
+                        <button onClick={() => saveLabel(src.description)} className="text-[11px] font-semibold text-purple-600 hover:text-purple-800">Save</button>
+                        <button onClick={cancelEditLabel} className="text-[11px] text-gray-400 hover:text-gray-600">Cancel</button>
+                      </div>
+                    )}
                     <Link
                       href={`/account/income/${encodeURIComponent(src.description)}`}
-                      className="block w-full text-left group"
+                      className={`block w-full text-left group ${isEditing ? "pointer-events-none" : ""}`}
                     >
                       <div className="flex items-start justify-between gap-2 mb-1.5">
                         <div className="flex items-center gap-2 min-w-0">
-                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: src.color }} />
+                          {!isEditing && <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: src.color }} />}
+                          {isEditing ? <span className="w-2.5 shrink-0" /> : null}
                           <span className="font-medium text-sm text-gray-800 truncate group-hover:text-purple-600 transition-colors">
-                            {src.description}
+                            {displayName}
                           </span>
+                          {needsName && (
+                            <span className="shrink-0 rounded-full border border-dashed border-purple-300 px-2 py-0.5 text-[10px] text-purple-400 italic">
+                              tap ✎ to name
+                            </span>
+                          )}
                           {srcAccounts.length > 0 && (
                             <span className="text-[10px] text-gray-400 truncate">
                               → {srcAccounts.join(", ")}
                             </span>
                           )}
+                          {/* Rename button */}
+                          <button
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); startEditLabel(src.description); }}
+                            title="Rename source"
+                            className="shrink-0 rounded-full p-0.5 text-gray-300 hover:text-purple-500 hover:bg-purple-50 transition opacity-0 group-hover:opacity-100"
+                          >
+                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                          </button>
                           <button
                             onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleExcludeSource(src.description); }}
                             title="Exclude from income"
-                            className="ml-auto shrink-0 rounded-full p-0.5 text-gray-300 hover:text-red-400 hover:bg-red-50 transition opacity-0 group-hover:opacity-100"
+                            className="shrink-0 rounded-full p-0.5 text-gray-300 hover:text-red-400 hover:bg-red-50 transition opacity-0 group-hover:opacity-100"
                           >
                             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -579,7 +760,9 @@ export default function IncomePage() {
                   return (
                     <div key={src.description}>
                       <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-xs font-medium text-gray-700 truncate max-w-[160px]">{src.description}</span>
+                        <span className="text-xs font-medium text-gray-700 truncate max-w-[160px]">
+                          {sourceLabels[src.description] ?? src.description.replace(/#\d+$/, "")}
+                        </span>
                         {needsMoreData ? (
                           <span className="text-[10px] text-gray-400 italic">building — needs more months</span>
                         ) : (
@@ -640,12 +823,21 @@ export default function IncomePage() {
             </div>
             <div className="divide-y divide-gray-100">
               {visibleTxns.map((txn, i) => {
-                const srcEntry = scoredSources.find((s) => s.description === (txn.source ?? "Other").trim());
+                // For clustered sub-sources, find by txn membership; otherwise by description
+                const txnRawDesc = (txn.source ?? "Other").trim();
+                const srcEntry = scoredSources.find(
+                  (s) => (expandedTxnMap.get(s.description) ?? []).includes(txn)
+                ) ?? scoredSources.find((s) => s.description === txnRawDesc);
                 const cfg = srcEntry ? RELIABILITY_CONFIG[srcEntry.reliability] : null;
+                // Show user's custom label → strip #N suffix → raw source name
+                const clusteredDesc = srcEntry?.description ?? txnRawDesc;
+                const displayLabel  = sourceLabels[clusteredDesc]
+                  ?? clusteredDesc.replace(/#\d+$/, "")
+                  ?? txn.source ?? "Other";
                 return (
                   <div key={i} className="flex items-center justify-between py-3">
                     <div>
-                      <p className="text-sm font-medium text-gray-800">{txn.source}</p>
+                      <p className="text-sm font-medium text-gray-800">{displayLabel}</p>
                       <p className="text-xs text-gray-400 flex items-center gap-1.5">
                         {txn.date && <span>{fmtDate(txn.date)}</span>}
                         {txn.category && <><span>·</span><span className="text-purple-500">{txn.category}</span></>}

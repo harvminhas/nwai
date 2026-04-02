@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
-import type { UserStatementSummary } from "@/lib/types";
-import { buildAccountSlug } from "@/lib/accountSlug";
+import type { AccountSnapshot } from "@/lib/extractTransactions";
+import { fmt as formatCurrency } from "@/lib/currencyUtils";
 
 type AccountType = "checking" | "savings" | "credit" | "mortgage" | "investment" | "loan" | "other";
 
@@ -30,28 +30,13 @@ const TYPE_COLOR: Record<AccountType, string> = {
   other: "bg-gray-100 text-gray-600",
 };
 
-function accountSlug(s: UserStatementSummary): string {
-  return buildAccountSlug(s.bankName, s.accountId);
-}
-
-import { fmt as formatCurrency } from "@/lib/currencyUtils";
-
-interface AccountGroup {
-  slug: string;
-  bankName: string;
-  accountId: string;
-  accountName: string;
-  accountType: AccountType;
-  statements: UserStatementSummary[];
-  latestNetWorth?: number;
-}
+const TYPE_ORDER: AccountType[] = ["checking", "savings", "investment", "credit", "mortgage", "loan", "other"];
 
 export default function AccountsPage() {
   const router = useRouter();
-  const [statements, setStatements] = useState<UserStatementSummary[]>([]);
-  const [currencyOverrides, setCurrencyOverrides] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [snapshots, setSnapshots] = useState<AccountSnapshot[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [error, setError]         = useState<string | null>(null);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -60,66 +45,19 @@ export default function AccountsPage() {
       setLoading(true); setError(null);
       try {
         const token = await user.getIdToken();
-        const headers = { Authorization: `Bearer ${token}` };
-        const [stmtRes, currRes] = await Promise.all([
-          fetch("/api/user/statements", { headers }),
-          fetch("/api/user/account-currencies", { headers }),
-        ]);
-        const [stmtJson, currJson] = await Promise.all([
-          stmtRes.json().catch(() => ({})),
-          currRes.json().catch(() => ({})),
-        ]);
-        if (!stmtRes.ok) { setError(stmtJson.error || "Failed to load"); return; }
-        setStatements(stmtJson.statements ?? []);
-        const overrides = currJson.overrides ?? {};
-        console.log("[accounts] currency overrides:", overrides);
-        setCurrencyOverrides(overrides);
-      } catch { setError("Failed to load"); }
-      finally { setLoading(false); }
+        const res   = await fetch("/api/user/statements/consolidated", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) { setError(json.error ?? "Failed to load"); return; }
+        setSnapshots(json.accountSnapshots ?? []);
+      } catch {
+        setError("Failed to load");
+      } finally {
+        setLoading(false);
+      }
     });
   }, [router]);
-
-  const accounts = useMemo<AccountGroup[]>(() => {
-    const map = new Map<string, AccountGroup>();
-    for (const s of statements) {
-      if (s.status !== "completed") continue;
-      const slug = accountSlug(s);
-      if (!map.has(slug)) {
-        map.set(slug, {
-          slug,
-          bankName: s.bankName ?? "Unknown Bank",
-          accountId: s.accountId ?? "",
-          accountName: s.accountName ?? s.bankName ?? "Account",
-          accountType: (s.accountType as AccountType) ?? "other",
-          statements: [],
-          latestNetWorth: undefined,
-        });
-      }
-      const group = map.get(slug)!;
-      group.statements.push(s);
-      // Keep latest net worth — only from statements that carry a real balance
-      if (s.netWorth != null) {
-        const date = s.statementDate ?? s.uploadedAt;
-        // Compare only against other balance-bearing statements (not CSV imports)
-        const prevDate = group.statements
-          .filter((x) => x !== s && x.netWorth != null)
-          .map((x) => x.statementDate ?? x.uploadedAt)
-          .sort()
-          .reverse()[0] ?? "";
-        if (!prevDate || date >= prevDate) {
-          group.latestNetWorth = s.netWorth;
-        }
-      }
-    }
-    // Sort: savings & checking first, then credit, then others
-    const typeOrder: AccountType[] = ["checking", "savings", "investment", "credit", "mortgage", "loan", "other"];
-    return Array.from(map.values()).sort((a, b) => {
-      const ta = typeOrder.indexOf(a.accountType);
-      const tb = typeOrder.indexOf(b.accountType);
-      if (ta !== tb) return ta - tb;
-      return a.accountName.localeCompare(b.accountName);
-    });
-  }, [statements]);
 
   if (loading) {
     return (
@@ -129,13 +67,20 @@ export default function AccountsPage() {
     );
   }
 
-  // Group accounts by type for sections
-  const typeGroups = new Map<AccountType, AccountGroup[]>();
-  for (const a of accounts) {
-    const t = a.accountType;
+  // Group snapshots by type
+  const typeGroups = new Map<AccountType, AccountSnapshot[]>();
+  for (const snap of snapshots) {
+    const t = (snap.accountType as AccountType) ?? "other";
     if (!typeGroups.has(t)) typeGroups.set(t, []);
-    typeGroups.get(t)!.push(a);
+    typeGroups.get(t)!.push(snap);
   }
+
+  // Sort within each type group alphabetically, and order the type groups
+  const orderedGroups = TYPE_ORDER
+    .map((t) => ({ type: t, accounts: (typeGroups.get(t) ?? []).sort((a, b) =>
+      (a.accountName ?? a.bankName ?? "").localeCompare(b.accountName ?? b.bankName ?? ""),
+    )}))
+    .filter((g) => g.accounts.length > 0);
 
   return (
     <div>
@@ -149,7 +94,7 @@ export default function AccountsPage() {
 
         {error && <p className="mt-4 text-red-600">{error}</p>}
 
-        {!error && accounts.length === 0 && (
+        {!error && snapshots.length === 0 && (
           <div className="mt-12 rounded-lg border border-gray-200 bg-white p-12 text-center">
             <p className="text-gray-600">No accounts found yet. Upload a statement to get started.</p>
             <Link href="/upload" className="mt-4 inline-block font-medium text-purple-600 hover:underline">
@@ -158,19 +103,20 @@ export default function AccountsPage() {
           </div>
         )}
 
-        {accounts.length > 0 && (
+        {orderedGroups.length > 0 && (
           <div className="mt-8 space-y-10">
-            {Array.from(typeGroups.entries()).map(([type, group]) => (
+            {orderedGroups.map(({ type, accounts }) => (
               <section key={type}>
                 <h2 className="mb-3 flex items-center gap-2 font-semibold text-gray-700 text-sm uppercase tracking-wide">
                   <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${TYPE_COLOR[type]}`}>
                     {TYPE_LABEL[type]}
                   </span>
-                  <span className="text-gray-400">{group.length} account{group.length !== 1 ? "s" : ""}</span>
+                  <span className="text-gray-400">{accounts.length} account{accounts.length !== 1 ? "s" : ""}</span>
                 </h2>
                 <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {group.map((acct) => {
-                    const currency = currencyOverrides[acct.slug] ?? "CAD";
+                  {accounts.map((acct) => {
+                    const displayName = acct.accountName ?? acct.bankName ?? "Account";
+                    const currency    = acct.currency ?? "CAD";
                     return (
                       <li key={acct.slug}>
                         <Link
@@ -179,7 +125,7 @@ export default function AccountsPage() {
                         >
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <p className="truncate font-semibold text-gray-900">{acct.accountName}</p>
+                              <p className="truncate font-semibold text-gray-900">{displayName}</p>
                               <p className="mt-0.5 text-xs text-gray-500">
                                 {acct.bankName}
                                 {acct.accountId && acct.accountId !== "unknown" && (
@@ -187,12 +133,12 @@ export default function AccountsPage() {
                                 )}
                               </p>
                               <p className="mt-0.5 text-xs text-gray-400">
-                                {acct.statements.length} statement{acct.statements.length !== 1 ? "s" : ""}
+                                as of {acct.statementMonth}
                               </p>
                             </div>
-                            {acct.latestNetWorth != null && (
-                              <p className={`shrink-0 font-bold text-sm ${acct.latestNetWorth < 0 ? "text-red-600" : "text-gray-900"}`}>
-                                {formatCurrency(acct.latestNetWorth, currency)}
+                            {acct.balance != null && (
+                              <p className={`shrink-0 font-bold text-sm ${acct.balance < 0 ? "text-red-600" : "text-gray-900"}`}>
+                                {formatCurrency(acct.balance, currency)}
                               </p>
                             )}
                           </div>

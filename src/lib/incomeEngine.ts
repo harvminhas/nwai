@@ -40,6 +40,15 @@ const QUARTERLY_KEYWORDS = [
   "dividend", "quarterly", "distribution", "tfsa dividend", "rrsp dividend",
 ];
 
+/**
+ * Source description values the bank assigns when the actual payee name is
+ * unavailable. Used to trigger amount-cluster sub-grouping on the income page.
+ */
+export const GENERIC_SOURCE_NAMES = [
+  "income", "deposit", "dep", "credit", "direct deposit", "direct dep",
+  "payroll deposit", "payroll", "salary",
+];
+
 // ── reliability scorer ────────────────────────────────────────────────────────
 
 export function scoreSource(
@@ -53,7 +62,10 @@ export function scoreSource(
   const desc = description.toLowerCase();
   const n = history.length;
 
-  if (ONE_TIME_KEYWORDS.some((k) => desc.includes(k)) || (n === 1 && totalMonthsTracked >= 3)) {
+  // n===1 with multiple same-month transactions can indicate a recurring sub-monthly
+  // pattern that just started appearing under this label — don't classify as one-time.
+  const multiTxnInSingleMonth = n === 1 && (history[0]?.transactions.length ?? 0) >= 2;
+  if (ONE_TIME_KEYWORDS.some((k) => desc.includes(k)) || (n === 1 && totalMonthsTracked >= 3 && !multiTxnInSingleMonth)) {
     return { reliability: "one-time", score: 0, amountScore: 0, timingScore: 0, frequencyScore: 0, note: "excluded from monthly average" };
   }
 
@@ -81,9 +93,9 @@ export function scoreSource(
   // outlier gaps (e.g. statement artifacts inflating stdDev).
   const isSubMonthlyPattern =
     (freq.frequency === "bi-weekly" || freq.frequency === "weekly") ||
-    (freq.medianGap !== null && freq.medianGap >= 5 && freq.medianGap <= 19 && freq.sampleCount >= 5);
+    (freq.medianGap !== null && freq.medianGap >= 5 && freq.medianGap <= 19 && freq.sampleCount >= 2);
 
-  if (isSubMonthlyPattern && freq.medianGap !== null && freq.sampleCount >= 3) {
+  if (isSubMonthlyPattern && freq.medianGap !== null && freq.sampleCount >= 2) {
     // Gap consistency: use trimmedStdDev (outlier gaps removed) so statement artifacts
     // (e.g. a month with many clustered transactions) don't destroy the timing score.
     const scoringStdDev = freq.trimmedStdDev ?? freq.stdDev ?? 0;

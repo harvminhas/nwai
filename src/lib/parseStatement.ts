@@ -185,7 +185,7 @@ PASS 2 — Category: Apply the category rules below. Category assignment only ha
 **STEP 3B — INCOME TRANSACTION LIST (checking/savings only)**
 List every individual money-IN transaction as a separate entry. Rules:
   - List every deposit you see in the statement, including repeated payees on different dates (e.g. bi-weekly payroll on the 1st and 15th). Do not skip any.
-  - source: the payee name as it appears on the statement, cleaned of codes and terminal IDs (e.g. "MAM PAY", "CRA GST CREDIT", "E-TRANSFER FROM JOHN"). Mirrors the "merchant" field on expense transactions.
+  - source: the actual payee or company name. Read the FULL transaction description row on the statement — the payee name is often embedded after a bank prefix. Examples: "DIRECT DEP MAM PAY INC" → "MAM PAY INC", "PAYROLL MAM ENTERPRISES" → "MAM Enterprises", "E-TFR FR JOHN SMITH" → "John Smith", "CRA GST/HST CREDIT" → "CRA". Clean trailing codes and reference numbers the same way you do for expense merchants.
   - category: exactly one of "Salary", "Government", "Transfer In", "Other".
   - NEVER include opening balance, closing balance, balance forward, or any bank-printed "Total Deposits" line.
   - NEVER include outgoing debits — always check the column/sign first.

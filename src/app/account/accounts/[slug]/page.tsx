@@ -482,7 +482,7 @@ export default function AccountDetailPage() {
   }
 
   async function handleReparse(statementId: string) {
-    if (!idToken) return;
+    if (!idToken || reparsingId !== null) return;  // block if any parse already running
     setReparsingId(statementId);
     try {
       const res = await fetch("/api/parse", {
@@ -1385,9 +1385,9 @@ export default function AccountDetailPage() {
                             ) : (
                               <button
                                 onClick={() => handleReparse(entry.statementId)}
-                                disabled={reparsingId === entry.statementId || deletingId === entry.statementId}
+                                disabled={reparsingId !== null || deletingId === entry.statementId}
                                 className="text-xs text-blue-400 hover:text-blue-600 disabled:opacity-40 flex items-center gap-1"
-                                title="Re-extract data from the original PDF with latest AI logic"
+                                title={reparsingId !== null && reparsingId !== entry.statementId ? "Another statement is being parsed — please wait" : "Re-extract data from the original PDF with latest AI logic"}
                               >
                                 {reparsingId === entry.statementId
                                   ? <><span className="animate-spin inline-block">↻</span> Parsing…</>
