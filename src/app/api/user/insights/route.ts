@@ -10,7 +10,7 @@ import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
 import { detectFrequency } from "@/lib/incomeEngine";
 import { projectNextDates, nextUpcoming, toDateStr } from "@/lib/projectionEngine";
 import { computeRadarItems } from "@/lib/today/computeRadarItems";
-import type { RadarItem, CalendarEvent, FreshnessData, NetWorthSnapshot } from "@/lib/today/types";
+import type { RadarItem, CalendarEvent, FreshnessData, FreshnessState, NetWorthSnapshot } from "@/lib/today/types";
 
 async function getUid(req: NextRequest): Promise<string | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
