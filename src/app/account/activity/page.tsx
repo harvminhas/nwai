@@ -178,12 +178,24 @@ function isStatementDue(slug: string, statements: UserStatementSummary[]): boole
   const sortedDays = [...issueDays].sort((a, b) => a - b);
   const typicalDay = sortedDays[Math.floor(sortedDays.length / 2)] ?? 1;
 
+  // Build a date safely — clamp typicalDay to the last real day of the month
+  // so e.g. day-31 in April doesn't silently overflow to May 1.
+  function safeDate(year: number, month: number, day: number): Date {
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    return new Date(year, month, Math.min(day, lastDay));
+  }
+
   // Expected date = most recent occurrence of typicalDay on or before today
   const today   = new Date();
   const todayMs = today.getTime();
-  const exp     = new Date(today);
-  exp.setDate(typicalDay);
-  if (exp.getTime() > todayMs) exp.setMonth(exp.getMonth() - 1);
+  let expYear   = today.getFullYear();
+  let expMonth  = today.getMonth();
+  let exp       = safeDate(expYear, expMonth, typicalDay);
+  if (exp.getTime() > todayMs) {
+    expMonth -= 1;
+    if (expMonth < 0) { expMonth = 11; expYear -= 1; }
+    exp = safeDate(expYear, expMonth, typicalDay);
+  }
 
   const expectedDate = exp.toISOString().slice(0, 10);
   const daysOverdue  = Math.round((todayMs - exp.getTime()) / 86_400_000);
@@ -290,6 +302,22 @@ function ActivityContent() {
       loadData(tok);
     });
   }, [router, loadData]);
+
+  // Silently re-fetch when user navigates back (e.g. after uploading a statement)
+  useEffect(() => {
+    function handleVisible() {
+      if (document.visibilityState === "visible" && token) loadData(token, true);
+    }
+    function handlePageShow(e: PageTransitionEvent) {
+      if (e.persisted && token) loadData(token, true);
+    }
+    document.addEventListener("visibilitychange", handleVisible);
+    window.addEventListener("pageshow", handlePageShow);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisible);
+      window.removeEventListener("pageshow", handlePageShow);
+    };
+  }, [token, loadData]);
 
   async function handleDelete(statementId: string) {
     if (!token) return;

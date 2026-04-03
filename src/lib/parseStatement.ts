@@ -222,7 +222,7 @@ Detect recurring charges (same merchant, same amount, predictable schedule).
 **STEP 7 — SUB-ACCOUNTS (multi-segment statements only)**
 For combined products (HELOC + mortgage term portions, etc.):
   - Populate subAccounts[] with one entry per segment: { "id", "label", "type": "heloc"|"mortgage"|"loan"|"credit", "balance" (positive), "apr" or null, "maturityDate" YYYY-MM-DD if shown }.
-  - Top-level netWorth = NEGATIVE sum of all sub-account balances.
+  - Top-level netWorth: set to 0 — this will be recomputed from subAccount balances in code. Just extract the individual sub-account balances accurately.
   - Top-level interestRate = rate for the revolving/HELOC portion.
   - Single-account statements: return subAccounts as [].
 
@@ -493,8 +493,37 @@ function normalizeData(data: ParsedStatementData): ParsedStatementData {
   const savingsRate =
     incomeTotal > 0 ? Math.round(((incomeTotal - expensesTotal) / incomeTotal) * 100) : 0;
 
+  // ── Sub-account recomputation ─────────────────────────────────────────────
+  // The AI should only extract individual sub-account balances from the statement.
+  // netWorth, assets, and debts are derived here in code — never trusted from AI.
+  const subAccounts = data.subAccounts ?? [];
+  let netWorth  = data.netWorth  ?? 0;
+  let assets    = data.assets;
+  let debts     = data.debts;
+
+  if (subAccounts.length > 0) {
+    const subTotal = subAccounts.reduce((s, a) => s + (a.balance ?? 0), 0);
+    const accountType = (data.accountType ?? "").toLowerCase();
+    const isDebt = ["mortgage", "loan", "heloc", "credit", "loc"].includes(accountType);
+
+    if (isDebt) {
+      // Debt accounts: netWorth is negative outstanding balance
+      netWorth = -subTotal;
+      debts    = subTotal;
+      assets   = 0;
+    } else {
+      // Asset/investment accounts: netWorth is positive
+      netWorth = subTotal;
+      assets   = subTotal;
+      debts    = 0;
+    }
+  }
+
   return {
     ...data,
+    netWorth,
+    assets,
+    debts,
     income:   { sources, total: incomeTotal,   transactions: incomeTxns },
     expenses: { categories,  total: expensesTotal, transactions: expenseTxns },
     savingsRate,

@@ -648,9 +648,11 @@ export default function AccountDetailPage() {
       })),
   ].sort((a, b) => b.changedAt.localeCompare(a.changedAt));
 
-  const filteredHistory = baselineMonth
+  const rawFilteredHistory = baselineMonth
     ? history.filter((h) => h.yearMonth >= baselineMonth)
     : history;
+
+  const filteredHistory = rawFilteredHistory;
 
   if (loading) return (
     <div className="flex min-h-[50vh] items-center justify-center">
@@ -689,9 +691,16 @@ export default function AccountDetailPage() {
   const spentThisMonthCount = data.expenses?.transactions?.length ?? 0;
   const linkedAssets      = manualAssets.filter((a) => a.linkedAccountSlug === slug);
   const linkedAssetsTotal = linkedAssets.reduce((s, a) => s + a.value, 0);
+  // When sub-accounts exist, sum their balances as the authoritative total —
+  // the AI-computed top-level netWorth can diverge from the sub-account sum.
+  const subAccountsSum = data.subAccounts && data.subAccounts.length > 0
+    ? data.subAccounts.reduce((s, a) => s + (a.balance ?? 0), 0)
+    : null;
   // Use data.debts (raw debt balance, never inflated by linked assets) rather than
   // Math.abs(data.netWorth) which becomes the equity value once an asset is linked.
-  const outstandingDebt   = data.debts ?? Math.abs(data.netWorth ?? 0);
+  const outstandingDebt = subAccountsSum ?? data.debts ?? Math.abs(data.netWorth ?? 0);
+
+  const correctedHistory = filteredHistory;
   const equity            = linkedAssetsTotal - outstandingDebt;
   // previousMonth.debts is already a positive number — no Math.abs needed.
   const prevDebt          = previousMonth ? (previousMonth.debts ?? Math.abs(previousMonth.netWorth)) : null;
@@ -863,6 +872,13 @@ export default function AccountDetailPage() {
       </div>
 
       {activeTab === "overview" && <>
+
+      {/* Balance trend chart — top of overview */}
+      {correctedHistory.length >= 2 && (
+        <div className="mb-6">
+          <NetWorthChart history={correctedHistory} isDebt={isDebtAccount} />
+        </div>
+      )}
 
       {/* Backfill estimated history banner */}
       {backfillCount > 0 && (
@@ -1197,7 +1213,7 @@ export default function AccountDetailPage() {
                 <div className="ml-4 text-right shrink-0">
                   <p className="text-sm font-semibold text-gray-900 tabular-nums">{fmt(sub.balance)}</p>
                   <p className="text-[11px] text-gray-400 mt-0.5">
-                    {data.netWorth ? `${Math.round((sub.balance / Math.abs(data.netWorth)) * 100)}% of total` : ""}
+                    {outstandingDebt > 0 ? `${Math.round((sub.balance / outstandingDebt) * 100)}% of total` : ""}
                   </p>
                 </div>
               </div>
@@ -1209,13 +1225,6 @@ export default function AccountDetailPage() {
       {/* ── Investment holdings breakdown ────────────────────────────────── */}
       {isInvestment && (data.holdings ?? []).length > 0 && (
         <HoldingsCard holdings={data.holdings!} totalValue={data.netWorth ?? 0} />
-      )}
-
-      {/* Balance trend chart */}
-      {filteredHistory.length >= 2 && (
-        <div className="mt-2 mb-6">
-          <NetWorthChart history={filteredHistory} isDebt={isDebtAccount} />
-        </div>
       )}
 
       {/* Spending cards */}

@@ -39,7 +39,7 @@ function formatAxis(v: number): string {
   const sign = v < 0 ? "-" : "";
   if (abs >= 1_000_000) return `${sign}${sym}${(abs / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `${sign}${sym}${Math.round(abs / 1_000)}k`;
-  return formatCurrency(v);
+  return formatCurrency(abs);
 }
 
 // Each point has a solid value and an optional estimatedNetWorth for dotted rendering
@@ -97,14 +97,21 @@ export default function NetWorthChart({
   const realPoints = history.filter((h) => !h.isEstimate);
   const isOnboarding = realPoints.length <= 3;
 
-  const allPoints: Point[] = history.map(({ yearMonth, netWorth, isEstimate }) => ({
-    yearMonth,
-    label: shortMonthLabel(yearMonth),
-    netWorth,
-    netWorthSolid: isEstimate ? null : netWorth,
-    netWorthDotted: isEstimate ? netWorth : null,
-    isEstimate: isEstimate ?? false,
-  }));
+  // For debt accounts show absolute (positive) balance values — avoids confusing
+  // negative axis labels like "-CA$476k" when the balance is improving.
+  const displayValue = (v: number) => isDebt ? Math.abs(v) : v;
+
+  const allPoints: Point[] = history.map(({ yearMonth, netWorth, isEstimate }) => {
+    const dv = displayValue(netWorth);
+    return {
+      yearMonth,
+      label: shortMonthLabel(yearMonth),
+      netWorth: dv,
+      netWorthSolid: isEstimate ? null : dv,
+      netWorthDotted: isEstimate ? dv : null,
+      isEstimate: isEstimate ?? false,
+    };
+  });
 
   // Add connector points so solid and dotted lines visually connect at transitions
   const connected = allPoints.map((pt, i) => {
@@ -131,6 +138,7 @@ export default function NetWorthChart({
   const selPt    = selIdx >= 0 ? data[selIdx] : null;
   const prevPt   = selIdx > 0  ? data[selIdx - 1] : null;
   const selDelta = selPt && prevPt ? selPt.netWorth - prevPt.netWorth : null;
+  // For debt: absolute value going DOWN is good (paid down). For assets: going UP is good.
   const deltaGood = selDelta !== null ? (isDebt ? selDelta < 0 : selDelta > 0) : null;
 
   // A jump is "large" when it's >25% of the previous value — likely a new account being added
