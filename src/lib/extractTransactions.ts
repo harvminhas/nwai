@@ -23,6 +23,7 @@ export interface ExpenseTxnRecord {
   txMonth: string;    // YYYY-MM derived from date
   amount: number;
   merchant: string;
+  debtType?: string;  // sub-type for Debt Payments transactions (AI-detected)
   category: string;
   accountSlug: string;
   accountLabel: string; // e.g. "TD ••••7780" — for display in transaction lists
@@ -178,6 +179,7 @@ export async function extractAllTransactions(
           accountSlug: slug,
           accountLabel: label,
           recurring: txn.recurring,
+          ...(txn.debtType ? { debtType: txn.debtType } : {}),
         });
       }
     }

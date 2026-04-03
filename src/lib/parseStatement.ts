@@ -161,12 +161,24 @@ PASS 2 — Category: Apply the category rules below. Category assignment only ha
   Healthcare: Medical offices, pharmacies, dental, vision, medical labs, health/dental/vision insurance premiums.
     Examples: "SHOPPERS DRUG MART", "REXALL", "ONTARIO BLUE CROSS", "SUNLIFE HEALTH PMT"
 
-  Fees: Bank-imposed charges, NSF/overdraft fees, monthly account fees, ATM fees, annual card fees, foreign transaction fees, service charges. Interest charges on credit/HELOC statements also go here.
+  Fees: Bank-imposed charges, NSF/overdraft fees, monthly account fees, ATM fees, annual card fees, foreign transaction fees, service charges.
     Examples: "SERVICE CHARGE", "O.D.P. FEE", "NSF FEE", "MONTHLY FEE", "ANNUAL FEE $139"
+    Never include: interest charges (those go in the Interest category below)
+
+  Interest: Interest charges billed on credit card, HELOC, line of credit, mortgage, or loan statements.
+    Examples: "INTEREST", "INTEREST CHARGED", "INTEREST - HELOC", "MORTGAGE INTEREST", "LOC INTEREST", "PURCHASE INTEREST CHARGED"
+    Note: these are NOT a cash spending expense — the cash cost is captured by the debt payment from the chequing account.
 
   Debt Payments: Payments sent FROM this account TO a credit card, loan, mortgage, or line of credit.
     Examples: "VISA PAYMENT", "MASTERCARD PMT", "CIBC MC", "TD CREDIT CARD PMT", "LOAN PAYMENT", "MORTGAGE PMT"
     CRITICAL: Do NOT include these in income even if they show as a credit on the receiving statement.
+    For every Debt Payments transaction, also add a "debtType" field:
+      "mortgage"       — home mortgage payment ("MORTGAGE PMT", "TD MORTGAGE", "RBC MORTGAGE")
+      "auto_loan"      — vehicle/car loan ("CAR LOAN", "AUTO PMT", "VEHICLE LOAN")
+      "personal_loan"  — personal or student loan ("PERSONAL LOAN", "STUDENT LOAN", "NSLSC")
+      "credit_card"    — credit card payment ("VISA PMT", "MASTERCARD", "MC PMT", "CIBC VISA", "TD CC")
+      "line_of_credit" — LOC or HELOC payment ("LOC PMT", "LINE OF CREDIT", "HELOC")
+      "other_debt"     — any other debt payment not matching the above
 
   Investments & Savings: RRSP/TFSA contributions, transfers to investment accounts, mutual fund/ETF purchases, GIC purchases, life insurance premiums.
     Examples: "WS INVESTMENTS", "WEALTHSIMPLE", "QUESTRADE", "SUNLIFE INS PMT", "RRSP CONTRIBUTION"
@@ -265,7 +277,7 @@ For a HELOC / Home Equity Line of Credit (revolving advances are expenses; payme
   "expenses": {
     "transactions": [
       { "merchant": "Brampton Taxes", "amount": 1722.73, "date": "2025-12-10", "category": "Other" },
-      { "merchant": "CIBC MC", "amount": 3000.00, "date": "2025-12-29", "category": "Debt Payments" },
+      { "merchant": "CIBC MC", "amount": 3000.00, "date": "2025-12-29", "category": "Debt Payments", "debtType": "credit_card" },
       { "merchant": "Interest", "amount": 79.41, "date": "2025-12-31", "category": "Fees", "recurring": "monthly" }
     ]
   },

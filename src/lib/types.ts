@@ -63,11 +63,15 @@ export interface ExpenseCategory {
   percentage: number;
 }
 
+export type DebtType = "mortgage" | "auto_loan" | "personal_loan" | "credit_card" | "line_of_credit" | "other_debt";
+
 export interface ExpenseTransaction {
   merchant: string;
   amount: number;
   category: string;
   date?: string; // ISO date YYYY-MM-DD
+  /** Sub-type for Debt Payments category — detected by AI from merchant name */
+  debtType?: DebtType;
   /**
    * AI-detected recurrence frequency for this specific transaction.
    * One of: "weekly" | "biweekly" | "monthly" | "quarterly" | "annual"

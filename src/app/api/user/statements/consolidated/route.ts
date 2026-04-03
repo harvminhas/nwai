@@ -143,10 +143,32 @@ export async function GET(request: NextRequest) {
       if (ym) yearMonths.add(ym);
     }
 
+    // ── Load category rules + financial profile before resolving month ─────────
+    // Profile is needed here to use latestTxMonth as the authoritative "latest
+    // month with actual transactions" — statement dates can be in the future
+    // (e.g. a March statement with a statementDate of April 1) and should not
+    // override the month that genuinely has the most recent transaction data.
+    const [rulesSnap, profile] = await Promise.all([
+      db.collection(`users/${uid}/categoryRules`).get(),
+      getFinancialProfile(uid, db),
+    ]);
+    const categoryRulesMap = new Map<string, string>();
+    for (const ruleDoc of rulesSnap.docs) {
+      const r = ruleDoc.data();
+      if (r.merchant && r.category) {
+        categoryRulesMap.set(merchantSlug(r.merchant as string), r.category as string);
+      }
+    }
+
+    // Prefer the latest month that has real transaction data over the latest
+    // statement date. This prevents landing on an empty "current" month when the
+    // most recently uploaded statement's date has ticked into the next month.
+    const latestStatementYM = yearMonths.size > 0
+      ? Array.from(yearMonths).sort().reverse()[0]!
+      : null;
+    const latestTxYM = profile.latestTxMonth ?? null;
     const month = useCurrent
-      ? yearMonths.size > 0
-        ? Array.from(yearMonths).sort().reverse()[0]!
-        : null
+      ? (latestTxYM ?? latestStatementYM ?? null)
       : monthParam!;
 
     if (!month || !/^\d{4}-\d{2}$/.test(month)) {
@@ -179,20 +201,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // ── Load category rules for this user ────────────────────────────────────
-    // Still needed for applyRulesAndRecalculate on the consolidated statement view.
-    const rulesSnap = await db.collection(`users/${uid}/categoryRules`).get();
-    const categoryRulesMap = new Map<string, string>();
-    for (const ruleDoc of rulesSnap.docs) {
-      const r = ruleDoc.data();
-      if (r.merchant && r.category) {
-        categoryRulesMap.set(merchantSlug(r.merchant as string), r.category as string);
-      }
-    }
-
-    // ── Financial profile cache — single source of truth for all spending data ─
-    // Category rules are pre-applied. Numbers guaranteed to match insights route.
-    const profile = await getFinancialProfile(uid, db);
+    // profile already loaded above — expose expenseTxns for use below
     const { expenseTxns } = profile;
 
     // ── Current month: carry-forward balances for all accounts ──────────────
@@ -541,6 +550,7 @@ export async function GET(request: NextRequest) {
           category: t.category,
           accountLabel: t.accountLabel,
           recurring: t.recurring,
+          ...(t.debtType ? { debtType: t.debtType } : {}),
         })),
       },
     };

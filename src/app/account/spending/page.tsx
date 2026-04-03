@@ -6,7 +6,7 @@ import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { getFirebaseClient } from "@/lib/firebase";
-import type { ParsedStatementData, ExpenseTransaction, Subscription } from "@/lib/types";
+import type { ParsedStatementData, ExpenseTransaction, Subscription, DebtType } from "@/lib/types";
 import { isBalanceMarker, txIgnoreKey } from "@/lib/balanceMarkers";
 import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
 import { merchantSlug } from "@/lib/applyRules";
@@ -199,6 +199,29 @@ function fmtDate(iso: string) {
 
 type HistoryPoint = { yearMonth: string; netWorth: number; expensesTotal?: number; coreExpensesTotal?: number };
 
+// ── debt payment helpers ───────────────────────────────────────────────────────
+
+const SCHEDULED_DEBT_TYPES = new Set(["mortgage", "auto_loan", "personal_loan"]);
+
+function debtTxKey(tx: ExpenseTransaction, fallbackMonth: string): string {
+  const date = tx.date ?? fallbackMonth;
+  const slug = (tx.merchant ?? "").toLowerCase().replace(/[^a-z0-9]/g, "_");
+  return `${date}_${slug}_${Math.round((tx.amount ?? 0) * 100)}`;
+}
+
+function defaultDebtTag(debtType: string | undefined): "scheduled" | "minimum" {
+  return SCHEDULED_DEBT_TYPES.has(debtType ?? "") ? "scheduled" : "minimum";
+}
+
+const DEBT_TYPE_LABELS: Record<string, string> = {
+  mortgage: "Mortgage",
+  auto_loan: "Auto Loan",
+  personal_loan: "Personal Loan",
+  credit_card: "Credit Card",
+  line_of_credit: "Line of Credit",
+  other_debt: "Debt",
+};
+
 // ── inner page ────────────────────────────────────────────────────────────────
 
 function SpendingPageInner() {
@@ -218,9 +241,10 @@ function SpendingPageInner() {
   const [history, setHistory]           = useState<HistoryPoint[]>([]);
   const [prevExpenses, setPrevExpenses] = useState<number | null>(null);
   const [loading, setLoading]           = useState(true);
-  const [debtSectionOpen, setDebtSectionOpen] = useState(true);
+  const [debtSectionOpen, setDebtSectionOpen] = useState(false);
   const [transferSectionOpen, setTransferSectionOpen] = useState(false);
   const [ignoredTxKeys, setIgnoredTxKeys] = useState<Set<string>>(new Set());
+  const [debtTags, setDebtTags] = useState<Record<string, string>>({});
   const [uid, setUid]                     = useState<string | null>(null);
   const [monthLoading, setMonthLoading] = useState(false);
   const [chartExpanded, setChartExpanded] = useState(false);
@@ -311,12 +335,18 @@ function SpendingPageInner() {
       try {
         const tok = await user.getIdToken();
         setToken(tok);
-        // Load ignored transaction keys from Firestore prefs
+        // Load ignored transaction keys + debt payment tags from Firestore prefs
         const { db } = getFirebaseClient();
-        const prefsSnap = await getDoc(doc(db, `users/${user.uid}/prefs/ignoredTxs`));
+        const [prefsSnap, tagsSnap] = await Promise.all([
+          getDoc(doc(db, `users/${user.uid}/prefs/ignoredTxs`)),
+          getDoc(doc(db, `users/${user.uid}/prefs/debtPaymentTags`)),
+        ]);
         if (prefsSnap.exists()) {
           const keys: string[] = prefsSnap.data()?.keys ?? [];
           setIgnoredTxKeys(new Set(keys));
+        }
+        if (tagsSnap.exists()) {
+          setDebtTags(tagsSnap.data()?.tags ?? {});
         }
         const [res] = await Promise.all([
           fetch("/api/user/statements/consolidated", { headers: { Authorization: `Bearer ${tok}` } }),
@@ -414,6 +444,15 @@ function SpendingPageInner() {
     if (uid) {
       const { db } = getFirebaseClient();
       await setDoc(doc(db, `users/${uid}/prefs/ignoredTxs`), { keys: Array.from(next) });
+    }
+  }
+
+  async function handleDebtTagChange(txKey: string, tag: string) {
+    const next = { ...debtTags, [txKey]: tag };
+    setDebtTags(next);
+    if (uid) {
+      const { db } = getFirebaseClient();
+      await setDoc(doc(db, `users/${uid}/prefs/debtPaymentTags`), { tags: next });
     }
   }
 
@@ -592,11 +631,16 @@ function SpendingPageInner() {
 
   const excludedTotal = excludedTxns.reduce((s, t) => s + t.amount, 0);
 
-  // Split excluded transactions into debt payments vs transfers
-  const DEBT_PAY_RE = /^debt payments$/i;
+  // Split excluded transactions into debt payments / interest / transfers
+  const DEBT_PAY_RE  = /^debt payments$/i;
+  const INTEREST_RE  = /^interest$/i;
   const debtTxns     = excludedTxns.filter((t) =>  DEBT_PAY_RE.test((t.category ?? "").trim()));
-  const transferTxns = excludedTxns.filter((t) => !DEBT_PAY_RE.test((t.category ?? "").trim()));
+  const interestTxns = excludedTxns.filter((t) =>  INTEREST_RE.test((t.category ?? "").trim()));
+  const transferTxns = excludedTxns.filter((t) =>
+    !DEBT_PAY_RE.test((t.category ?? "").trim()) && !INTEREST_RE.test((t.category ?? "").trim())
+  );
   const debtTotal     = debtTxns.reduce((s, t) => s + t.amount, 0);
+  const interestTotal = interestTxns.reduce((s, t) => s + t.amount, 0);
   const transferTotal = transferTxns.reduce((s, t) => s + t.amount, 0);
 
   const categories = (() => {
@@ -966,64 +1010,154 @@ function SpendingPageInner() {
                   </div>
 
                   {/* ── Debt Payments card (prominent) ───────────────────────── */}
-                  {debtTotal > 0 && (
-                    <div className="rounded-xl border border-orange-200 bg-white overflow-hidden shadow-sm">
-                      {/* Header — always visible, click to expand/collapse */}
-                      <button
-                        onClick={() => setDebtSectionOpen((v) => !v)}
-                        className="flex w-full items-center justify-between px-5 py-4 hover:bg-orange-50/40 transition"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-100 shrink-0">
-                            <svg className="h-4 w-4 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                  {(debtTotal > 0 || interestTotal > 0) && (() => {
+                    const sortedDebt = debtTxns.slice().sort((a, b) => b.amount - a.amount);
+                    let committedTotal = 0;
+                    let extraTotal = 0;
+                    for (const tx of sortedDebt) {
+                      const key = debtTxKey(tx, filterMonth);
+                      const tag = debtTags[key] ?? defaultDebtTag((tx as ExpenseTransaction & { debtType?: DebtType }).debtType);
+                      if (tag === "extra" || tag === "full_balance") extraTotal += tx.amount;
+                      else committedTotal += tx.amount;
+                    }
+                    return (
+                      <div className="rounded-xl border border-orange-200 bg-white overflow-hidden shadow-sm">
+                        {/* Header */}
+                        <button
+                          onClick={() => setDebtSectionOpen((v) => !v)}
+                          className="flex w-full items-center justify-between px-5 py-4 hover:bg-orange-50/40 transition"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-100 shrink-0">
+                              <svg className="h-4 w-4 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                              </svg>
+                            </div>
+                            <div className="text-left">
+                              <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Debt Payments</p>
+                              <p className="text-xl font-bold text-gray-900 tabular-nums leading-tight">{fmt(debtTotal)}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-[11px] text-gray-400">not in spending</span>
+                            <svg
+                              className={`h-3.5 w-3.5 text-gray-400 transition-transform ${debtSectionOpen ? "rotate-180" : ""}`}
+                              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
                             </svg>
                           </div>
-                          <div className="text-left">
-                            <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Debt Payments</p>
-                            <p className="text-xl font-bold text-gray-900 tabular-nums leading-tight">{fmt(debtTotal)}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-[11px] text-gray-400">not in spending</span>
-                          <svg
-                            className={`h-3.5 w-3.5 text-gray-400 transition-transform ${debtSectionOpen ? "rotate-180" : ""}`}
-                            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
-                          >
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                          </svg>
-                        </div>
-                      </button>
+                        </button>
 
-                      {/* Expanded: individual payments */}
-                      {debtSectionOpen && (
-                        <div className="border-t border-orange-100 divide-y divide-gray-50">
-                          {debtTxns
-                            .slice()
-                            .sort((a, b) => b.amount - a.amount)
-                            .map((tx, i) => (
-                              <div key={i} className="flex items-center justify-between px-5 py-3">
-                                <div className="min-w-0">
-                                  <p className="text-sm font-medium text-gray-800 truncate">{tx.merchant ?? "Debt Payment"}</p>
-                                  {tx.date && <p className="text-[11px] text-gray-400">{tx.date}</p>}
-                                </div>
-                                <p className="text-sm font-semibold text-gray-700 tabular-nums shrink-0 ml-4">{fmt(tx.amount)}</p>
-                              </div>
-                            ))}
-                          {paymentsMade > 0 && (
-                            <div className="flex items-center gap-2 px-5 py-3 bg-blue-50/50">
-                              <svg className="h-3.5 w-3.5 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                              </svg>
-                              <p className="text-[11px] text-blue-700">
-                                {fmt(paymentsMade)} received by your CC / loan accounts — offsets the payments above.
-                              </p>
+                        {/* Summary — always visible */}
+                        <div className="flex items-center gap-4 border-t border-orange-100 px-5 py-3 bg-orange-50/60">
+                          {committedTotal > 0 && (
+                            <div className="flex-1">
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-orange-400 mb-0.5">Min Payments</p>
+                              <p className="text-base font-bold text-orange-700 tabular-nums">{fmt(committedTotal)}</p>
+                            </div>
+                          )}
+                          {extraTotal > 0 && (
+                            <div className="flex-1">
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-green-500 mb-0.5">Extra Payments</p>
+                              <p className="text-base font-bold text-green-600 tabular-nums">{fmt(extraTotal)}</p>
+                            </div>
+                          )}
+                          {interestTotal > 0 && (
+                            <div className="flex-1">
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-red-400 mb-0.5">Interest</p>
+                              <p className="text-base font-bold text-red-500 tabular-nums">{fmt(interestTotal)}</p>
                             </div>
                           )}
                         </div>
-                      )}
-                    </div>
-                  )}
+
+                        {/* Expanded body — individual rows */}
+                        {debtSectionOpen && (
+                          <div className="border-t border-orange-100">
+                            {/* Individual rows */}
+                            <div className="divide-y divide-gray-50">
+                              {sortedDebt.map((tx, i) => {
+                                const txType = (tx as ExpenseTransaction & { debtType?: DebtType }).debtType;
+                                const key = debtTxKey(tx, filterMonth);
+                                const isScheduled = SCHEDULED_DEBT_TYPES.has(txType ?? "");
+                                const currentTag = debtTags[key] ?? defaultDebtTag(txType);
+                                // Two states: required (minimum) ↔ extra (above minimum); full_balance treated as extra
+                                const normalizedTag = (currentTag === "full_balance" || currentTag === "extra") ? "extra" : "minimum";
+                                const nextTag = normalizedTag === "minimum" ? "extra" : "minimum";
+                                const tagLabel = isScheduled ? "Scheduled" : (normalizedTag === "extra" ? "Extra payment" : "Min Payment");
+                                const tagColor = isScheduled
+                                  ? "bg-gray-100 text-gray-500"
+                                  : normalizedTag === "extra"
+                                    ? "bg-green-100 text-green-700"
+                                    : "bg-purple-100 text-purple-700";
+                                return (
+                                  <div key={i} className="flex items-center gap-3 px-5 py-3">
+                                    <div className="min-w-0 flex-1">
+                                      <p className="text-sm font-medium text-gray-800 truncate">{tx.merchant ?? "Debt Payment"}</p>
+                                      <p className="text-[11px] text-gray-400 mt-0.5">
+                                        {tx.date ?? ""}
+                                        {txType && <span className="ml-1 text-orange-400">· {DEBT_TYPE_LABELS[txType] ?? txType}</span>}
+                                      </p>
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      <p className="text-sm font-semibold text-gray-700 tabular-nums">{fmt(tx.amount)}</p>
+                                      {isScheduled ? (
+                                        <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${tagColor}`}>{tagLabel}</span>
+                                      ) : (
+                                        <button
+                                          onClick={() => handleDebtTagChange(key, nextTag)}
+                                          title={normalizedTag === "minimum" ? "Tap to mark as extra payment" : "Tap to mark as minimum payment"}
+                                          className={`rounded-full px-2 py-0.5 text-[11px] font-semibold transition hover:opacity-70 ${tagColor}`}
+                                        >
+                                          {tagLabel} ↻
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            {interestTxns.length > 0 && (
+                              <div className="border-t border-red-50">
+                                <div className="flex items-center gap-2 px-5 py-2 bg-red-50/60">
+                                  <svg className="h-3 w-3 text-red-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                  </svg>
+                                  <p className="text-[10px] font-semibold uppercase tracking-wider text-red-400">Interest charges — cost of debt</p>
+                                </div>
+                                <div className="divide-y divide-gray-50">
+                                  {interestTxns
+                                    .slice()
+                                    .sort((a, b) => b.amount - a.amount)
+                                    .map((tx, i) => (
+                                      <div key={i} className="flex items-center gap-3 px-5 py-2.5">
+                                        <div className="min-w-0 flex-1">
+                                          <p className="text-sm font-medium text-gray-700 truncate">{tx.merchant ?? "Interest"}</p>
+                                          {tx.date && <p className="text-[11px] text-gray-400">{tx.date}{tx.accountLabel ? ` · ${tx.accountLabel}` : ""}</p>}
+                                        </div>
+                                        <p className="text-sm font-semibold text-red-500 tabular-nums shrink-0">{fmt(tx.amount)}</p>
+                                      </div>
+                                    ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {paymentsMade > 0 && (
+                              <div className="flex items-center gap-2 px-5 py-3 bg-blue-50/50 border-t border-blue-100/50">
+                                <svg className="h-3.5 w-3.5 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                <p className="text-[11px] text-blue-700">
+                                  {fmt(paymentsMade)} received by your CC / loan accounts — offsets the payments above.
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* ── Transfers collapsible (secondary) ────────────────────── */}
                   {transferTotal > 0 && (
