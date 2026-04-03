@@ -550,7 +550,7 @@ export async function GET(request: NextRequest) {
           category: t.category,
           accountLabel: t.accountLabel,
           recurring: t.recurring,
-          ...(t.debtType ? { debtType: t.debtType } : {}),
+          ...(t.debtType ? { debtType: t.debtType as import("@/lib/types").DebtType } : {}),
         })),
       },
     };
