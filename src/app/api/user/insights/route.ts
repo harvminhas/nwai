@@ -507,11 +507,11 @@ export async function GET(req: NextRequest) {
     const allDates     = txns.map((t) => t.date).filter(Boolean).sort();
     const freq         = detectFrequency(allDates);
 
-    const amounts      = txns.map((t) => t.amount).filter((a) => a > 0);
-    const medianAmt    = amounts.length > 0
-      ? [...amounts].sort((a, b) => a - b)[Math.floor(amounts.length / 2)]
-      : 0;
-    if (medianAmt <= 0) continue;
+    // Use the most recent transaction amount — salary and regular deposits can
+    // change over time (e.g. tax rate changes mid-year), so the latest is the
+    // best predictor rather than a median of older values.
+    const latestAmt = sortedByDate.find((t) => t.amount > 0)?.amount ?? 0;
+    if (latestAmt <= 0) continue;
 
     const sourceName = resolveCanonical(
       txns[0].source || txns[0].description || srcKey.replace(/\b\w/g, (c) => c.toUpperCase()),
@@ -538,7 +538,7 @@ export async function GET(req: NextRequest) {
           subtitle: p.daysFromToday < 0
             ? `May have already arrived · ${patternLabel}`
             : patternLabel,
-          amount: Math.round(medianAmt),
+          amount: Math.round(latestAmt),
           type: "cash-in",
           href: "/account/income",
           isOverdue: p.daysFromToday < 0,
@@ -561,7 +561,7 @@ export async function GET(req: NextRequest) {
           daysFromNow: diff,
           title: sourceName,
           subtitle: diff < 0 ? "May have already arrived" : `Based on ${txns.length} deposit${txns.length !== 1 ? "s" : ""}`,
-          amount: Math.round(medianAmt),
+          amount: Math.round(latestAmt),
           type: "cash-in",
           href: "/account/income",
           isOverdue: diff < 0,
