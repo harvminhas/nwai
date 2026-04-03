@@ -9,6 +9,7 @@ import type { DashboardAlert, UpcomingItem, TodayInsight } from "@/app/api/user/
 import type { AgentCard } from "@/lib/agentTypes";
 import type { RadarItem, FreshnessData, NetWorthSnapshot } from "@/lib/today/types";
 import ParseStatusBanner from "@/components/ParseStatusBanner";
+import RefreshToast from "@/components/RefreshToast";
 import { fmt } from "@/lib/currencyUtils";
 import { usePlan } from "@/contexts/PlanContext";
 
@@ -227,6 +228,7 @@ export default function TodayPage() {
   const [netWorth,    setNetWorth]    = useState<NetWorthSnapshot | null>(null);
   const [savingsRate, setSavingsRate] = useState<{ rate: number; income: number; expenses: number; month: string } | null>(null);
   const [statusBanner,setStatusBanner]= useState<{ type: string; text: string; detail: string } | null>(null);
+  const [needsRefresh, setNeedsRefresh] = useState(false);
   const [loading,     setLoading]     = useState(true);
   const [error,       setError]       = useState<string | null>(null);
   const [token,       setToken]       = useState<string | null>(null);
@@ -265,6 +267,7 @@ export default function TodayPage() {
       setNetWorth(insJson.netWorth ?? null);
       setSavingsRate(insJson.savingsRate ?? null);
       setStatusBanner(insJson.statusBanner ?? null);
+      setNeedsRefresh(insJson.needsRefresh ?? false);
       const sorted = (cardJson.cards ?? [] as AgentCard[]).sort((a: AgentCard, b: AgentCard) => {
         const pri = { high: 0, medium: 1, low: 2 };
         const pd = (pri[a.priority] ?? 2) - (pri[b.priority] ?? 2);
@@ -718,6 +721,9 @@ export default function TodayPage() {
     <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
       {token && <ParseStatusBanner onRefresh={() => load(token)} />}
+      {token && needsRefresh && (
+        <RefreshToast token={token} onRefreshed={() => { setNeedsRefresh(false); load(token); }} />
+      )}
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="mb-5">

@@ -50,7 +50,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "9";
+const SCHEMA_VERSION = "10";
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -85,8 +85,14 @@ export interface FinancialProfileCache {
   updatedAt: string;
   /** Deterministic hash of all completed statement IDs + upload timestamps */
   sourceVersion: string;
-  /** Bumped in code when computation logic changes — forces rebuild on mismatch */
+  /** Bumped in code when computation logic changes — triggers user-visible refresh prompt */
   schemaVersion?: string;
+  /**
+   * True when the cached data was built with an older schemaVersion.
+   * API routes pass this to the frontend so it can show a "Refresh" toast.
+   * The rebuild only happens when the user explicitly triggers a refresh.
+   */
+  cacheStale?: boolean;
   /** Per-month aggregated totals — ALL historical months */
   monthlyHistory: MonthlyHistoryEntry[];
   /** Pre-computed typical monthly spend (median + avg) */
@@ -428,9 +434,11 @@ export async function getFinancialProfile(
   const cached = userDoc.data()?.financialProfile as FinancialProfileCache | undefined;
 
   if (cached?.updatedAt) {
-    // Schema version mismatch means code logic changed — always rebuild
+    // Schema version mismatch: return stale data immediately — the frontend will
+    // show a "Refresh" toast so the user can trigger a rebuild when convenient.
+    // We never force a silent rebuild here to avoid unexpected latency spikes.
     if (cached.schemaVersion !== SCHEMA_VERSION) {
-      return buildAndCacheFinancialProfile(uid, db);
+      return { ...cached, cacheStale: true };
     }
 
     const ageMs = Date.now() - new Date(cached.updatedAt).getTime();

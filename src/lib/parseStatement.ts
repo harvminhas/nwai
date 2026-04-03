@@ -458,12 +458,27 @@ ${trimmed}
  * single source of truth before data is written to Firestore.
  */
 function normalizeData(data: ParsedStatementData): ParsedStatementData {
-  const incomeTxns  = (data.income?.transactions ?? []).filter((t) => (t.amount ?? 0) > 0);
+  // Income categories the AI may misplace into the expenses array.
+  // Any expense transaction carrying one of these categories is money-IN, not money-OUT.
+  const INCOME_CATS = /^(salary|government|transfer in|other income)$/i;
+
+  const rawExpenseTxns = (data.expenses?.transactions ?? []).filter((t) => (t.amount ?? 0) > 0);
+
+  // Rescue misplaced income transactions — move them to income instead of dropping them.
+  const rescuedIncomeTxns = rawExpenseTxns
+    .filter((t) => INCOME_CATS.test((t.category ?? "").trim()))
+    .map((t) => ({ date: t.date, amount: t.amount, source: t.merchant ?? "Unknown", category: "Other" as const }));
+
+  const incomeTxns = [
+    ...(data.income?.transactions ?? []).filter((t) => (t.amount ?? 0) > 0),
+    ...rescuedIncomeTxns,
+  ];
 
   // Expense amounts must always be positive (money out). The AI prompt says so,
   // but the AI occasionally returns negative amounts for credits/refunds.
   // Drop them here — the bucket (expenses vs income) is the canonical direction signal.
-  const expenseTxns = (data.expenses?.transactions ?? []).filter((t) => (t.amount ?? 0) > 0);
+  // Also exclude any income-category transactions already moved above.
+  const expenseTxns = rawExpenseTxns.filter((t) => !INCOME_CATS.test((t.category ?? "").trim()));
 
   // Derive totals from individual transactions — never trust AI-computed sums.
   const incomeTotal   = incomeTxns.reduce((s, t) => s + (t.amount ?? 0), 0);

@@ -222,7 +222,10 @@ export function getSavingsRate(profile: FinancialProfileCache, yearMonth?: strin
   const ym     = yearMonth ?? profile.latestTxMonth ?? "";
   const entry  = profile.monthlyHistory.find((h) => h.yearMonth === ym);
   if (!entry || entry.incomeTotal <= 0) return 0;
-  return Math.round(((entry.incomeTotal - entry.expensesTotal) / entry.incomeTotal) * 100);
+  // Use coreExpensesTotal (transfers excluded) for a meaningful savings rate,
+  // falling back to expensesTotal if the core figure hasn't been computed yet.
+  const exp = entry.coreExpensesTotal ?? entry.expensesTotal;
+  return Math.round(((entry.incomeTotal - exp) / entry.incomeTotal) * 100);
 }
 
 // ── getLiquidAssets ────────────────────────────────────────────────────────────

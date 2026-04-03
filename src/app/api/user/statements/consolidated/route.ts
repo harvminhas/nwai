@@ -554,6 +554,7 @@ export async function GET(request: NextRequest) {
       previousMonth,
       yearMonth: month,
       history,
+      needsRefresh: profile.cacheStale ?? false,
       txMonthlyIncome,
       txMonthlyExpenses,
       manualAssets: relevantManualAssets,

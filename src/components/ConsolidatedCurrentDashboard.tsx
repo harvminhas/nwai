@@ -11,6 +11,7 @@ import AgentInsightCards from "@/components/AgentInsightCards";
 import type { ParsedStatementData } from "@/lib/types";
 import type { AgentCard } from "@/lib/agentTypes";
 import { isBalanceMarker } from "@/lib/balanceMarkers";
+import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
 import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -436,10 +437,6 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   const [agentCards, setAgentCards]   = useState<AgentCard[]>([]);
   const [idToken, setIdToken]         = useState<string | null>(null);
   const [uid, setUid]                 = useState<string | null>(null);
-  const [excludeTransfers, setExcludeTransfers] = useState<boolean>(() => {
-    if (typeof window !== "undefined") return localStorage.getItem("excludeTransfersFromTypical") === "true";
-    return false;
-  });
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -547,38 +544,32 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   const debtSubLabel  = debtLabels.map((l) => DEBT_TYPE_LABEL[l] ?? l).slice(0, 3).join(" + ")   || null;
 
   // ── avg income / spending from history (months with data) ─────────────────
-  const incomeMonths   = history.filter((h) => h.incomeTotal   > 0);
-  const expenseMonths  = history.filter((h) => h.expensesTotal > 0);
-  const avgIncome  = incomeMonths.length  > 0 ? incomeMonths.reduce((s, h)  => s + h.incomeTotal,   0) / incomeMonths.length  : 0;
-  const avgExpenses= expenseMonths.length > 0 ? expenseMonths.reduce((s, h) => s + h.expensesTotal, 0) / expenseMonths.length : 0;
+  const incomeMonths = history.filter((h) => h.incomeTotal > 0);
+  const avgIncome = incomeMonths.length > 0
+    ? incomeMonths.reduce((s, h) => s + h.incomeTotal, 0) / incomeMonths.length
+    : 0;
 
-  // When excludeTransfers is on, use coreExpensesTotal (transfers/debt payments stripped out)
-  const effectiveExpenseKey = (h: HistoryPoint) =>
-    excludeTransfers && h.coreExpensesTotal !== undefined ? h.coreExpensesTotal : h.expensesTotal;
-  const effectiveExpenseMonths = history.filter((h) => effectiveExpenseKey(h) > 0);
+  // Always use coreExpensesTotal (transfers + debt payments excluded everywhere)
+  const coreExp = (h: HistoryPoint) =>
+    h.coreExpensesTotal !== undefined ? h.coreExpensesTotal : h.expensesTotal;
+  const effectiveExpenseMonths = history.filter((h) => coreExp(h) > 0);
   const medianExpenses = (() => {
     if (effectiveExpenseMonths.length === 0) return 0;
-    const sorted = [...effectiveExpenseMonths].map(effectiveExpenseKey).sort((a, b) => a - b);
+    const sorted = [...effectiveExpenseMonths].map(coreExp).sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
     return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
   })();
 
-  // Current-month expenses — same filtering as the spending page:
-  // only transactions dated within the current calendar month, no balance markers.
-  const TRANSFER_CATS = /^transfers$/i;
+  // Current-month discretionary expenses — core only (CORE_EXCLUDE_RE applied)
   const allExpenseTxns = data?.expenses?.transactions ?? [];
   const calendarMonthTxns = allExpenseTxns.filter(
     (t) => (!t.date || t.date.startsWith(yearMonth)) && !isBalanceMarker(t.merchant ?? "")
   );
-  // Fall back to pre-computed total only when no dated transactions exist
-  const monthRawTotal = calendarMonthTxns.length > 0
-    ? calendarMonthTxns.reduce((s, t) => s + t.amount, 0)
-    : (data?.expenses?.total ?? 0);
-  const expenses = excludeTransfers
+  const expenses = calendarMonthTxns.length > 0
     ? calendarMonthTxns
-        .filter((t) => !TRANSFER_CATS.test((t.category ?? "").trim()))
+        .filter((t) => !CORE_EXCLUDE_RE.test((t.category ?? "").trim()))
         .reduce((s, t) => s + t.amount, 0)
-    : monthRawTotal;
+    : (data?.expenses?.total ?? 0);
 
   // saved uses the same filtered expense figure so the hero card stays consistent
   const saved = income - expenses;
@@ -739,39 +730,21 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
           </Link>
 
           {/* Typical Spending/mo */}
-          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-            <Link href="/account/spending" className="group block">
-              <p className="text-xs text-gray-400">Typical spending/mo</p>
-              <p className="mt-1 text-xl font-bold text-gray-900 tabular-nums">
-                {medianExpenses > 0 ? fmtNW(medianExpenses) : "—"}
+          <Link href="/account/spending" className="group rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:border-purple-200 hover:shadow transition">
+            <p className="text-xs text-gray-400">Typical spending/mo</p>
+            <p className="mt-1 text-xl font-bold text-gray-900 tabular-nums">
+              {medianExpenses > 0 ? fmtNW(medianExpenses) : "—"}
+            </p>
+            {expenses > 0 && medianExpenses > 0 ? (
+              <p className={`mt-1 text-xs font-medium ${expenses <= medianExpenses ? "text-green-600" : "text-red-500"}`}>
+                {fmt(expenses)} this month
               </p>
-              {expenses > 0 && medianExpenses > 0 ? (
-                <p className={`mt-1 text-xs font-medium ${expenses <= medianExpenses ? "text-green-600" : "text-red-500"}`}>
-                  {fmt(expenses)} this month
-                </p>
-              ) : (
-                <p className="mt-1 text-xs text-gray-400">
-                  {effectiveExpenseMonths.length > 0 ? `${effectiveExpenseMonths.length} month median` : "no spend data"}
-                </p>
-              )}
-            </Link>
-            <label
-              className="mt-2.5 flex items-center gap-1.5 cursor-pointer select-none w-fit"
-              title="Exclude transfers, debt payments &amp; investments from spending total"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <input
-                type="checkbox"
-                checked={excludeTransfers}
-                onChange={(e) => {
-                  setExcludeTransfers(e.target.checked);
-                  localStorage.setItem("excludeTransfersFromTypical", String(e.target.checked));
-                }}
-                className="w-3 h-3 accent-purple-600 cursor-pointer"
-              />
-              <span className="text-[11px] text-gray-400">excl. transfers</span>
-            </label>
-          </div>
+            ) : (
+              <p className="mt-1 text-xs text-gray-400">
+                {effectiveExpenseMonths.length > 0 ? `${effectiveExpenseMonths.length} month median` : "no spend data"}
+              </p>
+            )}
+          </Link>
         </div>
 
         {/* ── Agent insight cards ───────────────────────────────────────────── */}

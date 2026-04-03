@@ -18,6 +18,7 @@ import {
 import { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon } from "./shared";
 import type { CashFrequency } from "./shared";
 import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
+import RefreshToast from "@/components/RefreshToast";
 
 // Re-export shared items for other pages that used to import from this file
 export { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon } from "./shared";
@@ -216,16 +217,14 @@ function SpendingPageInner() {
   const [history, setHistory]           = useState<HistoryPoint[]>([]);
   const [prevExpenses, setPrevExpenses] = useState<number | null>(null);
   const [loading, setLoading]           = useState(true);
-  const [excludeTransfers, setExcludeTransfers] = useState<boolean>(() => {
-    if (typeof window !== "undefined") return localStorage.getItem("excludeTransfersFromTypical") === "true";
-    return false;
-  });
+  const [debtSectionOpen, setDebtSectionOpen] = useState(false);
   const [ignoredTxKeys, setIgnoredTxKeys] = useState<Set<string>>(new Set());
   const [uid, setUid]                     = useState<string | null>(null);
   const [monthLoading, setMonthLoading] = useState(false);
   const [chartExpanded, setChartExpanded] = useState(false);
   const [error, setError]               = useState<string | null>(null);
   const [token, setToken]               = useState<string | null>(null);
+  const [needsRefresh, setNeedsRefresh] = useState(false);
 
   // All-time merchant aggregation (loaded lazily when By Merchant tab is opened)
   const [merchants, setMerchants]         = useState<import("@/app/api/user/spending/merchants/route").MerchantSummary[] | null>(null);
@@ -329,6 +328,7 @@ function SpendingPageInner() {
         const currentYM = json.yearMonth ?? null;
         setData(json.data ?? null);
         setPaymentsMade(json.paymentsMade ?? 0);
+        setNeedsRefresh(json.needsRefresh ?? false);
         setYearMonth(currentYM);
         setSelectedMonth(currentYM);
         setHistory(Array.isArray(json.history) ? json.history : []);
@@ -578,20 +578,41 @@ function SpendingPageInner() {
       && !ignoredTxKeys.has(txIgnoreKey(t.date, t.amount, t.merchant))
   );
 
-  const total = monthTxns.length > 0
-    ? monthTxns.reduce((s, t) => s + t.amount, 0)
-    : (data?.expenses?.total ?? 0);
+  // Core transactions: excludes transfers and debt payments (CORE_EXCLUDE_RE)
+  const coreTxns = monthTxns.filter((t) => !CORE_EXCLUDE_RE.test((t.category ?? "").trim()));
+  // Excluded transactions: transfers + debt payments — shown in a separate section
+  const excludedTxns = monthTxns.filter((t) => CORE_EXCLUDE_RE.test((t.category ?? "").trim()));
 
-  const displayTotal = excludeTransfers
-    ? (monthTxns.length > 0
-        ? monthTxns.filter((t) => !CORE_EXCLUDE_RE.test((t.category ?? "").trim())).reduce((s, t) => s + t.amount, 0)
-        : (data?.expenses?.total ?? 0))
-    : total;
+  const total = coreTxns.length > 0
+    ? coreTxns.reduce((s, t) => s + t.amount, 0)
+    : (data?.expenses?.total ?? 0);
+  const displayTotal = total;
+
+  const excludedTotal = excludedTxns.reduce((s, t) => s + t.amount, 0);
+
+  // Excluded breakdown: group by category (Debt Payments vs Transfers)
+  const excludedByCategory = (() => {
+    const map = new Map<string, { total: number; txns: typeof excludedTxns }>();
+    for (const tx of excludedTxns) {
+      const key = tx.category || "Transfers";
+      const entry = map.get(key) ?? { total: 0, txns: [] };
+      entry.total += tx.amount;
+      entry.txns.push(tx);
+      map.set(key, entry);
+    }
+    return Array.from(map.entries()).sort((a, b) => b[1].total - a[1].total);
+  })();
 
   const categories = (() => {
-    if (monthTxns.length === 0) return (data?.expenses?.categories ?? []).slice().sort((a, b) => b.amount - a.amount);
+    if (coreTxns.length === 0) {
+      // Fall back to AI-computed categories, minus excluded ones
+      return (data?.expenses?.categories ?? [])
+        .filter((c) => !CORE_EXCLUDE_RE.test((c.name ?? "").trim()))
+        .slice()
+        .sort((a, b) => b.amount - a.amount);
+    }
     const map = new Map<string, number>();
-    for (const tx of monthTxns) {
+    for (const tx of coreTxns) {
       const key = tx.category || "Other";
       map.set(key, (map.get(key) ?? 0) + tx.amount);
     }
@@ -604,8 +625,9 @@ function SpendingPageInner() {
   })();
 
   const monthsTracked = history.length;
+  // Always use coreExpensesTotal (transfers + debt payments excluded)
   const effectiveExp = (h: HistoryPoint) =>
-    excludeTransfers && h.coreExpensesTotal !== undefined ? h.coreExpensesTotal : (h.expensesTotal ?? 0);
+    h.coreExpensesTotal !== undefined ? h.coreExpensesTotal : (h.expensesTotal ?? 0);
   const avgExpenses = monthsTracked > 0
     ? Math.round(history.reduce((s, h) => s + effectiveExp(h), 0) / monthsTracked)
     : null;
@@ -622,7 +644,7 @@ function SpendingPageInner() {
     const monthly = sub.frequency === "annual" ? sub.amount / 12 : sub.amount;
     return s + monthly * 12;
   }, 0);
-  const hasData = total > 0 || allSubscriptions.length > 0 || txns.length > 0 || cashItems.length > 0;
+  const hasData = total > 0 || excludedTotal > 0 || allSubscriptions.length > 0 || txns.length > 0 || cashItems.length > 0;
 
   if (loading) return (
     <div className="flex min-h-[50vh] items-center justify-center">
@@ -632,6 +654,17 @@ function SpendingPageInner() {
 
   return (
     <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
+
+      {token && needsRefresh && (
+        <RefreshToast
+          token={token}
+          onRefreshed={() => {
+            setNeedsRefresh(false);
+            // Reload data by re-fetching for the current selected month
+            if (selectedMonth) handleMonthSelect(selectedMonth);
+          }}
+        />
+      )}
 
       {/* Header */}
       <div className="mb-1 flex items-start justify-between gap-4">
@@ -644,21 +677,9 @@ function SpendingPageInner() {
             </p>
           )}
         </div>
-        <label
-          className="mt-2 flex items-center gap-1.5 cursor-pointer select-none shrink-0"
-          title="Exclude transfers, debt payments &amp; investments from all spending totals"
-        >
-          <input
-            type="checkbox"
-            checked={excludeTransfers}
-            onChange={(e) => {
-              setExcludeTransfers(e.target.checked);
-              localStorage.setItem("excludeTransfersFromTypical", String(e.target.checked));
-            }}
-            className="w-3.5 h-3.5 accent-purple-600 cursor-pointer"
-          />
-          <span className="text-xs text-gray-400">excl. transfers</span>
-        </label>
+        <p className="mt-3 text-[10px] text-gray-400 text-right shrink-0">
+          excl. transfers<br />& debt pmts
+        </p>
       </div>
 
       {/* Month pills */}
@@ -823,33 +844,20 @@ function SpendingPageInner() {
                   )}
                 </>
               )}
-              {total > 0 && (
+              {(total > 0 || excludedTotal > 0) && (
                 <>
-                  <div className={`grid gap-4 ${paymentsMade > 0 ? "grid-cols-3" : "grid-cols-2"}`}>
-                    {/* Total outflows this month */}
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Discretionary spending this month */}
                     <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                       <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">This Month</p>
-                      <p className="mt-2 font-bold text-2xl text-gray-900">{fmt(displayTotal)}</p>
-                      {expDelta !== null && (
+                      <p className="mt-2 font-bold text-2xl text-gray-900">{total > 0 ? fmt(displayTotal) : "—"}</p>
+                      {expDelta !== null && total > 0 && (
                         <p className={`mt-1 text-xs font-medium ${expDelta > 0 ? "text-red-500" : "text-green-600"}`}>
                           {expDelta > 0 ? "↑" : "↓"} {fmt(Math.abs(expDelta))} vs{" "}
                           {yearMonth ? shortMonth(history.filter(h => h.yearMonth < yearMonth).slice(-1)[0]?.yearMonth ?? "") : "last month"}
                         </p>
                       )}
-                      {paymentsMade > 0 && !excludeTransfers && (
-                        <p className="mt-1 text-xs text-gray-400">incl. {fmt(paymentsMade)} debt payments</p>
-                      )}
                     </div>
-
-                    {/* Payments Made — the debt-side receipt of transfers already counted above */}
-                    {paymentsMade > 0 && (
-                      <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-5 shadow-sm">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-blue-400">Payments Made</p>
-                        <p className="mt-2 font-bold text-2xl text-gray-900">{fmt(paymentsMade)}</p>
-                        <p className="mt-1 text-xs text-gray-400">received by CC / loans</p>
-                        <p className="mt-1 text-[10px] text-gray-400">matches "Debt Payments" in the category list below — offsets on consolidation</p>
-                      </div>
-                    )}
 
                     {/* Typical month */}
                     <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -866,17 +874,73 @@ function SpendingPageInner() {
                     </div>
                   </div>
 
-                  {/* Net spending callout — shows true discretionary spend after netting out debt payments */}
-                  {paymentsMade > 0 && (
-                    <div className="rounded-xl border border-gray-100 bg-gray-50 px-5 py-3 flex items-center justify-between gap-4">
-                      <div>
-                        <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">Net Spending </span>
-                        <span className="text-xs text-gray-400">(excl. debt payments)</span>
-                      </div>
-                      <div className="text-right">
-                        <span className="font-bold text-lg text-gray-900">{fmt(Math.max(0, total - paymentsMade))}</span>
-                        <span className="ml-2 text-xs text-gray-400">= {fmt(total)} − {fmt(paymentsMade)}</span>
-                      </div>
+                  {/* ── Debt & transfer section ──────────────────────────────── */}
+                  {excludedTotal > 0 && (
+                    <div className="rounded-xl border border-gray-100 bg-gray-50 overflow-hidden">
+                      {/* Header row — always visible, click to expand */}
+                      <button
+                        onClick={() => setDebtSectionOpen((v) => !v)}
+                        className="flex w-full items-center justify-between px-5 py-3.5 hover:bg-gray-100/60 transition"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <svg className="h-4 w-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                          </svg>
+                          <div className="text-left">
+                            <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">Debt &amp; Transfers</span>
+                            <span className="ml-2 text-xs text-gray-400">not counted above</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-sm font-semibold text-gray-600 tabular-nums">{fmt(excludedTotal)}</span>
+                          <svg
+                            className={`h-3.5 w-3.5 text-gray-400 transition-transform ${debtSectionOpen ? "rotate-180" : ""}`}
+                            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </div>
+                      </button>
+
+                      {/* Expanded detail */}
+                      {debtSectionOpen && (
+                        <div className="border-t border-gray-200">
+                          {excludedByCategory.map(([catName, catData]) => (
+                            <div key={catName} className="border-b border-gray-100 last:border-b-0">
+                              {/* Category sub-header */}
+                              <div className="flex items-center justify-between px-5 py-2 bg-white/60">
+                                <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">{catName}</p>
+                                <p className="text-xs font-semibold text-gray-600 tabular-nums">{fmt(catData.total)}</p>
+                              </div>
+                              {/* Individual transactions */}
+                              {catData.txns
+                                .slice()
+                                .sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""))
+                                .map((tx, i) => (
+                                  <div key={i} className="flex items-center justify-between px-5 py-2.5 bg-white border-t border-gray-50">
+                                    <div className="min-w-0">
+                                      <p className="text-sm text-gray-700 truncate">{tx.merchant ?? "Payment"}</p>
+                                      {tx.date && (
+                                        <p className="text-[11px] text-gray-400">{tx.date}</p>
+                                      )}
+                                    </div>
+                                    <p className="text-sm font-medium text-gray-600 tabular-nums shrink-0 ml-4">{fmt(tx.amount)}</p>
+                                  </div>
+                                ))}
+                            </div>
+                          ))}
+                          {paymentsMade > 0 && (
+                            <div className="flex items-center gap-2 px-5 py-3 bg-blue-50/40 border-t border-blue-100">
+                              <svg className="h-3.5 w-3.5 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              <p className="text-[11px] text-blue-700">
+                                {fmt(paymentsMade)} received by your CC / loan accounts this month — these offset the payments shown above.
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </>
@@ -896,7 +960,7 @@ function SpendingPageInner() {
                     {/* Donut chart */}
                     <div className="px-5 pt-5 pb-2">
                       <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">By Category</p>
-                      <div className="relative h-44">
+                      <div className="relative h-52">
                         <ResponsiveContainer width="100%" height="100%">
                           <PieChart style={{ outline: "none" }}>
                             <Pie
@@ -922,9 +986,18 @@ function SpendingPageInner() {
                         {/* Centre label */}
                         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
                           <p className="text-[11px] text-gray-400">Total</p>
-                          <p className="text-xl font-bold text-gray-900">{fmt(displayTotal)}</p>
+                          <p className="text-lg font-bold text-gray-900 tabular-nums">
+                            {(() => {
+                              const sym = getCurrencySymbol();
+                              const abs = Math.abs(displayTotal);
+                              if (abs >= 1_000_000) return `${sym}${(abs / 1_000_000).toFixed(1)}M`;
+                              if (abs >= 10_000)    return `${sym}${Math.round(abs / 1_000)}k`;
+                              if (abs >= 1_000)     return `${sym}${(abs / 1_000).toFixed(1)}k`;
+                              return fmt(displayTotal);
+                            })()}
+                          </p>
                           {categories.length > 0 && (
-                            <p className="text-[11px] text-gray-400">{categories.length} categories</p>
+                            <p className="text-[11px] text-gray-400">{categories.length} cats</p>
                           )}
                         </div>
                       </div>

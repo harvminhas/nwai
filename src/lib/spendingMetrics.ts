@@ -5,13 +5,18 @@
  * are excluded when computing discretionary spending (used by the consolidated
  * API's coreExpensesTotal, the insights route, and any future consumer).
  *
+ * Excluded categories:
+ *  • Transfers / Transfers & Payments — inter-account moves (already double-counted)
+ *  • Debt Payments — CC/mortgage/loan payments from chequing are always paired with
+ *    the actual purchases on the debt-side statement; counting both inflates expenses.
+ *
  * Rule: if you change this regex you change what "Typical Month" means everywhere.
  */
 
 import type { ExpenseTxnRecord } from "./extractTransactions";
 
 export const CORE_EXCLUDE_RE =
-  /^(transfers|transfers & payments)$/i;
+  /^(transfers|transfers & payments|debt payments|transfer in)$/i;
 
 export interface TypicalSpend {
   /** Median monthly core spend across all tracked months. */

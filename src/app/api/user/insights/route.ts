@@ -899,13 +899,14 @@ export async function GET(req: NextRequest) {
     freshness,
     netWorth,
     savingsRate: {
-      rate:    getSavingsRate(profile),
-      income:  getMonthlyIncome(profile),
-      expenses: getMonthlyExpenses(profile),
-      month:   profile.latestTxMonth ?? "",
+      rate:     getSavingsRate(profile),
+      income:   getMonthlyIncome(profile),
+      expenses: getMonthlyExpenses(profile, undefined, { core: true }),
+      month:    profile.latestTxMonth ?? "",
     },
     statusBanner: statusText
       ? { type: statusType, text: statusText, detail: statusDetail }
       : null,
+    needsRefresh: profile.cacheStale ?? false,
   });
 }
