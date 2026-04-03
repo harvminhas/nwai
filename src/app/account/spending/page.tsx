@@ -14,6 +14,7 @@ import { detectFrequency, FREQUENCY_CONFIG, type Frequency } from "@/lib/incomeE
 import {
   BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
   ReferenceLine, ResponsiveContainer, PieChart, Pie,
+  AreaChart, Area,
 } from "recharts";
 import { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon } from "./shared";
 import type { CashFrequency } from "./shared";
@@ -624,22 +625,32 @@ function SpendingPageInner() {
       }));
   })();
 
-  const monthsTracked = history.length;
   // Always use coreExpensesTotal (transfers + debt payments excluded)
   const effectiveExp = (h: HistoryPoint) =>
     h.coreExpensesTotal !== undefined ? h.coreExpensesTotal : (h.expensesTotal ?? 0);
+
+  // Typical month = median/avg of HISTORICAL months only — exclude the selected
+  // month so the current period never contaminates its own baseline.
+  const historicalHistory = history.filter((h) => h.yearMonth < filterMonth);
+  const monthsTracked = historicalHistory.length;
   const avgExpenses = monthsTracked > 0
-    ? Math.round(history.reduce((s, h) => s + effectiveExp(h), 0) / monthsTracked)
+    ? Math.round(historicalHistory.reduce((s, h) => s + effectiveExp(h), 0) / monthsTracked)
     : null;
   const medianExpenses = (() => {
     if (monthsTracked === 0) return null;
-    const sorted = [...history].map(effectiveExp).sort((a, b) => a - b);
+    const sorted = [...historicalHistory].map(effectiveExp).sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
     return sorted.length % 2 !== 0
       ? sorted[mid]
       : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
   })();
-  const expDelta  = prevExpenses !== null ? total - prevExpenses : null;
+  // Use the previous month from historicalHistory (already core-filtered) so the
+  // delta is apples-to-apples with `total`. prevExpenses from the API uses the raw
+  // expense total (transfers included) and always points to the same month.
+  const prevHistMonth   = historicalHistory.slice(-1)[0] ?? null;
+  const prevCoreExp     = prevHistMonth ? effectiveExp(prevHistMonth) : null;
+  const prevMonthLabel  = prevHistMonth ? shortMonth(prevHistMonth.yearMonth) : "last month";
+  const expDelta        = prevCoreExp !== null && total > 0 ? total - prevCoreExp : null;
   const subsYearly = allSubscriptions.reduce((s, sub) => {
     const monthly = sub.frequency === "annual" ? sub.amount / 12 : sub.amount;
     return s + monthly * 12;
@@ -848,30 +859,115 @@ function SpendingPageInner() {
                 <>
                   <div className="grid grid-cols-2 gap-4">
                     {/* Discretionary spending this month */}
-                    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">This Month</p>
-                      <p className="mt-2 font-bold text-2xl text-gray-900">{total > 0 ? fmt(displayTotal) : "—"}</p>
-                      {expDelta !== null && total > 0 && (
-                        <p className={`mt-1 text-xs font-medium ${expDelta > 0 ? "text-red-500" : "text-green-600"}`}>
-                          {expDelta > 0 ? "↑" : "↓"} {fmt(Math.abs(expDelta))} vs{" "}
-                          {yearMonth ? shortMonth(history.filter(h => h.yearMonth < yearMonth).slice(-1)[0]?.yearMonth ?? "") : "last month"}
-                        </p>
-                      )}
-                    </div>
+                    {(() => {
+                      // Spark: last 5 historical months + current month as final point
+                      const prevPoints = historicalHistory.slice(-5).map((h) => ({ v: effectiveExp(h), ym: h.yearMonth }));
+                      const thisMonthSpark = total > 0 ? [...prevPoints, { v: total, ym: filterMonth }] : prevPoints;
+                      const trend: "up" | "down" | "flat" = (() => {
+                        if (thisMonthSpark.length < 2 || total <= 0) return "flat";
+                        const baseline = prevPoints.length > 0
+                          ? prevPoints.reduce((s, p) => s + p.v, 0) / prevPoints.length
+                          : total;
+                        if (total > baseline * 1.04) return "up";
+                        if (total < baseline * 0.96) return "down";
+                        return "flat";
+                      })();
+                      const trendColor = trend === "up" ? "#ef4444" : trend === "down" ? "#22c55e" : "#9ca3af";
+                      return (
+                        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">This Month</p>
+                          <p className="mt-2 font-bold text-2xl text-gray-900">{total > 0 ? fmt(displayTotal) : "—"}</p>
+                          {expDelta !== null && total > 0 && (
+                            <p className={`mt-1 text-xs font-medium ${expDelta > 0 ? "text-red-500" : "text-green-600"}`}>
+                              {expDelta > 0 ? "↑" : "↓"} {fmt(Math.abs(expDelta))} vs {prevMonthLabel}
+                            </p>
+                          )}
+                          {/* Sparkline + trend vs recent average */}
+                          {thisMonthSpark.length >= 3 && total > 0 && (
+                            <div className="mt-3 space-y-1">
+                              <div className="h-10">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <AreaChart data={thisMonthSpark} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
+                                    <defs>
+                                      <linearGradient id="thisMonthGrad" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor={trendColor} stopOpacity={0.25} />
+                                        <stop offset="95%" stopColor={trendColor} stopOpacity={0} />
+                                      </linearGradient>
+                                    </defs>
+                                    <Area
+                                      type="monotone"
+                                      dataKey="v"
+                                      stroke={trendColor}
+                                      strokeWidth={1.5}
+                                      fill="url(#thisMonthGrad)"
+                                      dot={false}
+                                      isAnimationActive={false}
+                                    />
+                                  </AreaChart>
+                                </ResponsiveContainer>
+                              </div>
+                              <p className="text-[11px] font-medium" style={{ color: trendColor }}>
+                                {trend === "up" ? "↑ above recent avg" : trend === "down" ? "↓ below recent avg" : "→ in line with avg"}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     {/* Typical month */}
-                    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Typical Month</p>
-                      <p className="mt-2 font-bold text-2xl text-gray-900">{medianExpenses !== null ? fmt(medianExpenses) : "—"}</p>
-                      <p className="mt-1 text-xs text-gray-400">
-                        {monthsTracked > 0
-                          ? <>median · {monthsTracked} month{monthsTracked !== 1 ? "s" : ""} tracked</>
-                          : "No history yet"}
-                      </p>
-                      {avgExpenses !== null && medianExpenses !== null && avgExpenses !== medianExpenses && (
-                        <p className="mt-1 text-xs text-gray-400">avg {fmt(avgExpenses)}</p>
-                      )}
-                    </div>
+                    {(() => {
+                      const sparkPoints = historicalHistory.slice(-6).map((h) => ({ v: effectiveExp(h) }));
+                      const trend: "up" | "down" | "flat" = (() => {
+                        if (sparkPoints.length < 3) return "flat";
+                        const half = Math.ceil(sparkPoints.length / 2);
+                        const older = sparkPoints.slice(0, half).reduce((s, p) => s + p.v, 0) / half;
+                        const newer = sparkPoints.slice(-half).reduce((s, p) => s + p.v, 0) / half;
+                        if (newer > older * 1.04) return "up";
+                        if (newer < older * 0.96) return "down";
+                        return "flat";
+                      })();
+                      const trendColor = trend === "up" ? "#ef4444" : trend === "down" ? "#22c55e" : "#9ca3af";
+                      const trendLabel = trend === "up" ? "↑ trending up" : trend === "down" ? "↓ trending down" : "→ stable";
+                      return (
+                        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Typical Month</p>
+                          <p className="mt-2 font-bold text-2xl text-gray-900">{medianExpenses !== null ? fmt(medianExpenses) : "—"}</p>
+                          <p className="mt-1 text-xs text-gray-400">
+                            {monthsTracked > 0
+                              ? <>median · {monthsTracked} month{monthsTracked !== 1 ? "s" : ""}</>
+                              : "No history yet"}
+                          </p>
+                          {/* Sparkline + trend */}
+                          {sparkPoints.length >= 3 && (
+                            <div className="mt-3 space-y-1">
+                              <div className="h-10">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <AreaChart data={sparkPoints} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
+                                    <defs>
+                                      <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor={trendColor} stopOpacity={0.25} />
+                                        <stop offset="95%" stopColor={trendColor} stopOpacity={0} />
+                                      </linearGradient>
+                                    </defs>
+                                    <Area
+                                      type="monotone"
+                                      dataKey="v"
+                                      stroke={trendColor}
+                                      strokeWidth={1.5}
+                                      fill="url(#sparkGrad)"
+                                      dot={false}
+                                      isAnimationActive={false}
+                                    />
+                                  </AreaChart>
+                                </ResponsiveContainer>
+                              </div>
+                              <p className="text-[11px] font-medium" style={{ color: trendColor }}>{trendLabel}</p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* ── Debt & transfer section ──────────────────────────────── */}
