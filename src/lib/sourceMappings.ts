@@ -13,6 +13,7 @@ export type MappingStatus = "confirmed" | "rejected";
 
 export interface SourceMapping {
   id: string;
+  pairKey?: string;    // stable pair key used as the Firestore doc ID
   type: MappingType;
   canonical: string;   // the name to keep
   alias: string;       // the name that maps to canonical
@@ -29,6 +30,8 @@ export interface SourceSuggestion {
   canonical: string;
   alias: string;
   confidence: "high" | "medium"; // high = one is a prefix of the other; medium = shared first word
+  /** true when merging this pair would change a category and require a cache rebuild */
+  affectsCache?: boolean;
 }
 
 // ── normalisation ─────────────────────────────────────────────────────────────
