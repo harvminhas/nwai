@@ -9,6 +9,8 @@ import { getNetWorth } from "@/lib/profileMetrics";
 import type { ParsedStatementData, ManualAsset, AssetCategory } from "@/lib/types";
 import type { BalanceSnapshot } from "@/app/api/user/balance-snapshots/route";
 import type { AccountBackfill } from "@/app/api/user/account-backfills/route";
+import { buildSuggestions } from "@/lib/sourceMappings";
+import type { SourceMapping } from "@/lib/sourceMappings";
 
 /** Subtract n months from a YYYY-MM string */
 function subtractMonths(ym: string, n: number): string {
@@ -148,9 +150,10 @@ export async function GET(request: NextRequest) {
     // month with actual transactions" — statement dates can be in the future
     // (e.g. a March statement with a statementDate of April 1) and should not
     // override the month that genuinely has the most recent transaction data.
-    const [rulesSnap, profile] = await Promise.all([
+    const [rulesSnap, profile, sourceMappingsSnap] = await Promise.all([
       db.collection(`users/${uid}/categoryRules`).get(),
       getFinancialProfile(uid, db),
+      db.collection(`users/${uid}/sourceMappings`).get(),
     ]);
     const categoryRulesMap = new Map<string, string>();
     for (const ruleDoc of rulesSnap.docs) {
@@ -159,6 +162,10 @@ export async function GET(request: NextRequest) {
         categoryRulesMap.set(merchantSlug(r.merchant as string), r.category as string);
       }
     }
+    const existingMappings: SourceMapping[] = sourceMappingsSnap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<SourceMapping, "id">),
+    }));
 
     // Prefer the latest month that has real transaction data over the latest
     // statement date. This prevents landing on an empty "current" month when the
@@ -555,6 +562,43 @@ export async function GET(request: NextRequest) {
       },
     };
 
+    // ── Income source suggestions (prefix-match dedup hints) ─────────────────
+    // Only computed on the all-accounts view (not per-account detail pages) to
+    // avoid partial data confusing the comparison.
+    const incomeSuggestions = !accountFilter
+      ? buildSuggestions(
+          Array.from(new Set(profile.incomeTxns.map((t) => t.source).filter(Boolean))),
+          existingMappings,
+          "income"
+        )
+      : [];
+
+    // ── Expense merchant suggestions (prefix-match dedup hints) ───────────────
+    // Compare merchant names across all expense transactions — catches AI naming
+    // inconsistencies like "AMZN MKTP CA" vs "AMAZON.CA".
+    // affectsCache is set to true when the two merchants have different categories
+    // (a merge would change coreExpensesTotal for one of them).
+    const expenseSuggestions = !accountFilter
+      ? (() => {
+          const merchantCategories = new Map<string, string>();
+          for (const t of profile.expenseTxns) {
+            if (t.merchant) merchantCategories.set(t.merchant, t.category ?? "Other");
+          }
+          const raw = buildSuggestions(
+            Array.from(merchantCategories.keys()),
+            existingMappings,
+            "expense"
+          );
+          // Flag pairs where categories differ — merging would affect spending totals
+          return raw.map((s) => ({
+            ...s,
+            affectsCache:
+              (merchantCategories.get(s.canonical) ?? "") !==
+              (merchantCategories.get(s.alias)     ?? ""),
+          }));
+        })()
+      : [];
+
     return NextResponse.json({
       data: enrichedConsolidated,
       /** Total payments made toward credit/loan/mortgage accounts this month.
@@ -578,6 +622,8 @@ export async function GET(request: NextRequest) {
       accountCount: uniqueAccountIds.size,
       lastUploadedAt,
       liquidAssets,
+      incomeSuggestions,
+      expenseSuggestions,
       /** FX rates used for net worth: currency → CAD rate (e.g. { "USD": 1.42 }) */
       fxRates: profile.fxRates ?? {},
       /**

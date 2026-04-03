@@ -11,6 +11,8 @@ import { detectFrequency } from "@/lib/incomeEngine";
 import { projectNextDates, nextUpcoming, toDateStr } from "@/lib/projectionEngine";
 import { computeRadarItems } from "@/lib/today/computeRadarItems";
 import type { RadarItem, CalendarEvent, FreshnessData, FreshnessState, NetWorthSnapshot } from "@/lib/today/types";
+import { resolveCanonical } from "@/lib/sourceMappings";
+import type { SourceMapping } from "@/lib/sourceMappings";
 
 async function getUid(req: NextRequest): Promise<string | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
@@ -151,25 +153,31 @@ export async function GET(req: NextRequest) {
   }
 
   // ── 2. Cash commitments ────────────────────────────────────────────────────
-  const cashSnap = await db.collection(`users/${uid}/cashCommitments`).get();
+  const [cashSnap, recurringSnap, ratesSnap, sourceMappingsSnap] = await Promise.all([
+    db.collection(`users/${uid}/cashCommitments`).get(),
+    db.collection(`users/${uid}/recurringRules`).get(),
+    db.collection(`users/${uid}/accountRates`).get(),
+    db.collection(`users/${uid}/sourceMappings`).get(),
+  ]);
   const cashItems = cashSnap.docs.map((d) => d.data() as {
     id: string; name: string; amount: number; frequency: string;
     category: string; notes?: string; nextDate?: string;
   });
 
   // ── 3. User-marked recurring rules ─────────────────────────────────────────
-  const recurringSnap = await db.collection(`users/${uid}/recurringRules`).get();
   const recurringRules = recurringSnap.docs.map((d) => d.data() as {
     merchant: string; amount: number; frequency: string; category?: string; slug: string;
   });
 
   // ── 4. Account rates (CC APR alert + minimum payment estimate) ─────────────
-  const ratesSnap = await db.collection(`users/${uid}/accountRates`).get();
   const ratesByAccount: Record<string, number> = {};
   for (const d of ratesSnap.docs) {
     const r = d.data();
     ratesByAccount[d.id] = (r.manualRate ?? r.aiRate ?? 0) as number;
   }
+
+  // ── 4b. Source mappings (income deduplication) ─────────────────────────────
+  const sourceMappings = sourceMappingsSnap.docs.map((d) => d.data() as SourceMapping);
 
   // ── 5. Build merchant → day-of-month pattern from ALL transaction history ──
   // Gives us predicted dates and account attribution for recurring items.
@@ -473,16 +481,26 @@ export async function GET(req: NextRequest) {
   // ── E. Expected income — frequency-aware projection ─────────────────────────
   // Group incomeTxns by source, detect frequency, project next dates using
   // medianGap instead of day-of-month (which breaks for biweekly pay).
+
+  // Transfers that landed in income (e.g. "RY134 TFR-TO", "E-TFR JOHN") should
+  // never be treated as recurring income — they are one-off inter-account moves.
+  const TRANSFER_SRC_RE = /\b(TFR|TRANSFER|E-TFR|ETFR|XFER)\b/i;
+
   const incomeBySource = new Map<string, typeof incomeTxns>();
   for (const txn of incomeTxns) {
-    const key = normKey(txn.source || txn.description || "income");
+    const src = txn.source || txn.description || "income";
+    if (TRANSFER_SRC_RE.test(src)) continue;        // skip transfer-like sources
+    const canonical = resolveCanonical(src, sourceMappings);  // merge confirmed aliases
+    const key = normKey(canonical);
     const arr = incomeBySource.get(key) ?? [];
     arr.push(txn);
     incomeBySource.set(key, arr);
   }
 
   for (const [srcKey, txns] of incomeBySource) {
-    if (txns.length < 1) continue;
+    // Require at least 2 occurrences before predicting — a single deposit is
+    // not a confirmed pattern and should not show as overdue/upcoming.
+    if (txns.length < 2) continue;
 
     const sortedByDate = [...txns].sort((a, b) => b.date.localeCompare(a.date));
     const lastDate     = sortedByDate[0].date;
@@ -495,8 +513,10 @@ export async function GET(req: NextRequest) {
       : 0;
     if (medianAmt <= 0) continue;
 
-    const sourceName = txns[0].source || txns[0].description ||
-      srcKey.replace(/\b\w/g, (c) => c.toUpperCase());
+    const sourceName = resolveCanonical(
+      txns[0].source || txns[0].description || srcKey.replace(/\b\w/g, (c) => c.toUpperCase()),
+      sourceMappings
+    );
 
     if (freq.frequency !== "irregular" && freq.medianGap && freq.medianGap >= 5) {
       // Frequency-aware: project from last date using gap

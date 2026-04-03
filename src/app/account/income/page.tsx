@@ -17,6 +17,7 @@ import {
 } from "@/lib/incomeEngine";
 import type { SourceMonthData } from "@/lib/incomeEngine";
 import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
+import type { SourceSuggestion } from "@/lib/sourceMappings";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -162,6 +163,12 @@ export default function IncomePage() {
   const [labelDraft, setLabelDraft]       = useState("");
   const labelInputRef                     = useRef<HTMLInputElement>(null);
   const [showOneTime, setShowOneTime]     = useState(false);
+  const [suggestions, setSuggestions]     = useState<SourceSuggestion[]>([]);
+  // pairKey → "confirmed" | "rejected" | undefined (pending)
+  const [suggestionDecisions, setSuggestionDecisions] = useState<Record<string, "confirmed" | "rejected">>({});
+  const [applyingMappings, setApplyingMappings] = useState(false);
+  const [token, setToken]                 = useState<string | null>(null);
+  const [suggestionListExpanded, setSuggestionListExpanded] = useState(false);
 
   useEffect(() => {
     const { auth, db } = getFirebaseClient();
@@ -182,6 +189,7 @@ export default function IncomePage() {
           setSourceLabels(labelsDoc.data() ?? {});
         }
         const token = await user.getIdToken();
+        setToken(token);
         const res = await fetch("/api/user/statements/consolidated", {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -198,6 +206,12 @@ export default function IncomePage() {
         setHistory(hist);
         setTotalMonths(json.totalMonthsTracked ?? hist.length);
         setSourceHistory(json.incomeSourceHistory ?? {});
+        const incomeSugg = json.incomeSuggestions ?? [];
+        setSuggestions(incomeSugg);
+        // Default every suggestion to "confirmed" — user unchecks the ones they disagree with
+        const defaultDecisions: Record<string, "confirmed" | "rejected"> = {};
+        for (const s of incomeSugg) defaultDecisions[s.pairKey] = "confirmed";
+        setSuggestionDecisions(defaultDecisions);
 
         const latestYm: string = json.yearMonth ?? null;
         setSelectedMonth(latestYm);
@@ -287,6 +301,31 @@ export default function IncomePage() {
   function cancelEditLabel() {
     setEditingLabel(null);
     setLabelDraft("");
+  }
+
+  async function handleApplyMappings() {
+    if (!token) return;
+    const confirmed = suggestions.filter((s) => suggestionDecisions[s.pairKey] === "confirmed");
+    const rejected  = suggestions.filter((s) => suggestionDecisions[s.pairKey] === "rejected");
+    const toSave = [
+      ...confirmed.map((s) => ({ ...s, status: "confirmed" as const, affectsCache: false, createdAt: new Date().toISOString() })),
+      ...rejected.map((s)  => ({ ...s, status: "rejected"  as const, affectsCache: false, createdAt: new Date().toISOString() })),
+    ];
+    if (toSave.length === 0) return;
+    setApplyingMappings(true);
+    try {
+      await fetch("/api/user/source-mappings", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ mappings: toSave }),
+      });
+      // Remove applied suggestions from the review list
+      const appliedKeys = new Set(toSave.map((m) => m.pairKey));
+      setSuggestions((prev) => prev.filter((s) => !appliedKeys.has(s.pairKey)));
+      setSuggestionDecisions({});
+    } finally {
+      setApplyingMappings(false);
+    }
   }
 
   // ── derived ──────────────────────────────────────────────────────────────────
@@ -440,6 +479,66 @@ export default function IncomePage() {
 
   return (
     <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
+
+      {/* Suggestions review card */}
+      {suggestions.length > 0 && (() => {
+        const merging = suggestions.filter((s) => suggestionDecisions[s.pairKey] !== "rejected");
+        return (
+          <div className="mt-4 rounded-xl border border-purple-200 bg-purple-50/40 overflow-hidden">
+            {/* Header — one-tap action */}
+            <div className="flex items-center justify-between px-4 py-3">
+              <div>
+                <p className="text-sm font-semibold text-purple-900">
+                  {merging.length} duplicate income source{merging.length !== 1 ? "s" : ""} found
+                </p>
+                <button
+                  onClick={() => setSuggestionListExpanded((v) => !v)}
+                  className="text-[11px] text-purple-400 underline underline-offset-2 hover:text-purple-600"
+                >
+                  {suggestionListExpanded ? "Hide list" : "Review before merging"}
+                </button>
+              </div>
+              <button
+                onClick={handleApplyMappings}
+                disabled={applyingMappings}
+                className="shrink-0 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50 transition"
+              >
+                {applyingMappings ? "Saving…" : "Merge All"}
+              </button>
+            </div>
+            {/* Collapsed list — optional review */}
+            {suggestionListExpanded && (
+              <div className="border-t border-purple-100 divide-y divide-purple-100/60 max-h-72 overflow-y-auto">
+                {suggestions.map((s) => {
+                  const excluded = suggestionDecisions[s.pairKey] === "rejected";
+                  return (
+                    <button
+                      key={s.pairKey}
+                      onClick={() => setSuggestionDecisions((p) => ({
+                        ...p,
+                        [s.pairKey]: excluded ? "confirmed" : "rejected",
+                      }))}
+                      className={`flex w-full items-center gap-3 px-4 py-2 text-left transition hover:bg-purple-50/60 ${excluded ? "opacity-40" : ""}`}
+                    >
+                      <span className={`shrink-0 h-4 w-4 rounded border flex items-center justify-center transition ${excluded ? "border-gray-300 bg-white" : "border-purple-500 bg-purple-500"}`}>
+                        {!excluded && <svg className="h-2.5 w-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
+                      </span>
+                      <span className="flex-1 min-w-0 text-sm text-gray-800 truncate">{s.canonical}</span>
+                      <svg className="h-3 w-3 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" /></svg>
+                      <span className={`flex-1 min-w-0 text-sm truncate ${excluded ? "text-gray-400" : "text-gray-500 line-through decoration-gray-300"}`}>{s.alias}</span>
+                    </button>
+                  );
+                })}
+                {merging.length !== suggestions.length && (
+                  <div className="px-4 py-2 text-[11px] text-purple-500 bg-purple-50">
+                    {merging.length} will merge · {suggestions.length - merging.length} excluded
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Header */}
       <div className="mb-1">

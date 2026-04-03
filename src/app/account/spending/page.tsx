@@ -251,6 +251,10 @@ function SpendingPageInner() {
   const [error, setError]               = useState<string | null>(null);
   const [token, setToken]               = useState<string | null>(null);
   const [needsRefresh, setNeedsRefresh] = useState(false);
+  const [expenseSuggestions, setExpenseSuggestions] = useState<import("@/lib/sourceMappings").SourceSuggestion[]>([]);
+  const [suggestionDecisions, setSuggestionDecisions] = useState<Record<string, "confirmed" | "rejected">>({});
+  const [applyingMappings, setApplyingMappings] = useState(false);
+  const [suggestionListExpanded, setSuggestionListExpanded] = useState(false);
 
   // All-time merchant aggregation (loaded lazily when By Merchant tab is opened)
   const [merchants, setMerchants]         = useState<import("@/app/api/user/spending/merchants/route").MerchantSummary[] | null>(null);
@@ -361,6 +365,11 @@ function SpendingPageInner() {
         setData(json.data ?? null);
         setPaymentsMade(json.paymentsMade ?? 0);
         setNeedsRefresh(json.needsRefresh ?? false);
+        const expSugg = json.expenseSuggestions ?? [];
+        setExpenseSuggestions(expSugg);
+        const defaultDecisions: Record<string, "confirmed" | "rejected"> = {};
+        for (const s of expSugg) defaultDecisions[s.pairKey] = "confirmed";
+        setSuggestionDecisions(defaultDecisions);
         setYearMonth(currentYM);
         setSelectedMonth(currentYM);
         setHistory(Array.isArray(json.history) ? json.history : []);
@@ -444,6 +453,33 @@ function SpendingPageInner() {
     if (uid) {
       const { db } = getFirebaseClient();
       await setDoc(doc(db, `users/${uid}/prefs/ignoredTxs`), { keys: Array.from(next) });
+    }
+  }
+
+  async function handleApplyExpenseMappings() {
+    if (!token) return;
+    const suggestions = expenseSuggestions;
+    const confirmed = suggestions.filter((s) => suggestionDecisions[s.pairKey] === "confirmed");
+    const rejected  = suggestions.filter((s) => suggestionDecisions[s.pairKey] === "rejected");
+    const toSave = [
+      ...confirmed.map((s) => ({ ...s, status: "confirmed" as const, createdAt: new Date().toISOString() })),
+      ...rejected.map((s)  => ({ ...s, status: "rejected"  as const, createdAt: new Date().toISOString() })),
+    ];
+    if (toSave.length === 0) return;
+    setApplyingMappings(true);
+    try {
+      await fetch("/api/user/source-mappings", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ mappings: toSave }),
+      });
+      const appliedKeys = new Set(toSave.map((m) => m.pairKey));
+      setExpenseSuggestions((prev) => prev.filter((s) => !appliedKeys.has(s.pairKey)));
+      setSuggestionDecisions({});
+      // If any confirmed mapping affects cache, trigger a refresh
+      if (confirmed.some((s) => s.affectsCache)) setNeedsRefresh(true);
+    } finally {
+      setApplyingMappings(false);
     }
   }
 
@@ -695,6 +731,7 @@ function SpendingPageInner() {
     return s + monthly * 12;
   }, 0);
   const hasData = total > 0 || excludedTotal > 0 || allSubscriptions.length > 0 || txns.length > 0 || cashItems.length > 0;
+  const mergingExpenseSuggestions = expenseSuggestions.filter((s) => suggestionDecisions[s.pairKey] !== "rejected");
 
   if (loading) return (
     <div className="flex min-h-[50vh] items-center justify-center">
@@ -798,6 +835,64 @@ function SpendingPageInner() {
           {/* ── Overview tab ──────────────────────────────────────────────── */}
           {activeTab === "overview" && (
             <div className="space-y-5">
+
+              {/* Expense merchant suggestions */}
+              {expenseSuggestions.length > 0 && (
+                <div className="rounded-xl border border-purple-200 bg-purple-50/40 overflow-hidden">
+                    <div className="flex items-center justify-between px-4 py-3">
+                      <div>
+                        <p className="text-sm font-semibold text-purple-900">
+                          {mergingExpenseSuggestions.length} duplicate merchant{mergingExpenseSuggestions.length !== 1 ? "s" : ""} found
+                        </p>
+                        <button
+                          onClick={() => setSuggestionListExpanded((v) => !v)}
+                          className="text-[11px] text-purple-400 underline underline-offset-2 hover:text-purple-600"
+                        >
+                          {suggestionListExpanded ? "Hide list" : "Review before merging"}
+                        </button>
+                      </div>
+                      <button
+                        onClick={handleApplyExpenseMappings}
+                        disabled={applyingMappings}
+                        className="shrink-0 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50 transition"
+                      >
+                        {applyingMappings ? "Saving…" : "Merge All"}
+                      </button>
+                    </div>
+                    {suggestionListExpanded && (
+                      <div className="border-t border-purple-100 divide-y divide-purple-100/60 max-h-72 overflow-y-auto">
+                        {expenseSuggestions.map((s) => {
+                          const excluded = suggestionDecisions[s.pairKey] === "rejected";
+                          return (
+                            <button
+                              key={s.pairKey}
+                              onClick={() => setSuggestionDecisions((p) => ({
+                                ...p,
+                                [s.pairKey]: excluded ? "confirmed" : "rejected",
+                              }))}
+                              className={`flex w-full items-center gap-3 px-4 py-2 text-left transition hover:bg-purple-50/60 ${excluded ? "opacity-40" : ""}`}
+                            >
+                              <span className={`shrink-0 h-4 w-4 rounded border flex items-center justify-center transition ${excluded ? "border-gray-300 bg-white" : "border-purple-500 bg-purple-500"}`}>
+                                {!excluded && <svg className="h-2.5 w-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
+                              </span>
+                              <span className="flex-1 min-w-0 text-sm text-gray-800 truncate">{s.canonical}</span>
+                              <svg className="h-3 w-3 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" /></svg>
+                              <span className={`flex-1 min-w-0 text-sm truncate ${excluded ? "text-gray-400" : "text-gray-500 line-through decoration-gray-300"}`}>{s.alias}</span>
+                              {s.affectsCache && !excluded && (
+                                <span className="shrink-0 text-[10px] font-semibold text-orange-500">↻</span>
+                              )}
+                            </button>
+                          );
+                        })}
+                        {mergingExpenseSuggestions.length !== expenseSuggestions.length && (
+                          <div className="px-4 py-2 text-[11px] text-purple-500 bg-purple-50">
+                            {mergingExpenseSuggestions.length} will merge · {expenseSuggestions.length - mergingExpenseSuggestions.length} excluded
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               {history.filter((h) => (h.expensesTotal ?? 0) > 0).length >= 2 && (
                 <>
                   <SpendingChart
