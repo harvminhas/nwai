@@ -219,7 +219,6 @@ export async function buildAndCacheFinancialProfile(
     const src = (txn.source ?? txn.description ?? "").trim();
     if (INCOME_TRANSFER_RE.test(src)) return true;
     if (userTransferSources.has(src)) return true;
-    if (txn.category === "Transfer In") return true;
     return false;
   }
 
