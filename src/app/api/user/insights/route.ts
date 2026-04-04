@@ -5,7 +5,7 @@ import type { ParsedStatementData } from "@/lib/types";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { merchantSlug } from "@/lib/applyRules";
 import { getFinancialProfile } from "@/lib/financialProfile";
-import { getNetWorth, getSavingsRate, getMonthlyIncome, getMonthlyExpenses } from "@/lib/profileMetrics";
+import { getNetWorth, getSavingsRate, getMonthlyIncome, getMonthlyExpenses, getLatestCompleteMonth, getMonthlyDebtPayments } from "@/lib/profileMetrics";
 import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
 import { detectFrequency } from "@/lib/incomeEngine";
 import { projectNextDates, nextUpcoming, toDateStr } from "@/lib/projectionEngine";
@@ -154,16 +154,18 @@ export async function GET(req: NextRequest) {
   }
 
   // ── 2. Cash commitments ────────────────────────────────────────────────────
-  const [cashSnap, recurringSnap, ratesSnap, sourceMappingsSnap] = await Promise.all([
+  const [cashSnap, recurringSnap, ratesSnap, sourceMappingsSnap, cashIncomeSnap] = await Promise.all([
     db.collection(`users/${uid}/cashCommitments`).get(),
     db.collection(`users/${uid}/recurringRules`).get(),
     db.collection(`users/${uid}/accountRates`).get(),
     db.collection(`users/${uid}/sourceMappings`).get(),
+    db.collection(`users/${uid}/cashIncome`).get(),
   ]);
   const cashItems = cashSnap.docs.map((d) => d.data() as {
     id: string; name: string; amount: number; frequency: string;
     category: string; notes?: string; nextDate?: string;
   });
+  const cashIncomeItems = cashIncomeSnap.docs.map((d) => d.data() as import("@/lib/cashIncome").CashIncomeEntry);
 
   // ── 3. User-marked recurring rules ─────────────────────────────────────────
   const recurringRules = recurringSnap.docs.map((d) => d.data() as {
@@ -570,6 +572,78 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── E2. Cash income entries — recurring ones feed Next Up ────────────────────
+  for (const entry of cashIncomeItems) {
+    if (entry.frequency === "once") {
+      // One-off: only show if nextDate is within look-ahead window
+      if (!entry.nextDate) continue;
+      const diff = daysBetween(today, entry.nextDate);
+      if (diff > LOOK_AHEAD || diff < -3) continue;
+      const key = `cash-income-once-${entry.id}`;
+      if (seenMerchants.has(key)) continue;
+      seenMerchants.add(key);
+      upcoming.push({
+        id: key,
+        date: entry.nextDate,
+        daysFromNow: diff,
+        title: entry.name,
+        subtitle: `One-off · ${entry.category}`,
+        amount: entry.amount,
+        type: "cash-in",
+        href: "/account/income?tab=cash",
+        isOverdue: diff < 0,
+        isThisMonth: false,
+      });
+    } else {
+      // Recurring: nextDate is the NEXT expected date (not a past anchor).
+      // Advance forward by frequency gap until we reach a date ≥ today−3 days,
+      // then emit up to 2 upcoming occurrences within the look-ahead window.
+      if (!entry.nextDate) continue;
+      const freqDays: Record<string, number> = {
+        weekly: 7, biweekly: 14, monthly: 30, quarterly: 91, annual: 365,
+      };
+      const gap = freqDays[entry.frequency] ?? 30;
+      // Use a wider look-ahead for income so monthly entries are always visible
+      const incomeLookAhead = Math.max(LOOK_AHEAD, gap + 7);
+
+      // Step forward from nextDate until we find the first occurrence that isn't
+      // more than 3 days in the past.
+      let cursor = new Date(entry.nextDate + "T12:00:00Z");
+      const todayMs = new Date(today + "T00:00:00Z").getTime();
+      const gapMs   = gap * 86_400_000;
+      while (cursor.getTime() < todayMs - 3 * 86_400_000) {
+        cursor = new Date(cursor.getTime() + gapMs);
+      }
+
+      // Emit up to 2 occurrences within the look-ahead window
+      for (let i = 0; i < 2; i++) {
+        const daysFromNow = Math.round((cursor.getTime() - todayMs) / 86_400_000);
+        if (daysFromNow > incomeLookAhead) break;
+        const dateStr = toDateStr(cursor);
+        const key = `cash-income-${entry.id}-${dateStr}`;
+        if (!seenMerchants.has(key)) {
+          seenMerchants.add(key);
+          upcoming.push({
+            id: key,
+            date: dateStr,
+            daysFromNow,
+            title: entry.name,
+            subtitle: daysFromNow < 0
+              ? `May have already arrived · ${entry.frequency} · ${entry.category}`
+              : `${entry.frequency} · ${entry.category}`,
+            amount: entry.amount,
+            type: "cash-in",
+            href: "/account/income?tab=cash",
+            isOverdue: daysFromNow < 0,
+            isThisMonth: dateStr.slice(0, 7) === today.slice(0, 7),
+            predictedDate: dateStr,
+          });
+        }
+        cursor = new Date(cursor.getTime() + gapMs);
+      }
+    }
+  }
+
   // ── build today insights (deterministic, from transaction dates) ─────────────
   const todayInsights: TodayInsight[] = [];
 
@@ -917,12 +991,19 @@ export async function GET(req: NextRequest) {
     thisMonthCollapsedCount,
     freshness,
     netWorth,
-    savingsRate: {
-      rate:     getSavingsRate(profile),
-      income:   getMonthlyIncome(profile),
-      expenses: getMonthlyExpenses(profile, undefined, { core: true }),
-      month:    profile.latestTxMonth ?? "",
-    },
+    savingsRate: (() => {
+      // Use the latest month that has both income AND expenses (a complete month).
+      // This skips the current partial month (e.g. April with only cash income
+      // but no expenses yet) and correctly surfaces March if March statements exist.
+      const savingsMonth = getLatestCompleteMonth(profile);
+      return {
+        rate:         getSavingsRate(profile, savingsMonth),
+        income:       getMonthlyIncome(profile, savingsMonth),
+        expenses:     getMonthlyExpenses(profile, savingsMonth, { core: true }),
+        debtPayments: getMonthlyDebtPayments(profile, savingsMonth),
+        month:        savingsMonth,
+      };
+    })(),
     statusBanner: statusText
       ? { type: statusType, text: statusText, detail: statusDetail }
       : null,

@@ -270,7 +270,21 @@ export function getMonthlyExpenses(
   return options?.core ? entry.coreExpensesTotal : entry.expensesTotal;
 }
 
-// ── getTypicalMonthlySpend ─────────────────────────────────────────────────────
+// ── getLatestCompleteMonth ─────────────────────────────────────────────────────
+
+/**
+ * Return the most recent YYYY-MM from monthlyHistory that has any income or
+ * expense data. Falls back to latestTxMonth.
+ */
+export function getLatestCompleteMonth(profile: FinancialProfileCache): string {
+  const history = [...profile.monthlyHistory].sort((a, b) =>
+    b.yearMonth.localeCompare(a.yearMonth),
+  );
+  const withData = history.find((h) => h.incomeTotal > 0 || h.expensesTotal > 0);
+  return withData?.yearMonth ?? profile.latestTxMonth ?? "";
+}
+
+
 
 /**
  * Typical (median) monthly core spend from the profile cache.
@@ -279,6 +293,31 @@ export function getMonthlyExpenses(
 export function getTypicalMonthlySpend(profile: FinancialProfileCache): number {
   return profile.typicalMonthly?.median ?? 0;
 }
+
+// ── getMonthlyDebtPayments ─────────────────────────────────────────────────────
+
+/**
+ * Total minimum/scheduled debt payments for a given month.
+ * Uses the same min/extra split as the Spending page debt card.
+ * User tag overrides (min vs extra) are baked into the cache at build time.
+ *
+ * If the requested month has no debt payment data (e.g. checking account
+ * statement not yet uploaded for that month), falls back to the most recent
+ * month in history that has debt payments — so the savings rate toggle is
+ * always available when the user has any debt obligations.
+ */
+export function getMonthlyDebtPayments(profile: FinancialProfileCache, yearMonth?: string): number {
+  const ym    = yearMonth ?? profile.latestTxMonth ?? "";
+  const entry = profile.monthlyHistory.find((h) => h.yearMonth === ym);
+  if (entry?.minDebtPaymentsTotal) return entry.minDebtPaymentsTotal;
+
+  // Fall back to most recent month with debt payments
+  const fallback = [...profile.monthlyHistory]
+    .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth))
+    .find((h) => (h.minDebtPaymentsTotal ?? 0) > 0);
+  return fallback?.minDebtPaymentsTotal ?? 0;
+}
+
 
 // ── Internal helper ───────────────────────────────────────────────────────────
 

@@ -22,12 +22,15 @@
 import type * as Firestore from "firebase-admin/firestore";
 import { extractAllTransactions } from "./extractTransactions";
 import { computeTypicalSpend, CORE_EXCLUDE_RE, INCOME_TRANSFER_RE } from "./spendingMetrics";
+import type { CashIncomeEntry } from "./cashIncome";
+import { occurrencesInMonth } from "./cashIncome";
 import { merchantSlug } from "./applyRules";
 import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
 import type { TypicalSpend } from "./spendingMetrics";
 import type { ManualAsset, InvestmentHolding, ParsedStatementData } from "./types";
 import { buildAccountSlug } from "./accountSlug";
 import { getFxRatesForCurrencies } from "./fxRates";
+import { splitDebtPayments } from "./debtUtils";
 
 // ── Balance snapshot shape (mirrors /api/user/balance-snapshots) ──────────────
 export interface BalanceSnapshot {
@@ -50,7 +53,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "11";
+const SCHEMA_VERSION = "14";
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -78,6 +81,10 @@ export interface MonthlyHistoryEntry {
   coreExpensesTotal: number;
   /** Total income for this month */
   incomeTotal: number;
+  /** Sum of all "Debt Payments" category transactions (min + extra) */
+  debtPaymentsTotal: number;
+  /** Minimum / scheduled debt payments only (excl. extra payments) */
+  minDebtPaymentsTotal: number;
 }
 
 export interface FinancialProfileCache {
@@ -190,7 +197,7 @@ export async function buildAndCacheFinancialProfile(
   db: Firestore.Firestore,
 ): Promise<FinancialProfileCache> {
   // Fetch all data sources in parallel — same collections the assets page uses.
-  const [txData, rulesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap] =
+  const [txData, rulesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap] =
     await Promise.all([
       extractAllTransactions(uid, db),
       db.collection(`users/${uid}/categoryRules`).get(),
@@ -199,6 +206,9 @@ export async function buildAndCacheFinancialProfile(
       db.collection(`users/${uid}/balanceSnapshots`).orderBy("yearMonth", "desc").get(),
       db.collection(`users/${uid}/accountCurrencies`).get(),
       db.doc(`users/${uid}/prefs/transferIncomeSources`).get(),
+      db.collection(`users/${uid}/cashIncome`).get(),
+      db.collection(`users/${uid}/incomeCategoryRules`).get(),
+      db.doc(`users/${uid}/prefs/debtPaymentTags`).get(),
     ]);
 
   // Currency overrides: accountSlug → ISO currency code (e.g. "USD")
@@ -219,8 +229,28 @@ export async function buildAndCacheFinancialProfile(
     const src = (txn.source ?? txn.description ?? "").trim();
     if (INCOME_TRANSFER_RE.test(src)) return true;
     if (userTransferSources.has(src)) return true;
+    // Check income category rules — if user categorized as Transfer, exclude
+    if (incomeCatRulesMap.get(sourceSlug(src)) === "Transfer") return true;
     return false;
   }
+
+  // Cash income entries — manual/recurring income outside bank statements
+  const cashIncomeEntries: CashIncomeEntry[] = cashIncomeSnap.docs.map((d) => d.data() as CashIncomeEntry);
+
+  // Income category rules — source slug → category (Transfer sources excluded from total)
+  const incomeCatRulesMap = new Map<string, string>();
+  for (const d of incomeCatRulesSnap.docs) {
+    const r = d.data();
+    if (r.slug && r.category) incomeCatRulesMap.set(r.slug as string, r.category as string);
+  }
+  function sourceSlug(s: string): string {
+    return s.toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 60);
+  }
+
+  // User debt payment tag overrides — debtTxKey → "minimum" | "extra" | "scheduled"
+  const userDebtTags: Record<string, string> = debtTagsSnap.exists
+    ? (debtTagsSnap.data()?.tags ?? {})
+    : {};
 
   // Apply user category rules to expense transactions
   const rulesMap = new Map<string, string>();
@@ -311,13 +341,26 @@ export async function buildAndCacheFinancialProfile(
     const monthInc = allIncomeTxns.filter((t) => t.txMonth === ym);
     // Exclude inter-account transfers from income total (auto-detected + user-marked)
     const monthIncFiltered = monthInc.filter((t) => !isIncomeTransfer(t));
+    // Add cash income entries that have an occurrence in this month
+    const cashIncomeForMonth = cashIncomeEntries.reduce((sum, entry) => {
+      const count = occurrencesInMonth(entry, ym);
+      return sum + (count > 0 ? entry.amount * count : 0);
+    }, 0);
+    const debtTxns = monthExp.filter((t) => /^debt payments$/i.test((t.category ?? "").trim()));
+    const { minPaymentsTotal } = splitDebtPayments(
+      debtTxns as (import("./types").ExpenseTransaction & { debtType?: string })[],
+      userDebtTags,
+      ym,
+    );
     return {
       yearMonth: ym,
       expensesTotal: monthExp.reduce((s, t) => s + t.amount, 0),
       coreExpensesTotal: monthExp
         .filter((t) => !CORE_EXCLUDE_RE.test((t.category ?? "").trim()))
         .reduce((s, t) => s + t.amount, 0),
-      incomeTotal: monthIncFiltered.reduce((s, t) => s + t.amount, 0),
+      debtPaymentsTotal: debtTxns.reduce((s, t) => s + t.amount, 0),
+      minDebtPaymentsTotal: minPaymentsTotal,
+      incomeTotal: monthIncFiltered.reduce((s, t) => s + t.amount, 0) + cashIncomeForMonth,
     };
   });
 

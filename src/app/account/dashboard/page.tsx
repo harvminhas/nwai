@@ -226,7 +226,7 @@ export default function TodayPage() {
   const [radar,       setRadar]       = useState<RadarItem[]>([]);
   const [freshness,   setFreshness]   = useState<FreshnessData | null>(null);
   const [netWorth,    setNetWorth]    = useState<NetWorthSnapshot | null>(null);
-  const [savingsRate, setSavingsRate] = useState<{ rate: number; income: number; expenses: number; month: string } | null>(null);
+  const [savingsRate, setSavingsRate] = useState<{ rate: number; income: number; expenses: number; debtPayments: number; month: string } | null>(null);
   const [statusBanner,setStatusBanner]= useState<{ type: string; text: string; detail: string } | null>(null);
   const [needsRefresh, setNeedsRefresh] = useState(false);
   const [loading,     setLoading]     = useState(true);
@@ -265,7 +265,7 @@ export default function TodayPage() {
       setRadar(insJson.radar ?? []);
       setFreshness(insJson.freshness ?? null);
       setNetWorth(insJson.netWorth ?? null);
-      setSavingsRate(insJson.savingsRate ?? null);
+      setSavingsRate(insJson.savingsRate ? { debtPayments: 0, ...insJson.savingsRate } : null);
       setStatusBanner(insJson.statusBanner ?? null);
       setNeedsRefresh(insJson.needsRefresh ?? false);
       const sorted = (cardJson.cards ?? [] as AgentCard[]).sort((a: AgentCard, b: AgentCard) => {
@@ -628,12 +628,17 @@ export default function TodayPage() {
 
   // ── SavingsRateCard ───────────────────────────────────────────────────────────
   function SavingsRateCard() {
+    const [includeDebt, setIncludeDebt] = useState(false);
     if (!savingsRate || savingsRate.income <= 0) return null;
-    const { rate, income, expenses, month } = savingsRate;
+    const { income, expenses, debtPayments, month } = savingsRate;
     const cad = (n: number) => fmt(n);
     const monthLabel = month
       ? new Date(month + "-01").toLocaleDateString("en-CA", { month: "short", year: "numeric" })
       : "";
+
+    // Recompute rate client-side so the toggle is instant (no round-trip)
+    const effectiveExpenses = includeDebt ? expenses + debtPayments : expenses;
+    const rate      = income > 0 ? Math.round(((income - effectiveExpenses) / income) * 100) : 0;
     const clampedRate = Math.max(-100, Math.min(100, rate));
     const barPct      = Math.max(0, Math.min(100, clampedRate));
     const isNeg       = rate < 0;
@@ -669,9 +674,36 @@ export default function TodayPage() {
             <span className="text-xs font-semibold tabular-nums text-gray-800">{cad(income)}</span>
           </div>
           <div className="flex items-center justify-between px-4 py-2">
-            <span className="text-xs text-gray-500">Expenses</span>
-            <span className="text-xs font-semibold tabular-nums text-gray-800">{cad(expenses)}</span>
+            <span className="text-xs text-gray-500">
+              Expenses{includeDebt && debtPayments > 0 && (
+                <span className="ml-1 text-gray-400">(+debt pmts)</span>
+              )}
+            </span>
+            <span className="text-xs font-semibold tabular-nums text-gray-800">{cad(effectiveExpenses)}</span>
           </div>
+          {/* Toggle — shown whenever min debt payment data exists (any month) */}
+          {debtPayments > 0 && (
+            <div className="flex items-center justify-between px-4 py-2 bg-gray-50/60">
+              <span className="text-xs text-gray-500">
+                Include min debt payments
+                <span className="ml-1 text-gray-400">({cad(debtPayments)}/mo)</span>
+              </span>
+              <button
+                onClick={() => setIncludeDebt((v) => !v)}
+                className={`relative inline-flex h-4 w-8 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+                  includeDebt ? "bg-indigo-500" : "bg-gray-200"
+                }`}
+                role="switch"
+                aria-checked={includeDebt}
+              >
+                <span
+                  className={`inline-block h-3 w-3 rounded-full bg-white shadow transform transition-transform ${
+                    includeDebt ? "translate-x-4" : "translate-x-0"
+                  }`}
+                />
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );

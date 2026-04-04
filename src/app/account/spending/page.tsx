@@ -11,6 +11,7 @@ import { isBalanceMarker, txIgnoreKey } from "@/lib/balanceMarkers";
 import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
 import { merchantSlug } from "@/lib/applyRules";
 import { detectFrequency, FREQUENCY_CONFIG, type Frequency } from "@/lib/incomeEngine";
+import { SCHEDULED_DEBT_TYPES, debtTxKey, defaultDebtTag, splitDebtPayments } from "@/lib/debtUtils";
 import {
   BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
   ReferenceLine, ResponsiveContainer, PieChart, Pie,
@@ -199,19 +200,6 @@ function fmtDate(iso: string) {
 
 type HistoryPoint = { yearMonth: string; netWorth: number; expensesTotal?: number; coreExpensesTotal?: number };
 
-// ── debt payment helpers ───────────────────────────────────────────────────────
-
-const SCHEDULED_DEBT_TYPES = new Set(["mortgage", "auto_loan", "personal_loan"]);
-
-function debtTxKey(tx: ExpenseTransaction, fallbackMonth: string): string {
-  const date = tx.date ?? fallbackMonth;
-  const slug = (tx.merchant ?? "").toLowerCase().replace(/[^a-z0-9]/g, "_");
-  return `${date}_${slug}_${Math.round((tx.amount ?? 0) * 100)}`;
-}
-
-function defaultDebtTag(debtType: string | undefined): "scheduled" | "minimum" {
-  return SCHEDULED_DEBT_TYPES.has(debtType ?? "") ? "scheduled" : "minimum";
-}
 
 const DEBT_TYPE_LABELS: Record<string, string> = {
   mortgage: "Mortgage",
@@ -1107,14 +1095,12 @@ function SpendingPageInner() {
                   {/* ── Debt Payments card (prominent) ───────────────────────── */}
                   {(debtTotal > 0 || interestTotal > 0) && (() => {
                     const sortedDebt = debtTxns.slice().sort((a, b) => b.amount - a.amount);
-                    let committedTotal = 0;
-                    let extraTotal = 0;
-                    for (const tx of sortedDebt) {
-                      const key = debtTxKey(tx, filterMonth);
-                      const tag = debtTags[key] ?? defaultDebtTag((tx as ExpenseTransaction & { debtType?: DebtType }).debtType);
-                      if (tag === "extra" || tag === "full_balance") extraTotal += tx.amount;
-                      else committedTotal += tx.amount;
-                    }
+                    const { minPaymentsTotal: committedTotal, extraPaymentsTotal: extraTotal } =
+                      splitDebtPayments(
+                        sortedDebt as (ExpenseTransaction & { debtType?: DebtType })[],
+                        debtTags,
+                        filterMonth,
+                      );
                     return (
                       <div className="rounded-xl border border-orange-200 bg-white overflow-hidden shadow-sm">
                         {/* Header */}

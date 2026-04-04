@@ -150,10 +150,12 @@ export async function GET(request: NextRequest) {
     // month with actual transactions" — statement dates can be in the future
     // (e.g. a March statement with a statementDate of April 1) and should not
     // override the month that genuinely has the most recent transaction data.
-    const [rulesSnap, profile, sourceMappingsSnap] = await Promise.all([
+    const [rulesSnap, profile, sourceMappingsSnap, cashIncomeSnap, incomeCatRulesSnap] = await Promise.all([
       db.collection(`users/${uid}/categoryRules`).get(),
       getFinancialProfile(uid, db),
       db.collection(`users/${uid}/sourceMappings`).get(),
+      db.collection(`users/${uid}/cashIncome`).get(),
+      db.collection(`users/${uid}/incomeCategoryRules`).get(),
     ]);
     const categoryRulesMap = new Map<string, string>();
     for (const ruleDoc of rulesSnap.docs) {
@@ -166,6 +168,12 @@ export async function GET(request: NextRequest) {
       id: d.id,
       ...(d.data() as Omit<SourceMapping, "id">),
     }));
+
+    // Cash income entries and income category rules — passed to the income page
+    const cashIncomeItems = cashIncomeSnap.docs.map((d) => d.data());
+    const incomeCategoryRules = Object.fromEntries(
+      incomeCatRulesSnap.docs.map((d) => [d.data().slug as string, d.data().category as string])
+    );
 
     // Prefer the latest month that has real transaction data over the latest
     // statement date. This prevents landing on an empty "current" month when the
@@ -625,6 +633,8 @@ export async function GET(request: NextRequest) {
       liquidAssets,
       incomeSuggestions,
       expenseSuggestions,
+      cashIncomeItems,
+      incomeCategoryRules,
       /** FX rates used for net worth: currency → CAD rate (e.g. { "USD": 1.42 }) */
       fxRates: profile.fxRates ?? {},
       /**

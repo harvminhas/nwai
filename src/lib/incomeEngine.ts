@@ -49,6 +49,20 @@ export const GENERIC_SOURCE_NAMES = [
   "payroll deposit", "payroll", "salary",
 ];
 
+/** Canonical income categories — used for user recategorization and cash income entries. */
+export const INCOME_CATEGORIES = [
+  "Salary",
+  "Freelance",
+  "Rent",
+  "Business",
+  "Government",
+  "Investment",
+  "Gift",
+  "Transfer",
+  "Other",
+] as const;
+export type IncomeCategory = typeof INCOME_CATEGORIES[number];
+
 // ── reliability scorer ────────────────────────────────────────────────────────
 
 export function scoreSource(
