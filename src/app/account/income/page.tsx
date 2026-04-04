@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
@@ -173,7 +173,7 @@ const EMPTY_CASH_FORM = {
 
 // ── page ──────────────────────────────────────────────────────────────────────
 
-export default function IncomePage() {
+function IncomePageInner() {
   const router     = useRouter();
   const pathname   = usePathname();
   const searchParams = useSearchParams();
@@ -1188,5 +1188,13 @@ export default function IncomePage() {
       )}
 
     </div>
+  );
+}
+
+export default function IncomePage() {
+  return (
+    <Suspense>
+      <IncomePageInner />
+    </Suspense>
   );
 }
