@@ -18,6 +18,7 @@ import {
 import type { SourceMonthData } from "@/lib/incomeEngine";
 import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
 import type { SourceSuggestion } from "@/lib/sourceMappings";
+import { INCOME_TRANSFER_RE } from "@/lib/spendingMetrics";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -59,10 +60,9 @@ const SOURCE_COLORS = [
 ];
 
 // Inter-account transfer patterns — auto-excluded from income display.
-// Also catches the AI-assigned category "Transfer In" for cleaner detection.
-const TRANSFER_SOURCE_RE = /\bTFR[-\s]?(TO|FROM)\b|^IN\d+\s+TFR|inter[-\s]?account|^transfer\s+(to|from)\b|^income\s*\(transfer\s+in\)/i;
+// Uses the canonical INCOME_TRANSFER_RE from spendingMetrics (single source of truth).
 function isTransferSource(description: string, txns?: { category?: string }[]): boolean {
-  if (TRANSFER_SOURCE_RE.test(description)) return true;
+  if (INCOME_TRANSFER_RE.test(description)) return true;
   if (txns && txns.length > 0 && txns.every((t) => t.category === "Transfer In")) return true;
   return false;
 }
@@ -158,6 +158,7 @@ export default function IncomePage() {
   const [showAllTxns, setShowAllTxns]     = useState(false);
   const [uid, setUid]                     = useState<string | null>(null);
   const [excludedSources, setExcludedSources] = useState<Set<string>>(new Set());
+  const [transferSources, setTransferSources] = useState<Set<string>>(new Set());
   const [sourceLabels, setSourceLabels]   = useState<Record<string, string>>({});
   const [editingLabel, setEditingLabel]   = useState<string | null>(null);
   const [labelDraft, setLabelDraft]       = useState("");
@@ -178,15 +179,19 @@ export default function IncomePage() {
       setLoading(true); setError(null);
       try {
         // Load excluded income sources + custom labels from Firestore
-        const [prefDoc, labelsDoc] = await Promise.all([
+        const [prefDoc, labelsDoc, transferDoc] = await Promise.all([
           getDoc(doc(db, `users/${user.uid}/prefs/excludedIncomeSources`)),
           getDoc(doc(db, `users/${user.uid}/prefs/incomeSourceLabels`)),
+          getDoc(doc(db, `users/${user.uid}/prefs/transferIncomeSources`)),
         ]);
         if (prefDoc.exists()) {
           setExcludedSources(new Set(prefDoc.data()?.keys ?? []));
         }
         if (labelsDoc.exists()) {
           setSourceLabels(labelsDoc.data() ?? {});
+        }
+        if (transferDoc.exists()) {
+          setTransferSources(new Set(transferDoc.data()?.keys ?? []));
         }
         const token = await user.getIdToken();
         setToken(token);
@@ -275,6 +280,38 @@ export default function IncomePage() {
     if (!uid) return;
     const { db } = getFirebaseClient();
     await setDoc(doc(db, `users/${uid}/prefs/excludedIncomeSources`), { keys: Array.from(next) });
+  }
+
+  async function handleMarkAsTransfer(description: string) {
+    const next = new Set(transferSources);
+    next.add(description);
+    setTransferSources(next);
+    if (!uid) return;
+    const { db } = getFirebaseClient();
+    await setDoc(doc(db, `users/${uid}/prefs/transferIncomeSources`), { keys: Array.from(next) });
+    // Invalidate cache so incomeTotal is recomputed without this source
+    if (token) {
+      fetch("/api/user/invalidate-cache", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    }
+  }
+
+  async function handleRestoreTransfer(description: string) {
+    const next = new Set(transferSources);
+    next.delete(description);
+    setTransferSources(next);
+    if (!uid) return;
+    const { db } = getFirebaseClient();
+    await setDoc(doc(db, `users/${uid}/prefs/transferIncomeSources`), { keys: Array.from(next) });
+    // Invalidate cache so incomeTotal is recomputed with this source restored
+    if (token) {
+      fetch("/api/user/invalidate-cache", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    }
   }
 
   function startEditLabel(description: string) {
@@ -382,9 +419,9 @@ export default function IncomePage() {
 
   // Auto-filter inter-account transfers + user-excluded sources
   const mergedSources = allMergedSources.filter(
-    (s) => !isTransferSource(s.description, expandedTxnMap.get(s.description) ?? []) && !excludedSources.has(s.description)
+    (s) => !isTransferSource(s.description, expandedTxnMap.get(s.description) ?? []) && !excludedSources.has(s.description) && !transferSources.has(s.description)
   );
-  const autoFilteredSources = allMergedSources.filter((s) => isTransferSource(s.description, expandedTxnMap.get(s.description) ?? []));
+  const autoFilteredSources = allMergedSources.filter((s) => isTransferSource(s.description, expandedTxnMap.get(s.description) ?? []) || transferSources.has(s.description));
   const manuallyExcludedSources = allMergedSources.filter((s) => excludedSources.has(s.description));
 
   // Score each consolidated source using cross-month history.
@@ -764,6 +801,15 @@ export default function IncomePage() {
                             </svg>
                           </button>
                           <button
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleMarkAsTransfer(src.description); }}
+                            title="Mark as transfer (not income)"
+                            className="shrink-0 rounded-full p-0.5 text-gray-300 hover:text-blue-400 hover:bg-blue-50 transition opacity-0 group-hover:opacity-100"
+                          >
+                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                            </svg>
+                          </button>
+                          <button
                             onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleExcludeSource(src.description); }}
                             title="Exclude from income"
                             className="shrink-0 rounded-full p-0.5 text-gray-300 hover:text-red-400 hover:bg-red-50 transition opacity-0 group-hover:opacity-100"
@@ -771,8 +817,7 @@ export default function IncomePage() {
                             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                             </svg>
-                          </button>
-                        </div>
+                          </button>                        </div>
                         <div className="shrink-0 flex items-center gap-2">
                           <div className="text-right">
                             <span className="font-semibold text-sm text-gray-900 tabular-nums">{fmt(src.amount)}</span>
@@ -821,6 +866,14 @@ export default function IncomePage() {
                       {s.description}
                       <span className="text-gray-300">{fmt(s.amount)}</span>
                     </span>
+                    {transferSources.has(s.description) && (
+                      <button
+                        onClick={() => handleRestoreTransfer(s.description)}
+                        className="text-[10px] text-purple-400 hover:text-purple-600 hover:underline"
+                      >
+                        restore
+                      </button>
+                    )}
                   </div>
                 ))}
                 {manuallyExcludedSources.map((s) => (

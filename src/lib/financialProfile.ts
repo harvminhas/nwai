@@ -21,7 +21,7 @@
 
 import type * as Firestore from "firebase-admin/firestore";
 import { extractAllTransactions } from "./extractTransactions";
-import { computeTypicalSpend, CORE_EXCLUDE_RE } from "./spendingMetrics";
+import { computeTypicalSpend, CORE_EXCLUDE_RE, INCOME_TRANSFER_RE } from "./spendingMetrics";
 import { merchantSlug } from "./applyRules";
 import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
 import type { TypicalSpend } from "./spendingMetrics";
@@ -50,7 +50,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "10";
+const SCHEMA_VERSION = "11";
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -190,7 +190,7 @@ export async function buildAndCacheFinancialProfile(
   db: Firestore.Firestore,
 ): Promise<FinancialProfileCache> {
   // Fetch all data sources in parallel — same collections the assets page uses.
-  const [txData, rulesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap] =
+  const [txData, rulesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap] =
     await Promise.all([
       extractAllTransactions(uid, db),
       db.collection(`users/${uid}/categoryRules`).get(),
@@ -198,6 +198,7 @@ export async function buildAndCacheFinancialProfile(
       db.collection(`users/${uid}/manualAssets`).orderBy("updatedAt", "desc").get(),
       db.collection(`users/${uid}/balanceSnapshots`).orderBy("yearMonth", "desc").get(),
       db.collection(`users/${uid}/accountCurrencies`).get(),
+      db.doc(`users/${uid}/prefs/transferIncomeSources`).get(),
     ]);
 
   // Currency overrides: accountSlug → ISO currency code (e.g. "USD")
@@ -207,6 +208,20 @@ export async function buildAndCacheFinancialProfile(
   }
 
   const { incomeTxns: allIncomeTxns, accountSnapshots, latestTxMonth, allTxMonths } = txData;
+
+  // User-marked transfer sources — deposits that should NOT count as income
+  const userTransferSources = new Set<string>(
+    transferPrefsSnap.exists ? (transferPrefsSnap.data()?.keys ?? []) : []
+  );
+
+  /** Returns true when an income transaction is an inter-account transfer. */
+  function isIncomeTransfer(txn: IncomeTxnRecord): boolean {
+    const src = (txn.source ?? txn.description ?? "").trim();
+    if (INCOME_TRANSFER_RE.test(src)) return true;
+    if (userTransferSources.has(src)) return true;
+    if (txn.category === "Transfer In") return true;
+    return false;
+  }
 
   // Apply user category rules to expense transactions
   const rulesMap = new Map<string, string>();
@@ -295,13 +310,15 @@ export async function buildAndCacheFinancialProfile(
   const monthlyHistory: MonthlyHistoryEntry[] = allTxMonths.map((ym) => {
     const monthExp = allExpenseTxns.filter((t) => t.txMonth === ym);
     const monthInc = allIncomeTxns.filter((t) => t.txMonth === ym);
+    // Exclude inter-account transfers from income total (auto-detected + user-marked)
+    const monthIncFiltered = monthInc.filter((t) => !isIncomeTransfer(t));
     return {
       yearMonth: ym,
       expensesTotal: monthExp.reduce((s, t) => s + t.amount, 0),
       coreExpensesTotal: monthExp
         .filter((t) => !CORE_EXCLUDE_RE.test((t.category ?? "").trim()))
         .reduce((s, t) => s + t.amount, 0),
-      incomeTotal: monthInc.reduce((s, t) => s + t.amount, 0),
+      incomeTotal: monthIncFiltered.reduce((s, t) => s + t.amount, 0),
     };
   });
 

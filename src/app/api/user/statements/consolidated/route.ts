@@ -539,9 +539,10 @@ export async function GET(request: NextRequest) {
       t.txMonth === month && (!accountFilter || t.accountSlug === accountFilter)
     );
     const txMonthlyExpenses = monthExpTxns.reduce((s, t) => s + t.amount, 0);
-    // Income uses the statement-level total: no double-counting risk for deposits,
-    // and the AI parser correctly attributes income to the statement period.
-    const txMonthlyIncome = enrichedConsolidated.income?.total ?? 0;
+    // Use cache's incomeTotal for the selected month — it excludes inter-account
+    // transfers and user-marked transfer sources (same filter as the history chart).
+    const cachedMonthHistory = profile.monthlyHistory.find((h) => h.yearMonth === month);
+    const txMonthlyIncome = cachedMonthHistory?.incomeTotal ?? enrichedConsolidated.income?.total ?? 0;
 
     // Override enrichedConsolidated.expenses.transactions with extracted data so the
     // spending page transaction list matches the insights route's transaction set.

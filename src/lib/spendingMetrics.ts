@@ -20,6 +20,18 @@ import type { ExpenseTxnRecord } from "./extractTransactions";
 export const CORE_EXCLUDE_RE =
   /^(transfers|transfers & payments|debt payments|transfer in|interest)$/i;
 
+/**
+ * Income transfer filter — single source of truth for detecting inter-account
+ * deposits that should NOT count as income.
+ *
+ * Matches common bank abbreviations: TFR-TO, TFR-FR, TFR-FROM, E-TFR, XFER,
+ * ETFR, as well as the AI-assigned category "Transfer In".
+ *
+ * Rule: if you change this you change what counts as income everywhere.
+ */
+export const INCOME_TRANSFER_RE =
+  /\bTFR[-\s]?(TO|FR|FROM)\b|\bE[-\s]?TFR\b|\bETFR\b|\bXFER\b|\bTRANSFER\b/i;
+
 export interface TypicalSpend {
   /** Median monthly core spend across all tracked months. */
   median: number;

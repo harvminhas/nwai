@@ -13,6 +13,7 @@ import { computeRadarItems } from "@/lib/today/computeRadarItems";
 import type { RadarItem, CalendarEvent, FreshnessData, FreshnessState, NetWorthSnapshot } from "@/lib/today/types";
 import { resolveCanonical } from "@/lib/sourceMappings";
 import type { SourceMapping } from "@/lib/sourceMappings";
+import { INCOME_TRANSFER_RE } from "@/lib/spendingMetrics";
 
 async function getUid(req: NextRequest): Promise<string | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
@@ -482,14 +483,12 @@ export async function GET(req: NextRequest) {
   // Group incomeTxns by source, detect frequency, project next dates using
   // medianGap instead of day-of-month (which breaks for biweekly pay).
 
-  // Transfers that landed in income (e.g. "RY134 TFR-TO", "E-TFR JOHN") should
-  // never be treated as recurring income — they are one-off inter-account moves.
-  const TRANSFER_SRC_RE = /\b(TFR|TRANSFER|E-TFR|ETFR|XFER)\b/i;
-
+  // Transfers that landed in income should never be treated as recurring income.
+  // Uses the canonical INCOME_TRANSFER_RE (same regex used by the cache pipeline).
   const incomeBySource = new Map<string, typeof incomeTxns>();
   for (const txn of incomeTxns) {
     const src = txn.source || txn.description || "income";
-    if (TRANSFER_SRC_RE.test(src)) continue;        // skip transfer-like sources
+    if (INCOME_TRANSFER_RE.test(src)) continue;        // skip transfer-like sources
     const canonical = resolveCanonical(src, sourceMappings);  // merge confirmed aliases
     const key = normKey(canonical);
     const arr = incomeBySource.get(key) ?? [];
