@@ -216,6 +216,184 @@ const INSIGHT_TONE: Record<string, { bg: string; border: string; text: string; s
   neutral:  { bg: "bg-gray-50",   border: "border-gray-100",  text: "text-gray-700",   sub: "text-gray-500"  },
 };
 
+// ── Getting started / caught-up panel ─────────────────────────────────────────
+
+const EXPLORE_TILES = [
+  { href: "/account/spending",    icon: "💳", label: "Spending",    desc: "Where your money goes" },
+  { href: "/account/income",      icon: "💰", label: "Income",      desc: "All income sources" },
+  { href: "/account/liabilities", icon: "📋", label: "Liabilities", desc: "Debt & credit cards" },
+  { href: "/account/assets",      icon: "📈", label: "Assets",      desc: "Savings & investments" },
+  { href: "/account/goals",       icon: "🎯", label: "Goals",       desc: "Plan your targets" },
+  { href: "/account/statements",  icon: "📄", label: "Statements",  desc: "Manage uploads" },
+];
+
+function GettingStartedPanel({
+  netWorth,
+  savingsRate,
+  hasMultipleAccounts,
+}: {
+  netWorth:            { total: number } | null;
+  savingsRate:         { rate: number; month: string } | null;
+  hasMultipleAccounts: boolean;
+}) {
+  const isFirstRun = !hasMultipleAccounts;
+
+  return (
+    <div className="space-y-4">
+      {/* Welcome / caught-up header */}
+      <div className="rounded-xl border border-green-100 bg-green-50 px-5 py-4 flex items-start gap-3">
+        <svg className="h-5 w-5 shrink-0 text-green-500 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <div>
+          <p className="text-sm font-semibold text-green-800">
+            {isFirstRun ? "Your first statement is ready!" : "You're all caught up"}
+          </p>
+          <p className="mt-0.5 text-xs text-green-700">
+            {isFirstRun
+              ? "Your data has been analysed. Explore your financial picture below, or upload more months for trends."
+              : "No upcoming items or alerts. Check back as new statements are uploaded."}
+          </p>
+        </div>
+      </div>
+
+      {/* Explore tiles */}
+      <div>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Explore</p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {EXPLORE_TILES.map((t) => (
+            <Link key={t.href} href={t.href}
+              className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm hover:border-purple-200 hover:shadow-md transition group">
+              <span className="text-xl">{t.icon}</span>
+              <p className="mt-2 text-sm font-semibold text-gray-800 group-hover:text-purple-700">{t.label}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{t.desc}</p>
+            </Link>
+          ))}
+        </div>
+      </div>
+
+      {/* Upload more prompt */}
+      <div className="rounded-xl border border-dashed border-purple-200 bg-purple-50/40 px-5 py-4 flex items-center justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold text-purple-800">
+            {isFirstRun ? "Add more months to see trends" : "Upload your latest statement"}
+          </p>
+          <p className="mt-0.5 text-xs text-purple-600">
+            {isFirstRun
+              ? "Trends, typical spend, and savings projections appear after 2–3 months of data."
+              : "Keep your financial picture up to date."}
+          </p>
+        </div>
+        <Link href="/upload"
+          className="shrink-0 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition">
+          Upload
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+// ── Feature preview section (shown when real features have no data yet) ───────
+
+function FeaturePreviewSection({ upcoming }: { upcoming: UpcomingItem[] }) {
+  // Mirror the same segmentation used in the main feed
+  const dateItems = upcoming.filter((i) => !i.isThisMonth && i.daysFromNow >= 0);
+  const thisMonth = upcoming.filter((i) => i.isThisMonth);
+
+  const missingNextUp    = dateItems.length === 0;
+  const missingThisMonth = thisMonth.length === 0;
+
+  // Nothing to preview
+  if (!missingNextUp && !missingThisMonth) return null;
+
+  return (
+    <div className="mt-6 space-y-4">
+      <div className="flex items-center gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+          More features as you upload statements
+        </p>
+        <Link href="/upload" className="ml-auto text-xs font-semibold text-purple-600 hover:underline">
+          + Upload another →
+        </Link>
+      </div>
+
+      <div className={`grid gap-3 ${missingNextUp && missingThisMonth ? "sm:grid-cols-2" : ""}`}>
+
+        {/* Next Up preview */}
+        {missingNextUp && (
+          <PreviewCard
+            title="Next Up"
+            desc="Upcoming bills, subscriptions and income — predicted from your recurring patterns."
+          >
+            <div className="divide-y divide-gray-100">
+              {[
+                { icon: "💰", label: "Salary / payroll",    sub: "Recurring · bi-weekly", value: "+CA$3,200", color: "bg-green-100" },
+                { icon: "🔄", label: "GoodLife Clubs",      sub: "Recurring · monthly",   value: "−CA$12",    color: "bg-purple-100" },
+                { icon: "🏠", label: "Rent / mortgage",     sub: "Recurring · monthly",   value: "−CA$2,400", color: "bg-amber-100" },
+              ].map((r) => (
+                <div key={r.label} className="flex items-center gap-3 px-4 py-2.5">
+                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${r.color} text-sm`}>{r.icon}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-gray-700 truncate">{r.label}</p>
+                    <p className="text-[11px] text-gray-400">{r.sub}</p>
+                  </div>
+                  <span className="text-xs font-semibold text-gray-500 tabular-nums shrink-0">{r.value}</span>
+                </div>
+              ))}
+            </div>
+          </PreviewCard>
+        )}
+
+        {/* Also This Month preview */}
+        {missingThisMonth && (
+          <PreviewCard
+            title="Also This Month"
+            desc="All recurring expenses this month — including estimated credit card minimums."
+          >
+            <div className="divide-y divide-gray-100">
+              {[
+                { icon: "📋", label: "Visa ····1234 minimum",  sub: "Est. minimum · $8,500 balance",  value: "−CA$170", color: "bg-red-100" },
+                { icon: "📋", label: "Mastercard ····5678",    sub: "Est. minimum · $4,200 balance",  value: "−CA$84",  color: "bg-red-100" },
+                { icon: "🔄", label: "Netflix.com",            sub: "Recurring · monthly",            value: "−CA$18",  color: "bg-purple-100" },
+              ].map((r) => (
+                <div key={r.label} className="flex items-center gap-3 px-4 py-2.5">
+                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${r.color} text-sm`}>{r.icon}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-gray-700 truncate">{r.label}</p>
+                    <p className="text-[11px] text-gray-400">{r.sub}</p>
+                  </div>
+                  <span className="text-xs font-semibold text-gray-500 tabular-nums shrink-0">{r.value}</span>
+                </div>
+              ))}
+            </div>
+          </PreviewCard>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PreviewCard({ title, desc, children }: { title: string; desc: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden">
+      <div className="px-4 pt-4 pb-1">
+        <p className="text-sm font-semibold text-gray-700">{title}</p>
+        <p className="mt-0.5 text-xs text-gray-400 leading-snug">{desc}</p>
+      </div>
+      <div className="relative">
+        <div className="blur-sm opacity-40 pointer-events-none select-none">
+          {children}
+        </div>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="rounded-full bg-purple-100 px-3 py-1.5 text-xs font-semibold text-purple-700 shadow-sm">
+            Appears after 2+ months of data
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function TodayPage() {
   const router = useRouter();
   const { planId } = usePlan();
@@ -832,16 +1010,17 @@ export default function TodayPage() {
             <ThisMonthGroup items={thisMonth} ratePill={ratePill} />
           )}
 
-          {/* Caught-up empty state */}
+          {/* Caught-up / getting-started panel — only when truly nothing to show */}
           {!hasUpcoming && visibleRadar.length === 0 && !statusBanner && (
-            <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-5 py-12 text-center">
-              <svg className="mx-auto mb-2 h-8 w-8 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <p className="text-sm font-semibold text-gray-700">You&apos;re all caught up</p>
-              <p className="mt-1 text-xs text-gray-400">Nothing overdue. Check back tomorrow.</p>
-            </div>
+            <GettingStartedPanel
+              netWorth={netWorth}
+              savingsRate={savingsRate}
+              hasMultipleAccounts={(netWorth?.accounts?.length ?? 0) + (netWorth?.debtAccounts?.length ?? 0) > 1}
+            />
           )}
+
+          {/* Feature preview — shown when Next Up or Also This Month have no data yet */}
+          <FeaturePreviewSection upcoming={upcoming} />
         </div>
 
         {/* ── Right sidebar ─────────────────────────────────────────────────── */}

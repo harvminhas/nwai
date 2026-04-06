@@ -248,6 +248,7 @@ function SpendingPageInner() {
   const [merchants, setMerchants]         = useState<import("@/app/api/user/spending/merchants/route").MerchantSummary[] | null>(null);
   const [merchantsLoading, setMerchantsLoading] = useState(false);
   const [merchantSearch, setMerchantSearch]     = useState("");
+  const [merchantsMonth, setMerchantsMonth]     = useState<string | null>(null); // which month is currently loaded
 
   // Transactions with optimistic category overrides
   const [txns, setTxns]             = useState<ExpenseTransaction[]>([]);
@@ -282,7 +283,7 @@ function SpendingPageInner() {
     const p = new URLSearchParams(searchParams.toString());
     p.set("tab", id);
     router.replace(`${pathname}?${p.toString()}`, { scroll: false });
-    if (id === "merchants" && token) loadMerchants(token);
+    if (id === "merchants" && token) loadMerchants(token, selectedMonth ?? yearMonth ?? "");
   }
 
   const loadRecurring = useCallback(async (tok: string) => {
@@ -307,16 +308,18 @@ function SpendingPageInner() {
     finally { setCashLoading(false); }
   }, []);
 
-  const loadMerchants = useCallback(async (tok: string) => {
-    if (merchants !== null) return; // already loaded
+  const loadMerchants = useCallback(async (tok: string, month: string) => {
+    if (merchantsMonth === month && merchants !== null) return; // already loaded for this month
     setMerchantsLoading(true);
     try {
-      const res = await fetch("/api/user/spending/merchants", { headers: { Authorization: `Bearer ${tok}` } });
+      const url = `/api/user/spending/merchants?month=${encodeURIComponent(month)}`;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${tok}` } });
       const json = await res.json().catch(() => ({}));
       setMerchants(json.merchants ?? []);
+      setMerchantsMonth(month);
     } catch { /* non-fatal */ }
     finally { setMerchantsLoading(false); }
-  }, [merchants]);
+  }, [merchants, merchantsMonth]);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -344,8 +347,6 @@ function SpendingPageInner() {
           fetch("/api/user/statements/consolidated", { headers: { Authorization: `Bearer ${tok}` } }),
           loadRecurring(tok),
           loadCash(tok),
-          // If landing directly on the merchants tab, pre-load merchant data
-          activeTab === "merchants" ? loadMerchants(tok) : Promise.resolve(),
         ]);
         const json = await res.json().catch(() => ({}));
         if (!res.ok) { setError(json.error || "Failed to load"); return; }
@@ -366,6 +367,9 @@ function SpendingPageInner() {
           .slice()
           .sort((a: ExpenseTransaction, b: ExpenseTransaction) => (b.date ?? "").localeCompare(a.date ?? ""));
         setTxns(raw);
+
+        // If landing directly on the merchants tab, pre-load merchant data now that we have the month
+        if (activeTab === "merchants" && currentYM) loadMerchants(tok, currentYM);
 
         // Build frequency map from cross-month recurring history
         const rh: Record<string, { yearMonth: string; dates: string[] }[]> = json.recurringHistory ?? {};
@@ -407,6 +411,8 @@ function SpendingPageInner() {
         .slice()
         .sort((a: ExpenseTransaction, b: ExpenseTransaction) => (b.date ?? "").localeCompare(a.date ?? ""));
       setTxns(raw);
+      // Reload merchant data for the new month if that tab is active
+      if (activeTab === "merchants") loadMerchants(token, ym);
     } finally { setMonthLoading(false); }
   }
 

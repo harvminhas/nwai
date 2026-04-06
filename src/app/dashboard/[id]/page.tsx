@@ -1,14 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import NetWorthCard from "@/components/NetWorthCard";
-import IncomeCard from "@/components/IncomeCard";
-import StatementExpenses from "./StatementExpenses";
-import SavingsRateCard from "@/components/SavingsRateCard";
-import SubscriptionsCard from "@/components/SubscriptionsCard";
-import InsightsSection from "@/components/InsightsSection";
 import DashboardCtas from "@/components/DashboardCtas";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import type { StatementApiResponse, ParsedStatementData } from "@/lib/types";
+import { computeStatementSnapshot } from "@/lib/statementSnapshot";
+import SnapshotView from "./SnapshotView";
 
 async function getStatement(id: string): Promise<StatementApiResponse | null> {
   try {
@@ -43,9 +39,7 @@ export default async function DashboardPage({
         <div className="text-center">
           <div className="mx-auto h-12 w-12 animate-spin rounded-full border-4 border-purple-600 border-t-transparent" />
           <p className="mt-4 font-medium text-gray-900">Processing your statement…</p>
-          <p className="mt-1 text-sm text-gray-500">
-            This may take up to 30 seconds.
-          </p>
+          <p className="mt-1 text-sm text-gray-500">This may take up to 30 seconds.</p>
           <Link href="/upload" className="mt-6 inline-block text-purple-600 hover:underline">
             Back to upload
           </Link>
@@ -58,13 +52,9 @@ export default async function DashboardPage({
     return (
       <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
         <div className="max-w-md rounded-lg border border-red-200 bg-white p-8 text-center">
-          <p className="text-red-800">
-            {statement.errorMessage || "Something went wrong."}
-          </p>
-          <Link
-            href="/upload"
-            className="mt-6 inline-block rounded-lg bg-purple-600 px-6 py-2 font-medium text-white hover:bg-purple-700"
-          >
+          <p className="text-red-800">{statement.errorMessage || "Something went wrong."}</p>
+          <Link href="/upload"
+            className="mt-6 inline-block rounded-lg bg-purple-600 px-6 py-2 font-medium text-white hover:bg-purple-700">
             Try again
           </Link>
         </div>
@@ -75,24 +65,14 @@ export default async function DashboardPage({
   const data = statement.parsedData;
   if (!data) notFound();
 
-  const accountType = data.accountType ?? "other";
-  // Debt-only accounts (no income, no savings rate, no subscriptions worth showing)
-  const DEBT_ONLY_TYPES = new Set(["mortgage", "loan"]);
-  // Accounts that have spending/transactions
-  const HAS_SPENDING_TYPES = new Set(["checking", "savings", "credit"]);
-
-  const isDebtOnly  = DEBT_ONLY_TYPES.has(accountType);
-  const hasSpending = HAS_SPENDING_TYPES.has(accountType) ||
-    (!isDebtOnly && ((data.income?.total ?? 0) > 0 || (data.expenses?.total ?? 0) > 0));
-  // Income + savings rate only meaningful for checking/savings
-  const hasIncome = accountType === "checking" || accountType === "savings";
+  const snap = computeStatementSnapshot(data);
 
   return (
     <div className="min-h-screen bg-gray-50">
 
-      {/* ── Minimal public top bar (no auth nav) ────────────────────────── */}
+      {/* ── Top bar ────────────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-40 border-b border-gray-100 bg-white/90 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3 sm:px-6">
+        <div className="mx-auto flex max-w-2xl items-center justify-between px-4 py-3 sm:px-6">
           <Link href="/" className="font-bold text-purple-600 text-lg tracking-tight">
             networth<span className="text-gray-400">.online</span>
           </Link>
@@ -109,11 +89,11 @@ export default async function DashboardPage({
         </div>
       </header>
 
-      <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
-        <div className="mb-6 flex items-center gap-2 text-sm text-gray-500">
-          <Link href="/upload" className="hover:text-purple-600">
-            Upload another
-          </Link>
+      <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6 space-y-2">
+
+        {/* ── Breadcrumb ───────────────────────────────────────────────────── */}
+        <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
+          <Link href="/upload" className="hover:text-purple-600">Upload another</Link>
           <span>/</span>
           <span className="font-medium text-gray-700">
             {data.bankName ?? "Statement"}
@@ -123,26 +103,20 @@ export default async function DashboardPage({
           </span>
         </div>
 
-        <div className="mb-8">
-          <NetWorthCard data={data} />
+        {/* ── Interactive snapshot (client component) ──────────────────────── */}
+        <SnapshotView
+          snap={snap}
+          statementDate={data.statementDate}
+          bankName={data.bankName}
+          accountId={data.accountId}
+          accountType={data.accountType}
+          statementId={id}
+        />
+
+        {/* ── Upload more CTA ──────────────────────────────────────────────── */}
+        <div className="pt-4">
+          <DashboardCtas />
         </div>
-
-        {hasSpending && (
-          <div className="grid gap-6 lg:grid-cols-2">
-            <div className="space-y-6">
-              {hasIncome && <IncomeCard income={data.income} />}
-              <StatementExpenses expenses={data.expenses} statementId={id} />
-            </div>
-            <div className="space-y-6">
-              {hasIncome && <SavingsRateCard data={data} />}
-              {!isDebtOnly && <SubscriptionsCard subscriptions={data.subscriptions ?? []} />}
-            </div>
-          </div>
-        )}
-
-        <InsightsSection insights={data.insights ?? []} />
-
-        <DashboardCtas />
       </div>
     </div>
   );

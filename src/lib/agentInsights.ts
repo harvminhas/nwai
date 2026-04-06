@@ -35,10 +35,24 @@ Categories and when to use them:
 - "alert": Urgent issues (overspending, fees, very low cash)
 
 For actions, use these tools ONLY:
-- "navigate": Go to a specific page. Params: { "href": "/account/spending" }
+- "navigate": Go to a specific page. Params: { "href": "<one of the exact paths below>" }
 - "create_goal": Create a savings/debt goal. Params: { "title": "string", "targetAmount": number, "emoji": "string" }
 - "mark_subscription_cancelled": Mark subscription as cancelled. Params: { "merchantSlug": "netflix-com", "merchantName": "Netflix" }
 - "run_scenario": Open what-if tool. Params: { "href": "/account/whatif" }
+
+Valid "navigate" hrefs — use ONLY these exact strings, nothing else:
+- "/account/spending"       — monthly spending breakdown, categories, debt card, subscriptions
+- "/account/income"        — income sources, transactions, cash income
+- "/account/liabilities"   — credit cards, loans, mortgage, debt payoff planner
+- "/account/assets"        — savings accounts, investments, net worth
+- "/account/goals"         — savings goals, emergency fund, debt payoff goals
+- "/account/activity"      — transaction history, transfers, all account activity
+- "/account/statements"    — uploaded statements, reparse
+- "/account/overview"      — net worth summary across all accounts
+- "/account/whatif"        — what-if scenario planner (also used for run_scenario)
+- "/account/forecast"      — income and expense forecast
+
+Do NOT invent any other href. If no exact path fits, omit the navigate action entirely.
 
 Return ONLY a valid JSON array. No markdown, no explanation, just the JSON.
 

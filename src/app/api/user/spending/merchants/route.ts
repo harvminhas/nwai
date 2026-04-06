@@ -50,7 +50,8 @@ export async function GET(request: NextRequest) {
   if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { searchParams } = new URL(request.url);
-  const slugFilter = searchParams.get("slug")?.trim() ?? null; // optional: single merchant
+  const slugFilter  = searchParams.get("slug")?.trim()  ?? null; // optional: single merchant
+  const monthFilter = searchParams.get("month")?.trim() ?? null; // optional: YYYY-MM scope
 
   try {
     const { auth, db } = getFirebaseAdmin();
@@ -124,6 +125,9 @@ export async function GET(request: NextRequest) {
         // Use the transaction's own date for the monthly bucket (transaction-date principle).
         // Fall back to the statement month only when the transaction has no date.
         const txYm = txn.date ? txn.date.slice(0, 7) : stmtYm;
+
+        // If a month scope was requested, skip transactions outside that month
+        if (monthFilter && txYm !== monthFilter) continue;
 
         let entry = map.get(slug);
         if (!entry) {

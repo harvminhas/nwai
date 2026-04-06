@@ -82,7 +82,9 @@ export default function ProcessingAnimation({
         } else if (isLoggedInRef.current) {
           router.push("/account/dashboard");
         } else {
-          setDone(true);
+          // Persist so AuthForm can claim this statement after signup/login
+          try { localStorage.setItem("nwai_claim_statement", statementId); } catch { /* ignore */ }
+          router.push(`/dashboard/${statementId}`);
         }
       }, 600);
     };
@@ -171,22 +173,16 @@ export default function ProcessingAnimation({
   }
 
   if (done) {
+    // Fallback: should auto-redirect above, but keep as safety net
     return (
       <div className="mt-8 rounded-lg border border-green-200 bg-green-50 p-6">
         <div className="flex items-center gap-2">
           <span className="text-green-600 text-xl">✓</span>
           <p className="font-semibold text-gray-900">Your statement is ready!</p>
         </div>
-        <p className="mt-2 text-sm text-gray-600">
-          Create a free account to save your data and track progress over time, or view this statement now.
-        </p>
-        <div className="mt-4 flex flex-wrap gap-3">
-          <Link href="/signup"
-            className="rounded-lg bg-gradient-to-r from-purple-600 to-purple-700 px-5 py-2.5 font-semibold text-white transition hover:from-purple-700 hover:to-purple-800">
-            Create free account
-          </Link>
+        <div className="mt-4">
           <Link href={`/dashboard/${statementId}`}
-            className="rounded-lg border-2 border-purple-600 px-5 py-2.5 font-semibold text-purple-600 transition hover:bg-purple-50">
+            className="rounded-lg bg-gradient-to-r from-purple-600 to-purple-700 px-5 py-2.5 font-semibold text-white transition hover:from-purple-700 hover:to-purple-800">
             View statement
           </Link>
         </div>

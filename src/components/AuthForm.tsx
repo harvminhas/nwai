@@ -7,35 +7,82 @@ import { getFirebaseClient } from "@/lib/firebase";
 
 type Mode = "login" | "signup";
 
-/** After sign-in, claim any anonymous statement the user uploaded before creating an account. */
-async function claimPendingStatement(idToken: string) {
+/** Ensure the users/{uid} Firestore document exists. Safe to call on every sign-in.
+ *  Returns true if the document was freshly created (i.e. brand-new user). */
+async function ensureUserProfile(idToken: string): Promise<boolean> {
   try {
-    const sid = localStorage.getItem("nwai_claim_statement");
-    if (!sid) return;
-    const res = await fetch("/api/claim-statement", {
+    const res = await fetch("/api/user/ensure-profile", {
       method: "POST",
-      headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ statementId: sid }),
+      headers: { Authorization: `Bearer ${idToken}` },
     });
-    if (res.ok) localStorage.removeItem("nwai_claim_statement");
+    if (res.ok) {
+      const json = await res.json();
+      return json.created === true;
+    }
   } catch { /* non-critical */ }
+  return false;
+}
+
+/** After sign-in, claim any anonymous statement the user uploaded before creating an account.
+ *  Throws on failure so the caller can surface the error to the user. */
+async function claimPendingStatement(idToken: string): Promise<void> {
+  const sid = localStorage.getItem("nwai_claim_statement");
+  if (!sid) return;
+
+  const res = await fetch("/api/claim-statement", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ statementId: sid }),
+  });
+
+  // Always clear the stored ID — if the claim failed for a non-retryable reason
+  // (not found, not ready) we don't want to block every future login attempt.
+  localStorage.removeItem("nwai_claim_statement");
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    // Log but don't throw — a failed claim shouldn't block signup
+    console.error("[claim-statement] failed:", res.status, body);
+  }
 }
 
 export default function AuthForm({ mode }: { mode: Mode }) {
   const router  = useRouter();
-  const [error,   setError]   = useState<string | null>(null);
+  const [error,      setError]      = useState<string | null>(null);
+  const [existingUser, setExistingUser] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const isSignup = mode === "signup";
 
   const handleGoogleSignIn = async () => {
     setError(null);
+    setExistingUser(false);
     setLoading(true);
     try {
       const { auth } = getFirebaseClient();
-      const cred = await signInWithPopup(auth, new GoogleAuthProvider());
+      const cred    = await signInWithPopup(auth, new GoogleAuthProvider());
       const idToken = await cred.user.getIdToken();
-      await claimPendingStatement(idToken);
+
+      // Use our own users collection as the source of truth — Firebase Auth's
+      // isNewUser is unreliable when accounts have been deleted and re-created.
+      const isNewUser = await ensureUserProfile(idToken);
+
+      // Signup page: block if the Firestore user record already existed
+      if (isSignup && !isNewUser) {
+        await auth.signOut();
+        setExistingUser(true);
+        setError("An account with this email already exists.");
+        return;
+      }
+
+      if (isNewUser) {
+        // Brand-new account — claim any anonymous statement they uploaded
+        await claimPendingStatement(idToken);
+      } else {
+        // Returning user — discard any stored anonymous statement ID
+        try { localStorage.removeItem("nwai_claim_statement"); } catch { /* ignore */ }
+      }
+
       router.push("/account/dashboard");
       router.refresh();
     } catch (err: unknown) {
@@ -66,9 +113,14 @@ export default function AuthForm({ mode }: { mode: Mode }) {
       </div>
 
       {error && (
-        <p className="mb-4 rounded-lg bg-red-50 px-4 py-2.5 text-sm text-red-600" role="alert">
-          {error}
-        </p>
+        <div className="mb-4 rounded-lg bg-red-50 px-4 py-2.5 text-sm text-red-600" role="alert">
+          <p>{error}</p>
+          {existingUser && (
+            <a href="/login" className="mt-1 inline-block font-semibold underline hover:text-red-800">
+              Log in instead →
+            </a>
+          )}
+        </div>
       )}
 
       <button

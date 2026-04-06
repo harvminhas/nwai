@@ -273,14 +273,22 @@ export function getMonthlyExpenses(
 // ── getLatestCompleteMonth ─────────────────────────────────────────────────────
 
 /**
- * Return the most recent YYYY-MM from monthlyHistory that has any income or
- * expense data. Falls back to latestTxMonth.
+ * Return the most recent YYYY-MM from monthlyHistory that has income data.
+ * Falls back to the most recent month with any data, then to latestTxMonth.
+ * This ensures the savings rate card always picks a month where income was recorded.
  */
 export function getLatestCompleteMonth(profile: FinancialProfileCache): string {
   const history = [...profile.monthlyHistory].sort((a, b) =>
     b.yearMonth.localeCompare(a.yearMonth),
   );
-  const withData = history.find((h) => h.incomeTotal > 0 || h.expensesTotal > 0);
+  // Prefer a month that has both income and expenses
+  const withBoth = history.find((h) => h.incomeTotal > 0 && h.expensesTotal > 0);
+  if (withBoth) return withBoth.yearMonth;
+  // Fall back to any month with income
+  const withIncome = history.find((h) => h.incomeTotal > 0);
+  if (withIncome) return withIncome.yearMonth;
+  // Last resort: any month with data
+  const withData = history.find((h) => h.expensesTotal > 0);
   return withData?.yearMonth ?? profile.latestTxMonth ?? "";
 }
 
