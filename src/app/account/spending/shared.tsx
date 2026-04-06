@@ -110,7 +110,11 @@ export function CategoryPicker({ anchorRef, current, onSelect, onClose }: Catego
         anchorRef.current && !anchorRef.current.contains(e.target as Node)
       ) onClose();
     }
-    function onScroll() { onClose(); }
+    function onScroll(e: Event) {
+      // Only close if the scroll happened outside the picker menu
+      if (menuRef.current && menuRef.current.contains(e.target as Node)) return;
+      onClose();
+    }
     document.addEventListener("mousedown", handle);
     window.addEventListener("scroll", onScroll, true);
     return () => {
