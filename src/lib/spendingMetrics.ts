@@ -16,9 +16,20 @@
  */
 
 import type { ExpenseTxnRecord } from "./extractTransactions";
+import { getParentCategory } from "./categoryTaxonomy";
 
 export const CORE_EXCLUDE_RE =
   /^(transfers|transfers & payments|transfer out|debt payments|transfer in|interest)$/i;
+
+/**
+ * Returns true when a category (parent or subtype) should be excluded from
+ * core spending totals. Subtypes are tested against their parent category
+ * so that any future transfer/debt subtypes are automatically excluded.
+ */
+export function isCoreExcluded(category: string): boolean {
+  const parent = getParentCategory(category);
+  return CORE_EXCLUDE_RE.test(parent.trim()) || CORE_EXCLUDE_RE.test(category.trim());
+}
 
 /**
  * Income transfer filter — single source of truth for detecting inter-account
@@ -55,7 +66,7 @@ export function computeTypicalSpend(
   currentMonth: string
 ): TypicalSpend {
   const coreTxns = expenseTxns.filter(
-    (t) => !CORE_EXCLUDE_RE.test((t.category ?? "").trim())
+    (t) => !isCoreExcluded(t.category ?? "")
   );
 
   const allMonths = Array.from(new Set(coreTxns.map((t) => t.txMonth))).sort();

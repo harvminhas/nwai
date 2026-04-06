@@ -19,6 +19,7 @@ import {
 } from "recharts";
 import { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon } from "./shared";
 import type { CashFrequency } from "./shared";
+import { getParentCategory, isSubtype, CATEGORY_TAXONOMY } from "@/lib/categoryTaxonomy";
 import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
 import RefreshToast from "@/components/RefreshToast";
 
@@ -271,6 +272,7 @@ function SpendingPageInner() {
 
   const [toast, setToast]         = useState<string | null>(null);
   const [catExpanded, setCatExpanded] = useState(false);
+  const [expandedCatRows, setExpandedCatRows] = useState<Set<string>>(new Set());
 
   // ── cash commitments ────────────────────────────────────────────────────────
   const [cashItems, setCashItems] = useState<CashCommitment[]>([]);
@@ -673,25 +675,51 @@ function SpendingPageInner() {
   const interestTotal = interestTxns.reduce((s, t) => s + t.amount, 0);
   const transferTotal = transferTxns.reduce((s, t) => s + t.amount, 0);
 
+  // categories: parent-level rollup with subtypes nested inside each entry
   const categories = (() => {
-    if (coreTxns.length === 0) {
-      // Fall back to AI-computed categories, minus excluded ones
-      return (data?.expenses?.categories ?? [])
-        .filter((c) => !CORE_EXCLUDE_RE.test((c.name ?? "").trim()))
-        .slice()
-        .sort((a, b) => b.amount - a.amount);
+    // Build parent → total and parent → subtype breakdown maps
+    const parentMap  = new Map<string, number>();
+    const subtypeMap = new Map<string, Map<string, number>>();
+
+    const buildMaps = (txns: typeof coreTxns) => {
+      for (const tx of txns) {
+        const cat    = tx.category || "Other";
+        const parent = getParentCategory(cat);
+        parentMap.set(parent, (parentMap.get(parent) ?? 0) + tx.amount);
+        if (isSubtype(cat)) {
+          if (!subtypeMap.has(parent)) subtypeMap.set(parent, new Map());
+          const sm = subtypeMap.get(parent)!;
+          sm.set(cat, (sm.get(cat) ?? 0) + tx.amount);
+        }
+      }
+    };
+
+    if (coreTxns.length > 0) {
+      buildMaps(coreTxns);
+    } else {
+      // Fall back to AI-computed categories aggregated to parent
+      for (const c of (data?.expenses?.categories ?? [])) {
+        if (CORE_EXCLUDE_RE.test((c.name ?? "").trim())) continue;
+        const parent = getParentCategory(c.name ?? "Other");
+        parentMap.set(parent, (parentMap.get(parent) ?? 0) + c.amount);
+      }
     }
-    const map = new Map<string, number>();
-    for (const tx of coreTxns) {
-      const key = tx.category || "Other";
-      map.set(key, (map.get(key) ?? 0) + tx.amount);
-    }
-    return Array.from(map.entries())
+
+    return Array.from(parentMap.entries())
       .sort((a, b) => b[1] - a[1])
-      .map(([name, amount]) => ({
-        name, amount,
-        percentage: total > 0 ? Math.round((amount / total) * 100) : 0,
-      }));
+      .map(([name, amount]) => {
+        const subs = subtypeMap.get(name);
+        return {
+          name,
+          amount,
+          percentage: total > 0 ? Math.round((amount / total) * 100) : 0,
+          subtypes: subs
+            ? Array.from(subs.entries())
+                .sort((a, b) => b[1] - a[1])
+                .map(([subName, subAmt]) => ({ name: subName, amount: subAmt }))
+            : [],
+        };
+      });
   })();
 
   // Always use coreExpensesTotal (transfers + debt payments excluded)
@@ -1351,28 +1379,77 @@ function SpendingPageInner() {
                     {/* Category rows */}
                     <div className="divide-y divide-gray-100 border-t border-gray-100">
                       {visibleCats.map((cat) => {
-                        const color = categoryColor(cat.name);
+                        const color      = categoryColor(cat.name);
+                        const hasSubs    = cat.subtypes && cat.subtypes.length > 0;
+                        const isRowOpen  = expandedCatRows.has(cat.name);
+                        const catHref    = `/account/spending/category/${encodeURIComponent(cat.name.toLowerCase())}${filterMonth ? `?month=${filterMonth}` : ""}`;
                         return (
-                          <Link key={cat.name}
-                            href={`/account/spending/category/${encodeURIComponent(cat.name.toLowerCase())}${filterMonth ? `?month=${filterMonth}` : ""}`}
-                            className="flex items-center gap-4 px-5 py-3 group hover:bg-gray-50 transition">
-                            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="text-sm font-medium text-gray-800 group-hover:text-purple-600 transition-colors">{cat.name}</span>
-                                <div className="flex items-center gap-2 shrink-0">
-                                  <span className="text-sm font-semibold text-gray-700 tabular-nums">{fmt(cat.amount)}</span>
-                                  <span className="text-xs text-gray-400 w-8 text-right">{cat.percentage}%</span>
+                          <div key={cat.name}>
+                            {/* Parent row */}
+                            <div className="flex items-center gap-0 group hover:bg-gray-50 transition">
+                              <Link href={catHref} className="flex flex-1 items-center gap-4 px-5 py-3 min-w-0">
+                                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-sm font-medium text-gray-800 group-hover:text-purple-600 transition-colors">{cat.name}</span>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      <span className="text-sm font-semibold text-gray-700 tabular-nums">{fmt(cat.amount)}</span>
+                                      <span className="text-xs text-gray-400 w-8 text-right">{cat.percentage}%</span>
+                                    </div>
+                                  </div>
+                                  <div className="h-1 overflow-hidden rounded-full bg-gray-100">
+                                    <div className="h-full rounded-full" style={{ width: `${Math.min(cat.percentage, 100)}%`, backgroundColor: color }} />
+                                  </div>
+                                </div>
+                              </Link>
+                              {/* Expand/collapse subtypes button */}
+                              {hasSubs ? (
+                                <button
+                                  onClick={() => setExpandedCatRows((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(cat.name)) next.delete(cat.name); else next.add(cat.name);
+                                    return next;
+                                  })}
+                                  className="shrink-0 px-3 py-3 text-gray-300 hover:text-gray-500 transition"
+                                  title={isRowOpen ? "Hide breakdown" : "Show breakdown"}
+                                >
+                                  <svg className={`h-4 w-4 transition-transform ${isRowOpen ? "rotate-180" : ""}`}
+                                    fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                                  </svg>
+                                </button>
+                              ) : (
+                                <Link href={catHref} className="shrink-0 px-3 py-3">
                                   <svg className="h-4 w-4 text-gray-300 group-hover:text-purple-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                                   </svg>
-                                </div>
-                              </div>
-                              <div className="h-1 overflow-hidden rounded-full bg-gray-100">
-                                <div className="h-full rounded-full" style={{ width: `${Math.min(cat.percentage, 100)}%`, backgroundColor: color }} />
-                              </div>
+                                </Link>
+                              )}
                             </div>
-                          </Link>
+
+                            {/* Subtype rows (expanded) */}
+                            {hasSubs && isRowOpen && (
+                              <div className="border-t border-gray-50 bg-gray-50/60">
+                                {cat.subtypes.map((sub) => {
+                                  const subColor = categoryColor(sub.name);
+                                  const subPct   = cat.amount > 0 ? Math.round((sub.amount / cat.amount) * 100) : 0;
+                                  const subHref  = `/account/spending/category/${encodeURIComponent(sub.name.toLowerCase())}${filterMonth ? `?month=${filterMonth}` : ""}`;
+                                  return (
+                                    <Link key={sub.name} href={subHref}
+                                      className="flex items-center gap-3 pl-10 pr-5 py-2.5 hover:bg-gray-100 transition group/sub">
+                                      <span className="h-1.5 w-1.5 shrink-0 rounded-full opacity-80" style={{ backgroundColor: subColor }} />
+                                      <span className="flex-1 text-[13px] text-gray-600 group-hover/sub:text-purple-600 transition-colors truncate">{sub.name}</span>
+                                      <span className="text-[13px] text-gray-500 tabular-nums shrink-0">{fmt(sub.amount)}</span>
+                                      <span className="text-xs text-gray-400 w-7 text-right shrink-0">{subPct}%</span>
+                                      <svg className="h-3.5 w-3.5 text-gray-300 group-hover/sub:text-purple-400 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                      </svg>
+                                    </Link>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
                         );
                       })}
                     </div>

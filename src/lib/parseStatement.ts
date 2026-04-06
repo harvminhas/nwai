@@ -132,37 +132,62 @@ PASS 2 — Category: Apply the category rules below. Category assignment only ha
 
 **Classify as EXPENSE for all money OUT transactions. Use these categories:**
 
-  Housing: Rent, hydro/gas/water utilities, internet, home phone, home insurance, condo/strata fees.
-    Examples: "ROGERS COMM", "HYDRO ONE", "ENBRIDGE GAS", "RENT E-TFR", "BELL CANADA"
+  **IMPORTANT — USE THE MOST SPECIFIC SUBTYPE AVAILABLE.** Each parent category has optional subtypes listed below.
+  If a transaction clearly matches a subtype, use the subtype name exactly. If no subtype fits, use the parent category name.
+  NEVER invent category or subtype names — only use values listed here.
+
+  Housing (subtypes: Rent | Mortgage | Utilities | Internet & Phone | Home Insurance | Condo Fees):
+    Rent, hydro/gas/water utilities, internet, home phone, home insurance, condo/strata fees.
+    Examples: "ROGERS COMM" → "Internet & Phone", "HYDRO ONE" → "Utilities", "ENBRIDGE GAS" → "Utilities",
+              "RENT E-TFR" → "Rent", "BELL CANADA" → "Internet & Phone"
     Never include: mortgage principal payments, loan payments, credit card payments (those are Debt Payments)
 
-  Dining: Restaurants, fast food, food delivery apps, coffee shops, cafes, bars.
-    Examples: "TIM HORTONS", "MCDONALD'S", "UBER EATS", "DOORDASH", "STARBUCKS", "SKIP THE DISHES"
+  Dining (subtypes: Restaurants | Coffee & Drinks | Fast Food | Food Delivery):
+    Examples: "TIM HORTONS" → "Coffee & Drinks", "MCDONALD'S" → "Fast Food",
+              "UBER EATS" → "Food Delivery", "DOORDASH" → "Food Delivery",
+              "STARBUCKS" → "Coffee & Drinks", "SKIP THE DISHES" → "Food Delivery",
+              "EAST SIDE MARIO'S" → "Restaurants", "HARVEY'S" → "Fast Food"
     Never include: grocery stores, wholesale clubs
 
-  Groceries: Supermarkets, grocery stores, bulk/warehouse food stores.
+  Groceries: Supermarkets, grocery stores, bulk/warehouse food stores. No subtypes.
     Examples: "LOBLAWS", "METRO", "SOBEYS", "NO FRILLS", "FOOD BASICS", "WALMART GROCERY", "COSTCO"
     Never include: restaurants or food delivery (even if food-related)
 
-  Shopping: Retail stores, online shopping, clothing, electronics, home goods, department stores.
-    Examples: "AMAZON", "WALMART", "WINNERS", "HOME DEPOT", "BEST BUY", "IKEA", "ZARA", "ETSY"
+  Shopping (subtypes: Clothing | Electronics | Home & Garden | Online Shopping):
+    Examples: "AMAZON" → "Online Shopping", "WALMART" → "Shopping", "WINNERS" → "Clothing",
+              "HOME DEPOT" → "Home & Garden", "BEST BUY" → "Electronics", "IKEA" → "Home & Garden",
+              "ZARA" → "Clothing", "ETSY" → "Online Shopping"
 
-  Transportation: Gas stations, rideshare, transit, parking, car payments to a dealer or lender (not credit card payments).
-    Examples: "ESSO", "PETRO-CAN", "UBER TRIP", "TTC", "GO TRANSIT", "IMPARK", "HONDA FINANCIAL"
+  Transportation (subtypes: Gas | Parking | Car Insurance | Transit | Rideshare | Auto Service):
+    Examples: "ESSO" → "Gas", "PETRO-CAN" → "Gas", "SHELL" → "Gas",
+              "UBER TRIP" → "Rideshare", "LYFT" → "Rideshare",
+              "TTC" → "Transit", "GO TRANSIT" → "Transit", "PRESTO" → "Transit",
+              "IMPARK" → "Parking", "GREEN P" → "Parking",
+              "HONDA FINANCIAL" → "Transportation" (car loan — use parent unless clearly auto insurance/service)
+    Car loan payments to a dealer or lender are Transportation, NOT Debt Payments.
 
-  Entertainment: Streaming services, movies/theatre, games, events, hobbies, sports.
-    Examples: "NETFLIX", "DISNEY PLUS", "SPOTIFY", "APPLE MUSIC", "CINEPLEX", "STEAM"
+  Entertainment (subtypes: Streaming | Movies & Events | Sports | Hobbies):
+    Examples: "NETFLIX" → "Streaming", "DISNEY PLUS" → "Streaming", "SPOTIFY" → "Streaming",
+              "APPLE MUSIC" → "Streaming", "CINEPLEX" → "Movies & Events", "STEAM" → "Hobbies"
     IMPORTANT: If a streaming/subscription charge recurs on a fixed monthly schedule, ALSO add it to Subscriptions.
 
-  Subscriptions: Any fixed recurring charge on a predictable schedule (weekly/biweekly/monthly/quarterly/annual).
-    Examples: "GYM MEMBERSHIP", "AMAZON PRIME", "ADOBE CC", "NORTON", "APPLE ONE"
-    Note: Subscriptions often overlap with Entertainment or Healthcare categories. Include in both.
+  Subscriptions (subtypes: Software | Memberships | News & Media):
+    Any fixed recurring charge on a predictable schedule (weekly/biweekly/monthly/quarterly/annual).
+    Examples: "GYM MEMBERSHIP" → "Memberships", "AMAZON PRIME" → "Memberships",
+              "ADOBE CC" → "Software", "NORTON" → "Software", "APPLE ONE" → "Memberships",
+              "GLOBE AND MAIL" → "News & Media", "NEW YORK TIMES" → "News & Media"
+    Note: Subscriptions often overlap with Entertainment or Healthcare. Include in both.
 
-  Healthcare: Medical offices, pharmacies, dental, vision, medical labs, health/dental/vision insurance premiums.
-    Examples: "SHOPPERS DRUG MART", "REXALL", "ONTARIO BLUE CROSS", "SUNLIFE HEALTH PMT"
+  Healthcare (subtypes: Pharmacy | Dental | Vision | Fitness | Health Insurance):
+    Examples: "SHOPPERS DRUG MART" → "Pharmacy", "REXALL" → "Pharmacy",
+              "ONTARIO BLUE CROSS" → "Health Insurance", "SUNLIFE HEALTH PMT" → "Health Insurance",
+              "FITNESS DEPOT" → "Fitness", "GOODLIFE" → "Fitness",
+              "DENTAL CLINIC" → "Dental", "OPTOMETRIST" → "Vision"
 
-  Fees: Bank-imposed charges, NSF/overdraft fees, monthly account fees, ATM fees, annual card fees, foreign transaction fees, service charges.
-    Examples: "SERVICE CHARGE", "O.D.P. FEE", "NSF FEE", "MONTHLY FEE", "ANNUAL FEE $139"
+  Fees (subtypes: Bank Fees | NSF/OD Fees | Annual Card Fee):
+    Bank-imposed charges, NSF/overdraft fees, monthly account fees, ATM fees, annual card fees, service charges.
+    Examples: "SERVICE CHARGE" → "Bank Fees", "O.D.P. FEE" → "NSF/OD Fees",
+              "NSF FEE" → "NSF/OD Fees", "MONTHLY FEE" → "Bank Fees", "ANNUAL FEE $139" → "Annual Card Fee"
     Never include: interest charges (those go in the Interest category below)
 
   Interest: Interest charges billed on credit card, HELOC, line of credit, mortgage, or loan statements.
@@ -213,7 +238,7 @@ List every individual money-OUT transaction. Rules:
   - merchant: clean human-readable name. "AMZN MKTP CA 12345" → "Amazon". "TH #1234 BRAMPTON" → "Tim Hortons".
   - amount: positive number.
   - date: full YYYY-MM-DD. Derive the 4-digit year from the statement period header — never guess or use today's date.
-  - category: exactly one category name from Step 3.
+  - category: the most specific category or subtype name from Step 3 (e.g. "Gas" not "Transportation" when the merchant is clearly a gas station).
   - recurring: include ONLY when confident the charge repeats on a fixed schedule. Use exactly: "weekly", "biweekly", "monthly", "quarterly", "annual". Omit entirely for one-off charges.
   - For mortgage/loan/investment: return [].
 

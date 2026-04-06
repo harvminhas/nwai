@@ -2,58 +2,30 @@
 
 import { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
+import {
+  CATEGORY_COLORS,
+  categoryColor,
+  CATEGORY_TAXONOMY,
+  PARENT_CATEGORIES,
+  PICKER_CATEGORIES,
+  getParentCategory,
+  isSubtype,
+  PARENTS_WITH_SUBTYPES,
+} from "@/lib/categoryTaxonomy";
 
-// ── Category colors & helpers ─────────────────────────────────────────────────
+// Re-export from taxonomy so existing imports keep working
+export { CATEGORY_COLORS, categoryColor } from "@/lib/categoryTaxonomy";
+export { getParentCategory, isSubtype } from "@/lib/categoryTaxonomy";
 
-export const CATEGORY_COLORS: Record<string, string> = {
-  housing: "#3b82f6",
-  groceries: "#22c55e",
-  dining: "#fb923c",
-  transportation: "#f59e0b",
-  shopping: "#a855f7",
-  entertainment: "#ec4899",
-  subscriptions: "#94a3b8",
-  healthcare: "#14b8a6",
-  fees: "#f97316",
-  "debt payments": "#ef4444",
-  "investments & savings": "#10b981",
-  "transfers": "#06b6d4",
-  "transfer out": "#06b6d4",
-  "transfers & payments": "#06b6d4", // legacy
-  "cash & atm": "#f87171",
-  other: "#d1d5db",
-  // Income re-assignment categories (move tx out of expenses → income)
-  "income - salary": "#16a34a",
-  "income - other": "#4ade80",
-};
+export type CashFrequency = "weekly" | "biweekly" | "monthly" | "quarterly" | "annual" | "once";
 
-export function categoryColor(name: string): string {
-  return CATEGORY_COLORS[name.toLowerCase()] ?? "#a855f7";
-}
-
+// Legacy ALL_CATEGORIES — kept for backwards compat. Use PICKER_CATEGORIES for new code.
 export const ALL_CATEGORIES = [
-  "Housing",
-  "Groceries",
-  "Dining",
-  "Transportation",
-  "Shopping",
-  "Entertainment",
-  "Healthcare",
-  "Subscriptions",
-  "Fees",
-  "Debt Payments",
-  "Investments & Savings",
-  "Transfers",
-  "Transfer Out",
-  "Transfers & Payments", // legacy — old statements
-  "Cash & ATM",
-  "Other",
-  // ── Income re-assignment (moves the transaction out of expenses → income) ──
+  ...PARENT_CATEGORIES,
+  // Income re-assignment
   "Income - Salary",
   "Income - Other",
 ] as const;
-
-export type CashFrequency = "weekly" | "biweekly" | "monthly" | "quarterly" | "annual" | "once";
 
 // ── RecurringIcon ─────────────────────────────────────────────────────────────
 
@@ -67,7 +39,7 @@ export function RecurringIcon({ active }: { active: boolean }) {
   );
 }
 
-// ── CategoryPicker (portal, fixed-position) ───────────────────────────────────
+// ── CategoryPicker (portal, fixed-position, two-level accordion) ──────────────
 
 interface CategoryPickerProps {
   anchorRef: React.RefObject<HTMLButtonElement | null>;
@@ -80,14 +52,19 @@ export function CategoryPicker({ anchorRef, current, onSelect, onClose }: Catego
   const menuRef = useRef<HTMLDivElement>(null);
   const [style, setStyle] = useState<React.CSSProperties>({ visibility: "hidden" });
 
+  // Track which parent categories are expanded to show their subtypes
+  const currentParent = getParentCategory(current).toLowerCase();
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    // Pre-expand the parent of the currently selected category
+    return new Set([currentParent]);
+  });
+
   useEffect(() => {
     if (!anchorRef.current) return;
     const rect = anchorRef.current.getBoundingClientRect();
-    const PADDING = 12; // gap between button and menu edge
+    const PADDING = 12;
     const spaceBelow = window.innerHeight - rect.bottom - PADDING;
     const spaceAbove = rect.top - PADDING;
-
-    // Prefer below; fall back to above if more room there
     const openBelow = spaceBelow >= spaceAbove || spaceBelow >= 200;
     const maxHeight = Math.max(openBelow ? spaceBelow : spaceAbove, 160);
 
@@ -95,8 +72,8 @@ export function CategoryPicker({ anchorRef, current, onSelect, onClose }: Catego
       position: "fixed",
       top: openBelow ? rect.bottom + PADDING : undefined,
       bottom: openBelow ? undefined : window.innerHeight - rect.top + PADDING,
-      left: Math.min(rect.left, window.innerWidth - 216),
-      width: 208,
+      left: Math.min(rect.left, window.innerWidth - 232),
+      width: 224,
       maxHeight,
       zIndex: 9999,
       visibility: "visible",
@@ -111,7 +88,6 @@ export function CategoryPicker({ anchorRef, current, onSelect, onClose }: Catego
       ) onClose();
     }
     function onScroll(e: Event) {
-      // Only close if the scroll happened outside the picker menu
       if (menuRef.current && menuRef.current.contains(e.target as Node)) return;
       onClose();
     }
@@ -123,40 +99,111 @@ export function CategoryPicker({ anchorRef, current, onSelect, onClose }: Catego
     };
   }, [onClose, anchorRef]);
 
+  const toggleExpand = (parent: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(parent)) next.delete(parent);
+      else next.add(parent);
+      return next;
+    });
+  };
+
   return createPortal(
     <div ref={menuRef} style={style}
       className="rounded-xl border border-gray-200 bg-white shadow-xl ring-1 ring-black/5 flex flex-col overflow-hidden">
       <p className="shrink-0 px-3 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
         Change category · saves as rule
       </p>
-      <div className="overflow-y-auto">
-        {ALL_CATEGORIES.map((cat) => {
-        const isIncomeCat = cat.toLowerCase().startsWith("income");
-        const color = categoryColor(cat.toLowerCase());
-        const isActive = cat.toLowerCase() === current.toLowerCase();
-        const showDivider = cat === "Income - Salary"; // first income entry
-        return (
-          <div key={cat}>
-            {showDivider && (
-              <div className="mx-3 my-1 border-t border-gray-100 pt-1">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-green-600 pb-1">
-                  Move to Income
-                </p>
+      <div className="overflow-y-auto flex-1">
+        {/* ── Standard categories (two-level) ── */}
+        {(Object.entries(CATEGORY_TAXONOMY) as [string, readonly string[]][]).map(([parent, subtypes]) => {
+          const parentLower  = parent.toLowerCase();
+          const color        = categoryColor(parentLower);
+          const isActivePar  = current.toLowerCase() === parentLower;
+          const hasExpanded  = expanded.has(parentLower);
+          const hasSubs      = subtypes.length > 0;
+
+          return (
+            <div key={parent}>
+              {/* Parent row */}
+              <div className="flex items-center">
+                <button
+                  onClick={() => onSelect(parent)}
+                  className={`flex flex-1 items-center gap-2.5 px-3 py-2 text-left text-sm transition hover:bg-gray-50 ${
+                    isActivePar ? "font-semibold text-gray-900" : "text-gray-700"
+                  }`}
+                >
+                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+                  <span className="flex-1">{parent}</span>
+                  {isActivePar && <span className="text-xs text-gray-400">current</span>}
+                </button>
+                {hasSubs && (
+                  <button
+                    onClick={() => toggleExpand(parentLower)}
+                    className="shrink-0 px-2 py-2 text-gray-400 hover:text-gray-600 transition"
+                    aria-label={hasExpanded ? "Collapse subtypes" : "Expand subtypes"}
+                  >
+                    <svg className={`h-3 w-3 transition-transform ${hasExpanded ? "rotate-180" : ""}`}
+                      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                )}
               </div>
-            )}
-            <button onClick={() => onSelect(cat)}
+
+              {/* Subtype rows (indented, visible when expanded) */}
+              {hasSubs && hasExpanded && (
+                <div className="border-l-2 ml-5 border-gray-100">
+                  {subtypes.map((sub) => {
+                    const subColor   = categoryColor(sub.toLowerCase());
+                    const isActiveSub = current.toLowerCase() === sub.toLowerCase();
+                    return (
+                      <button
+                        key={sub}
+                        onClick={() => onSelect(sub)}
+                        className={`flex w-full items-center gap-2.5 pl-3 pr-3 py-1.5 text-left text-[13px] transition hover:bg-gray-50 ${
+                          isActiveSub ? "font-semibold text-gray-900" : "text-gray-600"
+                        }`}
+                      >
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: subColor }} />
+                        <span className="flex-1">{sub}</span>
+                        {isActiveSub && <span className="text-xs text-gray-400">current</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* ── Income re-assignment section ── */}
+        <div className="mx-3 my-1 border-t border-gray-100 pt-1">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-green-600 pb-1">
+            Move to Income
+          </p>
+        </div>
+        {(["Income - Salary", "Income - Other"] as const).map((cat) => {
+          const isActive = cat.toLowerCase() === current.toLowerCase();
+          return (
+            <button key={cat} onClick={() => onSelect(cat)}
               className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition hover:bg-gray-50 ${
-                isActive ? "font-semibold text-gray-900" : isIncomeCat ? "text-green-700" : "text-gray-700"
+                isActive ? "font-semibold text-green-700" : "text-green-700"
               }`}>
-              <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
-              {cat}
-              {isActive && <span className="ml-auto text-xs text-gray-400">current</span>}
+              <span className="h-2 w-2 shrink-0 rounded-full bg-green-400" />
+              <span className="flex-1">{cat}</span>
+              {isActive && <span className="text-xs text-gray-400">current</span>}
             </button>
-          </div>
-        );
+          );
         })}
       </div>
     </div>,
     document.body
   );
 }
+
+// Silence unused-import warnings for consumers that import these from here
+// (they're re-exported above)
+void PARENTS_WITH_SUBTYPES;
+void PICKER_CATEGORIES;
+void isSubtype;

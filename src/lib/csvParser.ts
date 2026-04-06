@@ -7,6 +7,7 @@
  */
 
 import { sendTextRequest } from "./ai";
+import { ALL_CATEGORY_VALUES } from "./categoryTaxonomy";
 
 export interface ParsedRow {
   date: string;          // YYYY-MM-DD
@@ -39,8 +40,8 @@ Format:
 }
 
 Rules for transactions:
-- isExpense = true  → money going OUT of the account (purchase, charge, fee, withdrawal, debit)
-- isExpense = false → money coming IN  to the account (deposit, payment received, credit, refund)
+- isExpense = true  => money going OUT of the account (purchase, charge, fee, withdrawal, debit)
+- isExpense = false => money coming IN  to the account (deposit, payment received, credit, refund)
 - Skip non-transaction rows: headers, opening/closing balance lines, totals, blank lines
 - Normalize all dates to YYYY-MM-DD regardless of source format
 - If the CSV uses separate Debit and Credit columns: Debit column populated = isExpense=true, Credit column populated = isExpense=false
@@ -48,19 +49,29 @@ Rules for transactions:
 - Clean up descriptions: remove extra whitespace, keep merchant/payee name readable
 - For income transactions (isExpense=false), set category to "Income"
 
-Category must be one of these exact values (for expenses):
-- "Dining"               — restaurants, sushi, pizza, coffee shops, fast food, food delivery
-- "Groceries"            — grocery stores, supermarkets, bulk food (Costco, No Frills, Loblaws, etc.)
-- "Shopping"             — retail, clothing, Amazon, online shopping, electronics, home goods
-- "Transportation"       — gas stations, Uber, Lyft, transit, parking, car payments, auto service
-- "Entertainment"        — streaming (Netflix, Spotify), movies, events, hobbies, sports, gym
-- "Subscriptions"        — recurring monthly/annual charges (software, memberships, clubs)
-- "Healthcare"           — medical, pharmacy, dental, optometrist, health/dental/vision insurance premiums
-- "Fees"                 — bank fees, account fees, NSF fees, overdraft fees (O.D.P.), service charges, annual card fees, ATM fees
-- "Debt Payments"        — credit card payments, loan payments, mortgage payments (e.g. "VISA PAYMENT", "CIBC MC", "TD CREDIT CARD PMT", "LOAN PAYMENT")
-- "Investments & Savings" — RRSP/TFSA contributions, investment account transfers (e.g. "WS INVESTMENTS", "WEALTHSIMPLE", "QUESTRADE"), mutual funds, ETFs, GICs, life insurance premiums, whole-life or investment-linked insurance
-- "Transfers"            — inter-account transfers between own accounts, e-transfers to individuals or businesses, rent via e-transfer, contractor payments (NOT debt payments or investment contributions)
-- "Other"                — anything that doesn't fit the above
+Use the most specific category or subtype. Parent categories and their subtypes:
+- "Housing"               -- rent, utilities, internet/phone, home insurance, condo fees
+     subtypes: "Rent" | "Utilities" | "Internet & Phone" | "Home Insurance" | "Condo Fees"
+- "Dining"                -- restaurants, food delivery, coffee shops, fast food
+     subtypes: "Restaurants" | "Coffee & Drinks" | "Fast Food" | "Food Delivery"
+- "Groceries"             -- grocery stores, supermarkets, bulk food (Costco, No Frills, Loblaws). No subtypes.
+- "Shopping"              -- retail, clothing, electronics, home goods, online shopping
+     subtypes: "Clothing" | "Electronics" | "Home & Garden" | "Online Shopping"
+- "Transportation"        -- gas stations, transit, parking, rideshare, auto service
+     subtypes: "Gas" | "Parking" | "Car Insurance" | "Transit" | "Rideshare" | "Auto Service"
+- "Entertainment"         -- streaming, movies, events, sports, hobbies
+     subtypes: "Streaming" | "Movies & Events" | "Sports" | "Hobbies"
+- "Subscriptions"         -- recurring monthly/annual charges
+     subtypes: "Software" | "Memberships" | "News & Media"
+- "Healthcare"            -- medical, pharmacy, dental, vision, fitness, health insurance
+     subtypes: "Pharmacy" | "Dental" | "Vision" | "Fitness" | "Health Insurance"
+- "Fees"                  -- bank fees, NSF/OD fees, annual card fees, service charges
+     subtypes: "Bank Fees" | "NSF/OD Fees" | "Annual Card Fee"
+- "Debt Payments"         -- credit card payments, loan payments, mortgage payments. No subtypes.
+- "Investments & Savings" -- RRSP/TFSA, investment transfers, mutual funds, GICs, life insurance. No subtypes.
+- "Transfers"             -- inter-account transfers, e-transfers to individuals. No subtypes.
+- "Other"                 -- anything else. No subtypes.
+Use a subtype (e.g. "Gas") when confident. Fall back to the parent (e.g. "Transportation") when unsure.
 
 Rules for closingBalance:
 - If the CSV has a running balance column, set closingBalance to the balance on the transaction row with the MOST RECENT DATE (the highest date value) — regardless of which physical row position it appears at in the file (CSVs may be sorted newest-first or oldest-first)
@@ -103,11 +114,12 @@ export async function parseCSV(csvText: string, accountType?: string): Promise<C
     };
   }
 
+  // Build valid category set from taxonomy (parents + subtypes) + legacy values
   const VALID_CATEGORIES = new Set([
-    "Dining", "Groceries", "Shopping", "Transportation", "Entertainment",
-    "Subscriptions", "Healthcare", "Fees", "Debt Payments", "Investments & Savings", "Transfers",
-    "Transfers & Payments", // legacy — kept so old statement data still validates
-    "Other", "Income",
+    ...ALL_CATEGORY_VALUES,
+    "Transfers & Payments", // legacy
+    "Transfer Out",
+    "Income",
   ]);
 
   type AiRow = { date?: string; description?: string; amount?: number; isExpense?: boolean; category?: string };
