@@ -1,3 +1,9 @@
+"use client";
+
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { onAuthStateChanged } from "firebase/auth";
+import { getFirebaseClient } from "@/lib/firebase";
 import Link from "next/link";
 import Hero from "@/components/Hero";
 import ValueProps from "@/components/ValueProps";
@@ -5,6 +11,15 @@ import ComparisonTable from "@/components/ComparisonTable";
 import LandingHeader from "@/components/LandingHeader";
 
 export default function Home() {
+  const router = useRouter();
+
+  useEffect(() => {
+    const { auth } = getFirebaseClient();
+    return onAuthStateChanged(auth, (user) => {
+      if (user) router.replace("/account/dashboard");
+    });
+  }, [router]);
+
   return (
     <div className="min-h-screen bg-white">
       <LandingHeader />
