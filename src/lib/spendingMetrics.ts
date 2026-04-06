@@ -6,7 +6,7 @@
  * API's coreExpensesTotal, the insights route, and any future consumer).
  *
  * Excluded categories:
- *  • Transfers / Transfers & Payments — inter-account moves (already double-counted)
+ *  • Transfers / Transfer Out / Transfers & Payments — inter-account moves (already double-counted)
  *  • Debt Payments — CC/mortgage/loan payments from chequing are always paired with
  *    the actual purchases on the debt-side statement; counting both inflates expenses.
  *  • Interest — interest charges on HELOC/LOC/CC/mortgage statements are already
@@ -18,7 +18,7 @@
 import type { ExpenseTxnRecord } from "./extractTransactions";
 
 export const CORE_EXCLUDE_RE =
-  /^(transfers|transfers & payments|debt payments|transfer in|interest)$/i;
+  /^(transfers|transfers & payments|transfer out|debt payments|transfer in|interest)$/i;
 
 /**
  * Income transfer filter — single source of truth for detecting inter-account
