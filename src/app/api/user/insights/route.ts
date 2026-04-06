@@ -103,6 +103,8 @@ export async function GET(req: NextRequest) {
   const now   = new Date();
   const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
+  try {
+
   // ── 1. Latest consolidated snapshot ────────────────────────────────────────
   const stmtSnap = await db.collection("statements")
     .where("userId", "==", uid)
@@ -266,7 +268,10 @@ export async function GET(req: NextRequest) {
   // ── Financial profile (single source of truth — same data as spending page) ──
   // Category rules are pre-applied. typicalMonthly computed over full history.
   const profile = await getFinancialProfile(uid, db);
-  const { expenseTxns, incomeTxns, accountSnapshots: txSnapshots, allTxMonths } = profile;
+  const expenseTxns   = profile.expenseTxns   ?? [];
+  const incomeTxns    = profile.incomeTxns    ?? [];
+  const txSnapshots   = profile.accountSnapshots ?? [];
+  const allTxMonths   = profile.allTxMonths   ?? [];
 
   // Override liquid assets from profile snapshots
   if (txSnapshots.length > 0) {
@@ -286,7 +291,7 @@ export async function GET(req: NextRequest) {
   const debts = txSnapshots.reduce((s, a) => s + Math.max(0, -a.balance), 0);
 
   const dataIsCurrentMonth     = allTxMonths.includes(thisMonth);
-  const typicalMonthlyExpenses = profile.typicalMonthly.median;
+  const typicalMonthlyExpenses = profile.typicalMonthly?.median ?? 0;
 
   // ── build alerts ──────────────────────────────────────────────────────────
   const alerts: DashboardAlert[] = [];
@@ -1009,4 +1014,17 @@ export async function GET(req: NextRequest) {
       : null,
     needsRefresh: profile.cacheStale ?? false,
   });
+
+  } catch (err) {
+    console.error("[insights] GET error uid=" + uid, err);
+    // Return a safe empty payload so the dashboard renders instead of crashing
+    return NextResponse.json({
+      alerts: [], upcoming: [], insights: [], radar: [],
+      freshness: { state: "fresh", daysOverdue: 0, accounts: [] },
+      netWorth: null,
+      savingsRate: null,
+      statusBanner: null,
+      needsRefresh: false,
+    }, { status: 200 });
+  }
 }

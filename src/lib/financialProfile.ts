@@ -493,11 +493,10 @@ export async function getFinancialProfile(
   const cached = userDoc.data()?.financialProfile as FinancialProfileCache | undefined;
 
   if (cached?.updatedAt) {
-    // Schema version mismatch: return stale data immediately — the frontend will
-    // show a "Refresh" toast so the user can trigger a rebuild when convenient.
-    // We never force a silent rebuild here to avoid unexpected latency spikes.
+    // Schema version mismatch: rebuild immediately so consumers never receive a
+    // cache that's missing fields added in newer schema versions.
     if (cached.schemaVersion !== SCHEMA_VERSION) {
-      return { ...cached, cacheStale: true };
+      return buildAndCacheFinancialProfile(uid, db);
     }
 
     const ageMs = Date.now() - new Date(cached.updatedAt).getTime();

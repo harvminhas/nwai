@@ -216,6 +216,106 @@ const INSIGHT_TONE: Record<string, { bg: string; border: string; text: string; s
   neutral:  { bg: "bg-gray-50",   border: "border-gray-100",  text: "text-gray-700",   sub: "text-gray-500"  },
 };
 
+// ── Onboarding modal ──────────────────────────────────────────────────────────
+
+const DISMISS_KEY = "nwai_onboarding_v1_dismissed";
+
+const UNLOCKED = [
+  { icon: "✓", label: "Net Worth snapshot" },
+  { icon: "✓", label: "Savings Rate" },
+  { icon: "✓", label: "Next Up predictions" },
+  { icon: "✓", label: "AI Signals" },
+];
+
+const COMING = [
+  { icon: "🔒", label: "On Your Radar — cash-flow conflicts" },
+  { icon: "🔒", label: "Also This Month — all recurring bills" },
+  { icon: "🔒", label: "Spending Trends — vs your typical month" },
+  { icon: "🔒", label: "Income predictions & patterns" },
+];
+
+function OnboardingModal({ radar, onDismiss }: { radar: RadarItem[]; onDismiss: () => void }) {
+  // Only show when not enough data for radar (< 2 months)
+  if (radar.length > 0) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.45)" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onDismiss(); }}
+    >
+      <div className="relative w-full max-w-lg rounded-2xl bg-white shadow-2xl overflow-hidden">
+
+        {/* Header */}
+        <div className="bg-gradient-to-br from-purple-600 to-indigo-600 px-6 py-5">
+          <button
+            onClick={onDismiss}
+            className="absolute top-3.5 right-4 text-white/60 hover:text-white transition"
+            aria-label="Close"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+          <p className="text-xs font-semibold uppercase tracking-widest text-purple-200 mb-1">Your financial picture is live</p>
+          <h2 className="text-xl font-bold text-white leading-snug">
+            Upload 1–2 more months to unlock the full experience
+          </h2>
+        </div>
+
+        {/* Body */}
+        <div className="px-6 py-5 grid sm:grid-cols-2 gap-4">
+          {/* Unlocked */}
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Already active</p>
+            <ul className="space-y-2">
+              {UNLOCKED.map((item) => (
+                <li key={item.label} className="flex items-center gap-2.5">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-green-100 text-green-600 text-xs font-bold">
+                    {item.icon}
+                  </span>
+                  <span className="text-sm text-gray-700">{item.label}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Coming */}
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Unlocks with 2+ months</p>
+            <ul className="space-y-2">
+              {COMING.map((item) => (
+                <li key={item.label} className="flex items-center gap-2.5">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-400 text-xs">
+                    {item.icon}
+                  </span>
+                  <span className="text-sm text-gray-400">{item.label}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="border-t border-gray-100 px-6 py-4 flex items-center justify-between gap-4">
+          <button
+            onClick={onDismiss}
+            className="text-sm text-gray-400 hover:text-gray-600 transition"
+          >
+            Got it, don&apos;t show again
+          </button>
+          <Link
+            href="/upload"
+            onClick={onDismiss}
+            className="rounded-lg bg-purple-600 px-5 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
+          >
+            Upload a statement →
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Getting started / caught-up panel ─────────────────────────────────────────
 
 const EXPLORE_TILES = [
@@ -415,6 +515,7 @@ export default function TodayPage() {
   const [expandedRadar,    setExpandedRadar]    = useState<Set<string>>(new Set());
   const [dismissedRadar,   setDismissedRadar]   = useState<Set<string>>(new Set());
   const [statusOpen,       setStatusOpen]       = useState(false);
+  const [showOnboarding,   setShowOnboarding]   = useState(false);
 
   function toggleAlert(id: string) {
     setExpandedAlerts((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -440,7 +541,12 @@ export default function TodayPage() {
       setAlerts(insJson.alerts ?? []);
       setUpcoming(insJson.upcoming ?? []);
       setInsights(insJson.insights ?? []);
-      setRadar(insJson.radar ?? []);
+      const radarData = insJson.radar ?? [];
+      setRadar(radarData);
+      // Show onboarding modal if data is sparse and user hasn't dismissed it
+      if (radarData.length === 0 && !localStorage.getItem(DISMISS_KEY)) {
+        setShowOnboarding(true);
+      }
       setFreshness(insJson.freshness ?? null);
       setNetWorth(insJson.netWorth ?? null);
       setSavingsRate(insJson.savingsRate ? { debtPayments: 0, ...insJson.savingsRate } : null);
@@ -928,6 +1034,7 @@ export default function TodayPage() {
   const hasUpcoming = upcoming.length > 0;
 
   return (
+    <>
     <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
       {token && <ParseStatusBanner onRefresh={() => load(token)} />}
@@ -1058,5 +1165,17 @@ export default function TodayPage() {
 
       </div>
     </div>
+
+    {/* Onboarding modal — shown when data is sparse and not yet dismissed */}
+    {showOnboarding && (
+      <OnboardingModal
+        radar={radar}
+        onDismiss={() => {
+          localStorage.setItem(DISMISS_KEY, "1");
+          setShowOnboarding(false);
+        }}
+      />
+    )}
+    </>
   );
 }

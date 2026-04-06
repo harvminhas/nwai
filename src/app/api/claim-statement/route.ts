@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { fireInsightEvent } from "@/lib/insights/index";
-import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
+import { buildAndCacheFinancialProfile } from "@/lib/financialProfile";
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 async function getUid(req: NextRequest): Promise<string | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
@@ -69,14 +69,18 @@ export async function POST(req: NextRequest) {
   // ── Adopt the statement ──────────────────────────────────────────────────
   await ref.update({ userId: uid });
 
-  // ── Invalidate cache synchronously so the next dashboard load rebuilds ──
+  // ── Rebuild financial profile synchronously — same guarantee as parse/route.ts ──
+  // This reads all statements now including the claimed one, applies category
+  // rules, and persists the result so the dashboard is ready immediately.
   try {
-    await invalidateFinancialProfileCache(uid, db);
+    await buildAndCacheFinancialProfile(uid, db);
+    console.log(`[claim-statement] profile rebuilt uid=${uid} statementId=${statementId}`);
   } catch (e) {
-    console.error("[claim-statement] cache invalidation failed:", e);
+    console.error("[claim-statement] profile rebuild failed:", e);
+    // Non-fatal: the dashboard will trigger a rebuild on next load
   }
 
-  // ── Fire insights pipeline (fire-and-forget — runs after response) ───────
+  // ── Fire detectors fire-and-forget (insight cards, subscriptions, DNA) ───
   fireInsightEvent({ type: "statement.parsed", meta: { statementId } }, uid, db)
     .catch((e) => console.error("[claim-statement] insights event failed:", e));
 

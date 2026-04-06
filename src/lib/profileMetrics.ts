@@ -129,7 +129,7 @@ export function getNetWorth(
   // ── Net worth total (mirrors consolidateStatements logic exactly) ────────
   let totalAssets = 0;
   let totalDebts  = 0;
-  for (const snap of profile.accountSnapshots) {
+  for (const snap of (profile.accountSnapshots ?? [])) {
     const cur = snap.currency ?? "CAD";
     if (snap.parsedAssets != null || snap.parsedDebts != null) {
       totalAssets += toCAD(snap.parsedAssets ?? 0, cur);
@@ -146,7 +146,7 @@ export function getNetWorth(
   // ── Account breakdown rows (display only — asset accounts + manual assets) ─
   const rowMap = new Map<string, { value: number; isEstimated: boolean }>();
 
-  for (const snap of profile.accountSnapshots) {
+  for (const snap of (profile.accountSnapshots ?? [])) {
     if (!ASSET_TYPES.has((snap.accountType ?? "").toLowerCase())) continue;
     if (snap.balance <= 0) continue;
     const label     = accountLabel(snap);
@@ -176,7 +176,7 @@ export function getNetWorth(
   // Each snapshot contributes its debt portion (parsedDebts when set, otherwise
   // max(0, -balance)) as a named row sorted by value descending.
   const debtRowMap = new Map<string, { value: number; isEstimated: boolean }>();
-  for (const snap of profile.accountSnapshots) {
+  for (const snap of (profile.accountSnapshots ?? [])) {
     const rawDebt = snap.parsedDebts != null
       ? snap.parsedDebts
       : Math.max(0, -snap.balance);
