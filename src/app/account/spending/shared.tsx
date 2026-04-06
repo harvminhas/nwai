@@ -18,6 +18,7 @@ export const CATEGORY_COLORS: Record<string, string> = {
   "debt payments": "#ef4444",
   "investments & savings": "#10b981",
   "transfers": "#06b6d4",
+  "transfer out": "#06b6d4",
   "transfers & payments": "#06b6d4", // legacy
   "cash & atm": "#f87171",
   other: "#d1d5db",
@@ -43,6 +44,7 @@ export const ALL_CATEGORIES = [
   "Debt Payments",
   "Investments & Savings",
   "Transfers",
+  "Transfer Out",
   "Transfers & Payments", // legacy — old statements
   "Cash & ATM",
   "Other",
@@ -81,13 +83,23 @@ export function CategoryPicker({ anchorRef, current, onSelect, onClose }: Catego
   useEffect(() => {
     if (!anchorRef.current) return;
     const rect = anchorRef.current.getBoundingClientRect();
-    const menuHeight = 340;
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const top = spaceBelow >= menuHeight ? rect.bottom + 6 : rect.top - menuHeight - 6;
+    const PADDING = 12; // gap between button and menu edge
+    const spaceBelow = window.innerHeight - rect.bottom - PADDING;
+    const spaceAbove = rect.top - PADDING;
+
+    // Prefer below; fall back to above if more room there
+    const openBelow = spaceBelow >= spaceAbove || spaceBelow >= 200;
+    const maxHeight = Math.max(openBelow ? spaceBelow : spaceAbove, 160);
+
     setStyle({
-      position: "fixed", top,
+      position: "fixed",
+      top: openBelow ? rect.bottom + PADDING : undefined,
+      bottom: openBelow ? undefined : window.innerHeight - rect.top + PADDING,
       left: Math.min(rect.left, window.innerWidth - 216),
-      width: 208, zIndex: 9999, visibility: "visible",
+      width: 208,
+      maxHeight,
+      zIndex: 9999,
+      visibility: "visible",
     });
   }, [anchorRef]);
 
@@ -109,11 +121,12 @@ export function CategoryPicker({ anchorRef, current, onSelect, onClose }: Catego
 
   return createPortal(
     <div ref={menuRef} style={style}
-      className="rounded-xl border border-gray-200 bg-white py-1 shadow-xl ring-1 ring-black/5">
-      <p className="px-3 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+      className="rounded-xl border border-gray-200 bg-white shadow-xl ring-1 ring-black/5 flex flex-col overflow-hidden">
+      <p className="shrink-0 px-3 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
         Change category · saves as rule
       </p>
-      {ALL_CATEGORIES.map((cat) => {
+      <div className="overflow-y-auto">
+        {ALL_CATEGORIES.map((cat) => {
         const isIncomeCat = cat.toLowerCase().startsWith("income");
         const color = categoryColor(cat.toLowerCase());
         const isActive = cat.toLowerCase() === current.toLowerCase();
@@ -137,7 +150,8 @@ export function CategoryPicker({ anchorRef, current, onSelect, onClose }: Catego
             </button>
           </div>
         );
-      })}
+        })}
+      </div>
     </div>,
     document.body
   );
