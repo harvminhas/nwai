@@ -797,15 +797,17 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
 // ── tab: accounts ─────────────────────────────────────────────────────────────
 
 function AccountsTab({
-  libs, manualLibs, deletingId,
-  onAdd, onEdit, onDelete,
+  libs, manualLibs, deletingId, deletingSlug,
+  onAdd, onEdit, onDelete, onDeleteAccount,
 }: {
   libs: DisplayLiability[];
   manualLibs: ManualLiability[];
   deletingId: string | null;
+  deletingSlug: string | null;
   onAdd: () => void;
   onEdit: (m: ManualLiability) => void;
   onDelete: (id: string) => void;
+  onDeleteAccount: (slug: string, label: string) => void;
 }) {
   if (libs.length === 0) return <EmptyState onAdd={onAdd} />;
 
@@ -845,12 +847,25 @@ function AccountsTab({
                         </p>
                       </div>
                     </div>
-                    <div className="ml-4 flex shrink-0 items-center gap-3">
+                    <div className="ml-4 flex shrink-0 items-center gap-2">
                       <p className="font-semibold text-sm text-gray-900 tabular-nums">{fmt(l.balance)}</p>
                       {l.source === "statement" && l.accountSlug && (
-                        <Link href={`/account/accounts/${l.accountSlug}`} className="text-gray-300 hover:text-purple-500 transition" title="View account">
-                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
-                        </Link>
+                        <>
+                          <button
+                            onClick={() => onDeleteAccount(l.accountSlug!, l.label)}
+                            disabled={deletingSlug === l.accountSlug}
+                            className="rounded p-1 text-gray-300 hover:bg-red-50 hover:text-red-400 disabled:opacity-40 transition"
+                            title="Delete account"
+                          >
+                            {deletingSlug === l.accountSlug
+                              ? <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
+                              : <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                            }
+                          </button>
+                          <Link href={`/account/accounts/${l.accountSlug}`} className="text-gray-300 hover:text-purple-500 transition" title="View account">
+                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                          </Link>
+                        </>
                       )}
                       {l.source === "manual" && (
                         <div className="flex items-center gap-1">
@@ -1101,6 +1116,11 @@ function LiabilitiesPageInner() {
   const [saving, setSaving]             = useState(false);
   const [deletingId, setDeletingId]     = useState<string | null>(null);
 
+  // Delete account (statement-sourced)
+  const [deletingSlug, setDeletingSlug] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ slug: string; label: string } | null>(null);
+  const [deleteSuccess, setDeleteSuccess] = useState(false);
+
   function switchTab(id: TabId) {
     setActiveTab(id);
     const params = new URLSearchParams(searchParams.toString());
@@ -1215,6 +1235,24 @@ function LiabilitiesPageInner() {
     } finally { setDeletingId(null); }
   }
 
+  async function handleDeleteAccount(slug: string) {
+    if (!idToken) return;
+    setDeletingSlug(slug);
+    setDeleteConfirm(null);
+    try {
+      const res = await fetch(`/api/user/accounts/${encodeURIComponent(slug)}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      if (res.ok) {
+        setDeleteSuccess(true);
+        await loadData(idToken);
+      }
+    } finally {
+      setDeletingSlug(null);
+    }
+  }
+
   const total = displayLibs.reduce((s, l) => s + l.balance, 0);
   const monthStr = yearMonth
     ? new Date(parseInt(yearMonth.slice(0, 4)), parseInt(yearMonth.slice(5, 7)) - 1, 1)
@@ -1282,11 +1320,86 @@ function LiabilitiesPageInner() {
       {activeTab === "accounts" && (
         <AccountsTab
           libs={displayLibs} manualLibs={manualLibs} deletingId={deletingId}
+          deletingSlug={deletingSlug}
           onAdd={() => { setEditing(null); setModalOpen(true); }}
           onEdit={(m) => { setEditing(m); setModalOpen(true); }}
           onDelete={handleDelete}
+          onDeleteAccount={(slug, label) => setDeleteConfirm({ slug, label })}
         />
       )}
+
+      {/* Delete account confirmation modal */}
+      {deleteConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.45)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) setDeleteConfirm(null); }}
+        >
+          <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl overflow-hidden">
+            <div className="bg-gradient-to-br from-red-500 to-rose-600 px-6 py-5">
+              <h2 className="text-lg font-bold text-white">Delete account?</h2>
+              <p className="mt-1 text-sm text-red-100">This will permanently delete all statements for this account.</p>
+            </div>
+            <div className="px-6 py-5">
+              <p className="text-sm text-gray-700">
+                All statement history for <span className="font-semibold">{deleteConfirm.label}</span> will be deleted.
+              </p>
+              <div className="mt-4 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
+                <p className="text-xs text-amber-800 font-medium">After deleting, re-upload the correct statement to add this account back.</p>
+              </div>
+            </div>
+            <div className="border-t border-gray-100 px-6 py-4 flex items-center justify-between gap-3">
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                className="text-sm text-gray-400 hover:text-gray-600 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDeleteAccount(deleteConfirm.slug)}
+                className="rounded-lg bg-red-500 px-5 py-2 text-sm font-semibold text-white hover:bg-red-600 transition"
+              >
+                Delete account
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Post-delete re-upload prompt */}
+      {deleteSuccess && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.45)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) setDeleteSuccess(false); }}
+        >
+          <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl overflow-hidden">
+            <div className="bg-gradient-to-br from-green-500 to-emerald-600 px-6 py-5">
+              <h2 className="text-lg font-bold text-white">Account deleted</h2>
+              <p className="mt-1 text-sm text-green-100">The account and all its statements have been removed.</p>
+            </div>
+            <div className="px-6 py-5">
+              <p className="text-sm text-gray-700">Re-upload the correct statement to add this account back with the right account number.</p>
+            </div>
+            <div className="border-t border-gray-100 px-6 py-4 flex items-center justify-between gap-3">
+              <button
+                onClick={() => setDeleteSuccess(false)}
+                className="text-sm text-gray-400 hover:text-gray-600 transition"
+              >
+                Close
+              </button>
+              <Link
+                href="/upload"
+                onClick={() => setDeleteSuccess(false)}
+                className="rounded-lg bg-purple-600 px-5 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
+              >
+                Upload statement →
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
       {activeTab === "payoff" && (
         can("payoffPlanner")
           ? <PayoffTab libs={displayLibs} accountRates={accountRates} />

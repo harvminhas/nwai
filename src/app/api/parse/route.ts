@@ -155,12 +155,17 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // True when the slug is a 4-digit account number (not a bank-name fallback).
+    // Used by the client to tailor the soft-duplicate advisory message.
+    const slugIsAccountNumber = /^\d{4}$/.test(slug ?? "");
+
     await statementRef.update({
       parsedData,
       status: "completed",
       errorMessage: null,
       accountSlug: slug,
       yearMonth: yearMonth ?? null,
+      slugIsAccountNumber,
       // Included in this same write so the onSnapshot fires with all fields set:
       ...(backfillPromptNeeded && {
         backfillPromptNeeded: true,

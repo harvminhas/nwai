@@ -47,6 +47,7 @@ interface BackfillPrompt {
   firstBalance: number;
   firstStatementYearMonth: string;
   oldestMonth: string; // oldest month in the user's history — used for ">6 mo" bucket
+  slugIsAccountNumber: boolean; // true when slug is ••••XXXX (vs bank-name fallback)
 }
 
 const AGE_BUCKETS = [
@@ -102,6 +103,9 @@ function BackfillPromptModal({
   };
 
   const selectedBucket = AGE_BUCKETS.find((b) => b.id === selected);
+  const displayId = prompt.slugIsAccountNumber
+    ? `••••${prompt.accountSlug}`
+    : prompt.accountSlug;
 
   return (
     <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4">
@@ -113,7 +117,7 @@ function BackfillPromptModal({
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-blue-900">
-            New account detected — {prompt.accountName || prompt.accountSlug}
+            New account detected — {prompt.accountName || displayId}
           </p>
           <p className="mt-0.5 text-xs text-blue-700">
             How long have you had this account? We&apos;ll estimate its history so your net worth chart doesn&apos;t show a false spike.
@@ -150,6 +154,17 @@ function BackfillPromptModal({
             >
               Skip
             </button>
+          </div>
+
+          {/* Soft duplicate advisory */}
+          <div className="mt-3 rounded-lg border border-blue-200 bg-white/70 px-3 py-2">
+            <p className="text-[11px] text-blue-700">
+              <span className="font-semibold">Already tracking this account?</span>{" "}
+              {prompt.slugIsAccountNumber
+                ? <>If {displayId} is the same card listed under a different number, go to <a href="/account/liabilities?tab=accounts" className="underline hover:text-blue-900">Accounts</a> and delete the old entry, then re-upload.</>
+                : <>If this account is already tracked under a different name, go to <a href="/account/liabilities?tab=accounts" className="underline hover:text-blue-900">Accounts</a> and delete the duplicate, then re-upload.</>
+              }
+            </p>
           </div>
         </div>
       </div>
@@ -241,6 +256,7 @@ export default function ParseStatusBanner({ onRefresh }: { onRefresh: () => void
           firstBalance:            (parsedData?.netWorth as number)  ?? 0,
           firstStatementYearMonth: (snapData.yearMonth as string)    ?? "",
           oldestMonth:             (snapData.backfillOldestMonth as string) ?? "",
+          slugIsAccountNumber:     (snapData.slugIsAccountNumber as boolean) ?? false,
         });
       }
     };
