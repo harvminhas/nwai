@@ -521,100 +521,6 @@ export function AssetsPage() {
                 </div>
               )}
 
-              {/* KPI cards — Cash / Investments / Property / Other */}
-              {totalAssets > 0 && (() => {
-                const cashVal       = chartRaw.find((g) => g.label === "Cash")?.value ?? 0;
-                const investVal     = (chartRaw.find((g) => g.label === "Investments")?.value ?? 0)
-                                    + (chartRaw.find((g) => g.label === "RRSP / TFSA")?.value ?? 0);
-                const propertyVal   = chartRaw.find((g) => g.label === "Real Estate")?.value ?? 0;
-                const otherVal      = (chartRaw.find((g) => g.label === "Vehicles")?.value ?? 0)
-                                    + (chartRaw.find((g) => g.label === "Business")?.value ?? 0)
-                                    + (chartRaw.find((g) => g.label === "Other")?.value ?? 0);
-                const cashAccts     = liquidSnapshots.length;
-                const investAccts   = accountSnapshots.filter((a) => a.accountType === "investment" && a.balance > 0).length
-                                    + assets.filter((a) => a.category === "investment" || a.category === "retirement").length;
-                const propertyItems = assets.filter((a) => a.category === "property").length;
-                const otherItems    = assets.filter((a) => ["vehicle", "business", "other"].includes(a.category)).length;
-                return (
-                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-amber-400" />
-                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Cash</p>
-                      </div>
-                      <p className="font-bold text-2xl text-gray-900">{cashVal > 0 ? fmtShort(cashVal) : "—"}</p>
-                      <p className="mt-1 text-xs text-gray-400">
-                        {cashVal > 0 ? `${cashAccts} account${cashAccts !== 1 ? "s" : ""} · ${totalAssets > 0 ? ((cashVal / totalAssets) * 100).toFixed(0) : 0}%` : "none"}
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-blue-400" />
-                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Investments</p>
-                      </div>
-                      <p className="font-bold text-2xl text-gray-900">{investVal > 0 ? fmtShort(investVal) : "—"}</p>
-                      <p className="mt-1 text-xs text-gray-400">
-                        {investVal > 0 ? `${investAccts} item${investAccts !== 1 ? "s" : ""} · ${totalAssets > 0 ? ((investVal / totalAssets) * 100).toFixed(0) : 0}%` : "none"}
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-indigo-400" />
-                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Property</p>
-                      </div>
-                      <p className="font-bold text-2xl text-gray-900">{propertyVal > 0 ? fmtShort(propertyVal) : "—"}</p>
-                      <p className="mt-1 text-xs text-gray-400">
-                        {propertyVal > 0 ? `${propertyItems} item${propertyItems !== 1 ? "s" : ""} · ${totalAssets > 0 ? ((propertyVal / totalAssets) * 100).toFixed(0) : 0}%` : "none"}
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-gray-400" />
-                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Other</p>
-                      </div>
-                      <p className="font-bold text-2xl text-gray-900">{otherVal > 0 ? fmtShort(otherVal) : "—"}</p>
-                      <p className="mt-1 text-xs text-gray-400">
-                        {otherVal > 0 ? `${otherItems} item${otherItems !== 1 ? "s" : ""} · ${totalAssets > 0 ? ((otherVal / totalAssets) * 100).toFixed(0) : 0}%` : "none"}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* What changed this month */}
-              {accountMonthly.some((a) => a.delta !== null) && (() => {
-                const changed = accountMonthly
-                  .filter((a) => a.delta !== null && Math.abs(a.delta!) > 0)
-                  .sort((a, b) => Math.abs(b.delta!) - Math.abs(a.delta!));
-                const netChange = changed.reduce((s, a) => s + toCAD(a.delta!, currencyOverrides[a.slug]), 0);
-                if (changed.length === 0) return null;
-                return (
-                  <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                    <div className="flex items-center justify-between mb-3">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">What changed this month</p>
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${netChange >= 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
-                        {netChange >= 0 ? "▲ " : "▼ "}{fmtShort(Math.abs(netChange))} net
-                      </span>
-                    </div>
-                    <div className="space-y-2">
-                      {changed.map((a) => {
-                        const grew = (a.delta ?? 0) >= 0;
-                        return (
-                          <div key={a.slug} className="flex items-center gap-3">
-                            <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: a.color }} />
-                            <span className="flex-1 truncate text-sm text-gray-700">{a.label}</span>
-                            <span className={`text-sm font-semibold tabular-nums ${grew ? "text-green-600" : "text-red-500"}`}>
-                              {grew ? "▲ " : "▼ "}{fmtShort(Math.abs(a.delta!))}
-                            </span>
-                            <span className="w-20 text-right text-xs text-gray-400 tabular-nums">{fmt(a.currentBalance, currencyOverrides[a.slug])}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })()}
-
               {/* Asset Growth chart */}
               {assetHistory.length >= 2 && (
                 <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -747,6 +653,100 @@ export function AssetsPage() {
                   )}
                 </div>
               )}
+
+              {/* KPI cards — Cash / Investments / Property / Other */}
+              {totalAssets > 0 && (() => {
+                const cashVal       = chartRaw.find((g) => g.label === "Cash")?.value ?? 0;
+                const investVal     = (chartRaw.find((g) => g.label === "Investments")?.value ?? 0)
+                                    + (chartRaw.find((g) => g.label === "RRSP / TFSA")?.value ?? 0);
+                const propertyVal   = chartRaw.find((g) => g.label === "Real Estate")?.value ?? 0;
+                const otherVal      = (chartRaw.find((g) => g.label === "Vehicles")?.value ?? 0)
+                                    + (chartRaw.find((g) => g.label === "Business")?.value ?? 0)
+                                    + (chartRaw.find((g) => g.label === "Other")?.value ?? 0);
+                const cashAccts     = liquidSnapshots.length;
+                const investAccts   = accountSnapshots.filter((a) => a.accountType === "investment" && a.balance > 0).length
+                                    + assets.filter((a) => a.category === "investment" || a.category === "retirement").length;
+                const propertyItems = assets.filter((a) => a.category === "property").length;
+                const otherItems    = assets.filter((a) => ["vehicle", "business", "other"].includes(a.category)).length;
+                return (
+                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-amber-400" />
+                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Cash</p>
+                      </div>
+                      <p className="font-bold text-2xl text-gray-900">{cashVal > 0 ? fmtShort(cashVal) : "—"}</p>
+                      <p className="mt-1 text-xs text-gray-400">
+                        {cashVal > 0 ? `${cashAccts} account${cashAccts !== 1 ? "s" : ""} · ${totalAssets > 0 ? ((cashVal / totalAssets) * 100).toFixed(0) : 0}%` : "none"}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-blue-400" />
+                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Investments</p>
+                      </div>
+                      <p className="font-bold text-2xl text-gray-900">{investVal > 0 ? fmtShort(investVal) : "—"}</p>
+                      <p className="mt-1 text-xs text-gray-400">
+                        {investVal > 0 ? `${investAccts} item${investAccts !== 1 ? "s" : ""} · ${totalAssets > 0 ? ((investVal / totalAssets) * 100).toFixed(0) : 0}%` : "none"}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-indigo-400" />
+                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Property</p>
+                      </div>
+                      <p className="font-bold text-2xl text-gray-900">{propertyVal > 0 ? fmtShort(propertyVal) : "—"}</p>
+                      <p className="mt-1 text-xs text-gray-400">
+                        {propertyVal > 0 ? `${propertyItems} item${propertyItems !== 1 ? "s" : ""} · ${totalAssets > 0 ? ((propertyVal / totalAssets) * 100).toFixed(0) : 0}%` : "none"}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-gray-400" />
+                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Other</p>
+                      </div>
+                      <p className="font-bold text-2xl text-gray-900">{otherVal > 0 ? fmtShort(otherVal) : "—"}</p>
+                      <p className="mt-1 text-xs text-gray-400">
+                        {otherVal > 0 ? `${otherItems} item${otherItems !== 1 ? "s" : ""} · ${totalAssets > 0 ? ((otherVal / totalAssets) * 100).toFixed(0) : 0}%` : "none"}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* What changed this month */}
+              {accountMonthly.some((a) => a.delta !== null) && (() => {
+                const changed = accountMonthly
+                  .filter((a) => a.delta !== null && Math.abs(a.delta!) > 0)
+                  .sort((a, b) => Math.abs(b.delta!) - Math.abs(a.delta!));
+                const netChange = changed.reduce((s, a) => s + toCAD(a.delta!, currencyOverrides[a.slug]), 0);
+                if (changed.length === 0) return null;
+                return (
+                  <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">What changed this month</p>
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${netChange >= 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
+                        {netChange >= 0 ? "▲ " : "▼ "}{fmtShort(Math.abs(netChange))} net
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      {changed.map((a) => {
+                        const grew = (a.delta ?? 0) >= 0;
+                        return (
+                          <div key={a.slug} className="flex items-center gap-3">
+                            <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: a.color }} />
+                            <span className="flex-1 truncate text-sm text-gray-700">{a.label}</span>
+                            <span className={`text-sm font-semibold tabular-nums ${grew ? "text-green-600" : "text-red-500"}`}>
+                              {grew ? "▲ " : "▼ "}{fmtShort(Math.abs(a.delta!))}
+                            </span>
+                            <span className="w-20 text-right text-xs text-gray-400 tabular-nums">{fmt(a.currentBalance, currencyOverrides[a.slug])}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* By account with sparklines */}
               {accountMonthly.length > 0 && (

@@ -411,6 +411,139 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
         </div>
       </div>
 
+      {/* Debt Growth chart */}
+      {debtHistory.length >= 2 && (
+        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Debt Over Time</p>
+              {growthTotal !== null && growthPct !== null && (
+                <p className={`mt-1 text-sm font-semibold ${growthTotal >= 0 ? "text-green-600" : "text-red-500"}`}>
+                  {growthTotal >= 0 ? "↓ " : "↑ "}{fmtShort(Math.abs(growthTotal))}
+                  <span className="ml-1.5 font-normal text-gray-400 text-xs">
+                    ({Math.abs(growthPct).toFixed(1)}% {growthTotal >= 0 ? "reduction" : "increase"}) over {debtHistory.length} months
+                  </span>
+                </p>
+              )}
+            </div>
+            {growthMoM !== null && (
+              <div className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${growthMoM >= 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
+                {growthMoM >= 0 ? "↓" : "↑"} {fmtShort(Math.abs(growthMoM))} MoM
+              </div>
+            )}
+          </div>
+          <p className="mb-2 text-xs text-gray-400">Click a point to see per-account breakdown</p>
+          <div className="h-44">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={debtHistory} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="debtGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%"  stopColor="#ef4444" stopOpacity={0.15} />
+                    <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
+                <YAxis tickFormatter={(v) => fmtShort(v)} tick={{ fontSize: 10, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={48} />
+                <Tooltip
+                  formatter={(v) => [typeof v === "number" ? fmt(v) : v, "Total debt"]}
+                  labelStyle={{ fontSize: 12, color: "#6b7280" }}
+                  contentStyle={{ borderRadius: "8px", border: "1px solid #e5e7eb", fontSize: 12 }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="total"
+                  stroke="#ef4444"
+                  strokeWidth={2}
+                  fill="url(#debtGrad)"
+                  dot={(props) => {
+                    const { cx, cy, payload } = props as { cx: number; cy: number; payload: DebtHistoryPoint };
+                    const selected = payload.ym === selectedYm;
+                    return (
+                      <circle
+                        key={payload.ym}
+                        cx={cx} cy={cy}
+                        r={selected ? 7 : 5}
+                        fill={selected ? "#ef4444" : "#fff"}
+                        stroke="#ef4444"
+                        strokeWidth={selected ? 2 : 1.5}
+                        style={{ cursor: "pointer", outline: "none" }}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedYm((prev) => prev === payload.ym ? null : payload.ym);
+                        }}
+                      />
+                    );
+                  }}
+                  activeDot={false}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Month breakdown panel */}
+          {selectedPt && (
+            <div className="mt-4 rounded-lg border border-red-100 bg-red-50/40 p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">{selectedPt.label}</p>
+                  <p className="text-xs text-gray-400">
+                    Total debt: <span className="font-medium text-gray-700">{fmt(selectedPt.total)}</span>
+                    {prevPtYm && (() => {
+                      const prevTotal = debtHistory.find((p) => p.ym === prevPtYm)?.total ?? null;
+                      if (prevTotal === null) return null;
+                      const diff = selectedPt.total - prevTotal;
+                      return (
+                        <span className={`ml-2 font-semibold ${diff <= 0 ? "text-green-600" : "text-red-500"}`}>
+                          {diff <= 0 ? "↓ " : "↑ "}{fmtShort(Math.abs(diff))} vs prev month
+                        </span>
+                      );
+                    })()}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setSelectedYm(null)}
+                  className="rounded-full p-1 text-gray-400 hover:bg-red-100 hover:text-gray-600"
+                  aria-label="Close"
+                >
+                  <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M4 4l8 8M12 4l-8 8" />
+                  </svg>
+                </button>
+              </div>
+              <div className="space-y-2">
+                {selectedRows.map((r) => {
+                  const paidDown = r.delta !== null && r.delta < 0;
+                  const increased = r.delta !== null && r.delta > 0;
+                  return (
+                    <div key={r.slug} className="flex items-center gap-3 rounded-lg bg-white px-3 py-2 shadow-sm">
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: r.color }} />
+                      <div className="flex-1 min-w-0">
+                        <p className="truncate text-sm font-medium text-gray-800">{r.label}</p>
+                        {r.accountId && (
+                          <p className="text-xs font-mono text-gray-400">{r.accountId}</p>
+                        )}
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-sm font-semibold tabular-nums text-gray-800">{fmt(r.balanceThisMonth!)}</p>
+                        {r.delta !== null ? (
+                          <p className={`text-xs font-medium tabular-nums ${paidDown ? "text-green-600" : increased ? "text-red-500" : "text-gray-400"}`}>
+                            {paidDown ? "↓ " : increased ? "↑ " : ""}{r.delta === 0 ? "no change" : fmtShort(Math.abs(r.delta))}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-gray-300">new</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* KPI cards — Mortgage / CC / Loans / Payments Made */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {/* Mortgage */}
@@ -572,139 +705,6 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
           </div>
         );
       })()}
-
-      {/* Debt Growth chart */}
-      {debtHistory.length >= 2 && (
-        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex items-start justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Debt Over Time</p>
-              {growthTotal !== null && growthPct !== null && (
-                <p className={`mt-1 text-sm font-semibold ${growthTotal >= 0 ? "text-green-600" : "text-red-500"}`}>
-                  {growthTotal >= 0 ? "↓ " : "↑ "}{fmtShort(Math.abs(growthTotal))}
-                  <span className="ml-1.5 font-normal text-gray-400 text-xs">
-                    ({Math.abs(growthPct).toFixed(1)}% {growthTotal >= 0 ? "reduction" : "increase"}) over {debtHistory.length} months
-                  </span>
-                </p>
-              )}
-            </div>
-            {growthMoM !== null && (
-              <div className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${growthMoM >= 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
-                {growthMoM >= 0 ? "↓" : "↑"} {fmtShort(Math.abs(growthMoM))} MoM
-              </div>
-            )}
-          </div>
-          <p className="mb-2 text-xs text-gray-400">Click a point to see per-account breakdown</p>
-          <div className="h-44">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={debtHistory} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="debtGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%"  stopColor="#ef4444" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
-                <YAxis tickFormatter={(v) => fmtShort(v)} tick={{ fontSize: 10, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={48} />
-                <Tooltip
-                  formatter={(v) => [typeof v === "number" ? fmt(v) : v, "Total debt"]}
-                  labelStyle={{ fontSize: 12, color: "#6b7280" }}
-                  contentStyle={{ borderRadius: "8px", border: "1px solid #e5e7eb", fontSize: 12 }}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="total"
-                  stroke="#ef4444"
-                  strokeWidth={2}
-                  fill="url(#debtGrad)"
-                  dot={(props) => {
-                    const { cx, cy, payload } = props as { cx: number; cy: number; payload: DebtHistoryPoint };
-                    const selected = payload.ym === selectedYm;
-                    return (
-                      <circle
-                        key={payload.ym}
-                        cx={cx} cy={cy}
-                        r={selected ? 7 : 5}
-                        fill={selected ? "#ef4444" : "#fff"}
-                        stroke="#ef4444"
-                        strokeWidth={selected ? 2 : 1.5}
-                        style={{ cursor: "pointer", outline: "none" }}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedYm((prev) => prev === payload.ym ? null : payload.ym);
-                        }}
-                      />
-                    );
-                  }}
-                  activeDot={false}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Month breakdown panel */}
-          {selectedPt && (
-            <div className="mt-4 rounded-lg border border-red-100 bg-red-50/40 p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-semibold text-gray-800">{selectedPt.label}</p>
-                  <p className="text-xs text-gray-400">
-                    Total debt: <span className="font-medium text-gray-700">{fmt(selectedPt.total)}</span>
-                    {prevPtYm && (() => {
-                      const prevTotal = debtHistory.find((p) => p.ym === prevPtYm)?.total ?? null;
-                      if (prevTotal === null) return null;
-                      const diff = selectedPt.total - prevTotal;
-                      return (
-                        <span className={`ml-2 font-semibold ${diff <= 0 ? "text-green-600" : "text-red-500"}`}>
-                          {diff <= 0 ? "↓ " : "↑ "}{fmtShort(Math.abs(diff))} vs prev month
-                        </span>
-                      );
-                    })()}
-                  </p>
-                </div>
-                <button
-                  onClick={() => setSelectedYm(null)}
-                  className="rounded-full p-1 text-gray-400 hover:bg-red-100 hover:text-gray-600"
-                  aria-label="Close"
-                >
-                  <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M4 4l8 8M12 4l-8 8" />
-                  </svg>
-                </button>
-              </div>
-              <div className="space-y-2">
-                {selectedRows.map((r) => {
-                  const paidDown = r.delta !== null && r.delta < 0;
-                  const increased = r.delta !== null && r.delta > 0;
-                  return (
-                    <div key={r.slug} className="flex items-center gap-3 rounded-lg bg-white px-3 py-2 shadow-sm">
-                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: r.color }} />
-                      <div className="flex-1 min-w-0">
-                        <p className="truncate text-sm font-medium text-gray-800">{r.label}</p>
-                        {r.accountId && (
-                          <p className="text-xs font-mono text-gray-400">{r.accountId}</p>
-                        )}
-                      </div>
-                      <div className="text-right shrink-0">
-                        <p className="text-sm font-semibold tabular-nums text-gray-800">{fmt(r.balanceThisMonth!)}</p>
-                        {r.delta !== null ? (
-                          <p className={`text-xs font-medium tabular-nums ${paidDown ? "text-green-600" : increased ? "text-red-500" : "text-gray-400"}`}>
-                            {paidDown ? "↓ " : increased ? "↑ " : ""}{r.delta === 0 ? "no change" : fmtShort(Math.abs(r.delta))}
-                          </p>
-                        ) : (
-                          <p className="text-xs text-gray-300">new</p>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* By account with sparklines */}
       {accountMonthly.length > 0 && (
