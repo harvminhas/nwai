@@ -53,7 +53,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "16"; // added subtype taxonomy rollup
+const SCHEMA_VERSION = "19"; // backfills stored as individual monthly docs
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -197,7 +197,7 @@ export async function buildAndCacheFinancialProfile(
   db: Firestore.Firestore,
 ): Promise<FinancialProfileCache> {
   // Fetch all data sources in parallel — same collections the assets page uses.
-  const [txData, rulesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap] =
+  const [txData, rulesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap, backfillsSnap] =
     await Promise.all([
       extractAllTransactions(uid, db),
       db.collection(`users/${uid}/categoryRules`).get(),
@@ -209,6 +209,7 @@ export async function buildAndCacheFinancialProfile(
       db.collection(`users/${uid}/cashIncome`).get(),
       db.collection(`users/${uid}/incomeCategoryRules`).get(),
       db.doc(`users/${uid}/prefs/debtPaymentTags`).get(),
+      db.collection(`users/${uid}/accountBackfills`).get(),
     ]);
 
   // Currency overrides: accountSlug → ISO currency code (e.g. "USD")
@@ -419,6 +420,29 @@ export async function buildAndCacheFinancialProfile(
     const existingUploadedAt = entry.entries.get(ym);
     if (existingUploadedAt == null) entry.entries.set(ym, parsed.netWorth);
   }
+  // Apply synthetic backfill entries — each doc is one pre-computed monthly record.
+  // Real statement data (loaded above) takes priority: only fill months with no real data.
+  // When the user uploads a real statement for a backfill month, it naturally wins.
+  for (const doc of backfillsSnap.docs) {
+    const bf = doc.data() as {
+      accountSlug: string; accountName: string; accountType: string;
+      yearMonth: string; balance: number;
+    };
+    if (!bf.accountSlug || !bf.yearMonth) continue;
+
+    if (!balanceHistoryMap.has(bf.accountSlug)) {
+      balanceHistoryMap.set(bf.accountSlug, {
+        label:       bf.accountName ?? bf.accountSlug,
+        accountType: bf.accountType ?? "other",
+        entries:     new Map(),
+      });
+    }
+    const entry = balanceHistoryMap.get(bf.accountSlug)!;
+    if (!entry.entries.has(bf.yearMonth)) {
+      entry.entries.set(bf.yearMonth, bf.balance);
+    }
+  }
+
   const accountBalanceHistory: AccountBalanceHistory[] = Array.from(balanceHistoryMap.entries()).map(([slug, e]) => {
     const currencyOverride = currencyOverrides.get(slug);
     // Derive currency: prefer user override, else look up from mergedSnapshots

@@ -8,16 +8,9 @@ import { getFinancialProfile } from "@/lib/financialProfile";
 import { getNetWorth } from "@/lib/profileMetrics";
 import type { ParsedStatementData, ManualAsset, AssetCategory } from "@/lib/types";
 import type { BalanceSnapshot } from "@/app/api/user/balance-snapshots/route";
-import type { AccountBackfill } from "@/app/api/user/account-backfills/route";
+import type { AccountBackfillEntry } from "@/app/api/user/account-backfills/route";
 import { buildSuggestions } from "@/lib/sourceMappings";
 import type { SourceMapping } from "@/lib/sourceMappings";
-
-/** Subtract n months from a YYYY-MM string */
-function subtractMonths(ym: string, n: number): string {
-  const [y, m] = ym.split("-").map(Number);
-  const date = new Date(y, m - 1 - n, 1);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-}
 
 /** Human-readable label for a statement's account, e.g. "TD ••••7780" */
 function accountDisplayLabel(parsed: ParsedStatementData): string {
@@ -422,65 +415,72 @@ export async function GET(request: NextRequest) {
     }
 
     // ── Backfill injection ───────────────────────────────────────────────────
-    // For accounts where the user told us they'd had the account longer than
-    // the first uploaded statement, inject flat estimated balance entries into
-    // history going back backfillMonths months. Shown as a dashed line on the chart.
+    // One Firestore doc per synthetic month (users/{uid}/accountBackfills/{slug_YYYY-MM}).
+    // Skip when a real statement already exists for that account + month.
     if (!accountFilter) {
       const backfillsSnap = await db
         .collection("users").doc(uid)
         .collection("accountBackfills")
         .get();
-      const backfills: AccountBackfill[] = backfillsSnap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<AccountBackfill, "id">),
-      }));
+      const backfills = backfillsSnap.docs.map((d) => d.data() as AccountBackfillEntry);
 
       if (backfills.length > 0) {
         const historyIndex = new Map(history.map((h, i) => [h.yearMonth, i]));
 
         for (const bf of backfills) {
-          if (bf.backfillMonths <= 0) continue;
-          for (let mo = 1; mo <= bf.backfillMonths; mo++) {
-            const ym  = subtractMonths(bf.firstStatementYearMonth, mo);
-            const idx = historyIndex.get(ym);
-            if (idx !== undefined) {
-              history[idx].netWorth  += bf.firstBalance;
-              history[idx].isEstimate = true;
-            } else {
-              const newIdx = history.length;
-              history.push({
-                yearMonth: ym, netWorth: bf.firstBalance,
-                expensesTotal: 0, coreExpensesTotal: 0,
-                incomeTotal: 0, debtTotal: 0, isEstimate: true,
-              });
-              historyIndex.set(ym, newIdx);
-            }
+          const ym = bf.yearMonth;
+          if (!ym || !bf.accountSlug || bf.balance == null || !Number.isFinite(bf.balance)) continue;
+
+          const hasRealStatement = allCompleted.some((doc) => {
+            const d = doc.data() as FirebaseFirestore.DocumentData;
+            if (docYearMonth(d) !== ym) return false;
+            const parsed = d.parsedData as ParsedStatementData | undefined;
+            if (!parsed) return false;
+            return buildAccountSlug(parsed.bankName, parsed.accountId) === bf.accountSlug;
+          });
+          if (hasRealStatement) continue;
+
+          const debtDelta = bf.balance < 0 ? Math.abs(bf.balance) : 0;
+
+          const idx = historyIndex.get(ym);
+          if (idx !== undefined) {
+            history[idx].netWorth += bf.balance;
+            if (debtDelta > 0) history[idx].debtTotal += debtDelta;
+            history[idx].isEstimate = true;
+          } else {
+            const newIdx = history.length;
+            history.push({
+              yearMonth: ym,
+              netWorth: bf.balance,
+              expensesTotal: 0,
+              coreExpensesTotal: 0,
+              incomeTotal: 0,
+              debtTotal: debtDelta,
+              isEstimate: true,
+            });
+            historyIndex.set(ym, newIdx);
           }
 
-          // Inject into accountStatementHistory for the account detail page
           if (!accountStatementHistory.has(bf.accountSlug)) {
             accountStatementHistory.set(bf.accountSlug, []);
           }
-          for (let mo = 1; mo <= bf.backfillMonths; mo++) {
-            const ym = subtractMonths(bf.firstStatementYearMonth, mo);
-            const already = accountStatementHistory.get(bf.accountSlug)!.some((e) => e.yearMonth === ym);
-            if (!already) {
-              accountStatementHistory.get(bf.accountSlug)!.push({
-                yearMonth: ym, netWorth: bf.firstBalance,
-                uploadedAt: bf.createdAt, statementId: "",
-                isCarryForward: false, interestRate: null,
-                isManualSnapshot: false,
-                note: "Estimated (backfilled)",
-              });
-            }
+          const acctHist = accountStatementHistory.get(bf.accountSlug)!;
+          const already = acctHist.some((e) => e.yearMonth === ym);
+          if (!already) {
+            acctHist.push({
+              yearMonth: ym,
+              netWorth: bf.balance,
+              uploadedAt: bf.createdAt,
+              statementId: "",
+              isCarryForward: false,
+              interestRate: null,
+              isManualSnapshot: false,
+              note: "Estimated (backfilled)",
+            });
+            acctHist.sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
           }
-
-          // Re-sort the account's history after injection
-          accountStatementHistory.get(bf.accountSlug)!
-            .sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
         }
 
-        // Re-sort the global history after injecting backfill months
         history.sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
       }
     }

@@ -14,6 +14,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { doc, onSnapshot } from "firebase/firestore";
 import { getFirebaseClient } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
@@ -72,10 +73,12 @@ function BackfillPromptModal({
 }) {
   const [selected, setSelected] = useState<BucketId | null>(null);
   const [saving,   setSaving]   = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const handleSave = async () => {
     if (!selected) return;
     setSaving(true);
+    setSaveError(null);
 
     const bucket    = AGE_BUCKETS.find((b) => b.id === selected)!;
     // For ">6 mo", backfill to the oldest tracked month (or 12 months if no baseline)
@@ -85,21 +88,33 @@ function BackfillPromptModal({
           : 12)
       : bucket.months;
 
-    await fetch("/api/user/account-backfills", {
-      method:  "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
-      body:    JSON.stringify({
-        statementId:             prompt.statementId,
-        accountSlug:             prompt.accountSlug,
-        accountName:             prompt.accountName,
-        accountType:             prompt.accountType,
-        backfillMonths,
-        firstBalance:            prompt.firstBalance,
-        firstStatementYearMonth: prompt.firstStatementYearMonth,
-      }),
-    });
-    setSaving(false);
-    onDone();
+    try {
+      const res = await fetch("/api/user/account-backfills", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+        body:    JSON.stringify({
+          statementId:             prompt.statementId,
+          accountSlug:             prompt.accountSlug,
+          accountName:             prompt.accountName,
+          accountType:             prompt.accountType,
+          backfillMonths,
+          firstBalance:            prompt.firstBalance,
+          firstStatementYearMonth: prompt.firstStatementYearMonth,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        console.error("[backfill] save failed:", res.status, body);
+        setSaveError("Something went wrong saving the backfill. Please try again.");
+        return; // keep modal open
+      }
+      onDone();
+    } catch (e) {
+      console.error("[backfill] save failed:", e);
+      setSaveError("Network error — please try again.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const selectedBucket = AGE_BUCKETS.find((b) => b.id === selected);
@@ -155,6 +170,9 @@ function BackfillPromptModal({
               Skip
             </button>
           </div>
+          {saveError && (
+            <p className="mt-2 text-[11px] font-medium text-red-600">{saveError}</p>
+          )}
 
           {/* Soft duplicate advisory */}
           <div className="mt-3 rounded-lg border border-blue-200 bg-white/70 px-3 py-2">
@@ -184,6 +202,7 @@ type ParseItemStatus = "analyzing" | "done" | "error";
 interface ParseItem extends PendingParse { status: ParseItemStatus }
 
 export default function ParseStatusBanner({ onRefresh }: { onRefresh: () => void }) {
+  const router                              = useRouter();
   const [items,          setItems]          = useState<ParseItem[]>([]);
   const [showDone,       setShowDone]       = useState(false);
   const [idToken,        setIdToken]        = useState<string | null>(null);
@@ -317,7 +336,7 @@ export default function ParseStatusBanner({ onRefresh }: { onRefresh: () => void
         <BackfillPromptModal
           prompt={backfillPrompt}
           idToken={idToken}
-          onDone={() => { setBackfillPrompt(null); onRefreshRef.current(); }}
+          onDone={() => { setBackfillPrompt(null); onRefreshRef.current(); router.refresh(); }}
         />
       )}
 

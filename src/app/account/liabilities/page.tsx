@@ -1144,20 +1144,33 @@ function LiabilitiesPageInner() {
       setYearMonth(cJson.yearMonth ?? null);
       setPaymentsMade(cJson.paymentsMade ?? 0);
 
-      // Build debt history from consolidated monthly history (already CAD-converted)
-      const rawHistory: { yearMonth: string; netWorth: number; debtTotal: number }[] = cJson.history ?? [];
-      const hist: DebtHistoryPoint[] = rawHistory
-        .filter((h) => h.debtTotal > 0)
-        .map((h) => {
-          const [y, m] = h.yearMonth.split("-");
+      // Build debt history from accountBalanceHistory with carry-forward.
+      // Using this source (instead of cJson.history[].debtTotal) means backfill months
+      // are included — accounts with synthetic history contribute their estimated balance
+      // to historical months, preventing false "new debt" spikes.
+      const DEBT_TYPES_SET = new Set(["credit", "mortgage", "loan"]);
+      const debtBalHist = (cJson.accountBalanceHistory as AccountBalanceHistory[] ?? [])
+        .filter((h) => DEBT_TYPES_SET.has(h.accountType) || h.entries.some((e) => e.balance < 0));
+      const allDebtMonths = Array.from(
+        new Set(debtBalHist.flatMap((h) => h.entries.map((e) => e.yearMonth)))
+      ).sort();
+      const hist: DebtHistoryPoint[] = allDebtMonths
+        .map((ym) => {
+          let total = 0;
+          for (const acct of debtBalHist) {
+            // Carry forward: use latest entry at-or-before this month
+            const pts = acct.entries.filter((e) => e.yearMonth <= ym);
+            if (pts.length > 0) total += Math.abs(pts[pts.length - 1].balance);
+          }
+          const [y, m] = ym.split("-");
           const label = new Date(parseInt(y), parseInt(m) - 1, 1)
             .toLocaleDateString("en-US", { month: "short", year: "2-digit" });
-          return { ym: h.yearMonth, label, total: h.debtTotal };
-        });
+          return { ym, label, total };
+        })
+        .filter((h) => h.total > 0);
       setDebtHistory(hist);
 
       // Per-account monthly balance history — from the financial profile cache
-      const DEBT_TYPES_SET = new Set(["credit", "mortgage", "loan"]);
       const acctMonthly: AccountMonthlyData[] = (cJson.accountBalanceHistory as AccountBalanceHistory[] ?? [])
         .filter((h) => DEBT_TYPES_SET.has(h.accountType) || h.entries.some((e) => e.balance < 0))
         .map((h) => {
