@@ -363,10 +363,7 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
 
   // Growth metrics
   const firstPt  = debtHistory[0];
-  const prevPt   = debtHistory.length >= 2 ? debtHistory[debtHistory.length - 2] : null;
   const latestPt = debtHistory.length >= 1 ? debtHistory[debtHistory.length - 1] : null;
-  // Debt going down = positive (good), going up = negative
-  const growthMoM   = prevPt  && latestPt ? prevPt.total  - latestPt.total : null; // positive = paid down
   const growthTotal = firstPt && latestPt ? firstPt.total - latestPt.total : null; // positive = net reduction
   const growthPct   = firstPt && latestPt && firstPt.total > 0
     ? ((firstPt.total - latestPt.total) / firstPt.total) * 100 : null;
@@ -401,13 +398,6 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
         <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Total Debt</p>
         <div className="mt-1 flex items-center gap-3 flex-wrap">
           <p className="font-bold text-4xl text-gray-900">{fmtShort(total)}</p>
-          {growthMoM !== null && (
-            <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm font-semibold ${
-              growthMoM >= 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"
-            }`}>
-              {growthMoM >= 0 ? "↓" : "↑"} {fmtShort(Math.abs(growthMoM))} this month
-            </span>
-          )}
         </div>
       </div>
 
@@ -426,11 +416,6 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
                 </p>
               )}
             </div>
-            {growthMoM !== null && (
-              <div className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${growthMoM >= 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
-                {growthMoM >= 0 ? "↓" : "↑"} {fmtShort(Math.abs(growthMoM))} MoM
-              </div>
-            )}
           </div>
           <p className="mb-2 text-xs text-gray-400">Click a point to see per-account breakdown</p>
           <div className="h-44">
@@ -496,7 +481,7 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
                       const diff = selectedPt.total - prevTotal;
                       return (
                         <span className={`ml-2 font-semibold ${diff <= 0 ? "text-green-600" : "text-red-500"}`}>
-                          {diff <= 0 ? "↓ " : "↑ "}{fmtShort(Math.abs(diff))} vs prev month
+                          {diff <= 0 ? "↓ " : "↑ "}{fmtShort(Math.abs(diff))} vs prior chart month
                         </span>
                       );
                     })()}
@@ -531,8 +516,13 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
                           <p className={`text-xs font-medium tabular-nums ${paidDown ? "text-green-600" : increased ? "text-red-500" : "text-gray-400"}`}>
                             {paidDown ? "↓ " : increased ? "↑ " : ""}{r.delta === 0 ? "no change" : fmtShort(Math.abs(r.delta))}
                           </p>
+                        ) : r.balanceThisMonth != null && prevPtYm ? (
+                          <p className="text-xs font-medium tabular-nums text-red-500">
+                            ↑ {fmtShort(r.balanceThisMonth)}{" "}
+                            <span className="font-normal text-gray-400">(new this month)</span>
+                          </p>
                         ) : (
-                          <p className="text-xs text-gray-300">new</p>
+                          <p className="text-xs text-gray-400">new</p>
                         )}
                       </div>
                     </div>
@@ -1329,7 +1319,15 @@ function LiabilitiesPageInner() {
       </div>
 
       {/* Tab content */}
-      {activeTab === "overview" && <OverviewTab libs={displayLibs} debtHistory={debtHistory} accountMonthly={accountMonthly} paymentsMade={paymentsMade} accountRates={accountRates} />}
+      {activeTab === "overview" && (
+        <OverviewTab
+          libs={displayLibs}
+          debtHistory={debtHistory}
+          accountMonthly={accountMonthly}
+          paymentsMade={paymentsMade}
+          accountRates={accountRates}
+        />
+      )}
       {activeTab === "accounts" && (
         <AccountsTab
           libs={displayLibs} manualLibs={manualLibs} deletingId={deletingId}

@@ -249,21 +249,52 @@ export function AssetsPage() {
       setAccountSnapshots(cJson.accountSnapshots ?? []);
       setAccountBalanceHistory(cJson.accountBalanceHistory ?? []);
 
-      // Build asset history from consolidated monthly history (already CAD-converted)
-      const rawHistory: { yearMonth: string; netWorth: number; debtTotal: number }[] =
-        cJson.history ?? [];
-      const hist = rawHistory
-        .filter((h) => h.netWorth + h.debtTotal > 0)
-        .map((h) => {
-          const [y, m] = h.yearMonth.split("-");
+      // Asset growth chart: carry-forward from accountBalanceHistory (includes synthetic
+      // backfill months) + manual assets each month — mirrors liabilities debt chart logic.
+      const ASSET_TYPES = new Set(["checking", "savings", "investment", "other"]);
+      const DEBT_TYPES_SET = new Set(["credit", "mortgage", "loan"]);
+      const balHist = (cJson.accountBalanceHistory as AccountBalanceHistory[] ?? []);
+      const assetBalHist = balHist.filter((h) => ASSET_TYPES.has(h.accountType));
+      const debtBalHistForHist = balHist.filter(
+        (h) => DEBT_TYPES_SET.has(h.accountType) || h.entries.some((e) => e.balance < 0),
+      );
+      const monthSet = new Set<string>(
+        assetBalHist.flatMap((h) => h.entries.map((e) => e.yearMonth)),
+      );
+      for (const row of cJson.history ?? []) {
+        if (row.yearMonth) monthSet.add(row.yearMonth);
+      }
+      const allAssetMonths = Array.from(monthSet).sort();
+      const manualAssetsTotal = (aJson.assets ?? []).reduce(
+        (s: number, ma: ManualAsset) => s + (ma.value ?? 0),
+        0,
+      );
+      const hist = allAssetMonths
+        .map((ym) => {
+          let stmtAssets = 0;
+          for (const acct of assetBalHist) {
+            const pts = acct.entries.filter((e) => e.yearMonth <= ym);
+            if (pts.length > 0) stmtAssets += Math.max(0, pts[pts.length - 1].balance);
+          }
+          let debtSide = 0;
+          for (const acct of debtBalHistForHist) {
+            const pts = acct.entries.filter((e) => e.yearMonth <= ym);
+            if (pts.length > 0) debtSide += Math.abs(pts[pts.length - 1].balance);
+          }
+          const [y, m] = ym.split("-");
           const label = new Date(parseInt(y), parseInt(m) - 1, 1)
             .toLocaleDateString("en-US", { month: "short", year: "2-digit" });
-          return { ym: h.yearMonth, label, total: h.netWorth + h.debtTotal, debt: h.debtTotal };
-        });
+          return {
+            ym,
+            label,
+            total: stmtAssets + manualAssetsTotal,
+            debt: debtSide,
+          };
+        })
+        .filter((h) => h.total > 0);
       setAssetHistory(hist);
 
       // Build per-account monthly series from the cache's accountBalanceHistory
-      const ASSET_TYPES = new Set(["checking", "savings", "investment", "other"]);
       const GROUP_COLORS: Record<string, string> = {
         checking: "#f59e0b", savings: "#f59e0b", investment: "#3b82f6", other: "#94a3b8",
       };
@@ -395,10 +426,8 @@ export function AssetsPage() {
 
   // Growth deltas from history
   const firstHist    = assetHistory[0];
-  const prevHist     = assetHistory.length >= 2 ? assetHistory[assetHistory.length - 2] : null;
   const latestHist   = assetHistory.length >= 1 ? assetHistory[assetHistory.length - 1] : null;
   const growthTotal  = firstHist && latestHist ? latestHist.total - firstHist.total : null;
-  const growthMoM    = prevHist  && latestHist ? latestHist.total - prevHist.total  : null;
   const growthPct    = firstHist && latestHist && firstHist.total > 0
     ? ((latestHist.total - firstHist.total) / firstHist.total) * 100 : null;
 
@@ -510,13 +539,6 @@ export function AssetsPage() {
                   <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Total Assets</p>
                   <div className="mt-1 flex items-center gap-3 flex-wrap">
                     <p className="font-bold text-4xl text-gray-900">{fmtShort(totalAssets)}</p>
-                    {growthMoM !== null && (
-                      <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm font-semibold ${
-                        growthMoM >= 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"
-                      }`}>
-                        {growthMoM >= 0 ? "↑" : "↓"} {fmtShort(Math.abs(growthMoM))} this month
-                      </span>
-                    )}
                   </div>
                 </div>
               )}
@@ -536,11 +558,6 @@ export function AssetsPage() {
                         </p>
                       )}
                     </div>
-                    {growthMoM !== null && (
-                      <div className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${growthMoM >= 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
-                        {growthMoM >= 0 ? "▲" : "▼"} {fmtShort(Math.abs(growthMoM))} MoM
-                      </div>
-                    )}
                   </div>
                   <p className="mb-2 text-xs text-gray-400">Click a point to see per-account breakdown</p>
                   <div className="h-44">
@@ -608,7 +625,7 @@ export function AssetsPage() {
                               const diff = selAssetPt.total - prevTotal;
                               return (
                                 <span className={`ml-2 font-semibold ${diff >= 0 ? "text-green-600" : "text-red-500"}`}>
-                                  {diff >= 0 ? "↑ " : "↓ "}{fmtShort(Math.abs(diff))} vs prev month
+                                  {diff >= 0 ? "↑ " : "↓ "}{fmtShort(Math.abs(diff))} vs prior chart month
                                 </span>
                               );
                             })()}
@@ -641,8 +658,13 @@ export function AssetsPage() {
                                   <p className={`text-xs font-medium tabular-nums ${grew ? "text-green-600" : shrank ? "text-red-500" : "text-gray-400"}`}>
                                     {grew ? "↑ " : shrank ? "↓ " : ""}{r.delta === 0 ? "no change" : fmtShort(Math.abs(r.delta))}
                                   </p>
+                                ) : r.balanceThisMonth != null && prevAssetPtYm ? (
+                                  <p className="text-xs font-medium tabular-nums text-green-600">
+                                    ↑ {fmtShort(Math.abs(r.balanceThisMonth))}{" "}
+                                    <span className="font-normal text-gray-400">(new this month)</span>
+                                  </p>
                                 ) : (
-                                  <p className="text-xs text-gray-300">new</p>
+                                  <p className="text-xs text-gray-400">new</p>
                                 )}
                               </div>
                             </div>
