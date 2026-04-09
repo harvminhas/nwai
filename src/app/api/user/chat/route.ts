@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { buildFinancialBrief } from "@/lib/financialBrief";
+import { resolvePlan } from "@/app/api/user/plan/route";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -56,10 +57,10 @@ export async function POST(req: NextRequest) {
   }
   if (!message) return NextResponse.json({ error: "Message is required" }, { status: 400 });
 
-  // Check plan
+  // Check plan — use resolvePlan which honours manualPro and subscription.status
   const { db } = getFirebaseAdmin();
   const userDoc = await db.collection("users").doc(uid).get();
-  const plan: string = userDoc.exists ? (userDoc.data()?.plan ?? "free") : "free";
+  const plan = resolvePlan(userDoc.exists ? (userDoc.data() as Record<string, unknown>) : undefined) ?? "free";
   if (plan === "free") {
     return NextResponse.json({ error: "AI Chat is a Pro feature. Upgrade to access." }, { status: 403 });
   }

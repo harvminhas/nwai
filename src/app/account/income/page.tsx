@@ -245,6 +245,41 @@ function IncomePageInner() {
 
   // ── data loading ─────────────────────────────────────────────────────────────
 
+  // Fetch a single month's data into cache without changing selectedMonth.
+  const prefetchMonth = useCallback(async (ym: string, tok: string, cashEntries: CashIncomeEntry[]) => {
+    try {
+      const res = await fetch(`/api/user/statements/consolidated?month=${ym}`, {
+        headers: { Authorization: `Bearer ${tok}` },
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json.data) {
+        setDataByMonth((prev) => ({
+          ...prev,
+          [ym]: {
+            income: json.data.income ?? { total: 0, sources: [], transactions: [] },
+            expenses: json.data.expenses ?? { total: 0 },
+            savingsRate: json.data.savingsRate ?? 0,
+            txIncome: json.txMonthlyIncome ?? json.data.income?.total ?? 0,
+            txExpenses: json.txMonthlyExpenses ?? json.data.expenses?.total ?? 0,
+          },
+        }));
+      } else {
+        const cashTotal = cashEntries.reduce((sum, e) => sum + occurrencesInMonth(e, ym) * e.amount, 0);
+        setDataByMonth((prev) => ({
+          ...prev,
+          [ym]: {
+            income: { total: cashTotal, sources: [], transactions: [] },
+            expenses: { total: 0 },
+            savingsRate: 0,
+            txIncome: cashTotal,
+            txExpenses: 0,
+            cashOnly: true,
+          } as ConsolidatedData & { cashOnly?: boolean },
+        }));
+      }
+    } catch { /* best-effort */ }
+  }, []);
+
   useEffect(() => {
     const { auth, db } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
@@ -291,6 +326,7 @@ function IncomePageInner() {
 
         const latestYm: string = json.yearMonth ?? null;
         setSelectedMonth(latestYm);
+        const initialCashItems = (json.cashIncomeItems ?? []) as CashIncomeEntry[];
         if (latestYm && json.data) {
           setDataByMonth({
             [latestYm]: {
@@ -302,12 +338,19 @@ function IncomePageInner() {
             },
           });
         }
+        // Background-prefetch all other history months so chart dots are instantly clickable
+        const otherYms = hist.map((h) => h.yearMonth).filter((ym) => ym !== latestYm);
+        for (const ym of otherYms) {
+          void prefetchMonth(ym, tok, initialCashItems);
+        }
       } catch { setError("Failed to load income data"); }
       finally { setLoading(false); }
     });
-  }, [router]);
+  }, [router, prefetchMonth]);
 
   // Re-fetches history + cash items when the financial profile is rebuilt.
+  // Clears the whole dataByMonth cache so stale values (e.g. deleted cash income)
+  // don't linger in the detail panel.
   const reloadConsolidated = useCallback(async () => {
     const tok = tokenRef.current;
     if (!tok) return;
@@ -328,22 +371,28 @@ function IncomePageInner() {
       setTotalMonths(json.totalMonthsTracked ?? hist.length);
       setSourceHistory(json.incomeSourceHistory ?? {});
       setIncomeCategoryRules(json.incomeCategoryRules ?? {});
-      setCashItems((json.cashIncomeItems ?? []) as CashIncomeEntry[]);
+      const freshCashItems = (json.cashIncomeItems ?? []) as CashIncomeEntry[];
+      setCashItems(freshCashItems);
       const latestYm: string = json.yearMonth ?? null;
+      // Reset entire cache so deleted/changed items don't show stale data
+      const freshCache: Record<string, ConsolidatedData> = {};
       if (latestYm && json.data) {
-        setDataByMonth((prev) => ({
-          ...prev,
-          [latestYm]: {
-            income: json.data.income ?? { total: 0, sources: [], transactions: [] },
-            expenses: json.data.expenses ?? { total: 0 },
-            savingsRate: json.data.savingsRate ?? 0,
-            txIncome: json.txMonthlyIncome ?? json.data.income?.total ?? 0,
-            txExpenses: json.txMonthlyExpenses ?? json.data.expenses?.total ?? 0,
-          },
-        }));
+        freshCache[latestYm] = {
+          income: json.data.income ?? { total: 0, sources: [], transactions: [] },
+          expenses: json.data.expenses ?? { total: 0 },
+          savingsRate: json.data.savingsRate ?? 0,
+          txIncome: json.txMonthlyIncome ?? json.data.income?.total ?? 0,
+          txExpenses: json.txMonthlyExpenses ?? json.data.expenses?.total ?? 0,
+        };
+      }
+      setDataByMonth(freshCache);
+      // Background-prefetch all other history months so dots are instantly clickable
+      const allYms = hist.map((h) => h.yearMonth).filter((ym) => ym !== latestYm);
+      for (const ym of allYms) {
+        void prefetchMonth(ym, tok, freshCashItems);
       }
     } catch { /* best-effort */ }
-  }, []);
+  }, [prefetchMonth]);
 
   useEffect(() => {
     if (!token) return;
@@ -872,14 +921,21 @@ function IncomePageInner() {
                     {regularHistoryPoints.length}-month avg <span className="font-semibold text-gray-600">{fmt(avgIncome)} / mo</span>
                   </p>
                 )}
-                <div className="h-44">
+                <div className="h-44 relative"
+                  onPointerDown={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const innerLeft = 52; // YAxis width
+                    const innerRight = rect.width - 8; // right margin
+                    const innerWidth = innerRight - innerLeft;
+                    const relX = e.clientX - rect.left - innerLeft;
+                    if (innerWidth <= 0 || relX < -8 || relX > innerWidth + 8) return;
+                    const idx = Math.round((Math.max(0, Math.min(innerWidth, relX)) / innerWidth) * (chartData.length - 1));
+                    const ym = chartData[Math.max(0, Math.min(chartData.length - 1, idx))]?.ym;
+                    if (ym) void fetchMonth(ym);
+                  }}
+                >
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}
-                      onClick={(d) => {
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        const ym = (d as any)?.activePayload?.[0]?.payload?.ym as string | undefined;
-                        if (ym) void fetchMonth(ym);
-                      }}
                       style={{ cursor: "pointer" }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
                       <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
@@ -888,13 +944,96 @@ function IncomePageInner() {
                         contentStyle={{ borderRadius: "8px", border: "1px solid #e5e7eb", fontSize: "13px" }}
                         labelStyle={{ fontWeight: 600, color: "#111827" }} />
                       <Line type="monotone" dataKey="income" stroke="#7c3aed" strokeWidth={2}
-                        dot={{ fill: "#7c3aed", strokeWidth: 0, r: 3 }}
-                        activeDot={{ r: 5, fill: "#7c3aed", stroke: "#fff", strokeWidth: 2 }} />
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        dot={(props: any) => {
+                          const ym = props.payload?.ym as string | undefined;
+                          const isSelected = ym === selectedMonth;
+                          if (props.cx == null || props.cy == null) return <g key="empty" />;
+                          return (
+                            <circle key={ym ?? props.cx}
+                              cx={props.cx as number} cy={props.cy as number}
+                              r={isSelected ? 6 : 4}
+                              fill={isSelected ? "#fff" : "#7c3aed"}
+                              stroke="#7c3aed"
+                              strokeWidth={isSelected ? 2.5 : 0}
+                            />
+                          );
+                        }}
+                        activeDot={{ r: 6, fill: "#fff", stroke: "#7c3aed", strokeWidth: 2 }} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
+                <p className="mt-2 text-center text-[11px] text-gray-400">Click a month to see breakdown</p>
               </div>
             )}
+
+            {/* Loading state while month data is fetching */}
+            {selectedMonth && !current && (
+              <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm text-center text-sm text-gray-400 animate-pulse">
+                Loading {longMonth(selectedMonth)}…
+              </div>
+            )}
+
+            {/* Selected-month detail panel — shown below the chart after clicking a dot */}
+            {selectedMonth && current && (
+              <div className="rounded-xl border border-purple-100 bg-purple-50/40 p-5 shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-purple-500">{longMonth(selectedMonth)}</p>
+                  <button onClick={() => setSelectedMonth(null)} className="text-xs text-gray-400 hover:text-gray-600 transition">✕ close</button>
+                </div>
+                <p className="text-3xl font-bold text-gray-900">{fmt(current.txIncome ?? income?.total ?? 0)}</p>
+                {(() => {
+                  const monthSources = current.income?.sources ?? [];
+                  const monthTxns = current.income?.transactions ?? [];
+                  if (monthTxns.length === 0 && monthSources.length === 0 && (current as { cashOnly?: boolean }).cashOnly) {
+                    return (
+                      <div className="mt-3 space-y-1.5">
+                        <p className="text-xs text-amber-600 font-medium mb-2">Cash income only · no statement uploaded</p>
+                        {cashItems.filter((c) => occurrencesInMonth(c, selectedMonth) > 0).map((c) => (
+                          <div key={c.id} className="flex items-center justify-between text-sm">
+                            <span className="text-gray-700">{c.name}</span>
+                            <span className="font-medium text-green-700">+{fmt(c.amount * occurrencesInMonth(c, selectedMonth))}</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }
+                  const isExcluded = (desc: string) =>
+                    isTransferSource(desc) || transferSources.has(desc) || excludedSources.has(desc);
+                  const rows = monthTxns.length > 0
+                    ? Array.from(
+                        monthTxns
+                          .filter((t) => !isExcluded((t.source ?? "").trim()))
+                          .reduce((m, t) => {
+                            const k = (t.source ?? "Other").trim();
+                            m.set(k, (m.get(k) ?? 0) + t.amount);
+                            return m;
+                          }, new Map<string, number>())
+                      ).sort((a, b) => b[1] - a[1])
+                    : monthSources
+                        .filter((s) => !isExcluded(s.description))
+                        .map((s) => [s.description, s.amount] as [string, number]);
+                  if (rows.length === 0) return <p className="mt-2 text-sm text-gray-400">No statement data for this month.</p>;
+                  return (
+                    <div className="mt-3 space-y-1.5">
+                      {rows.map(([desc, amt]) => (
+                        <div key={desc} className="flex items-center justify-between text-sm">
+                          <span className="truncate text-gray-700 max-w-[70%]">{desc}</span>
+                          <span className="font-medium text-green-700 tabular-nums shrink-0 ml-2">+{fmt(amt)}</span>
+                        </div>
+                      ))}
+                      {cashItems.filter((c) => occurrencesInMonth(c, selectedMonth) > 0).map((c) => (
+                        <div key={c.id} className="flex items-center justify-between text-sm">
+                          <span className="truncate text-gray-700 max-w-[70%]">{c.name} <span className="text-amber-500 text-xs">(cash)</span></span>
+                          <span className="font-medium text-green-700 tabular-nums shrink-0 ml-2">+{fmt(c.amount * occurrencesInMonth(c, selectedMonth))}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+            
           </>
         )}
 
