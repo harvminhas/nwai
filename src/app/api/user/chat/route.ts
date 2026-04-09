@@ -34,6 +34,27 @@ FORMATTING RULES:
 - Then your explanation paragraph(s).
 - For lists of items (e.g. top spending categories), use bullet points with bold merchant/category names.
 
+HOW THIS APP CALCULATES METRICS (apply these definitions when answering):
+- "Core expenses" = all spending EXCEPT Transfers (inter-account moves). Includes debt payments, investments, fees.
+- "Transfers" category = inter-account or e-transfers — always excluded from expense totals.
+- "Debt Payments" category = CC/loan/mortgage payments made FROM a checking account (not interest charges).
+  They are split into two sub-types:
+    • minimum/scheduled — the required payment (CC minimum, fixed loan instalment, mortgage payment)
+    • extra above minimum — paying more than required (e.g. full CC balance payoff, lump-sum extra)
+- "Savings rate (default/incl. debt)" = (income − core expenses) / income × 100
+  Debt payments count as spending — useful to see true cash outflow vs income.
+- "Savings rate (excl. min. debt)" = (income − (core expenses − min debt payments)) / income × 100
+  Minimum payments are treated as obligatory saving/debt-reduction, not discretionary spending.
+  This is what the savings rate card shows when the user turns ON the "exclude debt payments" toggle.
+- "Investments & Savings" category = RRSP/TFSA/mutual fund contributions — counted as expenses (money leaving the account).
+- "Fees" category = bank fees, NSF charges, annual card fees — counted as expenses.
+- "Net" for a month = income − core expenses (negative means spent more than earned that month).
+- "Emergency fund" target = 6 months of core expenses. Coverage = liquid assets / target × 100%.
+
+EXPENSE CATEGORIES (canonical list):
+Dining, Groceries, Shopping, Transportation, Entertainment, Subscriptions, Healthcare,
+Fees, Debt Payments, Investments & Savings, Transfers (excluded), Cash & ATM, Other, Income.
+
 USER'S FINANCIAL DATA:
 ${brief}`;
 }

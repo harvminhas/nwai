@@ -18,6 +18,7 @@ import {
   incomeTotalForMonth,
   expenseTotalForMonth,
 } from "@/lib/extractTransactions";
+import { SCHEDULED_DEBT_TYPES, debtTxKey } from "@/lib/debtUtils";
 import type { ParsedStatementData } from "@/lib/types";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -96,14 +97,26 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
 
   // Monthly figures — use the pre-computed monthlyHistory so cash income and cash
   // commitments are included and the numbers match exactly what the UI cards show.
-  const monthHistory = profile.monthlyHistory.find((h) => h.yearMonth === month);
-  const monthlyIncome = monthHistory?.incomeTotal   ?? incomeTotalForMonth(incomeTxns, month);
-  const monthlyExp    = monthHistory?.coreExpensesTotal ?? expenseTxns
+  const monthHistory    = profile.monthlyHistory.find((h) => h.yearMonth === month);
+  const monthlyIncome   = monthHistory?.incomeTotal        ?? incomeTotalForMonth(incomeTxns, month);
+  const monthlyExp      = monthHistory?.coreExpensesTotal  ?? expenseTxns
     .filter((t) => t.txMonth === month && !CORE_EXCLUDE_RE.test((t.category ?? "").trim()))
     .reduce((s, t) => s + t.amount, 0);
-  const monthlySav  = monthlyIncome - monthlyExp;
-  const savingsRate = monthlyIncome > 0 ? (monthlySav / monthlyIncome) * 100 : 0;
-  const efTarget    = monthlyExp * 6;
+  const monthlyDebt        = monthHistory?.debtPaymentsTotal    ?? 0;
+  const monthlyMinDebt     = monthHistory?.minDebtPaymentsTotal ?? 0;  // minimum/scheduled only
+  const monthlyExtraDebt   = Math.max(0, monthlyDebt - monthlyMinDebt); // extra above minimum
+  const monthlyDiscr       = monthlyExp - monthlyDebt;           // discretionary (excl. all debt payments)
+  const monthlySav         = monthlyIncome - monthlyExp;
+  const savingsRate        = monthlyIncome > 0 ? (monthlySav / monthlyIncome) * 100 : 0;
+  // Savings rate excl. min debt payments — "what did I save after obligatory payments?"
+  const savingsRateExclMinDebt = monthlyIncome > 0
+    ? ((monthlyIncome - (monthlyExp - monthlyMinDebt)) / monthlyIncome) * 100
+    : 0;
+  // Savings rate excl. all debt payments — used by savings rate card toggle
+  const savingsRateExclDebt = monthlyIncome > 0
+    ? ((monthlyIncome - monthlyDiscr) / monthlyIncome) * 100
+    : 0;
+  const efTarget        = monthlyExp * 6;
 
   // Account lines with real APRs
   const accountLines = accountSnapshots.map((a) => {
@@ -233,23 +246,59 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
   // Monthly trend — use pre-computed profile history so figures match the Spending page exactly
   const historyByMonth = new Map(profile.monthlyHistory.map((h) => [h.yearMonth, h]));
   const historyLines = allTxMonths.map((ym) => {
-    const h = historyByMonth.get(ym);
-    const inc = h?.incomeTotal   ?? incomeTotalForMonth(incomeTxns, ym);
-    const exp = h?.coreExpensesTotal ?? expenseTotalForMonth(expenseTxns, ym);
-    return `  ${ym}: Income ${fmt(inc)}, Expenses ${fmt(exp)}, Net ${fmt(inc - exp)}`;
+    const h   = historyByMonth.get(ym);
+    const inc = h?.incomeTotal        ?? incomeTotalForMonth(incomeTxns, ym);
+    const exp = h?.coreExpensesTotal  ?? expenseTotalForMonth(expenseTxns, ym);
+    const dbt    = h?.debtPaymentsTotal    ?? 0;
+    const minDbt = h?.minDebtPaymentsTotal ?? 0;
+    const xtrDbt = Math.max(0, dbt - minDbt);
+    const debtStr = dbt > 0
+      ? `, Debt pmts ${fmt(dbt)} (min ${fmt(minDbt)} + extra ${fmt(xtrDbt)})`
+      : "";
+    return `  ${ym}: Income ${fmt(inc)}, Expenses ${fmt(exp)}${debtStr}, Net ${fmt(inc - exp)}`;
   }).reverse();
 
+  // ── Debt payment breakdown for the latest month ──────────────────────────
+  // Lists each "Debt Payments" transaction with its min/scheduled vs extra tag.
+  // Uses SCHEDULED_DEBT_TYPES (same rule as defaultDebtTag) — mortgage/auto/personal_loan
+  // are always "scheduled"; CC and LOC default to "minimum".
+  // Note: user overrides (from prefs/debtPaymentTags) are already baked into
+  // monthlyMinDebt / monthlyExtraDebt totals via the profile cache — this
+  // section uses defaults only for labelling individual transactions.
+  const debtTxnsThisMonth = expenseTxns.filter(
+    (t) => t.txMonth === month && (t.category ?? "").toLowerCase() === "debt payments",
+  );
+  const debtBreakdownLines = debtTxnsThisMonth.map((t) => {
+    const isScheduled = SCHEDULED_DEBT_TYPES.has((t as { debtType?: string }).debtType ?? "");
+    const tag = isScheduled ? "scheduled/required" : "minimum (CC/LOC — default)";
+    return `  ${t.date}  ${t.merchant}  ${fmt(t.amount)}  [${tag}]`;
+  });
+  const debtBreakdownSection = debtBreakdownLines.length > 0
+    ? debtBreakdownLines.join("\n")
+    : "  No Debt Payment transactions recorded this month";
+
   return `== FINANCIAL SNAPSHOT (${month}) ==
-Net worth:        ${fmt(netWorth)}
-Total assets:     ${fmt(assets)}
-Total debt:       ${fmt(debts)}
-Monthly income:   ${fmt(monthlyIncome)}
-Monthly expenses: ${fmt(monthlyExp)}
-Monthly savings:  ${fmt(monthlySav)}
-Savings rate:     ${savingsRate.toFixed(1)}%
-Liquid assets:    ${fmt(liquidAssets)}
-Emergency fund:   ${fmt(efTarget)} target (6 months expenses) — ${efTarget > 0 ? ((liquidAssets / efTarget) * 100).toFixed(0) : 0}% funded
-Months of data:   ${allTxMonths.length}
+Net worth:         ${fmt(netWorth)}
+Total assets:      ${fmt(assets)}
+Total debt:        ${fmt(debts)}
+Liquid assets:     ${fmt(liquidAssets)}
+Emergency fund:    ${fmt(efTarget)} target — ${efTarget > 0 ? ((liquidAssets / efTarget) * 100).toFixed(0) : 0}% funded
+Months of data:    ${allTxMonths.length}
+
+== THIS MONTH: ${month} ==
+Income:                       ${fmt(monthlyIncome)}
+Core expenses:                ${fmt(monthlyExp)}
+  Debt payments (total):      ${fmt(monthlyDebt)}
+    minimum/scheduled:        ${fmt(monthlyMinDebt)}
+    extra above minimum:      ${fmt(monthlyExtraDebt)}
+  Discretionary (excl. debt): ${fmt(monthlyDiscr)}
+Net:                          ${fmt(monthlySav)}
+Savings rate:                 ${savingsRate.toFixed(1)}%
+Savings rate excl. min debt:  ${savingsRateExclMinDebt.toFixed(1)}%
+
+== DEBT PAYMENTS BREAKDOWN (${month}) ==
+(tag = scheduled/required for fixed loans; minimum for CC/LOC by default; user can override per-transaction)
+${debtBreakdownSection}
 
 == ACCOUNTS ==
 ${accountLines.join("\n") || "  No accounts found"}
