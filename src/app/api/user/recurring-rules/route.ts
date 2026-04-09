@@ -5,6 +5,7 @@ import {
   applyRecurringRuleToSubscriptionDoc,
   releaseSubscriptionUserLock,
 } from "@/lib/subscriptionRegistry";
+import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
 
 async function getUid(req: NextRequest): Promise<string | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
@@ -59,6 +60,7 @@ export async function PUT(req: NextRequest) {
     category: category ?? null,
     slug,
   });
+  await invalidateFinancialProfileCache(uid, db);
   return NextResponse.json({ ok: true, slug });
 }
 
@@ -72,5 +74,6 @@ export async function DELETE(req: NextRequest) {
   const { db } = getFirebaseAdmin();
   await db.doc(`users/${uid}/recurringRules/${slug}`).delete();
   await releaseSubscriptionUserLock(uid, db, slug);
+  await invalidateFinancialProfileCache(uid, db);
   return NextResponse.json({ ok: true });
 }

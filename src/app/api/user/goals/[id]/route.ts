@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
+import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
 
 function authToken(req: NextRequest): string | null {
   const h = req.headers.get("authorization");
@@ -18,6 +19,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       ...body,
       updatedAt: new Date(),
     });
+    await invalidateFinancialProfileCache(uid, db);
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("PUT /api/user/goals/[id] error:", err);
@@ -33,6 +35,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     const { uid } = await auth.verifyIdToken(token);
     const { id } = await params;
     await db.collection("users").doc(uid).collection("goals").doc(id).delete();
+    await invalidateFinancialProfileCache(uid, db);
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("DELETE /api/user/goals/[id] error:", err);

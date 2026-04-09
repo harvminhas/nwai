@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import type { ParsedStatementData } from "@/lib/types";
 import { buildAccountSlug } from "@/lib/accountSlug";
+import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
 
 export type PaymentFrequency = "weekly" | "biweekly" | "semi-monthly" | "monthly";
 
@@ -151,6 +152,7 @@ export async function PUT(req: NextRequest) {
       });
     }
 
+    await invalidateFinancialProfileCache(uid, db);
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("PUT /api/user/account-rates error:", err);

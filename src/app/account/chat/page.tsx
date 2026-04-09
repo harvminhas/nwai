@@ -15,6 +15,26 @@ interface Message {
   streaming?: boolean;
 }
 
+interface SessionSummary {
+  id: string;
+  title: string;
+  messageCount: number;
+  updatedAt: string;
+}
+
+function relativeTime(iso: string): string {
+  if (!iso) return "";
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins  = Math.floor(diff / 60_000);
+  const hours = Math.floor(diff / 3_600_000);
+  const days  = Math.floor(diff / 86_400_000);
+  if (mins  < 1)   return "just now";
+  if (mins  < 60)  return `${mins}m ago`;
+  if (hours < 24)  return `${hours}h ago`;
+  if (days  < 7)   return `${days}d ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
 // ── suggested prompts ──────────────────────────────────────────────────────────
 
 const SUGGESTED = [
@@ -88,35 +108,101 @@ function renderContent(text: string) {
 // ── main component ─────────────────────────────────────────────────────────────
 
 export default function ChatPage() {
-  const { can, setTestPlan, loading: planLoading } = usePlan();
+  const { can, loading: planLoading } = usePlan();
   const [token,        setToken]        = useState<string | null>(null);
   const [messages,     setMessages]     = useState<Message[]>([]);
   const [input,        setInput]        = useState("");
   const [streaming,    setStreaming]     = useState(false);
   const [error,        setError]        = useState<string | null>(null);
   const [dataMonth,    setDataMonth]     = useState<string | null>(null);
+  const [sessionId,    setSessionId]    = useState<string | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(false);
+  const [recentSessions, setRecentSessions] = useState<SessionSummary[]>([]);
   const bottomRef  = useRef<HTMLDivElement>(null);
   const inputRef   = useRef<HTMLTextAreaElement>(null);
   const abortRef   = useRef<AbortController | null>(null);
+  const tokenRef   = useRef<string | null>(null);
 
   // Auth
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
-      if (user) setToken(await user.getIdToken());
+      if (user) {
+        const tok = await user.getIdToken();
+        setToken(tok);
+        tokenRef.current = tok;
+      }
     });
   }, []);
 
-  // Fetch current data month for the context badge
+  // Load sessions list and data month once token is available
   useEffect(() => {
     if (!token) return;
-    fetch("/api/user/statements/consolidated", {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((r) => r.json())
-      .then((j) => { if (j.yearMonth) setDataMonth(j.yearMonth); })
-      .catch(() => {});
+    setSessionLoading(true);
+    Promise.all([
+      fetch("/api/user/chat-sessions", { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => r.json())
+        .catch(() => ({ sessions: [] })),
+      fetch("/api/user/statements/consolidated", { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => r.json())
+        .catch(() => ({})),
+    ]).then(([sessionJson, consolidatedJson]) => {
+      if (consolidatedJson.yearMonth) setDataMonth(consolidatedJson.yearMonth);
+      const sessions: SessionSummary[] = sessionJson.sessions ?? [];
+      setRecentSessions(sessions);
+      setSessionLoading(false);
+    }).catch(() => setSessionLoading(false));
   }, [token]);
+
+  // Load a specific past session when user clicks it in the history list
+  async function loadSession(summary: SessionSummary) {
+    if (!token) return;
+    setSessionLoading(true);
+    try {
+      const res = await fetch(`/api/user/chat-sessions/${summary.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      const msgs = json.session?.messages ?? [];
+      setSessionId(summary.id);
+      setMessages(
+        (msgs as { role: "user" | "assistant"; content: string }[]).map((m) => ({
+          id: crypto.randomUUID(),
+          role: m.role,
+          content: m.content,
+          streaming: false,
+        }))
+      );
+      setError(null);
+    } catch { /* best-effort */ }
+    finally { setSessionLoading(false); }
+  }
+
+  // Save current messages to the session (fire-and-forget)
+  async function persistSession(
+    finalMessages: { role: "user" | "assistant"; content: string }[],
+    currentSessionId: string | null,
+  ): Promise<string> {
+    const tok = tokenRef.current;
+    if (!tok || finalMessages.length === 0) return currentSessionId ?? "";
+    let sid = currentSessionId;
+    if (!sid) {
+      const res = await fetch("/api/user/chat-sessions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${tok}` },
+      });
+      const json = await res.json().catch(() => ({}));
+      sid = json.id ?? null;
+      if (sid) setSessionId(sid);
+    }
+    if (!sid) return "";
+    await fetch(`/api/user/chat-sessions/${sid}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
+      body: JSON.stringify({ messages: finalMessages }),
+    }).catch(() => {});
+    return sid;
+  }
 
   // Auto-scroll
   useEffect(() => {
@@ -134,6 +220,8 @@ export default function ChatPage() {
     if (!text.trim() || streaming || !token) return;
     setError(null);
 
+    // Snapshot of existing messages before this exchange
+    const prevMessages = messages;
     const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: text.trim() };
     const assistantId = crypto.randomUUID();
     const assistantMsg: Message = { id: assistantId, role: "assistant", content: "", streaming: true };
@@ -146,7 +234,7 @@ export default function ChatPage() {
     abortRef.current = new AbortController();
 
     try {
-      const history = messages.map((m) => ({ role: m.role, content: m.content }));
+      const history = prevMessages.map((m) => ({ role: m.role, content: m.content }));
       const res = await fetch("/api/user/chat", {
         method: "POST",
         headers: {
@@ -178,6 +266,14 @@ export default function ChatPage() {
       setMessages((prev) =>
         prev.map((m) => m.id === assistantId ? { ...m, streaming: false } : m)
       );
+
+      // Persist the completed exchange to Firestore
+      const toSave = [
+        ...prevMessages.map((m) => ({ role: m.role, content: m.content })),
+        { role: "user" as const, content: text.trim() },
+        { role: "assistant" as const, content: accumulated },
+      ];
+      void persistSession(toSave, sessionId);
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") return;
       const msg = err instanceof Error ? err.message : "Something went wrong.";
@@ -195,14 +291,22 @@ export default function ChatPage() {
     }
   }
 
-  function clearChat() {
+  function newChat() {
     abortRef.current?.abort();
     setMessages([]);
     setError(null);
     setStreaming(false);
+    setSessionId(null);
+    // Refresh session list so history reflects the session we just left
+    if (token) {
+      fetch("/api/user/chat-sessions", { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => r.json())
+        .then((j) => setRecentSessions(j.sessions ?? []))
+        .catch(() => {});
+    }
   }
 
-  if (planLoading) {
+  if (planLoading || sessionLoading) {
     return (
       <div className="flex items-center justify-center py-24">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-purple-200 border-t-purple-600" />
@@ -245,45 +349,81 @@ export default function ChatPage() {
               <span className="text-[11px] text-gray-500">Using {dataMonth} data</span>
             </div>
           )}
-          {!isEmpty && (
-            <button
-              onClick={clearChat}
-              className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition"
-            >
-              Clear
-            </button>
+          {sessionId && !isEmpty && (
+            <div className="hidden items-center gap-1 sm:flex">
+              <div className="h-1.5 w-1.5 rounded-full bg-purple-300" />
+              <span className="text-[11px] text-gray-400">Saved</span>
+            </div>
           )}
+          <button
+            onClick={newChat}
+            className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition"
+          >
+            New Chat
+          </button>
         </div>
       </div>
 
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto">
         {isEmpty ? (
-          /* Empty state */
-          <div className="flex flex-col items-center justify-center px-4 py-12 text-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-purple-50 mb-4">
-              <svg className="h-8 w-8 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
-              </svg>
+          /* Empty state — history + suggested prompts */
+          <div className="mx-auto w-full max-w-xl px-4 py-10">
+            {/* Hero */}
+            <div className="mb-8 flex flex-col items-center text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-purple-50 mb-3">
+                <svg className="h-7 w-7 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
+                </svg>
+              </div>
+              <h2 className="text-lg font-semibold text-gray-900">Ask anything about your finances</h2>
+              <p className="mt-1 text-sm text-gray-400 max-w-sm">
+                Every answer uses your actual statements and account data — not generic advice.
+              </p>
             </div>
-            <h2 className="text-lg font-semibold text-gray-900">Ask anything about your finances</h2>
-            <p className="mt-1.5 text-sm text-gray-400 max-w-sm">
-              Every answer uses your actual statements and account data — not generic advice.
-            </p>
+
+            {/* Recent conversations */}
+            {recentSessions.length > 0 && (
+              <div className="mb-7">
+                <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-gray-400">Recent conversations</p>
+                <div className="space-y-1.5">
+                  {recentSessions.slice(0, 5).map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => loadSession(s)}
+                      className="flex w-full items-center justify-between rounded-xl border border-gray-100 bg-white px-4 py-3 text-left shadow-sm hover:border-purple-200 hover:bg-purple-50/30 transition"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <svg className="h-4 w-4 shrink-0 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                        </svg>
+                        <span className="truncate text-sm text-gray-700">{s.title}</span>
+                      </div>
+                      <span className="ml-3 shrink-0 text-[11px] text-gray-400">{relativeTime(s.updatedAt)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Suggested prompts */}
-            <div className="mt-8 grid grid-cols-1 gap-2 sm:grid-cols-2 w-full max-w-xl">
-              {SUGGESTED.map((s) => (
-                <button
-                  key={s.text}
-                  onClick={() => sendMessage(s.text)}
-                  disabled={!token}
-                  className="flex items-start gap-2.5 rounded-xl border border-gray-100 bg-white px-4 py-3 text-left text-sm text-gray-600 shadow-sm hover:border-purple-200 hover:bg-purple-50/40 hover:text-purple-800 transition disabled:opacity-50"
-                >
-                  <span className="text-base leading-none mt-0.5">{s.icon}</span>
-                  <span>{s.text}</span>
-                </button>
-              ))}
+            <div>
+              <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                {recentSessions.length > 0 ? "Or try a prompt" : "Try asking"}
+              </p>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {SUGGESTED.map((s) => (
+                  <button
+                    key={s.text}
+                    onClick={() => sendMessage(s.text)}
+                    disabled={!token}
+                    className="flex items-start gap-2.5 rounded-xl border border-gray-100 bg-white px-4 py-3 text-left text-sm text-gray-600 shadow-sm hover:border-purple-200 hover:bg-purple-50/40 hover:text-purple-800 transition disabled:opacity-50"
+                  >
+                    <span className="text-base leading-none mt-0.5">{s.icon}</span>
+                    <span>{s.text}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         ) : (

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import type { ManualLiability, LiabilityCategory } from "@/lib/types";
+import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
 
 function authToken(req: NextRequest): string | null {
   const h = req.headers.get("authorization");
@@ -54,6 +55,7 @@ export async function POST(req: NextRequest) {
     };
     if (typeof interestRate === "number") doc.interestRate = interestRate;
     const ref = await db.collection("users").doc(uid).collection("manualLiabilities").add(doc);
+    await invalidateFinancialProfileCache(uid, db);
     return NextResponse.json({ id: ref.id });
   } catch (err) {
     console.error("POST /api/user/liabilities error:", err);

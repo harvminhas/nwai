@@ -13,6 +13,7 @@ import {
   applyRecurringRuleToSubscriptionDoc,
   releaseSubscriptionUserLock,
 } from "@/lib/subscriptionRegistry";
+import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
 
 const VALID = new Set<RecurringFrequency>([
   "oneoff",
@@ -132,5 +133,6 @@ export async function PUT(req: NextRequest) {
     }
   }
 
+  await invalidateFinancialProfileCache(uid, db);
   return NextResponse.json({ ok: true, cadence: { frequency } });
 }

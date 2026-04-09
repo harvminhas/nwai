@@ -12,18 +12,27 @@ function ChatBubble() {
   const pathname = usePathname();
   // Hide on the chat page itself
   if (pathname === "/account/chat") return null;
-  // Only show for Pro users
-  if (!can("aiChat")) return null;
+
+  const isPro = can("aiChat");
 
   return (
     <Link
       href="/account/chat"
-      title="AI Financial Chat"
-      className="fixed bottom-5 right-5 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-purple-600 shadow-lg ring-2 ring-white hover:bg-purple-700 transition-transform hover:scale-105 active:scale-95"
+      title={isPro ? "AI Financial Chat" : "Upgrade to access AI Financial Chat"}
+      className={`fixed bottom-5 right-5 z-50 flex h-12 w-12 items-center justify-center rounded-full shadow-lg ring-2 ring-white transition-transform hover:scale-105 active:scale-95 ${
+        isPro
+          ? "bg-purple-600 hover:bg-purple-700"
+          : "bg-gray-400 hover:bg-gray-500"
+      }`}
     >
       <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
       </svg>
+      {!isPro && (
+        <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-amber-400 text-[9px] font-bold text-white">
+          ★
+        </span>
+      )}
     </Link>
   );
 }

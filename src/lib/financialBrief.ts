@@ -19,7 +19,6 @@ import {
   expenseTotalForMonth,
 } from "@/lib/extractTransactions";
 import type { ParsedStatementData } from "@/lib/types";
-import type { SubscriptionRecord } from "@/lib/insights/types";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -60,33 +59,28 @@ const TOKEN_BUDGET = 1200;
  */
 export type BriefMode = "chat" | "insights";
 
-export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat"): Promise<string> {
+export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat", months?: number): Promise<string> {
   const { db } = getFirebaseAdmin();
 
-  // Use the financial profile cache — same data source as the Spending page and Today insights.
-  // Category rules and CORE_EXCLUDE_RE are pre-applied; numbers will match what the user sees.
-  const profile = await getFinancialProfile(uid, db);
-  const { expenseTxns, incomeTxns, accountSnapshots, latestTxMonth, allTxMonths } = profile;
+  // Single profile read — all collections (manualLiabilities, accountRates, goals,
+  // confirmedSubscriptions, cashCommitmentEntries) are now part of the cache.
+  // Pass months so the slice happens before building, keeping the AI context bounded.
+  const profile = await getFinancialProfile(uid, db, months ? { months } : undefined);
+  const {
+    expenseTxns, incomeTxns, accountSnapshots, latestTxMonth, allTxMonths,
+    manualAssets, manualLiabilities, accountRates, goals, confirmedSubscriptions,
+    cashCommitmentEntries,
+  } = profile;
 
   if (!latestTxMonth) return "No financial data available yet.";
 
   const month = latestTxMonth;
 
-  const [manualSnap, manualLiabSnap, ratesSnap, cashSnap, goalsSnap, confirmedSubsSnap] = await Promise.all([
-    db.collection("users").doc(uid).collection("manualAssets").get(),
-    db.collection("users").doc(uid).collection("manualLiabilities").get(),
-    db.collection("users").doc(uid).collection("accountRates").get(),
-    db.collection(`users/${uid}/cashCommitments`).get(),
-    db.collection("users").doc(uid).collection("goals").get(),
-    db.collection("users").doc(uid).collection("subscriptions").get(),
-  ]);
-
-  const manualTotal     = manualSnap.docs.reduce((s, d) => s + (d.data().value ?? 0), 0);
-  const manualLiabTotal = manualLiabSnap.docs.reduce((s, d) => s + (d.data().balance ?? 0), 0);
+  const manualTotal     = manualAssets.reduce((s, a) => s + (a.value ?? 0), 0);
+  const manualLiabTotal = manualLiabilities.reduce((s, l) => s + (l.balance ?? 0), 0);
   const rateMap = new Map<string, number>();
-  for (const doc of ratesSnap.docs) {
-    const d = doc.data();
-    if (d.rate != null) rateMap.set(doc.id, d.rate);
+  for (const r of accountRates) {
+    if (r.rate != null) rateMap.set(r.accountKey, r.rate);
   }
 
   // Net worth
@@ -100,9 +94,11 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat")
     .filter((a) => /checking|savings|cash/i.test(a.accountType))
     .reduce((s, a) => s + Math.max(0, a.balance), 0);
 
-  // Monthly figures — use CORE_EXCLUDE_RE so these match the Spending page's "core expenses" total
-  const monthlyIncome = incomeTotalForMonth(incomeTxns, month);
-  const monthlyExp    = expenseTxns
+  // Monthly figures — use the pre-computed monthlyHistory so cash income and cash
+  // commitments are included and the numbers match exactly what the UI cards show.
+  const monthHistory = profile.monthlyHistory.find((h) => h.yearMonth === month);
+  const monthlyIncome = monthHistory?.incomeTotal   ?? incomeTotalForMonth(incomeTxns, month);
+  const monthlyExp    = monthHistory?.coreExpensesTotal ?? expenseTxns
     .filter((t) => t.txMonth === month && !CORE_EXCLUDE_RE.test((t.category ?? "").trim()))
     .reduce((s, t) => s + t.amount, 0);
   const monthlySav  = monthlyIncome - monthlyExp;
@@ -116,13 +112,11 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat")
     const aprStr = apr != null ? ` at ${apr}% APR` : "";
     return `  ${a.bankName}${acctId} [${a.accountType}]: ${fmt(a.balance)}${aprStr}`;
   });
-  for (const d of manualSnap.docs) {
-    const a = d.data();
-    accountLines.push(`  ${a.name ?? "Manual asset"} [manual asset]: ${fmt(a.value ?? 0)}`);
+  for (const a of manualAssets) {
+    accountLines.push(`  ${a.label ?? "Manual asset"} [manual asset]: ${fmt(a.value ?? 0)}`);
   }
-  for (const d of manualLiabSnap.docs) {
-    const l = d.data();
-    accountLines.push(`  ${l.name ?? "Manual liability"} [manual liability]: -${fmt(l.balance ?? 0)}`);
+  for (const l of manualLiabilities) {
+    accountLines.push(`  ${l.label ?? "Manual liability"} [manual liability]: -${fmt(l.balance ?? 0)}`);
   }
 
   // Income by source with individual deposits
@@ -190,14 +184,10 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat")
     ? `  (showing most recent ${TOKEN_BUDGET} of ${expenseTxns.length} total expense transactions)`
     : "";
 
-  // Subscriptions — prefer code-detected records (with validated frequency) over AI-suggested ones
-  const confirmedSubs = confirmedSubsSnap.docs
-    .map((d) => d.data() as SubscriptionRecord)
-    .filter((s) => s.status === "confirmed" || s.status === "user_confirmed");
-
-  const suggestedSubs = confirmedSubsSnap.docs
-    .map((d) => d.data() as SubscriptionRecord)
-    .filter((s) => s.status === "suggested");
+  // Subscriptions — already filtered to confirmed/user_confirmed in the profile cache
+  const confirmedSubs = confirmedSubscriptions;
+  // No suggested subs in the cache (filtered at build time)
+  const suggestedSubs: typeof confirmedSubscriptions = [];
 
   const confirmedSubsSection = confirmedSubs.length > 0
     ? confirmedSubs
@@ -218,28 +208,26 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat")
   // No AI-extracted subscription fallback — confirmed/suggested subs from Firestore are authoritative
   const subs = "";
 
-  // Cash commitments
-  const cashSection = cashSnap.docs.map((d) => {
-    const c = d.data();
-    const freqPerYear: Record<string, number> = { weekly: 52, biweekly: 26, monthly: 12, quarterly: 4, once: 0 };
-    const perYear  = freqPerYear[c.frequency as string] ?? 12;
-    const monthly  = (c.amount as number) * perYear / 12;
+  // Cash commitments — from profile cache (no extra Firestore read needed)
+  const freqPerYear: Record<string, number> = { weekly: 52, biweekly: 26, monthly: 12, quarterly: 4, once: 0 };
+  const cashSection = cashCommitmentEntries.map((c) => {
+    const perYear  = freqPerYear[c.frequency] ?? 12;
+    const monthly  = c.amount * perYear / 12;
     const nextStr  = c.nextDate ? ` — date: ${c.nextDate}` : "";
     const mthStr   = c.frequency === "once" ? "one-time" : `~${fmt(monthly)}/mo`;
-    return `  ${c.name} (${c.frequency}): ${fmt(c.amount)} = ${mthStr} [${c.category}]${c.notes ? ` — ${c.notes}` : ""}${nextStr}`;
+    return `  ${c.name} (${c.frequency}): ${fmt(c.amount)} = ${mthStr} [${c.category ?? "Other"}]${c.notes ? ` — ${c.notes}` : ""}${nextStr}`;
   }).join("\n");
-  const cashMonthly = cashSnap.docs.reduce((sum, d) => {
-    const c = d.data();
-    const freqPerYear: Record<string, number> = { weekly: 52, biweekly: 26, monthly: 12, quarterly: 4, once: 0 };
-    const perYear = freqPerYear[c.frequency as string] ?? 12;
-    return sum + (c.amount as number) * perYear / 12;
+  const cashMonthly = cashCommitmentEntries.reduce((sum, c) => {
+    const perYear = freqPerYear[c.frequency] ?? 12;
+    return sum + c.amount * perYear / 12;
   }, 0);
 
-  // Goals
-  const goalsSection = goalsSnap.docs.map((d) => {
-    const g = d.data();
-    const pct = g.targetAmount > 0 ? Math.round((g.currentAmount / g.targetAmount) * 100) : 0;
-    return `  ${g.emoji ?? "🎯"} ${g.title}: ${fmt(g.currentAmount ?? 0)} / ${fmt(g.targetAmount ?? 0)} (${pct}%)`;
+  // Goals — from profile cache
+  const goalsSection = goals.map((g) => {
+    const pct = (g.targetAmount ?? 0) > 0
+      ? Math.round(((g.currentAmount ?? 0) / g.targetAmount!) * 100)
+      : 0;
+    return `  ${g.emoji} ${g.title}: ${fmt(g.currentAmount ?? 0)} / ${fmt(g.targetAmount ?? 0)} (${pct}%)`;
   }).join("\n");
 
   // Monthly trend — use pre-computed profile history so figures match the Spending page exactly

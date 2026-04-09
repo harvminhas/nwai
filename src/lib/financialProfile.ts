@@ -29,10 +29,11 @@ import { commitmentOccurrencesInMonth } from "@/app/api/user/cash-commitments/ro
 import { merchantSlug } from "./applyRules";
 import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
 import type { TypicalSpend } from "./spendingMetrics";
-import type { ManualAsset, InvestmentHolding, ParsedStatementData } from "./types";
+import type { ManualAsset, ManualLiability, InvestmentHolding, ParsedStatementData } from "./types";
 import { buildAccountSlug } from "./accountSlug";
 import { getFxRatesForCurrencies } from "./fxRates";
 import { splitDebtPayments } from "./debtUtils";
+import type { SubscriptionRecord } from "./insights/types";
 
 // ── Balance snapshot shape (mirrors /api/user/balance-snapshots) ──────────────
 export interface BalanceSnapshot {
@@ -55,7 +56,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "23"; // cash commitments injected into monthlyHistory expenses startDate→today
+const SCHEMA_VERSION = "24"; // manualLiabilities, accountRates, goals, confirmedSubscriptions, cashCommitmentEntries added to cache
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -153,6 +154,46 @@ export interface FinancialProfileCache {
    * Use this instead of fetching /api/user/statements — single pipeline.
    */
   accountBalanceHistory: AccountBalanceHistory[];
+  /**
+   * Manual liabilities (mortgage, car loan, etc.) from users/{uid}/manualLiabilities.
+   * Included so AI chat and brief builders need zero extra Firestore reads.
+   */
+  manualLiabilities: ManualLiability[];
+  /**
+   * User-stored APR and payment-frequency overrides, keyed by accountKey.
+   */
+  accountRates: CachedAccountRate[];
+  /**
+   * User goals from users/{uid}/goals.
+   */
+  goals: CachedGoal[];
+  /**
+   * Confirmed and user-confirmed subscription records from users/{uid}/subscriptions.
+   */
+  confirmedSubscriptions: SubscriptionRecord[];
+  /**
+   * Manual cash commitment entries already loaded during build — exposed here so
+   * consumers (AI brief, etc.) don't need a separate Firestore read.
+   */
+  cashCommitmentEntries: CashCommitment[];
+}
+
+/** Stored APR / payment-frequency override for a single account. */
+export interface CachedAccountRate {
+  accountKey: string;
+  rate?: number | null;
+  paymentFrequency?: string | null;
+}
+
+/** Minimal goal shape stored in the profile cache. */
+export interface CachedGoal {
+  id: string;
+  title: string;
+  emoji: string;
+  description?: string;
+  targetAmount: number | null;
+  currentAmount?: number;
+  targetDate?: string | null;
 }
 
 export interface PortfolioAccountHoldings {
@@ -199,7 +240,7 @@ export async function buildAndCacheFinancialProfile(
   db: Firestore.Firestore,
 ): Promise<FinancialProfileCache> {
   // Fetch all data sources in parallel — same collections the assets page uses.
-  const [txData, rulesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap, backfillsSnap, cashCommitmentsSnap] =
+  const [txData, rulesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap, backfillsSnap, cashCommitmentsSnap, manualLiabSnap, accountRatesSnap, goalsSnap, confirmedSubsSnap] =
     await Promise.all([
       extractAllTransactions(uid, db),
       db.collection(`users/${uid}/categoryRules`).get(),
@@ -213,6 +254,11 @@ export async function buildAndCacheFinancialProfile(
       db.doc(`users/${uid}/prefs/debtPaymentTags`).get(),
       db.collection(`users/${uid}/accountBackfills`).get(),
       db.collection(`users/${uid}/cashCommitments`).get(),
+      db.collection(`users/${uid}/manualLiabilities`).get(),
+      db.collection(`users/${uid}/accountRates`).get(),
+      db.collection(`users/${uid}/goals`).get(),
+      db.collection(`users/${uid}/subscriptions`)
+        .where("status", "in", ["confirmed", "user_confirmed"]).get(),
     ]);
 
   // Currency overrides: accountSlug → ISO currency code (e.g. "USD")
@@ -524,6 +570,35 @@ export async function buildAndCacheFinancialProfile(
     if (currency !== "CAD") fxRates[currency] = rate;
   }
 
+  // Build new cache fields from the parallel reads
+  const manualLiabilities: ManualLiability[] = manualLiabSnap.docs.map((d) => ({
+    id: d.id,
+    ...(d.data() as Omit<ManualLiability, "id">),
+  }));
+
+  const accountRates: CachedAccountRate[] = accountRatesSnap.docs.map((d) => ({
+    accountKey: d.id,
+    rate: d.data().rate ?? null,
+    paymentFrequency: d.data().paymentFrequency ?? null,
+  }));
+
+  const goals: CachedGoal[] = goalsSnap.docs.map((d) => {
+    const g = d.data();
+    return {
+      id: d.id,
+      title: g.title ?? "Untitled goal",
+      emoji: g.emoji ?? "🎯",
+      description: g.description ?? "",
+      targetAmount: g.targetAmount ?? null,
+      currentAmount: g.currentAmount ?? 0,
+      targetDate: g.targetDate ?? null,
+    };
+  });
+
+  const confirmedSubscriptions: SubscriptionRecord[] = confirmedSubsSnap.docs.map(
+    (d) => d.data() as SubscriptionRecord,
+  );
+
   const profile: FinancialProfileCache = {
     updatedAt: now.toISOString(),
     sourceVersion,
@@ -540,6 +615,11 @@ export async function buildAndCacheFinancialProfile(
     portfolioHoldings,
     fxRates,
     accountBalanceHistory,
+    manualLiabilities,
+    accountRates,
+    goals,
+    confirmedSubscriptions,
+    cashCommitmentEntries,
   };
 
   // Persist — JSON round-trip strips `undefined` fields (Firestore rejects them)
@@ -557,6 +637,16 @@ export async function buildAndCacheFinancialProfile(
 
 // ── read (with freshness check) ────────────────────────────────────────────────
 
+export interface GetFinancialProfileOpts {
+  /**
+   * When set, the returned profile's transaction arrays and monthly history are
+   * sliced to the most recent N months. The full data is always cached; slicing
+   * happens in memory before returning so callers get a smaller payload.
+   * Useful for AI chat where recent data is all that's needed.
+   */
+  months?: number;
+}
+
 /**
  * Return the user's financial profile, rebuilding from Firestore if stale.
  *
@@ -566,42 +656,60 @@ export async function buildAndCacheFinancialProfile(
 export async function getFinancialProfile(
   uid: string,
   db: Firestore.Firestore,
+  opts?: GetFinancialProfileOpts,
 ): Promise<FinancialProfileCache> {
   // Read cached document (lightweight — single doc read)
   const userDoc = await db.collection("users").doc(uid).get();
   const cached = userDoc.data()?.financialProfile as FinancialProfileCache | undefined;
 
+  let full: FinancialProfileCache;
+
   if (cached?.updatedAt) {
     // Schema version mismatch: rebuild immediately so consumers never receive a
     // cache that's missing fields added in newer schema versions.
     if (cached.schemaVersion !== SCHEMA_VERSION) {
-      return buildAndCacheFinancialProfile(uid, db);
-    }
+      full = await buildAndCacheFinancialProfile(uid, db);
+    } else {
+      const ageMs = Date.now() - new Date(cached.updatedAt).getTime();
 
-    const ageMs = Date.now() - new Date(cached.updatedAt).getTime();
-
-    // Hot path: cache is < 5 min old — return immediately, no version check
-    if (ageMs < HOT_WINDOW_MS) {
-      return cached;
-    }
-
-    // Warm path: cache is between 5 min and 24 h — check data version
-    if (ageMs < MAX_CACHE_MS) {
-      const completedSnap = await db
-        .collection("statements")
-        .where("userId", "==", uid)
-        .where("status", "==", "completed")
-        .get();
-      const currentVersion = computeSourceVersion(completedSnap.docs);
-      if (currentVersion === cached.sourceVersion) {
-        return cached; // data unchanged — return existing cache
+      // Hot path: cache is < 5 min old — return immediately, no version check
+      if (ageMs < HOT_WINDOW_MS) {
+        full = cached;
+      } else if (ageMs < MAX_CACHE_MS) {
+        // Warm path: cache is between 5 min and 24 h — check data version
+        const completedSnap = await db
+          .collection("statements")
+          .where("userId", "==", uid)
+          .where("status", "==", "completed")
+          .get();
+        const currentVersion = computeSourceVersion(completedSnap.docs);
+        full = currentVersion === cached.sourceVersion
+          ? cached
+          : await buildAndCacheFinancialProfile(uid, db);
+      } else {
+        // Expired — force rebuild
+        full = await buildAndCacheFinancialProfile(uid, db);
       }
     }
-
-    // Fall through: cache expired or data version mismatch → rebuild
+  } else {
+    full = await buildAndCacheFinancialProfile(uid, db);
   }
 
-  return buildAndCacheFinancialProfile(uid, db);
+  // Apply months slice in memory — cache always stores full history
+  if (opts?.months && opts.months > 0) {
+    const n = opts.months;
+    const trimmedMonths = full.allTxMonths.slice(-n);
+    const monthSet = new Set(trimmedMonths);
+    return {
+      ...full,
+      allTxMonths: trimmedMonths,
+      monthlyHistory: full.monthlyHistory.filter((h) => monthSet.has(h.yearMonth)),
+      expenseTxns: full.expenseTxns.filter((t) => monthSet.has(t.txMonth)),
+      incomeTxns: full.incomeTxns.filter((t) => monthSet.has(t.txMonth)),
+    };
+  }
+
+  return full;
 }
 
 /**
