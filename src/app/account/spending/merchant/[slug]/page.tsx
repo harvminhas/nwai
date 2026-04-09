@@ -63,6 +63,12 @@ export default function MerchantDetailPage() {
   const [idToken, setIdToken] = useState<string | null>(null);
   const categoryBtnRef = useRef<HTMLButtonElement>(null);
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
+  const [cancelled, setCancelled] = useState(false);
+  const [cancelSaving, setCancelSaving] = useState(false);
+  // Subscription-only record (when no merchant transaction history exists)
+  const [subOnlyRecord, setSubOnlyRecord] = useState<{
+    name: string; amount: number; frequency: string; cancelled: boolean;
+  } | null>(null);
   const { requestProfileRefresh } = useProfileRefresh();
 
   useEffect(() => {
@@ -78,7 +84,28 @@ export default function MerchantDetailPage() {
           { headers: { Authorization: `Bearer ${tok}` } }
         );
         const json = await res.json().catch(() => ({}));
-        if (!res.ok) { setError(json.error || "Failed to load"); return; }
+        if (!res.ok || !json.merchant) {
+          // No merchant transaction history — try to load the subscription record
+          // so the user can at least see and manage it (e.g. mark as cancelled).
+          const cadenceRes = await fetch(
+            `/api/user/spending/merchant-cadence?slug=${encodeURIComponent(slug)}`,
+            { headers: { Authorization: `Bearer ${tok}` } },
+          ).catch(() => null);
+          const cadenceJson = cadenceRes ? await cadenceRes.json().catch(() => ({})) : {};
+          if (cadenceJson.cadence || typeof cadenceJson.cancelled === "boolean") {
+            setSubOnlyRecord({
+              name: slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+              amount: 0,
+              frequency: cadenceJson.cadence?.frequency ?? "monthly",
+              cancelled: cadenceJson.cancelled ?? false,
+            });
+            setCancelled(cadenceJson.cancelled ?? false);
+          } else {
+            setError("No spending history found for this merchant.");
+          }
+          setLoading(false);
+          return;
+        }
         setMerchant(json.merchant ?? null);
       } catch {
         setError("Failed to load merchant data");
@@ -108,6 +135,36 @@ export default function MerchantDetailPage() {
     return () => window.removeEventListener(PROFILE_REFRESHED_EVENT, reloadMerchant);
   }, [idToken, slug]);
 
+  // Load cancelled status from cadence API
+  useEffect(() => {
+    if (!idToken) return;
+    fetch(`/api/user/spending/merchant-cadence?slug=${encodeURIComponent(slug)}`, {
+      headers: { Authorization: `Bearer ${idToken}` },
+    })
+      .then((r) => r.json())
+      .then((j) => { if (typeof j.cancelled === "boolean") setCancelled(j.cancelled); })
+      .catch(() => {});
+  }, [idToken, slug]);
+
+  async function handleCancelledToggle() {
+    if (!idToken || cancelSaving) return;
+    const next = !cancelled;
+    setCancelled(next);
+    setCancelSaving(true);
+    try {
+      await fetch("/api/user/spending/merchant-cadence", {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ slug, cancelled: next }),
+      });
+      requestProfileRefresh();
+    } catch {
+      setCancelled(!next); // revert on error
+    } finally {
+      setCancelSaving(false);
+    }
+  }
+
   function toggleSort(field: "date" | "amount") {
     if (sortField === field) {
       setSortDir((d) => (d === "desc" ? "asc" : "desc"));
@@ -124,6 +181,80 @@ export default function MerchantDetailPage() {
       </div>
     );
   }
+
+  // Subscription record exists but no merchant transaction history (e.g. "Annual Fee")
+  if (subOnlyRecord) {
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-8">
+        <Link
+          href="/account/spending?tab=merchants"
+          className="mb-6 inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700"
+        >
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+          Merchants
+        </Link>
+        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h1 className="text-xl font-bold text-gray-900">{subOnlyRecord.name}</h1>
+              <p className="mt-1 text-sm text-gray-400">
+                Recurring · {subOnlyRecord.frequency} · No transaction history in spending data
+              </p>
+            </div>
+            <span className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium ${
+              subOnlyRecord.cancelled
+                ? "border-red-200 bg-red-50 text-red-600"
+                : "border-emerald-200 bg-emerald-50 text-emerald-700"
+            }`}>
+              {subOnlyRecord.cancelled ? "Cancelled" : "Active"}
+            </span>
+          </div>
+
+          <div className="mt-6 rounded-lg border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            This item appears in your <strong>Upcoming</strong> feed because it was detected as a recurring charge,
+            but it has no individual merchant transactions to display. If you've cancelled it, mark it as inactive below.
+          </div>
+
+          <div className="mt-6 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={async () => {
+                if (!idToken || cancelSaving) return;
+                const next = !cancelled;
+                setCancelled(next);
+                setSubOnlyRecord((r) => r ? { ...r, cancelled: next } : r);
+                setCancelSaving(true);
+                try {
+                  await fetch("/api/user/spending/merchant-cadence", {
+                    method: "PATCH",
+                    headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+                    body: JSON.stringify({ slug, cancelled: next }),
+                  });
+                  requestProfileRefresh();
+                } catch {
+                  setCancelled(!next);
+                  setSubOnlyRecord((r) => r ? { ...r, cancelled: !next } : r);
+                } finally {
+                  setCancelSaving(false);
+                }
+              }}
+              disabled={cancelSaving || !idToken}
+              className={`rounded-lg border px-4 py-2 text-sm font-medium transition disabled:opacity-50 ${
+                cancelled
+                  ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                  : "border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
+              }`}
+            >
+              {cancelSaving ? "Saving…" : cancelled ? "Reactivate (show in Upcoming)" : "Mark as cancelled (hide from Upcoming)"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (error || !merchant) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-12 text-center">
@@ -220,6 +351,30 @@ export default function MerchantDetailPage() {
                 </svg>
               </button>
               <MerchantSpendCadencePill />
+              {/* Cancelled toggle — only meaningful when a recurring cadence is set */}
+              <button
+                type="button"
+                onClick={handleCancelledToggle}
+                disabled={cancelSaving}
+                title={cancelled ? "Mark as active — will appear in Upcoming" : "Mark as cancelled — hide from Upcoming"}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium transition disabled:opacity-60 ${
+                  cancelled
+                    ? "border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
+                    : "border-gray-200 bg-gray-50 text-gray-500 hover:border-gray-300 hover:bg-gray-100"
+                }`}
+              >
+                {cancelled ? (
+                  <>
+                    <span className="h-1.5 w-1.5 rounded-full bg-red-400" />
+                    Cancelled
+                  </>
+                ) : (
+                  <>
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                    Active
+                  </>
+                )}
+              </button>
             </div>
             {categoryPickerOpen && categoryBtnRef.current && (
               <CategoryPicker

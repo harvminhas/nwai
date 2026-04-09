@@ -1,9 +1,11 @@
 /**
- * GET  /api/user/spending/merchant-cadence?slug=...
- * PUT  /api/user/spending/merchant-cadence  { slug, frequency }
+ * GET   /api/user/spending/merchant-cadence?slug=...
+ * PUT   /api/user/spending/merchant-cadence  { slug, frequency, ... }
+ * PATCH /api/user/spending/merchant-cadence  { slug, cancelled: boolean }
  *
  * How often the user actually spends at this merchant (not the Pro forecast calculator).
  * Collection: users/{uid}/merchantCadence/{slug}
+ * cancelled=true sets upcomingSuppressed on the subscription doc → hides from Today/Upcoming.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -41,16 +43,22 @@ export async function GET(req: NextRequest) {
   if (!slug) return NextResponse.json({ error: "slug required" }, { status: 400 });
 
   const { db } = getFirebaseAdmin();
-  const snap = await db.doc(`users/${uid}/merchantCadence/${slug}`).get();
-  if (!snap.exists) {
-    return NextResponse.json({ cadence: null });
+  const [cadenceSnap, subSnap] = await Promise.all([
+    db.doc(`users/${uid}/merchantCadence/${slug}`).get(),
+    db.doc(`users/${uid}/subscriptions/${slug}`).get(),
+  ]);
+
+  const cancelled = subSnap.exists ? (subSnap.data()?.upcomingSuppressed ?? false) : false;
+
+  if (!cadenceSnap.exists) {
+    return NextResponse.json({ cadence: null, cancelled });
   }
-  const d = snap.data() as { frequency?: string };
+  const d = cadenceSnap.data() as { frequency?: string };
   const frequency = d.frequency as RecurringFrequency | undefined;
   if (!frequency || !VALID.has(frequency)) {
-    return NextResponse.json({ cadence: null });
+    return NextResponse.json({ cadence: null, cancelled });
   }
-  return NextResponse.json({ cadence: { frequency } });
+  return NextResponse.json({ cadence: { frequency }, cancelled });
 }
 
 export async function PUT(req: NextRequest) {
@@ -135,4 +143,25 @@ export async function PUT(req: NextRequest) {
 
   await invalidateFinancialProfileCache(uid, db);
   return NextResponse.json({ ok: true, cadence: { frequency } });
+}
+
+export async function PATCH(req: NextRequest) {
+  const uid = await authUid(req);
+  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const body = (await req.json().catch(() => ({}))) as { slug?: string; cancelled?: boolean };
+  const slug = typeof body.slug === "string" ? body.slug.trim() : "";
+  if (!slug) return NextResponse.json({ error: "slug required" }, { status: 400 });
+  if (typeof body.cancelled !== "boolean") {
+    return NextResponse.json({ error: "cancelled (boolean) required" }, { status: 400 });
+  }
+
+  const { db } = getFirebaseAdmin();
+  await db.doc(`users/${uid}/subscriptions/${slug}`).set(
+    { upcomingSuppressed: body.cancelled, updatedAt: new Date().toISOString(), merchantSlug: slug },
+    { merge: true },
+  );
+
+  await invalidateFinancialProfileCache(uid, db);
+  return NextResponse.json({ ok: true, cancelled: body.cancelled });
 }
