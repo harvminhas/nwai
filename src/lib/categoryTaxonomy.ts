@@ -37,7 +37,7 @@ export type ParentCategory = (typeof PARENT_CATEGORIES)[number];
 // and rolled up to their parent for chart totals.
 
 export const CATEGORY_TAXONOMY: Record<ParentCategory, readonly string[]> = {
-  Housing:                ["Rent", "Mortgage", "Utilities", "Internet & Phone", "Home Insurance", "Condo Fees"],
+  Housing:                ["Rent", "Mortgage", "Utilities", "Internet & Phone", "Home Insurance", "Condo Fees", "Maintenance & Repairs"],
   Groceries:              [],
   Dining:                 ["Restaurants", "Coffee & Drinks", "Fast Food", "Food Delivery"],
   Transportation:         ["Gas", "Parking", "Car Insurance", "Transit", "Rideshare", "Auto Service"],
@@ -97,6 +97,7 @@ export const CATEGORY_COLORS: Record<string, string> = {
   "internet & phone":       "#bfdbfe",
   "home insurance":         "#1d4ed8",
   "condo fees":             "#2563eb",
+  "maintenance & repairs":  "#1e40af",
 
   // Dining subtypes
   restaurants:              "#fb923c",

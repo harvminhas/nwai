@@ -21,6 +21,7 @@ import { generateAgentInsights } from "@/lib/agentInsights";
 import { buildFinancialBrief, type BriefMode } from "@/lib/financialBrief";
 import { buildAndCacheFinancialProfile } from "@/lib/financialProfile";
 import type { ParsedStatementData } from "@/lib/types";
+import { syncStatementAiSubscriptions } from "@/lib/subscriptionRegistry";
 import { getDetectorsForEvent } from "./registry";
 import type { DetectorContext, InsightEvent } from "./types";
 import { INSIGHTS_MAX_MONTHS } from "./types";
@@ -64,6 +65,8 @@ export async function runInsightsPipeline(
     }
     if (ym) allDocs.push({ yearMonth: ym, parsed });
   }
+
+  await syncStatementAiSubscriptions(uid, db, allDocs);
 
   const dna = inferFinancialDNA(allDocs);
   await db.collection("users").doc(uid).set({ financialDNA: dna }, { merge: true });

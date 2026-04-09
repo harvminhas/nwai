@@ -9,6 +9,12 @@ import { getNetWorth, getSavingsRate, getMonthlyIncome, getMonthlyExpenses, getL
 import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
 import { detectFrequency } from "@/lib/incomeEngine";
 import { projectNextDates, nextUpcoming, toDateStr } from "@/lib/projectionEngine";
+import type { SubscriptionRecord } from "@/lib/insights/types";
+import {
+  effectiveSubscriptionAmount,
+  effectiveSubscriptionFrequency,
+  nextSubscriptionOccurrence,
+} from "@/lib/subscriptionRegistry";
 import { computeRadarItems } from "@/lib/today/computeRadarItems";
 import type { RadarItem, CalendarEvent, FreshnessData, FreshnessState, NetWorthSnapshot } from "@/lib/today/types";
 import { resolveCanonical } from "@/lib/sourceMappings";
@@ -92,6 +98,12 @@ function fmt(v: number) {
   }).format(v);
 }
 
+/** Upcoming / radar: only validated subs — not AI- or tx-suggested rows (avoids one-offs as "monthly"). */
+function subscriptionEligibleForUpcoming(rec: SubscriptionRecord): boolean {
+  if (rec.upcomingSuppressed) return false;
+  return rec.status === "confirmed" || rec.status === "user_confirmed";
+}
+
 // ── GET ───────────────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
@@ -156,13 +168,20 @@ export async function GET(req: NextRequest) {
   }
 
   // ── 2. Cash commitments ────────────────────────────────────────────────────
-  const [cashSnap, recurringSnap, ratesSnap, sourceMappingsSnap, cashIncomeSnap] = await Promise.all([
+  const [cashSnap, recurringSnap, ratesSnap, sourceMappingsSnap, cashIncomeSnap, subscriptionsSnap] =
+    await Promise.all([
     db.collection(`users/${uid}/cashCommitments`).get(),
     db.collection(`users/${uid}/recurringRules`).get(),
     db.collection(`users/${uid}/accountRates`).get(),
     db.collection(`users/${uid}/sourceMappings`).get(),
     db.collection(`users/${uid}/cashIncome`).get(),
+    db.collection(`users/${uid}/subscriptions`).get(),
   ]);
+  const subscriptionRecords = subscriptionsSnap.docs.map((d) => d.data() as SubscriptionRecord);
+  /** Any Firestore row — blocks duplicate rows from consolidated AI for the same merchant slug. */
+  const subscriptionSlugs = new Set(subscriptionRecords.map((r) => r.merchantSlug));
+  /** Slugs we already listed in Upcoming from Firestore (B); recurring rules (D) skip these. */
+  const firestoreUpcomingSlugs = new Set<string>();
   const cashItems = cashSnap.docs.map((d) => d.data() as {
     id: string; name: string; amount: number; frequency: string;
     category: string; notes?: string; nextDate?: string;
@@ -403,15 +422,65 @@ export async function GET(req: NextRequest) {
     seenMerchants.add(c.name.toLowerCase());
   }
 
-  // ── B. AI-detected subscriptions (from consolidated statement) ─────────────
-  const aiSubs: { name: string; amount: number; frequency?: string }[] =
+  // Per-cadence horizon: how many days ahead to show each subscription type.
+  // Annual/quarterly only appear when the renewal is within 60 days.
+  const SUB_HORIZON: Record<string, number> = {
+    weekly: 21,
+    biweekly: 28,
+    monthly: 45,
+    quarterly: 60,
+    annual: 60,
+  };
+
+  // ── B. Subscriptions — Firestore registry (confirmed pattern or user-marked only) ─
+  for (const rec of subscriptionRecords) {
+    if (!subscriptionEligibleForUpcoming(rec)) continue;
+    const effAmt = effectiveSubscriptionAmount(rec);
+    const effFreq = effectiveSubscriptionFrequency(rec);
+    if (effAmt == null || !effFreq) continue;
+    const key = rec.name.toLowerCase();
+    if (seenMerchants.has(key)) continue;
+
+    const anchor = (rec.lastSeenAt ?? rec.firstSeenAt ?? today).slice(0, 10);
+    const { dateStr, daysFromNow } = nextSubscriptionOccurrence(anchor, effFreq, today);
+    const horizon = SUB_HORIZON[effFreq] ?? 45;
+    const isOverdueSub = daysFromNow < 0 && daysFromNow >= -3;
+
+    // Skip rows whose next occurrence is beyond the cadence-specific horizon.
+    // We always have a reliable anchor date, so there's no need for the
+    // "this month" fallback — show nothing until it's actually approaching.
+    if (daysFromNow > horizon && !isOverdueSub) continue;
+
+    seenMerchants.add(key);
+    firestoreUpcomingSlugs.add(rec.merchantSlug);
+    const occ = nextOccurrence(rec.name);
+    const subtitleParts: string[] = [`Recurring · ${effFreq}`];
+    if (occ?.account) subtitleParts.push(occ.account);
+    upcoming.push({
+      id: `sub-${rec.merchantSlug}`,
+      date: dateStr,
+      daysFromNow,
+      title: rec.name,
+      subtitle: subtitleParts.join(" · "),
+      amount: effAmt,
+      type: "subscription",
+      href: `/account/spending/merchant/${rec.merchantSlug}`,
+      isOverdue: isOverdueSub,
+      isThisMonth: false,
+      predictedDate: dateStr,
+    });
+  }
+
+  // ── C. AI subscriptions from consolidated data (only if no Firestore row) ───
+  const aiSubsFromStatements: { name: string; amount: number; frequency?: string }[] =
     consolidated?.subscriptions ?? [];
-  for (const sub of aiSubs) {
+  for (const sub of aiSubsFromStatements) {
+    const slug = merchantSlug(sub.name);
+    if (slug && subscriptionSlugs.has(slug)) continue;
     const key = sub.name.toLowerCase();
     if (seenMerchants.has(key)) continue;
     seenMerchants.add(key);
     const occ = nextOccurrence(sub.name);
-    // If we found a predicted date in the future, use it; otherwise keep "this month"
     const hasExactDate = occ && occ.daysFromNow >= 0 && occ.daysFromNow <= LOOK_AHEAD + 14;
     const subtitleParts: string[] = [`Recurring · ${sub.frequency ?? "monthly"}`];
     if (occ?.account) subtitleParts.push(occ.account);
@@ -430,8 +499,10 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // ── C. User-marked recurring rules (manual) ────────────────────────────────
+  // ── D. Recurring rules when Firestore did not already emit that slug from (B) ───
   for (const rule of recurringRules) {
+    if (rule.frequency === "never") continue;
+    if (firestoreUpcomingSlugs.has(rule.slug)) continue;
     const key = rule.merchant.toLowerCase();
     if (seenMerchants.has(key)) continue;
     seenMerchants.add(key);
@@ -454,7 +525,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // ── D. CC minimum payment estimate ────────────────────────────────────────
+  // ── E. CC minimum payment estimate ────────────────────────────────────────
   if (consolidated) {
     // Look for credit card accounts with a balance
     const stmtDocs = stmtSnap.docs;
@@ -486,7 +557,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // ── E. Expected income — frequency-aware projection ─────────────────────────
+  // ── F. Expected income — frequency-aware projection ─────────────────────────
   // Group incomeTxns by source, detect frequency, project next dates using
   // medianGap instead of day-of-month (which breaks for biweekly pay).
 
@@ -577,7 +648,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // ── E2. Cash income entries — recurring ones feed Next Up ────────────────────
+  // ── G. Cash income entries — recurring ones feed Next Up ────────────────────
   for (const entry of cashIncomeItems) {
     if (entry.frequency === "once") {
       // One-off: only show if nextDate is within look-ahead window
@@ -768,7 +839,7 @@ export async function GET(req: NextRequest) {
     return a.date.localeCompare(b.date);
   });
 
-  // ── F. Radar (calendar collision detection) ───────────────────────────────
+  // ── H. Radar (calendar collision detection) ───────────────────────────────
   // Build merchantPatternDates map for annual bill detection
   const merchantPatternDates = new Map<string, { dates: string[]; amounts: number[] }>();
   for (const doc of stmtSnap.docs) {
@@ -784,15 +855,35 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  const aiSubsForRadar: { name: string; amount: number; frequency?: string }[] = [];
+  for (const rec of subscriptionRecords) {
+    if (!subscriptionEligibleForUpcoming(rec)) continue;
+    const a = effectiveSubscriptionAmount(rec);
+    const f = effectiveSubscriptionFrequency(rec);
+    if (a == null || !f) continue;
+    aiSubsForRadar.push({ name: rec.name, amount: a, frequency: f });
+  }
+  const radarSlugSet = new Set(aiSubsForRadar.map((s) => merchantSlug(s.name)).filter(Boolean));
+  for (const sub of consolidated?.subscriptions ?? []) {
+    const slug = merchantSlug(sub.name);
+    if (slug && radarSlugSet.has(slug)) continue;
+    aiSubsForRadar.push({
+      name: sub.name,
+      amount: sub.amount,
+      frequency: sub.frequency,
+    });
+    if (slug) radarSlugSet.add(slug);
+  }
+
   const radar: RadarItem[] = computeRadarItems({
     incomeTxns,
     expenseTxns,
     cashCommitments: cashItems,
-    aiSubs: consolidated?.subscriptions ?? [],
+    aiSubs: aiSubsForRadar,
     merchantPatternDates,
   });
 
-  // ── G. Calendar events (overdue + this month) ─────────────────────────────
+  // ── I. Calendar events (overdue + this month) ─────────────────────────────
   // Convert upcoming items into the richer CalendarEvent format
   function upcomingToCalendarEvent(item: UpcomingItem): CalendarEvent {
     const tags: CalendarEvent["tags"] = [];
@@ -852,7 +943,7 @@ export async function GET(req: NextRequest) {
     (e) => e.dueDate < today && e.status !== "confirmed",
   ).length;
 
-  // ── H. Freshness ──────────────────────────────────────────────────────────
+  // ── J. Freshness ──────────────────────────────────────────────────────────
   // Build per-account upload dates from statement metadata
   // ── Build per-account statement-date history ──────────────────────────────
   // Key: slug → sorted array of statement dates (from parsedData.statementDate)
@@ -931,7 +1022,7 @@ export async function GET(req: NextRequest) {
     accounts:   freshnessAccounts.sort((a, b) => b.statementDate.localeCompare(a.statementDate)),
   };
 
-  // ── I. Net worth snapshot ─────────────────────────────────────────────────
+  // ── K. Net worth snapshot ─────────────────────────────────────────────────
   const nw = getNetWorth(profile, thisMonth);
   const netWorth: NetWorthSnapshot = {
     total:           nw.total,

@@ -35,14 +35,14 @@ export async function POST(req: NextRequest) {
   const uid = await getUid(req);
   if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = await req.json().catch(() => ({}));
-  const { name, amount, frequency, category, notes, nextDate } = body as Partial<CashIncomeEntry>;
+  const { name, amount, frequency, category, notes, nextDate, startDate } = body as Partial<CashIncomeEntry>;
   if (!name || amount === undefined || !frequency || !category) {
     return NextResponse.json({ error: "name, amount, frequency, and category are required" }, { status: 400 });
   }
   const { db } = getFirebaseAdmin();
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
-  const item = stripUndefined<CashIncomeEntry>({ id, name, amount, frequency, category, notes, nextDate, createdAt: now, updatedAt: now });
+  const item = stripUndefined<CashIncomeEntry>({ id, name, amount, frequency, category, notes, nextDate, startDate, createdAt: now, updatedAt: now });
   await db.doc(`users/${uid}/cashIncome/${id}`).set(item);
   return NextResponse.json({ item });
 }
@@ -51,11 +51,11 @@ export async function PUT(req: NextRequest) {
   const uid = await getUid(req);
   if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = await req.json().catch(() => ({}));
-  const { id, name, amount, frequency, category, notes, nextDate } = body as Partial<CashIncomeEntry>;
+  const { id, name, amount, frequency, category, notes, nextDate, startDate } = body as Partial<CashIncomeEntry>;
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
   const { db } = getFirebaseAdmin();
   const now = new Date().toISOString();
-  const update = stripUndefined({ name, amount, frequency, category, notes, nextDate, updatedAt: now });
+  const update = stripUndefined({ name, amount, frequency, category, notes, nextDate, startDate, updatedAt: now });
   await db.doc(`users/${uid}/cashIncome/${id}`).update(update);
   return NextResponse.json({ ok: true });
 }

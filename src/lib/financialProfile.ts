@@ -24,6 +24,8 @@ import { extractAllTransactions } from "./extractTransactions";
 import { computeTypicalSpend, CORE_EXCLUDE_RE, INCOME_TRANSFER_RE } from "./spendingMetrics";
 import type { CashIncomeEntry } from "./cashIncome";
 import { occurrencesInMonth } from "./cashIncome";
+import type { CashCommitment } from "@/app/api/user/cash-commitments/route";
+import { commitmentOccurrencesInMonth } from "@/app/api/user/cash-commitments/route";
 import { merchantSlug } from "./applyRules";
 import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
 import type { TypicalSpend } from "./spendingMetrics";
@@ -53,7 +55,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "19"; // backfills stored as individual monthly docs
+const SCHEMA_VERSION = "23"; // cash commitments injected into monthlyHistory expenses startDate→today
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -197,7 +199,7 @@ export async function buildAndCacheFinancialProfile(
   db: Firestore.Firestore,
 ): Promise<FinancialProfileCache> {
   // Fetch all data sources in parallel — same collections the assets page uses.
-  const [txData, rulesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap, backfillsSnap] =
+  const [txData, rulesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap, backfillsSnap, cashCommitmentsSnap] =
     await Promise.all([
       extractAllTransactions(uid, db),
       db.collection(`users/${uid}/categoryRules`).get(),
@@ -210,6 +212,7 @@ export async function buildAndCacheFinancialProfile(
       db.collection(`users/${uid}/incomeCategoryRules`).get(),
       db.doc(`users/${uid}/prefs/debtPaymentTags`).get(),
       db.collection(`users/${uid}/accountBackfills`).get(),
+      db.collection(`users/${uid}/cashCommitments`).get(),
     ]);
 
   // Currency overrides: accountSlug → ISO currency code (e.g. "USD")
@@ -237,6 +240,9 @@ export async function buildAndCacheFinancialProfile(
 
   // Cash income entries — manual/recurring income outside bank statements
   const cashIncomeEntries: CashIncomeEntry[] = cashIncomeSnap.docs.map((d) => d.data() as CashIncomeEntry);
+
+  // Cash commitment entries — manual recurring expenses outside bank statements
+  const cashCommitmentEntries: CashCommitment[] = cashCommitmentsSnap.docs.map((d) => d.data() as CashCommitment);
 
   // Income category rules — source slug → category (Transfer sources excluded from total)
   const incomeCatRulesMap = new Map<string, string>();
@@ -347,6 +353,11 @@ export async function buildAndCacheFinancialProfile(
       const count = occurrencesInMonth(entry, ym);
       return sum + (count > 0 ? entry.amount * count : 0);
     }, 0);
+    // Add cash commitment (manual expense) entries for this month
+    const cashCommitmentsForMonth = cashCommitmentEntries.reduce((sum, entry) => {
+      const count = commitmentOccurrencesInMonth(entry, ym);
+      return sum + (count > 0 ? entry.amount * count : 0);
+    }, 0);
     const debtTxns = monthExp.filter((t) => /^debt payments$/i.test((t.category ?? "").trim()));
     const { minPaymentsTotal } = splitDebtPayments(
       debtTxns as (import("./types").ExpenseTransaction & { debtType?: string })[],
@@ -355,15 +366,59 @@ export async function buildAndCacheFinancialProfile(
     );
     return {
       yearMonth: ym,
-      expensesTotal: monthExp.reduce((s, t) => s + t.amount, 0),
+      expensesTotal: monthExp.reduce((s, t) => s + t.amount, 0) + cashCommitmentsForMonth,
       coreExpensesTotal: monthExp
         .filter((t) => !CORE_EXCLUDE_RE.test((t.category ?? "").trim()))
-        .reduce((s, t) => s + t.amount, 0),
+        .reduce((s, t) => s + t.amount, 0) + cashCommitmentsForMonth,
       debtPaymentsTotal: debtTxns.reduce((s, t) => s + t.amount, 0),
       minDebtPaymentsTotal: minPaymentsTotal,
       incomeTotal: monthIncFiltered.reduce((s, t) => s + t.amount, 0) + cashIncomeForMonth,
     };
   });
+
+  // Inject months that have cash income or cash commitments but no statement.
+  // Walk from the earliest startDate across both collections to today.
+  {
+    const now0 = new Date();
+    const todayYM = `${now0.getFullYear()}-${String(now0.getMonth() + 1).padStart(2, "0")}`;
+    const historySet = new Set(monthlyHistory.map((h) => h.yearMonth));
+    const allManualEntries = [
+      ...cashIncomeEntries.map((e) => e.startDate?.slice(0, 7) ?? e.createdAt?.slice(0, 7) ?? todayYM),
+      ...cashCommitmentEntries.map((e) => e.startDate?.slice(0, 7) ?? e.createdAt?.slice(0, 7) ?? todayYM),
+    ];
+    if (allManualEntries.length > 0) {
+      const earliestYM = allManualEntries.reduce((min, s) => (s < min ? s : min), todayYM);
+      let ym = earliestYM;
+      while (ym <= todayYM) {
+        const cashIncome = cashIncomeEntries.reduce((sum, entry) => {
+          const count = occurrencesInMonth(entry, ym);
+          return sum + (count > 0 ? entry.amount * count : 0);
+        }, 0);
+        const cashExpenses = cashCommitmentEntries.reduce((sum, entry) => {
+          const count = commitmentOccurrencesInMonth(entry, ym);
+          return sum + (count > 0 ? entry.amount * count : 0);
+        }, 0);
+        if (!historySet.has(ym) && (cashIncome > 0 || cashExpenses > 0)) {
+          monthlyHistory.push({
+            yearMonth: ym,
+            expensesTotal: cashExpenses,
+            coreExpensesTotal: cashExpenses,
+            debtPaymentsTotal: 0,
+            minDebtPaymentsTotal: 0,
+            incomeTotal: cashIncome,
+          });
+          historySet.add(ym);
+        } else if (historySet.has(ym) && cashExpenses > 0) {
+          // Month already exists from a statement — cashCommitmentsForMonth already
+          // added above in the allTxMonths.map pass, so nothing extra needed here.
+        }
+        const [y, mo] = ym.split("-").map(Number) as [number, number];
+        const next = new Date(y, mo, 1);
+        ym = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
+      }
+      monthlyHistory.sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
+    }
+  }
 
   const now = new Date();
   const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;

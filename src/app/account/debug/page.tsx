@@ -76,6 +76,10 @@ export default function DebugParsePage() {
   const [cronResult, setCronResult]             = useState<Record<string, unknown> | null>(null);
   const [cronError, setCronError]               = useState<string | null>(null);
 
+  const [subCleanLoading, setSubCleanLoading]   = useState(false);
+  const [subCleanResult, setSubCleanResult]     = useState<{ deleted: number; kept: number } | null>(null);
+  const [subCleanError, setSubCleanError]       = useState<string | null>(null);
+
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
@@ -153,6 +157,24 @@ export default function DebugParsePage() {
       setCronError(e instanceof Error ? e.message : "Unknown error");
     } finally {
       setCronLoading(false);
+    }
+  }
+
+  async function runSubCleanup() {
+    if (!idToken) return;
+    setSubCleanLoading(true); setSubCleanError(null); setSubCleanResult(null);
+    try {
+      const res  = await fetch("/api/user/subscriptions/cleanup", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) { setSubCleanError(json.error || "Failed"); return; }
+      setSubCleanResult(json as { deleted: number; kept: number });
+    } catch (e) {
+      setSubCleanError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setSubCleanLoading(false);
     }
   }
 
@@ -420,6 +442,50 @@ export default function DebugParsePage() {
                 <p key={i} className="text-xs text-red-600 font-mono">{e}</p>
               ))}
             </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Subscription Cleanup ────────────────────────────────────────────── */}
+      <div>
+        <h2 className="text-xl font-bold text-gray-900">Subscription Data Cleanup</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          Removes incorrectly-detected subscription records (e.g. groceries, gas stations flagged
+          as weekly recurring). Preserves any subscriptions you have manually confirmed.
+          After running, trigger an insights refresh to rebuild from clean data.
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 shadow-sm flex items-center justify-between gap-4">
+        <p className="text-sm text-amber-700">
+          Deletes all <code className="font-mono text-xs bg-amber-100 px-1 py-0.5 rounded">suggested</code> and{" "}
+          <code className="font-mono text-xs bg-amber-100 px-1 py-0.5 rounded">confirmed</code> subscription docs.
+          Only <code className="font-mono text-xs bg-amber-100 px-1 py-0.5 rounded">user_confirmed</code> rows are kept.
+        </p>
+        <button
+          onClick={runSubCleanup}
+          disabled={subCleanLoading || !idToken}
+          className="rounded-lg bg-amber-600 px-5 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50 transition flex items-center gap-2 shrink-0"
+        >
+          {subCleanLoading && <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />}
+          {subCleanLoading ? "Cleaning…" : "🗑 Clean Subscriptions"}
+        </button>
+      </div>
+
+      {subCleanError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{subCleanError}</div>
+      )}
+
+      {subCleanResult && (
+        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+            <span className="text-gray-500">Deleted: <span className="font-semibold text-red-600">{subCleanResult.deleted}</span></span>
+            <span className="text-gray-500">Kept (user-confirmed): <span className="font-semibold text-green-700">{subCleanResult.kept}</span></span>
+          </div>
+          {subCleanResult.deleted > 0 && (
+            <p className="mt-2 text-xs text-gray-400">
+              Reload the Today page or trigger an insights refresh to see the corrected Upcoming list.
+            </p>
           )}
         </div>
       )}

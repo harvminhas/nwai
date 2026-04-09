@@ -21,6 +21,7 @@ function detectFrequency(intervals: number[]): SubscriptionFrequency | null {
   if (intervals.length === 0) return null;
   const avg = intervals.reduce((s, v) => s + v, 0) / intervals.length;
   if (avg >= 5   && avg <= 9)   return "weekly";
+  if (avg >= 12  && avg <= 16)  return "biweekly";
   if (avg >= 25  && avg <= 35)  return "monthly";
   if (avg >= 80  && avg <= 100) return "quarterly";
   if (avg >= 335 && avg <= 395) return "annual";
@@ -42,10 +43,13 @@ export const subscriptionsDetector: InsightDetector = {
     const now = new Date().toISOString();
     const relevantSet = new Set(relevantMonths);
 
-    // Group transactions by merchant slug within the relevant window
+    // Group transactions by merchant slug within the relevant window.
+    // Only process Subscriptions-category transactions — other recurring patterns
+    // (groceries, gas, etc.) must be user-confirmed from the merchant page.
     const byMerchant = new Map<string, { name: string; dates: string[]; amounts: number[] }>();
     for (const txn of expenseTxns) {
       if (!relevantSet.has(txn.txMonth)) continue;
+      if ((txn.category ?? "").toLowerCase() !== "subscriptions") continue;
       const slug = toSlug(txn.merchant);
       if (!slug) continue;
       const entry = byMerchant.get(slug);
@@ -70,9 +74,10 @@ export const subscriptionsDetector: InsightDetector = {
         intervals.push(ms / (1000 * 60 * 60 * 24));
       }
       const frequency = detectFrequency(intervals);
-      // Single occurrence: only record as suggested if it looks like a known sub pattern
-      // Multiple occurrences without a matching frequency: skip (e.g. irregular payments)
+      // Multiple occurrences without a matching interval pattern: skip (e.g. irregular)
       if (dates.length > 1 && !frequency) continue;
+      // One transaction is not a recurrence — do not create a "monthly" placeholder row
+      if (dates.length === 1) continue;
 
       const avgAmount  = amounts.reduce((s, v) => s + v, 0) / amounts.length;
       const firstSeen  = sorted[0];
@@ -88,7 +93,7 @@ export const subscriptionsDetector: InsightDetector = {
           name,
           status:             isConfirmed ? "confirmed" : "suggested",
           suggestedAmount:    avgAmount,
-          suggestedFrequency: frequency ?? "monthly",
+          suggestedFrequency: frequency!,
           amount:             isConfirmed ? avgAmount : null,
           frequency:          isConfirmed ? frequency : null,
           lockedFields:       [],
@@ -122,7 +127,7 @@ export const subscriptionsDetector: InsightDetector = {
           lastSeenAt:         lastSeen,
           occurrenceCount:    dates.length,
           suggestedAmount:    avgAmount,
-          suggestedFrequency: frequency ?? existing.suggestedFrequency,
+          suggestedFrequency: frequency!,
           updatedAt:          now,
         };
 

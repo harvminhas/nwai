@@ -22,6 +22,7 @@ import type { CashFrequency } from "./shared";
 import { getParentCategory, isSubtype, CATEGORY_TAXONOMY } from "@/lib/categoryTaxonomy";
 import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
 import RefreshToast from "@/components/RefreshToast";
+import { PROFILE_REFRESHED_EVENT, useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 
 // Re-export shared items for other pages that used to import from this file
 export { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon } from "./shared";
@@ -160,7 +161,8 @@ export interface CashCommitment {
   frequency: CashFrequency;
   category: string;
   notes?: string;
-  nextDate?: string; // ISO date e.g. "2026-03-28" — required when frequency is "once"
+  nextDate?: string;  // ISO date e.g. "2026-03-28" — required when frequency is "once"
+  startDate?: string; // ISO year-month e.g. "2026-01" — backfill floor for historical totals
   createdAt: string;
   updatedAt: string;
 }
@@ -181,6 +183,22 @@ function toMonthly(amount: number, freq: CashFrequency): number {
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+
+/** Returns the YYYY-MM string for N months ago (0 = current month). */
+function monthsAgoYm(n: number): string {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() - n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+const START_DATE_PRESETS = [
+  { label: "This month", value: () => monthsAgoYm(0) },
+  { label: "1 month ago", value: () => monthsAgoYm(1) },
+  { label: "3 months ago", value: () => monthsAgoYm(3) },
+  { label: "6 months ago", value: () => monthsAgoYm(6) },
+  { label: "1 year ago", value: () => monthsAgoYm(12) },
+];
 
 function fmtDec(v: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
@@ -262,6 +280,10 @@ function SpendingPageInner() {
   // Per-row button refs for portal positioning
   const btnRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
 
+  // Category picker for the cash commitment form
+  const [cashCatPickerOpen, setCashCatPickerOpen] = useState(false);
+  const cashCatBtnRef = useRef<HTMLButtonElement>(null);
+
   // User-marked recurring rules { slug → Subscription }
   const [recurringRules, setRecurringRules] = useState<Map<string, Subscription>>(new Map());
   // Auto-detected frequency per merchant slug (from cross-month gap analysis)
@@ -279,6 +301,10 @@ function SpendingPageInner() {
   const [cashLoading, setCashLoading] = useState(false);
   const [cashForm, setCashForm] = useState<Partial<CashCommitment> | null>(null); // null = closed
   const [cashSaving, setCashSaving] = useState(false);
+
+  const { requestProfileRefresh } = useProfileRefresh();
+  const handleMonthSelectRef = useRef<(ym: string) => Promise<void>>(async () => {});
+  const selectedMonthRef = useRef<string | null>(null);
 
   function switchTab(id: TabId) {
     setActiveTab(id);
@@ -418,6 +444,19 @@ function SpendingPageInner() {
     } finally { setMonthLoading(false); }
   }
 
+  handleMonthSelectRef.current = handleMonthSelect;
+  selectedMonthRef.current = selectedMonth;
+
+  useEffect(() => {
+    if (!token) return;
+    const onProfileRefreshed = () => {
+      const ym = selectedMonthRef.current;
+      if (ym) void handleMonthSelectRef.current(ym);
+    };
+    window.addEventListener(PROFILE_REFRESHED_EVENT, onProfileRefreshed);
+    return () => window.removeEventListener(PROFILE_REFRESHED_EVENT, onProfileRefreshed);
+  }, [token]);
+
   // ── category change ───────────────────────────────────────────────────────
 
   async function handleCategoryChange(txnIndex: number, newCategory: string) {
@@ -426,13 +465,20 @@ function SpendingPageInner() {
     setOpenPicker(null);
     setTxns((prev) => prev.map((t, i) => i === txnIndex ? { ...t, category: newCategory } : t));
     try {
-      await fetch("/api/user/category-rules", {
+      const res = await fetch("/api/user/category-rules", {
         method: "PUT",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ merchant: txn.merchant, category: newCategory }),
       });
-      setToast(`Rule saved: "${txn.merchant}" → ${newCategory}`);
-    } catch { setToast("Failed to save rule"); }
+      if (res.ok) {
+        setToast(`Rule saved: "${txn.merchant}" → ${newCategory}`);
+        requestProfileRefresh();
+      } else {
+        setToast("Failed to save rule");
+      }
+    } catch {
+      setToast("Failed to save rule");
+    }
   }
 
   // ── recurring toggle ──────────────────────────────────────────────────────
@@ -587,6 +633,9 @@ function SpendingPageInner() {
         setToast("Commitment added");
       }
       setCashForm(null);
+      setCashCatPickerOpen(false);
+      await fetch("/api/user/invalidate-cache", { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+      requestProfileRefresh();
     } catch { setToast("Failed to save"); }
     finally { setCashSaving(false); }
   }
@@ -597,6 +646,8 @@ function SpendingPageInner() {
     await fetch(`/api/user/cash-commitments?id=${encodeURIComponent(id)}`, {
       method: "DELETE", headers: { Authorization: `Bearer ${token}` },
     });
+    await fetch("/api/user/invalidate-cache", { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+    requestProfileRefresh();
     setToast("Commitment removed");
   }
 
@@ -656,9 +707,22 @@ function SpendingPageInner() {
   // Excluded transactions: transfers + debt payments — shown in a separate section
   const excludedTxns = monthTxns.filter((t) => CORE_EXCLUDE_RE.test((t.category ?? "").trim()));
 
-  const total = coreTxns.length > 0
+  // Cash commitment amount for a specific yearMonth — defined here so it's available
+  // for both the total and the categories breakdown below.
+  function cashCommitmentAmountForMonth(item: CashCommitment, ym: string): number {
+    if (item.frequency === "once") return 0;
+    const floor = item.startDate?.slice(0, 7) ?? item.createdAt?.slice(0, 7);
+    if (floor && ym < floor) return 0;
+    return toMonthly(item.amount, item.frequency as CashFrequency);
+  }
+  const cashCommitmentsForMonth = cashItems.reduce(
+    (s, c) => s + cashCommitmentAmountForMonth(c, filterMonth), 0
+  );
+
+  const statementTotal = coreTxns.length > 0
     ? coreTxns.reduce((s, t) => s + t.amount, 0)
     : (data?.expenses?.total ?? 0);
+  const total        = statementTotal + cashCommitmentsForMonth;
   const displayTotal = total;
 
   const excludedTotal = excludedTxns.reduce((s, t) => s + t.amount, 0);
@@ -676,6 +740,7 @@ function SpendingPageInner() {
   const transferTotal = transferTxns.reduce((s, t) => s + t.amount, 0);
 
   // categories: parent-level rollup with subtypes nested inside each entry
+  // includes cash commitments so the chart matches what the Cash tab shows
   const categories = (() => {
     // Build parent → total and parent → subtype breakdown maps
     const parentMap  = new Map<string, number>();
@@ -703,6 +768,14 @@ function SpendingPageInner() {
         const parent = getParentCategory(c.name ?? "Other");
         parentMap.set(parent, (parentMap.get(parent) ?? 0) + c.amount);
       }
+    }
+
+    // Inject cash commitments for the selected month
+    for (const item of cashItems) {
+      const amt = cashCommitmentAmountForMonth(item, filterMonth);
+      if (amt <= 0) continue;
+      const parent = getParentCategory(item.category || "Other");
+      parentMap.set(parent, (parentMap.get(parent) ?? 0) + amt);
     }
 
     return Array.from(parentMap.entries())
@@ -1896,7 +1969,7 @@ function SpendingPageInner() {
                   <p className="text-xs text-gray-400 mt-0.5">Track payments that never appear on your bank statement.</p>
                 </div>
                 <button
-                  onClick={() => setCashForm({ frequency: "monthly", category: "Other" })}
+                  onClick={() => setCashForm({ frequency: "monthly", category: "Other", startDate: monthsAgoYm(0) })}
                   className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-2 text-xs font-semibold text-white hover:bg-purple-700 transition"
                 >
                   <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -2092,13 +2165,28 @@ function SpendingPageInner() {
                       </div>
                       <div>
                         <label className="text-xs font-medium text-gray-500 mb-1 block">Category *</label>
-                        <select
-                          value={cashForm.category ?? "Other"}
-                          onChange={(e) => setCashForm((f) => ({ ...f, category: e.target.value }))}
-                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-200"
+                        <button
+                          ref={cashCatBtnRef}
+                          type="button"
+                          onClick={() => setCashCatPickerOpen((v) => !v)}
+                          className="w-full flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:border-purple-300 focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-200"
                         >
-                          {ALL_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-                        </select>
+                          <span className="flex items-center gap-2">
+                            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: categoryColor(cashForm.category ?? "Other") }} />
+                            {cashForm.category ?? "Other"}
+                          </span>
+                          <svg className="h-3.5 w-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+                        {cashCatPickerOpen && (
+                          <CategoryPicker
+                            anchorRef={cashCatBtnRef}
+                            current={cashForm.category ?? "Other"}
+                            onSelect={(cat) => { setCashForm((f) => ({ ...f, category: cat })); setCashCatPickerOpen(false); }}
+                            onClose={() => setCashCatPickerOpen(false)}
+                          />
+                        )}
                       </div>
                       <div>
                         <label className="text-xs font-medium text-gray-500 mb-1 block">Notes (optional)</label>
@@ -2124,6 +2212,34 @@ function SpendingPageInner() {
                           <p className="mt-1 text-[11px] text-gray-400">When the next payment is due — helps track upcoming cash outflows.</p>
                         )}
                       </div>
+                      {/* When did this start? — only for recurring entries */}
+                      {cashForm.frequency && cashForm.frequency !== "once" && (
+                        <div>
+                          <label className="text-xs font-medium text-gray-500 mb-1 block">When did this start?</label>
+                          <div className="flex flex-wrap gap-1.5 mb-2">
+                            {START_DATE_PRESETS.map((p) => {
+                              const v = p.value();
+                              return (
+                                <button
+                                  key={p.label}
+                                  type="button"
+                                  onClick={() => setCashForm((f) => ({ ...f, startDate: v }))}
+                                  className={`rounded-full border px-2.5 py-0.5 text-xs font-medium transition ${cashForm.startDate === v ? "border-purple-500 bg-purple-50 text-purple-700" : "border-gray-200 text-gray-500 hover:border-purple-300 hover:text-purple-600"}`}
+                                >
+                                  {p.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <input
+                            type="month"
+                            value={cashForm.startDate?.slice(0, 7) ?? ""}
+                            onChange={(e) => setCashForm((f) => ({ ...f, startDate: e.target.value || undefined }))}
+                            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-200"
+                          />
+                          <p className="mt-1 text-[11px] text-gray-400">Used to backfill historical spending totals.</p>
+                        </div>
+                      )}
                       {/* Monthly preview */}
                       {cashForm.amount && cashForm.frequency && cashForm.frequency !== "once" && (
                         <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">

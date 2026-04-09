@@ -16,6 +16,12 @@ export interface CashIncomeEntry {
   notes?: string;
   /** ISO date "YYYY-MM-DD" — next expected date for recurring; the date for one-offs */
   nextDate?: string;
+  /**
+   * ISO date "YYYY-MM-DD" — when this income actually started.
+   * occurrencesInMonth returns 0 for any month before this date.
+   * If omitted, income is counted for all months (legacy behaviour).
+   */
+  startDate?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -40,8 +46,8 @@ export const CASH_INCOME_FREQ_MONTHLY: Record<CashIncomeFrequency, number> = {
  *  - For recurring: uses the day-of-month from nextDate and the frequency cadence.
  */
 export function occurrencesInMonth(entry: CashIncomeEntry, yearMonth: string): number {
-  const createdMonth = entry.createdAt.slice(0, 7);
-  if (yearMonth < createdMonth) return 0;
+  // Respect the user-specified start date. If none set, count all months (backwards compat).
+  if (entry.startDate && yearMonth < entry.startDate.slice(0, 7)) return 0;
 
   if (entry.frequency === "once") {
     if (!entry.nextDate) return 0;

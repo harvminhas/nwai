@@ -88,7 +88,7 @@ export interface InsightDetector {
 
 export type SubscriptionStatus = "suggested" | "confirmed" | "user_confirmed";
 
-export type SubscriptionFrequency = "weekly" | "monthly" | "quarterly" | "annual";
+export type SubscriptionFrequency = "weekly" | "biweekly" | "monthly" | "quarterly" | "annual";
 
 export interface SubscriptionRecord {
   merchantSlug: string;
@@ -106,6 +106,10 @@ export interface SubscriptionRecord {
   frequency: SubscriptionFrequency | null;
   /** Fields the user has explicitly set. Insights will never overwrite these. */
   lockedFields: string[];
+  /** Present on docs seeded from statement `parsedData.subscriptions` (insights pipeline). */
+  statementAiTagged?: boolean;
+  /** User dismissed recurring (frequency "never" rule) — hide from upcoming until cleared. */
+  upcomingSuppressed?: boolean;
   firstSeenAt: string;   // ISO date of earliest transaction
   lastSeenAt: string;    // ISO date of most recent transaction
   occurrenceCount: number;

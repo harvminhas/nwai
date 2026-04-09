@@ -21,7 +21,8 @@ import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
 import type { SourceSuggestion } from "@/lib/sourceMappings";
 import { INCOME_TRANSFER_RE } from "@/lib/spendingMetrics";
 import type { CashIncomeEntry, CashIncomeFrequency, CashIncomeCategory } from "@/lib/cashIncome";
-import { CASH_INCOME_FREQ_MONTHLY } from "@/lib/cashIncome";
+import { CASH_INCOME_FREQ_MONTHLY, occurrencesInMonth } from "@/lib/cashIncome";
+import { PROFILE_REFRESHED_EVENT, useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -161,6 +162,22 @@ interface ConsolidatedData {
 
 // ── cash income form ──────────────────────────────────────────────────────────
 
+/** Preset start-date options — same concept as "how far back" on statement upload. */
+const START_DATE_PRESETS: { label: string; monthsAgo: number }[] = [
+  { label: "This month",    monthsAgo: 0 },
+  { label: "Last month",    monthsAgo: 1 },
+  { label: "3 months ago",  monthsAgo: 3 },
+  { label: "6 months ago",  monthsAgo: 6 },
+  { label: "1 year ago",    monthsAgo: 12 },
+];
+
+function monthsAgoYmd(n: number): string {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() - n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
 const EMPTY_CASH_FORM = {
   id: "",
   name: "",
@@ -169,6 +186,7 @@ const EMPTY_CASH_FORM = {
   category: "Other" as CashIncomeCategory,
   notes: "",
   nextDate: "",
+  startDate: monthsAgoYmd(0), // default: this month
 };
 
 // ── page ──────────────────────────────────────────────────────────────────────
@@ -177,6 +195,7 @@ function IncomePageInner() {
   const router     = useRouter();
   const pathname   = usePathname();
   const searchParams = useSearchParams();
+  const { requestProfileRefresh } = useProfileRefresh();
 
   const [history, setHistory]             = useState<HistoryPoint[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
@@ -197,6 +216,7 @@ function IncomePageInner() {
   const [suggestionDecisions, setSuggestionDecisions] = useState<Record<string, "confirmed" | "rejected">>({});
   const [applyingMappings, setApplyingMappings] = useState(false);
   const [token, setToken]                 = useState<string | null>(null);
+  const tokenRef                          = useRef<string | null>(null);
   const [suggestionListExpanded, setSuggestionListExpanded] = useState(false);
 
   // Income category rules: source slug → category
@@ -243,6 +263,7 @@ function IncomePageInner() {
 
         const tok = await user.getIdToken();
         setToken(tok);
+        tokenRef.current = tok;
         const res = await fetch("/api/user/statements/consolidated", {
           headers: { Authorization: `Bearer ${tok}` },
         });
@@ -286,8 +307,53 @@ function IncomePageInner() {
     });
   }, [router]);
 
+  // Re-fetches history + cash items when the financial profile is rebuilt.
+  const reloadConsolidated = useCallback(async () => {
+    const tok = tokenRef.current;
+    if (!tok) return;
+    try {
+      const res = await fetch("/api/user/statements/consolidated", {
+        headers: { Authorization: `Bearer ${tok}` },
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) return;
+      const hist: HistoryPoint[] = (json.history ?? []).map(
+        (h: { yearMonth: string; incomeTotal?: number; expensesTotal?: number }) => ({
+          yearMonth: h.yearMonth,
+          incomeTotal: h.incomeTotal ?? 0,
+          expensesTotal: h.expensesTotal ?? 0,
+        })
+      );
+      setHistory(hist);
+      setTotalMonths(json.totalMonthsTracked ?? hist.length);
+      setSourceHistory(json.incomeSourceHistory ?? {});
+      setIncomeCategoryRules(json.incomeCategoryRules ?? {});
+      setCashItems((json.cashIncomeItems ?? []) as CashIncomeEntry[]);
+      const latestYm: string = json.yearMonth ?? null;
+      if (latestYm && json.data) {
+        setDataByMonth((prev) => ({
+          ...prev,
+          [latestYm]: {
+            income: json.data.income ?? { total: 0, sources: [], transactions: [] },
+            expenses: json.data.expenses ?? { total: 0 },
+            savingsRate: json.data.savingsRate ?? 0,
+            txIncome: json.txMonthlyIncome ?? json.data.income?.total ?? 0,
+            txExpenses: json.txMonthlyExpenses ?? json.data.expenses?.total ?? 0,
+          },
+        }));
+      }
+    } catch { /* best-effort */ }
+  }, []);
+
+  useEffect(() => {
+    if (!token) return;
+    window.addEventListener(PROFILE_REFRESHED_EVENT, reloadConsolidated);
+    return () => window.removeEventListener(PROFILE_REFRESHED_EVENT, reloadConsolidated);
+  }, [token, reloadConsolidated]);
+
   async function fetchMonth(ym: string) {
-    if (dataByMonth[ym]) { setSelectedMonth(ym); return; }
+    setSelectedMonth(ym);
+    if (dataByMonth[ym]) return;
     try {
       const { auth } = getFirebaseClient();
       const user = auth.currentUser;
@@ -308,9 +374,24 @@ function IncomePageInner() {
             txExpenses: json.txMonthlyExpenses ?? json.data.expenses?.total ?? 0,
           },
         }));
+      } else {
+        // No statement for this month — synthesise a cash-income-only entry so the
+        // Overview tab can still show the user's declared recurring cash income.
+        const cashTotal = cashItems.reduce((sum, entry) =>
+          sum + occurrencesInMonth(entry, ym) * entry.amount, 0);
+        setDataByMonth((prev) => ({
+          ...prev,
+          [ym]: {
+            income: { total: cashTotal, sources: [], transactions: [] },
+            expenses: { total: 0 },
+            savingsRate: 0,
+            txIncome: cashTotal,
+            txExpenses: 0,
+            cashOnly: true,
+          } as ConsolidatedData & { cashOnly?: boolean },
+        }));
       }
     } catch { /* ignore */ }
-    setSelectedMonth(ym);
   }
 
   // ── source prefs ─────────────────────────────────────────────────────────────
@@ -339,6 +420,7 @@ function IncomePageInner() {
     const { db } = getFirebaseClient();
     await setDoc(doc(db, `users/${uid}/prefs/transferIncomeSources`), { keys: Array.from(next) });
     if (token) fetch("/api/user/invalidate-cache", { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
+    requestProfileRefresh();
   }
   async function handleRestoreTransfer(description: string) {
     const next = new Set(transferSources);
@@ -348,6 +430,7 @@ function IncomePageInner() {
     const { db } = getFirebaseClient();
     await setDoc(doc(db, `users/${uid}/prefs/transferIncomeSources`), { keys: Array.from(next) });
     if (token) fetch("/api/user/invalidate-cache", { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
+    requestProfileRefresh();
   }
 
   // ── source labels ─────────────────────────────────────────────────────────────
@@ -444,6 +527,7 @@ function IncomePageInner() {
       category: item.category,
       notes: item.notes ?? "",
       nextDate: item.nextDate ?? "",
+      startDate: item.startDate ?? monthsAgoYmd(0),
     });
     setShowCashModal(true);
   }
@@ -456,6 +540,7 @@ function IncomePageInner() {
         amount: parseFloat(cashForm.amount),
         notes: cashForm.notes || undefined,
         nextDate: cashForm.nextDate || undefined,
+        startDate: cashForm.startDate || undefined,
         ...(cashForm.id ? { id: cashForm.id } : {}),
       };
       await fetch("/api/user/cash-income", {
@@ -466,14 +551,18 @@ function IncomePageInner() {
       setShowCashModal(false);
       await loadCashIncome(token);
       // Invalidate cache so incomeTotal is recomputed with new cash income
-      fetch("/api/user/invalidate-cache", { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
+      await fetch("/api/user/invalidate-cache", { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
+      await reloadConsolidated();
+      requestProfileRefresh();
     } finally { setSavingCash(false); }
   }
   async function deleteCashItem(id: string) {
     if (!token) return;
     await fetch(`/api/user/cash-income?id=${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
     setCashItems((prev) => prev.filter((c) => c.id !== id));
-    if (token) fetch("/api/user/invalidate-cache", { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
+    await fetch("/api/user/invalidate-cache", { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
+    await reloadConsolidated();
+    requestProfileRefresh();
   }
 
   // ── derived ───────────────────────────────────────────────────────────────────
@@ -546,7 +635,7 @@ function IncomePageInner() {
   const surplus         = regularTotal - expensesTotal;
 
   const sortedHistory   = [...history].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
-  const chartData       = sortedHistory.map((h) => ({ label: shortMonth(h.yearMonth), income: h.incomeTotal }));
+  const chartData       = sortedHistory.map((h) => ({ label: shortMonth(h.yearMonth), income: h.incomeTotal, ym: h.yearMonth }));
   const regularHistoryPoints = sortedHistory.filter((h) => h.incomeTotal > 0);
   const avgIncome       = regularHistoryPoints.length > 0
     ? Math.round(regularHistoryPoints.reduce((s, h) => s + h.incomeTotal, 0) / regularHistoryPoints.length)
@@ -698,7 +787,24 @@ function IncomePageInner() {
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
                 total received · {selectedMonth ? longMonth(selectedMonth) : ""}
               </p>
-              {(current?.txIncome ?? income?.total ?? 0) === 0 && avgIncome > 0 ? (
+              {(current as (ConsolidatedData & { cashOnly?: boolean }) | null | undefined)?.cashOnly ? (
+                // Month has no statement — show cash income breakdown only
+                <div className="mt-3">
+                  <p className="mt-2 font-bold text-4xl text-gray-900">{fmt(current?.txIncome ?? 0)}</p>
+                  <p className="mt-1 text-xs text-amber-600 font-medium">Cash income only · no statement uploaded</p>
+                  <div className="mt-3 space-y-1.5">
+                    {cashItems.filter((c) => selectedMonth && occurrencesInMonth(c, selectedMonth) > 0).map((c) => (
+                      <div key={c.id} className="flex items-center justify-between text-sm">
+                        <span className="text-gray-700">{c.name}</span>
+                        <span className="font-medium text-green-700">+{fmt(c.amount * (selectedMonth ? occurrencesInMonth(c, selectedMonth) : 0))}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <Link href="/upload" className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-700 hover:bg-purple-100 transition">
+                    Upload a statement →
+                  </Link>
+                </div>
+              ) : (current?.txIncome ?? income?.total ?? 0) === 0 && avgIncome > 0 ? (
                 <div className="mt-3">
                   <p className="font-semibold text-gray-500 text-lg">No deposits detected</p>
                   <p className="mt-1 text-xs text-gray-400 leading-relaxed">
@@ -768,7 +874,13 @@ function IncomePageInner() {
                 )}
                 <div className="h-44">
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                    <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}
+                      onClick={(d) => {
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const ym = (d as any)?.activePayload?.[0]?.payload?.ym as string | undefined;
+                        if (ym) void fetchMonth(ym);
+                      }}
+                      style={{ cursor: "pointer" }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
                       <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
                       <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={52} />
@@ -1157,6 +1269,38 @@ function IncomePageInner() {
                 <input type="date" value={cashForm.nextDate} onChange={(e) => setCashForm((f) => ({ ...f, nextDate: e.target.value }))}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400" />
               </div>
+              {/* When did this start — hidden for one-offs */}
+              {cashForm.frequency !== "once" && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">When did this start?</label>
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {START_DATE_PRESETS.map((p) => {
+                      const ymd = monthsAgoYmd(p.monthsAgo);
+                      const active = cashForm.startDate?.slice(0, 7) === ymd.slice(0, 7);
+                      return (
+                        <button
+                          key={p.label}
+                          type="button"
+                          onClick={() => setCashForm((f) => ({ ...f, startDate: ymd }))}
+                          className={`rounded-full px-3 py-1 text-xs font-medium border transition ${
+                            active
+                              ? "bg-purple-600 text-white border-purple-600"
+                              : "bg-white text-gray-600 border-gray-300 hover:border-purple-400"
+                          }`}
+                        >
+                          {p.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <input
+                    type="month"
+                    value={cashForm.startDate?.slice(0, 7) ?? ""}
+                    onChange={(e) => setCashForm((f) => ({ ...f, startDate: e.target.value ? `${e.target.value}-01` : "" }))}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"
+                  />
+                </div>
+              )}
               {/* Notes */}
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1">Notes</label>

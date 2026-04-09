@@ -143,12 +143,13 @@ export async function GET(request: NextRequest) {
     // month with actual transactions" — statement dates can be in the future
     // (e.g. a March statement with a statementDate of April 1) and should not
     // override the month that genuinely has the most recent transaction data.
-    const [rulesSnap, profile, sourceMappingsSnap, cashIncomeSnap, incomeCatRulesSnap] = await Promise.all([
+    const [rulesSnap, profile, sourceMappingsSnap, cashIncomeSnap, incomeCatRulesSnap, cashCommitmentsSnap] = await Promise.all([
       db.collection(`users/${uid}/categoryRules`).get(),
       getFinancialProfile(uid, db),
       db.collection(`users/${uid}/sourceMappings`).get(),
       db.collection(`users/${uid}/cashIncome`).get(),
       db.collection(`users/${uid}/incomeCategoryRules`).get(),
+      db.collection(`users/${uid}/cashCommitments`).get(),
     ]);
     const categoryRulesMap = new Map<string, string>();
     for (const ruleDoc of rulesSnap.docs) {
@@ -164,6 +165,8 @@ export async function GET(request: NextRequest) {
 
     // Cash income entries and income category rules — passed to the income page
     const cashIncomeItems = cashIncomeSnap.docs.map((d) => d.data());
+    // Cash commitment entries (manual recurring expenses) — passed to spending pages
+    const cashCommitmentItems = cashCommitmentsSnap.docs.map((d) => d.data());
     const incomeCategoryRules = Object.fromEntries(
       incomeCatRulesSnap.docs.map((d) => [d.data().slug as string, d.data().category as string])
     );
@@ -442,11 +445,17 @@ export async function GET(request: NextRequest) {
 
           const debtDelta = bf.balance < 0 ? Math.abs(bf.balance) : 0;
 
+          // Read cash income from the profile cache (already computed there)
+          const cachedForYm = profile.monthlyHistory.find((h) => h.yearMonth === ym);
+
           const idx = historyIndex.get(ym);
           if (idx !== undefined) {
             history[idx].netWorth += bf.balance;
             if (debtDelta > 0) history[idx].debtTotal += debtDelta;
             history[idx].isEstimate = true;
+            if (history[idx].incomeTotal === 0 && (cachedForYm?.incomeTotal ?? 0) > 0) {
+              history[idx].incomeTotal = cachedForYm!.incomeTotal;
+            }
           } else {
             const newIdx = history.length;
             history.push({
@@ -454,7 +463,7 @@ export async function GET(request: NextRequest) {
               netWorth: bf.balance,
               expensesTotal: 0,
               coreExpensesTotal: 0,
-              incomeTotal: 0,
+              incomeTotal: cachedForYm?.incomeTotal ?? 0,
               debtTotal: debtDelta,
               isEstimate: true,
             });
@@ -483,6 +492,29 @@ export async function GET(request: NextRequest) {
 
         history.sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
       }
+    }
+
+    // ── Cash-income-only months (from profile cache) ────────────────────────
+    // The profile cache already computed incomeTotal for every month that has
+    // cash income (even months with no statement). Inject any such month that
+    // is not yet in the history array.
+    {
+      const historyYMs = new Set(history.map((h) => h.yearMonth));
+      for (const cached of profile.monthlyHistory) {
+        if (!historyYMs.has(cached.yearMonth) && cached.incomeTotal > 0) {
+          history.push({
+            yearMonth: cached.yearMonth,
+            netWorth: 0,
+            expensesTotal: 0,
+            coreExpensesTotal: 0,
+            incomeTotal: cached.incomeTotal,
+            debtTotal: 0,
+            isEstimate: true,
+          });
+          historyYMs.add(cached.yearMonth);
+        }
+      }
+      history.sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
     }
 
     // ── Incomplete months detection ──────────────────────────────────────────
@@ -634,6 +666,7 @@ export async function GET(request: NextRequest) {
       incomeSuggestions,
       expenseSuggestions,
       cashIncomeItems,
+      cashCommitmentItems,
       incomeCategoryRules,
       /** FX rates used for net worth: currency → CAD rate (e.g. { "USD": 1.42 }) */
       fxRates: profile.fxRates ?? {},

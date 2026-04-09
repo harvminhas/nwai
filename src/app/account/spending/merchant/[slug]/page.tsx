@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
@@ -9,9 +9,15 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, Cell,
 } from "recharts";
-import { categoryColor } from "@/app/account/spending/shared";
+import { categoryColor, CategoryPicker } from "@/app/account/spending/shared";
 import type { MerchantSummary } from "@/app/api/user/spending/merchants/route";
 import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
+import {
+  MerchantForecastProvider,
+  MerchantForecastSection,
+  MerchantSpendCadencePill,
+} from "@/components/MerchantForecastSection";
+import { PROFILE_REFRESHED_EVENT, useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -54,6 +60,10 @@ export default function MerchantDetailPage() {
   const [sortField, setSortField]   = useState<"date" | "amount">("date");
   const [sortDir, setSortDir]       = useState<"asc" | "desc">("desc");
   const [selectedYm, setSelectedYm] = useState<string | null>(null);
+  const [idToken, setIdToken] = useState<string | null>(null);
+  const categoryBtnRef = useRef<HTMLButtonElement>(null);
+  const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
+  const { requestProfileRefresh } = useProfileRefresh();
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -62,6 +72,7 @@ export default function MerchantDetailPage() {
       setLoading(true);
       try {
         const tok = await user.getIdToken();
+        setIdToken(tok);
         const res = await fetch(
           `/api/user/spending/merchants?slug=${encodeURIComponent(slug)}`,
           { headers: { Authorization: `Bearer ${tok}` } }
@@ -76,6 +87,26 @@ export default function MerchantDetailPage() {
       }
     });
   }, [router, slug]);
+
+  useEffect(() => {
+    if (!idToken) return;
+    const reloadMerchant = () => {
+      void (async () => {
+        try {
+          const res = await fetch(
+            `/api/user/spending/merchants?slug=${encodeURIComponent(slug)}`,
+            { headers: { Authorization: `Bearer ${idToken}` } },
+          );
+          const json = await res.json().catch(() => ({}));
+          if (json.merchant) setMerchant(json.merchant);
+        } catch {
+          /* ignore */
+        }
+      })();
+    };
+    window.addEventListener(PROFILE_REFRESHED_EVENT, reloadMerchant);
+    return () => window.removeEventListener(PROFILE_REFRESHED_EVENT, reloadMerchant);
+  }, [idToken, slug]);
 
   function toggleSort(field: "date" | "amount") {
     if (sortField === field) {
@@ -138,8 +169,29 @@ export default function MerchantDetailPage() {
   const vsAvgPct = monthlyAvg > 0 && selectedEntry
     ? Math.round(((selectedEntry.total - monthlyAvg) / monthlyAvg) * 100) : 0;
 
+  /** Captured for async handler — TS does not narrow `merchant` inside nested functions. */
+  const merchantRow = merchant;
+
+  async function handleMerchantCategorySelect(newCategory: string) {
+    setCategoryPickerOpen(false);
+    if (!idToken) return;
+    const prevCategory = merchantRow.category;
+    setMerchant((m) => (m ? { ...m, category: newCategory } : m));
+    try {
+      const res = await fetch("/api/user/category-rules", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ merchant: merchantRow.name, category: newCategory }),
+      });
+      if (res.ok) requestProfileRefresh();
+    } catch {
+      setMerchant((m) => (m ? { ...m, category: prevCategory } : m));
+    }
+  }
+
   return (
-    <div className="mx-auto max-w-3xl space-y-6 px-4 py-8">
+    <MerchantForecastProvider slug={slug} merchantName={merchant.name} avgAmount={merchant.avgAmount} lastSeenDate={merchant.lastDate} idToken={idToken}>
+      <div className="mx-auto max-w-3xl space-y-6 px-4 py-8">
       {/* Header */}
       <div>
         <Link
@@ -152,15 +204,31 @@ export default function MerchantDetailPage() {
           Merchants
         </Link>
         <div className="flex items-start justify-between gap-4">
-          <div>
+          <div className="min-w-0">
             <h1 className="text-2xl font-bold text-gray-900">{merchant.name}</h1>
-            <span
-              className="mt-1 inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium capitalize"
-              style={{ backgroundColor: color + "18", color }}
-            >
-              <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
-              {merchant.category}
-            </span>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                ref={categoryBtnRef}
+                type="button"
+                onClick={() => setCategoryPickerOpen((o) => !o)}
+                className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-0.5 text-xs font-medium text-gray-700 transition hover:border-purple-300 hover:bg-purple-50 hover:text-purple-800"
+              >
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+                <span>{merchant.category || "Other"}</span>
+                <svg className="h-3 w-3 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              <MerchantSpendCadencePill />
+            </div>
+            {categoryPickerOpen && categoryBtnRef.current && (
+              <CategoryPicker
+                anchorRef={categoryBtnRef}
+                current={merchant.category || "Other"}
+                onSelect={handleMerchantCategorySelect}
+                onClose={() => setCategoryPickerOpen(false)}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -228,6 +296,8 @@ export default function MerchantDetailPage() {
           </div>
         </>
       )}
+
+      <MerchantForecastSection />
 
       {/* Monthly bar chart — click to filter transactions */}
       {chartData.length >= 2 && (
@@ -338,6 +408,7 @@ export default function MerchantDetailPage() {
           ))}
         </div>
       </div>
-    </div>
+      </div>
+    </MerchantForecastProvider>
   );
 }

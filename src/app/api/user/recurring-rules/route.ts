@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { merchantSlug } from "@/lib/applyRules";
+import {
+  applyRecurringRuleToSubscriptionDoc,
+  releaseSubscriptionUserLock,
+} from "@/lib/subscriptionRegistry";
 
 async function getUid(req: NextRequest): Promise<string | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
@@ -42,10 +46,18 @@ export async function PUT(req: NextRequest) {
   }
   const { db } = getFirebaseAdmin();
   const slug = merchantSlug(merchant);
+  const freq = frequency ?? "monthly";
   await db.doc(`users/${uid}/recurringRules/${slug}`).set({
-    merchant, amount, frequency: frequency ?? "monthly",
+    merchant, amount, frequency: freq,
     category: category ?? null, slug,
     updatedAt: new Date(),
+  });
+  await applyRecurringRuleToSubscriptionDoc(uid, db, {
+    merchant,
+    amount,
+    frequency: freq,
+    category: category ?? null,
+    slug,
   });
   return NextResponse.json({ ok: true, slug });
 }
@@ -59,5 +71,6 @@ export async function DELETE(req: NextRequest) {
   if (!slug) return NextResponse.json({ error: "slug required" }, { status: 400 });
   const { db } = getFirebaseAdmin();
   await db.doc(`users/${uid}/recurringRules/${slug}`).delete();
+  await releaseSubscriptionUserLock(uid, db, slug);
   return NextResponse.json({ ok: true });
 }

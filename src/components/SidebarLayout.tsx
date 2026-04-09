@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
+import { ProfileRefreshProvider } from "@/contexts/ProfileRefreshContext";
 import { usePlan } from "@/contexts/PlanContext";
 
 function ChatBubble() {
@@ -43,12 +44,14 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Sidebar collapsed={collapsed} onToggle={toggle} />
-      <div className={`transition-all duration-200 ${collapsed ? "lg:pl-14" : "lg:pl-56"}`}>
-        {children}
+    <ProfileRefreshProvider>
+      <div className="min-h-screen bg-gray-50">
+        <Sidebar collapsed={collapsed} onToggle={toggle} />
+        <div className={`transition-all duration-200 ${collapsed ? "lg:pl-14" : "lg:pl-56"}`}>
+          {children}
+        </div>
+        <ChatBubble />
       </div>
-      <ChatBubble />
-    </div>
+    </ProfileRefreshProvider>
   );
 }

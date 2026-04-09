@@ -13,8 +13,10 @@ import { merchantSlug } from "@/lib/applyRules";
 import {
   categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon,
   type CashFrequency,
+  getParentCategory,
 } from "@/app/account/spending/shared";
 import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
+import { PROFILE_REFRESHED_EVENT, useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -54,6 +56,28 @@ interface ExpenseTxn {
   category: string;
   accountLabel?: string;
   date?: string;
+  isCashCommitment?: boolean;
+}
+
+interface CashCommitmentItem {
+  id: string;
+  name: string;
+  amount: number;
+  frequency: string;
+  category: string;
+  startDate?: string;
+  createdAt: string;
+}
+
+/** Monthly spend amount for a commitment in a given yearMonth. */
+function commitmentAmountForMonth(entry: CashCommitmentItem, yearMonth: string): number {
+  if (entry.frequency === "once") return 0;
+  const floor = entry.startDate?.slice(0, 7) ?? entry.createdAt?.slice(0, 7);
+  if (floor && yearMonth < floor) return 0;
+  const multipliers: Record<string, number> = {
+    weekly: 52 / 12, biweekly: 26 / 12, monthly: 1, quarterly: 1 / 3, annual: 1 / 12,
+  };
+  return entry.amount * (multipliers[entry.frequency] ?? 0);
 }
 
 interface Subscription {
@@ -80,6 +104,7 @@ export default function SpendingCategoryPage() {
   const [loading, setLoading]               = useState(true);
   const [error, setError]                   = useState<string | null>(null);
   const [toast, setToast]                   = useState<string | null>(null);
+  const [cashCommitments, setCashCommitments] = useState<CashCommitmentItem[]>([]);
 
   // Category picker
   const [openPicker, setOpenPicker]         = useState<number | null>(null);
@@ -113,6 +138,10 @@ export default function SpendingCategoryPage() {
 
       if (!consolidatedRes.ok) { setError(json.error ?? "Failed to load"); return; }
 
+      // Cash commitments come from the consolidated response — same source as overview
+      const allCommitments: CashCommitmentItem[] = json.cashCommitmentItems ?? [];
+      setCashCommitments(allCommitments);
+
       // Recurring rules
       const rMap = new Map<string, Subscription>();
       for (const r of (rJson.rules ?? [])) {
@@ -122,14 +151,35 @@ export default function SpendingCategoryPage() {
 
       const ym = json.yearMonth ?? null;
       setYearMonth(ym);
-      setMonthTotal(json.data?.expenses?.total ?? 0);
 
       const allTxns: ExpenseTxn[] = json.data?.expenses?.transactions ?? [];
       const catTxns = allTxns
         .filter((t) => t.category?.toLowerCase() === name)
         .sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
-      setTransactions(catTxns);
-      setCategoryTotal(catTxns.reduce((s, t) => s + t.amount, 0));
+
+      // Inject matching cash commitments as synthetic transactions for this month.
+      // Match both exact category ("Maintenance & Repairs") and parent rollup ("housing").
+      const matchesCategory = (cat: string | undefined) => {
+        if (!cat) return false;
+        if (cat.toLowerCase() === name) return true;
+        return getParentCategory(cat).toLowerCase() === name;
+      };
+      const matchingCommitments: ExpenseTxn[] = ym
+        ? allCommitments
+            .filter((c) => matchesCategory(c.category) && commitmentAmountForMonth(c, ym) > 0)
+            .map((c) => ({
+              merchant: c.name,
+              amount: commitmentAmountForMonth(c, ym),
+              category: c.category,
+              isCashCommitment: true,
+            }))
+        : [];
+
+      const allCatTxns = [...catTxns, ...matchingCommitments];
+      setTransactions(allCatTxns);
+      const catTotal = allCatTxns.reduce((s, t) => s + t.amount, 0);
+      setCategoryTotal(catTotal);
+      setMonthTotal((json.data?.expenses?.total ?? 0) + matchingCommitments.reduce((s, t) => s + t.amount, 0));
 
       // History trend
       const history: { yearMonth: string }[] = json.history ?? [];
@@ -146,16 +196,34 @@ export default function SpendingCategoryPage() {
         const j = await r.json().catch(() => ({}));
         if (r.ok) {
           const txns: ExpenseTxn[] = j.data?.expenses?.transactions ?? [];
-          const amt = txns.filter((t) => t.category?.toLowerCase() === name).reduce((s, t) => s + t.amount, 0);
-          monthData.push({ label: shortMonth(h.yearMonth), amount: amt, ym: h.yearMonth });
+          const stmtAmt = txns
+            .filter((t) => t.category?.toLowerCase() === name)
+            .reduce((s, t) => s + t.amount, 0);
+          const cashAmt = allCommitments
+            .filter((c) => matchesCategory(c.category))
+            .reduce((s, c) => s + commitmentAmountForMonth(c, h.yearMonth), 0);
+          monthData.push({ label: shortMonth(h.yearMonth), amount: stmtAmt + cashAmt, ym: h.yearMonth });
         }
       }));
-      monthData.push({ label: shortMonth(ym ?? ""), amount: catTxns.reduce((s, t) => s + t.amount, 0), ym: ym ?? "" });
+      monthData.push({ label: shortMonth(ym ?? ""), amount: catTotal, ym: ym ?? "" });
       monthData.sort((a, b) => a.ym.localeCompare(b.ym));
       setMonthlyHistory(monthData);
     } catch { setError("Failed to load category data"); }
     finally { setLoading(false); }
   }, []);
+
+  const { requestProfileRefresh } = useProfileRefresh();
+  const loadPageRef = useRef(loadPage);
+  loadPageRef.current = loadPage;
+
+  useEffect(() => {
+    if (!token) return;
+    const onProfileRefreshed = () => {
+      loadPageRef.current(token, rawName, monthParam);
+    };
+    window.addEventListener(PROFILE_REFRESHED_EVENT, onProfileRefreshed);
+    return () => window.removeEventListener(PROFILE_REFRESHED_EVENT, onProfileRefreshed);
+  }, [token, rawName, monthParam]);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -175,13 +243,20 @@ export default function SpendingCategoryPage() {
     setOpenPicker(null);
     setTransactions((prev) => prev.map((t, i) => i === idx ? { ...t, category: newCategory } : t));
     try {
-      await fetch("/api/user/category-rules", {
+      const res = await fetch("/api/user/category-rules", {
         method: "PUT",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ merchant: txn.merchant, category: newCategory }),
       });
-      setToast(`Rule saved: "${txn.merchant}" → ${newCategory}`);
-    } catch { setToast("Failed to save rule"); }
+      if (res.ok) {
+        setToast(`Rule saved: "${txn.merchant}" → ${newCategory}`);
+        requestProfileRefresh();
+      } else {
+        setToast("Failed to save rule");
+      }
+    } catch {
+      setToast("Failed to save rule");
+    }
   }
 
   // ── recurring toggle ────────────────────────────────────────────────────────
@@ -377,40 +452,52 @@ export default function SpendingCategoryPage() {
                 return (
                   <div key={i} className="flex items-center justify-between px-5 py-3.5">
                     <div className="min-w-0 flex-1">
-                      <Link
-                        href={`/account/spending/merchant/${encodeURIComponent(merchantSlug(txn.merchant))}`}
-                        className="block truncate text-sm font-medium text-gray-800 hover:text-purple-600 hover:underline"
-                      >
-                        {txn.merchant}
-                      </Link>
+                      {txn.isCashCommitment ? (
+                        <span className="block truncate text-sm font-medium text-gray-800">{txn.merchant}</span>
+                      ) : (
+                        <Link
+                          href={`/account/spending/merchant/${encodeURIComponent(merchantSlug(txn.merchant))}`}
+                          className="block truncate text-sm font-medium text-gray-800 hover:text-purple-600 hover:underline"
+                        >
+                          {txn.merchant}
+                        </Link>
+                      )}
                       <div className="mt-1 flex items-center gap-2 flex-wrap">
+                        {txn.isCashCommitment && (
+                          <span className="text-xs font-medium text-amber-600 bg-amber-50 rounded px-1.5 py-0.5">Cash</span>
+                        )}
                         {txn.date && <span className="text-xs text-gray-400">{fmtDate(txn.date)}</span>}
                         {txn.accountLabel && (
                           <span className="text-xs text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">{txn.accountLabel}</span>
                         )}
 
-                        {/* Category pill */}
-                        <button
-                          ref={(el) => { if (el) btnRefs.current.set(i, el); else btnRefs.current.delete(i); }}
-                          onClick={() => setOpenPicker(openPicker === i ? null : i)}
-                          className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-600 transition hover:border-purple-300 hover:bg-purple-50 hover:text-purple-700"
-                        >
-                          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: txnColor }} />
-                          {txn.category}
-                          <svg className="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                          </svg>
-                        </button>
-                        {openPicker === i && btnRefs.current.has(i) && (
-                          <CategoryPicker
-                            anchorRef={{ current: btnRefs.current.get(i)! }}
-                            current={txn.category}
-                            onSelect={(cat) => handleCategoryChange(i, cat)}
-                            onClose={() => setOpenPicker(null)}
-                          />
+                        {/* Category pill — not shown for cash commitments (managed from Spending › Cash) */}
+                        {!txn.isCashCommitment && (
+                          <>
+                            <button
+                              ref={(el) => { if (el) btnRefs.current.set(i, el); else btnRefs.current.delete(i); }}
+                              onClick={() => setOpenPicker(openPicker === i ? null : i)}
+                              className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-600 transition hover:border-purple-300 hover:bg-purple-50 hover:text-purple-700"
+                            >
+                              <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: txnColor }} />
+                              {txn.category}
+                              <svg className="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </button>
+                            {openPicker === i && btnRefs.current.has(i) && (
+                              <CategoryPicker
+                                anchorRef={{ current: btnRefs.current.get(i)! }}
+                                current={txn.category}
+                                onSelect={(cat) => handleCategoryChange(i, cat)}
+                                onClose={() => setOpenPicker(null)}
+                              />
+                            )}
+                          </>
                         )}
 
-                        {/* Recurring toggle */}
+                        {/* Recurring toggle — not shown for cash commitments */}
+                        {!txn.isCashCommitment && (
                         <button
                           onClick={(e) => handleRecurringToggle(txn, e.currentTarget)}
                           title={isManualSub ? "Remove from recurring" : "Mark as recurring"}
@@ -425,6 +512,7 @@ export default function SpendingCategoryPage() {
                             ? (recurringRules.get(slug)?.frequency ?? "recurring")
                             : "↻"}
                         </button>
+                        )}
                       </div>
                     </div>
                     <p className="ml-4 shrink-0 text-sm font-medium text-gray-700 tabular-nums">
