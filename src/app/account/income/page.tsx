@@ -151,7 +151,7 @@ type TabId = typeof TABS[number]["id"];
 
 // ── local types ───────────────────────────────────────────────────────────────
 
-interface HistoryPoint { yearMonth: string; incomeTotal: number; expensesTotal: number }
+interface HistoryPoint { yearMonth: string; incomeTotal: number; expensesTotal: number; isEstimate?: boolean }
 interface ConsolidatedData {
   income: { total: number; sources: IncomeSource[]; transactions?: IncomeTransaction[] };
   expenses: { total: number };
@@ -198,6 +198,7 @@ function IncomePageInner() {
   const { requestProfileRefresh } = useProfileRefresh();
 
   const [history, setHistory]             = useState<HistoryPoint[]>([]);
+  const [latestStmtMonth, setLatestStmtMonth] = useState<string | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [dataByMonth, setDataByMonth]     = useState<Record<string, ConsolidatedData>>({});
   const [sourceHistory, setSourceHistory] = useState<Record<string, SourceMonthData[]>>({});
@@ -306,13 +307,17 @@ function IncomePageInner() {
         if (!res.ok) { setError(json.error || "Failed to load"); return; }
 
         const hist: HistoryPoint[] = (json.history ?? []).map(
-          (h: { yearMonth: string; incomeTotal?: number; expensesTotal?: number }) => ({
+          (h: { yearMonth: string; incomeTotal?: number; expensesTotal?: number; isEstimate?: boolean }) => ({
             yearMonth: h.yearMonth,
             incomeTotal: h.incomeTotal ?? 0,
             expensesTotal: h.expensesTotal ?? 0,
+            isEstimate: h.isEstimate ?? false,
           })
         );
         setHistory(hist);
+        // Last month with a real uploaded statement (not cash-only or backfill)
+        const lastRealMonth = [...hist].reverse().find((h) => !h.isEstimate)?.yearMonth ?? (json.yearMonth as string ?? null);
+        setLatestStmtMonth(lastRealMonth);
         setTotalMonths(json.totalMonthsTracked ?? hist.length);
         setSourceHistory(json.incomeSourceHistory ?? {});
         setIncomeCategoryRules(json.incomeCategoryRules ?? {});
@@ -361,13 +366,16 @@ function IncomePageInner() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) return;
       const hist: HistoryPoint[] = (json.history ?? []).map(
-        (h: { yearMonth: string; incomeTotal?: number; expensesTotal?: number }) => ({
+        (h: { yearMonth: string; incomeTotal?: number; expensesTotal?: number; isEstimate?: boolean }) => ({
           yearMonth: h.yearMonth,
           incomeTotal: h.incomeTotal ?? 0,
           expensesTotal: h.expensesTotal ?? 0,
+          isEstimate: h.isEstimate ?? false,
         })
       );
       setHistory(hist);
+      const lastRealMonth = [...hist].reverse().find((h) => !h.isEstimate)?.yearMonth ?? (json.yearMonth as string ?? null);
+      setLatestStmtMonth(lastRealMonth);
       setTotalMonths(json.totalMonthsTracked ?? hist.length);
       setSourceHistory(json.incomeSourceHistory ?? {});
       setIncomeCategoryRules(json.incomeCategoryRules ?? {});
@@ -684,8 +692,36 @@ function IncomePageInner() {
   const surplus         = regularTotal - expensesTotal;
 
   const sortedHistory   = [...history].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
-  const chartData       = sortedHistory.map((h) => ({ label: shortMonth(h.yearMonth), income: h.incomeTotal, ym: h.yearMonth }));
-  const regularHistoryPoints = sortedHistory.filter((h) => h.incomeTotal > 0);
+
+  // Drop trailing zero-income months so the chart ends on real data.
+  // Then split remaining months into actual (solid) vs projected (dashed):
+  //   - months with isEstimate=true (cash-only, no statement) → projected/dashed
+  //   - real statement months → actual/solid
+  // The last real month gets both values so the lines connect.
+  const trimmedHistory = (() => {
+    const arr = [...sortedHistory];
+    while (arr.length > 1 && arr[arr.length - 1].incomeTotal === 0) arr.pop();
+    return arr;
+  })();
+
+  const lastRealIdx = (() => {
+    for (let i = trimmedHistory.length - 1; i >= 0; i--) {
+      if (!trimmedHistory[i].isEstimate) return i;
+    }
+    return trimmedHistory.length - 1;
+  })();
+
+  const chartData = trimmedHistory.map((h, i) => {
+    const isProjected = i > lastRealIdx;
+    const isBoundary  = i === lastRealIdx;
+    return {
+      label:     shortMonth(h.yearMonth),
+      ym:        h.yearMonth,
+      income:    isProjected ? null : h.incomeTotal,
+      projected: (isProjected || isBoundary) ? h.incomeTotal : null,
+    };
+  });
+  const regularHistoryPoints = trimmedHistory.filter((h) => h.incomeTotal > 0);
   const avgIncome       = regularHistoryPoints.length > 0
     ? Math.round(regularHistoryPoints.reduce((s, h) => s + h.incomeTotal, 0) / regularHistoryPoints.length)
     : 0;
@@ -940,17 +976,23 @@ function IncomePageInner() {
                       <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
                       <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
                       <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={52} />
-                      <Tooltip formatter={(v) => [typeof v === "number" ? fmt(v) : String(v), "Income"]}
+                      <Tooltip
+                        formatter={(v, name) => {
+                          const label = name === "projected" ? "Est. income" : "Income";
+                          return [typeof v === "number" ? fmt(v) : String(v), label];
+                        }}
                         contentStyle={{ borderRadius: "8px", border: "1px solid #e5e7eb", fontSize: "13px" }}
                         labelStyle={{ fontWeight: 600, color: "#111827" }} />
+                      {/* Actual months — solid line */}
                       <Line type="monotone" dataKey="income" stroke="#7c3aed" strokeWidth={2}
+                        connectNulls={false}
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         dot={(props: any) => {
                           const ym = props.payload?.ym as string | undefined;
                           const isSelected = ym === selectedMonth;
-                          if (props.cx == null || props.cy == null) return <g key="empty" />;
+                          if (props.cx == null || props.cy == null) return <g key={`a-${ym}`} />;
                           return (
-                            <circle key={ym ?? props.cx}
+                            <circle key={`actual-${ym ?? props.cx}`}
                               cx={props.cx as number} cy={props.cy as number}
                               r={isSelected ? 6 : 4}
                               fill={isSelected ? "#fff" : "#7c3aed"}
@@ -960,10 +1002,40 @@ function IncomePageInner() {
                           );
                         }}
                         activeDot={{ r: 6, fill: "#fff", stroke: "#7c3aed", strokeWidth: 2 }} />
+                      {/* Projected months — dashed line */}
+                      <Line type="monotone" dataKey="projected" stroke="#7c3aed" strokeWidth={2}
+                        strokeDasharray="5 4" strokeOpacity={0.55}
+                        connectNulls={false}
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        dot={(props: any) => {
+                          const ym = props.payload?.ym as string | undefined;
+                          const isSelected = ym === selectedMonth;
+                          // Don't render a dot at the boundary (already rendered by actual line)
+                          if (ym === latestStmtMonth) return <g key={`p-boundary-${ym}`} />;
+                          if (props.cx == null || props.cy == null) return <g key={`p-${ym}`} />;
+                          return (
+                            <circle key={`proj-${ym ?? props.cx}`}
+                              cx={props.cx as number} cy={props.cy as number}
+                              r={isSelected ? 6 : 4}
+                              fill={isSelected ? "#fff" : "#a78bfa"}
+                              stroke="#a78bfa"
+                              strokeWidth={isSelected ? 2.5 : 0}
+                            />
+                          );
+                        }}
+                        activeDot={{ r: 6, fill: "#fff", stroke: "#a78bfa", strokeWidth: 2 }} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
-                <p className="mt-2 text-center text-[11px] text-gray-400">Click a month to see breakdown</p>
+                <div className="mt-2 flex items-center justify-center gap-4">
+                  <p className="text-center text-[11px] text-gray-400">Click a month to see breakdown</p>
+                  {chartData.some((d) => d.projected !== null && d.ym !== latestStmtMonth) && (
+                    <span className="flex items-center gap-1 text-[11px] text-gray-400">
+                      <svg width="18" height="6" viewBox="0 0 18 6"><line x1="0" y1="3" x2="18" y2="3" stroke="#a78bfa" strokeWidth="2" strokeDasharray="5 4" /></svg>
+                      estimated from recurring
+                    </span>
+                  )}
+                </div>
               </div>
             )}
 
