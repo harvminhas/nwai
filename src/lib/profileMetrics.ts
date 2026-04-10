@@ -273,23 +273,31 @@ export function getMonthlyExpenses(
 // ── getLatestCompleteMonth ─────────────────────────────────────────────────────
 
 /**
- * Return the most recent YYYY-MM from monthlyHistory that has income data.
- * Falls back to the most recent month with any data, then to latestTxMonth.
- * This ensures the savings rate card always picks a month where income was recorded.
+ * Return the most recent YYYY-MM to use for the savings-rate / income-expenses display.
+ *
+ * Strategy:
+ *  1. Start from `profile.latestTxMonth` — this is the last month with ANY transaction.
+ *  2. If that month is the current calendar month (always partial), step back to the
+ *     previous month.
+ *  3. If no history entry is found at all, fall back to latestTxMonth.
+ *
+ * We intentionally do NOT require both income and expenses — a credit-card-only
+ * statement produces expenses without income, which is still a valid complete month.
  */
 export function getLatestCompleteMonth(profile: FinancialProfileCache): string {
-  const history = [...profile.monthlyHistory].sort((a, b) =>
-    b.yearMonth.localeCompare(a.yearMonth),
-  );
-  // Prefer a month that has both income and expenses
-  const withBoth = history.find((h) => h.incomeTotal > 0 && h.expensesTotal > 0);
-  if (withBoth) return withBoth.yearMonth;
-  // Fall back to any month with income
-  const withIncome = history.find((h) => h.incomeTotal > 0);
-  if (withIncome) return withIncome.yearMonth;
-  // Last resort: any month with data
-  const withData = history.find((h) => h.expensesTotal > 0);
-  return withData?.yearMonth ?? profile.latestTxMonth ?? "";
+  const now       = new Date();
+  const currentYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+  // All history months sorted descending, excluding the current partial month
+  const pastMonths = [...profile.monthlyHistory]
+    .map((h) => h.yearMonth)
+    .filter((ym) => ym < currentYM)
+    .sort((a, b) => b.localeCompare(a));
+
+  if (pastMonths.length > 0) return pastMonths[0];
+
+  // The only data is from the current month — return it as-is
+  return profile.latestTxMonth ?? currentYM;
 }
 
 
