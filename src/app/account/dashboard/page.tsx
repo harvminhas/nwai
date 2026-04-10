@@ -1090,23 +1090,39 @@ export default function TodayPage() {
           {/* ── Net Worth + Income/Expenses hero card ────────────────────────── */}
           {netWorth && (
             <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-              <div className="px-5 pt-5 pb-4 flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Net Worth</p>
-                  <p className="text-4xl font-bold text-gray-900 tabular-nums tracking-tight">{fmt(netWorth.total)}</p>
-                  <p className={`text-xs mt-1 font-medium ${netWorth.isStale ? "text-amber-500" : "text-gray-400"}`}>
-                    {netWorth.calculatedLabel}
-                  </p>
+              <div className="px-5 pt-5 pb-4">
+                {/* Top row: net worth left, income/expenses right (desktop only) */}
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Net Worth</p>
+                    <p className="text-4xl font-bold text-gray-900 tabular-nums tracking-tight">{fmt(netWorth.total)}</p>
+                    <p className={`text-xs mt-1 font-medium ${netWorth.isStale ? "text-amber-500" : "text-gray-400"}`}>
+                      {netWorth.calculatedLabel}
+                    </p>
+                  </div>
+                  {savingsRate && savingsRate.income > 0 && (
+                    <div className="hidden sm:flex gap-5 shrink-0 text-right">
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Income</p>
+                        <p className="mt-0.5 text-base font-bold text-green-600 tabular-nums">{fmt(savingsRate.income)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Expenses</p>
+                        <p className="mt-0.5 text-base font-bold text-red-500 tabular-nums">{fmt(savingsRate.expenses)}</p>
+                      </div>
+                    </div>
+                  )}
                 </div>
+                {/* Mobile: income/expenses as a row below the net worth number */}
                 {savingsRate && savingsRate.income > 0 && (
-                  <div className="flex gap-5 shrink-0 text-right">
+                  <div className="sm:hidden mt-3 flex gap-5 border-t border-gray-100 pt-3">
                     <div>
                       <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Income</p>
-                      <p className="mt-0.5 text-base font-bold text-green-600 tabular-nums">{fmt(savingsRate.income)}</p>
+                      <p className="mt-0.5 text-sm font-bold text-green-600 tabular-nums">{fmt(savingsRate.income)}</p>
                     </div>
                     <div>
                       <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Expenses</p>
-                      <p className="mt-0.5 text-base font-bold text-red-500 tabular-nums">{fmt(savingsRate.expenses)}</p>
+                      <p className="mt-0.5 text-sm font-bold text-red-500 tabular-nums">{fmt(savingsRate.expenses)}</p>
                     </div>
                   </div>
                 )}
