@@ -12,6 +12,7 @@ import ParseStatusBanner from "@/components/ParseStatusBanner";
 import RefreshToast from "@/components/RefreshToast";
 import { fmt } from "@/lib/currencyUtils";
 import { usePlan } from "@/contexts/PlanContext";
+import { useActiveProfile } from "@/contexts/ActiveProfileContext";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -497,6 +498,7 @@ function PreviewCard({ title, desc, children }: { title: string; desc: string; c
 export default function TodayPage() {
   const router = useRouter();
   const { planId } = usePlan();
+  const { targetUid, buildHeaders } = useActiveProfile();
   const [alerts,      setAlerts]      = useState<DashboardAlert[]>([]);
   const [upcoming,    setUpcoming]    = useState<UpcomingItem[]>([]);
   const [insights,    setInsights]    = useState<TodayInsight[]>([]);
@@ -532,7 +534,7 @@ export default function TodayPage() {
   const load = useCallback(async (tok: string) => {
     setLoading(true); setError(null);
     try {
-      const headers = { Authorization: `Bearer ${tok}` };
+      const headers = buildHeaders(tok);
       const [insRes, cardRes] = await Promise.all([
         fetch("/api/user/insights",       { headers }),
         fetch("/api/user/agent-insights", { headers }),
@@ -563,7 +565,7 @@ export default function TodayPage() {
       setAgentCards(sorted);
     } catch { setError("Failed to load today view"); }
     finally { setLoading(false); }
-  }, []);
+  }, [buildHeaders]);
 
   const handleRefresh = useCallback(async () => {
     if (!token) return;
@@ -571,13 +573,13 @@ export default function TodayPage() {
     try {
       await fetch("/api/user/insights/generate", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        headers: { ...buildHeaders(token), "Content-Type": "application/json" },
         body: JSON.stringify({ event: "full.refresh" }),
       });
       await load(token);
     } catch { /* silent */ }
     finally { setRefreshing(false); }
-  }, [token, load]);
+  }, [token, load, buildHeaders]);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -588,6 +590,13 @@ export default function TodayPage() {
       load(tok);
     });
   }, [router, load]);
+
+  // Re-load when the active profile switches (own ↔ shared account)
+  useEffect(() => {
+    if (token) load(token);
+  // targetUid is the only thing that should trigger this — token changes are handled above
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetUid]);
 
   if (loading) return (
     <div className="flex min-h-[50vh] items-center justify-center">
@@ -623,7 +632,7 @@ export default function TodayPage() {
     if (!token) return;
     await fetch("/api/user/agent-insights", {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      headers: { ...buildHeaders(token), "Content-Type": "application/json" },
       body: JSON.stringify({ action: "dismiss", cardId: id }),
     }).catch(() => {});
   }

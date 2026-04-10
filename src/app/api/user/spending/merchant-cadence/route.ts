@@ -10,6 +10,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
+import { resolveAccess } from "@/lib/access/resolveAccess";
 import type { RecurringFrequency } from "@/lib/merchantForecast";
 import {
   applyRecurringRuleToSubscriptionDoc,
@@ -26,13 +27,10 @@ const VALID = new Set<RecurringFrequency>([
   "yearly",
 ]);
 
-function authUid(req: NextRequest): Promise<string | null> {
-  const token = req.headers.get("authorization")?.replace("Bearer ", "");
-  if (!token) return Promise.resolve(null);
-  return getFirebaseAdmin()
-    .auth.verifyIdToken(token)
-    .then((d) => d.uid)
-    .catch(() => null);
+async function authUid(req: NextRequest): Promise<string | null> {
+  const { db } = getFirebaseAdmin();
+  const access = await resolveAccess(req, db);
+  return access?.targetUid ?? null;
 }
 
 export async function GET(req: NextRequest) {

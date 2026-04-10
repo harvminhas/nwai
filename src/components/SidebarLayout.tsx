@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import { ProfileRefreshProvider } from "@/contexts/ProfileRefreshContext";
+import { ActiveProfileProvider, useActiveProfile } from "@/contexts/ActiveProfileContext";
 import { usePlan } from "@/contexts/PlanContext";
 
 function ChatBubble() {
@@ -37,6 +38,64 @@ function ChatBubble() {
   );
 }
 
+
+function PendingInviteModal() {
+  const { pendingInvite, acceptPendingInvite, dismissPendingInvite } = useActiveProfile();
+  const [accepting, setAccepting] = useState(false);
+  const [error, setError] = useState("");
+
+  if (!pendingInvite) return null;
+
+  async function handleAccept() {
+    setAccepting(true);
+    setError("");
+    const result = await acceptPendingInvite();
+    if (!result.ok) {
+      setError(result.error ?? "Something went wrong");
+      setAccepting(false);
+    }
+    // On success the modal disappears because pendingInvite becomes null
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl p-6 space-y-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-purple-100 text-base font-bold text-purple-700">
+            {pendingInvite.initiatorName[0]?.toUpperCase() ?? "?"}
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-gray-900">
+              {pendingInvite.initiatorName} invited you to link accounts
+            </p>
+            <p className="text-xs text-gray-400 mt-0.5">{pendingInvite.initiatorEmail}</p>
+          </div>
+        </div>
+        <p className="text-sm text-gray-600">
+          You&apos;ll be able to view each other&apos;s finances and switch between accounts from the sidebar.
+        </p>
+        {error && <p className="text-xs text-red-500">{error}</p>}
+        <div className="flex gap-2 pt-1">
+          <button
+            onClick={handleAccept}
+            disabled={accepting}
+            className="flex-1 rounded-xl bg-purple-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-purple-700 transition disabled:opacity-50"
+          >
+            {accepting ? "Accepting…" : "Accept invite"}
+          </button>
+          <button
+            onClick={dismissPendingInvite}
+            disabled={accepting}
+            className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-500 hover:bg-gray-50 transition disabled:opacity-50"
+          >
+            Later
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function SidebarLayout({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -53,14 +112,17 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
   }
 
   return (
-    <ProfileRefreshProvider>
-      <div className="min-h-screen bg-gray-50">
-        <Sidebar collapsed={collapsed} onToggle={toggle} />
-        <div className={`transition-all duration-200 ${collapsed ? "lg:pl-14" : "lg:pl-56"}`}>
-          {children}
+    <ActiveProfileProvider>
+      <ProfileRefreshProvider>
+        <div className="min-h-screen bg-gray-50">
+          <Sidebar collapsed={collapsed} onToggle={toggle} />
+            <PendingInviteModal />
+          <div className={`transition-all duration-200 ${collapsed ? "lg:pl-14" : "lg:pl-56"}`}>
+            {children}
+          </div>
+          <ChatBubble />
         </div>
-        <ChatBubble />
-      </div>
-    </ProfileRefreshProvider>
+      </ProfileRefreshProvider>
+    </ActiveProfileProvider>
   );
 }

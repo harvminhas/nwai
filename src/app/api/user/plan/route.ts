@@ -42,6 +42,8 @@ export function resolvePlan(data: Record<string, unknown> | undefined): PlanId |
   return null;
 }
 
+import type { LinkedPartner } from "@/lib/access/types";
+
 export async function GET(req: NextRequest) {
   const token = authToken(req);
   if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -63,7 +65,6 @@ export async function GET(req: NextRequest) {
           const sub  = subs.data[0];
           if (sub?.status === "active" || sub?.status === "trialing") {
             plan = "pro";
-            // Backfill Firestore so future calls are fast
             db.collection("users").doc(uid).set(
               { plan: "pro", subscription: { id: sub.id, status: sub.status } },
               { merge: true },
@@ -74,6 +75,17 @@ export async function GET(req: NextRequest) {
         } catch { plan = "free"; }
       } else {
         plan = "free";
+      }
+    }
+
+    // Linked partner inherits the partner's plan — if partner is Pro, so are they
+    if (plan === "free") {
+      const partnerSnap = await db.doc(`users/${uid}/linkedPartner/data`).get();
+      if (partnerSnap.exists) {
+        const partner = partnerSnap.data() as LinkedPartner;
+        const partnerDoc = await db.collection("users").doc(partner.partnerUid).get();
+        const partnerPlan = resolvePlan(partnerDoc.data() as Record<string, unknown> | undefined);
+        if (partnerPlan === "pro") plan = "pro";
       }
     }
 

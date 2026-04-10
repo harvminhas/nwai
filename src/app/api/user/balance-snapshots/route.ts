@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
+import { resolveAccess } from "@/lib/access/resolveAccess";
 import { randomUUID } from "crypto";
 import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
 
@@ -38,8 +39,10 @@ export async function GET(req: NextRequest) {
   if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const { auth, db } = getFirebaseAdmin();
-    const { uid } = await auth.verifyIdToken(token);
+    const { db } = getFirebaseAdmin();
+    const access = await resolveAccess(req, db);
+    if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const uid = access.targetUid;
 
     const snap = await db
       .collection("users").doc(uid)
@@ -64,8 +67,10 @@ export async function POST(req: NextRequest) {
   if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const { auth, db } = getFirebaseAdmin();
-    const { uid } = await auth.verifyIdToken(token);
+    const { db } = getFirebaseAdmin();
+    const access = await resolveAccess(req, db);
+    if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const uid = access.targetUid;
     const body = await req.json() as Partial<BalanceSnapshot>;
 
     const { accountSlug, accountName, accountType, balance, yearMonth, note } = body;
@@ -98,8 +103,10 @@ export async function DELETE(req: NextRequest) {
   if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const { auth, db } = getFirebaseAdmin();
-    const { uid } = await auth.verifyIdToken(token);
+    const { db } = getFirebaseAdmin();
+    const access = await resolveAccess(req, db);
+    if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const uid = access.targetUid;
     const id = new URL(req.url).searchParams.get("id");
     if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 

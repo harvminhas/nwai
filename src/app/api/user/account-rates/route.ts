@@ -10,6 +10,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
+import { resolveAccess } from "@/lib/access/resolveAccess";
 import type { ParsedStatementData } from "@/lib/types";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
@@ -45,8 +46,10 @@ export async function GET(req: NextRequest) {
   if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const { auth, db } = getFirebaseAdmin();
-    const { uid } = await auth.verifyIdToken(token);
+    const { db } = getFirebaseAdmin();
+    const access = await resolveAccess(req, db);
+    if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const uid = access.actorUid;
 
     // ── Fetch all completed statements (root collection, filtered by userId) ──
     const stmtSnap = await db
@@ -123,8 +126,10 @@ export async function PUT(req: NextRequest) {
   if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const { auth, db } = getFirebaseAdmin();
-    const { uid } = await auth.verifyIdToken(token);
+    const { db } = getFirebaseAdmin();
+    const access = await resolveAccess(req, db);
+    if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const uid = access.actorUid;
     const body = await req.json();
     const { accountKey: key, rate, paymentFrequency, note } =
       body as { accountKey: string; rate?: number | null; paymentFrequency?: PaymentFrequency | null; note?: string };

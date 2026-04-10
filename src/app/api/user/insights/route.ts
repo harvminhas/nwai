@@ -20,15 +20,7 @@ import type { RadarItem, CalendarEvent, FreshnessData, FreshnessState, NetWorthS
 import { resolveCanonical } from "@/lib/sourceMappings";
 import type { SourceMapping } from "@/lib/sourceMappings";
 import { INCOME_TRANSFER_RE } from "@/lib/spendingMetrics";
-
-async function getUid(req: NextRequest): Promise<string | null> {
-  const token = req.headers.get("authorization")?.replace("Bearer ", "");
-  if (!token) return null;
-  try {
-    const { auth } = getFirebaseAdmin();
-    return (await auth.verifyIdToken(token)).uid;
-  } catch { return null; }
-}
+import { resolveAccess } from "@/lib/access/resolveAccess";
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -107,10 +99,10 @@ function subscriptionEligibleForUpcoming(rec: SubscriptionRecord): boolean {
 // ── GET ───────────────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
-  const uid = await getUid(req);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
   const { db } = getFirebaseAdmin();
+  const access = await resolveAccess(req, db);
+  if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const uid = access.targetUid;
   const today = todayISO();
   const now   = new Date();
   const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;

@@ -1,17 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
+import { resolveAccess } from "@/lib/access/resolveAccess";
 import type { SourceMapping } from "@/lib/sourceMappings";
 
 async function getUid(request: NextRequest): Promise<string | null> {
-  const token = request.headers.get("authorization")?.replace("Bearer ", "");
-  if (!token) return null;
-  try {
-    const { auth } = getFirebaseAdmin();
-    const decoded = await auth.verifyIdToken(token);
-    return decoded.uid;
-  } catch {
-    return null;
-  }
+  const { db } = getFirebaseAdmin();
+  const access = await resolveAccess(request, db);
+  return access?.targetUid ?? null;
 }
 
 /** GET /api/user/source-mappings — return all mappings for the user */

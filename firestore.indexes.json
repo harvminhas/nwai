@@ -7,6 +7,15 @@
         { "fieldPath": "userId", "order": "ASCENDING" },
         { "fieldPath": "uploadedAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "statements",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "uploadedAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

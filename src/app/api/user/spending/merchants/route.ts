@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
+import { resolveAccess } from "@/lib/access/resolveAccess";
 import { getYearMonth } from "@/lib/consolidate";
 import { applyRulesAndRecalculate, merchantSlug } from "@/lib/applyRules";
 import { buildAccountSlug } from "@/lib/accountSlug";
@@ -54,9 +55,10 @@ export async function GET(request: NextRequest) {
   const monthFilter = searchParams.get("month")?.trim() ?? null; // optional: YYYY-MM scope
 
   try {
-    const { auth, db } = getFirebaseAdmin();
-    const decoded = await auth.verifyIdToken(token);
-    const uid = decoded.uid;
+    const { db } = getFirebaseAdmin();
+    const access = await resolveAccess(request, db);
+    if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const uid = access.targetUid;
 
     // Load category rules
     const rulesSnap = await db

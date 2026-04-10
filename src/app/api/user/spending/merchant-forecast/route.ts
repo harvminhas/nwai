@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Firestore } from "firebase-admin/firestore";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
+import { resolveAccess } from "@/lib/access/resolveAccess";
 import { resolvePlan } from "@/app/api/user/plan/route";
 import { planHas, type PlanId } from "@/lib/plans";
 import type {
@@ -18,13 +19,10 @@ import type {
   VisitsPeriod,
 } from "@/lib/merchantForecast";
 
-function authUid(req: NextRequest): Promise<string | null> {
-  const token = req.headers.get("authorization")?.replace("Bearer ", "");
-  if (!token) return Promise.resolve(null);
-  return getFirebaseAdmin()
-    .auth.verifyIdToken(token)
-    .then((d) => d.uid)
-    .catch(() => null);
+async function authUid(req: NextRequest): Promise<string | null> {
+  const { db } = getFirebaseAdmin();
+  const access = await resolveAccess(req, db);
+  return access?.targetUid ?? null;
 }
 
 async function resolvedPlanId(uid: string, db: Firestore): Promise<PlanId> {

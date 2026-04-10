@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
+import { resolveAccess } from "@/lib/access/resolveAccess";
 import type { UserStatementSummary } from "@/lib/types";
 
 export async function GET(request: NextRequest) {
@@ -10,9 +11,10 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const { auth, db } = getFirebaseAdmin();
-    const decoded = await auth.verifyIdToken(token);
-    const uid = decoded.uid;
+    const { db } = getFirebaseAdmin();
+    const access = await resolveAccess(request, db);
+    if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const uid = access.targetUid;
 
     const snapshot = await db
       .collection("statements")

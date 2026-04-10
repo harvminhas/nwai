@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
+import { resolveAccess } from "@/lib/access/resolveAccess";
 
 function uuidv4(): string {
   return crypto.randomUUID();
@@ -9,8 +10,7 @@ async function getUid(req: NextRequest): Promise<string | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
   if (!token) return null;
   try {
-    const { auth } = getFirebaseAdmin();
-    return (await auth.verifyIdToken(token)).uid;
+    const { db } = getFirebaseAdmin(); const access = await resolveAccess(req, db); return access?.targetUid ?? null;
   } catch { return null; }
 }
 

@@ -9,6 +9,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
+import { resolveAccess } from "@/lib/access/resolveAccess";
 
 function authToken(req: NextRequest): string | null {
   const h = req.headers.get("authorization");
@@ -35,8 +36,10 @@ export async function GET(req: NextRequest) {
   if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const { auth, db } = getFirebaseAdmin();
-    const { uid } = await auth.verifyIdToken(token);
+    const { db } = getFirebaseAdmin();
+    const access = await resolveAccess(req, db);
+    if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const uid = access.targetUid;
 
     const events: ActivityEvent[] = [];
 

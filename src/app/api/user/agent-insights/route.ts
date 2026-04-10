@@ -6,24 +6,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import type { AgentCard } from "@/lib/agentTypes";
-
-function authToken(req: NextRequest): string | null {
-  const h = req.headers.get("authorization");
-  return h?.startsWith("Bearer ") ? h.slice(7) : null;
-}
+import { resolveAccess } from "@/lib/access/resolveAccess";
 
 // ── GET — load non-dismissed cards ────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
-  const token = authToken(req);
-  if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { db } = getFirebaseAdmin();
+  const access = await resolveAccess(req, db);
+  if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const { auth, db } = getFirebaseAdmin();
-    const { uid } = await auth.verifyIdToken(token);
-
     const snap = await db
-      .collection("users").doc(uid)
+      .collection("users").doc(access.targetUid)
       .collection("agentInsights")
       .orderBy("createdAt", "desc")
       .limit(20)
@@ -43,12 +37,13 @@ export async function GET(req: NextRequest) {
 // ── POST — dismiss or mark complete ───────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  const token = authToken(req);
-  if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { db } = getFirebaseAdmin();
+  const access = await resolveAccess(req, db);
+  if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Dismissals always apply to the actor's own insights, not the shared account
+  const uid = access.actorUid;
 
   try {
-    const { auth, db } = getFirebaseAdmin();
-    const { uid } = await auth.verifyIdToken(token);
     const body = await req.json().catch(() => ({})) as {
       action?: "dismiss" | "complete";
       cardId?: string;
