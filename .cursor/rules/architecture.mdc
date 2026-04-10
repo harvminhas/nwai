@@ -195,3 +195,37 @@ That is the only change required. Nothing else in the codebase needs to know abo
 - Gate on `minMonths` — do not generate low-confidence signals with insufficient history.
 - Respect `lockedFields` on any master data records (subscriptions, etc.) the user has explicitly set.
 - Never touch `parsedData`.
+
+### 14. App features are isolated consumers of the financial engine
+
+New product features — Events, Reminders, Life Log, Tags, and anything built in the future —
+are **separate, orthogonal apps** that sit on top of the financial engine. They MUST follow
+these rules:
+
+```
+┌─────────────────────────────────────────────────────┐
+│                  APPS (features)                    │
+│  Events  │  Reminders  │  Life Log  │  AI Chat  │  │
+│  Goals   │  Forecast   │  Sharing   │  Tags     │  │
+└──────────────────────┬──────────────────────────────┘
+                       │ reads only via getFinancialProfile()
+                       ▼
+┌─────────────────────────────────────────────────────┐
+│            FINANCIAL ENGINE (read-only API)         │
+│  getFinancialProfile()  │  extractTransactions()    │
+│  consolidate()          │  applyRules()             │
+└─────────────────────────────────────────────────────┘
+```
+
+**Rules:**
+- App features read from `getFinancialProfile(uid, db)` — this is the only permitted
+  dependency on the financial engine.
+- App features write ONLY to their own Firestore collections under `users/{uid}/`
+  (e.g. `users/{uid}/events`, `users/{uid}/txTags`, `users/{uid}/reminders`).
+- Engine files (`parseStatement.ts`, `consolidate.ts`, `applyRules.ts`,
+  `financialProfile.ts`, `spendingMetrics.ts`) MUST NOT import from any app feature.
+- The engine has zero knowledge that any app feature exists.
+- If an app feature is removed, the engine and all other features continue working unchanged.
+- Transaction annotations (tags, notes, event links) are stored in the app's own
+  collections and joined in-memory at the API route layer — never written back to
+  `statements/{id}.parsedData`.

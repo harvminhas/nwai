@@ -495,6 +495,67 @@ function PreviewCard({ title, desc, children }: { title: string; desc: string; c
   );
 }
 
+// ── Events widget (dashboard sidebar) ────────────────────────────────────────
+
+import type { EventSummary, EventColor } from "@/lib/events/types";
+import { EVENT_COLORS } from "@/lib/events/types";
+
+function evColorCfg(color: EventColor) {
+  return EVENT_COLORS.find((c) => c.id === color) ?? EVENT_COLORS[0];
+}
+
+function EventsWidget({ events }: { events: EventSummary[] }) {
+  if (events.length === 0) return null;
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between px-4 pt-4 pb-2 border-b border-gray-100">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Events</p>
+        <Link href="/account/events" className="text-[11px] font-semibold text-purple-600 hover:underline">
+          All →
+        </Link>
+      </div>
+      <div className="divide-y divide-gray-50">
+        {events.map((ev) => {
+          const cfg = evColorCfg(ev.color);
+          const pct = ev.budget ? Math.min(100, Math.round((ev.totalSpent / ev.budget) * 100)) : null;
+          const daysAway = ev.date
+            ? Math.round((new Date(ev.date + "T00:00:00").getTime() - Date.now()) / 86400000)
+            : null;
+          return (
+            <Link key={ev.id} href={`/account/events/${ev.id}`} className="block px-4 py-3 hover:bg-gray-50 transition">
+              <div className="flex items-center gap-2.5 mb-1.5">
+                <span className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${cfg.bg} text-sm`}>🗓</span>
+                <p className="text-xs font-semibold text-gray-800 truncate flex-1">{ev.name}</p>
+                {daysAway != null && daysAway >= 0 && daysAway <= 30 && (
+                  <span className="shrink-0 text-[10px] font-bold text-amber-600 bg-amber-50 rounded-full px-1.5 py-0.5">
+                    {daysAway === 0 ? "Today" : `${daysAway}d`}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center justify-between gap-2 text-[11px]">
+                <span className="text-gray-500">{fmt(ev.totalSpent)} spent</span>
+                {ev.budget && (
+                  <span className={`font-medium ${pct != null && pct >= 100 ? "text-red-500" : "text-gray-400"}`}>
+                    {pct}% of {fmt(ev.budget)}
+                  </span>
+                )}
+              </div>
+              {pct != null && (
+                <div className="mt-1.5 h-1 w-full rounded-full bg-gray-100">
+                  <div
+                    className={`h-1 rounded-full ${pct >= 100 ? "bg-red-400" : cfg.bg}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              )}
+            </Link>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function TodayPage() {
   const router = useRouter();
   const { planId } = usePlan();
@@ -520,6 +581,7 @@ export default function TodayPage() {
   const [showOnboarding,   setShowOnboarding]   = useState(false);
   const [showAllUpcoming,      setShowAllUpcoming]      = useState(false);
   const [includeDebtInExpenses, setIncludeDebtInExpenses] = useState(false);
+  const [activeEvents, setActiveEvents] = useState<import("@/lib/events/types").EventSummary[]>([]);
 
   function toggleAlert(id: string) {
     setExpandedAlerts((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -597,6 +659,27 @@ export default function TodayPage() {
   // targetUid is the only thing that should trigger this — token changes are handled above
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetUid]);
+
+  // Load active events independently (lightweight, doesn't block the main page)
+  useEffect(() => {
+    if (!token) return;
+    fetch("/api/user/events", { headers: buildHeaders(token) })
+      .then((r) => r.json())
+      .then((j) => {
+        const now = new Date().toISOString().slice(0, 10);
+        const in30 = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        // Surface events that are upcoming (date within 30 days) or have budget >75% used
+        const surface = (j.events ?? []).filter((ev: import("@/lib/events/types").EventSummary) => {
+          if (ev.date && ev.date >= now && ev.date <= in30) return true;
+          if (ev.budget && ev.totalSpent / ev.budget >= 0.75) return true;
+          if (!ev.date && !ev.budget) return true; // always show events with no date/budget
+          return false;
+        }).slice(0, 5);
+        setActiveEvents(surface);
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, targetUid]);
 
   if (loading) return (
     <div className="flex min-h-[50vh] items-center justify-center">
@@ -1473,6 +1556,9 @@ export default function TodayPage() {
               </div>
             )}
 
+            {/* ── Events ─────────────────────────────────────────────────────── */}
+            <EventsWidget events={activeEvents} />
+
           </div>
         </div>
 
@@ -1494,6 +1580,11 @@ export default function TodayPage() {
               <MobileCardShell><SidebarSignalCard card={card} /></MobileCardShell>
             </div>
           ))}
+          {activeEvents.length > 0 && (
+            <div className="snap-start shrink-0 w-64">
+              <MobileCardShell><EventsWidget events={activeEvents} /></MobileCardShell>
+            </div>
+          )}
         </div>
       </div>
 
