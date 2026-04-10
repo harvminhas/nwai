@@ -316,17 +316,29 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
           collapsed ? "lg:w-14" : "lg:w-56"
         }`}
       >
-        {/* Logo + account switcher */}
+        {/* Logo + collapse toggle + account switcher */}
         <div className={`shrink-0 border-b border-gray-100 ${collapsed ? "px-2 py-3" : "px-4 pt-3 pb-2"}`}>
-          <div className={`flex h-8 items-center ${collapsed ? "justify-center" : ""}`}>
+          <div className={`flex h-8 items-center ${collapsed ? "justify-center" : "justify-between"}`}>
             {collapsed ? (
-              <Link href="/account/dashboard" title="networth.online">
-                <span className="font-bold text-purple-600 text-lg">N</span>
-              </Link>
+              <button onClick={onToggle} title="Expand sidebar" className="flex items-center justify-center rounded-lg p-1 text-purple-600 hover:bg-purple-50 transition">
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                </svg>
+              </button>
             ) : (
-              <Link href="/account/dashboard" className="font-bold text-purple-600 text-lg tracking-tight">
-                networth<span className="text-gray-400">.online</span>
-              </Link>
+              <>
+                <Link href="/account/dashboard" className="font-bold text-purple-600 text-lg tracking-tight">
+                  networth<span className="text-gray-400">.online</span>
+                </Link>
+                {onToggle && (
+                  <button onClick={onToggle} title="Collapse sidebar"
+                    className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition">
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+                    </svg>
+                  </button>
+                )}
+              </>
             )}
           </div>
 
@@ -506,19 +518,6 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
             )}
           </div>
 
-          {/* Collapse toggle */}
-          {onToggle && (
-            <button
-              onClick={onToggle}
-              title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-              className={`mt-0.5 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition ${collapsed ? "justify-center" : ""}`}
-            >
-              <svg className={`h-3.5 w-3.5 shrink-0 transition-transform duration-200 ${collapsed ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-              </svg>
-              {!collapsed && <span>Collapse</span>}
-            </button>
-          )}
         </div>
       </aside>
 
