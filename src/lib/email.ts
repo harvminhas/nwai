@@ -9,13 +9,14 @@
 
 import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-const FROM   = process.env.RESEND_FROM_EMAIL ?? "noreply@networth.online";
+const FROM     = process.env.RESEND_FROM_EMAIL ?? "noreply@networth.online";
 const APP_NAME = "networth.online";
 
-/** Returns true if email is configured, false if RESEND_API_KEY is missing. */
-function isConfigured(): boolean {
-  return !!process.env.RESEND_API_KEY;
+/** Lazily create the Resend client so a missing key only fails at send time, not at build time. */
+function getResend(): Resend | null {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) return null;
+  return new Resend(key);
 }
 
 // ── Partner invite ─────────────────────────────────────────────────────────────
@@ -29,7 +30,8 @@ export async function sendPartnerInviteEmail({
   inviterName: string;
   inviteUrl: string;
 }): Promise<void> {
-  if (!isConfigured()) {
+  const resend = getResend();
+  if (!resend) {
     console.warn("[email] RESEND_API_KEY not set — skipping invite email to", to);
     return;
   }
