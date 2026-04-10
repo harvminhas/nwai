@@ -516,7 +516,8 @@ export default function TodayPage() {
   const [dismissedRadar,   setDismissedRadar]   = useState<Set<string>>(new Set());
   const [statusOpen,       setStatusOpen]       = useState(false);
   const [showOnboarding,   setShowOnboarding]   = useState(false);
-  const [showAllUpcoming,  setShowAllUpcoming]  = useState(false);
+  const [showAllUpcoming,      setShowAllUpcoming]      = useState(false);
+  const [includeDebtInExpenses, setIncludeDebtInExpenses] = useState(false);
 
   function toggleAlert(id: string) {
     setExpandedAlerts((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -1107,8 +1108,25 @@ export default function TodayPage() {
                         <p className="mt-0.5 text-base font-bold text-green-600 tabular-nums">{fmt(savingsRate.income)}</p>
                       </div>
                       <div>
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Expenses</p>
-                        <p className="mt-0.5 text-base font-bold text-red-500 tabular-nums">{fmt(savingsRate.expenses)}</p>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Expenses</p>
+                          {savingsRate.debtPayments > 0 && (
+                            <button
+                              onClick={() => setIncludeDebtInExpenses((v) => !v)}
+                              title={includeDebtInExpenses ? "Excluding debt payments" : "Include debt payments"}
+                              className={`relative inline-flex h-3.5 w-7 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${includeDebtInExpenses ? "bg-indigo-500" : "bg-gray-200"}`}
+                              role="switch" aria-checked={includeDebtInExpenses}
+                            >
+                              <span className={`inline-block h-2.5 w-2.5 rounded-full bg-white shadow transform transition-transform ${includeDebtInExpenses ? "translate-x-3" : "translate-x-0"}`} />
+                            </button>
+                          )}
+                        </div>
+                        <p className="mt-0.5 text-base font-bold text-red-500 tabular-nums">
+                          {fmt(savingsRate.expenses + (includeDebtInExpenses ? savingsRate.debtPayments : 0))}
+                        </p>
+                        {includeDebtInExpenses && savingsRate.debtPayments > 0 && (
+                          <p className="text-[10px] text-gray-400">incl. {fmt(savingsRate.debtPayments)} debt pymts</p>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1121,8 +1139,25 @@ export default function TodayPage() {
                       <p className="mt-0.5 text-sm font-bold text-green-600 tabular-nums">{fmt(savingsRate.income)}</p>
                     </div>
                     <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Expenses</p>
-                      <p className="mt-0.5 text-sm font-bold text-red-500 tabular-nums">{fmt(savingsRate.expenses)}</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Expenses</p>
+                        {savingsRate.debtPayments > 0 && (
+                          <button
+                            onClick={() => setIncludeDebtInExpenses((v) => !v)}
+                            title={includeDebtInExpenses ? "Excluding debt payments" : "Include debt payments"}
+                            className={`relative inline-flex h-3.5 w-7 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${includeDebtInExpenses ? "bg-indigo-500" : "bg-gray-200"}`}
+                            role="switch" aria-checked={includeDebtInExpenses}
+                          >
+                            <span className={`inline-block h-2.5 w-2.5 rounded-full bg-white shadow transform transition-transform ${includeDebtInExpenses ? "translate-x-3" : "translate-x-0"}`} />
+                          </button>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-sm font-bold text-red-500 tabular-nums">
+                        {fmt(savingsRate.expenses + (includeDebtInExpenses ? savingsRate.debtPayments : 0))}
+                      </p>
+                      {includeDebtInExpenses && savingsRate.debtPayments > 0 && (
+                        <p className="text-[10px] text-gray-400">incl. {fmt(savingsRate.debtPayments)} debt pymts</p>
+                      )}
                     </div>
                   </div>
                 )}
