@@ -101,14 +101,14 @@ export function ActiveProfileProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  // Load partner info whenever token changes
+  // Load partner info + last-viewed preference whenever token changes
   useEffect(() => {
     if (!token) return;
     setLoadingPartner(true);
     fetch("/api/access/grants", { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.json())
       .then((json) => {
-            setPartner(json.partner ?? null);
+        setPartner(json.partner ?? null);
         setPendingInvite(json.pendingReceived ?? null);
 
         if (!json.partner) {
@@ -116,16 +116,33 @@ export function ActiveProfileProvider({ children }: { children: ReactNode }) {
           setViewingPartner(false);
           localStorage.removeItem(STORAGE_KEY);
           localStorage.removeItem(STORAGE_KEY + "_chosen");
-        } else if (!localStorage.getItem(STORAGE_KEY + "_chosen")) {
-          // First time this linked user opens the app — auto-show partner's data
-          // since their own account is empty. Once they explicitly switch, we remember.
-          setViewingPartner(true);
-          localStorage.setItem(STORAGE_KEY, "partner");
-          localStorage.setItem(STORAGE_KEY + "_chosen", "1");
+        } else {
+          // Restore from server preference (cross-device), fall back to localStorage
+          const serverPref = json.lastViewedAccount as "self" | "partner" | undefined;
+          const localPref  = localStorage.getItem(STORAGE_KEY);
+          const chosen     = localStorage.getItem(STORAGE_KEY + "_chosen");
+
+          if (serverPref === "partner" || (!chosen && !serverPref)) {
+            // Server says partner, OR first-time linked user — show partner
+            setViewingPartner(serverPref === "partner");
+            localStorage.setItem(STORAGE_KEY, serverPref === "partner" ? "partner" : "self");
+            localStorage.setItem(STORAGE_KEY + "_chosen", "1");
+          } else if (localPref === "partner") {
+            setViewingPartner(true);
+          }
         }
       })
       .catch(() => {})
       .finally(() => setLoadingPartner(false));
+  }, [token]);
+
+  const saveServerPref = useCallback((pref: "self" | "partner") => {
+    if (!token) return;
+    fetch("/api/access/grants", {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ lastViewedAccount: pref }),
+    }).catch(() => {});
   }, [token]);
 
   const acceptPendingInvite = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
@@ -148,11 +165,12 @@ export function ActiveProfileProvider({ children }: { children: ReactNode }) {
       setViewingPartner(true);
       localStorage.setItem(STORAGE_KEY, "partner");
       localStorage.setItem(STORAGE_KEY + "_chosen", "1");
+      saveServerPref("partner");
       return { ok: true };
     } catch {
       return { ok: false, error: "Something went wrong" };
     }
-  }, [token, pendingInvite]);
+  }, [token, pendingInvite, saveServerPref]);
 
   const dismissPendingInvite = useCallback(() => {
     setInviteDismissed(true);
@@ -162,13 +180,15 @@ export function ActiveProfileProvider({ children }: { children: ReactNode }) {
     setViewingPartner(true);
     localStorage.setItem(STORAGE_KEY, "partner");
     localStorage.setItem(STORAGE_KEY + "_chosen", "1");
-  }, []);
+    saveServerPref("partner");
+  }, [saveServerPref]);
 
   const switchToSelf = useCallback(() => {
     setViewingPartner(false);
     localStorage.removeItem(STORAGE_KEY);
     localStorage.setItem(STORAGE_KEY + "_chosen", "1");
-  }, []);
+    saveServerPref("self");
+  }, [saveServerPref]);
 
   const isOwn = !viewingPartner || !partner;
 

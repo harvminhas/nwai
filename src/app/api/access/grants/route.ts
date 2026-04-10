@@ -1,6 +1,7 @@
 /**
- * GET  /api/access/grants  — returns current linked partner + any pending invite sent/received
- * POST /api/access/grants  — send a partner invite (Pro only, max 1 link)
+ * GET   /api/access/grants  — returns current linked partner + any pending invite sent/received
+ * POST  /api/access/grants  — send a partner invite (Pro only, max 1 link)
+ * PATCH /api/access/grants  — save last-viewed-account preference { lastViewedAccount: "self"|"partner" }
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -24,16 +25,19 @@ export async function GET(req: NextRequest) {
     const { auth, db } = getFirebaseAdmin();
     const { uid, email } = await auth.verifyIdToken(token);
 
-    const [partner, pendingSent, pendingReceived] = await Promise.all([
+    const [partner, pendingSent, pendingReceived, userDoc] = await Promise.all([
       getLinkedPartner(uid, db),
       getPendingInviteSent(uid, db),
       email ? getPendingInviteByEmail(email, db) : Promise.resolve(null),
+      db.collection("users").doc(uid).get(),
     ]);
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    const lastViewedAccount = (userDoc.data()?.lastViewedAccount as "self" | "partner" | undefined) ?? "self";
 
     return NextResponse.json({
       partner,
+      lastViewedAccount,
       pendingSent: pendingSent
         ? { ...pendingSent, inviteUrl: `${appUrl}/invite?token=${pendingSent.token}` }
         : null,
@@ -100,5 +104,27 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error("[access/grants] POST error", err);
     return NextResponse.json({ error: "Failed to create invite" }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: NextRequest) {
+  const token = authToken(req);
+  if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  try {
+    const { auth, db } = getFirebaseAdmin();
+    const { uid } = await auth.verifyIdToken(token);
+    const body = (await req.json().catch(() => ({}))) as { lastViewedAccount?: string };
+    if (body.lastViewedAccount !== "self" && body.lastViewedAccount !== "partner") {
+      return NextResponse.json({ error: "Invalid value" }, { status: 400 });
+    }
+    await db.collection("users").doc(uid).set(
+      { lastViewedAccount: body.lastViewedAccount },
+      { merge: true },
+    );
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error("[access/grants] PATCH error", err);
+    return NextResponse.json({ error: "Failed to save preference" }, { status: 500 });
   }
 }
