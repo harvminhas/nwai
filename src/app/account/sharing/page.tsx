@@ -86,7 +86,8 @@ export default function SharingPage() {
     setUnlinking(true);
     try {
       await fetch("/api/access/grants/unlink", { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
-      setPartner(null);
+      setCanView(null);
+      setSharedWith(null);
     } finally { setUnlinking(false); }
   }
 
