@@ -42,11 +42,13 @@ function ChatBubble() {
 function PendingInviteModal() {
   const { pendingInvite, acceptPendingInvite, dismissPendingInvite } = useActiveProfile();
   const [accepting, setAccepting] = useState(false);
+  const [mutualConsent, setMutualConsent] = useState(false);
   const [error, setError] = useState("");
 
   if (!pendingInvite) return null;
 
   async function handleAccept() {
+    if (!mutualConsent) return;
     setAccepting(true);
     setError("");
     const result = await acceptPendingInvite();
@@ -54,7 +56,7 @@ function PendingInviteModal() {
       setError(result.error ?? "Something went wrong");
       setAccepting(false);
     }
-    // On success the modal disappears because pendingInvite becomes null
+    // On success pendingInvite becomes null and modal disappears
   }
 
   return (
@@ -66,22 +68,50 @@ function PendingInviteModal() {
           </div>
           <div>
             <p className="text-sm font-semibold text-gray-900">
-              {pendingInvite.initiatorName} invited you to link accounts
+              {pendingInvite.initiatorName} wants to share finances with you
             </p>
             <p className="text-xs text-gray-400 mt-0.5">{pendingInvite.initiatorEmail}</p>
           </div>
         </div>
-        <p className="text-sm text-gray-600">
-          You&apos;ll be able to view each other&apos;s finances and switch between accounts from the sidebar.
-        </p>
+
+        {/* What this means */}
+        <div className="rounded-xl bg-gray-50 border border-gray-100 p-3 space-y-1.5">
+          <p className="text-xs font-semibold text-gray-700">By accepting:</p>
+          {[
+            `You will see ${pendingInvite.initiatorName}'s full financial data`,
+            `${pendingInvite.initiatorName} will NOT see your data unless you also invite them`,
+            "Either of you can unlink at any time",
+          ].map((line) => (
+            <div key={line} className="flex items-start gap-2 text-xs text-gray-600">
+              <svg className="mt-0.5 h-3.5 w-3.5 shrink-0 text-purple-500" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+              </svg>
+              <span>{line}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Consent checkbox */}
+        <label className="flex items-start gap-2.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={mutualConsent}
+            onChange={(e) => setMutualConsent(e.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 accent-purple-600"
+          />
+          <span className="text-xs text-gray-600 leading-relaxed">
+            I understand I will see <strong>{pendingInvite.initiatorName}</strong>&apos;s finances. They will not see mine.
+          </span>
+        </label>
+
         {error && <p className="text-xs text-red-500">{error}</p>}
-        <div className="flex gap-2 pt-1">
+        <div className="flex gap-2">
           <button
             onClick={handleAccept}
-            disabled={accepting}
-            className="flex-1 rounded-xl bg-purple-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-purple-700 transition disabled:opacity-50"
+            disabled={accepting || !mutualConsent}
+            className="flex-1 rounded-xl bg-purple-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-purple-700 transition disabled:opacity-40"
           >
-            {accepting ? "Accepting…" : "Accept invite"}
+            {accepting ? "Accepting…" : "Accept & Share"}
           </button>
           <button
             onClick={dismissPendingInvite}

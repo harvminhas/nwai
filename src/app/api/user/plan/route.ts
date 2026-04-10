@@ -78,14 +78,14 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Linked partner inherits the partner's plan — if partner is Pro, so are they
+    // If this user can VIEW a Pro partner's data, they inherit Pro access
     if (plan === "free") {
-      const partnerSnap = await db.doc(`users/${uid}/linkedPartner/data`).get();
-      if (partnerSnap.exists) {
-        const partner = partnerSnap.data() as LinkedPartner;
-        const partnerDoc = await db.collection("users").doc(partner.partnerUid).get();
-        const partnerPlan = resolvePlan(partnerDoc.data() as Record<string, unknown> | undefined);
-        if (partnerPlan === "pro") plan = "pro";
+      const canViewSnap = await db.doc(`users/${uid}/linkedPartner/data`).get();
+      if (canViewSnap.exists) {
+        const canView = canViewSnap.data() as LinkedPartner;
+        const canViewDoc = await db.collection("users").doc(canView.partnerUid).get();
+        const canViewPlan = resolvePlan(canViewDoc.data() as Record<string, unknown> | undefined);
+        if (canViewPlan === "pro") plan = "pro";
       }
     }
 

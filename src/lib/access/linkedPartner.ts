@@ -1,10 +1,16 @@
 /**
  * Access Layer — Linked Partner CRUD
  *
- * One Pro user can link one partner. The link is bidirectional:
- * both sides write a linkedPartner document on accept.
+ * Sharing is ONE-DIRECTIONAL by default.
  *
- * No roles, no scopes, no expiry. Symmetric full access.
+ * When Person A (Pro) invites Person B and B accepts:
+ *   - users/{B}/linkedPartner/data  → B can VIEW A's data
+ *   - users/{A}/sharedWithPartner/data → A has SHARED with B
+ *
+ * If B also wants to share back (B must be Pro), B sends a separate invite.
+ * Only Pro users can send invites (share their data).
+ *
+ * resolveAccess reads users/{uid}/linkedPartner/data — unchanged.
  */
 
 import { randomBytes } from "crypto";
@@ -71,24 +77,25 @@ export async function acceptInvite(
   const now = new Date().toISOString();
   const batch = db.batch();
 
-  // Write linkedPartner on both sides (bidirectional)
-  const initiatorPartner: LinkedPartner = {
-    partnerUid: inviteeUid,
-    partnerEmail: inviteeEmail,
-    partnerName: inviteeName,
-    linkedAt: now,
-    initiatedBy: invite.initiatorUid,
-  };
-  const inviteePartner: LinkedPartner = {
+  // Invitee gains VIEW access to the initiator's data
+  const inviteeCanView: LinkedPartner = {
     partnerUid: invite.initiatorUid,
     partnerEmail: invite.initiatorEmail,
     partnerName: invite.initiatorName,
     linkedAt: now,
     initiatedBy: invite.initiatorUid,
   };
+  // Initiator records that they have shared their data with the invitee
+  const initiatorSharedWith: LinkedPartner = {
+    partnerUid: inviteeUid,
+    partnerEmail: inviteeEmail,
+    partnerName: inviteeName,
+    linkedAt: now,
+    initiatedBy: invite.initiatorUid,
+  };
 
-  batch.set(db.doc(`users/${invite.initiatorUid}/linkedPartner/data`), initiatorPartner);
-  batch.set(db.doc(`users/${inviteeUid}/linkedPartner/data`), inviteePartner);
+  batch.set(db.doc(`users/${inviteeUid}/linkedPartner/data`), inviteeCanView);
+  batch.set(db.doc(`users/${invite.initiatorUid}/sharedWithPartner/data`), initiatorSharedWith);
 
   // Clean up invite tokens
   batch.delete(snap.ref);
@@ -100,22 +107,50 @@ export async function acceptInvite(
 }
 
 // ── unlinkPartner ─────────────────────────────────────────────────────────────
+// Removes ALL share relationships between uid and any partner (both directions).
 
 export async function unlinkPartner(uid: string, db: Firestore): Promise<void> {
-  const myDoc = await db.doc(`users/${uid}/linkedPartner/data`).get();
-  if (!myDoc.exists) return;
+  const [canViewSnap, sharedWithSnap] = await Promise.all([
+    db.doc(`users/${uid}/linkedPartner/data`).get(),
+    db.doc(`users/${uid}/sharedWithPartner/data`).get(),
+  ]);
 
-  const partner = myDoc.data() as LinkedPartner;
   const batch = db.batch();
-  batch.delete(myDoc.ref);
-  batch.delete(db.doc(`users/${partner.partnerUid}/linkedPartner/data`));
+
+  if (canViewSnap.exists) {
+    const viewed = canViewSnap.data() as LinkedPartner;
+    batch.delete(canViewSnap.ref);
+    // Remove the other side's sharedWith record
+    batch.delete(db.doc(`users/${viewed.partnerUid}/sharedWithPartner/data`));
+    // If they were also viewing us (mutual), remove that too
+    batch.delete(db.doc(`users/${viewed.partnerUid}/linkedPartner/data`));
+  }
+
+  if (sharedWithSnap.exists) {
+    const sharedWith = sharedWithSnap.data() as LinkedPartner;
+    batch.delete(sharedWithSnap.ref);
+    // Remove their view of us
+    batch.delete(db.doc(`users/${sharedWith.partnerUid}/linkedPartner/data`));
+    // If they were also sharing with us (mutual), clean that too
+    batch.delete(db.doc(`users/${sharedWith.partnerUid}/sharedWithPartner/data`));
+  }
+
   await batch.commit();
 }
 
 // ── getLinkedPartner ──────────────────────────────────────────────────────────
+// Returns the partner whose data uid can VIEW.
 
 export async function getLinkedPartner(uid: string, db: Firestore): Promise<LinkedPartner | null> {
   const snap = await db.doc(`users/${uid}/linkedPartner/data`).get();
+  return snap.exists ? (snap.data() as LinkedPartner) : null;
+}
+
+// ── getSharedWithPartner ──────────────────────────────────────────────────────
+// Returns the partner that uid has SHARED their data with (they can view uid).
+
+export async function getSharedWithPartner(uid: string, db: Firestore): Promise<LinkedPartner | null> {
+  const snap = await db.doc(`users/${uid}/sharedWithPartner/data`).get();
   return snap.exists ? (snap.data() as LinkedPartner) : null;
 }
 

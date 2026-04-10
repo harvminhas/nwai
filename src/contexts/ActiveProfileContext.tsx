@@ -31,8 +31,10 @@ interface ActiveProfileContextValue {
   selfUid: string | null;
   /** Own user's display name. */
   selfDisplayName: string;
-  /** Linked partner, if any. */
+  /** Partner whose data the current user CAN VIEW (they shared with you). */
   partner: LinkedPartner | null;
+  /** Partner you have SHARED YOUR DATA with (they can view you). */
+  sharedWith: LinkedPartner | null;
   /** Pending invite received (not yet accepted). */
   pendingInvite: PendingPartnerInvite & { inviteUrl: string } | null;
   /** Switch to viewing partner's account. */
@@ -55,6 +57,7 @@ const ActiveProfileContext = createContext<ActiveProfileContextValue>({
   selfUid: null,
   selfDisplayName: "",
   partner: null,
+  sharedWith: null,
   pendingInvite: null,
   switchToPartner: () => {},
   switchToSelf: () => {},
@@ -73,7 +76,8 @@ export function ActiveProfileProvider({ children }: { children: ReactNode }) {
   const [selfDisplayName, setSelfDisplayName] = useState("");
   const [token, setToken] = useState<string | null>(null);
   const [viewingPartner, setViewingPartner] = useState(false);
-  const [partner, setPartner] = useState<LinkedPartner | null>(null);
+  const [partner, setPartner] = useState<LinkedPartner | null>(null);       // who I can VIEW
+  const [sharedWith, setSharedWith] = useState<LinkedPartner | null>(null); // who I shared with
   const [pendingInvite, setPendingInvite] = useState<(PendingPartnerInvite & { inviteUrl: string }) | null>(null);
   const [inviteDismissed, setInviteDismissed] = useState(false);
   const [loadingPartner, setLoadingPartner] = useState(false);
@@ -108,11 +112,13 @@ export function ActiveProfileProvider({ children }: { children: ReactNode }) {
     fetch("/api/access/grants", { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.json())
       .then((json) => {
-        setPartner(json.partner ?? null);
+        const canView = json.canView ?? null;
+        setPartner(canView);
+        setSharedWith(json.sharedWith ?? null);
         setPendingInvite(json.pendingReceived ?? null);
 
-        if (!json.partner) {
-          // Partner revoked — snap back to self
+        if (!canView) {
+          // No one to view — snap back to self
           setViewingPartner(false);
           localStorage.removeItem(STORAGE_KEY);
           localStorage.removeItem(STORAGE_KEY + "_chosen");
@@ -123,7 +129,6 @@ export function ActiveProfileProvider({ children }: { children: ReactNode }) {
           const chosen     = localStorage.getItem(STORAGE_KEY + "_chosen");
 
           if (serverPref === "partner" || (!chosen && !serverPref)) {
-            // Server says partner, OR first-time linked user — show partner
             setViewingPartner(serverPref === "partner");
             localStorage.setItem(STORAGE_KEY, serverPref === "partner" ? "partner" : "self");
             localStorage.setItem(STORAGE_KEY + "_chosen", "1");
@@ -159,7 +164,8 @@ export function ActiveProfileProvider({ children }: { children: ReactNode }) {
       // Refresh partner info then auto-switch to their view
       const grantsRes = await fetch("/api/access/grants", { headers: { Authorization: `Bearer ${token}` } });
       const grantsJson = await grantsRes.json();
-      setPartner(grantsJson.partner ?? null);
+      setPartner(grantsJson.canView ?? null);
+      setSharedWith(grantsJson.sharedWith ?? null);
       setPendingInvite(null);
       setInviteDismissed(false);
       setViewingPartner(true);
@@ -221,6 +227,7 @@ export function ActiveProfileProvider({ children }: { children: ReactNode }) {
     selfUid,
     selfDisplayName,
     partner,
+    sharedWith,
     pendingInvite: inviteDismissed ? null : pendingInvite,
     switchToPartner,
     switchToSelf,
@@ -228,7 +235,7 @@ export function ActiveProfileProvider({ children }: { children: ReactNode }) {
     dismissPendingInvite,
     buildHeaders,
     loadingPartner,
-  }), [targetUid, isOwn, selfUid, selfDisplayName, partner, pendingInvite, inviteDismissed, switchToPartner, switchToSelf, acceptPendingInvite, dismissPendingInvite, buildHeaders, loadingPartner]);
+  }), [targetUid, isOwn, selfUid, selfDisplayName, partner, sharedWith, pendingInvite, inviteDismissed, switchToPartner, switchToSelf, acceptPendingInvite, dismissPendingInvite, buildHeaders, loadingPartner]);
 
   return (
     <ActiveProfileContext.Provider value={value}>

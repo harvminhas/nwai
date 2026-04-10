@@ -9,9 +9,12 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import {
   createInvite,
   getLinkedPartner,
+  getSharedWithPartner,
   getPendingInviteSent,
   getPendingInviteByEmail,
 } from "@/lib/access/linkedPartner";
+import { resolvePlan } from "@/app/api/user/plan/route";
+import { sendPartnerInviteEmail } from "@/lib/email";
 
 function authToken(req: NextRequest): string | null {
   return req.headers.get("authorization")?.replace("Bearer ", "").trim() ?? null;
@@ -25,8 +28,9 @@ export async function GET(req: NextRequest) {
     const { auth, db } = getFirebaseAdmin();
     const { uid, email } = await auth.verifyIdToken(token);
 
-    const [partner, pendingSent, pendingReceived, userDoc] = await Promise.all([
-      getLinkedPartner(uid, db),
+    const [canView, sharedWith, pendingSent, pendingReceived, userDoc] = await Promise.all([
+      getLinkedPartner(uid, db),        // partner whose data uid can VIEW
+      getSharedWithPartner(uid, db),    // partner uid has SHARED their data with
       getPendingInviteSent(uid, db),
       email ? getPendingInviteByEmail(email, db) : Promise.resolve(null),
       db.collection("users").doc(uid).get(),
@@ -36,12 +40,12 @@ export async function GET(req: NextRequest) {
     const lastViewedAccount = (userDoc.data()?.lastViewedAccount as "self" | "partner" | undefined) ?? "self";
 
     return NextResponse.json({
-      partner,
+      canView,      // who uid can switch to and view
+      sharedWith,   // who uid has shared their own data with
       lastViewedAccount,
       pendingSent: pendingSent
         ? { ...pendingSent, inviteUrl: `${appUrl}/invite?token=${pendingSent.token}` }
         : null,
-      // Only surface pendingReceived if it's from someone other than self
       pendingReceived: pendingReceived && pendingReceived.initiatorUid !== uid
         ? { ...pendingReceived, inviteUrl: `${appUrl}/invite?token=${pendingReceived.token}` }
         : null,
@@ -65,6 +69,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "inviteeEmail required" }, { status: 400 });
     }
 
+    // Only Pro users can share their data
+    const userDoc = await db.collection("users").doc(uid).get();
+    const plan = resolvePlan(userDoc.data() as Record<string, unknown> | undefined) ?? "free";
+    if (plan !== "pro") {
+      return NextResponse.json({ error: "Sharing requires a Pro plan." }, { status: 403 });
+    }
+
     const ownerRecord = await auth.getUser(uid);
 
     // Don't allow inviting yourself
@@ -72,20 +83,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Cannot invite yourself" }, { status: 400 });
     }
 
-    // Already linked — must unlink first
-    const existing = await getLinkedPartner(uid, db);
+    // Already sharing — must unlink first
+    const existing = await getSharedWithPartner(uid, db);
     if (existing) {
-      return NextResponse.json({ error: "You already have a linked partner. Unlink first." }, { status: 409 });
-    }
-
-    // Reject if the invitee already has an account — linked accounts must be new users for now
-    try {
-      await auth.getUserByEmail(body.inviteeEmail.toLowerCase().trim());
-      return NextResponse.json({
-        error: "That email already has an account. For now, linked accounts must be new users — ask them to use a different email.",
-      }, { status: 409 });
-    } catch {
-      // getUserByEmail throws if not found — that's the happy path (new user)
+      return NextResponse.json({ error: "You are already sharing your data with someone. Unlink first." }, { status: 409 });
     }
 
     const invite = await createInvite(
@@ -99,7 +100,13 @@ export async function POST(req: NextRequest) {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
     const inviteUrl = `${appUrl}/invite?token=${invite.token}`;
 
-    // TODO: wire email — send inviteUrl to body.inviteeEmail
+    // Send invite email — fire-and-forget, never blocks the response
+    sendPartnerInviteEmail({
+      to: body.inviteeEmail.trim(),
+      inviterName: ownerRecord.displayName ?? ownerRecord.email ?? "Someone",
+      inviteUrl,
+    }).catch((err) => console.error("[email] Failed to send invite email:", err));
+
     return NextResponse.json({ inviteUrl });
   } catch (err) {
     console.error("[access/grants] POST error", err);
