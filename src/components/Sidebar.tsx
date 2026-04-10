@@ -184,8 +184,10 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   const [lastUpload, setLastUpload]       = useState<string | null>(null);
   const [accountCount, setAccountCount]   = useState<number | null>(null);
   const [switcherOpen, setSwitcherOpen]   = useState(false);
+  const [userMenuOpen, setUserMenuOpen]   = useState(false);
   const desktopSwitcherRef                = useRef<HTMLDivElement>(null);
   const mobileSwitcherRef                 = useRef<HTMLDivElement>(null);
+  const userMenuRef                       = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -206,7 +208,7 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
     });
   }, []);
 
-  useEffect(() => { setDrawerOpen(false); setSwitcherOpen(false); }, [pathname]);
+  useEffect(() => { setDrawerOpen(false); setSwitcherOpen(false); setUserMenuOpen(false); }, [pathname]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -214,6 +216,7 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
       const insideDesktop = desktopSwitcherRef.current?.contains(t);
       const insideMobile  = mobileSwitcherRef.current?.contains(t);
       if (!insideDesktop && !insideMobile) setSwitcherOpen(false);
+      if (!userMenuRef.current?.contains(t)) setUserMenuOpen(false);
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
@@ -406,115 +409,111 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
           </nav>
         </div>
 
-        {/* Footer: last upload + sign out + collapse */}
-        <div className={`shrink-0 border-t border-gray-100 ${collapsed ? "p-2 space-y-1" : "p-4"}`}>
-          {/* Last upload info */}
-          {!collapsed && lastUpload && (
-            <div className="mb-3 rounded-lg bg-gray-50 px-3 py-2">
-              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Last upload</p>
-              <p className="mt-0.5 text-xs text-gray-600">
-                {fmtUploadDate(lastUpload)}
-                {accountCount != null && (
-                  <span className="text-gray-400"> · {accountCount} account{accountCount !== 1 ? "s" : ""}</span>
-                )}
-              </p>
-            </div>
-          )}
+        {/* Footer — slim user row */}
+        <div className={`shrink-0 border-t border-gray-100 ${collapsed ? "p-2" : "px-3 py-2"}`}>
+          <div className="relative" ref={userMenuRef}>
 
-          {!collapsed && userEmail && (
-            <p className="mb-2 truncate text-xs text-gray-400">{userEmail}</p>
-          )}
-
-          {/* Activity & Coverage */}
-          <Link
-            href="/account/activity"
-            title={collapsed ? "Activity & Coverage" : undefined}
-            className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${
-              pathname === "/account/activity"
-                ? "bg-purple-50 text-purple-700"
-                : "text-gray-500 hover:bg-gray-100 hover:text-gray-700"
-            } ${collapsed ? "justify-center px-2" : ""}`}
-          >
-            <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            {!collapsed && <span>Activity & Coverage</span>}
-          </Link>
-
-          {/* Billing / upgrade */}
-          {planId === "free" && !collapsed && (
-            <Link href="/account/billing"
-              className="mt-1 flex items-center gap-2 rounded-lg bg-purple-600 px-3 py-2 text-xs font-semibold text-white hover:bg-purple-700 transition"
+            {/* User row button */}
+            <button
+              onClick={() => setUserMenuOpen((o) => !o)}
+              title={collapsed ? (selfDisplayName || userEmail || "Account") : undefined}
+              className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition hover:bg-gray-50 ${collapsed ? "justify-center" : ""}`}
             >
-              <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
-              </svg>
-              Upgrade to Pro
-            </Link>
-          )}
-          {planId === "pro" && !collapsed && (
-            <Link href="/account/billing"
-              className="mt-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium text-purple-600 hover:bg-purple-50 transition"
-            >
-              <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
-              </svg>
-              Pro · Manage
-            </Link>
-          )}
-          {collapsed && (
-            <Link href="/account/billing" title="Billing"
-              className="flex w-full items-center justify-center rounded-lg px-2 py-2 text-purple-500 hover:bg-purple-50 transition"
-            >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-              </svg>
-            </Link>
-          )}
-          {/* Dev-only test plan switcher */}
-          {process.env.NODE_ENV === "development" && !collapsed && (
-            <div className="mt-1 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
-              <p className="text-[9px] font-bold uppercase tracking-widest text-amber-500 mb-1.5">🧪 Dev · Test plan</p>
-              <div className="flex gap-1">
-                {PLAN_ORDER.map((id) => (
-                  <button key={id}
-                    onClick={() => setTestPlan(id as PlanId)}
-                    className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition ${
-                      planId === id
-                        ? "bg-amber-500 text-white"
-                        : "bg-white text-amber-600 border border-amber-200 hover:bg-amber-100"
-                    }`}
-                  >
-                    {PLANS[id as PlanId].name}
-                  </button>
-                ))}
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-purple-100 text-xs font-bold text-purple-700">
+                {(selfDisplayName || userEmail || "?")[0]?.toUpperCase()}
               </div>
-            </div>
-          )}
+              {!collapsed && (
+                <>
+                  <div className="flex-1 min-w-0">
+                    <p className="truncate text-xs font-semibold text-gray-700 leading-tight">
+                      {selfDisplayName || userEmail || "Account"}
+                    </p>
+                    {planId === "pro" && (
+                      <p className="text-[10px] text-purple-500 font-medium leading-tight">Pro</p>
+                    )}
+                  </div>
+                  <svg className={`h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform ${userMenuOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </>
+              )}
+            </button>
 
-          {/* Sign out */}
-          <button
-            onClick={handleSignOut}
-            title={collapsed ? "Sign out" : undefined}
-            className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition ${collapsed ? "justify-center px-2" : ""}`}
-          >
-            <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-            </svg>
-            {!collapsed && <span>Sign out</span>}
-          </button>
+            {/* Popover — opens upward */}
+            {userMenuOpen && (
+              <div className="absolute bottom-full left-0 right-0 z-50 mb-1 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
+                {/* Last upload info */}
+                {lastUpload && (
+                  <div className="border-b border-gray-100 px-3 py-2">
+                    <p className="text-[10px] text-gray-400">
+                      Last upload: {fmtUploadDate(lastUpload)}
+                      {accountCount != null && ` · ${accountCount} account${accountCount !== 1 ? "s" : ""}`}
+                    </p>
+                  </div>
+                )}
 
-          {/* Collapse toggle — unchanged */}
+                {/* Activity & Coverage */}
+                <Link href="/account/activity" className={`flex items-center gap-2 px-3 py-2 text-xs font-medium transition hover:bg-gray-50 ${pathname === "/account/activity" ? "text-purple-700 bg-purple-50" : "text-gray-600"}`}>
+                  <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Activity &amp; Coverage
+                </Link>
+
+                {/* Billing */}
+                {planId === "free" ? (
+                  <Link href="/account/billing" className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-purple-600 hover:bg-purple-50 transition">
+                    <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                    </svg>
+                    Upgrade to Pro
+                  </Link>
+                ) : (
+                  <Link href="/account/billing" className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-purple-600 hover:bg-purple-50 transition">
+                    <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+                    </svg>
+                    Pro · Manage
+                  </Link>
+                )}
+
+                {/* Dev test plan switcher */}
+                {process.env.NODE_ENV === "development" && (
+                  <div className="border-t border-gray-100 px-3 py-2">
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-amber-500 mb-1.5">🧪 Test plan</p>
+                    <div className="flex gap-1">
+                      {PLAN_ORDER.map((id) => (
+                        <button key={id} onClick={() => setTestPlan(id as PlanId)}
+                          className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition ${planId === id ? "bg-amber-500 text-white" : "bg-white text-amber-600 border border-amber-200 hover:bg-amber-100"}`}
+                        >
+                          {PLANS[id as PlanId].name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Sign out */}
+                <div className="border-t border-gray-100">
+                  <button onClick={handleSignOut} className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition">
+                    <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                    </svg>
+                    Sign out
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Collapse toggle */}
           {onToggle && (
             <button
               onClick={onToggle}
               title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-              className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition ${collapsed ? "justify-center px-2" : ""}`}
+              className={`mt-0.5 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition ${collapsed ? "justify-center" : ""}`}
             >
-              <svg
-                className={`h-4 w-4 shrink-0 transition-transform duration-200 ${collapsed ? "rotate-180" : ""}`}
-                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
-              >
+              <svg className={`h-3.5 w-3.5 shrink-0 transition-transform duration-200 ${collapsed ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
               </svg>
               {!collapsed && <span>Collapse</span>}
@@ -614,50 +613,60 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
                 <NavGroups onItemClick={() => setDrawerOpen(false)} />
               </nav>
             </div>
-            <div className="shrink-0 border-t border-gray-100 p-4">
-              {lastUpload && (
-                <p className="mb-3 text-xs text-gray-400">
-                  Last upload: {fmtUploadDate(lastUpload)}
-                  {accountCount != null && ` · ${accountCount} accounts`}
-                </p>
-              )}
-              {userEmail && <p className="mb-2 truncate text-xs text-gray-400">{userEmail}</p>}
-              {/* Test mode switcher (mobile) */}
-              <div className="mb-3 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
-                <p className="text-[9px] font-bold uppercase tracking-widest text-amber-500 mb-1.5">🧪 Test plan</p>
-                <div className="flex gap-1">
-                  {PLAN_ORDER.map((id) => (
-                    <button key={id}
-                      onClick={() => setTestPlan(id as PlanId)}
-                      className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition ${
-                        planId === id
-                          ? "bg-amber-500 text-white"
-                          : "bg-white text-amber-600 border border-amber-200 hover:bg-amber-100"
-                      }`}
-                    >
-                      {PLANS[id as PlanId].name}
-                    </button>
-                  ))}
+            <div className="shrink-0 border-t border-gray-100 p-3 space-y-1">
+              {/* User info */}
+              <div className="flex items-center gap-2.5 px-2 py-1.5">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-purple-100 text-xs font-bold text-purple-700">
+                  {(selfDisplayName || userEmail || "?")[0]?.toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="truncate text-xs font-semibold text-gray-700">{selfDisplayName || userEmail}</p>
+                  {planId === "pro" && <p className="text-[10px] text-purple-500 font-medium">Pro</p>}
                 </div>
               </div>
-              <Link
-                href="/account/activity"
-                onClick={() => setDrawerOpen(false)}
-                className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition mb-1 ${
-                  pathname === "/account/activity"
-                    ? "bg-purple-50 text-purple-700"
-                    : "text-gray-500 hover:bg-gray-100 hover:text-gray-700"
-                }`}
-              >
+
+              <Link href="/account/activity" onClick={() => setDrawerOpen(false)}
+                className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${pathname === "/account/activity" ? "bg-purple-50 text-purple-700" : "text-gray-500 hover:bg-gray-100"}`}>
                 <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                Activity & Coverage
+                Activity &amp; Coverage
               </Link>
-              <button
-                onClick={handleSignOut}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 transition"
-              >
+
+              {planId === "free" ? (
+                <Link href="/account/billing" onClick={() => setDrawerOpen(false)}
+                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-purple-600 hover:bg-purple-50 transition">
+                  <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                  </svg>
+                  Upgrade to Pro
+                </Link>
+              ) : (
+                <Link href="/account/billing" onClick={() => setDrawerOpen(false)}
+                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-purple-600 hover:bg-purple-50 transition">
+                  <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+                  </svg>
+                  Pro · Manage
+                </Link>
+              )}
+
+              {process.env.NODE_ENV === "development" && (
+                <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-amber-500 mb-1.5">🧪 Test plan</p>
+                  <div className="flex gap-1">
+                    {PLAN_ORDER.map((id) => (
+                      <button key={id} onClick={() => setTestPlan(id as PlanId)}
+                        className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition ${planId === id ? "bg-amber-500 text-white" : "bg-white text-amber-600 border border-amber-200 hover:bg-amber-100"}`}>
+                        {PLANS[id as PlanId].name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <button onClick={handleSignOut}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 transition">
                 <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                 </svg>
