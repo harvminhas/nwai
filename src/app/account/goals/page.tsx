@@ -248,12 +248,15 @@ export default function GoalsPage() {
   const router = useRouter();
   const { can, loading: planLoading } = usePlan();
 
-  const [netWorth, setNetWorth]               = useState(0);
-  const [liquidAssets, setLiquidAssets]       = useState(0);
-  const [debts, setDebts]                     = useState(0);
-  const [monthlyIncome, setMonthlyIncome]     = useState(0);
-  const [monthlyExpenses, setMonthlyExpenses] = useState(0);
-  const [history, setHistory]                 = useState<{ debtTotal: number }[]>([]);
+  const [netWorth, setNetWorth]                       = useState(0);
+  const [liquidAssets, setLiquidAssets]               = useState(0);
+  const [debts, setDebts]                             = useState(0);
+  const [monthlyIncome, setMonthlyIncome]             = useState(0);
+  const [monthlyExpenses, setMonthlyExpenses]         = useState(0);
+  const [typicalDebtPayments, setTypicalDebtPayments] = useState(0);
+  const [monthsTracked, setMonthsTracked]             = useState(0);
+  const [includeDebtPayments, setIncludeDebtPayments] = useState(false);
+  const [history, setHistory]                         = useState<{ debtTotal: number }[]>([]);
   const [rates, setRates]                     = useState<AccountRateEntry[]>([]);
   const [loading, setLoading]                 = useState(true);
   const [error, setError]                     = useState<string | null>(null);
@@ -280,8 +283,13 @@ export default function GoalsPage() {
           setNetWorth(consolidated.data?.netWorth ?? 0);
           setLiquidAssets(consolidated.liquidAssets ?? 0);
           setDebts(consolidated.data?.debts ?? 0);
-          setMonthlyIncome(consolidated.txMonthlyIncome ?? consolidated.data?.income?.total ?? 0);
-          setMonthlyExpenses(consolidated.txMonthlyExpenses ?? consolidated.data?.expenses?.total ?? 0);
+          // Use median typical monthly figures for FI projections — these exclude
+          // transfers/debt payments/investments and are stable across months.
+          // Fall back to the single-month figure only if no history is available yet.
+          setMonthlyIncome(consolidated.typicalMonthlyIncome ?? consolidated.txMonthlyIncome ?? consolidated.data?.income?.total ?? 0);
+          setMonthlyExpenses(consolidated.typicalMonthlyExpenses ?? consolidated.txMonthlyExpenses ?? consolidated.data?.expenses?.total ?? 0);
+          setTypicalDebtPayments(consolidated.typicalMonthlyDebtPayments ?? 0);
+          setMonthsTracked(consolidated.totalMonthsTracked ?? 0);
           setHistory(Array.isArray(consolidated.history) ? consolidated.history : []);
         }
         if (ratesRes.ok) setRates(ratesJson.rates ?? []);
@@ -319,7 +327,10 @@ export default function GoalsPage() {
   // ── derived milestones ────────────────────────────────────────────────────
 
   const monthlySavings = monthlyIncome - monthlyExpenses;
-  const annualExpenses = monthlyExpenses * 12;
+  // When the user includes debt payments, we add them back to the expense
+  // base so the FI target reflects total cash obligations, not just discretionary spend.
+  const effectiveMonthlyExpenses = monthlyExpenses + (includeDebtPayments ? typicalDebtPayments : 0);
+  const annualExpenses = effectiveMonthlyExpenses * 12;
   const fiTarget       = annualExpenses > 0 ? FI_MULTIPLIER * annualExpenses : 0;
   const fiProgress     = fiTarget > 0 ? Math.min(1, netWorth / fiTarget) : 0;
   const fiMonths       = fiTarget > 0
@@ -429,6 +440,32 @@ export default function GoalsPage() {
                 </span>
               </div>
 
+              {/* Debt payments toggle */}
+              {typicalDebtPayments > 0 && (
+                <div className="flex items-center justify-between mb-3 text-xs text-gray-500">
+                  <span>
+                    Expense basis:{" "}
+                    <span className="font-medium text-gray-700">
+                      {includeDebtPayments
+                        ? `${fmt(effectiveMonthlyExpenses)}/mo (core + min. debt pymts)`
+                        : `${fmt(monthlyExpenses)}/mo (core spending only)`}
+                    </span>
+                  </span>
+                  <button
+                    onClick={() => setIncludeDebtPayments((v) => !v)}
+                    className={`ml-3 shrink-0 flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold border transition ${
+                      includeDebtPayments
+                        ? "bg-purple-50 border-purple-200 text-purple-700"
+                        : "bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100"
+                    }`}
+                    title="Toggle whether minimum debt payments count toward your FI expense base"
+                  >
+                    {includeDebtPayments ? "Incl." : "Excl."} debt pymts
+                    <span className="text-gray-400">({fmtShort(typicalDebtPayments)}/mo)</span>
+                  </button>
+                </div>
+              )}
+
               <div className="flex items-center gap-3 mb-2">
                 <div className="flex-1 h-3 overflow-hidden rounded-full bg-gray-100">
                   <div
@@ -454,8 +491,14 @@ export default function GoalsPage() {
               <div className="mt-3 flex flex-wrap gap-4 text-xs text-gray-400 border-t border-gray-100 pt-3">
                 <span>Current <span className="font-semibold text-gray-700">{fmtShort(netWorth)}</span></span>
                 <span>Saving <span className="font-semibold text-gray-700">{fmt(Math.max(0, monthlySavings))}/mo</span></span>
-                <span>Based on <span className="font-semibold text-gray-700">{fmt(annualExpenses)}/yr</span> spend</span>
-                <span className={usingDefaultReturn ? "text-amber-500" : ""}>
+                <span>
+                  Based on <span className="font-semibold text-gray-700">{fmt(annualExpenses)}/yr</span> spend
+                  {monthsTracked <= 1 && (
+                    <span className="ml-1 text-amber-500" title="Based on 1 month — upload more statements for a more accurate projection">
+                      (1 month only)
+                    </span>
+                  )}
+                </span>                <span className={usingDefaultReturn ? "text-amber-500" : ""}>
                   Return rate <span className="font-semibold">{(investReturnRate * 100).toFixed(1)}%{usingDefaultReturn ? " (default)" : ""}</span>
                 </span>
               </div>

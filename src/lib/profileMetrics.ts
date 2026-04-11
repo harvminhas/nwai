@@ -310,6 +310,34 @@ export function getTypicalMonthlySpend(profile: FinancialProfileCache): number {
   return profile.typicalMonthly?.median ?? 0;
 }
 
+/**
+ * Typical (median) monthly income across all historical months.
+ * Uses the same monthlyHistory as every other income figure in the app.
+ */
+export function getTypicalMonthlyIncome(profile: FinancialProfileCache): number {
+  const vals = profile.monthlyHistory
+    .map((h) => h.incomeTotal)
+    .filter((v) => v > 0)
+    .sort((a, b) => a - b);
+  if (vals.length === 0) return 0;
+  const mid = Math.floor(vals.length / 2);
+  return vals.length % 2 !== 0 ? vals[mid] : (vals[mid - 1] + vals[mid]) / 2;
+}
+
+/**
+ * Typical (median) monthly minimum debt payments across all historical months.
+ * Falls back to the most recent month with debt payments if history is thin.
+ */
+export function getTypicalMonthlyDebtPayments(profile: FinancialProfileCache): number {
+  const vals = profile.monthlyHistory
+    .map((h) => h.minDebtPaymentsTotal ?? 0)
+    .filter((v) => v > 0)
+    .sort((a, b) => a - b);
+  if (vals.length === 0) return 0;
+  const mid = Math.floor(vals.length / 2);
+  return vals.length % 2 !== 0 ? vals[mid] : (vals[mid - 1] + vals[mid]) / 2;
+}
+
 // ── getMonthlyDebtPayments ─────────────────────────────────────────────────────
 
 /**

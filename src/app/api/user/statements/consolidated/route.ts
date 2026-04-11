@@ -6,7 +6,7 @@ import { applyRulesAndRecalculate, merchantSlug } from "@/lib/applyRules";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { docYearMonth, carryForwardStatements } from "@/lib/spendHistory";
 import { getFinancialProfile } from "@/lib/financialProfile";
-import { getNetWorth } from "@/lib/profileMetrics";
+import { getNetWorth, getTypicalMonthlySpend, getTypicalMonthlyIncome, getTypicalMonthlyDebtPayments } from "@/lib/profileMetrics";
 import type { ParsedStatementData, ManualAsset, AssetCategory } from "@/lib/types";
 import type { BalanceSnapshot } from "@/app/api/user/balance-snapshots/route";
 import type { AccountBackfillEntry } from "@/app/api/user/account-backfills/route";
@@ -654,6 +654,23 @@ export async function GET(request: NextRequest) {
       needsRefresh: profile.cacheStale ?? false,
       txMonthlyIncome,
       txMonthlyExpenses,
+      /**
+       * Median core monthly expenses across all historical months — excludes
+       * transfers, debt payments, and investments. Use this for FI/goals
+       * projections instead of txMonthlyExpenses (which is a single month total
+       * and includes all categories).
+       */
+      typicalMonthlyExpenses: getTypicalMonthlySpend(profile),
+      /**
+       * Median monthly income across historical months — more stable basis for
+       * goals/FI projections than a single month's income figure.
+       */
+      typicalMonthlyIncome: getTypicalMonthlyIncome(profile),
+      /**
+       * Median monthly minimum debt payments — lets Goals page offer a
+       * "include debt payments" toggle for a more conservative FI target.
+       */
+      typicalMonthlyDebtPayments: getTypicalMonthlyDebtPayments(profile),
       manualAssets: relevantManualAssets,
       incompleteMonths,
       accountStatementHistory: Object.fromEntries(accountStatementHistory),
