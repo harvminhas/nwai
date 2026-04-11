@@ -495,6 +495,233 @@ function PreviewCard({ title, desc, children }: { title: string; desc: string; c
   );
 }
 
+// ── First-time user layout ────────────────────────────────────────────────────
+
+type AgentCardShape = {
+  id: string; priority: string; title: string; body: string; href?: string | null; source?: string;
+};
+
+function priorityLabel(priority: string): { dot: string; label: string } {
+  if (priority === "high")   return { dot: "bg-red-500",    label: "HIGH PRIORITY" };
+  if (priority === "medium") return { dot: "bg-amber-500",  label: "WORTH REVIEWING" };
+  return                            { dot: "bg-blue-400",   label: "OPPORTUNITY" };
+}
+
+function priorityBorder(priority: string): string {
+  if (priority === "high")   return "border-l-4 border-l-red-400";
+  if (priority === "medium") return "border-l-4 border-l-amber-400";
+  return                            "border-l-4 border-l-blue-400";
+}
+
+function shortMonth(ym: string) {
+  if (!ym) return "";
+  const [y, m] = ym.split("-");
+  const date = new Date(parseInt(y), parseInt(m) - 1, 1);
+  return date.toLocaleDateString("en-CA", { month: "short", year: "numeric" });
+}
+
+function savingsSummary(income: number, expenses: number, debtPayments: number, rate: number, month: string): string {
+  // rate is already an integer percentage (e.g. 54 for 54%)
+  // Use core expenses (no debt) for the "saved" figure to match SavingsRateCard default
+  const saved = income - expenses;
+  if (saved <= 0 || income <= 0) return "";
+  const aboveAvg = rate >= 20;
+  const mo = shortMonth(month);
+  return `You saved ${fmt(saved)} in ${mo} — putting away ${rate}% of your income.${aboveAvg ? " That's above average." : ""}`;
+}
+
+interface FirstTimeProps {
+  agentCards: AgentCardShape[];
+  netWorth: import("@/lib/today/types").NetWorthSnapshot | null;
+  topSpending: { category: string; amount: number }[];
+  statementCount: number;
+  monthCount: number;
+  savingsMonth: string;
+  /** The SavingsRateCard component rendered by TodayPage — guarantees identical logic */
+  savingsRateCard: React.ReactNode;
+  /** Raw numbers for the summary sentence */
+  savingsRaw: { income: number; expenses: number; debtPayments: number; rate: number; month: string } | null;
+}
+
+function FirstTimeLayout({ agentCards, netWorth, topSpending, statementCount, monthCount, savingsMonth, savingsRateCard, savingsRaw }: FirstTimeProps) {
+  const month = savingsMonth;
+  const summary = savingsRaw
+    ? savingsSummary(savingsRaw.income, savingsRaw.expenses, savingsRaw.debtPayments, savingsRaw.rate, savingsRaw.month)
+    : "";
+
+  // Feature unlock tiers
+  const features = [
+    { label: "Spending analysis",        unlocked: statementCount >= 1 },
+    { label: "AI insights",              unlocked: agentCards.length > 0 },
+    { label: "Recurring predictions",    unlocked: monthCount >= 2 },
+    { label: "Trend charts",             unlocked: monthCount >= 3 },
+    { label: "Net worth history",        unlocked: monthCount >= 3 },
+  ];
+
+  const monthsNeeded = monthCount === 0 ? 3 : monthCount === 1 ? 2 : 1;
+
+  return (
+    <div className="flex gap-5 items-start">
+
+      {/* ── Main column ──────────────────────────────────────────────────────── */}
+      <div className="min-w-0 flex-1 space-y-4">
+
+        {/* Status banner */}
+        <div className="rounded-xl border border-green-200 bg-green-50 px-5 py-4 flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3 min-w-0">
+            <svg className="h-5 w-5 shrink-0 text-green-500 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-green-800">Your first statement has been analysed</p>
+              <p className="text-xs text-green-700 mt-0.5">Here&apos;s what we found. Upload more months to unlock trends and predictions.</p>
+            </div>
+          </div>
+          <Link href="/upload"
+            className="shrink-0 rounded-lg border border-green-300 bg-white px-3 py-1.5 text-xs font-semibold text-green-700 hover:bg-green-50 transition whitespace-nowrap">
+            + Upload another →
+          </Link>
+        </div>
+
+        {/* What We Found — reuses SavingsRateCard (identical logic to mature layout) */}
+        {savingsRateCard && (
+          <div className="space-y-1">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
+              What we found · {shortMonth(month).toUpperCase()}
+            </p>
+            {savingsRateCard}
+            {summary && (
+              <p className="text-sm text-gray-600 leading-relaxed pt-2">{summary}</p>
+            )}
+          </div>
+        )}
+
+        {/* What We Noticed (AI signals) */}
+        {agentCards.length > 0 && (
+          <div className="space-y-3">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">What we noticed</p>
+            {agentCards.map((card) => {
+              const { dot, label } = priorityLabel(card.priority);
+              const border = priorityBorder(card.priority);
+              return (
+                <div key={card.id} className={`rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden ${border}`}>
+                  <div className="px-5 py-4">
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${dot}`} />
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">{label}</span>
+                    </div>
+                    <p className="text-sm font-semibold text-gray-900 mb-1">{card.title}</p>
+                    <p className="text-xs text-gray-500 leading-relaxed">{card.body}</p>
+                    {card.href && (
+                      <Link href={card.href} className="mt-2 inline-block text-xs font-semibold text-purple-600 hover:underline">
+                        {card.source === "external" ? "Source ↗" : "Explore →"}
+                      </Link>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Unlocks with more statements */}
+        <div className="rounded-xl border border-dashed border-gray-200 bg-white p-5 space-y-3">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Unlocks with more statements</p>
+          <div className="space-y-3">
+            {[
+              { label: "Upcoming bills & salary predictions", sub: "Needs 2+ months to detect recurring patterns" },
+              { label: "Spending trends & anomalies",         sub: "Typical spend comparison unlocks with history" },
+              { label: "Net worth over time",                 sub: "Track growth across all accounts month by month" },
+            ].map((item) => (
+              <div key={item.label} className="flex items-start gap-3">
+                <div className="mt-0.5 h-4 w-4 shrink-0 rounded-full border-2 border-gray-200 bg-white" />
+                <div>
+                  <p className="text-xs font-medium text-gray-700">{item.label}</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">{item.sub}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="pt-1 flex items-center justify-between border-t border-gray-100">
+            <p className="text-xs text-gray-500">
+              Upload {monthsNeeded === 1 ? "1 more month" : `${monthsNeeded} more months`} to unlock predictions and trend analysis
+            </p>
+            <Link href="/upload"
+              className="shrink-0 ml-4 rounded-lg bg-gray-900 px-4 py-2 text-xs font-semibold text-white hover:bg-gray-700 transition">
+              Upload now →
+            </Link>
+          </div>
+        </div>
+
+      </div>
+
+      {/* ── Right sidebar ────────────────────────────────────────────────────── */}
+      <div className="hidden lg:block w-72 shrink-0 space-y-4">
+
+        {/* Net Worth */}
+        {netWorth && (
+          <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-5">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Net Worth</p>
+            <p className="text-3xl font-bold text-gray-900 tabular-nums">{fmt(netWorth.total)}</p>
+            {(netWorth.accounts?.length ?? 0) + (netWorth.debtAccounts?.length ?? 0) === 1 && (
+              <p className="text-xs text-gray-400 mt-1.5 leading-snug">
+                Based on 1 account · chequing balance only. Add more accounts for a complete picture.
+              </p>
+            )}
+            <Link href="/account/overview" className="mt-3 block text-xs font-semibold text-gray-500 hover:text-gray-800">
+              Show all {(netWorth.accounts?.length ?? 0) + (netWorth.debtAccounts?.length ?? 0)} account{((netWorth.accounts?.length ?? 0) + (netWorth.debtAccounts?.length ?? 0)) !== 1 ? "s" : ""} →
+            </Link>
+          </div>
+        )}
+
+        {/* Top Spending */}
+        {topSpending.length > 0 && (
+          <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+            <div className="flex items-center justify-between px-4 pt-4 pb-2">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                Top Spending · {shortMonth(month).replace(" ", " ").toUpperCase()}
+              </p>
+            </div>
+            <div className="divide-y divide-gray-50 pb-1">
+              {topSpending.map((s) => (
+                <div key={s.category} className="flex items-center justify-between px-4 py-2.5">
+                  <span className="text-xs text-gray-600">{s.category}</span>
+                  <span className="text-xs font-semibold text-gray-800 tabular-nums">{fmt(s.amount)}</span>
+                </div>
+              ))}
+            </div>
+            <Link href="/account/spending"
+              className="flex items-center justify-center gap-1 border-t border-gray-100 px-4 py-2.5 text-xs font-semibold text-gray-500 hover:text-gray-700 hover:bg-gray-50 transition">
+              View full breakdown →
+            </Link>
+          </div>
+        )}
+
+        {/* Your Data */}
+        <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-4 space-y-3">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Your Data</p>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-600">Statements uploaded</span>
+            <span className="text-xs font-bold text-gray-900">{statementCount}</span>
+          </div>
+          <p className="text-[11px] text-gray-400 leading-snug">
+            Upload {monthsNeeded === 1 ? "1–2 more months" : "2–3 more months"} to unlock predictions and trend analysis.
+          </p>
+          <div className="space-y-1.5 pt-1">
+            {features.map((f) => (
+              <div key={f.label} className="flex items-center gap-2">
+                <div className={`h-3.5 w-3.5 shrink-0 rounded-full border-2 transition-colors ${f.unlocked ? "bg-green-400 border-green-400" : "bg-white border-gray-200"}`} />
+                <span className={`text-[11px] ${f.unlocked ? "text-gray-700 font-medium" : "text-gray-400"}`}>{f.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
 // ── Events widget (dashboard sidebar) ────────────────────────────────────────
 
 import type { EventSummary, EventColor } from "@/lib/events/types";
@@ -582,6 +809,9 @@ export default function TodayPage() {
   const [showAllUpcoming,      setShowAllUpcoming]      = useState(false);
   const [includeDebtInExpenses, setIncludeDebtInExpenses] = useState(false);
   const [activeEvents, setActiveEvents] = useState<import("@/lib/events/types").EventSummary[]>([]);
+  const [monthCount,   setMonthCount]   = useState<number>(0);
+  const [statementCount, setStatementCount] = useState<number>(0);
+  const [topSpending,  setTopSpending]  = useState<{ category: string; amount: number }[]>([]);
 
   function toggleAlert(id: string) {
     setExpandedAlerts((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -625,6 +855,9 @@ export default function TodayPage() {
         return (a.source === "external" ? 1 : 0) - (b.source === "external" ? 1 : 0);
       });
       setAgentCards(sorted);
+      setMonthCount(insJson.monthCount ?? 0);
+      setStatementCount(insJson.statementCount ?? 0);
+      setTopSpending(insJson.topSpending ?? []);
     } catch { setError("Failed to load today view"); }
     finally { setLoading(false); }
   }, [buildHeaders]);
@@ -1174,6 +1407,32 @@ export default function TodayPage() {
 
       {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
 
+      {/* ── First-time layout (< 3 months of data) ───────────────────────────── */}
+      {monthCount < 3 && !loading ? (
+        <FirstTimeLayout
+          agentCards={agentCards}
+          netWorth={netWorth}
+          topSpending={topSpending}
+          statementCount={statementCount}
+          monthCount={monthCount}
+          savingsMonth={savingsRate?.month ?? ""}
+          savingsRateCard={savingsRate && savingsRate.income > 0 ? <SavingsRateCard /> : null}
+          savingsRaw={savingsRate ? {
+            income:       savingsRate.income,
+            expenses:     savingsRate.expenses,
+            debtPayments: savingsRate.debtPayments,
+            rate:         (() => {
+              // rate from API is already integer % (e.g. 54). Re-derive to be safe.
+              const eff = savingsRate.income > 0
+                ? Math.round(((savingsRate.income - savingsRate.expenses) / savingsRate.income) * 100)
+                : 0;
+              return eff;
+            })(),
+            month:        savingsRate.month,
+          } : null}
+        />
+      ) : (<>
+
       {/* ── Two-column layout ────────────────────────────────────────────────── */}
       <div className="flex gap-5 items-start">
 
@@ -1564,8 +1823,11 @@ export default function TodayPage() {
 
       </div>
 
-      {/* ── Mobile: horizontal scroll strip for accounts + signals ──────────── */}
-      <div className="lg:hidden mt-5 -mx-4 px-4">
+      </>) /* end rich-data layout */}
+
+      {/* ── Mobile: horizontal scroll strip — rich data only ─────────────────── */}
+      {monthCount >= 3 && (
+        <div className="lg:hidden mt-5 -mx-4 px-4">
         <div className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory scrollbar-hide">
           <div className="snap-start shrink-0 w-64">
             <MobileCardShell><NetWorthCard /></MobileCardShell>
@@ -1587,8 +1849,9 @@ export default function TodayPage() {
           )}
         </div>
       </div>
+      )} {/* end mobile strip */}
 
-    </div>
+    </div> {/* end mx-auto max-w-5xl */}
 
     {/* Onboarding modal */}
     {showOnboarding && (

@@ -1066,6 +1066,21 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── Top spending by category (for first-time user sidebar) ───────────────
+  const savingsMonthForTop = getLatestCompleteMonth(profile);
+  const topSpending = (() => {
+    const totals = new Map<string, number>();
+    for (const tx of expenseTxns) {
+      if (tx.txMonth !== savingsMonthForTop) continue;
+      const cat = tx.category ?? "Other";
+      totals.set(cat, (totals.get(cat) ?? 0) + tx.amount);
+    }
+    return Array.from(totals.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([category, amount]) => ({ category, amount: Math.round(amount) }));
+  })();
+
   return NextResponse.json({
     // Legacy fields (kept for backwards compat with existing UI consumers)
     alerts: cappedAlerts,
@@ -1079,6 +1094,9 @@ export async function GET(req: NextRequest) {
     thisMonthCollapsedCount,
     freshness,
     netWorth,
+    monthCount: allTxMonths.length,
+    statementCount: stmtSnap.size,
+    topSpending,
     savingsRate: (() => {
       // Use the latest month that has both income AND expenses (a complete month).
       // This skips the current partial month (e.g. April with only cash income
