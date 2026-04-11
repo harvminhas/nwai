@@ -47,6 +47,11 @@ export default function OverviewPage() {
 
         {token && <ParseStatusBanner onRefresh={() => load(token)} />}
 
+        <div className="mb-5">
+          <h1 className="text-2xl font-bold text-gray-900">Financial Health</h1>
+          <p className="mt-0.5 text-sm text-gray-400">Your net worth, balances, and account snapshot</p>
+        </div>
+
         <ConsolidatedCurrentDashboard />
       </div>
 

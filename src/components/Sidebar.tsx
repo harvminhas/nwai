@@ -34,20 +34,10 @@ const NAV_GROUPS: { section: string; items: NavItemDef[] }[] = [
       },
       {
         href: "/account/overview",
-        label: "Overview",
+        label: "Financial Health",
         icon: (
           <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-          </svg>
-        ),
-      },
-      {
-        href: "/account/forecast",
-        label: "Forecast",
-        proFeature: "forecast" as keyof PlanFeatures,
-        icon: (
-          <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
           </svg>
         ),
       },
@@ -98,6 +88,16 @@ const NAV_GROUPS: { section: string; items: NavItemDef[] }[] = [
     section: "PLAN",
     items: [
       {
+        href: "/account/forecast",
+        label: "Forecast",
+        proFeature: "forecast" as keyof PlanFeatures,
+        icon: (
+          <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+          </svg>
+        ),
+      },
+      {
         href: "/account/events",
         label: "Events",
         icon: (
@@ -127,40 +127,12 @@ const NAV_GROUPS: { section: string; items: NavItemDef[] }[] = [
         ),
       },
       {
-        href: "/account/chat",
-        label: "AI Chat",
-        proFeature: "aiChat" as keyof PlanFeatures,
-        icon: (
-          <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-          </svg>
-        ),
-      },
-      {
         href: "/account/payoff",
         label: "Payoff planner",
         disabled: true,
         icon: (
           <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-          </svg>
-        ),
-      },
-      {
-        href: "/account/statements",
-        label: "Manage uploads",
-        icon: (
-          <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
-          </svg>
-        ),
-      },
-      {
-        href: "/account/sharing",
-        label: "Sharing",
-        icon: (
-          <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
         ),
       },
@@ -481,6 +453,22 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
                   Activity &amp; Coverage
                 </Link>
 
+                {/* Manage uploads */}
+                <Link href="/account/statements" className={`flex items-center gap-2 px-3 py-2 text-xs font-medium transition hover:bg-gray-50 ${pathname === "/account/statements" ? "text-purple-700 bg-purple-50" : "text-gray-600"}`}>
+                  <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+                  </svg>
+                  Manage uploads
+                </Link>
+
+                {/* Sharing */}
+                <Link href="/account/sharing" className={`flex items-center gap-2 px-3 py-2 text-xs font-medium transition hover:bg-gray-50 ${pathname === "/account/sharing" ? "text-purple-700 bg-purple-50" : "text-gray-600"}`}>
+                  <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  Sharing
+                </Link>
+
                 {/* Billing */}
                 {planId === "free" ? (
                   <Link href="/account/billing" className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-purple-600 hover:bg-purple-50 transition">
@@ -643,6 +631,22 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 Activity &amp; Coverage
+              </Link>
+
+              <Link href="/account/statements" onClick={() => setDrawerOpen(false)}
+                className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${pathname === "/account/statements" ? "bg-purple-50 text-purple-700" : "text-gray-500 hover:bg-gray-100"}`}>
+                <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+                </svg>
+                Manage uploads
+              </Link>
+
+              <Link href="/account/sharing" onClick={() => setDrawerOpen(false)}
+                className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${pathname === "/account/sharing" ? "bg-purple-50 text-purple-700" : "text-gray-500 hover:bg-gray-100"}`}>
+                <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                Sharing
               </Link>
 
               {planId === "free" ? (

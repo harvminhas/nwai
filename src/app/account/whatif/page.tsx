@@ -404,7 +404,7 @@ function ScenarioCard({
           ? "border-purple-300 bg-purple-50 shadow-sm"
           : "border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm"
       }`}
-      onClick={onEdit}
+      onClick={onViewFullAnalysis}
     >
       {/* Top row */}
       <div className="flex items-start justify-between gap-2 mb-2">
@@ -587,13 +587,13 @@ function EditorPanel({
 
       <div
         key={animKey}
-        className="editor-slide-in rounded-2xl border border-purple-200 bg-white shadow-xl ring-1 ring-purple-100 overflow-hidden"
+        className="editor-slide-in rounded-2xl border border-gray-200 bg-white shadow-xl overflow-hidden"
       >
-        {/* ── Purple header ── */}
-        <div className="bg-gradient-to-r from-purple-600 to-purple-700 px-5 py-4">
+        {/* ── Dark header ── */}
+        <div className="bg-gradient-to-r from-gray-800 to-gray-900 px-5 py-4">
           <div className="flex items-center justify-between">
             <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-purple-200 mb-0.5">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-0.5">
                 {isNew ? "New scenario" : "Editing scenario"}
               </p>
               <h3 className="text-base font-bold text-white leading-tight truncate">
@@ -604,14 +604,14 @@ function EditorPanel({
               {!isNew && onDelete && (
                 <button
                   onClick={onDelete}
-                  className="rounded-lg px-2.5 py-1 text-[11px] font-semibold text-purple-200 hover:bg-purple-500 hover:text-white transition"
+                  className="rounded-lg px-2.5 py-1 text-[11px] font-semibold text-gray-300 hover:bg-gray-700 hover:text-white transition"
                 >
                   Delete
                 </button>
               )}
               <button
                 onClick={onClose}
-                className="flex h-7 w-7 items-center justify-center rounded-full text-purple-200 hover:bg-purple-500 hover:text-white transition"
+                className="flex h-7 w-7 items-center justify-center rounded-full text-gray-400 hover:bg-gray-700 hover:text-white transition"
               >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -627,7 +627,7 @@ function EditorPanel({
               </button>
               <button
                 onClick={onViewFullAnalysis}
-                className="rounded-lg px-3 py-1.5 text-[11px] font-semibold text-purple-200 hover:bg-purple-500 hover:text-white transition"
+                className="rounded-lg px-3 py-1.5 text-[11px] font-semibold text-gray-300 hover:bg-gray-700 hover:text-white transition"
               >
                 Full analysis
               </button>
@@ -660,7 +660,7 @@ function EditorPanel({
           <button
             onClick={onSave}
             disabled={saving}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-purple-600 px-5 py-3 text-sm font-bold text-white hover:bg-purple-700 transition disabled:opacity-50 shadow-md shadow-purple-200"
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-purple-600 px-5 py-3 text-sm font-bold text-white hover:bg-purple-700 transition disabled:opacity-50 shadow-md"
           >
             {saving ? (
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
@@ -1014,31 +1014,31 @@ function FullAnalysisPanel({
         .fa-slide-in { animation: faSlideIn 0.22s ease-out; }
       `}</style>
 
-      <div key={panel.scenario.id + "-fa"} className="fa-slide-in rounded-2xl border border-gray-200 bg-white shadow-xl overflow-hidden">
-        {/* Dark header */}
-        <div className="bg-gradient-to-r from-gray-800 to-gray-900 px-5 py-4">
+      <div key={panel.scenario.id + "-fa"} className="fa-slide-in rounded-2xl border border-purple-200 bg-white shadow-xl ring-1 ring-purple-100 overflow-hidden">
+        {/* Purple header */}
+        <div className="bg-gradient-to-r from-purple-600 to-purple-700 px-5 py-4">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               {/* Breadcrumb */}
               <div className="flex items-center gap-1.5 mb-1.5">
-                <button onClick={onClose} className="text-[11px] text-gray-400 hover:text-gray-200 transition flex items-center gap-1">
+                <button onClick={onClose} className="text-[11px] text-purple-300 hover:text-white transition flex items-center gap-1">
                   <svg className="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
                   </svg>
                   Scenarios
                 </button>
-                <span className="text-gray-600 text-[11px]">/</span>
-                <span className="text-[11px] text-gray-300 truncate max-w-[140px]">{panel.name}</span>
+                <span className="text-purple-400 text-[11px]">/</span>
+                <span className="text-[11px] text-purple-200 truncate max-w-[140px]">{panel.name}</span>
               </div>
               <h3 className="text-base font-bold text-white leading-tight truncate">{panel.name}</h3>
-              <p className="text-[11px] text-gray-400 mt-0.5 truncate">
+              <p className="text-[11px] text-purple-300 mt-0.5 truncate">
                 {tmpl?.label} · {description}
               </p>
             </div>
             <div className="flex items-center gap-1.5 shrink-0 ml-2 flex-wrap justify-end">
               <button
                 onClick={onSwitchToEdit}
-                className="rounded-lg px-3 py-1.5 text-[11px] font-semibold text-gray-300 border border-gray-600 hover:bg-gray-700 hover:text-white transition"
+                className="rounded-lg px-3 py-1.5 text-[11px] font-semibold text-purple-200 border border-purple-400 hover:bg-purple-500 hover:text-white transition"
               >
                 Edit
               </button>
@@ -1047,7 +1047,7 @@ function FullAnalysisPanel({
               </button>
               <button
                 onClick={onClose}
-                className="flex h-7 w-7 items-center justify-center rounded-full text-gray-400 hover:bg-gray-700 hover:text-white transition"
+                className="flex h-7 w-7 items-center justify-center rounded-full text-purple-200 hover:bg-purple-500 hover:text-white transition"
               >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -1146,7 +1146,13 @@ function WhatIfWorkspace() {
 
         if (scenRes.ok) {
           const json = await scenRes.json();
-          setScenarios(json.scenarios ?? []);
+          const loaded: WhatIfScenario[] = json.scenarios ?? [];
+          setScenarios(loaded);
+          // Auto-open first scenario in full analysis so the page doesn't feel empty
+          if (loaded.length > 0) {
+            const first = loaded[0];
+            setPanel({ mode: "fullAnalysis", scenario: first, inputs: { ...first.inputs }, name: first.name, templateId: first.templateId });
+          }
         }
       } catch {
         setSnap({ netWorth: 47210, monthlyIncome: 5800, monthlyExpenses: 4700,
@@ -1371,12 +1377,12 @@ function WhatIfWorkspace() {
           <div className="lg:sticky lg:top-4 lg:self-start">
             {panel.mode !== "fullAnalysis" && (
               <div className="flex items-center gap-2 px-1 mb-3">
-                <span className="hidden lg:flex h-5 w-5 items-center justify-center rounded-full bg-purple-600 text-white">
+                <span className="hidden lg:flex h-5 w-5 items-center justify-center rounded-full bg-gray-700 text-white">
                   <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
                   </svg>
                 </span>
-                <p className="text-[11px] font-bold uppercase tracking-widest text-purple-600">Your turn — configure this scenario</p>
+                <p className="text-[11px] font-bold uppercase tracking-widest text-gray-500">Your turn — configure this scenario</p>
               </div>
             )}
             {panel.mode === "fullAnalysis" ? (
