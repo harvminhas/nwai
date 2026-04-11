@@ -16,8 +16,6 @@ import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
 
 // Conservative 4% annual return applied monthly to existing net worth
 const MONTHLY_RETURN_RATE = 0.04 / 12;
-// How many recent months to average for baseline savings calculation
-const LOOKBACK_MONTHS = 3;
 // Optimized scenario: 20% improvement on monthly savings
 const OPTIMIZED_BOOST = 0.20;
 
@@ -150,18 +148,13 @@ export default function ForecastPage() {
 
         setCurrentNetWorth(json.data?.netWorth ?? 0);
 
-        // Compute avg monthly savings from recent history
-        const history: { yearMonth: string; incomeTotal: number; expensesTotal: number }[] =
-          json.history ?? [];
-        const recentMonths = history
-          .filter((h) => h.incomeTotal > 0)
-          .slice(-LOOKBACK_MONTHS);
+        // Use the same median-based income/expense engine as Goals and Dashboard.
+        // This is robust to one-off large transactions (e.g. investment holdings).
+        const typicalIncome   = json.typicalMonthlyIncome   ?? 0;
+        const typicalExpenses = json.typicalMonthlyExpenses ?? 0;
 
-        if (recentMonths.length > 0) {
-          const totalSavings = recentMonths.reduce(
-            (s, h) => s + (h.incomeTotal - h.expensesTotal), 0
-          );
-          setAvgSavings(Math.round(totalSavings / recentMonths.length));
+        if (typicalIncome > 0 || typicalExpenses > 0) {
+          setAvgSavings(Math.round(typicalIncome - typicalExpenses));
         }
       } catch { setError("Failed to load forecast data"); }
       finally { setLoading(false); }
@@ -171,7 +164,9 @@ export default function ForecastPage() {
   // ── derived ──────────────────────────────────────────────────────────────────
 
   const monthlySavings   = avgSavings ?? 0;
-  const optimizedSavings = Math.round(monthlySavings * (1 + OPTIMIZED_BOOST));
+  // When savings is negative, "optimized" means reducing the deficit (less negative),
+  // not multiplying it. Adding |savings| × boost moves in the right direction either way.
+  const optimizedSavings = Math.round(monthlySavings + Math.abs(monthlySavings) * OPTIMIZED_BOOST);
   const totalMonths      = horizon * 12;
 
   const currentPaceValues  = projectNetWorth(currentNetWorth, monthlySavings, totalMonths);
@@ -241,7 +236,9 @@ export default function ForecastPage() {
                 <p className="text-xs text-red-600 mt-0.5">
                   At current pace you&apos;re drawing down{" "}
                   <span className="font-medium">{fmtShort(Math.abs(monthlySavings))}/mo</span>.
-                  Net worth will decline without changes.
+                  {delta1yr < 0
+                    ? " Net worth is projected to decline — consider reducing spending or growing income."
+                    : " Investment returns are currently offsetting the deficit, but this is worth addressing."}
                 </p>
               </div>
             </div>
@@ -266,7 +263,7 @@ export default function ForecastPage() {
               <p className={`mt-1 text-xs font-medium ${delta1yr >= 0 ? "text-green-600" : "text-red-500"}`}>
                 {delta1yr >= 0 ? "+" : ""}{fmtShort(delta1yr)}{" "}
                 <span className="font-normal text-gray-400">
-                  {isSavingsNegative ? "decline" : "on track"}
+                  {delta1yr >= 0 ? "projected growth" : "projected decline"}
                 </span>
               </p>
             </div>
@@ -292,7 +289,7 @@ export default function ForecastPage() {
                 <p className="font-semibold text-gray-900">Net worth trajectory</p>
                 <p className="mt-0.5 text-xs text-gray-400">
                   Assumes {fmt(monthlySavings)}/mo savings · 4% annual return ·{" "}
-                  Optimized = 20% savings boost
+                  Optimized = 20% {monthlySavings < 0 ? "deficit reduction" : "savings boost"}
                 </p>
               </div>
               {/* Horizon selector */}
@@ -375,7 +372,7 @@ export default function ForecastPage() {
                 <p className={`mt-1 text-lg font-bold tabular-nums ${monthlySavings < 0 ? "text-red-500" : "text-gray-900"}`}>
                   {fmt(monthlySavings)}
                 </p>
-                <p className="text-[10px] text-gray-400">avg last {LOOKBACK_MONTHS} months</p>
+                <p className="text-[10px] text-gray-400">typical monthly (median)</p>
               </div>
               <div className="rounded-lg bg-blue-50 p-3 border border-blue-100">
                 <p className="text-xs text-blue-400">Optimized savings/mo</p>
@@ -394,7 +391,9 @@ export default function ForecastPage() {
             </div>
             <p className="mt-3 text-[11px] text-gray-400 leading-relaxed">
               Projections assume a 4% annual return on existing net worth and a{" "}
-              {Math.round(OPTIMIZED_BOOST * 100)}% increase in monthly savings for the optimized scenario.
+              {Math.round(OPTIMIZED_BOOST * 100)}%{" "}
+              {monthlySavings < 0 ? "reduction in monthly deficit" : "increase in monthly savings"}{" "}
+              for the optimized scenario.
               Actual results will vary. These are directional estimates, not financial advice.
             </p>
           </div>
