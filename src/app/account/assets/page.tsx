@@ -472,7 +472,8 @@ export function AssetsPage() {
     </div>
   );
 
-  const isEmpty = assets.length === 0 && debts.length === 0 && liquidTotal === 0;
+  // Show the page whenever there is any tracked data — even a zero-balance upload counts
+  const isEmpty = assets.length === 0 && debts.length === 0 && liquidTotal === 0 && allAccounts.length === 0;
 
   return (
     <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
