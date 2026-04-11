@@ -192,11 +192,10 @@ export async function POST(request: NextRequest) {
       if (hasBatchOps) await batch.commit();
     }
 
-    // Invalidate financial profile cache so the next page load picks up the
-    // new parsedData (currency, holdings, balance, etc.) immediately.
+    // Await cache invalidation so the stale cache is gone before we respond.
+    // The client's next data fetch will always see fresh data.
     if (userId) {
-      invalidateFinancialProfileCache(userId, db)
-        .catch((e) => console.error("[parse] cache invalidation failed:", e));
+      await invalidateFinancialProfileCache(userId, db);
     }
 
     // Fire insight event — fire-and-forget, never blocks the parse response.

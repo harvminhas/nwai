@@ -143,9 +143,8 @@ export async function extractAllTransactions(
 
   // ── 2. Extract expense transactions using actual transaction dates ─────────
   // Two-pass: statements first (preferred source), then CSV.
-  // Fingerprint dedup catches any cross-source overlap that slips past
-  // the account×month dedup above (e.g. a CSV that spans a month already
-  // covered by a PDF statement).
+  // Fingerprint dedup catches cross-source overlap (CSV vs stmt) AND cross-statement
+  // overlap (two PDF statements whose billing periods overlap a shared transaction date).
   const expenseTxns: ExpenseTxnRecord[] = [];
   const expFingerprintsFromStmt = new Set<string>();
 
@@ -166,8 +165,10 @@ export async function extractAllTransactions(
         const date = txn.date ?? `${stmtYm}-15`;
         const txMonth = date.slice(0, 7);
         const fp = txFingerprint(parsed.accountId ?? slug, date, txn.amount, txn.merchant ?? "");
-        if (isCSV && expFingerprintsFromStmt.has(fp)) continue; // duplicate — skip CSV copy
-        if (!isCSV) expFingerprintsFromStmt.add(fp);
+        // Skip if this fingerprint was already added (handles both stmt-stmt overlap
+        // and the stmt-before-CSV cross-source dedup in a single check)
+        if (expFingerprintsFromStmt.has(fp)) continue;
+        expFingerprintsFromStmt.add(fp);
         if (isBalanceMarker(txn.merchant ?? "")) continue; // skip AI-leaked balance rows
         if ((txn.amount ?? 0) <= 0) continue; // expense amounts must be positive (money out)
         expenseTxns.push({
@@ -204,8 +205,8 @@ export async function extractAllTransactions(
         const date = txn.date ?? `${stmtYm}-01`;
         const txMonth = date.slice(0, 7);
         const fp = txFingerprint(parsed.accountId ?? slug, date, txn.amount, txn.source ?? txn.category ?? "");
-        if (isCSV && incFingerprintsFromStmt.has(fp)) continue;
-        if (!isCSV) incFingerprintsFromStmt.add(fp);
+        if (incFingerprintsFromStmt.has(fp)) continue;
+        incFingerprintsFromStmt.add(fp);
         incomeTxns.push({
           date,
           txMonth,

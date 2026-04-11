@@ -19,6 +19,8 @@ import { txFingerprint } from "@/lib/txFingerprint";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { getYearMonth } from "@/lib/consolidate";
 import type { ParsedStatementData, ExpenseTransaction, IncomeTransaction } from "@/lib/types";
+import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
+import { fireInsightEvent } from "@/lib/insights/index";
 
 async function getUid(request: NextRequest): Promise<string | null> {
   const token = request.headers.get("authorization")?.replace("Bearer ", "");
@@ -293,6 +295,14 @@ export async function POST(request: NextRequest) {
       parsedData,
     });
     createdIds.push(docRef.id);
+  }
+
+  // After a successful import: await cache invalidation so the stale cache
+  // is gone before we respond, then fire insights rebuild in the background.
+  if (createdIds.length > 0) {
+    await invalidateFinancialProfileCache(uid, db);
+    fireInsightEvent({ type: "statement.parsed", meta: { statementId: createdIds[0] } }, uid, db)
+      .catch((e) => console.error("[csv-import] insight event failed:", e));
   }
 
   return NextResponse.json({

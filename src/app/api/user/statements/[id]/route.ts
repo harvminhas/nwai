@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { merchantSlug, applyRulesAndRecalculate } from "@/lib/applyRules";
 import type { ParsedStatementData } from "@/lib/types";
+import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
+import { fireInsightEvent } from "@/lib/insights/index";
 
 async function getUid(request: NextRequest): Promise<string | null> {
   const token = request.headers.get("authorization")?.replace("Bearer ", "");
@@ -54,6 +56,9 @@ export async function PATCH(
     merchant, category, slug, updatedAt: new Date(),
   });
 
+  // Re-categorization changes parsedData — await so the cache is stale before we respond
+  await invalidateFinancialProfileCache(uid, db);
+
   return NextResponse.json({ ok: true, parsedData: updated });
 }
 
@@ -96,6 +101,14 @@ export async function DELETE(
 
   // ── 2. Delete the Firestore document ─────────────────────────────────────
   await statementRef.delete();
+
+  // Await cache invalidation so the stale cache is gone before we respond.
+  // Clients that reload immediately after deletion will always trigger a fresh rebuild.
+  await invalidateFinancialProfileCache(uid, db);
+
+  // Fire-and-forget the insights rebuild (does not block the response)
+  fireInsightEvent({ type: "statement.parsed", meta: { statementId: id } }, uid, db)
+    .catch((e) => console.error("[statements/delete] insight event failed:", e));
 
   return NextResponse.json({ ok: true });
 }
