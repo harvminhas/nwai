@@ -297,8 +297,19 @@ export default function Home() {
         </main>
 
         {/* ── Footer ──────────────────────────────────────────────────────── */}
-        <footer className="border-t border-gray-100 py-6 bg-white">
-          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-400">
+        <footer className="border-t border-gray-100 bg-white">
+          {/* AI accuracy note */}
+          <div className="border-b border-gray-100 bg-gray-50 py-3">
+            <p className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 text-center text-xs text-gray-400">
+              AI-powered insights are a helpful guide, not guaranteed to be 100% accurate.
+              Always verify important figures with your bank.{" "}
+              <Link href="/terms#ai-accuracy" className="underline hover:text-gray-600 transition">
+                Learn more
+              </Link>
+            </p>
+          </div>
+          {/* Footer links */}
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-400">
             <span>
               <span className="font-semibold text-purple-600">networth.online</span>
               &nbsp;— No bank login. No credentials. No ads.
@@ -306,6 +317,8 @@ export default function Home() {
             <div className="flex gap-5">
               <Link href="/login" className="hover:text-gray-600 transition">Log in</Link>
               <Link href="/upload" className="hover:text-gray-600 transition">Upload statement</Link>
+              <Link href="/privacy" className="hover:text-gray-600 transition">Privacy</Link>
+              <Link href="/terms" className="hover:text-gray-600 transition">Terms</Link>
             </div>
           </div>
         </footer>

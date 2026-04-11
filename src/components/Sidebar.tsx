@@ -522,6 +522,10 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
                     </svg>
                     Sign out
                   </button>
+                  <div className="flex gap-3 px-3 pb-2">
+                    <Link href="/privacy" className="text-[10px] text-gray-400 hover:text-gray-600 transition">Privacy</Link>
+                    <Link href="/terms" className="text-[10px] text-gray-400 hover:text-gray-600 transition">Terms</Link>
+                  </div>
                 </div>
               </div>
             )}
