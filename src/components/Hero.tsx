@@ -26,7 +26,7 @@ export default function Hero() {
               </Link>
             </div>
             <p className="mt-3 text-xs text-gray-400">
-              PDF &nbsp;·&nbsp; Any Canadian bank &nbsp;·&nbsp; Under 60 seconds
+              PDF &nbsp;·&nbsp; Any major bank &nbsp;·&nbsp; Under 60 seconds
             </p>
           </div>
 
@@ -52,7 +52,7 @@ export default function Hero() {
                 {/* Net worth block */}
                 <div className="bg-white rounded-lg p-3 border border-gray-100">
                   <div className="text-[9px] text-gray-400 uppercase tracking-wider font-medium">Net Worth</div>
-                  <div className="text-[22px] font-bold text-gray-900 mt-0.5 leading-none">CA$1,059,066</div>
+                  <div className="text-[22px] font-bold text-gray-900 mt-0.5 leading-none">$1,059,066</div>
                   <div className="text-[10px] text-gray-400 mt-0.5">Updated today &nbsp;·&nbsp; 13 accounts</div>
                   <div className="flex gap-2 mt-2">
                     <span className="bg-green-50 text-green-700 text-[10px] font-semibold px-2 py-0.5 rounded-full">Savings&nbsp;+54%</span>
@@ -66,7 +66,7 @@ export default function Hero() {
                     High Priority
                   </span>
                   <p className="text-[11px] text-gray-600 leading-snug">
-                    Consolidate high-interest debt. CA$142 across 3 payments. Consolidating could save CA$300/mo.
+                    Consolidate high-interest debt. $142 across 3 payments. Consolidating could save $300/mo.
                   </p>
                 </div>
 
@@ -76,7 +76,7 @@ export default function Hero() {
                     Reviewing
                   </span>
                   <p className="text-[11px] text-gray-600 leading-snug">
-                    CA$111 in fees last month. CA$1 × REGIONI.EZ MSP — may be avoidable.
+                    $111 in fees last month. $1 × REGIONI.EZ MSP — may be avoidable.
                   </p>
                 </div>
 

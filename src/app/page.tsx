@@ -8,16 +8,16 @@ import LandingHeader from "@/components/LandingHeader";
 export const metadata: Metadata = {
   title: "networth.online – Know Where Your Money Actually Goes",
   description:
-    "Upload your bank statement PDF and instantly see your net worth, spending breakdown, savings rate, and AI-powered insights. No bank login. Any Canadian bank. Under 60 seconds.",
+    "Upload your bank statement PDF and instantly see your net worth, spending breakdown, savings rate, and AI-powered insights. No bank login. Any major bank. Under 60 seconds.",
   keywords: [
     "personal finance tracker",
     "bank statement analyzer",
-    "net worth calculator Canada",
+    "net worth calculator",
     "spending tracker no bank login",
     "savings rate calculator",
     "AI financial insights",
     "PDF bank statement analysis",
-    "Canadian personal finance",
+    "personal finance app no bank login",
   ],
   openGraph: {
     title: "networth.online – Know Where Your Money Actually Goes",
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
     url: "https://networth.online",
     siteName: "networth.online",
     type: "website",
-    locale: "en_CA",
+    locale: "en",
     images: [
       {
         url: "https://networth.online/opengraph-image",
@@ -56,15 +56,14 @@ const appJsonLd = {
   url: "https://networth.online",
   applicationCategory: "FinanceApplication",
   operatingSystem: "Web",
-  inLanguage: "en-CA",
+  inLanguage: "en",
   description:
     "Upload a PDF bank statement and instantly get your net worth, spending breakdown, savings rate, and AI-powered financial insights. No bank login required.",
   featureList:
     "Net worth tracking, AI financial insights, Spending analysis, Savings rate calculator, Subscription detection, PDF bank statement analysis, Income breakdown, Recurring payment detection",
   audience: {
     "@type": "Audience",
-    geographicArea: "Canada",
-    audienceType: "Canadians seeking personal finance insights without sharing bank credentials",
+    audienceType: "People seeking personal finance insights without sharing bank credentials",
   },
   offers: {
     "@type": "Offer",
@@ -81,8 +80,8 @@ const faqs = [
     a: "No. You never connect your bank account or share your login credentials. You simply download a PDF statement from your bank's website and upload it here. Your banking login is never involved.",
   },
   {
-    q: "Which Canadian banks are supported?",
-    a: "We support PDF statements from all major Canadian banks including TD, RBC, Scotiabank, CIBC, BMO, Tangerine, and most credit unions. If your bank produces a readable PDF statement, it will work.",
+    q: "Which banks are supported?",
+    a: "We support PDF statements from major banks in North America. This includes TD, RBC, Scotiabank, CIBC, BMO, Chase, Wells Fargo, Bank of America, Citi, Capital One, and most credit unions. If your bank produces a readable PDF statement, it will work.",
   },
   {
     q: "Is my data private and secure?",
@@ -122,20 +121,20 @@ const insightExamples = [
   {
     badge: "High Priority",
     badgeColor: "bg-red-100 text-red-600",
-    title: "CA$340/mo in subscriptions you may have forgotten",
+    title: "$340/mo in subscriptions you may have forgotten",
     body: "We found 11 recurring charges across 3 accounts. 4 haven't been used in over 60 days based on your patterns.",
   },
   {
     badge: "Worth Reviewing",
     badgeColor: "bg-amber-100 text-amber-700",
-    title: "April has 3 paydays — CA$3,600 more than usual",
+    title: "April has 3 paydays — $3,600 more than usual",
     body: "Bi-weekly salary sometimes produces an extra payday. We flag these in advance so you can plan around the windfall.",
   },
   {
     badge: "Opportunity",
     badgeColor: "bg-purple-100 text-purple-700",
     title: "You're saving 36% of income without realising it",
-    body: "After all expenses and debt payments your net savings rate is well above the Canadian average of under 5%.",
+    body: "After all expenses and debt payments your net savings rate is well above the average of under 5%.",
   },
 ];
 
@@ -144,7 +143,7 @@ const steps = [
   {
     n: "1",
     title: "Download a PDF from your bank",
-    body: "Log into your bank's website, go to statements, and export last month as a PDF. Works with CIBC, TD, RBC, Scotiabank, BMO, and most credit unions.",
+    body: "Log into your bank's website, go to statements, and export last month as a PDF. Works with TD, RBC, CIBC, BMO, Chase, Wells Fargo, Bank of America, Citi, and most other major banks.",
   },
   {
     n: "2",
@@ -289,7 +288,7 @@ export default function Home() {
                   Upload your first statement →
                 </Link>
                 <p className="mt-3 text-xs text-gray-400">
-                  PDF &nbsp;·&nbsp; Any Canadian bank &nbsp;·&nbsp; Results in under 60 seconds
+                  PDF &nbsp;·&nbsp; Any major bank &nbsp;·&nbsp; Results in under 60 seconds
                 </p>
               </div>
             </div>
