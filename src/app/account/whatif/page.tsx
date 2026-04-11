@@ -1,72 +1,35 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
-import { useSearchParams, useRouter, usePathname } from "next/navigation";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { usePlan } from "@/contexts/PlanContext";
 import { fmt } from "@/lib/currencyUtils";
+import type {
+  WhatIfScenario, FinancialSnapshot, TemplateId,
+} from "@/lib/whatIf/types";
+import { SCENARIO_COLORS } from "@/lib/whatIf/types";
+import {
+  TEMPLATES, getTemplate, computeCombinedImpact, buildSparklineData,
+  getScenarioDescription, getCompactMetrics, getAiQuestion, num, bool,
+} from "@/lib/whatIf/templates";
 
-// ── types ──────────────────────────────────────────────────────────────────────
+// ── Panel state ────────────────────────────────────────────────────────────────
 
-interface FinancialSnapshot {
-  netWorth: number;
-  monthlyIncome: number;
-  monthlyExpenses: number;
-  monthlySavings: number;
-  savingsRate: number;
-  totalDebt: number;
-  liquidAssets: number;
-  emergencyFundTarget: number;
-}
+type PanelState =
+  | { mode: "empty" }
+  | { mode: "new";  templateId: TemplateId; inputs: Record<string, number | string | boolean>; name: string }
+  | { mode: "edit"; scenario: WhatIfScenario; inputs: Record<string, number | string | boolean>; name: string; templateId: TemplateId }
+  | { mode: "fullAnalysis"; scenario: WhatIfScenario; inputs: Record<string, number | string | boolean>; name: string; templateId: TemplateId };
 
-// ── helpers ────────────────────────────────────────────────────────────────────
+// ── Primitive helpers ─────────────────────────────────────────────────────────
 
-function fmtDelta(v: number) {
-  return `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
-}
+function fmtDelta(v: number) { return `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`; }
+
 function addMonthsLabel(months: number): string {
   const d = new Date();
   d.setMonth(d.getMonth() + months);
   return d.toLocaleDateString("en-US", { month: "short", year: "numeric" });
-}
-
-// ── primitive UI components ────────────────────────────────────────────────────
-
-type Accent = "green" | "amber" | "red" | "default";
-const accentColor: Record<Accent, string> = {
-  green: "text-emerald-600",
-  amber: "text-amber-600",
-  red:   "text-red-600",
-  default: "text-gray-900",
-};
-
-function OutcomeCard({ label, value, sub, accent = "default" }: {
-  label: string; value: string; sub?: string; accent?: Accent;
-}) {
-  return (
-    <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
-      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</p>
-      <p className={`mt-1 text-xl font-bold leading-tight ${accentColor[accent]}`}>{value}</p>
-      {sub && <p className="mt-0.5 text-xs text-gray-400">{sub}</p>}
-    </div>
-  );
-}
-
-function VerdictBanner({ color, text }: { color: "green" | "amber" | "red" | "blue"; text: string }) {
-  const styles = {
-    green: "bg-emerald-50 border-emerald-200 text-emerald-800",
-    amber: "bg-amber-50 border-amber-200 text-amber-800",
-    red:   "bg-red-50 border-red-200 text-red-800",
-    blue:  "bg-blue-50 border-blue-200 text-blue-800",
-  };
-  const icons = { green: "✓", amber: "⚠", red: "✕", blue: "ℹ" };
-  return (
-    <div className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-sm ${styles[color]}`}>
-      <span className="mt-0.5 font-bold">{icons[color]}</span>
-      <span>{text}</span>
-    </div>
-  );
 }
 
 function SliderRow({ label, value, min, max, step, onChange, format }: {
@@ -102,8 +65,7 @@ function NumInput({ label, value, onChange, prefix, suffix }: {
       <div className="flex items-center overflow-hidden rounded-lg border border-gray-200 bg-white focus-within:border-purple-400 focus-within:ring-1 focus-within:ring-purple-200">
         {prefix && <span className="shrink-0 border-r border-gray-200 bg-gray-50 px-2.5 py-2 text-xs text-gray-400">{prefix}</span>}
         <input
-          type="number" value={value}
-          onChange={(e) => onChange(e.target.value)}
+          type="number" value={value} onChange={(e) => onChange(e.target.value)}
           className="min-w-0 flex-1 px-3 py-2 text-sm outline-none"
         />
         {suffix && <span className="shrink-0 border-l border-gray-200 bg-gray-50 px-2.5 py-2 text-xs text-gray-400">{suffix}</span>}
@@ -112,621 +74,1041 @@ function NumInput({ label, value, onChange, prefix, suffix }: {
   );
 }
 
-// ── MODE 1: New Purchase ───────────────────────────────────────────────────────
+// ── Editor sub-components (inputs only, no outcome cards) ─────────────────────
 
-function Mode1NewPurchase({ snap }: { snap: FinancialSnapshot }) {
-  const [name, setName]         = useState("iPhone 16 Pro");
-  const [isOneTime, setIsOneTime] = useState(false);
-  const [cost, setCost]         = useState(55);
-  const [months, setMonths]     = useState(24);
+type InputsProps = {
+  inputs: Record<string, number | string | boolean>;
+  onChange: (key: string, value: number | string | boolean) => void;
+};
 
-  const monthlyCost        = isOneTime ? cost / Math.max(months, 1) : cost;
-  const totalCost          = isOneTime ? cost : cost * months;
-  const newMonthlySavings  = snap.monthlySavings - monthlyCost;
-  const newSavingsRate     = snap.monthlyIncome > 0 ? (newMonthlySavings / snap.monthlyIncome) * 100 : 0;
-  const savingsRateDelta   = newSavingsRate - snap.savingsRate;
+function InputsPurchase({ inputs, onChange }: InputsProps) {
+  const isOneTime = bool(inputs.isOneTime ?? false);
+  const cost      = num(inputs.cost, 55);
+  const months    = num(inputs.months, 24);
 
-  const efCurrent  = snap.liquidAssets;
-  const efTarget   = snap.emergencyFundTarget;
-  const baseEFMo   = snap.monthlySavings > 0 ? Math.max(0, Math.ceil((efTarget - efCurrent) / snap.monthlySavings)) : 999;
-  const newEFMo    = newMonthlySavings  > 0 ? Math.max(0, Math.ceil((efTarget - efCurrent) / newMonthlySavings))  : 999;
-  const efDelay    = newEFMo === 999 ? 99 : Math.max(0, newEFMo - baseEFMo);
-
-  const baseNW12   = snap.netWorth + snap.monthlySavings * 12;
-  const newNW12    = snap.netWorth + newMonthlySavings * 12;
-  const nwDelta    = newNW12 - baseNW12;
-
-  const verdictColor: Accent =
-    efDelay === 0 && savingsRateDelta > -2 ? "green" :
-    efDelay <= 3  || savingsRateDelta > -5 ? "amber" : "red";
-
-  const verdictText =
-    verdictColor === "green"
-      ? `${name || "This purchase"} is comfortably within budget. It won't delay your emergency fund and has minimal savings rate impact.`
-      : verdictColor === "amber"
-      ? `${name || "This purchase"} is manageable but delays your emergency fund by ~${efDelay} month${efDelay !== 1 ? "s" : ""} and drops savings rate by ${Math.abs(savingsRateDelta).toFixed(1)}%.`
-      : `${name || "This purchase"} puts real strain on your goals — pushing emergency fund back ${efDelay} months and dropping savings rate by ${Math.abs(savingsRateDelta).toFixed(1)}%. Consider a lower-cost alternative.`;
+  // One-time purchases (laptops, appliances, etc.) need a much wider range
+  const costMax  = isOneTime ? 10000 : 500;
+  const costStep = isOneTime ? (cost >= 1000 ? 50 : 25) : 5;
 
   return (
-    <div className="space-y-5">
-      <div className="rounded-2xl border border-gray-100 bg-gray-50/50 p-5 space-y-5">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Item name</label>
-          <input
-            type="text" value={name} onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. iPhone 16 Pro"
-            className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-200"
-          />
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="text-sm font-medium text-gray-700">Cost type</span>
-          <div className="flex overflow-hidden rounded-lg border border-gray-200 text-sm font-medium">
-            {["Monthly", "One-time"].map((t) => (
-              <button
-                key={t}
-                onClick={() => setIsOneTime(t === "One-time")}
-                className={`px-3 py-1.5 transition ${(t === "One-time") === isOneTime ? "bg-purple-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}
-              >{t}</button>
-            ))}
-          </div>
-        </div>
-        <SliderRow
-          label={isOneTime ? "Purchase price" : "Monthly cost"}
-          value={cost} min={10} max={500} step={5} onChange={setCost} format={fmt}
-        />
-        <SliderRow
-          label={isOneTime ? "Spread over" : "Contract length"}
-          value={months} min={1} max={36} step={1} onChange={setMonths}
-          format={(v) => `${v} mo`}
+    <div className="space-y-4">
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Item name</label>
+        <input
+          type="text" value={String(inputs.name ?? "")}
+          onChange={(e) => onChange("name", e.target.value)}
+          placeholder="e.g. iPhone 16 Pro"
+          className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-200"
         />
       </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <OutcomeCard label="Total committed" value={fmt(totalCost)} sub={`Over ${months} months`} />
-        <OutcomeCard
-          label="Emergency fund delayed"
-          value={efDelay === 99 ? "Cannot reach" : efDelay === 0 ? "No delay" : `${efDelay} mo`}
-          sub="vs current timeline"
-          accent={efDelay === 0 ? "green" : efDelay <= 3 ? "amber" : "red"}
-        />
-        <OutcomeCard
-          label="Savings rate"
-          value={`${Math.max(0, newSavingsRate).toFixed(1)}%`}
-          sub={`${fmtDelta(savingsRateDelta)} from ${snap.savingsRate.toFixed(1)}%`}
-          accent={savingsRateDelta >= -2 ? "green" : savingsRateDelta >= -5 ? "amber" : "red"}
-        />
-        <OutcomeCard
-          label="Net worth in 12 months"
-          value={fmt(newNW12)}
-          sub={`${nwDelta >= 0 ? "+" : ""}${fmt(nwDelta)} vs baseline`}
-          accent={nwDelta >= 0 ? "green" : nwDelta > -3000 ? "amber" : "red"}
-        />
-      </div>
-      <VerdictBanner color={verdictColor} text={verdictText} />
-    </div>
-  );
-}
-
-// ── MODE 2: Buy vs Rent ────────────────────────────────────────────────────────
-
-function Mode2BuyVsRent({ snap }: { snap: FinancialSnapshot }) {
-  const [homePrice,   setHomePrice]   = useState("650000");
-  const [downPct,     setDownPct]     = useState("10");
-  const [mortRate,    setMortRate]    = useState("5.5");
-  const [amortYears,  setAmortYears]  = useState("25");
-  const [propTaxPct,  setPropTaxPct]  = useState("1.2");
-  const [maintPct,    setMaintPct]    = useState("0.8");
-  const [rent,        setRent]        = useState("2400");
-  const [rentIncrPct, setRentIncrPct] = useState("3");
-  const [investRet,   setInvestRet]   = useState("6");
-
-  const price      = Math.max(0, parseFloat(homePrice)  || 650000);
-  const down       = price * Math.max(0, parseFloat(downPct) || 10) / 100;
-  const principal  = price - down;
-  const r          = (parseFloat(mortRate) || 5.5) / 100 / 12;
-  const n          = (parseFloat(amortYears) || 25) * 12;
-  const monthlyMortgage = principal > 0 && r > 0
-    ? principal * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1)
-    : principal / n;
-  const monthlyPropTax  = price * (parseFloat(propTaxPct) || 1.2) / 100 / 12;
-  const monthlyMaint    = price * (parseFloat(maintPct)   || 0.8) / 100 / 12;
-  const totalBuying     = monthlyMortgage + monthlyPropTax + monthlyMaint;
-
-  const monthlyRent  = parseFloat(rent) || 2400;
-  const rentIncr     = (parseFloat(rentIncrPct) || 3) / 100;
-  const invRetPct    = (parseFloat(investRet)   || 6) / 100;
-
-  // Year-by-year simulation
-  let breakEvenYear: number | null = null;
-  let buyNW10 = snap.netWorth, rentNW10 = snap.netWorth;
-  let curRent = monthlyRent;
-  let investedDown = down;
-  for (let y = 1; y <= 30; y++) {
-    const homeValue      = price * Math.pow(1.04, y);
-    const remaining      = principal * (Math.pow(1 + r, n) - Math.pow(1 + r, y * 12)) / (Math.pow(1 + r, n) - 1);
-    const equity         = homeValue - Math.max(0, remaining);
-    const buyDelta       = snap.monthlySavings - totalBuying;
-    buyNW10              = snap.netWorth + equity + buyDelta * 12 * y;
-
-    investedDown         = down * Math.pow(1 + invRetPct, y);
-    const extraFromRent  = (totalBuying - curRent) * 12 * y;
-    rentNW10             = snap.netWorth + investedDown + extraFromRent;
-    curRent             *= (1 + rentIncr);
-    if (breakEvenYear === null && buyNW10 >= rentNW10) breakEvenYear = y;
-  }
-
-  const rentDelta  = totalBuying - monthlyRent;
-  const buyingWins = breakEvenYear !== null && breakEvenYear <= 10;
-
-  return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-5 rounded-2xl border border-gray-100 bg-gray-50/50 p-5">
-        <div className="space-y-3">
-          <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Buying</p>
-          <NumInput label="Home price"     value={homePrice}   onChange={setHomePrice}   prefix="$" />
-          <NumInput label="Down payment"   value={downPct}     onChange={setDownPct}     suffix="%" />
-          <NumInput label="Mortgage rate"  value={mortRate}    onChange={setMortRate}    suffix="%" />
-          <NumInput label="Amortization"   value={amortYears}  onChange={setAmortYears}  suffix="yrs" />
-          <NumInput label="Property tax"   value={propTaxPct}  onChange={setPropTaxPct}  suffix="% /yr" />
-          <NumInput label="Maintenance"    value={maintPct}    onChange={setMaintPct}    suffix="% /yr" />
-        </div>
-        <div className="space-y-3">
-          <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Renting</p>
-          <NumInput label="Monthly rent"       value={rent}        onChange={setRent}        prefix="$" />
-          <NumInput label="Annual rent increase" value={rentIncrPct} onChange={setRentIncrPct} suffix="%" />
-          <NumInput label="Investment return"  value={investRet}   onChange={setInvestRet}   suffix="%" />
+      <div className="flex items-center gap-3">
+        <span className="text-sm font-medium text-gray-700">Cost type</span>
+        <div className="flex overflow-hidden rounded-lg border border-gray-200 text-sm font-medium">
+          {["Monthly", "One-time"].map((t) => (
+            <button
+              key={t}
+              onClick={() => {
+                onChange("isOneTime", t === "One-time");
+                // Reset cost to a sensible default when switching modes
+                if (t === "One-time" && cost <= 100) onChange("cost", 500);
+                if (t === "Monthly"  && cost > 500)  onChange("cost", 55);
+              }}
+              className={`px-3 py-1.5 transition ${(t === "One-time") === isOneTime ? "bg-purple-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}
+            >{t}</button>
+          ))}
         </div>
       </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <OutcomeCard
-          label="Monthly cost (buying)"
-          value={fmt(totalBuying)}
-          sub={`${rentDelta >= 0 ? "+" : ""}${fmt(rentDelta)} vs rent`}
-          accent={rentDelta <= 0 ? "green" : rentDelta < 500 ? "amber" : "red"}
-        />
-        <OutcomeCard
-          label="Break-even point"
-          value={breakEvenYear !== null ? `Year ${breakEvenYear}` : "Never <30yr"}
-          sub="When buying becomes cheaper"
-          accent={breakEvenYear !== null && breakEvenYear <= 7 ? "green" : breakEvenYear !== null ? "amber" : "red"}
-        />
-        <OutcomeCard
-          label="Net worth 10yr — buying"
-          value={fmt(buyNW10)}
-          sub="Equity + savings delta"
-          accent={buyNW10 >= rentNW10 ? "green" : "amber"}
-        />
-        <OutcomeCard
-          label="Net worth 10yr — renting"
-          value={fmt(rentNW10)}
-          sub="Invested down + savings delta"
-          accent={rentNW10 > buyNW10 ? "green" : "amber"}
-        />
-      </div>
-      <VerdictBanner
-        color={buyingWins ? "green" : "blue"}
-        text={buyingWins
-          ? `Buying comes out ahead after ${breakEvenYear} year${breakEvenYear !== 1 ? "s" : ""}. Stay ${breakEvenYear}+ years and buying wins.`
-          : `Renting and investing the difference comes out ahead over 10 years. Buying only wins if you stay ${breakEvenYear ?? "20"}+ years.`}
+      <SliderRow
+        label={isOneTime ? "Purchase price" : "Monthly cost"}
+        value={Math.min(cost, costMax)}
+        min={isOneTime ? 50 : 10}
+        max={costMax}
+        step={costStep}
+        onChange={(v) => onChange("cost", v)}
+        format={fmt}
+      />
+      <SliderRow
+        label={isOneTime ? "Spread over" : "Duration"}
+        value={months} min={1} max={60} step={1}
+        onChange={(v) => onChange("months", v)} format={(v) => `${v} mo`}
       />
     </div>
   );
 }
 
-// ── MODE 3: New Car ────────────────────────────────────────────────────────────
-
-function Mode3NewCar({ snap }: { snap: FinancialSnapshot }) {
-  const [price,    setPrice]    = useState(35000);
-  const [down,     setDown]     = useState(5000);
-  const [tradeIn,  setTradeIn]  = useState(0);
-  const [termMo,   setTermMo]   = useState(60);
-  const [apr,      setApr]      = useState(6.5);
-
-  const principal    = Math.max(0, price - down - tradeIn);
-  const r            = apr / 100 / 12;
-  const monthlyPmt   = principal > 0 && r > 0
-    ? principal * (r * Math.pow(1 + r, termMo)) / (Math.pow(1 + r, termMo) - 1)
-    : principal / termMo;
-  const totalInterest  = Math.max(0, monthlyPmt * termMo - principal);
-  const trueCost       = price - tradeIn + totalInterest;
-  const newMonthlySav  = snap.monthlySavings - monthlyPmt;
-  const newSavRate     = snap.monthlyIncome > 0 ? (newMonthlySav / snap.monthlyIncome) * 100 : 0;
-  const savRateDelta   = newSavRate - snap.savingsRate;
-  const incomeRatio    = snap.monthlyIncome > 0 ? (monthlyPmt / snap.monthlyIncome) * 100 : 20;
-
-  const efCurrent  = snap.liquidAssets;
-  const efTarget   = snap.emergencyFundTarget;
-  const baseEFMo   = snap.monthlySavings > 0 ? Math.max(0, Math.ceil((efTarget - efCurrent) / snap.monthlySavings)) : 999;
-  const newEFMo    = newMonthlySav  > 0 ? Math.max(0, Math.ceil((efTarget - efCurrent) / newMonthlySav))  : 999;
-  const efDelay    = newEFMo === 999 ? 99 : Math.max(0, newEFMo - baseEFMo);
-
-  const verdictColor: Accent = incomeRatio < 10 ? "green" : incomeRatio < 15 ? "amber" : "red";
-  const verdictText =
-    verdictColor === "green"
-      ? `At ${fmt(monthlyPmt)}/mo (${incomeRatio.toFixed(1)}% of income), this car fits comfortably within your budget. Total cost including interest: ${fmt(trueCost)}.`
-      : verdictColor === "amber"
-      ? `At ${fmt(monthlyPmt)}/mo (${incomeRatio.toFixed(1)}% of income), this is manageable but watch your other goals. A larger down payment or trade-in would help.`
-      : `${fmt(monthlyPmt)}/mo is ${incomeRatio.toFixed(1)}% of your income — above the 15% recommendation. Consider a cheaper vehicle, larger down payment, or longer term.`;
-
+function InputsBuyRent({ inputs, onChange }: InputsProps) {
   return (
-    <div className="space-y-5">
-      <div className="rounded-2xl border border-gray-100 bg-gray-50/50 p-5 space-y-5">
-        <SliderRow label="Purchase price"     value={price}   min={10000} max={80000} step={1000} onChange={setPrice}   format={fmt} />
-        <SliderRow label="Down payment"       value={down}    min={0}     max={20000} step={500}  onChange={setDown}    format={fmt} />
-        <SliderRow label="Trade-in value"     value={tradeIn} min={0}     max={15000} step={500}  onChange={setTradeIn} format={fmt} />
-        <SliderRow label="Loan term"          value={termMo}  min={24}    max={84}    step={12}   onChange={setTermMo}  format={(v) => `${v} months`} />
-        <SliderRow label="Interest rate (APR)" value={apr}   min={3}     max={12}    step={0.5}  onChange={setApr}     format={(v) => `${v}%`} />
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-3">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Buying</p>
+          <NumInput label="Home price"    value={String(inputs.homePrice  ?? 650000)} onChange={(v) => onChange("homePrice",  v)} prefix="$" />
+          <NumInput label="Down payment"  value={String(inputs.downPct    ?? 10)}     onChange={(v) => onChange("downPct",    v)} suffix="%" />
+          <NumInput label="Mortgage rate" value={String(inputs.mortRate   ?? 5.5)}    onChange={(v) => onChange("mortRate",   v)} suffix="%" />
+          <NumInput label="Amortization"  value={String(inputs.amortYears ?? 25)}     onChange={(v) => onChange("amortYears", v)} suffix="yrs" />
+          <NumInput label="Property tax"  value={String(inputs.propTaxPct ?? 1.2)}    onChange={(v) => onChange("propTaxPct", v)} suffix="% /yr" />
+          <NumInput label="Maintenance"   value={String(inputs.maintPct   ?? 0.8)}    onChange={(v) => onChange("maintPct",   v)} suffix="% /yr" />
+        </div>
+        <div className="space-y-3">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Renting</p>
+          <NumInput label="Monthly rent"         value={String(inputs.rent        ?? 2400)} onChange={(v) => onChange("rent",        v)} prefix="$" />
+          <NumInput label="Annual rent increase"  value={String(inputs.rentIncrPct ?? 3)}   onChange={(v) => onChange("rentIncrPct", v)} suffix="%" />
+          <NumInput label="Investment return"     value={String(inputs.investRet   ?? 6)}   onChange={(v) => onChange("investRet",   v)} suffix="%" />
+        </div>
       </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <OutcomeCard
-          label="Monthly payment"
-          value={fmt(monthlyPmt)}
-          sub={`${incomeRatio.toFixed(1)}% of monthly income`}
-          accent={verdictColor}
-        />
-        <OutcomeCard
-          label="True cost (incl. interest)"
-          value={fmt(trueCost)}
-          sub={`${fmt(totalInterest)} in interest`}
-          accent={totalInterest > 5000 ? "amber" : "default"}
-        />
-        <OutcomeCard
-          label="Savings rate"
-          value={`${Math.max(0, newSavRate).toFixed(1)}%`}
-          sub={`${fmtDelta(savRateDelta)} from ${snap.savingsRate.toFixed(1)}%`}
-          accent={savRateDelta >= -2 ? "green" : savRateDelta >= -5 ? "amber" : "red"}
-        />
-        <OutcomeCard
-          label="Emergency fund delayed"
-          value={efDelay === 99 ? "Cannot reach" : efDelay === 0 ? "No delay" : `${efDelay} mo`}
-          sub="vs current timeline"
-          accent={efDelay === 0 ? "green" : efDelay <= 3 ? "amber" : "red"}
-        />
-      </div>
-      <VerdictBanner color={verdictColor} text={verdictText} />
     </div>
   );
 }
 
-// ── MODE 4: Savings Levers ─────────────────────────────────────────────────────
+function InputsCar({ inputs, onChange }: InputsProps) {
+  return (
+    <div className="space-y-4">
+      <SliderRow label="Purchase price"      value={num(inputs.price,   35000)} min={10000} max={80000} step={1000} onChange={(v) => onChange("price",   v)} format={fmt} />
+      <SliderRow label="Down payment"        value={num(inputs.down,    5000)}  min={0}     max={20000} step={500}  onChange={(v) => onChange("down",    v)} format={fmt} />
+      <SliderRow label="Trade-in value"      value={num(inputs.tradeIn, 0)}     min={0}     max={15000} step={500}  onChange={(v) => onChange("tradeIn", v)} format={fmt} />
+      <SliderRow label="Loan term"           value={num(inputs.termMo,  60)}    min={24}    max={84}    step={12}   onChange={(v) => onChange("termMo",  v)} format={(v) => `${v} months`} />
+      <SliderRow label="Interest rate (APR)" value={num(inputs.apr,     6.5)}   min={3}     max={12}    step={0.5}  onChange={(v) => onChange("apr",     v)} format={(v) => `${v}%`} />
+    </div>
+  );
+}
 
-function Mode4SavingsLevers({ snap }: { snap: FinancialSnapshot }) {
-  const [cutSubs,      setCutSubs]      = useState(0);
-  const [cutDining,    setCutDining]    = useState(0);
-  const [extraSavings, setExtraSavings] = useState(0);
-  const [extraDebt,    setExtraDebt]    = useState(0);
+function InputsLevers({ inputs, onChange }: InputsProps) {
+  return (
+    <div className="space-y-4">
+      <SliderRow label="Cut subscriptions"         value={num(inputs.cutSubs,      0)} min={0} max={200} step={10} onChange={(v) => onChange("cutSubs",      v)} format={fmt} />
+      <SliderRow label="Reduce dining out"          value={num(inputs.cutDining,    0)} min={0} max={300} step={10} onChange={(v) => onChange("cutDining",    v)} format={fmt} />
+      <SliderRow label="Increase savings transfer"  value={num(inputs.extraSavings, 0)} min={0} max={500} step={25} onChange={(v) => onChange("extraSavings", v)} format={fmt} />
+      <SliderRow label="Extra debt payment"         value={num(inputs.extraDebt,    0)} min={0} max={400} step={25} onChange={(v) => onChange("extraDebt",    v)} format={fmt} />
+    </div>
+  );
+}
 
-  const totalReclaimed  = cutSubs + cutDining + extraSavings + extraDebt;
-  const newMonthlySav   = snap.monthlySavings + cutSubs + cutDining + extraSavings;
+function InputsSalary({ inputs, onChange, snap }: InputsProps & { snap: FinancialSnapshot }) {
+  const currentAnnual = Math.round(snap.monthlyIncome * 12 / 1000) * 1000 || 60000;
+  const newAnnual     = num(inputs.newAnnual, currentAnnual);
+  const sliderMin     = Math.max(20000, Math.round(currentAnnual * 0.5 / 1000) * 1000);
+  const sliderMax     = Math.round(currentAnnual * 2 / 1000) * 1000 + 20000;
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl bg-purple-50 px-4 py-3 flex items-center justify-between">
+        <div>
+          <p className="text-xs font-medium text-purple-500">Current annual income</p>
+          <p className="text-base font-bold text-purple-800">{fmt(currentAnnual)}</p>
+        </div>
+        <p className="text-xs text-gray-400">{fmt(snap.monthlyIncome)} / mo</p>
+      </div>
+      <SliderRow
+        label="New annual salary" value={newAnnual}
+        min={sliderMin} max={sliderMax} step={1000}
+        onChange={(v) => onChange("newAnnual", v)} format={fmt}
+      />
+      <SliderRow
+        label="Effective in" value={num(inputs.effectiveInMo, 0)}
+        min={0} max={11} step={1}
+        onChange={(v) => onChange("effectiveInMo", v)}
+        format={(v) => v === 0 ? "Immediately" : `${v} month${v !== 1 ? "s" : ""}`}
+      />
+    </div>
+  );
+}
 
-  const efTarget   = snap.emergencyFundTarget;
-  const efCurrent  = snap.liquidAssets;
-  const efMo       = newMonthlySav > 0 ? Math.max(0, Math.ceil((efTarget - efCurrent) / newMonthlySav)) : 999;
+function InputsPayoff({ inputs, onChange, snap }: InputsProps & { snap: FinancialSnapshot }) {
+  const lumpSum       = num(inputs.lumpSum, 5000);
+  const debtBal       = Math.max(snap.totalDebt, 0);
+  const lumpSafeLimit = snap.liquidAssets - snap.emergencyFundTarget;
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl bg-red-50 px-4 py-3 flex items-center justify-between">
+        <div>
+          <p className="text-xs font-medium text-red-400">Current total debt</p>
+          <p className="text-base font-bold text-red-700">{fmt(debtBal)}</p>
+        </div>
+        <div className="text-right">
+          <p className="text-xs text-gray-400">Safe to deploy</p>
+          <p className="text-sm font-semibold text-gray-700">{lumpSafeLimit > 0 ? fmt(lumpSafeLimit) : "—"}</p>
+        </div>
+      </div>
+      <SliderRow
+        label="Lump sum payment" value={lumpSum}
+        min={0} max={Math.max(debtBal, 20000)} step={500}
+        onChange={(v) => onChange("lumpSum", v)} format={fmt}
+      />
+      <SliderRow
+        label="Debt APR" value={num(inputs.apr, 8)}
+        min={3} max={25} step={0.5}
+        onChange={(v) => onChange("apr", v)} format={(v) => `${v}%`}
+      />
+    </div>
+  );
+}
 
-  // Debt payoff simulation (8% APR default)
-  const debtBal        = Math.max(snap.totalDebt, 0);
-  const debtRate       = 0.08 / 12;
-  const minDebtPayment = Math.max(25, debtBal * 0.02);
-  const totalDebtPmt   = minDebtPayment + extraDebt;
-  let debtMonths = 0;
-  if (debtBal > 0) {
-    let bal = debtBal;
-    while (bal > 0 && debtMonths < 600) {
-      bal = bal * (1 + debtRate) - totalDebtPmt;
-      debtMonths++;
-    }
+function TemplateInputs({
+  templateId, inputs, onChange, snap,
+}: {
+  templateId: TemplateId;
+  inputs: Record<string, number | string | boolean>;
+  onChange: (k: string, v: number | string | boolean) => void;
+  snap: FinancialSnapshot;
+}) {
+  switch (templateId) {
+    case "purchase": return <InputsPurchase inputs={inputs} onChange={onChange} />;
+    case "buyrent":  return <InputsBuyRent  inputs={inputs} onChange={onChange} />;
+    case "car":      return <InputsCar      inputs={inputs} onChange={onChange} />;
+    case "levers":   return <InputsLevers   inputs={inputs} onChange={onChange} />;
+    case "salary":   return <InputsSalary   inputs={inputs} onChange={onChange} snap={snap} />;
+    case "payoff":   return <InputsPayoff   inputs={inputs} onChange={onChange} snap={snap} />;
   }
+}
 
-  const vacGoal  = 3000;
-  const vacMo    = newMonthlySav > 0 ? Math.ceil(vacGoal / newMonthlySav) : 999;
-  const nw12     = snap.netWorth + newMonthlySav * 12;
+// ── Projected Impact (compact, in editor) ─────────────────────────────────────
+
+function ProjectedImpact({
+  templateId, inputs, snap,
+}: {
+  templateId: TemplateId;
+  inputs: Record<string, number | string | boolean>;
+  snap: FinancialSnapshot;
+}) {
+  const metrics = getCompactMetrics(templateId, inputs, snap);
+  if (metrics.length === 0) return null;
+  return (
+    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-3">Projected impact</p>
+      <div className="space-y-2">
+        {metrics.map((m) => (
+          <div key={m.label} className="flex items-center justify-between">
+            <span className="text-sm text-gray-600">{m.label}</span>
+            <span className={`text-sm font-semibold ${
+              m.positive === true  ? "text-emerald-600" :
+              m.positive === false ? "text-red-500" :
+              "text-gray-700"
+            }`}>{m.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Combined Impact Card ──────────────────────────────────────────────────────
+
+function CombinedImpactCard({
+  snap, combined, enabledCount,
+}: {
+  snap: FinancialSnapshot;
+  combined: ReturnType<typeof computeCombinedImpact>;
+  enabledCount: number;
+}) {
+  if (enabledCount === 0) return null;
+
+  const baseNW12   = snap.netWorth + snap.monthlySavings * 12;
+  const newNW12    = combined.newNetWorth12;
+  const nwDelta    = newNW12 - baseNW12;
+
+  // Emergency fund months: how many months of savings to reach target
+  const efTarget = snap.emergencyFundTarget;
+  const baseEFMo = snap.monthlySavings > 0
+    ? Math.max(0, Math.ceil((efTarget - snap.liquidAssets) / snap.monthlySavings))
+    : 0;
+  const newEFMo  = combined.newMonthlySavings > 0
+    ? Math.max(0, Math.ceil((efTarget - snap.liquidAssets) / combined.newMonthlySavings))
+    : 0;
+
+  const tiles = [
+    {
+      label:    "Monthly cash flow",
+      baseline: `baseline ${fmt(snap.monthlySavings)}`,
+      hero:     fmt(combined.newMonthlySavings),
+      delta:    `${combined.newMonthlySavings - snap.monthlySavings >= 0 ? "+" : ""}${fmt(combined.newMonthlySavings - snap.monthlySavings)}/mo with active scenarios`,
+      negative: combined.newMonthlySavings < snap.monthlySavings,
+    },
+    {
+      label:    "Savings rate",
+      baseline: `baseline ${snap.savingsRate.toFixed(0)}%`,
+      hero:     `${Math.max(0, combined.newSavingsRate).toFixed(0)}%`,
+      delta:    `${combined.savingsRateDelta >= 0 ? "+" : ""}${combined.savingsRateDelta.toFixed(0)} pts`,
+      negative: combined.savingsRateDelta < 0,
+    },
+    {
+      label:    "Emergency fund target",
+      baseline: `baseline ${baseEFMo} mo`,
+      hero:     `${newEFMo} mo`,
+      delta:    "at current pace",
+      negative: newEFMo > baseEFMo,
+    },
+    {
+      label:    "Net worth in 12 mo",
+      baseline: `baseline ${baseNW12 >= 0 ? "+" : ""}${fmt(Math.round(baseNW12 - snap.netWorth))}`,
+      hero:     `${newNW12 - snap.netWorth >= 0 ? "+" : ""}${fmt(Math.round(newNW12 - snap.netWorth))}`,
+      delta:    `${nwDelta >= 0 ? "+" : ""}${fmt(Math.round(nwDelta))} vs baseline`,
+      negative: nwDelta < 0,
+    },
+  ];
 
   return (
-    <div className="space-y-5">
-      {totalReclaimed > 0 && (
-        <div className="flex justify-center">
-          <div className="inline-flex items-center gap-2 rounded-full bg-purple-600 px-4 py-2 text-sm font-semibold text-white shadow-sm">
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-            </svg>
-            {fmt(totalReclaimed)} / month reclaimed
+    <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm mb-6">
+      <div className="flex items-center gap-3 mb-4">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-400">Combined impact</p>
+        <span className="rounded-full bg-purple-100 px-2.5 py-0.5 text-[11px] font-bold text-purple-700">
+          {enabledCount} active
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {tiles.map((tile) => (
+          <div key={tile.label} className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+            <p className="text-[11px] font-medium text-gray-400 mb-1">{tile.label}</p>
+            <p className="text-[11px] text-gray-400">{tile.baseline}</p>
+            <p className={`text-xl font-bold leading-tight mt-0.5 ${tile.negative ? "text-red-600" : "text-gray-900"}`}>
+              {tile.hero}
+            </p>
+            <p className={`text-[11px] mt-0.5 font-medium ${tile.negative ? "text-red-500" : "text-emerald-600"}`}>
+              {tile.delta}
+            </p>
           </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Scenario card (left column) ───────────────────────────────────────────────
+
+function ScenarioCard({
+  scenario, snap, isActive, onToggle, onDelete, onEdit, onViewFullAnalysis,
+}: {
+  scenario: WhatIfScenario;
+  snap: FinancialSnapshot;
+  isActive: boolean;
+  onToggle: () => void;
+  onDelete: () => void;
+  onEdit: () => void;
+  onViewFullAnalysis: () => void;
+}) {
+  const tmpl      = getTemplate(scenario.templateId);
+  const impact    = tmpl ? tmpl.impact(scenario.inputs, snap) : null;
+  const colorDef  = SCENARIO_COLORS.find((c) => c.id === scenario.color) ?? SCENARIO_COLORS[0];
+  const description = getScenarioDescription(scenario.templateId, scenario.inputs, snap);
+
+  const netMonthly = impact
+    ? impact.monthlyIncomeDelta - impact.monthlyExpenseDelta
+    : 0;
+  const newSavRate = (snap.monthlyIncome + (impact?.monthlyIncomeDelta ?? 0)) > 0
+    ? ((snap.monthlySavings + netMonthly) / (snap.monthlyIncome + (impact?.monthlyIncomeDelta ?? 0))) * 100
+    : 0;
+  const savRateDelta = newSavRate - snap.savingsRate;
+
+  return (
+    <div
+      className={`group cursor-pointer rounded-xl border p-4 transition ${
+        isActive
+          ? "border-purple-300 bg-purple-50 shadow-sm"
+          : "border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm"
+      }`}
+      onClick={onEdit}
+    >
+      {/* Top row */}
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className={`h-2 w-2 shrink-0 rounded-full ${colorDef.dot} ${!scenario.enabled ? "opacity-30" : ""}`} />
+          <span className="text-sm font-bold text-gray-900 truncate">{scenario.name}</span>
         </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${colorDef.bg} ${colorDef.text}`}>
+            {tmpl?.label ?? scenario.templateId}
+          </span>
+          {impact && (
+            <span className={`text-xs font-bold ${netMonthly >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+              {netMonthly >= 0 ? "+" : ""}{fmt(netMonthly)}/mo
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Description */}
+      {description && (
+        <p className="text-xs text-gray-500 leading-relaxed mb-3 line-clamp-2">{description}</p>
       )}
 
-      <div className="rounded-2xl border border-gray-100 bg-gray-50/50 p-5 space-y-5">
-        <SliderRow label="Cut subscriptions"       value={cutSubs}      min={0} max={200} step={10} onChange={setCutSubs}      format={fmt} />
-        <SliderRow label="Reduce dining out"       value={cutDining}    min={0} max={300} step={10} onChange={setCutDining}    format={fmt} />
-        <SliderRow label="Increase savings transfer" value={extraSavings} min={0} max={500} step={25} onChange={setExtraSavings} format={fmt} />
-        <SliderRow label="Extra debt payment"      value={extraDebt}    min={0} max={400} step={25} onChange={setExtraDebt}    format={fmt} />
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <OutcomeCard
-          label={`Emergency fund (${fmt(efTarget)} goal)`}
-          value={efMo === 0 ? "Achieved" : efMo === 999 ? "—" : addMonthsLabel(efMo)}
-          sub={efMo === 999 ? "Increase savings to reach" : efMo === 0 ? "Already funded" : `~${efMo} months away`}
-          accent={efMo <= 6 ? "green" : efMo <= 18 ? "amber" : "red"}
-        />
-        <OutcomeCard
-          label="Debt-free date"
-          value={debtBal <= 0 ? "No debt" : debtMonths >= 600 ? "100+ yrs" : addMonthsLabel(debtMonths)}
-          sub={debtBal <= 0 ? "" : `Based on ${fmt(debtBal)} balance`}
-          accent={debtMonths <= 24 ? "green" : debtMonths <= 60 ? "amber" : "red"}
-        />
-        <OutcomeCard
-          label="Vacation fund ($3,000)"
-          value={vacMo === 999 ? "—" : `${vacMo} months`}
-          sub={vacMo === 999 ? "Increase savings" : `By ${addMonthsLabel(vacMo)}`}
-          accent={vacMo <= 6 ? "green" : vacMo <= 12 ? "amber" : "red"}
-        />
-        <OutcomeCard
-          label="Net worth in 12 months"
-          value={fmt(nw12)}
-          sub={`${nw12 >= snap.netWorth ? "+" : ""}${fmt(nw12 - snap.netWorth)} from today`}
-          accent={nw12 > snap.netWorth ? "green" : "red"}
-        />
-      </div>
-    </div>
-  );
-}
-
-// ── MODE 5: Salary Change ──────────────────────────────────────────────────────
-
-function Mode5SalaryChange({ snap }: { snap: FinancialSnapshot }) {
-  const currentAnnual = Math.round(snap.monthlyIncome * 12 / 1000) * 1000 || 60000;
-  const [newAnnual,      setNewAnnual]      = useState(currentAnnual);
-  const [effectiveInMo,  setEffectiveInMo]  = useState(0);
-
-  const newMonthlyIncome  = newAnnual / 12;
-  const incomeChange      = newMonthlyIncome - snap.monthlyIncome;
-  const newMonthlySav     = snap.monthlySavings + incomeChange;
-  const newSavRate        = newMonthlyIncome > 0 ? (newMonthlySav / newMonthlyIncome) * 100 : 0;
-  const savRateDelta      = newSavRate - snap.savingsRate;
-  const isRaise           = incomeChange >= 0;
-
-  const efCurrent  = snap.liquidAssets;
-  const efTarget   = snap.emergencyFundTarget;
-  const baseEFMo   = snap.monthlySavings > 0 ? Math.max(0, Math.ceil((efTarget - efCurrent) / snap.monthlySavings)) : 999;
-  const newEFMo    = newMonthlySav  > 0 ? Math.max(0, Math.ceil((efTarget - efCurrent) / newMonthlySav))  : 999;
-  const efChange   = baseEFMo === 999 ? -99 : newEFMo === 999 ? 99 : newEFMo - baseEFMo;
-
-  const nw12Baseline = snap.netWorth + snap.monthlySavings * 12;
-  const nw12New      = snap.netWorth
-    + snap.monthlySavings * effectiveInMo
-    + newMonthlySav * (12 - effectiveInMo);
-  const nwDelta = nw12New - nw12Baseline;
-
-  const verdictColor: Accent = isRaise ? "green" : incomeChange > -snap.monthlyIncome * 0.2 ? "amber" : "red";
-  const verdictText = isRaise
-    ? `A ${fmt(incomeChange)}/mo raise boosts your savings rate to ${Math.max(0, newSavRate).toFixed(1)}% and adds ${fmt(Math.abs(nwDelta))} to your net worth over 12 months.`
-    : `This ${fmt(Math.abs(incomeChange))}/mo reduction drops your savings rate to ${Math.max(0, newSavRate).toFixed(1)}% and your emergency fund timeline extends by ${Math.abs(efChange)} months.`;
-
-  const sliderMin = Math.max(20000, Math.round(currentAnnual * 0.5 / 1000) * 1000);
-  const sliderMax = Math.round(currentAnnual * 2 / 1000) * 1000 + 20000;
-
-  return (
-    <div className="space-y-5">
-      <div className="rounded-2xl border border-gray-100 bg-gray-50/50 p-5 space-y-5">
-        <div className="rounded-xl bg-purple-50 px-4 py-3 flex items-center justify-between">
-          <div>
-            <p className="text-xs font-medium text-purple-500">Current annual income</p>
-            <p className="text-lg font-bold text-purple-800">{fmt(currentAnnual)}</p>
-          </div>
-          <div className="text-right text-xs text-gray-400">
-            <p>{fmt(snap.monthlyIncome)} / mo</p>
-          </div>
+      {/* Metrics row + Stack toggle */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-3 text-[11px] text-gray-500">
+          {impact && (
+            <span>
+              Savings rate{" "}
+              <span className={`font-semibold ${savRateDelta >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+                {savRateDelta >= 0 ? "+" : ""}{savRateDelta.toFixed(0)}%
+              </span>
+            </span>
+          )}
+          {impact?.oneTimeCost ? (
+            <span>
+              Down payment{" "}
+              <span className="font-semibold text-gray-700">{fmt(impact.oneTimeCost)}</span>
+            </span>
+          ) : impact && (
+            <span>
+              Duration{" "}
+              <span className="font-semibold text-gray-700">
+                {scenario.templateId === "purchase" ? `${num(scenario.inputs.months, 24)} mo` : "ongoing"}
+              </span>
+            </span>
+          )}
         </div>
-        <SliderRow
-          label="New annual salary"
-          value={newAnnual}
-          min={sliderMin} max={sliderMax} step={1000}
-          onChange={setNewAnnual} format={fmt}
-        />
-        <SliderRow
-          label="Effective in"
-          value={effectiveInMo} min={0} max={11} step={1}
-          onChange={setEffectiveInMo}
-          format={(v) => v === 0 ? "Immediately" : `${v} month${v !== 1 ? "s" : ""}`}
-        />
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <OutcomeCard
-          label="Monthly income change"
-          value={`${incomeChange >= 0 ? "+" : ""}${fmt(incomeChange)}`}
-          sub={`${fmt(newMonthlyIncome)}/mo new income`}
-          accent={isRaise ? "green" : "red"}
-        />
-        <OutcomeCard
-          label="New savings rate"
-          value={`${Math.max(0, newSavRate).toFixed(1)}%`}
-          sub={`${fmtDelta(savRateDelta)} from ${snap.savingsRate.toFixed(1)}%`}
-          accent={newSavRate >= 20 ? "green" : newSavRate >= 10 ? "amber" : "red"}
-        />
-        <OutcomeCard
-          label="Emergency fund"
-          value={Math.abs(efChange) === 0 ? "Unchanged" : `${Math.abs(efChange)} mo ${efChange < 0 ? "faster" : "slower"}`}
-          sub={efChange < 0 ? "Accelerated" : efChange === 0 ? "" : "Delayed"}
-          accent={efChange < 0 ? "green" : efChange === 0 ? "default" : "amber"}
-        />
-        <OutcomeCard
-          label="Net worth in 12 months"
-          value={fmt(nw12New)}
-          sub={`${nwDelta >= 0 ? "+" : ""}${fmt(nwDelta)} vs baseline`}
-          accent={nwDelta >= 0 ? "green" : "red"}
-        />
-      </div>
-      <VerdictBanner color={verdictColor} text={verdictText} />
-    </div>
-  );
-}
-
-// ── MODE 6: Pay Off Debt Lump Sum ──────────────────────────────────────────────
-
-function Mode6PayoffLump({ snap }: { snap: FinancialSnapshot }) {
-  const [lumpSum, setLumpSum] = useState(5000);
-  const [apr,     setApr]     = useState(8);
-
-  const debtBal    = Math.max(snap.totalDebt, 0);
-  const r          = apr / 100 / 12;
-  const minPayment = Math.max(25, debtBal * 0.02);
-
-  // Simulate baseline
-  let baseMo = 0, baseInterest = 0;
-  if (debtBal > 0) {
-    let bal = debtBal;
-    while (bal > 0 && baseMo < 600) {
-      baseInterest += bal * r;
-      bal = bal * (1 + r) - minPayment;
-      baseMo++;
-    }
-  }
-
-  // Simulate with lump sum
-  const newBal   = Math.max(0, debtBal - lumpSum);
-  let newMo = 0, newInterest = 0;
-  if (newBal > 0) {
-    let bal = newBal;
-    while (bal > 0 && newMo < 600) {
-      newInterest += bal * r;
-      bal = bal * (1 + r) - minPayment;
-      newMo++;
-    }
-  }
-
-  const monthsSaved    = Math.max(0, baseMo - newMo);
-  const interestSaved  = Math.max(0, baseInterest - newInterest);
-  const lumpSafeLimit  = snap.liquidAssets - snap.emergencyFundTarget;
-  const isLargeChunk   = lumpSum > snap.liquidAssets * 0.5;
-
-  const verdictColor: "green" | "amber" | "red" | "blue" =
-    debtBal <= 0  ? "green" :
-    lumpSum <= 0  ? "blue" :
-    isLargeChunk  ? "amber" : "green";
-
-  const verdictText =
-    debtBal <= 0
-      ? "Great news — you have no tracked debt. Use this to model a future scenario."
-      : lumpSum <= 0
-      ? "Adjust the lump sum to see the impact."
-      : isLargeChunk
-      ? `Paying ${fmt(lumpSum)} saves ${fmt(interestSaved)} in interest and gets you debt-free ${monthsSaved} months sooner. This uses a large portion of liquid assets — keep at least ${fmt(snap.emergencyFundTarget)} in your emergency fund.`
-      : `Paying ${fmt(lumpSum)} now saves ${fmt(interestSaved)} in interest and gets you debt-free by ${addMonthsLabel(newMo)} — ${monthsSaved} months sooner.`;
-
-  return (
-    <div className="space-y-5">
-      <div className="rounded-2xl border border-gray-100 bg-gray-50/50 p-5 space-y-5">
-        <div className="rounded-xl bg-red-50 px-4 py-3 flex items-center justify-between">
-          <div>
-            <p className="text-xs font-medium text-red-400">Current total debt</p>
-            <p className="text-lg font-bold text-red-700">{fmt(debtBal)}</p>
-          </div>
-          <div className="text-right">
-            <p className="text-xs text-gray-400">Safe to deploy</p>
-            <p className="text-sm font-semibold text-gray-700">{lumpSafeLimit > 0 ? fmt(lumpSafeLimit) : "—"}</p>
-          </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-gray-400">Stack</span>
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggle(); }}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+              scenario.enabled ? "bg-purple-600" : "bg-gray-200"
+            }`}
+            title={scenario.enabled ? "Remove from combined" : "Add to combined"}
+          >
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
+              scenario.enabled ? "translate-x-4" : "translate-x-0"
+            }`} />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            className="rounded p-1 text-gray-300 hover:text-red-400 transition opacity-0 group-hover:opacity-100"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
-        <SliderRow
-          label="Lump sum payment"
-          value={lumpSum}
-          min={0}
-          max={Math.max(debtBal, 20000)}
-          step={500}
-          onChange={setLumpSum}
-          format={fmt}
-        />
-        <SliderRow
-          label="Debt APR"
-          value={apr} min={3} max={25} step={0.5}
-          onChange={setApr}
-          format={(v) => `${v}%`}
-        />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <OutcomeCard
-          label="Months saved"
-          value={debtBal <= 0 ? "No debt" : `${monthsSaved} mo`}
-          sub={debtBal <= 0 ? "" : `Debt-free by ${addMonthsLabel(newMo)}`}
-          accent={monthsSaved >= 12 ? "green" : monthsSaved >= 3 ? "amber" : "default"}
-        />
-        <OutcomeCard
-          label="Interest saved"
-          value={fmt(interestSaved)}
-          sub="Pure wealth gain"
-          accent={interestSaved >= 1000 ? "green" : interestSaved >= 100 ? "amber" : "default"}
-        />
-        <OutcomeCard
-          label="Remaining debt"
-          value={fmt(newBal)}
-          sub={`Down from ${fmt(debtBal)}`}
-          accent={newBal === 0 ? "green" : newBal < debtBal * 0.5 ? "amber" : "default"}
-        />
-        <OutcomeCard
-          label="Net worth impact"
-          value={`+${fmt(interestSaved)}`}
-          sub="Interest savings = wealth"
-          accent={interestSaved >= 1000 ? "green" : "default"}
-        />
-      </div>
-      <VerdictBanner color={verdictColor} text={verdictText} />
-    </div>
-  );
-}
-
-// ── mode config ────────────────────────────────────────────────────────────────
-
-const MODES = [
-  { id: "purchase", label: "New purchase",   free: true  },
-  { id: "buyrent",  label: "Buy vs rent",    free: false },
-  { id: "car",      label: "New car",        free: false },
-  { id: "levers",   label: "Savings levers", free: false },
-  { id: "salary",   label: "Salary change",  free: false },
-  { id: "payoff",   label: "Pay off debt",   free: false },
-];
-
-// ── locked overlay ─────────────────────────────────────────────────────────────
-
-function LockedOverlay({ onUpgrade }: { onUpgrade: () => void }) {
-  return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl backdrop-blur-[3px] bg-white/70">
-      <div className="flex flex-col items-center gap-3 text-center px-6">
-        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-purple-100">
-          <svg className="h-6 w-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-          </svg>
-        </div>
-        <div>
-          <p className="font-semibold text-gray-900">Pro feature</p>
-          <p className="mt-1 text-sm text-gray-500 max-w-[220px]">Upgrade to model this scenario against your real financial data.</p>
-        </div>
+      {/* Action buttons */}
+      <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100" onClick={(e) => e.stopPropagation()}>
         <button
-          onClick={onUpgrade}
-          className="rounded-lg bg-purple-600 px-5 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
+          onClick={onViewFullAnalysis}
+          className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:border-purple-300 hover:text-purple-700 transition text-left"
         >
-          Upgrade to Pro
+          View full analysis →
+        </button>
+        <button
+          onClick={onEdit}
+          className="rounded-lg px-3 py-1.5 text-xs font-medium text-gray-400 hover:text-gray-700 transition"
+        >
+          Edit
         </button>
       </div>
     </div>
   );
 }
 
-// ── main inner component (uses useSearchParams) ────────────────────────────────
+// ── Template switcher pills ───────────────────────────────────────────────────
 
-function WhatIfInner() {
-  const searchParams  = useSearchParams();
-  const router        = useRouter();
-  const pathname      = usePathname();
+const TEMPLATE_LABEL_SHORT: Record<TemplateId, string> = {
+  purchase: "New purchase",
+  payoff:   "Pay off debt",
+  salary:   "Salary change",
+  buyrent:  "Buy vs rent",
+  car:      "New car",
+  levers:   "Savings levers",
+};
+
+function TemplateSwitcher({
+  activeId, isPro, onSelect,
+}: {
+  activeId: TemplateId;
+  isPro: boolean;
+  onSelect: (id: TemplateId) => void;
+}) {
+  const order: TemplateId[] = ["purchase", "payoff", "salary", "buyrent", "car", "levers"];
+  return (
+    <div>
+      <p className="text-sm font-medium text-gray-700 mb-2">Template</p>
+      <div className="grid grid-cols-2 gap-2">
+        {order.map((id) => {
+          const locked  = !isPro && !TEMPLATES.find((t) => t.id === id)?.free;
+          const isActive = id === activeId;
+          return (
+            <button
+              key={id}
+              onClick={() => onSelect(id)}
+              className={`relative rounded-lg px-3 py-2 text-sm font-medium text-left transition ${
+                isActive
+                  ? "border border-purple-400 bg-purple-50 text-purple-700"
+                  : locked
+                  ? "border border-gray-100 bg-gray-50 text-gray-400 cursor-default"
+                  : "border border-gray-200 bg-white text-gray-700 hover:border-gray-300"
+              }`}
+            >
+              {TEMPLATE_LABEL_SHORT[id]}
+              {locked && !isActive && (
+                <span className="absolute top-1.5 right-1.5 rounded-full bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-600">Pro</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Editor panel (right column) ───────────────────────────────────────────────
+
+function EditorPanel({
+  panel, snap, isPro, saving, hasUnsaved,
+  onInputChange, onNameChange, onTemplateChange, onSave, onDelete, onClose, onViewFullAnalysis,
+}: {
+  panel: Exclude<PanelState, { mode: "empty" } | { mode: "fullAnalysis" }>;
+  snap: FinancialSnapshot;
+  isPro: boolean;
+  saving: boolean;
+  hasUnsaved: boolean;
+  onInputChange: (k: string, v: number | string | boolean) => void;
+  onNameChange: (name: string) => void;
+  onTemplateChange: (id: TemplateId) => void;
+  onSave: () => void;
+  onDelete?: () => void;
+  onClose: () => void;
+  onViewFullAnalysis?: () => void;
+}) {
+  const templateId = panel.templateId;
+  const aiQuestion = getAiQuestion(templateId);
+  const isNew      = panel.mode === "new";
+
+  // Key changes whenever the user switches between scenarios so the slide-in
+  // animation re-triggers on each new edit session.
+  const animKey = panel.mode === "edit" ? panel.scenario.id : "new";
+
+  return (
+    <>
+      {/* Keyframe for the slide-in entrance */}
+      <style>{`
+        @keyframes editorSlideIn {
+          from { opacity: 0; transform: translateY(12px) scale(0.98); }
+          to   { opacity: 1; transform: translateY(0)    scale(1);    }
+        }
+        .editor-slide-in { animation: editorSlideIn 0.22s ease-out; }
+      `}</style>
+
+      <div
+        key={animKey}
+        className="editor-slide-in rounded-2xl border border-purple-200 bg-white shadow-xl ring-1 ring-purple-100 overflow-hidden"
+      >
+        {/* ── Purple header ── */}
+        <div className="bg-gradient-to-r from-purple-600 to-purple-700 px-5 py-4">
+          <div className="flex items-center justify-between">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-purple-200 mb-0.5">
+                {isNew ? "New scenario" : "Editing scenario"}
+              </p>
+              <h3 className="text-base font-bold text-white leading-tight truncate">
+                {panel.name || (isNew ? "Untitled" : "Scenario")}
+              </h3>
+            </div>
+            <div className="flex items-center gap-2 shrink-0 ml-3">
+              {!isNew && onDelete && (
+                <button
+                  onClick={onDelete}
+                  className="rounded-lg px-2.5 py-1 text-[11px] font-semibold text-purple-200 hover:bg-purple-500 hover:text-white transition"
+                >
+                  Delete
+                </button>
+              )}
+              <button
+                onClick={onClose}
+                className="flex h-7 w-7 items-center justify-center rounded-full text-purple-200 hover:bg-purple-500 hover:text-white transition"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          {/* Edit / Full analysis tabs — only shown when editing an existing scenario */}
+          {!isNew && onViewFullAnalysis && (
+            <div className="flex items-center gap-1 mt-3">
+              <button className="rounded-lg px-3 py-1.5 text-[11px] font-semibold text-white bg-white/20 border border-white/30 cursor-default">
+                Edit
+              </button>
+              <button
+                onClick={onViewFullAnalysis}
+                className="rounded-lg px-3 py-1.5 text-[11px] font-semibold text-purple-200 hover:bg-purple-500 hover:text-white transition"
+              >
+                Full analysis
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="p-5 space-y-5">
+          {/* Scenario name */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Scenario name</label>
+            <input
+              type="text"
+              value={panel.name}
+              onChange={(e) => onNameChange(e.target.value)}
+              className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-200"
+            />
+          </div>
+
+          {/* Template switcher */}
+          <TemplateSwitcher activeId={templateId} isPro={isPro} onSelect={onTemplateChange} />
+
+          {/* Template inputs */}
+          <TemplateInputs templateId={templateId} inputs={panel.inputs} onChange={onInputChange} snap={snap} />
+
+          {/* Projected impact */}
+          <ProjectedImpact templateId={templateId} inputs={panel.inputs} snap={snap} />
+
+          {/* Save button */}
+          <button
+            onClick={onSave}
+            disabled={saving}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-purple-600 px-5 py-3 text-sm font-bold text-white hover:bg-purple-700 transition disabled:opacity-50 shadow-md shadow-purple-200"
+          >
+            {saving ? (
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+            ) : null}
+            {isNew ? "Save scenario" : (hasUnsaved ? "Save changes" : "Saved")}
+          </button>
+
+          {/* View full analysis — only for existing scenarios */}
+          {!isNew && onViewFullAnalysis && (
+            <button
+              onClick={onViewFullAnalysis}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-5 py-3 text-sm font-medium text-gray-600 hover:border-purple-300 hover:text-purple-700 transition"
+            >
+              View full analysis with opportunity cost →
+            </button>
+          )}
+
+          {/* Ask AI */}
+          <div className="rounded-xl border border-purple-100 bg-purple-50/60 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-purple-400 mb-2">Ask AI about this scenario</p>
+            <button
+              className="flex w-full items-center gap-2 rounded-lg border border-purple-200 bg-white px-3 py-2 text-xs text-purple-700 hover:bg-purple-50 transition text-left"
+              title="AI analysis — coming soon"
+            >
+              <svg className="h-3.5 w-3.5 shrink-0 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+              </svg>
+              Ask AI: {aiQuestion} ↗
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Sparkline ─────────────────────────────────────────────────────────────────
+
+function Sparkline({ snap, combined }: {
+  snap: FinancialSnapshot;
+  combined: ReturnType<typeof computeCombinedImpact>;
+}) {
+  const W = 440, H = 100;
+  const padL = 56, padR = 10, padT = 8, padB = 24;
+
+  const data    = buildSparklineData(snap, combined);
+  const allVals = data.flatMap((d) => [d.baseline, d.scenario]);
+  const minY    = Math.min(...allVals);
+  const maxY    = Math.max(...allVals);
+  const range   = maxY - minY || 1;
+
+  const toX = (i: number) => padL + (i / 12) * (W - padL - padR);
+  const toY = (v: number) => padT + (1 - (v - minY) / range) * (H - padT - padB);
+
+  const basePath = data.map((d, i) => `${i === 0 ? "M" : "L"} ${toX(i).toFixed(1)} ${toY(d.baseline).toFixed(1)}`).join(" ");
+  const scenPath = data.map((d, i) => `${i === 0 ? "M" : "L"} ${toX(i).toFixed(1)} ${toY(d.scenario).toFixed(1)}`).join(" ");
+
+  const ticks = [minY, (minY + maxY) / 2, maxY].map((v) => ({
+    v, label: Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(0)}k` : v.toFixed(0),
+  }));
+
+  return (
+    <div className="rounded-xl border border-gray-100 bg-white p-4">
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-400">12-month net worth projection</p>
+        <div className="flex items-center gap-3 text-[11px] text-gray-400">
+          <span className="flex items-center gap-1.5"><span className="inline-block h-1.5 w-5 rounded-full bg-emerald-400" /> Baseline</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-1.5 w-5 rounded-full bg-purple-500" /> With scenarios</span>
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: H }}>
+        {ticks.map(({ v, label }, i) => (
+          <g key={i}>
+            <line x1={padL} y1={toY(v)} x2={W - padR} y2={toY(v)} stroke="#f3f4f6" strokeWidth={1} />
+            <text x={padL - 4} y={toY(v) + 3.5} textAnchor="end" fontSize={8} fill="#9ca3af">{label}</text>
+          </g>
+        ))}
+        <path d={basePath} fill="none" stroke="#34d399" strokeWidth={2} strokeLinecap="round" />
+        {combined.hasImpact && (
+          <path d={scenPath} fill="none" stroke="#7c3aed" strokeWidth={2} strokeLinecap="round" strokeDasharray="5 2" />
+        )}
+        {[0, 3, 6, 9, 12].map((i) => (
+          <text key={i} x={toX(i)} y={H - 5} textAnchor="middle" fontSize={8} fill="#9ca3af">
+            {i === 0 ? "Now" : `+${i}mo`}
+          </text>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+// ── Full Analysis — Purchase template ─────────────────────────────────────────
+
+function FullAnalysisPurchase({
+  inputs, snap,
+}: {
+  inputs: Record<string, number | string | boolean>;
+  snap: FinancialSnapshot;
+}) {
+  const [returnRate, setReturnRate] = useState(7);
+  const [horizonYr,  setHorizonYr]  = useState(5);
+
+  const isOneTime     = bool(inputs.isOneTime ?? false);
+  const cost          = num(inputs.cost, 55);
+  const months        = Math.max(1, num(inputs.months, 24));
+  const monthlyCost   = isOneTime ? cost / months : cost;
+  const contractTotal = isOneTime ? cost : cost * months;
+  const annualCost    = monthlyCost * 12;
+
+  const horizonMonths = horizonYr * 12;
+  const r             = returnRate / 100 / 12;
+  const fvMonthly     = r > 0 ? monthlyCost * (Math.pow(1 + r, horizonMonths) - 1) / r : monthlyCost * horizonMonths;
+  const paidOut       = monthlyCost * horizonMonths;
+  const foregone      = Math.max(0, fvMonthly - paidOut);
+  const trueCostWithOpp = contractTotal + foregone;
+
+  const pctOfIncome  = snap.monthlyIncome  > 0 ? (monthlyCost / snap.monthlyIncome)  * 100 : 0;
+  const pctOfSurplus = snap.monthlySavings > 0 ? (monthlyCost / snap.monthlySavings) * 100 : 0;
+
+  const riskLevel = pctOfSurplus < 5 ? "low" : pctOfSurplus < 20 ? "moderate" : "high";
+  const riskColor = riskLevel === "low" ? "bg-emerald-500" : riskLevel === "moderate" ? "bg-amber-500" : "bg-red-500";
+  const fv10yr    = r > 0 ? monthlyCost * (Math.pow(1 + r, 120) - 1) / r : monthlyCost * 120;
+  const maxBar    = Math.max(paidOut, fvMonthly, 1);
+
+  const insights: { color: string; text: React.ReactNode }[] = [
+    {
+      color: riskColor,
+      text: (
+        <>
+          <strong>{riskLevel === "low" ? "Low risk" : riskLevel === "moderate" ? "Moderate impact" : "High impact"} at your savings rate.</strong>
+          {" "}{fmt(Math.round(monthlyCost))}/mo is {pctOfSurplus.toFixed(1)}% of your monthly surplus —
+          {riskLevel === "low" ? " well within discretionary range." :
+           riskLevel === "moderate" ? " monitor the effect on your other goals." :
+           " consider a cheaper alternative or delaying the purchase."}
+        </>
+      ),
+    },
+    {
+      color: "bg-amber-400",
+      text: (
+        <>
+          <strong>The 10-year habit cost</strong> is {fmt(Math.round(fv10yr))} in opportunity cost at {returnRate}%.
+          {" "}If this is a recurring upgrade cycle, the compounding effect is the real decision.
+        </>
+      ),
+    },
+  ];
+
+  if (pctOfIncome < 2) {
+    insights.push({
+      color: "bg-blue-400",
+      text: <>At {pctOfIncome.toFixed(2)}% of income, this purchase won&apos;t meaningfully shift your financial picture. Focus on bigger levers if optimizing.</>,
+    });
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* True Cost Anatomy */}
+      <div>
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-400 mb-3">True cost anatomy</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-xl border border-gray-100 bg-gray-50 p-3.5">
+            <p className="text-xs text-gray-400 mb-1">Monthly</p>
+            <p className="text-xl font-bold text-gray-900">{fmt(Math.round(monthlyCost))}</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">{pctOfIncome.toFixed(2)}% of income</p>
+          </div>
+          <div className="rounded-xl border border-gray-100 bg-gray-50 p-3.5">
+            <p className="text-xs text-gray-400 mb-1">Annual</p>
+            <p className="text-xl font-bold text-gray-900">{fmt(Math.round(annualCost))}</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">12 × {fmt(Math.round(monthlyCost))}</p>
+          </div>
+          <div className="rounded-xl border border-gray-100 bg-gray-50 p-3.5">
+            <p className="text-xs text-gray-400 mb-1">Contract total</p>
+            <p className="text-xl font-bold text-gray-900">{fmt(contractTotal)}</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">{months} × {fmt(Math.round(monthlyCost))}</p>
+          </div>
+          <div className="rounded-xl border border-purple-100 bg-purple-50 p-3.5">
+            <p className="text-xs text-purple-500 mb-1">True cost incl. opp.</p>
+            <p className="text-xl font-bold text-purple-700">{fmt(Math.round(trueCostWithOpp))}</p>
+            <p className="text-[11px] text-purple-400 mt-0.5">at {returnRate}% over {horizonYr}yr</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Opportunity Cost Engine */}
+      <div>
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-400 mb-3">Opportunity cost engine</p>
+        <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <SliderRow label="Return rate" value={returnRate} min={2} max={15} step={0.5} onChange={setReturnRate} format={(v) => `${v}%`} />
+            <SliderRow label="Horizon"     value={horizonYr}  min={1} max={20} step={1}   onChange={setHorizonYr}  format={(v) => `${v} yr`} />
+          </div>
+          <p className="text-sm text-gray-600 leading-relaxed">
+            If invested at{" "}
+            <span className="font-semibold text-gray-900">{returnRate}%</span> over{" "}
+            <span className="font-semibold text-gray-900">{horizonYr} years</span>,{" "}
+            {fmt(Math.round(monthlyCost))}/mo grows to{" "}
+            <span className="font-semibold text-emerald-600">{fmt(Math.round(fvMonthly))}</span>.
+            {" "}You pay {fmt(Math.round(paidOut))} — foregone returns:{" "}
+            <span className="font-semibold text-amber-600">{fmt(Math.round(foregone))}</span>.
+          </p>
+          <div className="space-y-2">
+            {[
+              { label: "Paid out",    value: paidOut,   color: "bg-red-400"   },
+              { label: "If invested", value: fvMonthly, color: "bg-blue-400"  },
+              { label: "Foregone",    value: foregone,  color: "bg-amber-400" },
+            ].map((bar) => (
+              <div key={bar.label} className="flex items-center gap-3">
+                <span className="w-20 shrink-0 text-xs text-gray-500">{bar.label}</span>
+                <div className="flex-1 h-3 rounded-full bg-gray-200 overflow-hidden">
+                  <div className={`h-full rounded-full transition-all duration-300 ${bar.color}`} style={{ width: `${(bar.value / maxBar) * 100}%` }} />
+                </div>
+                <span className="w-20 shrink-0 text-right text-xs font-semibold text-gray-700">{fmt(Math.round(bar.value))}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Key Insights */}
+      <div>
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-400 mb-3">Key insights</p>
+        <div className="space-y-3">
+          {insights.map((insight, i) => (
+            <div key={i} className="flex items-start gap-3">
+              <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${insight.color}`} />
+              <p className="text-sm text-gray-600 leading-relaxed">{insight.text}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Full Analysis — Generic (all other templates) ─────────────────────────────
+
+function FullAnalysisGeneric({
+  scenario, inputs, snap,
+}: {
+  scenario: WhatIfScenario;
+  inputs: Record<string, number | string | boolean>;
+  snap: FinancialSnapshot;
+}) {
+  const tmpl       = getTemplate(scenario.templateId);
+  const impact     = tmpl ? tmpl.impact(inputs, snap) : null;
+  const metrics    = tmpl ? getCompactMetrics(scenario.templateId, inputs, snap) : [];
+  const netMonthly = impact ? impact.monthlyIncomeDelta - impact.monthlyExpenseDelta : 0;
+  const newIncome  = snap.monthlyIncome + (impact?.monthlyIncomeDelta ?? 0);
+  const newSavings = snap.monthlySavings + netMonthly;
+  const newSavRate = newIncome > 0 ? (newSavings / newIncome) * 100 : 0;
+
+  return (
+    <div className="space-y-6">
+      {/* Overview tiles */}
+      <div>
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-400 mb-3">Scenario impact</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-xl border border-gray-100 bg-gray-50 p-3.5">
+            <p className="text-xs text-gray-400 mb-1">Monthly cash flow</p>
+            <p className={`text-xl font-bold ${netMonthly >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+              {netMonthly >= 0 ? "+" : ""}{fmt(netMonthly)}/mo
+            </p>
+            <p className="text-[11px] text-gray-400 mt-0.5">vs baseline {fmt(snap.monthlySavings)}/mo</p>
+          </div>
+          <div className="rounded-xl border border-gray-100 bg-gray-50 p-3.5">
+            <p className="text-xs text-gray-400 mb-1">Savings rate</p>
+            <p className={`text-xl font-bold ${newSavRate >= snap.savingsRate ? "text-emerald-600" : "text-red-600"}`}>
+              {Math.max(0, newSavRate).toFixed(0)}%
+            </p>
+            <p className="text-[11px] text-gray-400 mt-0.5">vs baseline {snap.savingsRate.toFixed(0)}%</p>
+          </div>
+          <div className="rounded-xl border border-gray-100 bg-gray-50 p-3.5">
+            <p className="text-xs text-gray-400 mb-1">12-mo net worth</p>
+            <p className={`text-xl font-bold ${newSavings * 12 >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+              {newSavings >= 0 ? "+" : ""}{fmt(Math.round(newSavings * 12))}
+            </p>
+            <p className="text-[11px] text-gray-400 mt-0.5">projected change</p>
+          </div>
+          {impact?.oneTimeCost ? (
+            <div className="rounded-xl border border-amber-100 bg-amber-50 p-3.5">
+              <p className="text-xs text-amber-500 mb-1">One-time cost</p>
+              <p className="text-xl font-bold text-amber-700">{fmt(impact.oneTimeCost)}</p>
+              <p className="text-[11px] text-amber-400 mt-0.5">upfront payment</p>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-gray-100 bg-gray-50 p-3.5">
+              <p className="text-xs text-gray-400 mb-1">Annualized impact</p>
+              <p className={`text-xl font-bold ${netMonthly * 12 >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                {netMonthly >= 0 ? "+" : ""}{fmt(Math.round(netMonthly * 12))}/yr
+              </p>
+              <p className="text-[11px] text-gray-400 mt-0.5">vs baseline</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Detailed metrics */}
+      {metrics.length > 0 && (
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-400 mb-3">Breakdown</p>
+          <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 space-y-3">
+            {metrics.map((m) => (
+              <div key={m.label} className="flex items-center justify-between">
+                <span className="text-sm text-gray-600">{m.label}</span>
+                <span className={`text-sm font-semibold ${
+                  m.positive === true  ? "text-emerald-600" :
+                  m.positive === false ? "text-red-500" :
+                  "text-gray-700"
+                }`}>{m.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {impact?.summaryLine && (
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-400 mb-3">Key insight</p>
+          <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4">
+            <p className="text-sm text-blue-700 leading-relaxed">{impact.summaryLine}</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Full Analysis Panel (wrapper with header) ─────────────────────────────────
+
+function FullAnalysisPanel({
+  panel, snap, onSwitchToEdit, onClose, onDelete,
+}: {
+  panel: { scenario: WhatIfScenario; inputs: Record<string, number | string | boolean>; name: string; templateId: TemplateId };
+  snap: FinancialSnapshot;
+  onSwitchToEdit: () => void;
+  onClose: () => void;
+  onDelete: () => void;
+}) {
+  const tmpl         = getTemplate(panel.templateId);
+  const aiQuestion   = getAiQuestion(panel.templateId);
+  const description  = getScenarioDescription(panel.templateId, panel.inputs, snap);
+
+  return (
+    <>
+      <style>{`
+        @keyframes faSlideIn {
+          from { opacity: 0; transform: translateY(12px) scale(0.98); }
+          to   { opacity: 1; transform: translateY(0)    scale(1);    }
+        }
+        .fa-slide-in { animation: faSlideIn 0.22s ease-out; }
+      `}</style>
+
+      <div key={panel.scenario.id + "-fa"} className="fa-slide-in rounded-2xl border border-gray-200 bg-white shadow-xl overflow-hidden">
+        {/* Dark header */}
+        <div className="bg-gradient-to-r from-gray-800 to-gray-900 px-5 py-4">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              {/* Breadcrumb */}
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <button onClick={onClose} className="text-[11px] text-gray-400 hover:text-gray-200 transition flex items-center gap-1">
+                  <svg className="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+                  </svg>
+                  Scenarios
+                </button>
+                <span className="text-gray-600 text-[11px]">/</span>
+                <span className="text-[11px] text-gray-300 truncate max-w-[140px]">{panel.name}</span>
+              </div>
+              <h3 className="text-base font-bold text-white leading-tight truncate">{panel.name}</h3>
+              <p className="text-[11px] text-gray-400 mt-0.5 truncate">
+                {tmpl?.label} · {description}
+              </p>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0 ml-2 flex-wrap justify-end">
+              <button
+                onClick={onSwitchToEdit}
+                className="rounded-lg px-3 py-1.5 text-[11px] font-semibold text-gray-300 border border-gray-600 hover:bg-gray-700 hover:text-white transition"
+              >
+                Edit
+              </button>
+              <button className="rounded-lg px-3 py-1.5 text-[11px] font-semibold text-white bg-white/20 border border-white/30 cursor-default">
+                Full analysis
+              </button>
+              <button
+                onClick={onClose}
+                className="flex h-7 w-7 items-center justify-center rounded-full text-gray-400 hover:bg-gray-700 hover:text-white transition"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Scrollable content */}
+        <div className="p-5 max-h-[80vh] overflow-y-auto space-y-2">
+          {panel.templateId === "purchase" ? (
+            <FullAnalysisPurchase inputs={panel.inputs} snap={snap} />
+          ) : (
+            <FullAnalysisGeneric scenario={panel.scenario} inputs={panel.inputs} snap={snap} />
+          )}
+
+          {/* Delete */}
+          <div className="pt-2 border-t border-gray-100">
+            <button onClick={onDelete} className="text-xs text-red-400 hover:text-red-600 transition">
+              Delete this scenario
+            </button>
+          </div>
+
+          {/* Ask AI */}
+          <button className="flex w-full items-center gap-2 rounded-xl border border-purple-100 bg-purple-50/60 px-4 py-3 text-sm text-purple-700 hover:bg-purple-100 transition text-left">
+            <svg className="h-4 w-4 shrink-0 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 003.09 3.09z" />
+            </svg>
+            Ask AI: {aiQuestion} ↗
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── API helper ────────────────────────────────────────────────────────────────
+
+async function apiFetch(path: string, token: string, options?: RequestInit) {
+  return fetch(path, {
+    ...options,
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(options?.headers ?? {}) },
+  });
+}
+
+// ── Main workspace ────────────────────────────────────────────────────────────
+
+function WhatIfWorkspace() {
   const { can, setTestPlan } = usePlan();
-  const isPro         = can("whatIf");
+  const isPro = can("whatIf");
 
-  const [snap,    setSnap]    = useState<FinancialSnapshot | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [snap,      setSnap]      = useState<FinancialSnapshot | null>(null);
+  const [scenarios, setScenarios] = useState<WhatIfScenario[]>([]);
+  const [loading,   setLoading]   = useState(true);
+  const [saving,    setSaving]    = useState(false);
+  const [panel,     setPanel]     = useState<PanelState>({ mode: "empty" });
 
-  const activeMode = searchParams.get("mode") ?? "purchase";
+  const tokenRef = useRef<string>("");
+
+  // ── Load data ──
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -734,28 +1116,39 @@ function WhatIfInner() {
       if (!user) { setLoading(false); return; }
       try {
         const token = await user.getIdToken();
-        const res   = await fetch("/api/user/statements/consolidated", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) throw new Error();
-        const json = await res.json();
-        // Financial data lives under json.data; top-level has liquidAssets etc.
-        const d               = json.data ?? {};
-        const monthlyIncome   = json.txMonthlyIncome   ?? d.income?.total   ?? 0;
-        const monthlyExpenses = json.txMonthlyExpenses ?? d.expenses?.total ?? 0;
-        const assets          = d.assets             ?? Math.max(0, d.netWorth ?? 0);
-        const debts           = d.debts              ?? 0;
-        const netWorth        = assets - debts;
-        const monthlySavings  = monthlyIncome - monthlyExpenses;
-        const savingsRate     = monthlyIncome > 0 ? (monthlySavings / monthlyIncome) * 100 : 0;
-        const liquidAssets    = json.liquidAssets    ?? assets * 0.3;
-        setSnap({
-          netWorth, monthlyIncome, monthlyExpenses, monthlySavings,
-          savingsRate, totalDebt: debts,
-          liquidAssets, emergencyFundTarget: monthlyExpenses * 6,
-        });
+        tokenRef.current = token;
+
+        const [consRes, scenRes] = await Promise.all([
+          apiFetch("/api/user/statements/consolidated", token),
+          apiFetch("/api/user/whatif-scenarios", token),
+        ]);
+
+        if (consRes.ok) {
+          const json            = await consRes.json();
+          const d               = json.data ?? {};
+          const monthlyIncome   = json.typicalMonthlyIncome  ?? json.txMonthlyIncome   ?? d.income?.total   ?? 0;
+          const monthlyExpenses = json.typicalMonthlyExpenses ?? json.txMonthlyExpenses ?? d.expenses?.total ?? 0;
+          const assets          = d.assets  ?? Math.max(0, d.netWorth ?? 0);
+          const debts           = d.debts   ?? 0;
+          const monthlySavings  = monthlyIncome - monthlyExpenses;
+          const savingsRate     = monthlyIncome > 0 ? (monthlySavings / monthlyIncome) * 100 : 0;
+          const liquidAssets    = json.liquidAssets ?? assets * 0.3;
+          setSnap({
+            netWorth: assets - debts, monthlyIncome, monthlyExpenses, monthlySavings,
+            savingsRate, totalDebt: debts,
+            liquidAssets, emergencyFundTarget: monthlyExpenses * 6,
+          });
+        } else {
+          setSnap({ netWorth: 47210, monthlyIncome: 5800, monthlyExpenses: 4700,
+            monthlySavings: 1100, savingsRate: 19, totalDebt: 4800,
+            liquidAssets: 8000, emergencyFundTarget: 28200 });
+        }
+
+        if (scenRes.ok) {
+          const json = await scenRes.json();
+          setScenarios(json.scenarios ?? []);
+        }
       } catch {
-        // Fallback demo snapshot so page is always usable
         setSnap({ netWorth: 47210, monthlyIncome: 5800, monthlyExpenses: 4700,
           monthlySavings: 1100, savingsRate: 19, totalDebt: 4800,
           liquidAssets: 8000, emergencyFundTarget: 28200 });
@@ -764,11 +1157,130 @@ function WhatIfInner() {
     });
   }, []);
 
-  function setMode(id: string) {
-    const p = new URLSearchParams(searchParams.toString());
-    p.set("mode", id);
-    router.push(`${pathname}?${p.toString()}`);
+  const freshToken = useCallback(async () => {
+    const { auth } = getFirebaseClient();
+    if (auth.currentUser) {
+      const t = await auth.currentUser.getIdToken();
+      tokenRef.current = t;
+      return t;
+    }
+    return tokenRef.current;
+  }, []);
+
+  // ── Panel actions ──
+
+  function openNewScenario(templateId: TemplateId = "purchase") {
+    if (!isPro && !TEMPLATES.find((t) => t.id === templateId)?.free) {
+      setTestPlan("pro"); return;
+    }
+    const tmpl = getTemplate(templateId)!;
+    const inputs = snap ? tmpl.defaultInputs(snap) : {};
+    setPanel({
+      mode: "new", templateId, inputs,
+      name: snap ? tmpl.defaultName(inputs) : tmpl.label,
+    });
   }
+
+  function openScenario(scenario: WhatIfScenario) {
+    setPanel({ mode: "edit", scenario, inputs: { ...scenario.inputs }, name: scenario.name, templateId: scenario.templateId });
+  }
+
+  function openFullAnalysis(scenario: WhatIfScenario) {
+    setPanel({ mode: "fullAnalysis", scenario, inputs: { ...scenario.inputs }, name: scenario.name, templateId: scenario.templateId });
+  }
+
+  function closePanel() { setPanel({ mode: "empty" }); }
+
+  const handleInputChange = useCallback((key: string, value: number | string | boolean) => {
+    setPanel((prev) => {
+      if (prev.mode === "empty") return prev;
+      const newInputs = { ...prev.inputs, [key]: value };
+      const tmpl      = getTemplate(prev.templateId);
+      const autoName  = tmpl ? tmpl.defaultName(newInputs) : prev.name;
+      return { ...prev, inputs: newInputs, name: key === "name" ? String(value) : autoName };
+    });
+  }, []);
+
+  function handleNameChange(name: string) {
+    setPanel((prev) => prev.mode === "empty" ? prev : { ...prev, name });
+  }
+
+  function handleTemplateChange(newTemplateId: TemplateId) {
+    if (!isPro && !TEMPLATES.find((t) => t.id === newTemplateId)?.free) {
+      setTestPlan("pro"); return;
+    }
+    const tmpl = getTemplate(newTemplateId)!;
+    const inputs = snap ? tmpl.defaultInputs(snap) : {};
+    setPanel((prev) => {
+      if (prev.mode === "empty") return prev;
+      return { ...prev, templateId: newTemplateId, inputs, name: snap ? tmpl.defaultName(inputs) : tmpl.label };
+    });
+  }
+
+  // ── Save ──
+
+  async function saveScenario() {
+    if (panel.mode === "empty" || !snap) return;
+    setSaving(true);
+    try {
+      const token = await freshToken();
+      if (panel.mode === "new") {
+        const res = await apiFetch("/api/user/whatif-scenarios", token, {
+          method: "POST",
+          body:   JSON.stringify({ name: panel.name, templateId: panel.templateId, inputs: panel.inputs }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          setScenarios((prev) => [...prev, json.scenario]);
+          setPanel({ mode: "edit", scenario: json.scenario, inputs: { ...panel.inputs }, name: panel.name, templateId: panel.templateId });
+        }
+      } else {
+        const id  = panel.scenario.id;
+        const res = await apiFetch(`/api/user/whatif-scenarios/${id}`, token, {
+          method: "PUT",
+          body:   JSON.stringify({ name: panel.name, inputs: panel.inputs }),
+        });
+        if (res.ok) {
+          const updated = { ...panel.scenario, name: panel.name, inputs: panel.inputs, updatedAt: new Date().toISOString() };
+          setScenarios((prev) => prev.map((s) => s.id === id ? updated : s));
+          setPanel((prev) => prev.mode === "edit" ? { ...prev, scenario: updated } : prev);
+        }
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // ── Toggle + delete ──
+
+  async function toggleScenario(id: string) {
+    const s = scenarios.find((x) => x.id === id);
+    if (!s) return;
+    const newEnabled = !s.enabled;
+    setScenarios((prev) => prev.map((x) => x.id === id ? { ...x, enabled: newEnabled } : x));
+    const token = await freshToken();
+    await apiFetch(`/api/user/whatif-scenarios/${id}`, token, { method: "PUT", body: JSON.stringify({ enabled: newEnabled }) });
+  }
+
+  async function deleteScenario(id: string) {
+    setScenarios((prev) => prev.filter((x) => x.id !== id));
+    if ((panel.mode === "edit" || panel.mode === "fullAnalysis") && panel.scenario.id === id) closePanel();
+    const token = await freshToken();
+    await apiFetch(`/api/user/whatif-scenarios/${id}`, token, { method: "DELETE" });
+  }
+
+  // ── Derived ──
+
+  const combined      = snap ? computeCombinedImpact(scenarios, snap) : null;
+  const enabledCount  = scenarios.filter((s) => s.enabled).length;
+  const activeId      = (panel.mode === "edit" || panel.mode === "fullAnalysis") ? panel.scenario.id : null;
+
+  const hasUnsaved = panel.mode === "new" || (
+    panel.mode === "edit" && (
+      panel.name !== panel.scenario.name ||
+      JSON.stringify(panel.inputs) !== JSON.stringify(panel.scenario.inputs)
+    )
+  );
 
   if (loading) {
     return (
@@ -777,81 +1289,128 @@ function WhatIfInner() {
       </div>
     );
   }
-
   if (!snap) return null;
 
-  const modeConfig = MODES.find((m) => m.id === activeMode);
-  const canRunMode = isPro || (modeConfig?.free ?? false);
-
   return (
-    <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
-      {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-center gap-2.5">
-          <h1 className="text-2xl font-bold text-gray-900">What If</h1>
-          <span className="rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-semibold text-purple-700">AI</span>
-          {!isPro && (
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">Pro</span>
-          )}
-        </div>
-        <p className="mt-1 text-sm text-gray-400">Model financial decisions against your real numbers.</p>
-      </div>
-
-      {/* Mode pills */}
-      <div className="mb-6 flex flex-wrap gap-2">
-        {MODES.map((mode) => {
-          const isLocked = !isPro && !mode.free;
-          const isActive = activeMode === mode.id;
-          return (
-            <button
-              key={mode.id}
-              onClick={() => setMode(mode.id)}
-              className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-medium transition ${
-                isActive
-                  ? "bg-purple-600 text-white shadow-sm"
-                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-              }`}
-            >
-              {mode.label}
-              {isLocked && !isActive && (
-                <svg className="h-3 w-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                </svg>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Free-user hint for mode 1 */}
-      {!isPro && activeMode === "purchase" && (
-        <div className="mb-5 flex items-start gap-3 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3">
-          <svg className="mt-0.5 h-4 w-4 shrink-0 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <p className="text-xs text-indigo-700">
-            <strong>New Purchase</strong> is free. Upgrade to Pro to unlock Buy vs Rent, New Car, Savings Levers, Salary Change, and Pay Off Debt scenarios.
+    <div className="mx-auto max-w-5xl px-4 pt-4 pb-12 sm:px-6">
+      {/* Page header */}
+      <div className="flex items-start justify-between mb-6">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-2xl font-bold text-gray-900">What if</h1>
+            <span className="rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-semibold text-purple-700">AI</span>
+          </div>
+          <p className="mt-1 text-sm text-gray-400">
+            Build scenarios · stack them · see combined impact against your real numbers
           </p>
         </div>
-      )}
+        <button
+          onClick={() => openNewScenario("purchase")}
+          className="shrink-0 flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 hover:border-purple-300 hover:text-purple-700 hover:bg-purple-50 shadow-sm transition"
+        >
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+          </svg>
+          + New scenario
+        </button>
+      </div>
 
-      {/* Mode content */}
-      <div className={`relative ${!canRunMode ? "overflow-hidden rounded-2xl" : ""}`}>
-        {!canRunMode && <LockedOverlay onUpgrade={() => setTestPlan("pro")} />}
-        <div className={!canRunMode ? "pointer-events-none select-none opacity-40" : ""}>
-          {activeMode === "purchase" && <Mode1NewPurchase snap={snap} />}
-          {activeMode === "buyrent"  && <Mode2BuyVsRent   snap={snap} />}
-          {activeMode === "car"      && <Mode3NewCar       snap={snap} />}
-          {activeMode === "levers"   && <Mode4SavingsLevers snap={snap} />}
-          {activeMode === "salary"   && <Mode5SalaryChange snap={snap} />}
-          {activeMode === "payoff"   && <Mode6PayoffLump   snap={snap} />}
+      {/* Combined impact card */}
+      {combined && <CombinedImpactCard snap={snap} combined={combined} enabledCount={enabledCount} />}
+
+      {/* Two-column body */}
+      <div className={`flex flex-col gap-6 ${panel.mode !== "empty" ? "lg:grid lg:grid-cols-[1fr_420px]" : ""}`}>
+
+        {/* ── Left: scenario list ──────────────────────────────────────── */}
+        <div className="space-y-3">
+          {scenarios.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-gray-200 px-6 py-12 text-center">
+              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-purple-50">
+                <svg className="h-6 w-6 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                </svg>
+              </div>
+              <p className="text-sm font-semibold text-gray-700 mb-1">No scenarios yet</p>
+              <p className="text-xs text-gray-400 max-w-xs mx-auto">Click "+ New scenario" to start modelling decisions — buy a car, get a raise, pay off debt — and see how they stack up.</p>
+            </div>
+          ) : (
+            <>
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-400 px-1">Saved scenarios</p>
+              {scenarios.map((s) => (
+                <ScenarioCard
+                  key={s.id}
+                  scenario={s}
+                  snap={snap}
+                  isActive={s.id === activeId}
+                  onToggle={() => toggleScenario(s.id)}
+                  onDelete={() => deleteScenario(s.id)}
+                  onEdit={() => openScenario(s)}
+                  onViewFullAnalysis={() => openFullAnalysis(s)}
+                />
+              ))}
+            </>
+          )}
+
+          {/* Add scenario prompt */}
+          <button
+            onClick={() => openNewScenario("purchase")}
+            className="flex w-full flex-col items-center gap-1 rounded-xl border border-dashed border-gray-200 px-4 py-5 text-center hover:border-purple-300 hover:bg-purple-50/50 transition"
+          >
+            <span className="text-sm font-semibold text-gray-600">+ Add scenario</span>
+            <span className="text-xs text-gray-400">Model a new financial decision</span>
+          </button>
+
+          {/* Sparkline */}
+          {combined && snap && (
+            <Sparkline snap={snap} combined={combined} />
+          )}
         </div>
+
+        {/* ── Right: editor / full analysis ───────────────────────────── */}
+        {panel.mode !== "empty" && (
+          <div className="lg:sticky lg:top-4 lg:self-start">
+            {panel.mode !== "fullAnalysis" && (
+              <div className="flex items-center gap-2 px-1 mb-3">
+                <span className="hidden lg:flex h-5 w-5 items-center justify-center rounded-full bg-purple-600 text-white">
+                  <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+                  </svg>
+                </span>
+                <p className="text-[11px] font-bold uppercase tracking-widest text-purple-600">Your turn — configure this scenario</p>
+              </div>
+            )}
+            {panel.mode === "fullAnalysis" ? (
+              <FullAnalysisPanel
+                panel={panel}
+                snap={snap}
+                onSwitchToEdit={() => openScenario(panel.scenario)}
+                onClose={closePanel}
+                onDelete={() => deleteScenario(panel.scenario.id)}
+              />
+            ) : (
+              <EditorPanel
+                panel={panel}
+                snap={snap}
+                isPro={isPro}
+                saving={saving}
+                hasUnsaved={hasUnsaved}
+                onInputChange={handleInputChange}
+                onNameChange={handleNameChange}
+                onTemplateChange={handleTemplateChange}
+                onSave={saveScenario}
+                onDelete={panel.mode === "edit" ? () => deleteScenario(panel.scenario.id) : undefined}
+                onClose={closePanel}
+                onViewFullAnalysis={panel.mode === "edit" ? () => openFullAnalysis(panel.scenario) : undefined}
+              />
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-// ── page export ────────────────────────────────────────────────────────────────
+// ── Page export ────────────────────────────────────────────────────────────────
 
 export default function WhatIfPage() {
   return (
@@ -860,7 +1419,7 @@ export default function WhatIfPage() {
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-purple-200 border-t-purple-600" />
       </div>
     }>
-      <WhatIfInner />
+      <WhatIfWorkspace />
     </Suspense>
   );
 }
