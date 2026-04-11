@@ -14,12 +14,22 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "networth.online – Your Financial Snapshot in 30 Seconds",
+  title: {
+    default: "networth.online – Know Where Your Money Actually Goes",
+    template: "%s | networth.online",
+  },
   description:
-    "Upload your bank statement and instantly see your net worth, income, expenses, subscriptions, and smart insights. No bank login required.",
+    "Upload your bank statement PDF and instantly see your net worth, spending breakdown, savings rate, and AI-powered insights. No bank login. Any Canadian bank. Under 60 seconds.",
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: { index: true, follow: true },
+  },
   icons: {
     icon: "/icon.svg",
+    apple: "/icon.svg", // replace with a 180×180 PNG when available
   },
+  metadataBase: new URL("https://networth.online"),
 };
 
 export default function RootLayout({
@@ -28,7 +38,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en-CA">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
