@@ -114,6 +114,9 @@ export async function GET(request: NextRequest) {
       const parsed = d.parsedData as ParsedStatementData;
       const stmtYm = docYearMonth(d);
 
+      // Investment accounts hold portfolio activity, not personal spending — skip entirely
+      if ((parsed.accountType ?? "").toLowerCase() === "investment") continue;
+
       // Apply category rules
       const withRules = applyRulesAndRecalculate(parsed, rulesMap);
       const label = accountDisplayLabel(parsed);

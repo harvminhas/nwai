@@ -161,7 +161,13 @@ export async function extractAllTransactions(
       const bank  = (parsed.bankName ?? "").trim();
       const label = parsed.accountName
         ?? (slug === "unknown" ? bank || "Unknown Account" : [bank, `••••${slug}`].filter(Boolean).join(" "));
-      for (const txn of parsed.expenses?.transactions ?? []) {
+
+      // Investment accounts hold portfolio activity (stock buys/sells/dividends),
+      // not personal expenses. Skip their expense transactions entirely — the account
+      // still appears in accountSnapshots for balance tracking.
+      const isInvestmentAccount = (parsed.accountType ?? "").toLowerCase() === "investment";
+      if (!isInvestmentAccount) {
+        for (const txn of parsed.expenses?.transactions ?? []) {
         const date = txn.date ?? `${stmtYm}-15`;
         const txMonth = date.slice(0, 7);
         const fp = txFingerprint(parsed.accountId ?? slug, date, txn.amount, txn.merchant ?? "");
@@ -171,20 +177,21 @@ export async function extractAllTransactions(
         expFingerprintsFromStmt.add(fp);
         if (isBalanceMarker(txn.merchant ?? "")) continue; // skip AI-leaked balance rows
         if ((txn.amount ?? 0) <= 0) continue; // expense amounts must be positive (money out)
-        expenseTxns.push({
-          date,
-          txMonth,
-          amount: txn.amount,
-          merchant: txn.merchant ?? "Unknown",
-          category: txn.category ?? "Other",
-          accountSlug: slug,
-          accountLabel: label,
-          recurring: txn.recurring,
-          ...(txn.debtType ? { debtType: txn.debtType } : {}),
-        });
-      }
-    }
-  }
+          expenseTxns.push({
+            date,
+            txMonth,
+            amount: txn.amount,
+            merchant: txn.merchant ?? "Unknown",
+            category: txn.category ?? "Other",
+            accountSlug: slug,
+            accountLabel: label,
+            recurring: txn.recurring,
+            ...(txn.debtType ? { debtType: txn.debtType } : {}),
+          });
+        }
+      } // end !isInvestmentAccount
+    }   // end for (const doc ...)
+  }     // end for (const pass ...)
   expenseTxns.sort((a, b) => b.date.localeCompare(a.date));
 
   // ── 3. Extract income transactions using actual transaction dates ──────────
