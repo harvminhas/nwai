@@ -498,7 +498,7 @@ export default function AccountDetailPage() {
       if (!prev) return prev;
       return {
         ...prev,
-        transactions: prev.transactions.map((t, i) =>
+        transactions: (prev.transactions ?? []).map((t, i) =>
           i === txnIndex ? { ...t, category: newCategory } : t
         ),
       };
