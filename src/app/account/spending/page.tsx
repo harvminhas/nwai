@@ -782,15 +782,22 @@ function SpendingPageInner() {
       .sort((a, b) => b[1] - a[1])
       .map(([name, amount]) => {
         const subs = subtypeMap.get(name);
+        const subtypeEntries = subs
+          ? Array.from(subs.entries())
+              .sort((a, b) => b[1] - a[1])
+              .map(([subName, subAmt]) => ({ name: subName, amount: subAmt }))
+          : [];
+        const subtypeTotal = subtypeEntries.reduce((s, e) => s + e.amount, 0);
+        const remainder = amount - subtypeTotal;
+        // Transactions tagged with the parent name directly (no subtype chosen) — show as a catch-all row
+        if (remainder > 0.005 && subtypeEntries.length > 0) {
+          subtypeEntries.push({ name: `Other ${name}`, amount: remainder });
+        }
         return {
           name,
           amount,
           percentage: total > 0 ? Math.round((amount / total) * 100) : 0,
-          subtypes: subs
-            ? Array.from(subs.entries())
-                .sort((a, b) => b[1] - a[1])
-                .map(([subName, subAmt]) => ({ name: subName, amount: subAmt }))
-            : [],
+          subtypes: subtypeEntries,
         };
       });
   })();
@@ -1506,17 +1513,29 @@ function SpendingPageInner() {
                                 {cat.subtypes.map((sub) => {
                                   const subColor = categoryColor(sub.name);
                                   const subPct   = cat.amount > 0 ? Math.round((sub.amount / cat.amount) * 100) : 0;
+                                  const isRemainder = sub.name.startsWith("Other ");
                                   const subHref  = `/account/spending/category/${encodeURIComponent(sub.name.toLowerCase())}${filterMonth ? `?month=${filterMonth}` : ""}`;
-                                  return (
-                                    <Link key={sub.name} href={subHref}
-                                      className="flex items-center gap-3 pl-10 pr-5 py-2.5 hover:bg-gray-100 transition group/sub">
-                                      <span className="h-1.5 w-1.5 shrink-0 rounded-full opacity-80" style={{ backgroundColor: subColor }} />
-                                      <span className="flex-1 text-[13px] text-gray-600 group-hover/sub:text-purple-600 transition-colors truncate">{sub.name}</span>
+                                  const rowContent = (
+                                    <>
+                                      <span className="h-1.5 w-1.5 shrink-0 rounded-full opacity-50" style={{ backgroundColor: subColor }} />
+                                      <span className={`flex-1 text-[13px] truncate ${isRemainder ? "text-gray-400 italic" : "text-gray-600 group-hover/sub:text-purple-600 transition-colors"}`}>{sub.name}</span>
                                       <span className="text-[13px] text-gray-500 tabular-nums shrink-0">{fmt(sub.amount)}</span>
                                       <span className="text-xs text-gray-400 w-7 text-right shrink-0">{subPct}%</span>
-                                      <svg className="h-3.5 w-3.5 text-gray-300 group-hover/sub:text-purple-400 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                                      </svg>
+                                      {!isRemainder && (
+                                        <svg className="h-3.5 w-3.5 text-gray-300 group-hover/sub:text-purple-400 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                        </svg>
+                                      )}
+                                    </>
+                                  );
+                                  return isRemainder ? (
+                                    <div key={sub.name} className="flex items-center gap-3 pl-10 pr-5 py-2.5">
+                                      {rowContent}
+                                    </div>
+                                  ) : (
+                                    <Link key={sub.name} href={subHref}
+                                      className="flex items-center gap-3 pl-10 pr-5 py-2.5 hover:bg-gray-100 transition group/sub">
+                                      {rowContent}
                                     </Link>
                                   );
                                 })}
