@@ -1521,11 +1521,15 @@ function SpendingPageInner() {
                                       <span className={`flex-1 text-[13px] truncate ${isRemainder ? "text-gray-400 italic" : "text-gray-600 group-hover/sub:text-purple-600 transition-colors"}`}>{sub.name}</span>
                                       <span className="text-[13px] text-gray-500 tabular-nums shrink-0">{fmt(sub.amount)}</span>
                                       <span className="text-xs text-gray-400 w-7 text-right shrink-0">{subPct}%</span>
-                                      {!isRemainder && (
-                                        <svg className="h-3.5 w-3.5 text-gray-300 group-hover/sub:text-purple-400 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                                        </svg>
-                                      )}
+                                      {/* Always reserve the same width as the chevron so columns stay aligned */}
+                                      {isRemainder
+                                        ? <span className="h-3.5 w-3.5 shrink-0" />
+                                        : (
+                                          <svg className="h-3.5 w-3.5 text-gray-300 group-hover/sub:text-purple-400 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                          </svg>
+                                        )
+                                      }
                                     </>
                                   );
                                   return isRemainder ? (
