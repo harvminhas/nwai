@@ -1514,7 +1514,9 @@ function SpendingPageInner() {
                                   const subColor = categoryColor(sub.name);
                                   const subPct   = cat.amount > 0 ? Math.round((sub.amount / cat.amount) * 100) : 0;
                                   const isRemainder = sub.name.startsWith("Other ");
-                                  const subHref  = `/account/spending/category/${encodeURIComponent(sub.name.toLowerCase())}${filterMonth ? `?month=${filterMonth}` : ""}`;
+                                  const subHref  = isRemainder
+                                    ? `/account/spending/category/${encodeURIComponent(cat.name.toLowerCase())}${filterMonth ? `?month=${filterMonth}` : ""}`
+                                    : `/account/spending/category/${encodeURIComponent(sub.name.toLowerCase())}${filterMonth ? `?month=${filterMonth}` : ""}`;
                                   const rowContent = (
                                     <>
                                       <span className="h-1.5 w-1.5 shrink-0 rounded-full opacity-50" style={{ backgroundColor: subColor }} />
@@ -1522,21 +1524,12 @@ function SpendingPageInner() {
                                       <span className="text-[13px] text-gray-500 tabular-nums shrink-0">{fmt(sub.amount)}</span>
                                       <span className="text-xs text-gray-400 w-7 text-right shrink-0">{subPct}%</span>
                                       {/* Always reserve the same width as the chevron so columns stay aligned */}
-                                      {isRemainder
-                                        ? <span className="h-3.5 w-3.5 shrink-0" />
-                                        : (
-                                          <svg className="h-3.5 w-3.5 text-gray-300 group-hover/sub:text-purple-400 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                                          </svg>
-                                        )
-                                      }
+                                      <svg className="h-3.5 w-3.5 text-gray-300 group-hover/sub:text-purple-400 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                      </svg>
                                     </>
                                   );
-                                  return isRemainder ? (
-                                    <div key={sub.name} className="flex items-center gap-3 pl-10 pr-5 py-2.5">
-                                      {rowContent}
-                                    </div>
-                                  ) : (
+                                  return (
                                     <Link key={sub.name} href={subHref}
                                       className="flex items-center gap-3 pl-10 pr-5 py-2.5 hover:bg-gray-100 transition group/sub">
                                       {rowContent}
