@@ -15,6 +15,8 @@ import type { ParsedStatementData, ManualAsset, InvestmentHolding } from "@/lib/
 import { buildAccountSlug } from "@/lib/accountSlug";
 import CsvImportPanel from "@/components/CsvImportPanel";
 import type { PaymentFrequency } from "@/app/api/user/account-rates/route";
+import { CategoryPicker, categoryColor } from "@/app/account/spending/shared";
+import { useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -314,6 +316,8 @@ export default function AccountDetailPage() {
   const [txData, setTxData]           = useState<ParsedStatementData["expenses"] | null>(null);
   const [txPayments, setTxPayments]   = useState<number>(0);
   const [txLoading, setTxLoading]     = useState(false);
+  const [openPicker, setOpenPicker]   = useState<number | null>(null);
+  const pickerBtnRefs                 = useRef<Map<number, HTMLButtonElement>>(new Map());
 
   // APR / frequency state
   const [effectiveRate, setEffectiveRate]       = useState<number | null>(null);
@@ -479,6 +483,41 @@ export default function AccountDetailPage() {
   function showToast(msg: string, ok: boolean) {
     setToast({ msg, ok });
     setTimeout(() => setToast(null), 4000);
+  }
+
+  const { requestProfileRefresh } = useProfileRefresh();
+
+  // ── transaction recategorization ──────────────────────────────────────────
+
+  async function handleCategoryChange(txnIndex: number, newCategory: string) {
+    const txn = txns[txnIndex];
+    if (!txn || !idToken) return;
+    setOpenPicker(null);
+    // Optimistic update
+    setTxData((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        transactions: prev.transactions.map((t, i) =>
+          i === txnIndex ? { ...t, category: newCategory } : t
+        ),
+      };
+    });
+    try {
+      const res = await fetch("/api/user/category-rules", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ merchant: txn.merchant, category: newCategory }),
+      });
+      if (res.ok) {
+        showToast(`Rule saved: "${txn.merchant}" → ${newCategory}`, true);
+        requestProfileRefresh();
+      } else {
+        showToast("Failed to save rule", false);
+      }
+    } catch {
+      showToast("Failed to save rule", false);
+    }
   }
 
   async function handleReparse(statementId: string) {
@@ -1459,7 +1498,32 @@ export default function AccountDetailPage() {
                       <p className="truncate text-sm font-medium text-gray-900">{txn.merchant}</p>
                       <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                         {txn.date && <span className="text-xs text-gray-400">{fmtDate(txn.date)}</span>}
-                        {txn.category && <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500">{txn.category}</span>}
+                        {txn.category && !isInvestment && (
+                          <>
+                            <button
+                              ref={(el) => { if (el) pickerBtnRefs.current.set(i, el); else pickerBtnRefs.current.delete(i); }}
+                              onClick={() => setOpenPicker(openPicker === i ? null : i)}
+                              className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] font-medium text-gray-600 transition hover:border-purple-300 hover:bg-purple-50 hover:text-purple-700"
+                            >
+                              <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: categoryColor(txn.category) }} />
+                              {txn.category}
+                              <svg className="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </button>
+                            {openPicker === i && pickerBtnRefs.current.has(i) && (
+                              <CategoryPicker
+                                anchorRef={{ current: pickerBtnRefs.current.get(i)! }}
+                                current={txn.category}
+                                onSelect={(cat) => handleCategoryChange(i, cat)}
+                                onClose={() => setOpenPicker(null)}
+                              />
+                            )}
+                          </>
+                        )}
+                        {txn.category && isInvestment && (
+                          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500">{txn.category}</span>
+                        )}
                         {txn.recurring && <span className="rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-medium text-teal-600">↻ {txn.recurring}</span>}
                       </div>
                     </div>

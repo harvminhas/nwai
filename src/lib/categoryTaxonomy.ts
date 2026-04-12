@@ -19,6 +19,7 @@ export const PARENT_CATEGORIES = [
   "Entertainment",
   "Healthcare",
   "Subscriptions",
+  "Education",
   "Fees",
   "Debt Payments",
   "Investments & Savings",
@@ -45,6 +46,7 @@ export const CATEGORY_TAXONOMY: Record<ParentCategory, readonly string[]> = {
   Entertainment:          ["Streaming", "Movies & Events", "Sports", "Hobbies"],
   Healthcare:             ["Pharmacy", "Dental", "Vision", "Fitness", "Health Insurance"],
   Subscriptions:          ["Software", "Memberships", "News & Media"],
+  Education:              ["Tuition", "Courses & Training", "Books & Supplies", "School Fees", "Childcare"],
   Fees:                   ["Bank Fees", "NSF/OD Fees", "Annual Card Fee"],
   "Debt Payments":        [],
   "Investments & Savings":[],
@@ -136,6 +138,14 @@ export const CATEGORY_COLORS: Record<string, string> = {
   software:                 "#94a3b8",
   memberships:              "#cbd5e1",
   "news & media":           "#64748b",
+
+  // Education subtypes
+  education:                "#6366f1",
+  tuition:                  "#6366f1",
+  "courses & training":     "#818cf8",
+  "books & supplies":       "#a5b4fc",
+  "school fees":            "#4f46e5",
+  childcare:                "#4338ca",
 
   // Fees subtypes
   "bank fees":              "#f97316",

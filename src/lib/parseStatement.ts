@@ -184,6 +184,12 @@ PASS 2 — Category: Apply the category rules below. Category assignment only ha
               "FITNESS DEPOT" → "Fitness", "GOODLIFE" → "Fitness",
               "DENTAL CLINIC" → "Dental", "OPTOMETRIST" → "Vision"
 
+  Education (subtypes: Tuition | Courses & Training | Books & Supplies | School Fees | Childcare):
+    University/college tuition, online courses, tutoring, school supplies, daycare/childcare.
+    Examples: "COURSERA" → "Courses & Training", "UDEMY" → "Courses & Training",
+              "UNIVERSITY OF TORONTO" → "Tuition", "AMAZON" (textbooks context) → "Books & Supplies",
+              "DAYCARE" → "Childcare", "MONTESSORI" → "Childcare"
+
   Fees (subtypes: Bank Fees | NSF/OD Fees | Annual Card Fee):
     Bank-imposed charges, NSF/overdraft fees, monthly account fees, ATM fees, annual card fees, service charges.
     Examples: "SERVICE CHARGE" → "Bank Fees", "O.D.P. FEE" → "NSF/OD Fees",
