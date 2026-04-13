@@ -19,6 +19,13 @@ const checklist = [
   "Smart insights to save more",
 ];
 
+const uploadTrustPoints = [
+  { icon: "🔒", label: "Encrypted over HTTPS" },
+  { icon: "🔐", label: "File stored encrypted, private to you" },
+  { icon: "🚫", label: "No bank login needed" },
+  { icon: "🔕", label: "Data never sold" },
+];
+
 const ANONYMOUS_UPLOAD_KEY = "nwai_anonymous_uploaded";
 
 // ── queue types ───────────────────────────────────────────────────────────────
@@ -213,6 +220,16 @@ export default function UploadPage() {
                     <UploadZone onFileSelect={handleFileSelect} />
                     {uploadError && <p className="mt-3 text-sm text-red-600">{uploadError}</p>}
 
+                    {/* Inline trust strip */}
+                    <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                      {uploadTrustPoints.map((p) => (
+                        <span key={p.label} className="flex items-center gap-1 text-xs text-gray-400">
+                          <span aria-hidden="true">{p.icon}</span>
+                          {p.label}
+                        </span>
+                      ))}
+                    </div>
+
                     {/* Premium upsell banner */}
                     <div className="mt-5 rounded-xl bg-indigo-50 border border-indigo-100 px-4 py-4">
                       <div className="flex items-start gap-3">
@@ -379,6 +396,36 @@ export default function UploadPage() {
                   <UploadZone onFileSelect={handleFileSelect} />
                 </div>
                 {uploadError && <p className="mt-4 text-sm text-red-600">{uploadError}</p>}
+
+                {/* Inline trust strip */}
+                <div className="mt-4 flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
+                  {uploadTrustPoints.map((p) => (
+                    <span key={p.label} className="flex items-center gap-1.5 text-xs text-gray-400">
+                      <span aria-hidden="true">{p.icon}</span>
+                      {p.label}
+                    </span>
+                  ))}
+                </div>
+
+                {/* What happens to your file */}
+                <div className="mt-5 rounded-xl border border-gray-200 bg-white px-5 py-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">What happens when you upload</p>
+                  <ol className="space-y-2">
+                    {[
+                      "Your PDF is sent securely over HTTPS to our servers",
+                      "AI reads and categorises every transaction (takes ~30 sec)",
+                      "The file is stored encrypted in Google Cloud, private to your account",
+                      "Your data is never shared with other users or third parties",
+                    ].map((step, i) => (
+                      <li key={i} className="flex items-start gap-2.5 text-sm text-gray-600">
+                        <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-purple-100 text-[10px] font-bold text-purple-600">
+                          {i + 1}
+                        </span>
+                        {step}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
               </>
             )}
 

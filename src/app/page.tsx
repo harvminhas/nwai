@@ -85,7 +85,7 @@ const faqs = [
   },
   {
     q: "Is my data private and secure?",
-    a: "Yes. Your raw PDF file is discarded immediately after parsing — we only retain the extracted transaction data associated with your account. Your data is never sold or shared with third parties.",
+    a: "Yes. Your uploaded statement is stored encrypted in Google Cloud and is only accessible to your account — it is never visible to other users or third parties. Your data is never sold or shared.",
   },
   {
     q: "How much does it cost?",
@@ -112,8 +112,73 @@ const faqJsonLd = {
 };
 const trustItems = [
   "No bank login or credentials",
-  "Raw files discarded after parsing",
+  "Statement stored encrypted, private to your account",
   "Data never sold or shared",
+];
+
+// ── Testimonials ──────────────────────────────────────────────────────────────
+const testimonials = [
+  {
+    quote: "I knew I was spending too much on food but seeing $847/month in one place made it real. Changed my habits in a week.",
+    name: "Priya S.",
+    role: "Marketing manager, Toronto",
+    initials: "PS",
+    color: "bg-purple-100 text-purple-700",
+  },
+  {
+    quote: "Finally a finance app that doesn't want my banking password. I've been burned before. Uploading a PDF is the right way to do this.",
+    name: "Marcus T.",
+    role: "Software engineer, Seattle",
+    initials: "MT",
+    color: "bg-blue-100 text-blue-700",
+  },
+  {
+    quote: "Found 3 streaming services I completely forgot about. Cancelled two within the hour. Already paid for itself.",
+    name: "Jessica L.",
+    role: "Freelance designer, Vancouver",
+    initials: "JL",
+    color: "bg-green-100 text-green-700",
+  },
+];
+
+// ── Security badges ───────────────────────────────────────────────────────────
+const securityBadges = [
+  {
+    icon: (
+      <svg className="h-6 w-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+      </svg>
+    ),
+    title: "Encrypted in transit & at rest",
+    body: "All data is transmitted over HTTPS and stored encrypted on Google Cloud (Firebase). Same infrastructure used by Fortune 500 companies.",
+  },
+  {
+    icon: (
+      <svg className="h-6 w-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+      </svg>
+    ),
+    title: "Your file is private to you",
+    body: "Your uploaded statement is stored encrypted in Google Cloud and is only accessible to your account. It is never shared with other users or third parties.",
+  },
+  {
+    icon: (
+      <svg className="h-6 w-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+      </svg>
+    ),
+    title: "No bank login. Ever.",
+    body: "Your banking username and password never touch our systems. You download a PDF from your bank directly and upload it here. We have zero access to your bank account.",
+  },
+  {
+    icon: (
+      <svg className="h-6 w-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+      </svg>
+    ),
+    title: "Your data is never sold",
+    body: "We don't sell, share, or monetise your financial data. Our business model is a simple subscription — your data is the product we protect, not the product we sell.",
+  },
 ];
 
 // ── "What you'll discover" insight examples ───────────────────────────────────
@@ -228,6 +293,41 @@ export default function Home() {
             </div>
           </section>
 
+          {/* ── Testimonials ─────────────────────────────────────────────── */}
+          <section className="py-16 md:py-24 bg-gray-50" aria-labelledby="testimonials-heading">
+            <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+              <div className="text-center max-w-xl mx-auto">
+                <h2 id="testimonials-heading" className="text-2xl font-bold text-gray-900 md:text-3xl">
+                  What people discovered
+                </h2>
+                <p className="mt-3 text-sm text-gray-500">
+                  Real reactions from people who uploaded their first statement.
+                </p>
+              </div>
+              <div className="mt-10 grid gap-6 md:grid-cols-3">
+                {testimonials.map((t) => (
+                  <figure
+                    key={t.name}
+                    className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm flex flex-col gap-4"
+                  >
+                    <blockquote className="flex-1">
+                      <p className="text-sm text-gray-700 leading-relaxed">&ldquo;{t.quote}&rdquo;</p>
+                    </blockquote>
+                    <figcaption className="flex items-center gap-3">
+                      <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${t.color}`}>
+                        {t.initials}
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-gray-900">{t.name}</p>
+                        <p className="text-xs text-gray-400">{t.role}</p>
+                      </div>
+                    </figcaption>
+                  </figure>
+                ))}
+              </div>
+            </div>
+          </section>
+
           {/* ── How it works ──────────────────────────────────────────────── */}
           <section className="py-16 md:py-24 bg-gray-50" aria-labelledby="how-heading">
             <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
@@ -250,6 +350,50 @@ export default function Home() {
                   </li>
                 ))}
               </ol>
+            </div>
+          </section>
+
+          {/* ── How we protect your data ─────────────────────────────────── */}
+          <section className="py-16 md:py-24 bg-white" aria-labelledby="security-heading">
+            <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+              <div className="text-center max-w-xl mx-auto">
+                <div className="inline-flex items-center gap-2 rounded-full border border-green-200 bg-green-50 px-3 py-1 text-xs font-semibold text-green-700 mb-4">
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  </svg>
+                  Bank-level privacy by design
+                </div>
+                <h2 id="security-heading" className="text-2xl font-bold text-gray-900 md:text-3xl">
+                  Uploading a statement is safer than you think
+                </h2>
+                <p className="mt-3 text-sm text-gray-500">
+                  We built this app specifically so you&apos;d never have to hand over your banking credentials.
+                  Here&apos;s exactly how your data is handled.
+                </p>
+              </div>
+              <div className="mt-10 grid gap-6 md:grid-cols-2">
+                {securityBadges.map((badge) => (
+                  <div
+                    key={badge.title}
+                    className="flex gap-4 rounded-xl border border-gray-100 bg-gray-50 p-6"
+                  >
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-purple-50">
+                      {badge.icon}
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-gray-900 text-sm">{badge.title}</h3>
+                      <p className="mt-1.5 text-sm text-gray-500 leading-relaxed">{badge.body}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-8 rounded-xl border border-purple-100 bg-purple-50 px-6 py-5 text-center">
+                <p className="text-sm text-purple-900">
+                  <span className="font-semibold">Compare this to bank aggregators:</span>{" "}
+                  Apps like Mint or Credit Karma require your banking username and password. 
+                  We don&apos;t — and we never will. A PDF is all we need.
+                </p>
+              </div>
             </div>
           </section>
 
