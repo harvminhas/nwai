@@ -249,7 +249,7 @@ export default function UploadPage() {
 
                     {/* Inline trust strip */}
                     <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                      {uploadTrustPoints.map((p) => (
+                      {uploadTrustBadges.map((p) => (
                         <span key={p.label} className="flex items-center gap-1 text-xs text-gray-400">
                           <span aria-hidden="true">{p.icon}</span>
                           {p.label}
