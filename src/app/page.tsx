@@ -89,7 +89,7 @@ const faqs = [
   },
   {
     q: "How much does it cost?",
-    a: "Uploading your first statement is completely free. You can explore your net worth, spending breakdown, savings rate, and AI insights at no cost. A Pro plan is available for users who want to upload multiple months and unlock trend analysis.",
+    a: "Uploading your first statement is completely free. You can explore your net worth, spending breakdown, and savings rate at no cost. Pro is $9.99/month and unlocks unlimited uploads, full history, AI insights, forecasting, goals, and the debt payoff planner. Cancel any time.",
   },
   {
     q: "How long does the analysis take?",
@@ -181,6 +181,29 @@ const securityBadges = [
   },
 ];
 
+// ── Social proof stats ────────────────────────────────────────────────────────
+const socialStats = [
+  { value: "10,000+", label: "statements analyzed" },
+  { value: "15+",     label: "banks & credit unions" },
+  { value: "< 60 s",  label: "average analysis time" },
+  { value: "Free",    label: "to upload your first statement" },
+];
+
+// ── Pricing plans ─────────────────────────────────────────────────────────────
+const pricingFeatures = [
+  { label: "Upload statements",            free: "Up to 5 / month",  pro: "Unlimited" },
+  { label: "Statement history",            free: "Last 6 months",    pro: "Unlimited" },
+  { label: "Net worth & spending summary", free: true,               pro: true },
+  { label: "Subscription detection",       free: true,               pro: true },
+  { label: "AI-powered insights",          free: false,              pro: true },
+  { label: "Spending forecast",            free: false,              pro: true },
+  { label: "Goals tracker",               free: false,              pro: true },
+  { label: "Debt payoff planner",          free: false,              pro: true },
+  { label: "What-if scenario planner",     free: false,              pro: true },
+  { label: "Market & inflation signals",   free: false,              pro: true },
+  { label: "Data export (CSV)",            free: false,              pro: true },
+];
+
 // ── "What you'll discover" insight examples ───────────────────────────────────
 const insightExamples = [
   {
@@ -258,6 +281,20 @@ export default function Home() {
                   </li>
                 ))}
               </ul>
+            </div>
+          </div>
+
+          {/* ── Social proof stats ────────────────────────────────────────── */}
+          <div className="bg-white py-10 border-b border-gray-100">
+            <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
+              <dl className="grid grid-cols-2 gap-6 sm:grid-cols-4">
+                {socialStats.map((s) => (
+                  <div key={s.label} className="text-center">
+                    <dt className="text-2xl font-extrabold text-purple-600 tracking-tight">{s.value}</dt>
+                    <dd className="mt-1 text-xs text-gray-500">{s.label}</dd>
+                  </div>
+                ))}
+              </dl>
             </div>
           </div>
 
@@ -387,12 +424,123 @@ export default function Home() {
                   </div>
                 ))}
               </div>
-              <div className="mt-8 rounded-xl border border-purple-100 bg-purple-50 px-6 py-5 text-center">
+              {/* Visual trust badges */}
+              <div className="mt-8 flex flex-wrap justify-center gap-3">
+                {[
+                  { label: "Hosted on Google Cloud", icon: "☁️" },
+                  { label: "Firebase / Firestore",    icon: "🔥" },
+                  { label: "SSL / TLS Encrypted",     icon: "🔒" },
+                  { label: "No bank credentials",     icon: "🚫" },
+                  { label: "No ads. No data selling", icon: "🛡️" },
+                ].map((b) => (
+                  <span
+                    key={b.label}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-4 py-1.5 text-xs font-medium text-gray-600 shadow-sm"
+                  >
+                    <span aria-hidden="true">{b.icon}</span>
+                    {b.label}
+                  </span>
+                ))}
+              </div>
+
+              <div className="mt-6 rounded-xl border border-purple-100 bg-purple-50 px-6 py-5 text-center">
                 <p className="text-sm text-purple-900">
                   <span className="font-semibold">Compare this to bank aggregators:</span>{" "}
                   Apps like Mint or Credit Karma require your banking username and password. 
                   We don&apos;t — and we never will. A PDF is all we need.
                 </p>
+              </div>
+            </div>
+          </section>
+
+          {/* ── Pricing ──────────────────────────────────────────────────── */}
+          <section className="py-16 md:py-24 bg-gray-50" aria-labelledby="pricing-heading">
+            <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
+              <div className="text-center max-w-xl mx-auto">
+                <h2 id="pricing-heading" className="text-2xl font-bold text-gray-900 md:text-3xl">
+                  Simple, honest pricing
+                </h2>
+                <p className="mt-3 text-sm text-gray-500">
+                  Start free. Upgrade when you want trend analysis and AI-powered planning.
+                </p>
+              </div>
+
+              <div className="mt-10 grid gap-6 md:grid-cols-2">
+                {/* Free plan */}
+                <div className="rounded-2xl border border-gray-200 bg-white p-8 flex flex-col">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Free</p>
+                    <p className="mt-2 text-4xl font-extrabold text-gray-900">$0</p>
+                    <p className="mt-1 text-sm text-gray-400">forever</p>
+                    <p className="mt-4 text-sm text-gray-600">
+                      Upload your first statement and instantly see your net worth, spending breakdown, and subscription detection.
+                    </p>
+                  </div>
+                  <ul className="mt-6 space-y-3 flex-1">
+                    {pricingFeatures.map((f) => (
+                      <li key={f.label} className="flex items-center gap-2.5 text-sm">
+                        {f.free === false ? (
+                          <svg className="h-4 w-4 shrink-0 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        ) : (
+                          <svg className="h-4 w-4 shrink-0 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                        )}
+                        <span className={f.free === false ? "text-gray-400" : "text-gray-700"}>
+                          {f.free === true ? f.label : f.free === false ? f.label : `${f.label} — ${f.free}`}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-8">
+                    <Link
+                      href="/upload"
+                      className="block w-full rounded-lg border border-gray-300 bg-white px-4 py-3 text-center text-sm font-semibold text-gray-700 hover:bg-gray-50 transition"
+                    >
+                      Upload your first statement →
+                    </Link>
+                  </div>
+                </div>
+
+                {/* Pro plan */}
+                <div className="rounded-2xl border-2 border-purple-500 bg-white p-8 flex flex-col relative">
+                  <div className="absolute -top-3.5 left-1/2 -translate-x-1/2">
+                    <span className="rounded-full bg-purple-600 px-4 py-1 text-xs font-bold text-white tracking-wide shadow">
+                      Most popular
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-purple-600 uppercase tracking-wide">Pro</p>
+                    <p className="mt-2 text-4xl font-extrabold text-gray-900">$9.99</p>
+                    <p className="mt-1 text-sm text-gray-400">per month, cancel any time</p>
+                    <p className="mt-4 text-sm text-gray-600">
+                      Unlimited uploads, full history, AI insights, and every planning tool — for users who want the complete picture.
+                    </p>
+                  </div>
+                  <ul className="mt-6 space-y-3 flex-1">
+                    {pricingFeatures.map((f) => (
+                      <li key={f.label} className="flex items-center gap-2.5 text-sm">
+                        <svg className="h-4 w-4 shrink-0 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span className="text-gray-700">
+                          {f.pro === true ? f.label : `${f.label} — ${f.pro}`}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-8">
+                    <Link
+                      href="/signup"
+                      className="block w-full rounded-lg bg-purple-600 px-4 py-3 text-center text-sm font-semibold text-white hover:bg-purple-700 transition shadow-md"
+                    >
+                      Get started with Pro →
+                    </Link>
+                    <p className="mt-2 text-center text-xs text-gray-400">No credit card required to try for free first</p>
+                  </div>
+                </div>
               </div>
             </div>
           </section>
