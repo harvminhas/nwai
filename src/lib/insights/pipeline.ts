@@ -119,7 +119,11 @@ export async function runInsightsPipeline(
     .get();
 
   const batch = db.batch();
-  for (const doc of existingSnap.docs) batch.delete(doc.ref);
+  for (const doc of existingSnap.docs) {
+    // Preserve external data cards — they are written by a separate pipeline
+    // and should not be wiped when AI insight cards regenerate.
+    if (doc.data().source !== "external") batch.delete(doc.ref);
+  }
   for (const card of cards) {
     batch.set(userRef.collection("agentInsights").doc(card.id), card);
   }

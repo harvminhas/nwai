@@ -989,6 +989,7 @@ export default function TodayPage() {
   const [expandedAlerts,   setExpandedAlerts]   = useState<Set<string>>(new Set());
   const [expandedRadar,    setExpandedRadar]    = useState<Set<string>>(new Set());
   const [dismissedRadar,   setDismissedRadar]   = useState<Set<string>>(new Set());
+  const [sigExpanded,      setSigExpanded]      = useState(false);
   const [statusOpen,       setStatusOpen]       = useState(false);
   const [showOnboarding,   setShowOnboarding]   = useState(false);
   const [showAllUpcoming,      setShowAllUpcoming]      = useState(false);
@@ -1369,6 +1370,175 @@ export default function TodayPage() {
             {expanded ? "Show less ↑" : `Show all (${assets.length + debts.length} accounts) ↓`}
           </button>
         )}
+      </div>
+    );
+  }
+
+
+  // ── MarketSignalCard — rich card for external/market data signals ─────────────
+  function MarketSignalCard({ card, onDismiss }: { card: AgentCard; onDismiss?: () => void }) {
+    const c = card as AgentCard & Record<string, unknown>;
+
+    // Derive source label from dataType — more reliable than the stored dataSource field
+    function sourceLabel(dataType: string | undefined): string {
+      switch (dataType) {
+        case "canada-overnight-rate":
+        case "canada-prime-rate":   return "Bank of Canada";
+        case "canada-cpi":          return "CPI · Canada";
+        case "canada-food-cpi":     return "Food CPI · Canada";
+        case "us-federal-funds-rate": return "Federal Reserve";
+        case "us-cpi":              return "CPI · USA";
+        case "us-food-cpi":         return "Food CPI · USA";
+        default:                    return "Market Data";
+      }
+    }
+
+    const dataSource  = sourceLabel(card.dataType);
+    // Derive period from releaseDate if dataPeriod field isn't stored yet
+    const rawPeriod = (c.dataPeriod as string | undefined);
+    const dataPeriod = rawPeriod ?? (() => {
+      const rel = card.releaseDate ?? "";
+      if (!rel) return "";
+      const d = new Date(rel + (rel.length === 7 ? "-01" : "") + "T12:00:00Z");
+      return isNaN(d.getTime()) ? rel : d.toLocaleDateString("en-CA", { month: "short", year: "numeric" }).toUpperCase();
+    })();
+    const inflationPct = typeof c.inflationPct === "number" ? c.inflationPct : null;
+    const userSpendPct = typeof c.userSpendPct === "number" ? c.userSpendPct : null;
+    const rateCurrent  = typeof c.rateCurrent  === "number" ? c.rateCurrent  : null;
+    const rateDelta    = typeof c.rateDelta    === "number" ? c.rateDelta    : null;
+    const rateDirection = c.rateDirection as string | undefined;
+    const monthlyImpact = typeof c.monthlyImpact === "number" ? c.monthlyImpact : null;
+    const isCpi  = card.dataType === "canada-cpi" || card.dataType === "us-cpi"
+                 || card.dataType === "canada-food-cpi" || card.dataType === "us-food-cpi";
+    const isRate = !isCpi;
+    const rateAccounts = Array.isArray(c.rateAccounts)
+      ? c.rateAccounts as { label: string; balance: number; monthlyImpact: number }[]
+      : [];
+
+    // Bar visual: scale to max value
+    function Bar({ pct, color }: { pct: number; color: string }) {
+      const max = isCpi && userSpendPct !== null && inflationPct !== null
+        ? Math.max(Math.abs(userSpendPct), Math.abs(inflationPct), 1) * 1.2
+        : 100;
+      const width = Math.min(Math.abs(pct) / max * 100, 100);
+      return (
+        <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+          <div className="h-full rounded-full transition-all" style={{ width: `${width}%`, backgroundColor: color }} />
+        </div>
+      );
+    }
+
+    return (
+      <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+        {/* Header */}
+        <div className="px-4 pt-3.5 pb-2 flex items-center gap-2 border-b border-gray-100">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-purple-500 shrink-0" />
+              <span className="text-[10px] font-bold uppercase tracking-wider text-purple-600">Market Signal</span>
+            </div>
+            <p className="text-[10px] text-gray-400 mt-0.5 uppercase tracking-wide">
+              {dataSource}{dataPeriod ? ` · ${dataPeriod}` : ""}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {card.href && (
+              <a href={card.href} target="_blank" rel="noopener noreferrer"
+                className="text-[10px] font-semibold text-purple-600 hover:text-purple-800 uppercase tracking-wide">
+                Source ↗
+              </a>
+            )}
+            {onDismiss && (
+              <button onClick={onDismiss} className="text-gray-300 hover:text-gray-500 transition">
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="px-4 py-3 space-y-3">
+          {/* Headline */}
+          <p className="text-sm font-bold text-gray-900 leading-snug">{card.title}</p>
+
+          {/* CPI comparison bars — all-items or food */}
+          {isCpi && inflationPct !== null && userSpendPct !== null && (
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-gray-500 w-20 shrink-0">
+                  {(c.linkedCategory as string | undefined) ?? "CPI"}
+                </span>
+                <Bar pct={inflationPct} color="#22c55e" />
+                <span className="text-[11px] font-semibold text-green-600 w-10 text-right shrink-0">
+                  +{inflationPct}%
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-gray-500 w-20 shrink-0">Your spend</span>
+                <Bar pct={userSpendPct} color={userSpendPct > inflationPct ? "#f97316" : "#22c55e"} />
+                <span className={`text-[11px] font-semibold w-10 text-right shrink-0 ${userSpendPct > inflationPct ? "text-orange-500" : "text-green-600"}`}>
+                  {userSpendPct > 0 ? "+" : ""}{userSpendPct}%
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Rate comparison */}
+          {isRate && rateCurrent !== null && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <p className="text-2xl font-bold text-gray-900 tabular-nums">{rateCurrent.toFixed(2)}%</p>
+                  <p className="text-[11px] text-gray-400">Current rate</p>
+                </div>
+                {rateDelta !== null && rateDelta !== 0 && (
+                  <div className={`rounded-lg px-3 py-2 text-center ${rateDirection === "up" ? "bg-red-50" : "bg-green-50"}`}>
+                    <p className={`text-sm font-bold ${rateDirection === "up" ? "text-red-600" : "text-green-600"}`}>
+                      {rateDelta > 0 ? "+" : ""}{rateDelta}%
+                    </p>
+                    <p className={`text-[10px] font-medium ${rateDirection === "up" ? "text-red-400" : "text-green-400"}`}>
+                      {rateDirection === "up" ? "raised" : "cut"}
+                    </p>
+                  </div>
+                )}
+              </div>
+              {/* Per-account breakdown */}
+              {rateAccounts.length > 0 && (
+                <div className="space-y-1 pt-1 border-t border-gray-100">
+                  {rateAccounts.map((acct, i) => (
+                    <div key={i} className="flex items-center justify-between">
+                      <span className="text-[11px] text-gray-500 truncate mr-2">{acct.label}</span>
+                      {acct.monthlyImpact > 0 && rateDelta !== 0 ? (
+                        <span className={`text-[11px] font-semibold shrink-0 ${rateDirection === "up" ? "text-red-500" : "text-green-600"}`}>
+                          {rateDirection === "up" ? "+" : "−"}${acct.monthlyImpact}/mo
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-gray-400 shrink-0 tabular-nums">
+                          ${new Intl.NumberFormat("en-CA", { maximumFractionDigits: 0 }).format(acct.balance)}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Dollar impact footer */}
+          {card.dollarImpact !== null && card.dollarImpact !== undefined && (card.dollarImpact as number) > 0 && (
+            <div className="flex items-center gap-1.5 pt-1 border-t border-gray-100">
+              <span className="text-[11px] font-semibold text-gray-700">
+                ~${Math.round(card.dollarImpact as number)}/mo
+                {isCpi ? " above inflation" : (isRate && rateDirection === "up" ? " extra interest" : " interest saved")}
+              </span>
+              {monthlyImpact !== null && isRate && (
+                <span className="text-[10px] text-gray-400">on your variable debt</span>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     );
   }
@@ -1884,11 +2054,60 @@ export default function TodayPage() {
           )}
 
           <FeaturePreviewSection upcoming={upcoming} />
+
+          {/* ── Signals — main feed (always visible, all screen sizes) ─────── */}
+          {agentCards.filter(c => c.source === "external").length > 0 && (() => {
+            const externalCards = agentCards.filter(c => c.source === "external");
+            return (
+              <div className="space-y-3">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Market Signals</p>
+                {externalCards.map((card) => (
+                  <MarketSignalCard key={card.id} card={card} onDismiss={() => dismissCard(card.id)} />
+                ))}
+              </div>
+            );
+          })()}
         </div>
 
         {/* ── Right sidebar ─────────────────────────────────────────────────── */}
         <div className="hidden lg:block w-72 shrink-0">
           <div className="sticky top-6 space-y-3">
+
+            {/* ── Market Signals — top of sidebar, collapsible ───────────────── */}
+            {agentCards.some(c => c.source === "external") && (() => {
+              const externalCards = agentCards.filter(c => c.source === "external");
+              const visible = sigExpanded ? externalCards : externalCards.slice(0, 1);
+              return (
+                <div>
+                  <button
+                    onClick={() => setSigExpanded(v => !v)}
+                    className="w-full mb-2 flex items-center gap-2 px-1 group"
+                  >
+                    <span className="text-sm">📡</span>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-purple-600">Market Signals</p>
+                    <span className="ml-auto rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-bold text-purple-600">
+                      {externalCards.length}
+                    </span>
+                    <svg className={`h-3.5 w-3.5 text-gray-400 transition-transform shrink-0 ${sigExpanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  <div className="space-y-2">
+                    {visible.map((card) => (
+                      <MarketSignalCard key={card.id} card={card} onDismiss={() => dismissCard(card.id)} />
+                    ))}
+                  </div>
+                  {externalCards.length > 1 && (
+                    <button
+                      onClick={() => setSigExpanded(v => !v)}
+                      className="mt-1 w-full text-[11px] font-semibold text-gray-400 hover:text-gray-600 transition"
+                    >
+                      {sigExpanded ? "Show less ↑" : `+${externalCards.length - 1} more ↓`}
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* ── Accounts ───────────────────────────────────────────────────── */}
             {netWorth && (
@@ -1949,59 +2168,6 @@ export default function TodayPage() {
             {/* Savings rate mini-card */}
             <SavingsRateCard />
 
-            {/* ── Signals ───────────────────────────────────────────────────── */}
-            {agentCards.length > 0 && (
-              <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-                <div className="px-4 pt-4 pb-2 flex items-center gap-2 border-b border-gray-100">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Signals</p>
-                  <span className="ml-auto rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold text-gray-500">
-                    {agentCards.length}
-                  </span>
-                </div>
-                <div className="divide-y divide-gray-100">
-                  {agentCards.map((card) => {
-                    const isExternal = card.source === "external";
-                    return (
-                      <div key={card.id} className="px-4 py-3">
-                        <div className="flex items-center gap-1.5 mb-1">
-                          <span className="h-1.5 w-1.5 rounded-full bg-purple-500 shrink-0" />
-                          <span className="text-[10px] font-bold text-purple-600 uppercase tracking-wider">
-                            {isExternal ? "Market Signal" : "AI Insight"}
-                          </span>
-                          <button
-                            onClick={() => dismissCard(card.id)}
-                            className="ml-auto shrink-0 text-gray-300 hover:text-gray-500 transition"
-                          >
-                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          </button>
-                        </div>
-                        <p className="text-[13px] font-semibold text-gray-900 leading-snug">{card.title}</p>
-                        <p className="mt-1 text-[12px] text-gray-500 leading-relaxed line-clamp-2">{card.body}</p>
-                        <div className="mt-1.5 flex items-center gap-3">
-                          <button
-                            onClick={() => toggleAlert(card.id)}
-                            className="text-[11px] font-medium text-gray-400 hover:text-gray-600"
-                          >
-                            {expandedAlerts.has(card.id) ? "Less" : "More →"}
-                          </button>
-                          {card.href && (
-                            <Link href={card.href} className="text-[11px] font-semibold text-purple-600 hover:underline">
-                              {isExternal ? "Source ↗" : "View →"}
-                            </Link>
-                          )}
-                        </div>
-                        {expandedAlerts.has(card.id) && (
-                          <p className="mt-1.5 text-[12px] text-gray-500 leading-relaxed">{card.body}</p>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
             {/* ── Events ─────────────────────────────────────────────────────── */}
             <EventsWidget events={activeEvents} />
 
@@ -2024,7 +2190,7 @@ export default function TodayPage() {
               <MobileCardShell><SavingsRateCard /></MobileCardShell>
             </div>
           )}
-          {agentCards.map((card) => (
+          {agentCards.filter(c => c.source === "external").map((card) => (
             <div key={card.id} className="snap-start shrink-0 w-64">
               <MobileCardShell><SidebarSignalCard card={card} /></MobileCardShell>
             </div>

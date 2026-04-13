@@ -19,9 +19,11 @@ import type { FinancialProfileCache } from "@/lib/financialProfile";
 export type ExternalDataType =
   | "canada-overnight-rate"    // Bank of Canada overnight rate
   | "canada-prime-rate"        // Canadian prime lending rate
-  | "canada-cpi"               // Canada CPI inflation
+  | "canada-cpi"               // Canada CPI inflation (all-items)
+  | "canada-food-cpi"          // Canada CPI food purchased from stores
   | "us-federal-funds-rate"    // US federal funds rate
-  | "us-cpi";                  // US CPI inflation
+  | "us-cpi"                   // US CPI inflation (all-items)
+  | "us-food-cpi";             // US CPI food at home
 
 export type Country = "CA" | "US";
 

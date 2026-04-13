@@ -1,12 +1,17 @@
 /**
  * GET  /api/user/agent-insights        — load active (non-dismissed) cards
  * POST /api/user/agent-insights        — dismiss or complete a card
+ *
+ * On GET: silently refreshes external data cards if global data is newer
+ * than what the user already has. This means users see fresh market signals
+ * on every visit — no statement upload required.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import type { AgentCard } from "@/lib/agentTypes";
 import { resolveAccess } from "@/lib/access/resolveAccess";
+import { generateExternalCardsForUser } from "@/lib/external/pipeline";
 
 // ── GET — load non-dismissed cards ────────────────────────────────────────────
 
@@ -14,6 +19,15 @@ export async function GET(req: NextRequest) {
   const { db } = getFirebaseAdmin();
   const access = await resolveAccess(req, db);
   if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  // Refresh external cards if global data has been updated since last visit.
+  // Fire-and-forget — we await it so the response includes any new cards,
+  // but a failure here never blocks the user from seeing their existing cards.
+  try {
+    await generateExternalCardsForUser(access.targetUid, db);
+  } catch (err) {
+    console.error("[agent-insights] external card refresh failed:", err);
+  }
 
   try {
     const snap = await db
@@ -26,6 +40,8 @@ export async function GET(req: NextRequest) {
     const cards: AgentCard[] = snap.docs
       .map((d) => ({ id: d.id, ...d.data() } as AgentCard))
       .filter((c) => !c.dismissed);
+
+    console.log(`[agent-insights] uid=${access.targetUid} returning ${cards.length} card(s) (${snap.docs.length} total in collection)`);
 
     return NextResponse.json({ cards });
   } catch (err) {

@@ -29,7 +29,7 @@ import type Stripe from "stripe";
 import { stripe, WEBHOOK_SECRET } from "@/lib/stripe";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 
-export const config = { api: { bodyParser: false } };
+// App Router reads the raw body via request.text() — no body-parser config needed.
 
 async function uidFromCustomer(
   db: ReturnType<typeof getFirebaseAdmin>["db"],

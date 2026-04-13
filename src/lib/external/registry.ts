@@ -15,6 +15,10 @@ import type { FinancialProfileCache } from "@/lib/financialProfile";
 import type { ExternalDataDescriptor, ExternalDataPoint } from "./types";
 import { fetchCanadaOvernightRate, fetchCanadaPrimeRate } from "./fetchers/canada-rates";
 import { fetchCanadaCPI } from "./fetchers/canada-cpi";
+import { fetchCanadaFoodCPI } from "./fetchers/canada-food-cpi";
+import { fetchUsFederalFundsRate } from "./fetchers/us-rates";
+import { fetchUsCpi } from "./fetchers/us-cpi";
+import { fetchUsFoodCPI } from "./fetchers/us-food-cpi";
 
 // ── Country detection ──────────────────────────────────────────────────────────
 
@@ -22,9 +26,12 @@ const CA_BANK_RE = /\b(td|rbc|bmo|cibc|scotiabank|national bank|desjardins|tange
 const US_BANK_RE = /\b(chase|bank of america|wells fargo|citi|us bank|capital one|pnc|truist|ally)\b/i;
 
 export function detectCountry(profile: FinancialProfileCache): "CA" | "US" | null {
-  const banks = profile.accountSnapshots.map((a) => a.bankName ?? "").join(" ");
-  if (CA_BANK_RE.test(banks)) return "CA";
-  if (US_BANK_RE.test(banks)) return "US";
+  // Check bankName, accountName, and accountType fields across all snapshots
+  const text = profile.accountSnapshots
+    .flatMap((a) => [a.bankName ?? "", a.accountName ?? ""])
+    .join(" ");
+  if (CA_BANK_RE.test(text)) return "CA";
+  if (US_BANK_RE.test(text)) return "US";
   return null;
 }
 
@@ -34,6 +41,13 @@ function hasVariableDebt(profile: FinancialProfileCache): boolean {
   return profile.accountSnapshots.some((a) =>
     /mortgage|heloc|loc|line of credit/i.test(a.accountType ?? "")
   );
+}
+
+function hasGrocerySpend(profile: FinancialProfileCache): boolean {
+  return profile.expenseTxns.some((t) => {
+    const cat = (t.category ?? "").toLowerCase();
+    return cat === "groceries" || cat.startsWith("groceries/");
+  });
 }
 
 function hasInvestments(profile: FinancialProfileCache): boolean {
@@ -81,7 +95,44 @@ export const EXTERNAL_DATA_REGISTRY: RegisteredDescriptor[] = [
     fetch: fetchCanadaCPI,
     relevant: (profile) =>
       detectCountry(profile) === "CA" &&
-      profile.typicalMonthly.monthsTracked >= 3, // need history to compare against
+      profile.typicalMonthly.monthsTracked >= 1,
+  },
+  {
+    dataType: "canada-food-cpi",
+    country: "CA",
+    label: "Canada Food Inflation (Groceries)",
+    refreshIntervalHours: 168,
+    fetch: fetchCanadaFoodCPI,
+    relevant: (profile) =>
+      detectCountry(profile) === "CA" && hasGrocerySpend(profile),
+  },
+  {
+    dataType: "us-federal-funds-rate",
+    country: "US",
+    label: "Federal Funds Rate",
+    refreshIntervalHours: 24,
+    fetch: fetchUsFederalFundsRate,
+    relevant: (profile) =>
+      detectCountry(profile) === "US" && hasVariableDebt(profile),
+  },
+  {
+    dataType: "us-cpi",
+    country: "US",
+    label: "US CPI Inflation",
+    refreshIntervalHours: 168, // weekly
+    fetch: fetchUsCpi,
+    relevant: (profile) =>
+      detectCountry(profile) === "US" &&
+      profile.typicalMonthly.monthsTracked >= 1,
+  },
+  {
+    dataType: "us-food-cpi",
+    country: "US",
+    label: "US Food Inflation (Groceries)",
+    refreshIntervalHours: 168,
+    fetch: fetchUsFoodCPI,
+    relevant: (profile) =>
+      detectCountry(profile) === "US" && hasGrocerySpend(profile),
   },
 ];
 

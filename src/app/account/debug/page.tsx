@@ -52,9 +52,12 @@ type SpendingDebugResult = {
   monthSummary: { yearMonth: string; allExpenses: number; coreExpenses: number; excluded: number; income: number }[];
 };
 
+const ADMIN_EMAILS = ["harvminhas@gmail.com"];
+
 export default function DebugParsePage() {
   const router = useRouter();
   const [idToken, setIdToken]         = useState<string | null>(null);
+  const [isAdmin, setIsAdmin]         = useState<boolean | null>(null); // null = checking
   const [statements, setStatements]   = useState<UserStatementSummary[]>([]);
   const [selected, setSelected]       = useState<string>("");
   const [loading, setLoading]                   = useState(false);
@@ -84,6 +87,11 @@ export default function DebugParsePage() {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
       if (!user) { router.push("/login"); return; }
+      if (!ADMIN_EMAILS.includes(user.email ?? "")) {
+        router.push("/account/dashboard");
+        return;
+      }
+      setIsAdmin(true);
       const token = await user.getIdToken();
       setIdToken(token);
       try {
@@ -142,11 +150,14 @@ export default function DebugParsePage() {
     }
   }
 
+  const [cronForce, setCronForce]               = useState(false);
+
   async function runCron() {
     if (!idToken) return;
     setCronLoading(true); setCronError(null); setCronResult(null);
     try {
-      const res  = await fetch("/api/cron/refresh-external-data", {
+      const url = `/api/cron/refresh-external-data${cronForce ? "?force=true" : ""}`;
+      const res  = await fetch(url, {
         method: "POST",
         headers: { Authorization: `Bearer ${idToken}` },
       });
@@ -197,6 +208,15 @@ export default function DebugParsePage() {
 
   return (
     <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8 space-y-6">
+      {/* Admin gate — spinner while auth state resolves */}
+      {isAdmin === null && (
+        <div className="flex min-h-[40vh] items-center justify-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-purple-600 border-t-transparent" />
+        </div>
+      )}
+
+      {isAdmin && (
+        <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Parse Debugger</h1>
         <p className="mt-1 text-sm text-gray-500">
@@ -411,7 +431,18 @@ export default function DebugParsePage() {
       </div>
 
       <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm flex items-center justify-between gap-4">
-        <p className="text-sm text-gray-500">Only runs sources that are due for refresh. Safe to trigger manually.</p>
+        <div className="flex flex-col gap-2">
+          <p className="text-sm text-gray-500">Only runs sources that are due for refresh. Safe to trigger manually.</p>
+          <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={cronForce}
+              onChange={(e) => setCronForce(e.target.checked)}
+              className="h-4 w-4 rounded accent-purple-600"
+            />
+            Force refresh (bypass cache / re-fetch even if not due)
+          </label>
+        </div>
         <button
           onClick={runCron}
           disabled={cronLoading || !idToken}
@@ -427,20 +458,51 @@ export default function DebugParsePage() {
       )}
 
       {cronResult && (
-        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Result</p>
+        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm space-y-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Result</p>
           <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
-            <span className="text-gray-500">Users checked: <span className="font-medium text-gray-800">{String(cronResult.users ?? "—")}</span></span>
-            <span className="text-gray-500">Users notified: <span className="font-medium text-gray-800">{String(cronResult.usersNotified ?? "—")}</span></span>
             <span className="text-gray-500">Refreshed: <span className="font-medium text-gray-800">{Array.isArray(cronResult.refreshed) ? (cronResult.refreshed as string[]).join(", ") || "none" : "—"}</span></span>
             <span className="text-gray-500">Skipped (not due): <span className="font-medium text-gray-800">{Array.isArray(cronResult.skipped) ? (cronResult.skipped as string[]).join(", ") || "none" : "—"}</span></span>
+            {cronResult.usersNotified !== undefined && (
+              <span className="text-gray-500">Users notified: <span className="font-medium text-gray-800">{String(cronResult.usersNotified)}</span></span>
+            )}
           </div>
           {Array.isArray(cronResult.fetchErrors) && (cronResult.fetchErrors as string[]).length > 0 && (
-            <div className="mt-3 space-y-1">
+            <div className="space-y-1">
               <p className="text-xs font-semibold text-red-500">Fetch errors:</p>
               {(cronResult.fetchErrors as string[]).map((e, i) => (
                 <p key={i} className="text-xs text-red-600 font-mono">{e}</p>
               ))}
+            </div>
+          )}
+          {/* Per-user signal diagnostics */}
+          {Array.isArray(cronResult.diagnostics) && (cronResult.diagnostics as Record<string, unknown>[]).length > 0 && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">Signal Diagnostics</p>
+              <div className="space-y-3">
+                {(cronResult.diagnostics as Record<string, unknown>[]).map((d, i) => (
+                  <div key={i} className="rounded-lg border border-gray-100 bg-gray-50 p-3 text-xs">
+                    <div className="flex items-center gap-3 mb-2">
+                      <span className="font-mono text-gray-500">{String(d.uid).slice(0, 8)}…</span>
+                      <span className={`rounded-full px-2 py-0.5 font-semibold ${d.country ? "bg-blue-100 text-blue-700" : "bg-red-100 text-red-700"}`}>
+                        {d.country ? `Country: ${String(d.country)}` : "⚠ Country not detected"}
+                      </span>
+                    </div>
+                    <div className="space-y-1">
+                      {(d.signals as Record<string, unknown>[]).map((s, j) => (
+                        <div key={j} className="flex items-center gap-2">
+                          <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${s.signalGenerated ? "bg-green-500" : "bg-gray-300"}`} />
+                          <span className="font-mono text-gray-600 w-52 shrink-0">{String(s.dataType)}</span>
+                          {s.signalGenerated
+                            ? <span className="text-green-600 font-semibold">✓ card written</span>
+                            : <span className="text-gray-400">{String(s.skipReason ?? "skipped")}</span>
+                          }
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -725,6 +787,8 @@ export default function DebugParsePage() {
               )}
             </div>
           </div>
+        </div>
+      )}
         </div>
       )}
     </div>

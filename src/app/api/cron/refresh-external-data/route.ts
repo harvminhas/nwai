@@ -4,65 +4,58 @@
  * Fetches all due external data sources and pushes personalized insight cards
  * to relevant users.
  *
- * Security: requires a valid Firebase ID token belonging to an admin email.
- * Trigger manually from the app (debug page) or via any HTTP scheduler passing
- * the user's Bearer token.
+ * Security: two accepted auth paths:
+ *   1. Vercel Cron — sends Authorization: Bearer <CRON_SECRET> (env var)
+ *   2. Manual admin trigger — sends a valid Firebase ID token for an admin email
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
-import { runExternalDataPipeline } from "@/lib/external/pipeline";
+import { refreshExternalData } from "@/lib/external/pipeline";
 
 export const maxDuration = 120;
 
 const ALLOWED_EMAILS = ["harvminhas@gmail.com"];
 
-export async function POST(request: NextRequest) {
+async function isAuthorized(request: NextRequest): Promise<boolean> {
   const token = request.headers.get("authorization")?.replace("Bearer ", "").trim();
-  if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!token) return false;
 
-  const { auth, db: adminDb } = getFirebaseAdmin();
-  let email: string | undefined;
+  // Path 1: Vercel Cron secret (set CRON_SECRET in Vercel env vars)
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret && token === cronSecret) return true;
+
+  // Path 2: Firebase ID token for an admin email (manual trigger)
   try {
+    const { auth } = getFirebaseAdmin();
     const decoded = await auth.verifyIdToken(token);
-    email = decoded.email;
+    return !!(decoded.email && ALLOWED_EMAILS.includes(decoded.email));
   } catch {
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 });
+    return false;
+  }
+}
+
+export async function POST(request: NextRequest) {
+  if (!(await isAuthorized(request))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  if (!email || !ALLOWED_EMAILS.includes(email)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const { db: adminDb } = getFirebaseAdmin();
 
-  const db = adminDb;
+  // Allow ?force=true to bypass the isDueForRefresh cache (useful for testing)
+  const force = new URL(request.url).searchParams.get("force") === "true";
 
   try {
+    console.log(`[cron/external] refreshing global external data (force=${force})`);
 
-    // Collect all active user IDs (users who have at least one completed statement)
-    const stmtSnap = await db
-      .collection("statements")
-      .where("status", "==", "completed")
-      .select("userId") // fetch only the userId field
-      .get();
+    const result = await refreshExternalData(adminDb, { force });
 
-    const allUids = Array.from(
-      new Set(stmtSnap.docs.map((d) => d.data().userId as string).filter(Boolean))
-    );
-
-    console.log(`[cron/external] running for ${allUids.length} users`);
-
-    const result = await runExternalDataPipeline(allUids, db);
-
-    return NextResponse.json({
-      ok: true,
-      users: allUids.length,
-      ...result,
-    });
+    return NextResponse.json({ ok: true, ...result });
   } catch (err) {
     console.error("[cron/external] error:", err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
