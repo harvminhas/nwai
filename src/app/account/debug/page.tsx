@@ -54,6 +54,24 @@ type SpendingDebugResult = {
 
 const ADMIN_EMAILS = ["harvminhas@gmail.com"];
 
+// ── Promo campaign types ──────────────────────────────────────────────────────
+interface PromoCampaign {
+  code: string;
+  active: boolean;
+  durationDays: number;
+  maxRedemptions: number | null;
+  redemptionCount: number;
+  description: string;
+  expiresAt: string | null;
+}
+
+interface NewPromoForm {
+  code: string;
+  durationDays: number;
+  maxRedemptions: number;
+  description: string;
+}
+
 export default function DebugParsePage() {
   const router = useRouter();
   const [idToken, setIdToken]         = useState<string | null>(null);
@@ -152,6 +170,14 @@ export default function DebugParsePage() {
 
   const [cronForce, setCronForce]               = useState(false);
 
+  // ── Promo campaign manager state ────────────────────────────────────────────
+  const [promoCampaigns, setPromoCampaigns]     = useState<PromoCampaign[]>([]);
+  const [promoLoading, setPromoLoading]         = useState(false);
+  const [promoError, setPromoError]             = useState<string | null>(null);
+  const [newPromo, setNewPromo]                 = useState<NewPromoForm>({
+    code: "", durationDays: 90, maxRedemptions: 500, description: "",
+  });
+
   async function runCron() {
     if (!idToken) return;
     setCronLoading(true); setCronError(null); setCronResult(null);
@@ -186,6 +212,58 @@ export default function DebugParsePage() {
       setSubCleanError(e instanceof Error ? e.message : "Unknown error");
     } finally {
       setSubCleanLoading(false);
+    }
+  }
+
+  async function loadPromoCampaigns() {
+    if (!idToken) return;
+    setPromoLoading(true); setPromoError(null);
+    try {
+      const res  = await fetch("/api/admin/promo-campaigns", { headers: { Authorization: `Bearer ${idToken}` } });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) { setPromoError(json.error || "Failed to load campaigns"); return; }
+      setPromoCampaigns(json.campaigns ?? []);
+    } catch (e) {
+      setPromoError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setPromoLoading(false);
+    }
+  }
+
+  async function togglePromoCampaign(code: string, active: boolean) {
+    if (!idToken) return;
+    try {
+      const res = await fetch("/api/admin/promo-campaigns", {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ code, active }),
+      });
+      if (!res.ok) { setPromoError("Failed to update campaign"); return; }
+      setPromoCampaigns((prev) => prev.map((c) => c.code === code ? { ...c, active } : c));
+    } catch (e) {
+      setPromoError(e instanceof Error ? e.message : "Unknown error");
+    }
+  }
+
+  async function createPromoCampaign() {
+    if (!idToken) return;
+    const code = newPromo.code.toUpperCase().trim();
+    if (!code || !newPromo.description) { setPromoError("Code and description are required."); return; }
+    setPromoLoading(true); setPromoError(null);
+    try {
+      const res  = await fetch("/api/admin/promo-campaigns", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ ...newPromo, code }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) { setPromoError(json.error || "Failed to create campaign"); return; }
+      setNewPromo({ code: "", durationDays: 90, maxRedemptions: 500, description: "" });
+      await loadPromoCampaigns();
+    } catch (e) {
+      setPromoError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setPromoLoading(false);
     }
   }
 
@@ -789,6 +867,133 @@ export default function DebugParsePage() {
           </div>
         </div>
       )}
+
+        {/* ── Promo Campaign Manager ─────────────────────────────────── */}
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+            <div>
+              <h2 className="font-semibold text-gray-900">Promo Campaigns</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Create and manage promo codes that grant free Pro access</p>
+            </div>
+            <button
+              onClick={loadPromoCampaigns}
+              disabled={promoLoading}
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition"
+            >
+              {promoLoading ? "Loading…" : "Load campaigns"}
+            </button>
+          </div>
+
+          <div className="p-5 space-y-5">
+            {promoError && (
+              <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{promoError}</p>
+            )}
+
+            {/* Create new campaign */}
+            <div className="rounded-xl border border-purple-100 bg-purple-50 p-4">
+              <p className="text-xs font-bold uppercase tracking-widest text-purple-500 mb-3">New campaign</p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Code (e.g. PHLAUNCH2026)</label>
+                  <input
+                    value={newPromo.code}
+                    onChange={(e) => setNewPromo((p) => ({ ...p, code: e.target.value.toUpperCase() }))}
+                    placeholder="PHLAUNCH2026"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-purple-300"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
+                  <input
+                    value={newPromo.description}
+                    onChange={(e) => setNewPromo((p) => ({ ...p, description: e.target.value }))}
+                    placeholder="Product Hunt April 2026"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Duration (days)</label>
+                  <input
+                    type="number"
+                    value={newPromo.durationDays}
+                    onChange={(e) => setNewPromo((p) => ({ ...p, durationDays: Number(e.target.value) }))}
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Max redemptions (0 = unlimited)</label>
+                  <input
+                    type="number"
+                    value={newPromo.maxRedemptions}
+                    onChange={(e) => setNewPromo((p) => ({ ...p, maxRedemptions: Number(e.target.value) }))}
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+                  />
+                </div>
+              </div>
+              <button
+                onClick={createPromoCampaign}
+                disabled={promoLoading || !newPromo.code || !newPromo.description}
+                className="mt-3 rounded-lg bg-purple-600 px-4 py-2 text-xs font-semibold text-white hover:bg-purple-700 disabled:opacity-50 transition"
+              >
+                Create campaign
+              </button>
+            </div>
+
+            {/* Campaign list */}
+            {promoCampaigns.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-50 border-y border-gray-100">
+                    <tr>
+                      <th className="text-left px-4 py-2 font-medium text-gray-500">Code</th>
+                      <th className="text-left px-4 py-2 font-medium text-gray-500">Description</th>
+                      <th className="text-center px-4 py-2 font-medium text-gray-500">Duration</th>
+                      <th className="text-center px-4 py-2 font-medium text-gray-500">Redemptions</th>
+                      <th className="text-center px-4 py-2 font-medium text-gray-500">Status</th>
+                      <th className="px-4 py-2" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {promoCampaigns.map((c) => (
+                      <tr key={c.code} className="border-b border-gray-50 hover:bg-gray-50">
+                        <td className="px-4 py-2.5 font-mono font-semibold text-gray-800">{c.code}</td>
+                        <td className="px-4 py-2.5 text-gray-600">{c.description}</td>
+                        <td className="px-4 py-2.5 text-center text-gray-600">{c.durationDays}d</td>
+                        <td className="px-4 py-2.5 text-center">
+                          <span className="font-semibold text-gray-800">{c.redemptionCount}</span>
+                          {c.maxRedemptions !== null && (
+                            <span className="text-gray-400"> / {c.maxRedemptions}</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-center">
+                          <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                            c.active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
+                          }`}>
+                            {c.active ? "Active" : "Paused"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          <button
+                            onClick={() => togglePromoCampaign(c.code, !c.active)}
+                            className={`text-xs font-medium ${c.active ? "text-red-500 hover:text-red-700" : "text-green-600 hover:text-green-800"} transition`}
+                          >
+                            {c.active ? "Pause" : "Activate"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {promoCampaigns.length === 0 && !promoLoading && (
+              <p className="text-sm text-gray-400 text-center py-4">
+                Click &ldquo;Load campaigns&rdquo; to see existing promo codes, or create one above.
+              </p>
+            )}
+          </div>
+        </div>
         </div>
       )}
     </div>

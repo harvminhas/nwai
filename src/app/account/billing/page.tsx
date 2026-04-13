@@ -25,15 +25,32 @@ const PRO_FEATURES = [
   "What-if scenarios",
 ];
 
+interface FeaturedCampaign {
+  durationDays: number;
+  description: string;
+}
+
+function durationLabel(days: number): string {
+  if (days % 365 === 0) return `${days / 365} year${days / 365 > 1 ? "s" : ""}`;
+  if (days % 30 === 0)  return `${days / 30} month${days / 30 > 1 ? "s" : ""}`;
+  return `${days} days`;
+}
+
 function BillingContent() {
   const { planId, loading: planLoading, refresh } = usePlan();
   const searchParams = useSearchParams();
   const router       = useRouter();
 
-  const [token,      setToken]      = useState<string | null>(null);
-  const [working,    setWorking]    = useState(false);
-  const [error,      setError]      = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [token,        setToken]        = useState<string | null>(null);
+  const [working,      setWorking]      = useState(false);
+  const [error,        setError]        = useState<string | null>(null);
+  const [successMsg,   setSuccessMsg]   = useState<string | null>(null);
+  const [featured,     setFeatured]     = useState<FeaturedCampaign | null | undefined>(undefined);
+  const [promoCode,    setPromoCode]    = useState("");
+  const [promoApplying,setPromoApplying]= useState(false);
+  const [promoError,   setPromoError]   = useState<string | null>(null);
+  const [promoSuccess, setPromoSuccess] = useState(false);
+  const [promoExpiry,  setPromoExpiry]  = useState<string | null>(null);
 
   const [subInfo, setSubInfo] = useState<{
     status?: string;
@@ -128,6 +145,36 @@ function BillingContent() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Fetch featured promo campaign once on mount
+  useEffect(() => {
+    fetch("/api/promo/featured")
+      .then((r) => r.json())
+      .then((d) => setFeatured(d.campaign ?? null))
+      .catch(() => setFeatured(null));
+  }, []);
+
+  async function handleApplyPromo() {
+    const trimmed = promoCode.trim().toUpperCase();
+    if (!trimmed || !token) return;
+    setPromoApplying(true); setPromoError(null);
+    try {
+      const res  = await fetch("/api/user/redeem-promo", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ code: trimmed }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setPromoError(data.error ?? "Invalid code."); return; }
+      setPromoExpiry(data.expiresAt ?? null);
+      setPromoSuccess(true);
+      await refresh();
+    } catch {
+      setPromoError("Something went wrong. Please try again.");
+    } finally {
+      setPromoApplying(false);
+    }
+  }
+
   async function handleUpgrade() {
     if (!token) return;
     setWorking(true); setError(null);
@@ -194,6 +241,68 @@ function BillingContent() {
           {error}
         </div>
       )}
+
+      {/* Special offer banner — shown only to free users when a campaign is live */}
+      {!isPro && featured && !promoSuccess && (
+        <div className="mb-6 rounded-2xl border border-purple-200 bg-gradient-to-r from-purple-50 to-white px-5 py-4">
+          <div className="flex items-start gap-3">
+            <span className="text-xl shrink-0 mt-0.5" aria-hidden="true">🎉</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-purple-900">
+                Special offer — get {durationLabel(featured.durationDays)} of Pro free
+              </p>
+              <p className="text-xs text-purple-600 mt-0.5">
+                Have a promo code? Enter it below to unlock all Pro features instantly.
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <input
+                  value={promoCode}
+                  onChange={(e) => { setPromoCode(e.target.value.toUpperCase()); setPromoError(null); }}
+                  onKeyDown={(e) => e.key === "Enter" && handleApplyPromo()}
+                  placeholder="Enter code"
+                  maxLength={32}
+                  className="w-44 rounded-lg border border-purple-200 bg-white px-3 py-1.5 text-sm font-mono uppercase tracking-wide placeholder:normal-case placeholder:tracking-normal focus:outline-none focus:ring-2 focus:ring-purple-400"
+                />
+                <button
+                  onClick={handleApplyPromo}
+                  disabled={promoApplying || !promoCode.trim()}
+                  className="rounded-lg bg-purple-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50 transition"
+                >
+                  {promoApplying ? "Applying…" : "Apply"}
+                </button>
+              </div>
+              {promoError && <p className="mt-1.5 text-xs text-red-600">{promoError}</p>}
+            </div>
+          </div>
+        </div>
+      )}
+      {promoSuccess && (() => {
+        const expiry = promoExpiry
+          ? new Date(promoExpiry).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
+          : null;
+        const dur = featured ? durationLabel(featured.durationDays) : "Pro";
+        return (
+          <div className="mb-6 rounded-2xl border border-green-200 bg-green-50 px-6 py-5">
+            <div className="flex items-start gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-green-100">
+                <svg className="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-base font-bold text-green-900">You&apos;re on Pro! 🎉</p>
+                <p className="mt-0.5 text-sm text-green-700">
+                  {dur} of Pro access is now active.{" "}
+                  {expiry && <span>Access expires <strong>{expiry}</strong>.</span>}
+                </p>
+                <p className="mt-1 text-xs text-green-600">
+                  All features are unlocked — forecasts, AI insights, goals, debt planner, and more.
+                </p>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Current plan banner */}
       <div className={`rounded-2xl border p-5 mb-6 ${
@@ -372,14 +481,6 @@ function BillingContent() {
       <p className="mt-6 text-center text-xs text-gray-400">
         Payments are securely processed by Stripe. Cancel anytime.
       </p>
-
-      {/* Temporary debug — remove once confirmed working */}
-      {process.env.NODE_ENV !== "production" || true ? (
-        <details className="mt-8 rounded-xl border border-gray-200 bg-gray-50 p-4 text-xs text-gray-500">
-          <summary className="cursor-pointer font-mono font-semibold">Debug: subInfo</summary>
-          <pre className="mt-2 whitespace-pre-wrap break-all">{JSON.stringify(subInfo, null, 2)}</pre>
-        </details>
-      ) : null}
     </div>
   );
 }

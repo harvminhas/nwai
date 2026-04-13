@@ -8,7 +8,9 @@ import { getFirebaseClient } from "@/lib/firebase";
 import type { DashboardAlert, UpcomingItem, TodayInsight } from "@/app/api/user/insights/route";
 import type { AgentCard } from "@/lib/agentTypes";
 import type { RadarItem, FreshnessData, NetWorthSnapshot } from "@/lib/today/types";
-import ParseStatusBanner from "@/components/ParseStatusBanner";
+import ParseStatusBanner, { addPendingParse } from "@/components/ParseStatusBanner";
+import PromoDashboardBanner from "@/components/PromoDashboardBanner";
+import UploadZone from "@/components/UploadZone";
 import RefreshToast from "@/components/RefreshToast";
 import { fmt } from "@/lib/currencyUtils";
 import { usePlan } from "@/contexts/PlanContext";
@@ -533,7 +535,33 @@ const HOW_IT_WORKS = [
   },
 ];
 
-function ZeroStatementsLayout() {
+function ZeroStatementsLayout({ token, onUploaded }: { token: string | null; onUploaded: () => void }) {
+  const [uploadError,   setUploadError]   = useState<string | null>(null);
+  const [uploading,     setUploading]     = useState(false);
+  const [uploadedName,  setUploadedName]  = useState<string | null>(null);
+
+  async function handleFileSelect(file: File) {
+    if (!token) return;
+    setUploading(true); setUploadError(null);
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const res  = await fetch("/api/upload", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: formData });
+      const data = await res.json();
+      if (res.status === 409 && data.error === "duplicate") { onUploaded(); return; }
+      if (!res.ok) { setUploadError(data.error || "Upload failed. Please try again."); return; }
+      const sid = data.statementId as string;
+      setUploadedName(file.name);
+      addPendingParse(sid, file.name);
+      fetch("/api/parse", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ statementId: sid }) }).catch(() => {});
+      onUploaded();
+    } catch {
+      setUploadError("Upload failed. Please try again.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
   return (
     <div className="flex gap-5 items-start">
 
@@ -541,7 +569,7 @@ function ZeroStatementsLayout() {
       <div className="min-w-0 flex-1 space-y-4">
 
         {/* Upload hero */}
-        <Link href="/upload" className="block rounded-2xl border border-gray-200 bg-white shadow-sm p-8 hover:border-purple-200 hover:shadow-md transition group">
+        <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-8">
           <div className="text-center mb-6">
             <h2 className="text-2xl font-bold text-gray-900 leading-snug mb-2">
               Upload a bank statement.<br />See your finances clearly.
@@ -551,30 +579,48 @@ function ZeroStatementsLayout() {
             </p>
           </div>
 
-          {/* Drop zone */}
-          <div className="rounded-xl border-2 border-dashed border-gray-200 group-hover:border-purple-300 bg-gray-50 group-hover:bg-purple-50/30 transition px-6 py-8 flex flex-col items-center gap-2">
-            <div className="rounded-full bg-white border border-gray-200 p-2.5">
-              <svg className="h-6 w-6 text-gray-400 group-hover:text-purple-500 transition" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-              </svg>
+          {uploadedName ? (
+            /* Success state — analysis kicked off */
+            <div className="rounded-xl border border-green-200 bg-green-50 px-6 py-5 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-100 mx-auto mb-3">
+                <svg className="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <p className="text-sm font-semibold text-gray-900">Statement uploaded!</p>
+              <p className="mt-1 text-xs text-gray-500">
+                AI analysis is running in the background — usually 30–60 seconds.
+                Your dashboard will update automatically.
+              </p>
             </div>
-            <p className="text-sm font-semibold text-gray-700 group-hover:text-purple-700 transition">Drop your statement here</p>
-            <p className="text-xs text-gray-400">PDF · Any Canadian bank · CIBC, TD, RBC, Scotiabank, BMO</p>
-          </div>
+          ) : (
+            <>
+              <UploadZone onFileSelect={handleFileSelect} disabled={uploading} />
+              {uploading && (
+                <div className="mt-3 flex items-center justify-center gap-2 text-sm text-purple-600">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-purple-600 border-t-transparent" />
+                  Uploading…
+                </div>
+              )}
+              {uploadError && (
+                <p className="mt-3 text-center text-sm text-red-600">{uploadError}</p>
+              )}
+            </>
+          )}
 
           <p className="mt-4 flex items-center justify-center gap-4 text-[11px] text-gray-400">
             <span className="flex items-center gap-1">
               <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
               </svg>
-              Processed locally
+              Encrypted
             </span>
             <span>·</span>
-            <span>never stored on our servers</span>
+            <span>Private to your account</span>
             <span>·</span>
-            <span>no bank credentials needed</span>
+            <span>No bank credentials needed</span>
           </p>
-        </Link>
+        </div>
 
         {/* Example insights */}
         <div className="space-y-3">
@@ -1736,6 +1782,7 @@ export default function TodayPage() {
     <>
     <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
+      <PromoDashboardBanner />
       {token && <ParseStatusBanner onRefresh={() => load(token)} />}
       {token && needsRefresh && (
         <RefreshToast token={token} onRefreshed={() => { setNeedsRefresh(false); load(token); }} />
@@ -1764,7 +1811,7 @@ export default function TodayPage() {
 
       {/* ── Zero / First-time / Rich layouts ────────────────────────────────── */}
       {!loading && statementCount === 0 ? (
-        <ZeroStatementsLayout />
+        <ZeroStatementsLayout token={token} onUploaded={() => token && load(token)} />
       ) : statementCount <= 3 && !loading ? (
         <FirstTimeLayout
           agentCards={agentCards}
@@ -2055,7 +2102,46 @@ export default function TodayPage() {
 
           <FeaturePreviewSection upcoming={upcoming} />
 
-          {/* ── Signals — main feed (always visible, all screen sizes) ─────── */}
+          {/* ── What we noticed — non-external agent cards ───────────────── */}
+          {agentCards.filter(c => c.source !== "external" && !c.dismissed).length > 0 && (
+            <div className="space-y-3">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">What we noticed</p>
+              {agentCards.filter(c => c.source !== "external" && !c.dismissed).map((card) => {
+                const { dot, label } = priorityLabel(card.priority);
+                const border = priorityBorder(card.priority);
+                return (
+                  <div key={card.id} className={`rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden ${border}`}>
+                    <div className="px-5 py-4">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${dot}`} />
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">{label}</span>
+                        </div>
+                        <button
+                          onClick={() => dismissCard(card.id)}
+                          className="text-gray-300 hover:text-gray-500 transition"
+                          aria-label="Dismiss"
+                        >
+                          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                      <p className="text-sm font-semibold text-gray-900 mb-1">{card.title}</p>
+                      <p className="text-xs text-gray-500 leading-relaxed">{card.body}</p>
+                      {card.href && (
+                        <Link href={card.href} className="mt-2 inline-block text-xs font-semibold text-purple-600 hover:underline">
+                          Explore →
+                        </Link>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── Market Signals — main feed (always visible, all screen sizes) ── */}
           {agentCards.filter(c => c.source === "external").length > 0 && (() => {
             const externalCards = agentCards.filter(c => c.source === "external");
             return (

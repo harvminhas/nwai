@@ -5,8 +5,9 @@
  * Resolution priority:
  *   1. users/{uid}.manualPro === true  → "pro"  (admin override)
  *   2. users/{uid}.subscription.status === "active" | "trialing"  → "pro"  (written by webhook / billing-info)
- *   3. Live Stripe lookup (fallback when webhook hasn't fired yet)
- *   4. Otherwise → "free"
+ *   3. users/{uid}.promoExpiresAt > now  → "pro"  (promo code grant)
+ *   4. Live Stripe lookup (fallback when webhook hasn't fired yet)
+ *   5. Otherwise → "free"
  *
  * PUT /api/user/plan  (dev/test only)
  * Body: { plan: "free" | "pro" }
@@ -16,6 +17,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { stripe } from "@/lib/stripe";
 import { PLAN_ORDER, type PlanId } from "@/lib/plans";
+import type { Timestamp } from "firebase-admin/firestore";
 
 function authToken(req: NextRequest): string | null {
   const h = req.headers.get("authorization");
@@ -34,7 +36,11 @@ export function resolvePlan(data: Record<string, unknown> | undefined): PlanId |
   if (sub?.status === "active" || sub?.status === "trialing") return "pro";
   if (sub?.status && sub.status !== "") return "free"; // explicitly inactive
 
-  // 3. Legacy plan field (test mode)
+  // 3. Active promo code grant
+  const promoExpiry = data.promoExpiresAt as Timestamp | undefined;
+  if (promoExpiry && promoExpiry.toDate() > new Date()) return "pro";
+
+  // 4. Legacy plan field (test mode)
   const legacy = data.plan as PlanId | undefined;
   if (legacy && PLAN_ORDER.includes(legacy)) return legacy;
 
