@@ -13,6 +13,7 @@ import { buildAccountSlug } from "@/lib/accountSlug";
 import { getYearMonth } from "@/lib/consolidate";
 import { fireInsightEvent } from "@/lib/insights/index";
 import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
+import { inferCurrencyFromBankName } from "@/lib/currencyUtils";
 import type { ParsedStatementData } from "@/lib/types";
 
 export const maxDuration = 120;
@@ -123,6 +124,9 @@ export async function POST(request: NextRequest) {
     // listener has already unsubscribed following the "completed" event.
     let backfillPromptNeeded = false;
     let backfillOldestMonth: string | null = null;
+    // inferredCurrency: best-guess currency for the new account.
+    // The user confirms or overrides this in the currency prompt.
+    const inferredCurrency = inferCurrencyFromBankName(parsedData.bankName, parsedData.currency);
     if (userId && slug) {
       try {
         const allUserStmts = await db
@@ -170,6 +174,7 @@ export async function POST(request: NextRequest) {
       ...(backfillPromptNeeded && {
         backfillPromptNeeded: true,
         backfillOldestMonth,
+        inferredCurrency,
       }),
     });
 

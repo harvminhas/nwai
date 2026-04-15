@@ -66,7 +66,7 @@ export interface ExternalDataDescriptor {
    * Returns true if this data point is relevant to the given user's profile.
    * Called at pipeline time — cheap, no async.
    */
-  relevant(profile: FinancialProfileCache): boolean;
+  relevant(profile: FinancialProfileCache, country?: "CA" | "US"): boolean;
 }
 
 // ── Signal emitted when external data is relevant to a user ───────────────────

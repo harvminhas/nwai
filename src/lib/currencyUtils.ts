@@ -16,6 +16,30 @@
 /** Default when no home currency is known yet. */
 export const HOME_CURRENCY = "USD";
 
+const CA_BANK_RE = /\b(td|rbc|bmo|cibc|scotiabank|desjardins|national bank|tangerine|simplii|hsbc canada|laurentian|coast capital|meridian|atb)\b/i;
+const US_BANK_RE = /\b(bank of america|chase|wells fargo|citibank|citi|capital one|us bank|pnc|suntrust|bb&t|truist|regions|fifth third|ally|discover|american express|amex|usaa|navy federal|td bank)\b/i;
+
+/**
+ * Infer the ISO 4217 currency for a statement given the bank name and any
+ * explicit currency the AI already extracted.
+ *
+ * Priority:
+ *   1. `explicitCurrency` — AI-extracted (always trusted when present)
+ *   2. Bank-name heuristic — CA banks → CAD, US banks → USD
+ *   3. `fallback` — caller's home currency (last resort)
+ */
+export function inferCurrencyFromBankName(
+  bankName: string | null | undefined,
+  explicitCurrency: string | null | undefined,
+  fallback = HOME_CURRENCY,
+): string {
+  if (explicitCurrency) return explicitCurrency.toUpperCase();
+  const name = bankName ?? "";
+  if (CA_BANK_RE.test(name)) return "CAD";
+  if (US_BANK_RE.test(name)) return "USD";
+  return fallback.toUpperCase();
+}
+
 export const CURRENCY_SYMBOL: Record<string, string> = {
   CAD: "CA$",
   USD: "US$",

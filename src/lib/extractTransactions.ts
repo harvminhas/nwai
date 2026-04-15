@@ -12,6 +12,7 @@
 import type * as Firestore from "firebase-admin/firestore";
 import type { ParsedStatementData } from "./types";
 import { buildAccountSlug } from "./accountSlug";
+import { inferCurrencyFromBankName } from "./currencyUtils";
 import { getYearMonth } from "./consolidate";
 import { txFingerprint } from "./txFingerprint";
 import { isBalanceMarker } from "./balanceMarkers";
@@ -189,7 +190,7 @@ export async function extractAllTransactions(
             category: txn.category ?? "Other",
             accountSlug: slug,
             accountLabel: label,
-            currency: parsed.currency ?? undefined,
+            currency: inferCurrencyFromBankName(parsed.bankName, parsed.currency),
             recurring: txn.recurring,
             ...(txn.debtType ? { debtType: txn.debtType } : {}),
           });
@@ -226,7 +227,7 @@ export async function extractAllTransactions(
           source: txn.source ?? "Income",
           description: txn.source ?? txn.category ?? "Income",
           accountSlug: slug,
-          currency: parsed.currency ?? undefined,
+          currency: inferCurrencyFromBankName(parsed.bankName, parsed.currency),
         });
       }
     }
@@ -259,7 +260,7 @@ export async function extractAllTransactions(
       parsedDebts:  parsed.debts,
       statementMonth: stmtYm,
       interestRate: typeof parsed.interestRate === "number" ? parsed.interestRate : null,
-      currency: parsed.currency ?? "CAD",
+      currency: inferCurrencyFromBankName(parsed.bankName, parsed.currency),
     })
   );
 

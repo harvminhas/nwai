@@ -49,7 +49,16 @@ interface BackfillPrompt {
   firstStatementYearMonth: string;
   oldestMonth: string; // oldest month in the user's history — used for ">6 mo" bucket
   slugIsAccountNumber: boolean; // true when slug is ••••XXXX (vs bank-name fallback)
+  inferredCurrency: string; // best-guess currency (e.g. "CAD", "USD")
 }
+
+const SUPPORTED_CURRENCIES = [
+  { code: "CAD", label: "CA$", name: "Canadian Dollar" },
+  { code: "USD", label: "US$", name: "US Dollar" },
+  { code: "EUR", label: "€",   name: "Euro" },
+  { code: "GBP", label: "£",   name: "British Pound" },
+  { code: "AUD", label: "AU$", name: "Australian Dollar" },
+];
 
 const AGE_BUCKETS = [
   { id: "new",    label: "< 1 month",  months: 0,  help: "This is a brand-new account — no backfill needed." },
@@ -71,17 +80,25 @@ function BackfillPromptModal({
   idToken: string;
   onDone: () => void;
 }) {
-  const [selected, setSelected] = useState<BucketId | null>(null);
-  const [saving,   setSaving]   = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  // Step 1: currency confirmation. Step 2: account age.
+  const [step,         setStep]         = useState<1 | 2>(1);
+  const [currency,     setCurrency]     = useState<string>(prompt.inferredCurrency || "USD");
+  const [selected,     setSelected]     = useState<BucketId | null>(null);
+  const [saving,       setSaving]       = useState(false);
+  const [saveError,    setSaveError]    = useState<string | null>(null);
+
+  const displayId = prompt.slugIsAccountNumber
+    ? `••••${prompt.accountSlug}`
+    : prompt.accountSlug;
+
+  const handleCurrencyNext = () => setStep(2);
 
   const handleSave = async () => {
     if (!selected) return;
     setSaving(true);
     setSaveError(null);
 
-    const bucket    = AGE_BUCKETS.find((b) => b.id === selected)!;
-    // For ">6 mo", backfill to the oldest tracked month (or 12 months if no baseline)
+    const bucket = AGE_BUCKETS.find((b) => b.id === selected)!;
     const backfillMonths = bucket.months === -1
       ? (prompt.oldestMonth
           ? monthsDiff(prompt.oldestMonth, prompt.firstStatementYearMonth)
@@ -89,7 +106,19 @@ function BackfillPromptModal({
       : bucket.months;
 
     try {
-      const res = await fetch("/api/user/account-backfills", {
+      // Save confirmed currency first
+      const ccyRes = await fetch("/api/user/currency-overrides", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+        body:    JSON.stringify({ accountSlug: prompt.accountSlug, currency, confirmed: true }),
+      });
+      if (!ccyRes.ok) {
+        setSaveError("Couldn't save currency. Please try again.");
+        return;
+      }
+
+      // Then save account age / backfill
+      const bfRes = await fetch("/api/user/account-backfills", {
         method:  "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
         body:    JSON.stringify({
@@ -102,11 +131,9 @@ function BackfillPromptModal({
           firstStatementYearMonth: prompt.firstStatementYearMonth,
         }),
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        console.error("[backfill] save failed:", res.status, body);
-        setSaveError("Something went wrong saving the backfill. Please try again.");
-        return; // keep modal open
+      if (!bfRes.ok) {
+        setSaveError("Something went wrong saving account history. Please try again.");
+        return;
       }
       onDone();
     } catch (e) {
@@ -118,9 +145,6 @@ function BackfillPromptModal({
   };
 
   const selectedBucket = AGE_BUCKETS.find((b) => b.id === selected);
-  const displayId = prompt.slugIsAccountNumber
-    ? `••••${prompt.accountSlug}`
-    : prompt.accountSlug;
 
   return (
     <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4">
@@ -131,59 +155,106 @@ function BackfillPromptModal({
           </svg>
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-blue-900">
-            New account detected — {prompt.accountName || displayId}
-          </p>
-          <p className="mt-0.5 text-xs text-blue-700">
-            How long have you had this account? We&apos;ll estimate its history so your net worth chart doesn&apos;t show a false spike.
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {AGE_BUCKETS.map((b) => (
-              <button
-                key={b.id}
-                onClick={() => setSelected(b.id)}
-                className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
-                  selected === b.id
-                    ? "border-blue-500 bg-blue-600 text-white"
-                    : "border-blue-200 bg-white text-blue-700 hover:border-blue-400"
-                }`}
-              >
-                {b.label}
-              </button>
-            ))}
-          </div>
-          {selectedBucket && (
-            <p className="mt-2 text-[11px] text-blue-600">{selectedBucket.help}</p>
-          )}
-          <div className="mt-3 flex items-center gap-2">
-            <button
-              onClick={handleSave}
-              disabled={!selected || saving}
-              className="rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-40 transition"
-            >
-              {saving ? "Saving…" : "Confirm"}
-            </button>
-            <button
-              onClick={onDone}
-              className="text-xs text-blue-500 hover:text-blue-700"
-            >
-              Skip
-            </button>
-          </div>
-          {saveError && (
-            <p className="mt-2 text-[11px] font-medium text-red-600">{saveError}</p>
-          )}
-
-          {/* Soft duplicate advisory */}
-          <div className="mt-3 rounded-lg border border-blue-200 bg-white/70 px-3 py-2">
-            <p className="text-[11px] text-blue-700">
-              <span className="font-semibold">Already tracking this account?</span>{" "}
-              {prompt.slugIsAccountNumber
-                ? <>If {displayId} is the same card listed under a different number, go to <a href="/account/liabilities?tab=accounts" className="underline hover:text-blue-900">Accounts</a> and delete the old entry, then re-upload.</>
-                : <>If this account is already tracked under a different name, go to <a href="/account/liabilities?tab=accounts" className="underline hover:text-blue-900">Accounts</a> and delete the duplicate, then re-upload.</>
-              }
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-blue-900">
+              New account — {prompt.accountName || displayId}
             </p>
+            <span className="text-[10px] font-medium text-blue-400">Step {step} of 2</span>
           </div>
+
+          {step === 1 ? (
+            <>
+              <p className="mt-1 text-xs text-blue-700">
+                What currency is this account in?
+              </p>
+              <p className="mt-0.5 text-[11px] text-blue-500">
+                We detected <strong>{prompt.inferredCurrency}</strong> — confirm or change below.
+                This affects how balances and transactions are displayed.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {SUPPORTED_CURRENCIES.map((c) => (
+                  <button
+                    key={c.code}
+                    onClick={() => setCurrency(c.code)}
+                    className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+                      currency === c.code
+                        ? "border-blue-500 bg-blue-600 text-white"
+                        : "border-blue-200 bg-white text-blue-700 hover:border-blue-400"
+                    }`}
+                  >
+                    {c.label} {c.name}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  onClick={handleCurrencyNext}
+                  className="rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition"
+                >
+                  Next →
+                </button>
+                <button onClick={onDone} className="text-xs text-blue-500 hover:text-blue-700">
+                  Skip
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="mt-1 text-xs text-blue-700">
+                How long have you had this account? We&apos;ll estimate its history so your net worth chart doesn&apos;t show a false spike.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {AGE_BUCKETS.map((b) => (
+                  <button
+                    key={b.id}
+                    onClick={() => setSelected(b.id)}
+                    className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+                      selected === b.id
+                        ? "border-blue-500 bg-blue-600 text-white"
+                        : "border-blue-200 bg-white text-blue-700 hover:border-blue-400"
+                    }`}
+                  >
+                    {b.label}
+                  </button>
+                ))}
+              </div>
+              {selectedBucket && (
+                <p className="mt-2 text-[11px] text-blue-600">{selectedBucket.help}</p>
+              )}
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  onClick={() => setStep(1)}
+                  className="text-xs text-blue-500 hover:text-blue-700"
+                >
+                  ← Back
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={!selected || saving}
+                  className="rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-40 transition"
+                >
+                  {saving ? "Saving…" : "Confirm"}
+                </button>
+                <button onClick={onDone} className="text-xs text-blue-500 hover:text-blue-700">
+                  Skip
+                </button>
+              </div>
+              {saveError && (
+                <p className="mt-2 text-[11px] font-medium text-red-600">{saveError}</p>
+              )}
+
+              {/* Soft duplicate advisory */}
+              <div className="mt-3 rounded-lg border border-blue-200 bg-white/70 px-3 py-2">
+                <p className="text-[11px] text-blue-700">
+                  <span className="font-semibold">Already tracking this account?</span>{" "}
+                  {prompt.slugIsAccountNumber
+                    ? <>If {displayId} is the same card listed under a different number, go to <a href="/account/liabilities?tab=accounts" className="underline hover:text-blue-900">Accounts</a> and delete the old entry, then re-upload.</>
+                    : <>If this account is already tracked under a different name, go to <a href="/account/liabilities?tab=accounts" className="underline hover:text-blue-900">Accounts</a> and delete the duplicate, then re-upload.</>
+                  }
+                </p>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -276,6 +347,7 @@ export default function ParseStatusBanner({ onRefresh }: { onRefresh: () => void
           firstStatementYearMonth: (snapData.yearMonth as string)    ?? "",
           oldestMonth:             (snapData.backfillOldestMonth as string) ?? "",
           slugIsAccountNumber:     (snapData.slugIsAccountNumber as boolean) ?? false,
+          inferredCurrency:        (snapData.inferredCurrency as string) ?? "USD",
         });
       }
     };

@@ -56,7 +56,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "29"; // back-fill transaction currencies from account slug map
+const SCHEMA_VERSION = "30"; // currency inference uses bank-name heuristic (US banks → USD)
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**

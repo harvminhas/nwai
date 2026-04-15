@@ -4,6 +4,7 @@ import { resolveAccess } from "@/lib/access/resolveAccess";
 import { getYearMonth } from "@/lib/consolidate";
 import { applyRulesAndRecalculate, merchantSlug } from "@/lib/applyRules";
 import { buildAccountSlug } from "@/lib/accountSlug";
+import { inferCurrencyFromBankName } from "@/lib/currencyUtils";
 import type { ParsedStatementData, ExpenseTransaction } from "@/lib/types";
 
 export interface MerchantSummary {
@@ -103,15 +104,8 @@ export async function GET(request: NextRequest) {
     const profileSnap = await db.collection("users").doc(uid).get();
     const homeCurrency: string = profileSnap.data()?.country === "CA" ? "CAD" : "USD";
 
-    // Canadian bank names → currency is CAD
-    const CA_BANKS = /\b(td|rbc|bmo|cibc|scotiabank|desjardins|national bank|tangerine|simplii|hsbc canada|laurentian|coast capital|meridian|atb)\b/i;
-
-    /** Infer statement currency: explicit field → bank-name heuristic → homeCurrency. */
-    function inferStmtCurrency(parsed: ParsedStatementData): string {
-      if (parsed.currency) return parsed.currency.toUpperCase();
-      if (CA_BANKS.test(parsed.bankName ?? "")) return "CAD";
-      return homeCurrency;
-    }
+    const inferStmtCurrency = (parsed: ParsedStatementData) =>
+      inferCurrencyFromBankName(parsed.bankName, parsed.currency, homeCurrency);
 
     // Aggregate by merchant slug. Each merchant belongs to one account → one currency.
     // Store native amounts as-is; no FX conversion needed.
