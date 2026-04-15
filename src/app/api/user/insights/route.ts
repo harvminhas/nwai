@@ -1022,6 +1022,8 @@ export async function GET(req: NextRequest) {
     isStale:         nw.isStale,
     accounts:        nw.accounts,
     debtAccounts:    nw.debtAccounts,
+    homeCurrency:    nw.homeCurrency,
+    fxRatesApplied:  nw.fxRatesApplied,
   };
 
   // ── Status banner ─────────────────────────────────────────────────────────
@@ -1114,6 +1116,7 @@ export async function GET(req: NextRequest) {
       ? { type: statusType, text: statusText, detail: statusDetail }
       : null,
     needsRefresh: profile.cacheStale ?? false,
+    homeCurrency: profile.homeCurrency,
   });
 
   } catch (err) {

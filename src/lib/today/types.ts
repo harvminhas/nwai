@@ -132,6 +132,14 @@ export interface NetWorthSnapshot {
   accounts: NetWorthAccount[];
   /** Liability accounts (mortgage, credit, loans), sorted by value desc */
   debtAccounts: NetWorthAccount[];
+  /** ISO-4217 currency the total is expressed in */
+  homeCurrency: string;
+  /**
+   * FX rates used when aggregating foreign-currency accounts.
+   * e.g. { "CAD": 0.72 } means "1 CAD was converted at 0.72 USD".
+   * Empty object when no conversion was needed.
+   */
+  fxRatesApplied: Record<string, number>;
 }
 
 // ── Full page data shape ──────────────────────────────────────────────────────

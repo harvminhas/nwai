@@ -329,8 +329,9 @@ export default function AccountDetailPage() {
   const [paymentFrequency, setPaymentFrequency] = useState<PaymentFrequency>("monthly");
   const [savingFreq, setSavingFreq]             = useState(false);
 
-  // FX rates from the financial profile cache (currency → CAD rate)
+  // FX rates from the financial profile cache (currency → homeCurrency rate)
   const [fxRates, setFxRates] = useState<Record<string, number>>({});
+  const [homeCurrency, setHomeCurrency] = useState<string>("USD");
 
   // Currency override modal state
   const [showCurrencyModal, setShowCurrencyModal] = useState(false);
@@ -389,6 +390,7 @@ export default function AccountDetailPage() {
       setHistory(chartHistory);
 
       setFxRates(typeof json.fxRates === "object" && json.fxRates !== null ? json.fxRates : {});
+      if (json.homeCurrency) setHomeCurrency(json.homeCurrency);
 
       const saved = localStorage.getItem(`baseline-${slug}`);
       if (saved) setBaselineMonth(saved);
@@ -711,11 +713,11 @@ export default function AccountDetailPage() {
   const isDebtAccount    = DEBT_TYPES.has(accountType);
   const isInvestment     = accountType === "investment";
   const currency         = (data as ParsedStatementData & { currency?: string }).currency ?? "CAD";
-  const isForeignCurrency = currency !== "CAD";
-  // Live FX rate for this account's currency (undefined if CAD or rate not yet fetched)
-  const fxRate           = isForeignCurrency ? fxRates[currency.toUpperCase()] : undefined;
+  const isForeignCurrency = currency.toUpperCase() !== homeCurrency.toUpperCase();
   const rawBalance       = data.netWorth ?? 0;
-  const cadEquivalent    = fxRate ? rawBalance * fxRate : null;
+  // Live FX rate: account native currency → home currency (e.g. CAD→USD for a US-home user with a CAD account)
+  const fxRate           = isForeignCurrency ? fxRates[currency.toUpperCase()] : undefined;
+  const homeEquivalent   = fxRate != null ? rawBalance * fxRate : null;
   const hasIncome        = !isInvestment && (accountType === "checking" || accountType === "savings" || (data.income?.total ?? 0) > 0);
   // Investment accounts contain fund transactions (buys, sells, dividends) that the
   // parser may surface as "expenses" — these are portfolio activity, not spending.
@@ -806,13 +808,13 @@ export default function AccountDetailPage() {
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
           </svg>
           <div className="text-xs text-amber-800 space-y-0.5">
-            {fxRate && cadEquivalent !== null ? (
+            {fxRate && homeEquivalent !== null ? (
               <>
                 <p>
-                  Balance {fmt(rawBalance, currency)} = <strong>{fmt(cadEquivalent, "CAD")} CAD</strong>{" "}
-                  <span className="text-amber-600">(1 {currency} = {fxRate.toFixed(4)} CAD, refreshed daily)</span>
+                  Balance {fmt(rawBalance, currency)} = <strong>{fmt(homeEquivalent, homeCurrency)}</strong>{" "}
+                  <span className="text-amber-600">(1 {currency} = {fxRate.toFixed(4)} {homeCurrency}, refreshed daily)</span>
                 </p>
-                <p className="text-amber-700">Your net worth already includes this account converted to CAD.</p>
+                <p className="text-amber-700">Your net worth already includes this account converted to {homeCurrency}.</p>
               </>
             ) : (
               <p>
@@ -963,17 +965,17 @@ export default function AccountDetailPage() {
             {linkedAssets.map((a) => (
               <div key={a.id} className="rounded-lg bg-white p-3 shadow-sm">
                 <p className="text-xs text-gray-500 truncate">{a.label}</p>
-                <p className="font-bold text-gray-900">{fmt(a.value)}</p>
+                <p className="font-bold text-gray-900">{fmt(a.value, homeCurrency)}</p>
                 <Link href="/account/assets" className="text-xs text-purple-500 hover:underline">Edit →</Link>
               </div>
             ))}
             <div className="rounded-lg bg-white p-3 shadow-sm">
               <p className="text-xs text-gray-500">Outstanding balance</p>
-              <p className="font-bold text-red-600">−{fmt(outstandingDebt)}</p>
+              <p className="font-bold text-red-600">−{fmt(outstandingDebt, currency)}</p>
             </div>
             <div className={`rounded-lg p-3 shadow-sm ${equity >= 0 ? "bg-green-50" : "bg-red-50"}`}>
               <p className="text-xs text-gray-500">Your equity</p>
-              <p className={`font-bold text-lg ${equity >= 0 ? "text-green-700" : "text-red-600"}`}>{fmt(equity)}</p>
+              <p className={`font-bold text-lg ${equity >= 0 ? "text-green-700" : "text-red-600"}`}>{fmt(equity, homeCurrency)}</p>
             </div>
           </div>
         </div>
@@ -1003,7 +1005,7 @@ export default function AccountDetailPage() {
           {/* Outstanding Balance */}
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Outstanding Balance</p>
-            <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(outstandingDebt, currency)}</p>
+            <p className="mt-2 font-bold text-xl text-gray-900 break-all leading-tight md:text-2xl">{fmt(outstandingDebt, currency)}</p>
             {paidDown !== null && paidDown !== 0 && (
               <p className={`mt-1.5 text-xs font-medium ${paidDown > 0 ? "text-green-600" : "text-red-500"}`}>
                 {paidDown > 0 ? "↓" : "↑"} {fmt(Math.abs(paidDown), currency)} {paidDown > 0 ? "paid down" : "more debt"} vs prev month
@@ -1019,12 +1021,12 @@ export default function AccountDetailPage() {
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
               {txPayments > 0 ? "Payments Made" : paidDown !== null && paidDown > 0 ? "Principal Paid" : "Balance Change"}
             </p>
-            <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">
+            <p className="mt-2 font-bold text-xl text-gray-900 break-all leading-tight md:text-2xl">
               {txPayments > 0
-                ? fmt(txPayments)
+                ? fmt(txPayments, currency)
                 : paidDown !== null
-                  ? fmt(Math.abs(paidDown))
-                  : (data.expenses?.total ? fmt(data.expenses.total) : "—")}
+                  ? fmt(Math.abs(paidDown), currency)
+                  : (data.expenses?.total ? fmt(data.expenses.total, currency) : "—")}
             </p>
             <p className="mt-1.5 text-xs text-gray-400">
               {txPayments > 0
@@ -1067,7 +1069,7 @@ export default function AccountDetailPage() {
                 }}
               />
               {perPaymentInterest !== null ? (
-                <p className="mt-1.5 text-xs text-gray-400">≈ {fmt(perPaymentInterest)} interest/{freqConfig.label.toLowerCase()}</p>
+                <p className="mt-1.5 text-xs text-gray-400">≈ {fmt(perPaymentInterest, currency)} interest/{freqConfig.label.toLowerCase()}</p>
               ) : (
                 <p className="mt-1.5 text-xs text-gray-400">
                   {effectiveRate !== null ? "User-set" : extractedRate !== null ? "From statement" : "Not set"}
@@ -1120,7 +1122,7 @@ export default function AccountDetailPage() {
           {/* Portfolio Value */}
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Portfolio Value</p>
-            <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(data.netWorth ?? 0, currency)}</p>
+            <p className="mt-2 font-bold text-xl text-gray-900 break-all leading-tight md:text-2xl">{fmt(data.netWorth ?? 0, currency)}</p>
             {(() => {
               const delta = previousMonth != null ? (data.netWorth ?? 0) - previousMonth.netWorth : null;
               if (delta === null) return <p className="mt-1.5 text-xs text-gray-400">First month tracked</p>;
@@ -1135,7 +1137,7 @@ export default function AccountDetailPage() {
           {(data.income?.total ?? 0) > 0 && (
             <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Contributions</p>
-              <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(data.income?.total ?? 0, currency)}</p>
+              <p className="mt-2 font-bold text-xl text-gray-900 break-all leading-tight md:text-2xl">{fmt(data.income?.total ?? 0, currency)}</p>
               <p className="mt-1.5 text-xs text-gray-400">deposits &amp; transfers in</p>
             </div>
           )}
@@ -1171,7 +1173,7 @@ export default function AccountDetailPage() {
           {/* Balance */}
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Balance</p>
-            <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(data.netWorth ?? 0, currency)}</p>
+            <p className="mt-2 font-bold text-xl text-gray-900 break-all leading-tight md:text-2xl">{fmt(data.netWorth ?? 0, currency)}</p>
             {(() => {
               const delta = previousMonth != null ? (data.netWorth ?? 0) - previousMonth.netWorth : null;
               if (delta === null) return <p className="mt-1.5 text-xs text-gray-400">First month tracked</p>;
@@ -1186,7 +1188,7 @@ export default function AccountDetailPage() {
           {hasIncome && (
             <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Income this month</p>
-              <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(data.income?.total ?? 0, currency)}</p>
+              <p className="mt-2 font-bold text-xl text-gray-900 break-all leading-tight md:text-2xl">{fmt(data.income?.total ?? 0, currency)}</p>
               {data.income?.total ? (
                 <p className="mt-1.5 text-xs text-gray-400">deposits &amp; transfers in</p>
               ) : (
@@ -1199,7 +1201,7 @@ export default function AccountDetailPage() {
           {hasSpending && (
             <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Spent this month</p>
-              <p className="mt-2 font-bold text-2xl text-gray-900 md:text-3xl">{fmt(spentThisMonth, currency)}</p>
+              <p className="mt-2 font-bold text-xl text-gray-900 break-all leading-tight md:text-2xl">{fmt(spentThisMonth, currency)}</p>
               {spentThisMonth > 0 ? (
                 <p className="mt-1.5 text-xs text-gray-400">{spentThisMonthCount} transactions incl. transfers</p>
               ) : (
@@ -1250,7 +1252,7 @@ export default function AccountDetailPage() {
                   </p>
                 </div>
                 <div className="ml-4 text-right shrink-0">
-                  <p className="text-sm font-semibold text-gray-900 tabular-nums">{fmt(sub.balance)}</p>
+                  <p className="text-sm font-semibold text-gray-900 tabular-nums">{fmt(sub.balance, currency)}</p>
                   <p className="text-[11px] text-gray-400 mt-0.5">
                     {outstandingDebt > 0 ? `${Math.round((sub.balance / outstandingDebt) * 100)}% of total` : ""}
                   </p>
@@ -1477,7 +1479,7 @@ export default function AccountDetailPage() {
           {txPayments > 0 && (
             <div className="mb-4 rounded-lg bg-blue-50 border border-blue-100 px-4 py-2.5 flex items-center justify-between">
               <span className="text-xs font-medium text-blue-700">Payments received</span>
-              <span className="text-sm font-semibold text-blue-900">{fmt(txPayments)}</span>
+              <span className="text-sm font-semibold text-blue-900">{fmt(txPayments, currency)}</span>
             </div>
           )}
           {txLoading ? (

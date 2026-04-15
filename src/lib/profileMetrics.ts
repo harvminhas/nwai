@@ -29,26 +29,24 @@ export interface NetWorthAccount {
 
 /** Full net worth result — suitable for the card display and the Overview page KPIs. */
 export interface NetWorthResult {
-  /** Assets − Liabilities (the headline figure) */
+  /** Assets − Liabilities (the headline figure), in homeCurrency */
   total: number;
-  /** Sum of all asset-side account balances + manual assets */
+  /** Sum of all asset-side account balances + manual assets, in homeCurrency */
   totalAssets: number;
-  /** Sum of all liability-side account balances */
+  /** Sum of all liability-side account balances, in homeCurrency */
   totalDebts: number;
-  /**
-   * Asset accounts + manual assets consolidated by canonical label,
-   * sorted by value descending.
-   */
   accounts: NetWorthAccount[];
-  /**
-   * Liability accounts (mortgage, credit cards, loans) sorted by value descending.
-   * Values are positive — they represent what is owed.
-   */
   debtAccounts: NetWorthAccount[];
-  /** Human-readable freshness string, e.g. "Updated today" or "Last calculated Jan 15" */
   calculatedLabel: string;
-  /** True when the most recent account data is older than referenceMonth */
   isStale: boolean;
+  /** ISO-4217 home currency code — the currency all totals are expressed in */
+  homeCurrency: string;
+  /**
+   * FX rates applied when aggregating: maps foreignCcy → rate.
+   * e.g. { "CAD": 0.72 } means 1 CAD = 0.72 USD.
+   * Empty when all accounts are already in homeCurrency.
+   */
+  fxRatesApplied: Record<string, number>;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -118,11 +116,16 @@ export function getNetWorth(
 ): NetWorthResult {
   const refMonth = referenceMonth ?? todayYearMonth();
 
-  // ── FX helper: convert a balance in any currency to CAD ─────────────────
+  // ── FX helper: convert a balance in any currency to home currency ────────
   const fxRates = profile.fxRates ?? {};
-  function toCAD(amount: number, currency?: string): number {
-    if (!currency || currency === "CAD") return amount;
-    const rate = fxRates[currency.toUpperCase()];
+  const home = (profile.homeCurrency ?? "CAD").toUpperCase();
+  // Track which foreign currencies were actually encountered during conversion
+  const fxRatesApplied: Record<string, number> = {};
+  function toHome(amount: number, currency?: string): number {
+    const cur = (currency ?? home).toUpperCase();
+    if (cur === home) return amount;
+    const rate = fxRates[cur];
+    if (rate) fxRatesApplied[cur] = rate;
     return rate ? amount * rate : amount; // fall back to 1:1 if rate missing
   }
 
@@ -130,13 +133,13 @@ export function getNetWorth(
   let totalAssets = 0;
   let totalDebts  = 0;
   for (const snap of (profile.accountSnapshots ?? [])) {
-    const cur = snap.currency ?? "CAD";
+    const cur = snap.currency ?? home;
     if (snap.parsedAssets != null || snap.parsedDebts != null) {
-      totalAssets += toCAD(snap.parsedAssets ?? 0, cur);
-      totalDebts  += toCAD(snap.parsedDebts  ?? 0, cur);
+      totalAssets += toHome(snap.parsedAssets ?? 0, cur);
+      totalDebts  += toHome(snap.parsedDebts  ?? 0, cur);
     } else {
-      totalAssets += toCAD(Math.max(0,  snap.balance), cur);
-      totalDebts  += toCAD(Math.max(0, -snap.balance), cur);
+      totalAssets += toHome(Math.max(0,  snap.balance), cur);
+      totalDebts  += toHome(Math.max(0, -snap.balance), cur);
     }
   }
   const manualTotal = (profile.manualAssets ?? []).reduce((s, a) => s + a.value, 0);
@@ -151,7 +154,7 @@ export function getNetWorth(
     if (snap.balance <= 0) continue;
     const label     = accountLabel(snap);
     const estimated = snap.statementMonth < refMonth;
-    const cadBalance = toCAD(snap.balance, snap.currency ?? "CAD");
+    const cadBalance = toHome(snap.balance, snap.currency ?? home);
     const existing  = rowMap.get(label);
     if (existing) {
       existing.value      += cadBalance;
@@ -181,7 +184,7 @@ export function getNetWorth(
       ? snap.parsedDebts
       : Math.max(0, -snap.balance);
     if (rawDebt <= 0) continue;
-    const debtAmt   = toCAD(rawDebt, snap.currency ?? "CAD");
+    const debtAmt   = toHome(rawDebt, snap.currency ?? home);
     const label     = debtLabel(snap);
     const estimated = snap.statementMonth < refMonth;
     const existing  = debtRowMap.get(label);
@@ -207,7 +210,7 @@ export function getNetWorth(
     ? `Last calculated ${new Date(latestMonth + "-01").toLocaleDateString("en-CA", { month: "short", day: "numeric" })}`
     : "Updated today";
 
-  return { total, totalAssets, totalDebts, accounts, debtAccounts, calculatedLabel, isStale };
+  return { total, totalAssets, totalDebts, accounts, debtAccounts, calculatedLabel, isStale, homeCurrency: home, fxRatesApplied };
 }
 
 // ── getSavingsRate ─────────────────────────────────────────────────────────────

@@ -11,7 +11,7 @@ import {
 } from "recharts";
 import { categoryColor, CategoryPicker } from "@/app/account/spending/shared";
 import type { MerchantSummary } from "@/app/api/user/spending/merchants/route";
-import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
+import { fmt, getCurrencySymbol, formatCurrency } from "@/lib/currencyUtils";
 import {
   MerchantForecastProvider,
   MerchantForecastSection,
@@ -21,14 +21,15 @@ import { PROFILE_REFRESHED_EVENT, useProfileRefresh } from "@/contexts/ProfileRe
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function fmtDec(v: number) {
+function fmtDec(v: number, originalCurrency?: string, homeCurrency = "USD") {
+  const cur = originalCurrency ?? homeCurrency;
   return new Intl.NumberFormat("en-US", {
-    style: "currency", currency: "USD",
+    style: "currency", currency: cur,
     minimumFractionDigits: 2, maximumFractionDigits: 2,
   }).format(v);
 }
-function fmtAxis(v: number) {
-  const sym = getCurrencySymbol();
+function fmtAxis(v: number, homeCurrency = "USD") {
+  const sym = getCurrencySymbol(homeCurrency);
   if (v >= 1_000) return `${sym}${Math.round(v / 1_000)}k`;
   return v === 0 ? `${sym}0` : `${sym}${Math.round(v)}`;
 }
@@ -57,6 +58,7 @@ export default function MerchantDetailPage() {
   const [merchant, setMerchant] = useState<MerchantSummary | null>(null);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);
+  const [homeCurrency, setHomeCurrency] = useState<string>("USD");
   const [sortField, setSortField]   = useState<"date" | "amount">("date");
   const [sortDir, setSortDir]       = useState<"asc" | "desc">("desc");
   const [selectedYm, setSelectedYm] = useState<string | null>(null);
@@ -107,6 +109,7 @@ export default function MerchantDetailPage() {
           return;
         }
         setMerchant(json.merchant ?? null);
+        if (json.homeCurrency) setHomeCurrency(json.homeCurrency);
       } catch {
         setError("Failed to load merchant data");
       } finally {
@@ -396,16 +399,16 @@ export default function MerchantDetailPage() {
             <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
               {shortMonth(selectedYm!)}
             </p>
-            <p className="mt-1 text-4xl font-bold text-gray-900">{fmt(selectedEntry.total)}</p>
+            <p className="mt-1 text-4xl font-bold text-gray-900">{formatCurrency(selectedEntry.total, homeCurrency, undefined, true)}</p>
             <p className={`mt-1 text-sm font-medium ${vsAvgPct > 0 ? "text-red-500" : vsAvgPct < 0 ? "text-green-600" : "text-gray-400"}`}>
               {vsAvgPct > 0 ? "↑" : vsAvgPct < 0 ? "↓" : "="}{" "}
-              {Math.abs(vsAvgPct)}% vs {fmt(monthlyAvg)} avg
+              {Math.abs(vsAvgPct)}% vs {formatCurrency(monthlyAvg, homeCurrency, undefined, true)} avg
             </p>
           </div>
           <div className="grid grid-cols-3 divide-x divide-gray-100 border-t border-gray-100">
             {[
               { label: "Transactions",  value: selectedEntry.count.toString() },
-              { label: "Avg per visit", value: fmtDec(selectedAvg) },
+              { label: "Avg per visit", value: fmtDec(selectedAvg, undefined, homeCurrency) },
               { label: "of total",      value: `${Math.round((selectedEntry.total / merchant.total) * 100)}%` },
             ].map(({ label, value }) => (
               <div key={label} className="px-4 py-3">
@@ -421,13 +424,13 @@ export default function MerchantDetailPage() {
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
             <div className="px-5 pt-5 pb-4">
               <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Total spent</p>
-              <p className="mt-1 text-4xl font-bold text-gray-900">{fmt(merchant.total)}</p>
-              <p className="mt-1 text-sm text-gray-400">{fmt(monthlyAvg)}/mo avg · {activeMonths} active months</p>
+              <p className="mt-1 text-4xl font-bold text-gray-900">{formatCurrency(merchant.total, homeCurrency, undefined, true)}</p>
+              <p className="mt-1 text-sm text-gray-400">{formatCurrency(monthlyAvg, homeCurrency, undefined, true)}/mo avg · {activeMonths} active months</p>
             </div>
             <div className="grid grid-cols-3 divide-x divide-gray-100 border-t border-gray-100">
               {[
                 { label: "Transactions",  value: merchant.count.toString() },
-                { label: "Avg per visit", value: fmtDec(merchant.avgAmount) },
+                { label: "Avg per visit", value: fmtDec(merchant.avgAmount, undefined, homeCurrency) },
                 { label: "Active months", value: activeMonths.toString() },
               ].map(({ label, value }) => (
                 <div key={label} className="px-4 py-3">
@@ -476,9 +479,9 @@ export default function MerchantDetailPage() {
               <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }} style={{ outline: "none" }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
                 <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
-                <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={48} />
+                <YAxis tickFormatter={(v) => fmtAxis(v, homeCurrency)} tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={48} />
                 <Tooltip
-                  formatter={(v) => [fmtDec(Number(v)), "Spent"]}
+                  formatter={(v) => [fmtDec(Number(v), undefined, homeCurrency), "Spent"]}
                   contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb" }}
                   cursor={{ fill: "rgba(0,0,0,0.04)" }}
                 />
@@ -557,7 +560,7 @@ export default function MerchantDetailPage() {
                 </span>
               </div>
               <p className="ml-4 shrink-0 text-sm font-semibold text-gray-800 tabular-nums">
-                −{fmtDec(Math.abs(txn.amount))}
+                −{fmtDec(Math.abs(txn.amount), txn.currency, homeCurrency)}
               </p>
             </div>
           ))}

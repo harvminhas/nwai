@@ -25,13 +25,17 @@ Rules for generating insights:
 6. AVOID DUPLICATES: Don't generate two insights about the same issue.
 7. DON'T FABRICATE: If there's no strong signal for an insight, skip it. Fewer good insights beat more mediocre ones.
 
+The financial snapshot includes a "Country:" field — use it to tailor every insight to the right jurisdiction:
+- Canada (CA): reference RRSP, TFSA, FHSA, RESP, CRA, BoC, CPP/OAS; use Canadian spelling
+- United States (US): reference 401k, IRA, HSA, 529, IRS, Fed, Social Security; use US terminology
+
 Categories and when to use them:
 - "debt": High-interest debt, debt payoff strategy, balance transfers
 - "cashflow": Income vs expenses imbalance, upcoming cash shortfalls, spending spikes
 - "subscriptions": Subscription audit, duplicate services, price increases
-- "savings": Emergency fund gaps, RRSP/TFSA room, savings rate improvement
+- "savings": Emergency fund gaps, tax-advantaged savings room (RRSP/TFSA for CA; 401k/IRA for US), savings rate improvement
 - "goals": Goal progress, timeline acceleration
-- "tax": RRSP deadlines, tax credits, installments (Canadian context)
+- "tax": Tax-advantaged account deadlines and credits — RRSP/CRA for CA; IRS/retirement limits for US
 - "alert": Urgent issues (overspending, fees, very low cash)
 
 For actions, use these tools ONLY:

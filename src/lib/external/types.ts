@@ -23,7 +23,8 @@ export type ExternalDataType =
   | "canada-food-cpi"          // Canada CPI food purchased from stores
   | "us-federal-funds-rate"    // US federal funds rate
   | "us-cpi"                   // US CPI inflation (all-items)
-  | "us-food-cpi";             // US CPI food at home
+  | "us-food-cpi"              // US CPI food at home
+  | "cad-usd-rate";            // CAD/USD exchange rate (reference data, no insight card)
 
 export type Country = "CA" | "US";
 

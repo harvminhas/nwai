@@ -104,7 +104,7 @@ interface RatePill {
   direction: "up" | "down" | "unchanged";
 }
 
-function UpcomingRow({ item, muted = false, ratePill }: { item: UpcomingItem; muted?: boolean; ratePill?: RatePill }) {
+function UpcomingRow({ item, muted = false, ratePill, homeCurrency = "USD" }: { item: UpcomingItem; muted?: boolean; ratePill?: RatePill; homeCurrency?: string }) {
   const { text, cls } = getDateLabel(item);
   const pillColor = ratePill?.direction === "up"
     ? "bg-red-50 text-red-600 border-red-100"
@@ -128,7 +128,7 @@ function UpcomingRow({ item, muted = false, ratePill }: { item: UpcomingItem; mu
       </div>
       <div className="shrink-0 text-right">
         <p className={`text-sm font-semibold ${item.type === "cash-in" ? "text-green-600" : muted ? "text-gray-400" : "text-gray-800"}`}>
-          {item.type === "cash-in" ? "+" : "−"}{fmt(item.amount)}
+          {item.type === "cash-in" ? "+" : "−"}{fmt(item.amount, homeCurrency)}
         </p>
         <p className={`text-xs mt-0.5 ${muted ? "text-gray-300" : cls}`}>{text}</p>
       </div>
@@ -144,7 +144,7 @@ function UpcomingRow({ item, muted = false, ratePill }: { item: UpcomingItem; mu
     : <div key={item.id}>{row}</div>;
 }
 
-function UpcomingGroup({ title, items, emptySlot, ratePill }: { title: string; items: UpcomingItem[]; emptySlot?: React.ReactNode; ratePill?: RatePill }) {
+function UpcomingGroup({ title, items, emptySlot, ratePill, homeCurrency = "USD" }: { title: string; items: UpcomingItem[]; emptySlot?: React.ReactNode; ratePill?: RatePill; homeCurrency?: string }) {
   if (items.length === 0 && !emptySlot) return null;
   return (
     <div>
@@ -156,7 +156,7 @@ function UpcomingGroup({ title, items, emptySlot, ratePill }: { title: string; i
       ) : (
         <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden divide-y divide-gray-100">
           {items.map((item) => (
-            <UpcomingRow key={item.id} item={item} ratePill={item.type === "debt" ? ratePill : undefined} />
+            <UpcomingRow key={item.id} item={item} ratePill={item.type === "debt" ? ratePill : undefined} homeCurrency={homeCurrency} />
           ))}
         </div>
       )}
@@ -164,7 +164,7 @@ function UpcomingGroup({ title, items, emptySlot, ratePill }: { title: string; i
   );
 }
 
-function ThisMonthGroup({ items, ratePill }: { items: UpcomingItem[]; ratePill?: RatePill }) {
+function ThisMonthGroup({ items, ratePill, homeCurrency = "USD" }: { items: UpcomingItem[]; ratePill?: RatePill; homeCurrency?: string }) {
   const [showPast, setShowPast] = useState(false);
   if (items.length === 0) return null;
 
@@ -178,7 +178,7 @@ function ThisMonthGroup({ items, ratePill }: { items: UpcomingItem[]; ratePill?:
       <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden divide-y divide-gray-100">
         {upcoming.length > 0
           ? upcoming.map((item) => (
-              <UpcomingRow key={item.id} item={item} ratePill={item.type === "debt" ? ratePill : undefined} />
+              <UpcomingRow key={item.id} item={item} ratePill={item.type === "debt" ? ratePill : undefined} homeCurrency={homeCurrency} />
             ))
           : (
             <p className="px-4 py-3 text-xs text-gray-400">Nothing left scheduled this month.</p>
@@ -201,7 +201,7 @@ function ThisMonthGroup({ items, ratePill }: { items: UpcomingItem[]; ratePill?:
             </button>
             {showPast && (
               <div className="divide-y divide-gray-100">
-                {past.map((item) => <UpcomingRow key={item.id} item={item} muted />)}
+                {past.map((item) => <UpcomingRow key={item.id} item={item} muted homeCurrency={homeCurrency} />)}
               </div>
             )}
           </>
@@ -430,9 +430,9 @@ function FeaturePreviewSection({ upcoming }: { upcoming: UpcomingItem[] }) {
           >
             <div className="divide-y divide-gray-100">
               {[
-                { icon: "💰", label: "Salary / payroll",    sub: "Recurring · bi-weekly", value: "+CA$3,200", color: "bg-green-100" },
-                { icon: "🔄", label: "GoodLife Clubs",      sub: "Recurring · monthly",   value: "−CA$12",    color: "bg-purple-100" },
-                { icon: "🏠", label: "Rent / mortgage",     sub: "Recurring · monthly",   value: "−CA$2,400", color: "bg-amber-100" },
+                { icon: "💰", label: "Salary / payroll",    sub: "Recurring · bi-weekly", value: "+$3,200", color: "bg-green-100" },
+                { icon: "🔄", label: "GoodLife Clubs",      sub: "Recurring · monthly",   value: "−$12",    color: "bg-purple-100" },
+                { icon: "🏠", label: "Rent / mortgage",     sub: "Recurring · monthly",   value: "−$2,400", color: "bg-amber-100" },
               ].map((r) => (
                 <div key={r.label} className="flex items-center gap-3 px-4 py-2.5">
                   <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${r.color} text-sm`}>{r.icon}</span>
@@ -455,9 +455,9 @@ function FeaturePreviewSection({ upcoming }: { upcoming: UpcomingItem[] }) {
           >
             <div className="divide-y divide-gray-100">
               {[
-                { icon: "📋", label: "Visa ····1234 minimum",  sub: "Est. minimum · $8,500 balance",  value: "−CA$170", color: "bg-red-100" },
-                { icon: "📋", label: "Mastercard ····5678",    sub: "Est. minimum · $4,200 balance",  value: "−CA$84",  color: "bg-red-100" },
-                { icon: "🔄", label: "Netflix.com",            sub: "Recurring · monthly",            value: "−CA$18",  color: "bg-purple-100" },
+                { icon: "📋", label: "Visa ····1234 minimum",  sub: "Est. minimum · $8,500 balance",  value: "−$170", color: "bg-red-100" },
+                { icon: "📋", label: "Mastercard ····5678",    sub: "Est. minimum · $4,200 balance",  value: "−$84",  color: "bg-red-100" },
+                { icon: "🔄", label: "Netflix.com",            sub: "Recurring · monthly",            value: "−$18",  color: "bg-purple-100" },
               ].map((r) => (
                 <div key={r.label} className="flex items-center gap-3 px-4 py-2.5">
                   <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${r.color} text-sm`}>{r.icon}</span>
@@ -502,7 +502,7 @@ function PreviewCard({ title, desc, children }: { title: string; desc: string; c
 const EXAMPLE_INSIGHTS = [
   {
     priority: "high",
-    title: "CA$340/mo in subscriptions you may have forgotten",
+    title: "$340/mo in subscriptions you may have forgotten",
     body: "We found 11 recurring charges across 3 accounts. 4 of them haven't been used in over 60 days based on your statement patterns.",
   },
   {
@@ -535,7 +535,7 @@ const HOW_IT_WORKS = [
   },
 ];
 
-function ZeroStatementsLayout({ token, onUploaded }: { token: string | null; onUploaded: () => void }) {
+function ZeroStatementsLayout({ token, onUploaded, homeCurrency = "USD" }: { token: string | null; onUploaded: () => void; homeCurrency?: string }) {
   const [uploadError,   setUploadError]   = useState<string | null>(null);
   const [uploading,     setUploading]     = useState(false);
   const [uploadedName,  setUploadedName]  = useState<string | null>(null);
@@ -670,7 +670,7 @@ function ZeroStatementsLayout({ token, onUploaded }: { token: string | null; onU
         {/* Net Worth placeholder */}
         <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-5">
           <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Net Worth</p>
-          <p className="text-3xl font-bold text-gray-400 tabular-nums">CA$—</p>
+          <p className="text-3xl font-bold text-gray-400 tabular-nums">{homeCurrency === "CAD" ? "CA$" : "US$"}—</p>
           <div className="mt-3 rounded-lg bg-gray-50 px-3 py-2.5">
             <p className="text-xs text-gray-500 leading-relaxed">
               Upload statements from chequing, savings, credit cards, and investments to calculate your net worth.
@@ -745,14 +745,14 @@ function shortMonth(ym: string) {
   return date.toLocaleDateString("en-CA", { month: "short", year: "numeric" });
 }
 
-function savingsSummary(income: number, expenses: number, debtPayments: number, rate: number, month: string): string {
+function savingsSummary(income: number, expenses: number, debtPayments: number, rate: number, month: string, homeCurrency = "USD"): string {
   // rate is already an integer percentage (e.g. 54 for 54%)
   // Use core expenses (no debt) for the "saved" figure to match SavingsRateCard default
   const saved = income - expenses;
   if (saved <= 0 || income <= 0) return "";
   const aboveAvg = rate >= 20;
   const mo = shortMonth(month);
-  return `You saved ${fmt(saved)} in ${mo} — putting away ${rate}% of your income.${aboveAvg ? " That's above average." : ""}`;
+  return `You saved ${fmt(saved, homeCurrency)} in ${mo} — putting away ${rate}% of your income.${aboveAvg ? " That's above average." : ""}`;
 }
 
 interface FirstTimeProps {
@@ -766,12 +766,13 @@ interface FirstTimeProps {
   savingsRateCard: React.ReactNode;
   /** Raw numbers for the summary sentence */
   savingsRaw: { income: number; expenses: number; debtPayments: number; rate: number; month: string } | null;
+  homeCurrency: string;
 }
 
-function FirstTimeLayout({ agentCards, netWorth, topSpending, statementCount, monthCount, savingsMonth, savingsRateCard, savingsRaw }: FirstTimeProps) {
+function FirstTimeLayout({ agentCards, netWorth, topSpending, statementCount, monthCount, savingsMonth, savingsRateCard, savingsRaw, homeCurrency }: FirstTimeProps) {
   const month = savingsMonth;
   const summary = savingsRaw
-    ? savingsSummary(savingsRaw.income, savingsRaw.expenses, savingsRaw.debtPayments, savingsRaw.rate, savingsRaw.month)
+    ? savingsSummary(savingsRaw.income, savingsRaw.expenses, savingsRaw.debtPayments, savingsRaw.rate, savingsRaw.month, homeCurrency)
     : "";
 
   // Feature unlock tiers
@@ -893,7 +894,14 @@ function FirstTimeLayout({ agentCards, netWorth, topSpending, statementCount, mo
         {netWorth && (
           <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-5">
             <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Net Worth</p>
-            <p className="text-3xl font-bold text-gray-900 tabular-nums">{fmt(netWorth.total)}</p>
+            <p className="text-3xl font-bold text-gray-900 tabular-nums">{fmt(netWorth.total, homeCurrency)}</p>
+            {netWorth.fxRatesApplied && Object.keys(netWorth.fxRatesApplied).length > 0 && (
+              <p className="text-[10px] text-gray-400 mt-0.5">
+                {Object.entries(netWorth.fxRatesApplied)
+                  .map(([ccy, rate]) => `1 ${ccy} = ${rate.toFixed(4)} ${netWorth.homeCurrency}`)
+                  .join(" · ")}
+              </p>
+            )}
             {(netWorth.accounts?.length ?? 0) + (netWorth.debtAccounts?.length ?? 0) === 1 && (
               <p className="text-xs text-gray-400 mt-1.5 leading-snug">
                 Based on 1 account · chequing balance only. Add more accounts for a complete picture.
@@ -917,7 +925,7 @@ function FirstTimeLayout({ agentCards, netWorth, topSpending, statementCount, mo
               {topSpending.map((s) => (
                 <div key={s.category} className="flex items-center justify-between px-4 py-2.5">
                   <span className="text-xs text-gray-600">{s.category}</span>
-                  <span className="text-xs font-semibold text-gray-800 tabular-nums">{fmt(s.amount)}</span>
+                  <span className="text-xs font-semibold text-gray-800 tabular-nums">{fmt(s.amount, homeCurrency)}</span>
                 </div>
               ))}
             </div>
@@ -962,7 +970,7 @@ function evColorCfg(color: EventColor) {
   return EVENT_COLORS.find((c) => c.id === color) ?? EVENT_COLORS[0];
 }
 
-function EventsWidget({ events }: { events: EventSummary[] }) {
+function EventsWidget({ events, homeCurrency = "USD" }: { events: EventSummary[]; homeCurrency?: string }) {
   if (events.length === 0) return null;
   return (
     <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
@@ -991,10 +999,10 @@ function EventsWidget({ events }: { events: EventSummary[] }) {
                 )}
               </div>
               <div className="flex items-center justify-between gap-2 text-[11px]">
-                <span className="text-gray-500">{fmt(ev.totalSpent)} spent</span>
+                <span className="text-gray-500">{fmt(ev.totalSpent, homeCurrency)} spent</span>
                 {ev.budget && (
                   <span className={`font-medium ${pct != null && pct >= 100 ? "text-red-500" : "text-gray-400"}`}>
-                    {pct}% of {fmt(ev.budget)}
+                    {pct}% of {fmt(ev.budget, homeCurrency)}
                   </span>
                 )}
               </div>
@@ -1044,6 +1052,31 @@ export default function TodayPage() {
   const [monthCount,   setMonthCount]   = useState<number>(0);
   const [statementCount, setStatementCount] = useState<number>(0);
   const [topSpending,  setTopSpending]  = useState<{ category: string; amount: number }[]>([]);
+  const [confirmedCountry, setConfirmedCountry] = useState<"CA" | "US" | null>(null);
+  const [detectedCountry,  setDetectedCountry]  = useState<"CA" | "US">("US");
+  const [countryConfirming, setCountryConfirming] = useState(false);
+  const [homeCurrency, setHomeCurrency] = useState<string>("USD");
+  const [currencyInfo, setCurrencyInfo] = useState<{
+    homeCurrency: string;
+    showExchange: boolean;
+    cadPerUsd: number | null;
+    usdPerCad: number | null;
+    rateDate: string | null;
+  } | null>(null);
+
+  async function confirmCountry(country: "CA" | "US") {
+    if (!token) return;
+    setCountryConfirming(true);
+    try {
+      await fetch("/api/user/profile", {
+        method: "PATCH",
+        headers: { ...buildHeaders(token), "Content-Type": "application/json" },
+        body: JSON.stringify({ country }),
+      });
+      setConfirmedCountry(country);
+    } catch { /* silent — user can retry */ }
+    finally { setCountryConfirming(false); }
+  }
 
   function toggleAlert(id: string) {
     setExpandedAlerts((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -1059,12 +1092,14 @@ export default function TodayPage() {
     setLoading(true); setError(null);
     try {
       const headers = buildHeaders(tok);
-      const [insRes, cardRes] = await Promise.all([
+      const [insRes, cardRes, fxRes] = await Promise.all([
         fetch("/api/user/insights",       { headers }),
         fetch("/api/user/agent-insights", { headers }),
+        fetch("/api/user/currency-info",  { headers }),
       ]);
       const insJson  = await insRes.json().catch(() => ({}));
       const cardJson = await cardRes.json().catch(() => ({}));
+      const fxJson   = await fxRes.json().catch(() => ({}));
       if (!insRes.ok) { setError(insJson.error || "Failed to load"); return; }
       setAlerts(insJson.alerts ?? []);
       setUpcoming(insJson.upcoming ?? []);
@@ -1090,6 +1125,13 @@ export default function TodayPage() {
       setMonthCount(insJson.monthCount ?? 0);
       setStatementCount(insJson.statementCount ?? 0);
       setTopSpending(insJson.topSpending ?? []);
+      setConfirmedCountry(cardJson.confirmedCountry ?? null);
+      setDetectedCountry(cardJson.detectedCountry ?? "US");
+      // homeCurrency from profile (authoritative after schema v27 rebuild).
+      // Fall back to the confirmed/detected country so the symbol is never wrong.
+      const resolvedCountry = (cardJson.confirmedCountry ?? cardJson.detectedCountry ?? "US") as "CA" | "US";
+      setHomeCurrency(insJson.homeCurrency ?? (resolvedCountry === "CA" ? "CAD" : "USD"));
+      if (fxJson.homeCurrency) setCurrencyInfo(fxJson);
     } catch { setError("Failed to load today view"); }
     finally { setLoading(false); }
   }, [buildHeaders]);
@@ -1355,7 +1397,7 @@ export default function TodayPage() {
     const [expanded, setExpanded] = useState(false);
     if (!netWorth) return null;
 
-    const cad = (n: number) => fmt(n);
+    const cad = (n: number) => fmt(n, homeCurrency);
 
     const PREVIEW = 3;
     const assets      = netWorth.accounts;
@@ -1643,7 +1685,7 @@ export default function TodayPage() {
     const [includeDebt, setIncludeDebt] = useState(false);
     if (!savingsRate || savingsRate.income <= 0) return null;
     const { income, expenses, debtPayments, month } = savingsRate;
-    const cad = (n: number) => fmt(n);
+    const cad = (n: number) => fmt(n, homeCurrency);
     const monthLabel = month
       ? new Date(month + "-01").toLocaleDateString("en-CA", { month: "short", year: "numeric" })
       : "";
@@ -1794,24 +1836,86 @@ export default function TodayPage() {
           <h1 className="text-3xl font-bold text-gray-900">Today</h1>
           <p className="mt-0.5 text-sm text-gray-400">{todayLabel()}</p>
         </div>
-        {/* Freshness CTA — only shown when user has statements (zero-state has its own upload hero) */}
-        {statementCount > 0 && overdueAccounts.length > 0 && (
-          <Link href="/account/activity?tab=coverage"
-            className="shrink-0 flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-sm hover:border-gray-300 hover:shadow-md transition">
-            <span className="h-2 w-2 rounded-full bg-orange-400 shrink-0" />
-            {overdueAccounts.length} statement{overdueAccounts.length > 1 ? "s" : ""} to upload
-            <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-            </svg>
-          </Link>
-        )}
+
+        {/* Right side: currency widget + freshness CTA */}
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Currency widget */}
+          {currencyInfo && (
+            <div className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm">
+              <span className="text-sm font-bold text-gray-800">
+                {currencyInfo.homeCurrency === "CAD" ? "🍁" : "🇺🇸"} {currencyInfo.homeCurrency}
+              </span>
+              {currencyInfo.showExchange && currencyInfo.cadPerUsd !== null && currencyInfo.usdPerCad !== null && (
+                <>
+                  <span className="text-gray-300 text-sm">·</span>
+                  <span className="text-xs text-gray-500 font-medium">
+                    {currencyInfo.homeCurrency === "USD"
+                      ? `1 CAD = $${currencyInfo.usdPerCad.toFixed(4)}`
+                      : `1 USD = $${currencyInfo.cadPerUsd.toFixed(4)} CAD`}
+                  </span>
+                  {currencyInfo.rateDate && (
+                    <span className="text-[10px] text-gray-400 hidden sm:inline">
+                      {new Date(currencyInfo.rateDate + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Freshness CTA — only shown when user has statements */}
+          {statementCount > 0 && overdueAccounts.length > 0 && (
+            <Link href="/account/activity?tab=coverage"
+              className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-sm hover:border-gray-300 hover:shadow-md transition">
+              <span className="h-2 w-2 rounded-full bg-orange-400 shrink-0" />
+              {overdueAccounts.length} statement{overdueAccounts.length > 1 ? "s" : ""} to upload
+              <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+            </Link>
+          )}
+        </div>
       </div>
 
       {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
 
+      {/* ── Country confirmation — shown once after first statement upload ─── */}
+      {!loading && statementCount >= 1 && confirmedCountry === null && (
+        <div className="mb-5 rounded-xl border border-blue-100 bg-blue-50 px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-blue-900">
+              {detectedCountry === "CA" ? "🍁" : "🇺🇸"} Confirm your home country
+            </p>
+            <p className="text-xs text-blue-700 mt-0.5">
+              We detected{" "}
+              <span className="font-semibold">
+                {detectedCountry === "CA" ? "Canada" : "United States"}
+              </span>{" "}
+              from your bank. Is that right? This helps us tailor tax tips, savings advice, and market signals to you.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => confirmCountry(detectedCountry)}
+              disabled={countryConfirming}
+              className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 transition"
+            >
+              Yes, {detectedCountry === "CA" ? "Canada 🍁" : "United States 🇺🇸"}
+            </button>
+            <button
+              onClick={() => confirmCountry(detectedCountry === "CA" ? "US" : "CA")}
+              disabled={countryConfirming}
+              className="rounded-lg border border-blue-200 bg-white px-4 py-2 text-xs font-semibold text-blue-700 hover:border-blue-300 disabled:opacity-50 transition"
+            >
+              No, {detectedCountry === "CA" ? "United States 🇺🇸" : "Canada 🍁"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Zero / First-time / Rich layouts ────────────────────────────────── */}
       {!loading && statementCount === 0 ? (
-        <ZeroStatementsLayout token={token} onUploaded={() => token && load(token)} />
+        <ZeroStatementsLayout token={token} onUploaded={() => token && load(token)} homeCurrency={homeCurrency} />
       ) : statementCount <= 3 && !loading ? (
         <FirstTimeLayout
           agentCards={agentCards}
@@ -1834,6 +1938,7 @@ export default function TodayPage() {
             })(),
             month:        savingsRate.month,
           } : null}
+          homeCurrency={homeCurrency}
         />
       ) : (<>
 
@@ -1851,16 +1956,23 @@ export default function TodayPage() {
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
                     <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Net Worth</p>
-                    <p className="text-4xl font-bold text-gray-900 tabular-nums tracking-tight">{fmt(netWorth.total)}</p>
+                    <p className="text-4xl font-bold text-gray-900 tabular-nums tracking-tight">{fmt(netWorth.total, homeCurrency)}</p>
                     <p className={`text-xs mt-1 font-medium ${netWorth.isStale ? "text-amber-500" : "text-gray-400"}`}>
                       {netWorth.calculatedLabel}
                     </p>
+                    {netWorth.fxRatesApplied && Object.keys(netWorth.fxRatesApplied).length > 0 && (
+                      <p className="text-[10px] text-gray-400 mt-0.5">
+                        {Object.entries(netWorth.fxRatesApplied)
+                          .map(([ccy, rate]) => `1 ${ccy} = ${rate.toFixed(4)} ${netWorth.homeCurrency}`)
+                          .join(" · ")}
+                      </p>
+                    )}
                   </div>
                   {savingsRate && savingsRate.income > 0 && (
                     <div className="hidden sm:flex gap-5 shrink-0 text-right">
                       <div>
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Income</p>
-                        <p className="mt-0.5 text-base font-bold text-green-600 tabular-nums">{fmt(savingsRate.income)}</p>
+                        <p className="mt-0.5 text-base font-bold text-green-600 tabular-nums">{fmt(savingsRate.income, homeCurrency)}</p>
                       </div>
                       <div>
                         <div className="flex items-center justify-end gap-1.5">
@@ -1877,10 +1989,10 @@ export default function TodayPage() {
                           )}
                         </div>
                         <p className="mt-0.5 text-base font-bold text-red-500 tabular-nums">
-                          {fmt(savingsRate.expenses + (includeDebtInExpenses ? savingsRate.debtPayments : 0))}
+                          {fmt(savingsRate.expenses + (includeDebtInExpenses ? savingsRate.debtPayments : 0), homeCurrency)}
                         </p>
                         {includeDebtInExpenses && savingsRate.debtPayments > 0 && (
-                          <p className="text-[10px] text-gray-400">incl. {fmt(savingsRate.debtPayments)} debt pymts</p>
+                          <p className="text-[10px] text-gray-400">incl. {fmt(savingsRate.debtPayments, homeCurrency)} debt pymts</p>
                         )}
                       </div>
                     </div>
@@ -1891,7 +2003,7 @@ export default function TodayPage() {
                   <div className="sm:hidden mt-3 flex gap-5 border-t border-gray-100 pt-3">
                     <div>
                       <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Income</p>
-                      <p className="mt-0.5 text-sm font-bold text-green-600 tabular-nums">{fmt(savingsRate.income)}</p>
+                      <p className="mt-0.5 text-sm font-bold text-green-600 tabular-nums">{fmt(savingsRate.income, homeCurrency)}</p>
                     </div>
                     <div>
                       <div className="flex items-center gap-1.5">
@@ -1908,10 +2020,10 @@ export default function TodayPage() {
                         )}
                       </div>
                       <p className="mt-0.5 text-sm font-bold text-red-500 tabular-nums">
-                        {fmt(savingsRate.expenses + (includeDebtInExpenses ? savingsRate.debtPayments : 0))}
+                        {fmt(savingsRate.expenses + (includeDebtInExpenses ? savingsRate.debtPayments : 0), homeCurrency)}
                       </p>
                       {includeDebtInExpenses && savingsRate.debtPayments > 0 && (
-                        <p className="text-[10px] text-gray-400">incl. {fmt(savingsRate.debtPayments)} debt pymts</p>
+                        <p className="text-[10px] text-gray-400">incl. {fmt(savingsRate.debtPayments, homeCurrency)} debt pymts</p>
                       )}
                     </div>
                   </div>
@@ -1950,7 +2062,7 @@ export default function TodayPage() {
                   <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-semibold text-orange-600">
                     {daysAgo}d ago
                   </span>
-                  <span className="ml-auto text-lg font-bold text-green-600 tabular-nums">+{fmt(item.amount)}</span>
+                    <span className="ml-auto text-lg font-bold text-green-600 tabular-nums">+{fmt(item.amount, homeCurrency)}</span>
                 </div>
                 <div className="px-5 pb-4">
                   <div className="flex items-center gap-2 mt-1">
@@ -2024,7 +2136,7 @@ export default function TodayPage() {
             <div className="rounded-2xl border border-red-200 bg-white shadow-sm overflow-hidden divide-y divide-gray-100">
               <p className="px-5 py-3 text-[10px] font-bold uppercase tracking-widest text-red-500">Overdue</p>
               {overdueOther.map((item) => (
-                <UpcomingRow key={item.id} item={item} />
+                <UpcomingRow key={item.id} item={item} homeCurrency={homeCurrency} />
               ))}
             </div>
           )}
@@ -2064,7 +2176,7 @@ export default function TodayPage() {
                       </div>
                       <div className="shrink-0 text-right">
                         <p className={`text-sm font-bold tabular-nums ${item.type === "cash-in" ? "text-green-600" : "text-gray-800"}`}>
-                          {item.type === "cash-in" ? "+" : "−"}{fmt(item.amount)}
+                          {item.type === "cash-in" ? "+" : "−"}{fmt(item.amount, homeCurrency)}
                         </p>
                         <p className={`text-xs mt-0.5 ${cls}`}>{text}</p>
                       </div>
@@ -2088,7 +2200,7 @@ export default function TodayPage() {
 
           {/* Also-this-month strip (collapsed by default) */}
           {thisMonth.length > 0 && (
-            <ThisMonthGroup items={thisMonth} ratePill={ratePill} />
+            <ThisMonthGroup items={thisMonth} ratePill={ratePill} homeCurrency={homeCurrency} />
           )}
 
           {/* Caught-up / getting-started panel */}
@@ -2255,7 +2367,7 @@ export default function TodayPage() {
             <SavingsRateCard />
 
             {/* ── Events ─────────────────────────────────────────────────────── */}
-            <EventsWidget events={activeEvents} />
+            <EventsWidget events={activeEvents} homeCurrency={homeCurrency} />
 
           </div>
         </div>
@@ -2283,7 +2395,7 @@ export default function TodayPage() {
           ))}
           {activeEvents.length > 0 && (
             <div className="snap-start shrink-0 w-64">
-              <MobileCardShell><EventsWidget events={activeEvents} /></MobileCardShell>
+              <MobileCardShell><EventsWidget events={activeEvents} homeCurrency={homeCurrency} /></MobileCardShell>
             </div>
           )}
         </div>

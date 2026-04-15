@@ -15,14 +15,15 @@ import {
   type CashFrequency,
   getParentCategory,
 } from "@/app/account/spending/shared";
-import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
+import { fmt, getCurrencySymbol, formatCurrency } from "@/lib/currencyUtils";
 import { PROFILE_REFRESHED_EVENT, useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function fmtDec(v: number) {
+function fmtDec(v: number, originalCurrency?: string, homeCurrency = "USD") {
+  const cur = originalCurrency ?? homeCurrency;
   return new Intl.NumberFormat("en-US", {
-    style: "currency", currency: "USD",
+    style: "currency", currency: cur,
     minimumFractionDigits: 2, maximumFractionDigits: 2,
   }).format(v);
 }
@@ -57,6 +58,7 @@ interface ExpenseTxn {
   accountLabel?: string;
   date?: string;
   isCashCommitment?: boolean;
+  currency?: string;
 }
 
 interface CashCommitmentItem {
@@ -104,6 +106,7 @@ export default function SpendingCategoryPage() {
   const [loading, setLoading]               = useState(true);
   const [error, setError]                   = useState<string | null>(null);
   const [toast, setToast]                   = useState<string | null>(null);
+  const [homeCurrency, setHomeCurrency]     = useState<string>("USD");
   const [cashCommitments, setCashCommitments] = useState<CashCommitmentItem[]>([]);
 
   // Category picker
@@ -137,6 +140,7 @@ export default function SpendingCategoryPage() {
       const rJson  = recurringRes.ok ? await recurringRes.json().catch(() => ({})) : {};
 
       if (!consolidatedRes.ok) { setError(json.error ?? "Failed to load"); return; }
+      if (json.homeCurrency) setHomeCurrency(json.homeCurrency);
 
       // Cash commitments come from the consolidated response — same source as overview
       const allCommitments: CashCommitmentItem[] = json.cashCommitmentItems ?? [];
@@ -340,7 +344,7 @@ export default function SpendingCategoryPage() {
           <h1 className="text-3xl font-bold text-gray-900">{categoryName}</h1>
           {yearMonth && (
             <p className="mt-0.5 text-sm text-gray-400">
-              {fmt(categoryTotal)} · {pctOfTotal}% of total · {new Date(parseInt(yearMonth.slice(0,4)), parseInt(yearMonth.slice(5,7)) - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+              {formatCurrency(categoryTotal, homeCurrency, undefined, true)} · {pctOfTotal}% of total · {new Date(parseInt(yearMonth.slice(0,4)), parseInt(yearMonth.slice(5,7)) - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" })}
             </p>
           )}
         </div>
@@ -351,8 +355,8 @@ export default function SpendingCategoryPage() {
         {/* KPI strip */}
         <div className="grid grid-cols-3 gap-3">
           {[
-            { label: yearMonth ? new Date(parseInt(yearMonth.slice(0,4)), parseInt(yearMonth.slice(5,7)) - 1, 1).toLocaleDateString("en-US", { month: "short", year: "numeric" }) : "This month", value: fmt(categoryTotal) },
-            { label: "Monthly avg",   value: avg > 0 ? fmt(avg) : "—" },
+            { label: yearMonth ? new Date(parseInt(yearMonth.slice(0,4)), parseInt(yearMonth.slice(5,7)) - 1, 1).toLocaleDateString("en-US", { month: "short", year: "numeric" }) : "This month", value: formatCurrency(categoryTotal, homeCurrency, undefined, true) },
+            { label: "Monthly avg",   value: avg > 0 ? formatCurrency(avg, homeCurrency, undefined, true) : "—" },
             { label: "% of spending", value: `${pctOfTotal}%` },
           ].map(({ label, value }) => (
             <div key={label} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm text-center">
@@ -378,7 +382,7 @@ export default function SpendingCategoryPage() {
                   <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
                   <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={48} />
                   <Tooltip
-                    formatter={(v) => [typeof v === "number" ? fmt(v) : String(v), categoryName]}
+                    formatter={(v) => [typeof v === "number" ? formatCurrency(v, homeCurrency, undefined, true) : String(v), categoryName]}
                     contentStyle={{ borderRadius: "8px", border: "1px solid #e5e7eb", fontSize: "13px" }}
                     labelStyle={{ fontWeight: 600, color: "#111827" }}
                     cursor={{ fill: "rgba(0,0,0,0.04)" }}
@@ -422,7 +426,7 @@ export default function SpendingCategoryPage() {
                   <div key={merchant}>
                     <div className="flex items-center justify-between text-sm mb-1">
                       <span className="font-medium text-gray-700 truncate">{merchant}</span>
-                      <span className="tabular-nums text-gray-500 shrink-0 ml-2">{fmt(amount)}</span>
+                      <span className="tabular-nums text-gray-500 shrink-0 ml-2">{formatCurrency(amount, homeCurrency, undefined, true)}</span>
                     </div>
                     <div className="h-1.5 overflow-hidden rounded-full bg-gray-100">
                       <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
@@ -516,7 +520,7 @@ export default function SpendingCategoryPage() {
                       </div>
                     </div>
                     <p className="ml-4 shrink-0 text-sm font-medium text-gray-700 tabular-nums">
-                      −{fmtDec(Math.abs(txn.amount))}
+                      −{fmtDec(Math.abs(txn.amount), txn.currency, homeCurrency)}
                     </p>
                   </div>
                 );

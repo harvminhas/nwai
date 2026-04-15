@@ -49,6 +49,8 @@ export interface IncomeTransaction {
   category?: string;
   /** Human-readable account label e.g. "TD ••••7780". Populated at API aggregation time. */
   accountLabel?: string;
+  /** ISO 4217 currency of the source account (e.g. "CAD", "USD"). Populated at API aggregation time. */
+  currency?: string;
 }
 
 export interface Income {
@@ -80,6 +82,8 @@ export interface ExpenseTransaction {
   recurring?: string;
   /** Human-readable account label e.g. "TD ••••7780". Populated at API aggregation time. */
   accountLabel?: string;
+  /** ISO 4217 currency of the source account (e.g. "CAD", "USD"). Populated at API aggregation time. */
+  currency?: string;
 }
 
 export interface Expenses {

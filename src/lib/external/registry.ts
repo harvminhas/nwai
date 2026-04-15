@@ -19,20 +19,25 @@ import { fetchCanadaFoodCPI } from "./fetchers/canada-food-cpi";
 import { fetchUsFederalFundsRate } from "./fetchers/us-rates";
 import { fetchUsCpi } from "./fetchers/us-cpi";
 import { fetchUsFoodCPI } from "./fetchers/us-food-cpi";
+import { fetchCadUsdRate } from "./fetchers/cad-usd-rate";
 
 // ── Country detection ──────────────────────────────────────────────────────────
 
 const CA_BANK_RE = /\b(td|rbc|bmo|cibc|scotiabank|national bank|desjardins|tangerine|simplii|hsbc canada|laurentian|atb)\b/i;
-const US_BANK_RE = /\b(chase|bank of america|wells fargo|citi|us bank|capital one|pnc|truist|ally)\b/i;
 
-export function detectCountry(profile: FinancialProfileCache): "CA" | "US" | null {
-  // Check bankName, accountName, and accountType fields across all snapshots
+/**
+ * Auto-detect country from bank names in account snapshots.
+ * Default: "US" when unrecognised.
+ *
+ * NOTE: call sites that have a user-confirmed country stored in Firestore
+ * should use that value directly instead of calling this function.
+ */
+export function detectCountry(profile: FinancialProfileCache): "CA" | "US" {
   const text = profile.accountSnapshots
     .flatMap((a) => [a.bankName ?? "", a.accountName ?? ""])
     .join(" ");
   if (CA_BANK_RE.test(text)) return "CA";
-  if (US_BANK_RE.test(text)) return "US";
-  return null;
+  return "US";
 }
 
 // ── Relevance helpers ──────────────────────────────────────────────────────────
@@ -50,22 +55,18 @@ function hasGrocerySpend(profile: FinancialProfileCache): boolean {
   });
 }
 
-function hasInvestments(profile: FinancialProfileCache): boolean {
-  return (
-    profile.accountSnapshots.some((a) => /investment|rrsp|tfsa|brokerage/i.test(a.accountType ?? "")) ||
-    profile.monthlyHistory.some((h) =>
-      // User has "Investments & Savings" category spending (contributions)
-      h.expensesTotal - h.coreExpensesTotal > 50
-    )
-  );
-}
-
 // ── Registry ──────────────────────────────────────────────────────────────────
 
 type FetchFn = () => Promise<ExternalDataPoint>;
 
+/**
+ * relevant() receives the resolved user country as a second argument so it
+ * never needs to call detectCountry() internally. Country is always authoritative
+ * (user-confirmed > auto-detected) by the time relevant() is called.
+ */
 export interface RegisteredDescriptor extends ExternalDataDescriptor {
   fetch: FetchFn;
+  relevant: (profile: FinancialProfileCache, country: "CA" | "US") => boolean;
 }
 
 export const EXTERNAL_DATA_REGISTRY: RegisteredDescriptor[] = [
@@ -75,8 +76,7 @@ export const EXTERNAL_DATA_REGISTRY: RegisteredDescriptor[] = [
     label: "Bank of Canada Overnight Rate",
     refreshIntervalHours: 24,
     fetch: fetchCanadaOvernightRate,
-    relevant: (profile) =>
-      detectCountry(profile) === "CA" && hasVariableDebt(profile),
+    relevant: (profile, country) => country === "CA" && hasVariableDebt(profile),
   },
   {
     dataType: "canada-prime-rate",
@@ -84,18 +84,16 @@ export const EXTERNAL_DATA_REGISTRY: RegisteredDescriptor[] = [
     label: "Canadian Prime Rate",
     refreshIntervalHours: 24,
     fetch: fetchCanadaPrimeRate,
-    relevant: (profile) =>
-      detectCountry(profile) === "CA" && hasVariableDebt(profile),
+    relevant: (profile, country) => country === "CA" && hasVariableDebt(profile),
   },
   {
     dataType: "canada-cpi",
     country: "CA",
     label: "Canada CPI Inflation",
-    refreshIntervalHours: 168, // weekly
+    refreshIntervalHours: 168,
     fetch: fetchCanadaCPI,
-    relevant: (profile) =>
-      detectCountry(profile) === "CA" &&
-      profile.typicalMonthly.monthsTracked >= 1,
+    relevant: (profile, country) =>
+      country === "CA" && profile.typicalMonthly.monthsTracked >= 1,
   },
   {
     dataType: "canada-food-cpi",
@@ -103,8 +101,7 @@ export const EXTERNAL_DATA_REGISTRY: RegisteredDescriptor[] = [
     label: "Canada Food Inflation (Groceries)",
     refreshIntervalHours: 168,
     fetch: fetchCanadaFoodCPI,
-    relevant: (profile) =>
-      detectCountry(profile) === "CA" && hasGrocerySpend(profile),
+    relevant: (profile, country) => country === "CA" && hasGrocerySpend(profile),
   },
   {
     dataType: "us-federal-funds-rate",
@@ -112,18 +109,16 @@ export const EXTERNAL_DATA_REGISTRY: RegisteredDescriptor[] = [
     label: "Federal Funds Rate",
     refreshIntervalHours: 24,
     fetch: fetchUsFederalFundsRate,
-    relevant: (profile) =>
-      detectCountry(profile) === "US" && hasVariableDebt(profile),
+    relevant: (profile, country) => country === "US" && hasVariableDebt(profile),
   },
   {
     dataType: "us-cpi",
     country: "US",
     label: "US CPI Inflation",
-    refreshIntervalHours: 168, // weekly
+    refreshIntervalHours: 168,
     fetch: fetchUsCpi,
-    relevant: (profile) =>
-      detectCountry(profile) === "US" &&
-      profile.typicalMonthly.monthsTracked >= 1,
+    relevant: (profile, country) =>
+      country === "US" && profile.typicalMonthly.monthsTracked >= 1,
   },
   {
     dataType: "us-food-cpi",
@@ -131,8 +126,16 @@ export const EXTERNAL_DATA_REGISTRY: RegisteredDescriptor[] = [
     label: "US Food Inflation (Groceries)",
     refreshIntervalHours: 168,
     fetch: fetchUsFoodCPI,
-    relevant: (profile) =>
-      detectCountry(profile) === "US" && hasGrocerySpend(profile),
+    relevant: (profile, country) => country === "US" && hasGrocerySpend(profile),
+  },
+  {
+    dataType: "cad-usd-rate",
+    country: "CA",
+    label: "CAD/USD Exchange Rate",
+    refreshIntervalHours: 24,
+    fetch: fetchCadUsdRate,
+    // Pure reference data — stored daily for the currency widget, never generates an insight card.
+    relevant: () => false,
   },
 ];
 

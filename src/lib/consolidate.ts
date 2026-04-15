@@ -76,14 +76,18 @@ export function consolidateStatements(
   if (statements.length === 1) {
     const s = statements[0];
     const nw = s.netWorth ?? 0;
-    const txns = (s.expenses?.transactions ?? []).slice().sort((a, b) => {
-      if (a.date && b.date) return b.date.localeCompare(a.date);
-      return 0;
-    });
-    const incomeTxns = (s.income?.transactions ?? []).slice().sort((a, b) => {
-      if (a.date && b.date) return b.date.localeCompare(a.date);
-      return 0;
-    });
+    const txns = (s.expenses?.transactions ?? []).slice()
+      .map((t) => t.currency ? t : { ...t, currency: s.currency ?? undefined })
+      .sort((a, b) => {
+        if (a.date && b.date) return b.date.localeCompare(a.date);
+        return 0;
+      });
+    const incomeTxns = (s.income?.transactions ?? []).slice()
+      .map((t) => t.currency ? t : { ...t, currency: s.currency ?? undefined })
+      .sort((a, b) => {
+        if (a.date && b.date) return b.date.localeCompare(a.date);
+        return 0;
+      });
     return {
       ...s,
       assets: s.assets ?? Math.max(0, nw),
@@ -130,7 +134,7 @@ export function consolidateStatements(
       }
     }
     for (const txn of inc.transactions ?? []) {
-      allIncomeTransactions.push(txn);
+      allIncomeTransactions.push(txn.currency ? txn : { ...txn, currency: s.currency ?? undefined });
     }
   }
   const incomeSources: IncomeSource[] = Array.from(incomeSourcesMap.values()).map(
@@ -157,7 +161,7 @@ export function consolidateStatements(
       }
     }
     for (const txn of exp.transactions ?? []) {
-      allTransactions.push(txn);
+      allTransactions.push(txn.currency ? txn : { ...txn, currency: s.currency ?? undefined });
     }
   }
   const expenseCategories: ExpenseCategory[] = Array.from(

@@ -13,7 +13,7 @@ import Link from "next/link";
 import type { ManualAsset, AssetCategory, Insight } from "@/lib/types";
 import type { AccountSnapshot } from "@/lib/extractTransactions";
 import type { AccountBalanceHistory } from "@/lib/financialProfile";
-import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
+import { fmt, getCurrencySymbol, formatCurrency } from "@/lib/currencyUtils";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -52,13 +52,13 @@ type TabId = typeof TABS[number]["id"];
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function fmtShort(v: number) {
-  const sym = getCurrencySymbol();
+function fmtShort(v: number, currency?: string) {
+  const sym = getCurrencySymbol(currency);
   const abs = Math.abs(v);
   const sign = v < 0 ? "-" : "";
   if (abs >= 1_000_000) return `${sign}${sym}${(abs / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000)     return `${sign}${sym}${Math.round(abs / 1_000)}k`;
-  return fmt(v);
+  return fmt(v, currency);
 }
 function timeAgo(iso: string) {
   const diff = Date.now() - new Date(iso).getTime();
@@ -130,7 +130,7 @@ const EMPTY_FORM: FormState = { label: "", category: "property", value: "", link
 
 // ── donut chart ───────────────────────────────────────────────────────────────
 
-function DonutChart({ data, total }: { data: { label: string; value: number; color: string }[]; total: number }) {
+function DonutChart({ data, total, homeCurrency = "USD" }: { data: { label: string; value: number; color: string }[]; total: number; homeCurrency?: string }) {
   return (
     <div className="flex items-center gap-6">
       <div className="relative h-40 w-40 shrink-0">
@@ -141,13 +141,13 @@ function DonutChart({ data, total }: { data: { label: string; value: number; col
               {data.map((entry, i) => <Cell key={i} fill={entry.color} />)}
             </Pie>
             <Tooltip
-              formatter={(value) => [typeof value === "number" ? fmtShort(value) : String(value)]}
+              formatter={(value) => [typeof value === "number" ? formatCurrency(value, homeCurrency, undefined, true) : String(value)]}
               contentStyle={{ borderRadius: "8px", border: "1px solid #e5e7eb", fontSize: "12px" }}
             />
           </PieChart>
         </ResponsiveContainer>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-base font-bold text-gray-900">{fmtShort(total)}</span>
+          <span className="text-base font-bold text-gray-900">{formatCurrency(total, homeCurrency, undefined, true)}</span>
           <span className="text-xs text-gray-400">assets</span>
         </div>
       </div>
@@ -161,7 +161,7 @@ function DonutChart({ data, total }: { data: { label: string; value: number; col
                 <span className="truncate text-sm text-gray-700">{d.label}</span>
               </div>
               <div className="flex items-center gap-2 shrink-0 text-sm">
-                <span className="font-medium text-gray-800">{fmtShort(d.value)}</span>
+                <span className="font-medium text-gray-800">{formatCurrency(d.value, homeCurrency, undefined, true)}</span>
                 <span className="w-8 text-right text-xs text-gray-400">{pct}%</span>
               </div>
             </div>
@@ -189,6 +189,7 @@ export function AssetsPage() {
   const [assets, setAssets]                       = useState<ManualAsset[]>([]);
   const [currencyOverrides, setCurrencyOverrides]   = useState<Record<string, string>>({});
   const [fxRates, setFxRates]                       = useState<Record<string, number>>({});
+  const [homeCurrency, setHomeCurrency]             = useState<string>("USD");
   // Single pipeline: account data comes from the financial profile cache via consolidated API
   const [accountSnapshots, setAccountSnapshots]     = useState<AccountSnapshot[]>([]);
   const [accountBalanceHistory, setAccountBalanceHistory] = useState<AccountBalanceHistory[]>([]);
@@ -240,6 +241,7 @@ export function AssetsPage() {
 
       setCurrencyOverrides(currJson.overrides ?? {});
       setFxRates(cJson.fxRates ?? {});
+      setHomeCurrency(cJson.homeCurrency ?? "USD");
       setAssets(aJson.assets ?? []);
       setInsights(cJson.data?.insights ?? []);
       setYearMonth(cJson.yearMonth ?? null);
@@ -269,17 +271,25 @@ export function AssetsPage() {
         (s: number, ma: ManualAsset) => s + (ma.value ?? 0),
         0,
       );
+      const histFxRates: Record<string, number> = cJson.fxRates ?? {};
+      const histHomeCurrency: string = cJson.homeCurrency ?? "USD";
+      function toHistHome(amount: number, ccy?: string): number {
+        if (!ccy || ccy.toUpperCase() === histHomeCurrency.toUpperCase()) return amount;
+        const rate = histFxRates[ccy.toUpperCase()];
+        return rate != null ? amount * rate : amount;
+      }
+
       const hist = allAssetMonths
         .map((ym) => {
           let stmtAssets = 0;
           for (const acct of assetBalHist) {
             const pts = acct.entries.filter((e) => e.yearMonth <= ym);
-            if (pts.length > 0) stmtAssets += Math.max(0, pts[pts.length - 1].balance);
+            if (pts.length > 0) stmtAssets += toHistHome(Math.max(0, pts[pts.length - 1].balance), acct.currency);
           }
           let debtSide = 0;
           for (const acct of debtBalHistForHist) {
             const pts = acct.entries.filter((e) => e.yearMonth <= ym);
-            if (pts.length > 0) debtSide += Math.abs(pts[pts.length - 1].balance);
+            if (pts.length > 0) debtSide += toHistHome(Math.abs(pts[pts.length - 1].balance), acct.currency);
           }
           const [y, m] = ym.split("-");
           const label = new Date(parseInt(y), parseInt(m) - 1, 1)
@@ -401,17 +411,17 @@ export function AssetsPage() {
 
   // ── derived data ──────────────────────────────────────────────────────────
 
-  // Convert a balance from an account's native currency to CAD.
+  // Convert a balance from an account's native currency to the user's home currency.
   // Uses fxRates from the financial profile cache — same rates used by getNetWorth().
-  function toCAD(amount: number, currency?: string): number {
-    if (!currency || currency === "CAD") return amount;
+  function toHome(amount: number, currency?: string): number {
+    if (!currency || currency.toUpperCase() === homeCurrency) return amount;
     const rate = fxRates[currency.toUpperCase()];
     return rate ? amount * rate : amount;
   }
 
   const manualTotal          = assets.reduce((s, a) => s + a.value, 0);
   const liquidSnapshots      = accountSnapshots.filter((a) => LIQUID_ACCOUNT_TYPES.has(a.accountType ?? "") && a.balance > 0);
-  const liquidFromStatements = liquidSnapshots.reduce((s, a) => s + toCAD(a.balance, a.currency), 0);
+  const liquidFromStatements = liquidSnapshots.reduce((s, a) => s + toHome(a.balance, a.currency), 0);
   const liquidFromManual     = assets.filter((a) => LIQUID_ASSET_CATEGORIES.has(a.category)).reduce((s, a) => s + a.value, 0);
   const liquidTotal          = liquidFromStatements + liquidFromManual;
   const illiquidTotal        = assets.filter((a) => !LIQUID_ASSET_CATEGORIES.has(a.category)).reduce((s, a) => s + a.value, 0);
@@ -420,7 +430,7 @@ export function AssetsPage() {
 
   const chartRaw = CHART_GROUPS.map((g) => {
     const fromManual     = assets.filter((a) => (g.categories as string[]).includes(a.category)).reduce((s, a) => s + a.value, 0);
-    const fromStatements = accountSnapshots.filter((a) => g.accountTypes.includes(a.accountType ?? "") && a.balance > 0).reduce((s, a) => s + toCAD(a.balance, a.currency), 0);
+    const fromStatements = accountSnapshots.filter((a) => g.accountTypes.includes(a.accountType ?? "") && a.balance > 0).reduce((s, a) => s + toHome(a.balance, a.currency), 0);
     return { label: g.label, value: fromManual + fromStatements, color: g.color };
   }).filter((d) => d.value > 0);
 
@@ -483,7 +493,7 @@ export function AssetsPage() {
         <div>
           <h1 className="font-bold text-3xl text-gray-900">Assets</h1>
           <p className="mt-0.5 text-sm text-gray-400">
-            {totalAssets > 0 && <>{fmt(totalAssets)} total</>}
+            {totalAssets > 0 && <>{formatCurrency(totalAssets, homeCurrency, undefined, true)} total</>}
             {monthStr && <> · {monthStr}</>}
           </p>
         </div>
@@ -539,8 +549,15 @@ export function AssetsPage() {
                 <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                   <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Total Assets</p>
                   <div className="mt-1 flex items-center gap-3 flex-wrap">
-                    <p className="font-bold text-4xl text-gray-900">{fmtShort(totalAssets)}</p>
+                    <p className="font-bold text-3xl text-gray-900 break-all leading-tight">{formatCurrency(totalAssets, homeCurrency, undefined, true)}</p>
                   </div>
+                  {Object.keys(fxRates).length > 0 && (
+                    <p className="mt-1 text-[10px] text-gray-400">
+                      {Object.entries(fxRates)
+                        .map(([ccy, rate]) => `1 ${ccy} = ${rate.toFixed(4)} ${homeCurrency}`)
+                        .join(" · ")}
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -552,7 +569,7 @@ export function AssetsPage() {
                       <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Asset Growth</p>
                       {growthTotal !== null && growthPct !== null && (
                         <p className={`mt-1 text-sm font-semibold ${growthTotal >= 0 ? "text-green-600" : "text-red-500"}`}>
-                          {growthTotal >= 0 ? "+" : ""}{fmtShort(growthTotal)}
+                          {growthTotal >= 0 ? "+" : ""}{formatCurrency(growthTotal, homeCurrency, undefined, true)}
                           <span className="ml-1.5 font-normal text-gray-400 text-xs">
                             ({growthPct >= 0 ? "+" : ""}{growthPct.toFixed(1)}%) over {assetHistory.length} months
                           </span>
@@ -573,12 +590,12 @@ export function AssetsPage() {
                         <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
                         <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
                         <YAxis
-                          tickFormatter={(v) => fmtShort(v)}
+                          tickFormatter={(v) => formatCurrency(v, homeCurrency, undefined, true)}
                           tick={{ fontSize: 10, fill: "#9ca3af" }}
                           tickLine={false} axisLine={false} width={48}
                         />
                         <Tooltip
-                          formatter={(v) => [typeof v === "number" ? fmt(v) : v, "Total assets"]}
+                          formatter={(v) => [typeof v === "number" ? formatCurrency(v, homeCurrency, undefined, true) : v, "Total assets"]}
                           labelStyle={{ fontSize: 12, color: "#6b7280" }}
                           contentStyle={{ borderRadius: "8px", border: "1px solid #e5e7eb", fontSize: 12 }}
                         />
@@ -619,14 +636,14 @@ export function AssetsPage() {
                         <div>
                           <p className="text-sm font-semibold text-gray-800">{selAssetPt.label}</p>
                           <p className="text-xs text-gray-400">
-                            Total assets: <span className="font-medium text-gray-700">{fmt(selAssetPt.total)}</span>
+                            Total assets: <span className="font-medium text-gray-700">{formatCurrency(selAssetPt.total, homeCurrency, undefined, true)}</span>
                             {prevAssetPtYm && (() => {
                               const prevTotal = assetHistory.find((p) => p.ym === prevAssetPtYm)?.total ?? null;
                               if (prevTotal === null) return null;
                               const diff = selAssetPt.total - prevTotal;
                               return (
                                 <span className={`ml-2 font-semibold ${diff >= 0 ? "text-green-600" : "text-red-500"}`}>
-                                  {diff >= 0 ? "↑ " : "↓ "}{fmtShort(Math.abs(diff))} vs prior chart month
+                                  {diff >= 0 ? "↑ " : "↓ "}{formatCurrency(Math.abs(diff), homeCurrency, undefined, true)} vs prior chart month
                                 </span>
                               );
                             })()}
@@ -657,11 +674,11 @@ export function AssetsPage() {
                                 <p className="text-sm font-semibold tabular-nums text-gray-800">{fmt(r.balanceThisMonth!, currencyOverrides[r.slug])}</p>
                                 {r.delta !== null ? (
                                   <p className={`text-xs font-medium tabular-nums ${grew ? "text-green-600" : shrank ? "text-red-500" : "text-gray-400"}`}>
-                                    {grew ? "↑ " : shrank ? "↓ " : ""}{r.delta === 0 ? "no change" : fmtShort(Math.abs(r.delta))}
+                                    {grew ? "↑ " : shrank ? "↓ " : ""}{r.delta === 0 ? "no change" : formatCurrency(Math.abs(r.delta), homeCurrency, currencyOverrides[r.slug], false)}
                                   </p>
                                 ) : r.balanceThisMonth != null && prevAssetPtYm ? (
                                   <p className="text-xs font-medium tabular-nums text-green-600">
-                                    ↑ {fmtShort(Math.abs(r.balanceThisMonth))}{" "}
+                                    ↑ {formatCurrency(Math.abs(r.balanceThisMonth), homeCurrency, currencyOverrides[r.slug], false)}{" "}
                                     <span className="font-normal text-gray-400">(new this month)</span>
                                   </p>
                                 ) : (
@@ -698,7 +715,7 @@ export function AssetsPage() {
                         <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-amber-400" />
                         <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Cash</p>
                       </div>
-                      <p className="font-bold text-2xl text-gray-900">{cashVal > 0 ? fmtShort(cashVal) : "—"}</p>
+                      <p className="font-bold text-xl text-gray-900 break-all leading-tight">{cashVal > 0 ? formatCurrency(cashVal, homeCurrency, undefined, true) : "—"}</p>
                       <p className="mt-1 text-xs text-gray-400">
                         {cashVal > 0 ? `${cashAccts} account${cashAccts !== 1 ? "s" : ""} · ${totalAssets > 0 ? ((cashVal / totalAssets) * 100).toFixed(0) : 0}%` : "none"}
                       </p>
@@ -708,7 +725,7 @@ export function AssetsPage() {
                         <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-blue-400" />
                         <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Investments</p>
                       </div>
-                      <p className="font-bold text-2xl text-gray-900">{investVal > 0 ? fmtShort(investVal) : "—"}</p>
+                      <p className="font-bold text-xl text-gray-900 break-all leading-tight">{investVal > 0 ? formatCurrency(investVal, homeCurrency, undefined, true) : "—"}</p>
                       <p className="mt-1 text-xs text-gray-400">
                         {investVal > 0 ? `${investAccts} item${investAccts !== 1 ? "s" : ""} · ${totalAssets > 0 ? ((investVal / totalAssets) * 100).toFixed(0) : 0}%` : "none"}
                       </p>
@@ -718,7 +735,7 @@ export function AssetsPage() {
                         <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-indigo-400" />
                         <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Property</p>
                       </div>
-                      <p className="font-bold text-2xl text-gray-900">{propertyVal > 0 ? fmtShort(propertyVal) : "—"}</p>
+                      <p className="font-bold text-xl text-gray-900 break-all leading-tight">{propertyVal > 0 ? formatCurrency(propertyVal, homeCurrency, undefined, true) : "—"}</p>
                       <p className="mt-1 text-xs text-gray-400">
                         {propertyVal > 0 ? `${propertyItems} item${propertyItems !== 1 ? "s" : ""} · ${totalAssets > 0 ? ((propertyVal / totalAssets) * 100).toFixed(0) : 0}%` : "none"}
                       </p>
@@ -728,7 +745,7 @@ export function AssetsPage() {
                         <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-gray-400" />
                         <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Other</p>
                       </div>
-                      <p className="font-bold text-2xl text-gray-900">{otherVal > 0 ? fmtShort(otherVal) : "—"}</p>
+                      <p className="font-bold text-xl text-gray-900 break-all leading-tight">{otherVal > 0 ? formatCurrency(otherVal, homeCurrency, undefined, true) : "—"}</p>
                       <p className="mt-1 text-xs text-gray-400">
                         {otherVal > 0 ? `${otherItems} item${otherItems !== 1 ? "s" : ""} · ${totalAssets > 0 ? ((otherVal / totalAssets) * 100).toFixed(0) : 0}%` : "none"}
                       </p>
@@ -742,14 +759,14 @@ export function AssetsPage() {
                 const changed = accountMonthly
                   .filter((a) => a.delta !== null && Math.abs(a.delta!) > 0)
                   .sort((a, b) => Math.abs(b.delta!) - Math.abs(a.delta!));
-                const netChange = changed.reduce((s, a) => s + toCAD(a.delta!, currencyOverrides[a.slug]), 0);
+                const netChange = changed.reduce((s, a) => s + toHome(a.delta!, currencyOverrides[a.slug]), 0);
                 if (changed.length === 0) return null;
                 return (
                   <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                     <div className="flex items-center justify-between mb-3">
                       <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">What changed this month</p>
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${netChange >= 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
-                        {netChange >= 0 ? "▲ " : "▼ "}{fmtShort(Math.abs(netChange))} net
+                        {netChange >= 0 ? "▲ " : "▼ "}{formatCurrency(Math.abs(netChange), homeCurrency, undefined, true)} net
                       </span>
                     </div>
                     <div className="space-y-2">
@@ -760,7 +777,7 @@ export function AssetsPage() {
                             <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: a.color }} />
                             <span className="flex-1 truncate text-sm text-gray-700">{a.label}</span>
                             <span className={`text-sm font-semibold tabular-nums ${grew ? "text-green-600" : "text-red-500"}`}>
-                              {grew ? "▲ " : "▼ "}{fmtShort(Math.abs(a.delta!))}
+                              {grew ? "▲ " : "▼ "}{formatCurrency(Math.abs(a.delta!), homeCurrency, currencyOverrides[a.slug], false)}
                             </span>
                             <span className="w-20 text-right text-xs text-gray-400 tabular-nums">{fmt(a.currentBalance, currencyOverrides[a.slug])}</span>
                           </div>
@@ -795,7 +812,7 @@ export function AssetsPage() {
                             <p className="text-sm font-semibold text-gray-800 tabular-nums">{fmt(a.currentBalance, currencyOverrides[a.slug])}</p>
                             {a.delta !== null && Math.abs(a.delta) > 0 && (
                               <p className={`text-xs font-medium tabular-nums ${grew ? "text-green-600" : "text-red-500"}`}>
-                                {grew ? "▲ " : "▼ "}{fmtShort(Math.abs(a.delta))} MoM
+                                {grew ? "▲ " : "▼ "}{formatCurrency(Math.abs(a.delta), homeCurrency, currencyOverrides[a.slug], false)} MoM
                               </p>
                             )}
                             {(a.delta === null || Math.abs(a.delta) === 0) && (
@@ -813,7 +830,7 @@ export function AssetsPage() {
               {chartRaw.length > 0 && (
                 <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                   <p className="mb-4 text-xs font-semibold uppercase tracking-wider text-gray-400">Asset Breakdown</p>
-                  <DonutChart data={chartRaw} total={totalAssets} />
+                  <DonutChart data={chartRaw} total={totalAssets} homeCurrency={homeCurrency} />
                 </div>
               )}
 
@@ -923,7 +940,7 @@ export function AssetsPage() {
                       <div className="flex items-center gap-2 px-5 pt-4 pb-2">
                         <span className="text-base">{m.emoji}</span>
                         <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">{m.label}</p>
-                        <span className="ml-auto text-sm font-semibold text-gray-700">{fmt(catTotal)}</span>
+                        <span className="ml-auto text-sm font-semibold text-gray-700">{formatCurrency(catTotal, homeCurrency, undefined, true)}</span>
                       </div>
                       <div className="divide-y divide-gray-100">
                         {catAssets.map((asset) => {

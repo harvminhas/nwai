@@ -27,6 +27,8 @@ export interface ExpenseTxnRecord {
   category: string;
   accountSlug: string;
   accountLabel: string; // e.g. "TD ••••7780" — for display in transaction lists
+  /** ISO 4217 currency of the source account (e.g. "CAD", "USD"). */
+  currency?: string;
   recurring?: string;
 }
 
@@ -37,6 +39,8 @@ export interface IncomeTxnRecord {
   source: string;
   description: string;
   accountSlug: string;
+  /** ISO 4217 currency of the source account (e.g. "CAD", "USD"). */
+  currency?: string;
 }
 
 export interface AccountSnapshot {
@@ -185,6 +189,7 @@ export async function extractAllTransactions(
             category: txn.category ?? "Other",
             accountSlug: slug,
             accountLabel: label,
+            currency: parsed.currency ?? undefined,
             recurring: txn.recurring,
             ...(txn.debtType ? { debtType: txn.debtType } : {}),
           });
@@ -221,6 +226,7 @@ export async function extractAllTransactions(
           source: txn.source ?? "Income",
           description: txn.source ?? txn.category ?? "Income",
           accountSlug: slug,
+          currency: parsed.currency ?? undefined,
         });
       }
     }

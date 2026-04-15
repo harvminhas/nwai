@@ -16,7 +16,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
 } from "recharts";
-import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
+import { fmt, getCurrencySymbol, formatCurrency } from "@/lib/currencyUtils";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -51,12 +51,12 @@ type TabId = typeof TABS[number]["id"];
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function fmtShort(v: number) {
-  const sym = getCurrencySymbol();
+function fmtShort(v: number, currency?: string) {
+  const sym = getCurrencySymbol(currency);
   const abs = Math.abs(v);
   if (abs >= 1_000_000) return `${sym}${(v / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000)     return `${sym}${Math.round(abs / 1_000)}k`;
-  return fmt(v);
+  return fmt(v, currency);
 }
 function normalizeName(s: string) { return s.toLowerCase().replace(/[^a-z0-9]/g, ""); }
 function addMonths(n: number): string {
@@ -114,7 +114,7 @@ function estimateMinPayment(balance: number, apr: number | null, cat: LiabilityC
 
 interface PayoffDebt {
   id: string; label: string; bankName?: string; category: LiabilityCategory;
-  balance: number; apr: number | null; aprEstimated: boolean; minPayment: number;
+  balance: number; currency?: string; apr: number | null; aprEstimated: boolean; minPayment: number;
 }
 
 function simulate(
@@ -181,7 +181,7 @@ function CategoryIcon({ cat }: { cat: LiabilityCategory }) {
 
 interface DisplayLiability {
   id: string; label: string; subLabel?: string; category: LiabilityCategory;
-  balance: number; interestRate?: number; statementDate?: string;
+  balance: number; currency?: string; interestRate?: number; statementDate?: string;
   source: "manual" | "statement"; accountSlug?: string;
   subAccounts?: SubAccount[];
 }
@@ -310,14 +310,24 @@ function Sparkline({ values, color, good }: { values: number[]; color: string; g
 
 interface DebtHistoryPoint { ym: string; label: string; total: number }
 
-function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountRates }: {
+function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountRates, homeCurrency, fxRates }: {
   libs: DisplayLiability[];
   debtHistory: DebtHistoryPoint[];
   accountMonthly: AccountMonthlyData[];
   paymentsMade: number;
   accountRates: AccountRateEntry[];
+  homeCurrency: string;
+  fxRates: Record<string, number>;
 }) {
-  const total = libs.reduce((s, l) => s + l.balance, 0);
+  // Convert a liability's native-currency balance to the home currency for aggregation.
+  function toHome(amount: number, currency?: string): number {
+    const cur = (currency ?? homeCurrency).toUpperCase();
+    if (cur === homeCurrency.toUpperCase()) return amount;
+    const rate = fxRates[cur];
+    return rate ? amount * rate : amount;
+  }
+
+  const total = libs.reduce((s, l) => s + toHome(l.balance, l.currency), 0);
   const [selectedYm, setSelectedYm] = useState<string | null>(null);
   if (libs.length === 0) return <EmptyState />;
 
@@ -340,9 +350,9 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
     .filter((r) => r.balanceThisMonth !== null)
     .sort((a, b) => (b.balanceThisMonth ?? 0) - (a.balanceThisMonth ?? 0));
 
-  // By-type summary
+  // By-type summary — convert each liability to home currency before aggregating
   const byCategory = new Map<LiabilityCategory, number>();
-  for (const l of libs) byCategory.set(l.category, (byCategory.get(l.category) ?? 0) + l.balance);
+  for (const l of libs) byCategory.set(l.category, (byCategory.get(l.category) ?? 0) + toHome(l.balance, l.currency));
   const categoryGroups = CATEGORY_ORDER.filter((c) => byCategory.has(c)).map((c) => ({
     cat: c, label: CATEGORY_META[c].label, total: byCategory.get(c)!, color: CATEGORY_CHART_COLOR[c],
     meta: CATEGORY_META[c],
@@ -397,8 +407,15 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
       <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
         <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Total Debt</p>
         <div className="mt-1 flex items-center gap-3 flex-wrap">
-          <p className="font-bold text-4xl text-gray-900">{fmtShort(total)}</p>
+          <p className="font-bold text-3xl text-gray-900 break-all leading-tight">{formatCurrency(total, homeCurrency, undefined, true)}</p>
         </div>
+        {Object.keys(fxRates).length > 0 && (
+          <p className="mt-1 text-[10px] text-gray-400">
+            {Object.entries(fxRates)
+              .map(([ccy, rate]) => `1 ${ccy} = ${rate.toFixed(4)} ${homeCurrency}`)
+              .join(" · ")}
+          </p>
+        )}
       </div>
 
       {/* Debt Growth chart */}
@@ -409,7 +426,7 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Debt Over Time</p>
               {growthTotal !== null && growthPct !== null && (
                 <p className={`mt-1 text-sm font-semibold ${growthTotal >= 0 ? "text-green-600" : "text-red-500"}`}>
-                  {growthTotal >= 0 ? "↓ " : "↑ "}{fmtShort(Math.abs(growthTotal))}
+                  {growthTotal >= 0 ? "↓ " : "↑ "}{formatCurrency(Math.abs(growthTotal), homeCurrency, undefined, true)}
                   <span className="ml-1.5 font-normal text-gray-400 text-xs">
                     ({Math.abs(growthPct).toFixed(1)}% {growthTotal >= 0 ? "reduction" : "increase"}) over {debtHistory.length} months
                   </span>
@@ -429,9 +446,9 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
                 <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
-                <YAxis tickFormatter={(v) => fmtShort(v)} tick={{ fontSize: 10, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={48} />
+                <YAxis tickFormatter={(v) => formatCurrency(v, homeCurrency, undefined, true)} tick={{ fontSize: 10, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={48} />
                 <Tooltip
-                  formatter={(v) => [typeof v === "number" ? fmt(v) : v, "Total debt"]}
+                  formatter={(v) => [typeof v === "number" ? formatCurrency(v, homeCurrency, undefined, true) : v, "Total debt"]}
                   labelStyle={{ fontSize: 12, color: "#6b7280" }}
                   contentStyle={{ borderRadius: "8px", border: "1px solid #e5e7eb", fontSize: 12 }}
                 />
@@ -474,14 +491,14 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
                 <div>
                   <p className="text-sm font-semibold text-gray-800">{selectedPt.label}</p>
                   <p className="text-xs text-gray-400">
-                    Total debt: <span className="font-medium text-gray-700">{fmt(selectedPt.total)}</span>
+                    Total debt: <span className="font-medium text-gray-700">{formatCurrency(selectedPt.total, homeCurrency, undefined, true)}</span>
                     {prevPtYm && (() => {
                       const prevTotal = debtHistory.find((p) => p.ym === prevPtYm)?.total ?? null;
                       if (prevTotal === null) return null;
                       const diff = selectedPt.total - prevTotal;
                       return (
                         <span className={`ml-2 font-semibold ${diff <= 0 ? "text-green-600" : "text-red-500"}`}>
-                          {diff <= 0 ? "↓ " : "↑ "}{fmtShort(Math.abs(diff))} vs prior chart month
+                          {diff <= 0 ? "↓ " : "↑ "}{formatCurrency(Math.abs(diff), homeCurrency, undefined, true)} vs prior chart month
                         </span>
                       );
                     })()}
@@ -511,14 +528,14 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
                         )}
                       </div>
                       <div className="text-right shrink-0">
-                        <p className="text-sm font-semibold tabular-nums text-gray-800">{fmt(r.balanceThisMonth!)}</p>
+                        <p className="text-sm font-semibold tabular-nums text-gray-800">{formatCurrency(r.balanceThisMonth!, homeCurrency, undefined, true)}</p>
                         {r.delta !== null ? (
                           <p className={`text-xs font-medium tabular-nums ${paidDown ? "text-green-600" : increased ? "text-red-500" : "text-gray-400"}`}>
-                            {paidDown ? "↓ " : increased ? "↑ " : ""}{r.delta === 0 ? "no change" : fmtShort(Math.abs(r.delta))}
+                            {paidDown ? "↓ " : increased ? "↑ " : ""}{r.delta === 0 ? "no change" : formatCurrency(Math.abs(r.delta), homeCurrency, undefined, true)}
                           </p>
                         ) : r.balanceThisMonth != null && prevPtYm ? (
                           <p className="text-xs font-medium tabular-nums text-red-500">
-                            ↑ {fmtShort(r.balanceThisMonth)}{" "}
+                            ↑ {formatCurrency(r.balanceThisMonth, homeCurrency, undefined, true)}{" "}
                             <span className="font-normal text-gray-400">(new this month)</span>
                           </p>
                         ) : (
@@ -542,7 +559,7 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
             <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-red-400" />
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Mortgage</p>
           </div>
-          <p className="font-bold text-2xl text-gray-900">{mortgageTotal > 0 ? fmtShort(mortgageTotal) : "—"}</p>
+          <p className="font-bold text-xl text-gray-900 break-all leading-tight">{mortgageTotal > 0 ? formatCurrency(mortgageTotal, homeCurrency, undefined, true) : "—"}</p>
           <p className="mt-1 text-xs text-gray-400">
             {mortgageTotal > 0
               ? `${mortgageAccts} account${mortgageAccts !== 1 ? "s" : ""} · ${total > 0 ? ((mortgageTotal / total) * 100).toFixed(0) : 0}% of debt`
@@ -556,7 +573,7 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
             <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-orange-400" />
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Credit Cards</p>
           </div>
-          <p className="font-bold text-2xl text-gray-900">{ccTotal > 0 ? fmtShort(ccTotal) : "—"}</p>
+          <p className="font-bold text-xl text-gray-900 break-all leading-tight">{ccTotal > 0 ? formatCurrency(ccTotal, homeCurrency, undefined, true) : "—"}</p>
           <p className="mt-1 text-xs text-gray-400">
             {ccTotal > 0
               ? `${ccAccts} card${ccAccts !== 1 ? "s" : ""} · ${total > 0 ? ((ccTotal / total) * 100).toFixed(0) : 0}% of debt`
@@ -570,7 +587,7 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
             <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-blue-400" />
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Loans</p>
           </div>
-          <p className="font-bold text-2xl text-gray-900">{loansTotal > 0 ? fmtShort(loansTotal) : "—"}</p>
+          <p className="font-bold text-xl text-gray-900 break-all leading-tight">{loansTotal > 0 ? formatCurrency(loansTotal, homeCurrency, undefined, true) : "—"}</p>
           <p className="mt-1 text-xs text-gray-400">
             {loansTotal > 0
               ? `${loanAccts} account${loanAccts !== 1 ? "s" : ""} · ${total > 0 ? ((loansTotal / total) * 100).toFixed(0) : 0}% of debt`
@@ -584,7 +601,7 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
             <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-blue-400" />
             <p className="text-xs font-semibold uppercase tracking-wider text-blue-400">Payments Made</p>
           </div>
-          <p className="font-bold text-2xl text-gray-900">{paymentsMade > 0 ? fmtShort(paymentsMade) : "—"}</p>
+          <p className="font-bold text-xl text-gray-900 break-all leading-tight">{paymentsMade > 0 ? formatCurrency(paymentsMade, homeCurrency, undefined, true) : "—"}</p>
           <p className="mt-1 text-xs text-gray-400">{paymentsMade > 0 ? "this month" : "re-upload for data"}</p>
         </div>
       </div>
@@ -597,13 +614,13 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
             <div className="flex items-start justify-between gap-2">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wider text-red-400">Interest costing you</p>
-                <p className="mt-1.5 font-bold text-3xl text-red-600">
-                  {monthlyInterest > 0 ? fmt(Math.round(monthlyInterest)) : "—"}
+                <p className="mt-1.5 font-bold text-2xl text-red-600 break-all leading-tight">
+                  {monthlyInterest > 0 ? fmt(Math.round(monthlyInterest), homeCurrency) : "—"}
                   {monthlyInterest > 0 && <span className="ml-1 text-base font-normal text-red-400">/mo</span>}
                 </p>
                 {monthlyInterest > 0 && (
                   <p className="mt-1 text-xs text-red-400">
-                    {fmt(Math.round(monthlyInterest * 12))} per year lost to interest
+                    {fmt(Math.round(monthlyInterest * 12), homeCurrency)} per year lost to interest
                   </p>
                 )}
                 {estimatedCount > 0 && (
@@ -638,7 +655,7 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
                     <p className="mt-1 text-xs text-gray-400">at minimum payments</p>
                     {totalInterestIfMin != null && totalInterestIfMin > 0 && (
                       <p className="mt-1 text-xs text-red-400">
-                        {fmt(totalInterestIfMin)} in interest if you take that long
+                        {fmt(totalInterestIfMin, homeCurrency)} in interest if you take that long
                       </p>
                     )}
                   </>
@@ -674,7 +691,7 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
             <div className="flex items-center justify-between mb-3">
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">What changed this month</p>
               <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${netChange <= 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
-                {netChange <= 0 ? "↓ " : "↑ "}{fmtShort(Math.abs(netChange))} net
+                {netChange <= 0 ? "↓ " : "↑ "}{formatCurrency(Math.abs(netChange), homeCurrency, undefined, true)} net
               </span>
             </div>
             <div className="space-y-2">
@@ -685,9 +702,9 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
                     <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: a.color }} />
                     <span className="flex-1 truncate text-sm text-gray-700">{a.label}</span>
                     <span className={`text-sm font-semibold tabular-nums ${paidDown ? "text-green-600" : "text-red-500"}`}>
-                      {paidDown ? "↓ " : "↑ "}{fmtShort(Math.abs(a.delta!))}
+                      {paidDown ? "↓ " : "↑ "}{formatCurrency(Math.abs(a.delta!), homeCurrency, undefined, true)}
                     </span>
-                    <span className="w-20 text-right text-xs text-gray-400 tabular-nums">{fmt(a.currentBalance)}</span>
+                    <span className="w-20 text-right text-xs text-gray-400 tabular-nums">{formatCurrency(a.currentBalance, homeCurrency, undefined, true)}</span>
                   </div>
                 );
               })}
@@ -720,10 +737,10 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
                     <Sparkline values={sparkVals} color={a.color} good="down" />
                   </div>
                   <div className="shrink-0 text-right w-28">
-                    <p className="text-sm font-semibold text-gray-800 tabular-nums">{fmt(a.currentBalance)}</p>
+                        <p className="text-sm font-semibold text-gray-800 tabular-nums">{formatCurrency(a.currentBalance, homeCurrency, undefined, true)}</p>
                     {a.delta !== null && Math.abs(a.delta) > 0 && (
                       <p className={`text-xs font-medium tabular-nums ${paidDown ? "text-green-600" : "text-red-500"}`}>
-                        {paidDown ? "↓ " : "↑ "}{fmtShort(Math.abs(a.delta))} MoM
+                        {paidDown ? "↓ " : "↑ "}{formatCurrency(Math.abs(a.delta), homeCurrency, undefined, true)} MoM
                       </p>
                     )}
                     {(a.delta === null || Math.abs(a.delta) === 0) && (
@@ -750,13 +767,13 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
                     {donutData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
                   </Pie>
                   <Tooltip
-                    formatter={(v) => [typeof v === "number" ? fmtShort(v) : String(v)]}
+                    formatter={(v) => [typeof v === "number" ? formatCurrency(v, homeCurrency, undefined, true) : String(v)]}
                     contentStyle={{ borderRadius: "8px", border: "1px solid #e5e7eb", fontSize: 12 }}
                   />
                 </PieChart>
               </ResponsiveContainer>
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-base font-bold text-gray-900">{fmtShort(total)}</span>
+                <span className="text-base font-bold text-gray-900">{formatCurrency(total, homeCurrency, undefined, true)}</span>
                 <span className="text-xs text-gray-400">owed</span>
               </div>
             </div>
@@ -770,7 +787,7 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
                       <span className="truncate text-sm text-gray-700">{d.label}</span>
                     </div>
                     <div className="flex items-center gap-2 shrink-0 text-sm">
-                      <span className="font-medium text-gray-800">{fmtShort(d.value)}</span>
+                      <span className="font-medium text-gray-800">{formatCurrency(d.value, homeCurrency, undefined, true)}</span>
                       <span className="w-8 text-right text-xs text-gray-400">{pct}%</span>
                     </div>
                   </div>
@@ -787,19 +804,28 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
 // ── tab: accounts ─────────────────────────────────────────────────────────────
 
 function AccountsTab({
-  libs, manualLibs, deletingId, deletingSlug,
+  libs, manualLibs, deletingId, deletingSlug, homeCurrency, fxRates,
   onAdd, onEdit, onDelete, onDeleteAccount,
 }: {
   libs: DisplayLiability[];
   manualLibs: ManualLiability[];
   deletingId: string | null;
   deletingSlug: string | null;
+  homeCurrency: string;
+  fxRates: Record<string, number>;
   onAdd: () => void;
   onEdit: (m: ManualLiability) => void;
   onDelete: (id: string) => void;
   onDeleteAccount: (slug: string, label: string) => void;
 }) {
   if (libs.length === 0) return <EmptyState onAdd={onAdd} />;
+
+  function toHome(amount: number, currency?: string): number {
+    const cur = (currency ?? homeCurrency).toUpperCase();
+    if (cur === homeCurrency.toUpperCase()) return amount;
+    const rate = fxRates[cur];
+    return rate ? amount * rate : amount;
+  }
 
   const byCategory = new Map<LiabilityCategory, DisplayLiability[]>();
   for (const l of libs) {
@@ -811,13 +837,13 @@ function AccountsTab({
     <div className="space-y-5">
       {CATEGORY_ORDER.filter((cat) => byCategory.has(cat)).map((cat) => {
         const group     = byCategory.get(cat)!;
-        const groupTotal = group.reduce((s, l) => s + l.balance, 0);
+        const groupTotal = group.reduce((s, l) => s + toHome(l.balance, l.currency), 0);
         const meta      = CATEGORY_META[cat];
         return (
           <div key={cat}>
             <div className="mb-2 flex items-center gap-2">
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">{meta.label}</p>
-              <span className={`rounded-md px-2 py-0.5 text-xs font-semibold ${meta.color}`}>{fmt(groupTotal)}</span>
+              <span className={`rounded-md px-2 py-0.5 text-xs font-semibold ${meta.color}`}>{fmt(groupTotal, homeCurrency)}</span>
             </div>
             <div className="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white shadow-sm">
               {group.map((l) => (
@@ -838,7 +864,7 @@ function AccountsTab({
                       </div>
                     </div>
                     <div className="ml-4 flex shrink-0 items-center gap-2">
-                      <p className="font-semibold text-sm text-gray-900 tabular-nums">{fmt(l.balance)}</p>
+                      <p className="font-semibold text-sm text-gray-900 tabular-nums">{fmt(l.balance, l.currency)}</p>
                       {l.source === "statement" && l.accountSlug && (
                         <>
                           <button
@@ -884,7 +910,7 @@ function AccountsTab({
                               {" · "}<span className="capitalize">{sub.type}</span>
                             </p>
                           </div>
-                          <p className="ml-3 shrink-0 text-xs font-semibold text-gray-700 tabular-nums">{fmt(sub.balance)}</p>
+                          <p className="ml-3 shrink-0 text-xs font-semibold text-gray-700 tabular-nums">{fmt(sub.balance, l.currency)}</p>
                         </div>
                       ))}
                     </div>
@@ -912,14 +938,14 @@ function AccountsTab({
 
 type Strategy = "avalanche" | "snowball" | "custom";
 
-function PayoffTab({ libs, accountRates }: { libs: DisplayLiability[]; accountRates: AccountRateEntry[] }) {
+function PayoffTab({ libs, accountRates, homeCurrency }: { libs: DisplayLiability[]; accountRates: AccountRateEntry[]; homeCurrency: string }) {
   const [strategy, setStrategy]       = useState<Strategy>("avalanche");
   const [extraPayment, setExtraPayment] = useState(200);
   const [customOrder, setCustomOrder] = useState<string[]>([]);
 
   const payoffDebts: PayoffDebt[] = libs.filter((d) => d.balance > 0).map((d) => {
     const { apr, estimated } = resolveApr(d, accountRates);
-    return { id: d.id, label: d.label, bankName: d.subLabel, category: d.category, balance: d.balance, apr, aprEstimated: estimated, minPayment: estimateMinPayment(d.balance, apr, d.category) };
+    return { id: d.id, label: d.label, bankName: d.subLabel, category: d.category, balance: d.balance, currency: d.currency, apr, aprEstimated: estimated, minPayment: estimateMinPayment(d.balance, apr, d.category) };
   });
 
   function strategyOrder(s: Strategy, custom: string[]): string[] {
@@ -992,11 +1018,11 @@ function PayoffTab({ libs, accountRates }: { libs: DisplayLiability[]; accountRa
                 </p>
                 <p className="mt-0.5 text-xs text-gray-400">
                   {d.apr != null ? <>{d.apr.toFixed(1)}% APR{d.aprEstimated && <span className="text-amber-500"> est.</span>} · </> : null}
-                  {fmt(d.minPayment)}/mo min
+                  {fmt(d.minPayment, d.currency)}/mo min
                 </p>
               </div>
               <div className="shrink-0 text-right">
-                <p className="text-sm font-semibold text-gray-900 tabular-nums">{fmtShort(d.balance)}</p>
+                <p className="text-sm font-semibold text-gray-900 tabular-nums">{formatCurrency(d.balance, homeCurrency, d.currency, false)}</p>
                 <p className="mt-0.5 text-xs text-green-600">
                   {result ? (result.payoffMonths >= 600 ? "50+ yrs" : `Paid off ${addMonths(result.payoffMonths)}`) : "—"}
                 </p>
@@ -1022,19 +1048,19 @@ function PayoffTab({ libs, accountRates }: { libs: DisplayLiability[]; accountRa
       <div className="border-t border-gray-100 px-4 pt-4 pb-3">
         <div className="flex items-center justify-between mb-2">
           <p className="text-sm text-gray-600">Extra payment per month</p>
-          <span className="text-sm font-bold text-gray-900 tabular-nums">{fmt(extraPayment)}</span>
+          <span className="text-sm font-bold text-gray-900 tabular-nums">{fmt(extraPayment, homeCurrency)}</span>
         </div>
         <input type="range" min={0} max={maxExtra} step={25} value={extraPayment}
           onChange={(e) => setExtraPayment(Number(e.target.value))}
           className="w-full accent-gray-900 cursor-pointer" />
-        <div className="flex justify-between text-xs text-gray-300 mt-0.5"><span>$0</span><span>{fmt(maxExtra)}</span></div>
+        <div className="flex justify-between text-xs text-gray-300 mt-0.5"><span>$0</span><span>{fmt(maxExtra, homeCurrency)}</span></div>
       </div>
 
       {/* Savings banner */}
       {extraPayment > 0 && (interestSaved > 0 || monthsSooner > 0) ? (
         <div className="mx-4 mb-4 rounded-lg bg-green-50 border border-green-200 px-4 py-2.5">
           <p className="text-sm font-medium text-green-800">
-            {interestSaved > 0 && <>Save <span className="font-bold">{fmt(interestSaved)}</span> in interest</>}
+            {interestSaved > 0 && <>Save <span className="font-bold">{fmt(interestSaved, homeCurrency)}</span> in interest</>}
             {interestSaved > 0 && monthsSooner > 0 && <span className="text-green-500"> · </span>}
             {monthsSooner > 0 && <>debt-free <span className="font-bold">{monthsSooner < 12 ? `${monthsSooner} month${monthsSooner !== 1 ? "s" : ""}` : `${(monthsSooner / 12).toFixed(1)} yrs`}</span> sooner</>}
           </p>
@@ -1098,6 +1124,8 @@ function LiabilitiesPageInner() {
   const [yearMonth, setYearMonth]       = useState<string | null>(null);
   const [debtHistory, setDebtHistory]   = useState<DebtHistoryPoint[]>([]);
   const [accountMonthly, setAccountMonthly] = useState<AccountMonthlyData[]>([]);
+  const [homeCurrency, setHomeCurrency] = useState<string>("USD");
+  const [fxRates, setFxRates]           = useState<Record<string, number>>({});
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState<string | null>(null);
 
@@ -1133,6 +1161,8 @@ function LiabilitiesPageInner() {
 
       setYearMonth(cJson.yearMonth ?? null);
       setPaymentsMade(cJson.paymentsMade ?? 0);
+      setHomeCurrency(cJson.homeCurrency ?? "USD");
+      setFxRates(cJson.fxRates ?? {});
 
       // Build debt history from accountBalanceHistory with carry-forward.
       // Using this source (instead of cJson.history[].debtTotal) means backfill months
@@ -1144,13 +1174,21 @@ function LiabilitiesPageInner() {
       const allDebtMonths = Array.from(
         new Set(debtBalHist.flatMap((h) => h.entries.map((e) => e.yearMonth)))
       ).sort();
+      const histFxRates: Record<string, number> = cJson.fxRates ?? {};
+      const histHomeCurrency: string = cJson.homeCurrency ?? "USD";
+      function toHistHome(amount: number, ccy?: string): number {
+        if (!ccy || ccy.toUpperCase() === histHomeCurrency.toUpperCase()) return amount;
+        const rate = histFxRates[ccy.toUpperCase()];
+        return rate != null ? amount * rate : amount;
+      }
+
       const hist: DebtHistoryPoint[] = allDebtMonths
         .map((ym) => {
           let total = 0;
           for (const acct of debtBalHist) {
-            // Carry forward: use latest entry at-or-before this month
+            // Carry forward: use latest entry at-or-before this month, converted to home currency
             const pts = acct.entries.filter((e) => e.yearMonth <= ym);
-            if (pts.length > 0) total += Math.abs(pts[pts.length - 1].balance);
+            if (pts.length > 0) total += toHistHome(Math.abs(pts[pts.length - 1].balance), acct.currency);
           }
           const [y, m] = ym.split("-");
           const label = new Date(parseInt(y), parseInt(m) - 1, 1)
@@ -1190,7 +1228,8 @@ function LiabilitiesPageInner() {
         .map((s) => ({
           id: `stmt-${s.slug}`, label: s.accountName ?? s.bankName ?? "Account",
           subLabel: s.bankName, category: ACCT_TYPE_TO_CAT[s.accountType ?? ""] ?? "other",
-          balance: Math.abs(s.balance), statementDate: s.statementMonth,
+          balance: Math.abs(s.balance), currency: s.currency ?? undefined,
+          statementDate: s.statementMonth,
           interestRate: typeof s.interestRate === "number" ? s.interestRate : undefined,
           source: "statement" as const, accountSlug: s.slug,
         }));
@@ -1256,7 +1295,12 @@ function LiabilitiesPageInner() {
     }
   }
 
-  const total = displayLibs.reduce((s, l) => s + l.balance, 0);
+  const total = displayLibs.reduce((s, l) => {
+    const rate = l.currency && l.currency.toUpperCase() !== homeCurrency.toUpperCase()
+      ? (fxRates[l.currency.toUpperCase()] ?? 1)
+      : 1;
+    return s + l.balance * rate;
+  }, 0);
   const monthStr = yearMonth
     ? new Date(parseInt(yearMonth.slice(0, 4)), parseInt(yearMonth.slice(5, 7)) - 1, 1)
         .toLocaleDateString("en-US", { month: "short", year: "numeric" })
@@ -1276,7 +1320,7 @@ function LiabilitiesPageInner() {
         <div>
           <h1 className="font-bold text-3xl text-gray-900">Liabilities</h1>
           <p className="mt-0.5 text-sm text-gray-400">
-            {total > 0 && <>{fmt(total)} total</>}
+            {total > 0 && <>{formatCurrency(total, homeCurrency, undefined, true)} total</>}
             {monthStr && <> · {monthStr}</>}
           </p>
         </div>
@@ -1326,12 +1370,16 @@ function LiabilitiesPageInner() {
           accountMonthly={accountMonthly}
           paymentsMade={paymentsMade}
           accountRates={accountRates}
+          homeCurrency={homeCurrency}
+          fxRates={fxRates}
         />
       )}
       {activeTab === "accounts" && (
         <AccountsTab
           libs={displayLibs} manualLibs={manualLibs} deletingId={deletingId}
           deletingSlug={deletingSlug}
+          homeCurrency={homeCurrency}
+          fxRates={fxRates}
           onAdd={() => { setEditing(null); setModalOpen(true); }}
           onEdit={(m) => { setEditing(m); setModalOpen(true); }}
           onDelete={handleDelete}
@@ -1413,7 +1461,7 @@ function LiabilitiesPageInner() {
 
       {activeTab === "payoff" && (
         can("payoffPlanner")
-          ? <PayoffTab libs={displayLibs} accountRates={accountRates} />
+          ? <PayoffTab libs={displayLibs} accountRates={accountRates} homeCurrency={homeCurrency} />
           : <UpgradePrompt feature="payoffPlanner" description="Simulate avalanche, snowball, and custom debt payoff strategies with extra payment modelling." />
       )}
 

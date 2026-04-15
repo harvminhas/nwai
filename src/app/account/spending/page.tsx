@@ -20,7 +20,7 @@ import {
 import { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon } from "./shared";
 import type { CashFrequency } from "./shared";
 import { getParentCategory, isSubtype, CATEGORY_TAXONOMY } from "@/lib/categoryTaxonomy";
-import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
+import { fmt, getCurrencySymbol, formatCurrency } from "@/lib/currencyUtils";
 import RefreshToast from "@/components/RefreshToast";
 import { PROFILE_REFRESHED_EVENT, useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 
@@ -44,12 +44,13 @@ function Toast({ message, onDone }: { message: string; onDone: () => void }) {
 
 // ── Monthly spending chart ────────────────────────────────────────────────────
 
-function SpendingChart({ history, avg, median, selectedMonth, effectiveExp }: {
+function SpendingChart({ history, avg, median, selectedMonth, effectiveExp, homeCurrency = "USD" }: {
   history: HistoryPoint[];
   avg: number | null;
   median: number | null;
   selectedMonth: string | null;
   effectiveExp: (h: HistoryPoint) => number;
+  homeCurrency?: string;
 }) {
   const data = history
     .filter((h) => (h.expensesTotal ?? 0) > 0)
@@ -67,7 +68,7 @@ function SpendingChart({ history, avg, median, selectedMonth, effectiveExp }: {
     return (
       <div className="rounded-lg border border-gray-100 bg-white px-3 py-2 shadow-lg text-xs">
         <p className="font-semibold text-gray-800">{monthLabel(ym)}</p>
-        <p className="text-gray-600">{fmt(amount)}</p>
+        <p className="text-gray-600">{formatCurrency(amount, homeCurrency, undefined, true)}</p>
       </div>
     );
   };
@@ -78,19 +79,19 @@ function SpendingChart({ history, avg, median, selectedMonth, effectiveExp }: {
       {median !== null && (
         <p className="mb-4 text-sm font-medium text-gray-600">
           {data.length}-month median{" "}
-          <span className="font-bold text-gray-900">{fmt(median)} / mo</span>
+          <span className="font-bold text-gray-900">{formatCurrency(median, homeCurrency, undefined, true)} / mo</span>
           {avg !== null && avg !== median && (
-            <span className="ml-2 text-xs text-gray-400">(avg {fmt(avg)})</span>
+            <span className="ml-2 text-xs text-gray-400">(avg {formatCurrency(avg, homeCurrency, undefined, true)})</span>
           )}
         </p>
       )}
       <div style={{ pointerEvents: "none" }}>
         <ResponsiveContainer width="100%" height={140}>
-          <BarChart data={data} barSize={22} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+          <BarChart data={data} barSize={22} margin={{ top: 4, right: 4, left: -8, bottom: 0 }}>
             <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#f3f4f6" />
             <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false}
-              tickFormatter={(v: number) => { const s = getCurrencySymbol(); return v >= 1000 ? `${s}${Math.round(v / 1000)}k` : `${s}${v}`; }} />
+            <YAxis width={52} tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false}
+              tickFormatter={(v: number) => { const s = getCurrencySymbol(homeCurrency); return v >= 1000 ? `${s}${Math.round(v / 1000)}k` : `${s}${v}`; }} />
             <Tooltip content={<CustomTooltip />} cursor={{ fill: "#f5f3ff" }} />
             {median !== null && (
               <ReferenceLine y={median} stroke="#a78bfa" strokeDasharray="4 3" strokeWidth={1.5}
@@ -200,8 +201,11 @@ const START_DATE_PRESETS = [
   { label: "1 year ago", value: () => monthsAgoYm(12) },
 ];
 
-function fmtDec(v: number) {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
+// fmtDec: two-decimal individual-transaction display in native currency.
+// homeCurrency is provided at runtime from component state.
+function fmtDec(v: number, originalCurrency?: string, homeCurrency = "USD") {
+  const cur = originalCurrency ?? homeCurrency;
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: cur, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
 }
 function monthLabel(ym: string) {
   const [y, m] = ym.split("-");
@@ -295,6 +299,9 @@ function SpendingPageInner() {
   const [toast, setToast]         = useState<string | null>(null);
   const [catExpanded, setCatExpanded] = useState(false);
   const [expandedCatRows, setExpandedCatRows] = useState<Set<string>>(new Set());
+  const [catIncludeAll, setCatIncludeAll] = useState(false);
+  const [homeCurrency, setHomeCurrency] = useState<string>("USD");
+  const [fxRates, setFxRates]           = useState<Record<string, number>>({});
 
   // ── cash commitments ────────────────────────────────────────────────────────
   const [cashItems, setCashItems] = useState<CashCommitment[]>([]);
@@ -382,6 +389,8 @@ function SpendingPageInner() {
         setData(json.data ?? null);
         setPaymentsMade(json.paymentsMade ?? 0);
         setNeedsRefresh(json.needsRefresh ?? false);
+        if (json.homeCurrency) setHomeCurrency(json.homeCurrency);
+        if (json.fxRates) setFxRates(json.fxRates);
         const expSugg = json.expenseSuggestions ?? [];
         setExpenseSuggestions(expSugg);
         const defaultDecisions: Record<string, "confirmed" | "rejected"> = {};
@@ -735,38 +744,38 @@ function SpendingPageInner() {
   const transferTxns = excludedTxns.filter((t) =>
     !DEBT_PAY_RE.test((t.category ?? "").trim()) && !INTEREST_RE.test((t.category ?? "").trim())
   );
-  const debtTotal     = debtTxns.reduce((s, t) => s + t.amount, 0);
-  const interestTotal = interestTxns.reduce((s, t) => s + t.amount, 0);
-  const transferTotal = transferTxns.reduce((s, t) => s + t.amount, 0);
+  // Aggregate totals — converted to home currency
+  function toHomeTxn(amount: number, tx: ExpenseTransaction): number {
+    const ccy = tx.currency;
+    if (!ccy || ccy.toUpperCase() === homeCurrency.toUpperCase()) return amount;
+    const rate = fxRates[ccy.toUpperCase()];
+    return rate != null ? amount * rate : amount;
+  }
+  const debtTotal     = debtTxns.reduce((s, t) => s + toHomeTxn(t.amount, t), 0);
+  const interestTotal = interestTxns.reduce((s, t) => s + toHomeTxn(t.amount, t), 0);
+  const transferTotal = transferTxns.reduce((s, t) => s + toHomeTxn(t.amount, t), 0);
 
-  // categories: parent-level rollup with subtypes nested inside each entry
-  // includes cash commitments so the chart matches what the Cash tab shows
-  const categories = (() => {
-    // Build parent → total and parent → subtype breakdown maps
+  // Convert transaction amount to home currency for aggregation (used by category builders)
+  function toHomeCat(amount: number, currency?: string | null): number {
+    if (!currency || currency.toUpperCase() === homeCurrency.toUpperCase()) return amount;
+    const rate = fxRates[currency.toUpperCase()];
+    return rate != null ? amount * rate : amount;
+  }
+
+  // Shared category builder — accepts any transaction slice
+  function buildCategories(txns: typeof coreTxns, baseTotal: number) {
     const parentMap  = new Map<string, number>();
     const subtypeMap = new Map<string, Map<string, number>>();
 
-    const buildMaps = (txns: typeof coreTxns) => {
-      for (const tx of txns) {
-        const cat    = tx.category || "Other";
-        const parent = getParentCategory(cat);
-        parentMap.set(parent, (parentMap.get(parent) ?? 0) + tx.amount);
-        if (isSubtype(cat)) {
-          if (!subtypeMap.has(parent)) subtypeMap.set(parent, new Map());
-          const sm = subtypeMap.get(parent)!;
-          sm.set(cat, (sm.get(cat) ?? 0) + tx.amount);
-        }
-      }
-    };
-
-    if (coreTxns.length > 0) {
-      buildMaps(coreTxns);
-    } else {
-      // Fall back to AI-computed categories aggregated to parent
-      for (const c of (data?.expenses?.categories ?? [])) {
-        if (CORE_EXCLUDE_RE.test((c.name ?? "").trim())) continue;
-        const parent = getParentCategory(c.name ?? "Other");
-        parentMap.set(parent, (parentMap.get(parent) ?? 0) + c.amount);
+    for (const tx of txns) {
+      const cat    = tx.category || "Other";
+      const parent = getParentCategory(cat);
+      const amt    = toHomeCat(tx.amount, (tx as ExpenseTransaction).currency);
+      parentMap.set(parent, (parentMap.get(parent) ?? 0) + amt);
+      if (isSubtype(cat)) {
+        if (!subtypeMap.has(parent)) subtypeMap.set(parent, new Map());
+        const sm = subtypeMap.get(parent)!;
+        sm.set(cat, (sm.get(cat) ?? 0) + amt);
       }
     }
 
@@ -789,18 +798,40 @@ function SpendingPageInner() {
           : [];
         const subtypeTotal = subtypeEntries.reduce((s, e) => s + e.amount, 0);
         const remainder = amount - subtypeTotal;
-        // Transactions tagged with the parent name directly (no subtype chosen) — show as a catch-all row
         if (remainder > 0.005 && subtypeEntries.length > 0) {
           subtypeEntries.push({ name: `Other ${name}`, amount: remainder });
         }
         return {
           name,
           amount,
-          percentage: total > 0 ? Math.round((amount / total) * 100) : 0,
+          percentage: baseTotal > 0 ? Math.round((amount / baseTotal) * 100) : 0,
           subtypes: subtypeEntries,
         };
       });
+  }
+
+  // categories: parent-level rollup — core only (excludes transfers & debt payments)
+  const categories = (() => {
+    if (coreTxns.length > 0) return buildCategories(coreTxns, total);
+    // Fall back to AI-computed categories (assumed home currency)
+    const parentMap = new Map<string, number>();
+    for (const c of (data?.expenses?.categories ?? [])) {
+      if (CORE_EXCLUDE_RE.test((c.name ?? "").trim())) continue;
+      const parent = getParentCategory(c.name ?? "Other");
+      parentMap.set(parent, (parentMap.get(parent) ?? 0) + c.amount);
+    }
+    return Array.from(parentMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, amount]) => ({
+        name, amount,
+        percentage: total > 0 ? Math.round((amount / total) * 100) : 0,
+        subtypes: [] as { name: string; amount: number }[],
+      }));
   })();
+
+  // categoriesAll: includes transfers & debt payments
+  const allTxnsTotal = monthTxns.reduce((s, t) => s + toHomeTxn(t.amount, t as ExpenseTransaction), 0) + cashCommitmentsForMonth;
+  const categoriesAll = buildCategories(monthTxns, allTxnsTotal);
 
   // Always use coreExpensesTotal (transfers + debt payments excluded)
   const effectiveExp = (h: HistoryPoint) =>
@@ -861,13 +892,13 @@ function SpendingPageInner() {
           <h1 className="font-bold text-3xl text-gray-900">Spending</h1>
           {selectedMonth && (
             <p className="mt-0.5 text-sm text-gray-400">
-              {displayTotal > 0 && <>{fmt(displayTotal)} · </>}{monthLabel(selectedMonth)}
+              {displayTotal > 0 && <>{formatCurrency(displayTotal, homeCurrency, undefined, true)} · </>}{monthLabel(selectedMonth)}
               {monthLoading && <span className="ml-2 text-xs text-gray-300">loading…</span>}
             </p>
           )}
         </div>
         <p className="mt-3 text-[10px] text-gray-400 text-right shrink-0">
-          excl. transfers<br />& debt pmts
+          excl. transfers<br />{catIncludeAll ? "" : "& debt pmts"}
         </p>
       </div>
 
@@ -1003,6 +1034,7 @@ function SpendingPageInner() {
                     median={medianExpenses}
                     selectedMonth={selectedMonth}
                     effectiveExp={effectiveExp}
+                    homeCurrency={homeCurrency}
                   />
 
                   {/* Expand toggle — centered chevron below chart */}
@@ -1030,11 +1062,11 @@ function SpendingPageInner() {
                             <p className="text-xs text-gray-400">
                               Total:{" "}
                               <span className="font-semibold text-gray-700">
-                                {monthLoading ? "…" : fmt(total)}
+                                {monthLoading ? "…" : formatCurrency(total, homeCurrency, undefined, true)}
                               </span>
                               {expDelta !== null && !monthLoading && (
                                 <span className={`ml-2 font-semibold ${expDelta > 0 ? "text-red-500" : "text-green-600"}`}>
-                                  {expDelta > 0 ? "↑ " : "↓ "}{fmt(Math.abs(expDelta))} vs prev
+                                  {expDelta > 0 ? "↑ " : "↓ "}{formatCurrency(Math.abs(expDelta), homeCurrency, undefined, true)} vs prev
                                 </span>
                               )}
                             </p>
@@ -1054,7 +1086,7 @@ function SpendingPageInner() {
                                         <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: categoryColor(cat.name) }} />
                                         <span className="flex-1 text-sm text-gray-700 truncate">{cat.name}</span>
                                         <span className="text-xs text-gray-400 tabular-nums w-8 text-right">{cat.percentage}%</span>
-                                        <span className="text-sm font-semibold tabular-nums text-gray-800">{fmt(cat.amount)}</span>
+                                        <span className="text-sm font-semibold tabular-nums text-gray-800">{formatCurrency(cat.amount, homeCurrency, undefined, true)}</span>
                                       </div>
                                     ))}
                                   </div>
@@ -1077,7 +1109,7 @@ function SpendingPageInner() {
                                         {txn.accountLabel ? ` · ${txn.accountLabel}` : ""}
                                       </p>
                                     </div>
-                                        <span className="text-sm font-semibold tabular-nums text-gray-800 shrink-0">{fmt(txn.amount)}</span>
+                                        <span className="text-sm font-semibold tabular-nums text-gray-800 shrink-0">{formatCurrency(txn.amount, homeCurrency, txn.currency, false)}</span>
                                       </div>
                                     ))}
                                   </div>
@@ -1112,10 +1144,10 @@ function SpendingPageInner() {
                       return (
                         <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                           <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">This Month</p>
-                          <p className="mt-2 font-bold text-2xl text-gray-900">{total > 0 ? fmt(displayTotal) : "—"}</p>
+                          <p className="mt-2 font-bold text-2xl text-gray-900">{total > 0 ? formatCurrency(displayTotal, homeCurrency, undefined, true) : "—"}</p>
                           {expDelta !== null && total > 0 && (
                             <p className={`mt-1 text-xs font-medium ${expDelta > 0 ? "text-red-500" : "text-green-600"}`}>
-                              {expDelta > 0 ? "↑" : "↓"} {fmt(Math.abs(expDelta))} vs {prevMonthLabel}
+                              {expDelta > 0 ? "↑" : "↓"} {formatCurrency(Math.abs(expDelta), homeCurrency, undefined, true)} vs {prevMonthLabel}
                             </p>
                           )}
                           {/* Sparkline + trend vs recent average */}
@@ -1168,7 +1200,7 @@ function SpendingPageInner() {
                       return (
                         <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                           <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Typical Month</p>
-                          <p className="mt-2 font-bold text-2xl text-gray-900">{medianExpenses !== null ? fmt(medianExpenses) : "—"}</p>
+                          <p className="mt-2 font-bold text-2xl text-gray-900">{medianExpenses !== null ? formatCurrency(medianExpenses, homeCurrency, undefined, true) : "—"}</p>
                           <p className="mt-1 text-xs text-gray-400">
                             {monthsTracked > 0
                               ? <>median · {monthsTracked} month{monthsTracked !== 1 ? "s" : ""}</>
@@ -1230,7 +1262,7 @@ function SpendingPageInner() {
                             </div>
                             <div className="text-left">
                               <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Debt Payments</p>
-                              <p className="text-xl font-bold text-gray-900 tabular-nums leading-tight">{fmt(debtTotal)}</p>
+                              <p className="text-xl font-bold text-gray-900 tabular-nums leading-tight">{formatCurrency(debtTotal, homeCurrency, undefined, true)}</p>
                             </div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
@@ -1249,19 +1281,19 @@ function SpendingPageInner() {
                           {committedTotal > 0 && (
                             <div className="flex-1">
                               <p className="text-[10px] font-semibold uppercase tracking-wider text-orange-400 mb-0.5">Min Payments</p>
-                              <p className="text-base font-bold text-orange-700 tabular-nums">{fmt(committedTotal)}</p>
+                              <p className="text-base font-bold text-orange-700 tabular-nums">{formatCurrency(committedTotal, homeCurrency, undefined, true)}</p>
                             </div>
                           )}
                           {extraTotal > 0 && (
                             <div className="flex-1">
                               <p className="text-[10px] font-semibold uppercase tracking-wider text-green-500 mb-0.5">Extra Payments</p>
-                              <p className="text-base font-bold text-green-600 tabular-nums">{fmt(extraTotal)}</p>
+                              <p className="text-base font-bold text-green-600 tabular-nums">{formatCurrency(extraTotal, homeCurrency, undefined, true)}</p>
                             </div>
                           )}
                           {interestTotal > 0 && (
                             <div className="flex-1">
                               <p className="text-[10px] font-semibold uppercase tracking-wider text-red-400 mb-0.5">Interest</p>
-                              <p className="text-base font-bold text-red-500 tabular-nums">{fmt(interestTotal)}</p>
+                              <p className="text-base font-bold text-red-500 tabular-nums">{formatCurrency(interestTotal, homeCurrency, undefined, true)}</p>
                             </div>
                           )}
                         </div>
@@ -1295,7 +1327,7 @@ function SpendingPageInner() {
                                       </p>
                                     </div>
                                     <div className="flex items-center gap-2 shrink-0">
-                                      <p className="text-sm font-semibold text-gray-700 tabular-nums">{fmt(tx.amount)}</p>
+                                      <p className="text-sm font-semibold text-gray-700 tabular-nums">{formatCurrency(tx.amount, homeCurrency, (tx as ExpenseTransaction).currency, false)}</p>
                                       {isScheduled ? (
                                         <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${tagColor}`}>{tagLabel}</span>
                                       ) : (
@@ -1331,7 +1363,7 @@ function SpendingPageInner() {
                                           <p className="text-sm font-medium text-gray-700 truncate">{tx.merchant ?? "Interest"}</p>
                                           {tx.date && <p className="text-[11px] text-gray-400">{tx.date}{tx.accountLabel ? ` · ${tx.accountLabel}` : ""}</p>}
                                         </div>
-                                        <p className="text-sm font-semibold text-red-500 tabular-nums shrink-0">{fmt(tx.amount)}</p>
+                                        <p className="text-sm font-semibold text-red-500 tabular-nums shrink-0">{formatCurrency(tx.amount, homeCurrency, (tx as ExpenseTransaction).currency, false)}</p>
                                       </div>
                                     ))}
                                 </div>
@@ -1344,7 +1376,7 @@ function SpendingPageInner() {
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                                 </svg>
                                 <p className="text-[11px] text-blue-700">
-                                  {fmt(paymentsMade)} received by your CC / loan accounts — offsets the payments above.
+                                  {formatCurrency(paymentsMade, homeCurrency, undefined, true)} received by your CC / loan accounts — offsets the payments above.
                                 </p>
                               </div>
                             )}
@@ -1369,7 +1401,7 @@ function SpendingPageInner() {
                           <span className="text-xs text-gray-400">not counted above</span>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-xs font-semibold text-gray-500 tabular-nums">{fmt(transferTotal)}</span>
+                          <span className="text-xs font-semibold text-gray-500 tabular-nums">{formatCurrency(transferTotal, homeCurrency, undefined, true)}</span>
                           <svg
                             className={`h-3.5 w-3.5 text-gray-400 transition-transform ${transferSectionOpen ? "rotate-180" : ""}`}
                             fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
@@ -1389,7 +1421,7 @@ function SpendingPageInner() {
                                   <p className="text-sm text-gray-700 truncate">{tx.merchant ?? "Transfer"}</p>
                                   {tx.date && <p className="text-[11px] text-gray-400">{tx.date}</p>}
                                 </div>
-                                <p className="text-sm text-gray-600 tabular-nums shrink-0 ml-4">{fmt(tx.amount)}</p>
+                                <p className="text-sm text-gray-600 tabular-nums shrink-0 ml-4">{formatCurrency(tx.amount, homeCurrency, (tx as ExpenseTransaction).currency, false)}</p>
                               </div>
                             ))}
                         </div>
@@ -1401,18 +1433,35 @@ function SpendingPageInner() {
 
               {categories.length > 0 && (() => {
                 const COLLAPSE_CAT = 5;
-                const pieData = categories.map((cat) => ({
+                const activeCats  = catIncludeAll ? categoriesAll : categories;
+                const activeTotal = catIncludeAll ? allTxnsTotal  : displayTotal;
+                const pieData = activeCats.map((cat) => ({
                   name: cat.name,
                   value: cat.amount,
                   color: categoryColor(cat.name),
                 }));
-                const visibleCats = catExpanded ? categories : categories.slice(0, COLLAPSE_CAT);
-                const hiddenCount = Math.max(0, categories.length - COLLAPSE_CAT);
+                const visibleCats = catExpanded ? activeCats : activeCats.slice(0, COLLAPSE_CAT);
+                const hiddenCount = Math.max(0, activeCats.length - COLLAPSE_CAT);
                 return (
                   <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
                     {/* Donut chart */}
                     <div className="px-5 pt-5 pb-2">
-                      <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">By Category</p>
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">By Category</p>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] text-gray-400">incl. debt pmts</span>
+                          <button
+                            onClick={() => setCatIncludeAll((v) => !v)}
+                            className={`relative inline-flex h-4 w-8 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+                              catIncludeAll ? "bg-indigo-500" : "bg-gray-200"
+                            }`}
+                            role="switch"
+                            aria-checked={catIncludeAll}
+                          >
+                            <span className={`inline-block h-3 w-3 rounded-full bg-white shadow transform transition-transform ${catIncludeAll ? "translate-x-4" : "translate-x-0"}`} />
+                          </button>
+                        </div>
+                      </div>
                       <div className="relative h-52">
                         <ResponsiveContainer width="100%" height="100%">
                           <PieChart style={{ outline: "none" }}>
@@ -1431,7 +1480,7 @@ function SpendingPageInner() {
                               ))}
                             </Pie>
                             <Tooltip
-                              formatter={(value, name) => [fmt(Number(value)), String(name)]}
+                              formatter={(value, name) => [formatCurrency(Number(value), homeCurrency, undefined, true), String(name)]}
                               contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb" }}
                             />
                           </PieChart>
@@ -1441,16 +1490,16 @@ function SpendingPageInner() {
                           <p className="text-[11px] text-gray-400">Total</p>
                           <p className="text-lg font-bold text-gray-900 tabular-nums">
                             {(() => {
-                              const sym = getCurrencySymbol();
-                              const abs = Math.abs(displayTotal);
+                              const sym = getCurrencySymbol(homeCurrency);
+                              const abs = Math.abs(activeTotal);
                               if (abs >= 1_000_000) return `${sym}${(abs / 1_000_000).toFixed(1)}M`;
                               if (abs >= 10_000)    return `${sym}${Math.round(abs / 1_000)}k`;
                               if (abs >= 1_000)     return `${sym}${(abs / 1_000).toFixed(1)}k`;
-                              return fmt(displayTotal);
+                              return formatCurrency(activeTotal, homeCurrency, undefined, true);
                             })()}
                           </p>
-                          {categories.length > 0 && (
-                            <p className="text-[11px] text-gray-400">{categories.length} cats</p>
+                          {activeCats.length > 0 && (
+                            <p className="text-[11px] text-gray-400">{activeCats.length} cats</p>
                           )}
                         </div>
                       </div>
@@ -1473,7 +1522,7 @@ function SpendingPageInner() {
                                   <div className="flex items-center justify-between mb-1">
                                     <span className="text-sm font-medium text-gray-800 group-hover:text-purple-600 transition-colors">{cat.name}</span>
                                     <div className="flex items-center gap-2 shrink-0">
-                                      <span className="text-sm font-semibold text-gray-700 tabular-nums">{fmt(cat.amount)}</span>
+                                      <span className="text-sm font-semibold text-gray-700 tabular-nums">{formatCurrency(cat.amount, homeCurrency, undefined, true)}</span>
                                       <span className="text-xs text-gray-400 w-8 text-right">{cat.percentage}%</span>
                                     </div>
                                   </div>
@@ -1521,7 +1570,7 @@ function SpendingPageInner() {
                                     <>
                                       <span className="h-1.5 w-1.5 shrink-0 rounded-full opacity-50" style={{ backgroundColor: subColor }} />
                                       <span className={`flex-1 text-[13px] truncate ${isRemainder ? "text-gray-400 italic" : "text-gray-600 group-hover/sub:text-purple-600 transition-colors"}`}>{sub.name}</span>
-                                      <span className="text-[13px] text-gray-500 tabular-nums shrink-0">{fmt(sub.amount)}</span>
+                                      <span className="text-[13px] text-gray-500 tabular-nums shrink-0">{formatCurrency(sub.amount, homeCurrency, undefined, true)}</span>
                                       <span className="text-xs text-gray-400 w-7 text-right shrink-0">{subPct}%</span>
                                       {/* Always reserve the same width as the chevron so columns stay aligned */}
                                       <svg className="h-3.5 w-3.5 text-gray-300 group-hover/sub:text-purple-400 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1581,7 +1630,7 @@ function SpendingPageInner() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-amber-800">{fmt(cashMonthlyTotal)}/mo</span>
+                  <span className="text-sm font-semibold text-amber-800">{formatCurrency(cashMonthlyTotal, homeCurrency, undefined, true)}/mo</span>
                   <svg className="h-4 w-4 text-amber-400 group-hover:text-amber-600 transition" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                   </svg>
@@ -1764,7 +1813,7 @@ function SpendingPageInner() {
                           </div>
                           <div className="ml-4 flex items-center gap-2 shrink-0">
                             <p className="text-sm font-medium text-gray-700 tabular-nums">
-                              −{fmtDec(Math.abs(txn.amount))}
+                              −{fmtDec(Math.abs(txn.amount), txn.currency, homeCurrency)}
                             </p>
                             <button
                               onClick={() => handleIgnoreTx(txn)}
@@ -1874,11 +1923,11 @@ function SpendingPageInner() {
                             </div>
                             <div className="col-span-2 text-center text-sm text-gray-600">{m.count}</div>
                             <div className="col-span-2 text-right text-sm text-gray-600 tabular-nums">
-                              {fmt(m.avgAmount)}
+                              {formatCurrency(m.avgAmount, homeCurrency, m.currency, false)}
                             </div>
                             <div className="col-span-3 text-right">
                               <span className="text-sm font-semibold text-gray-800 tabular-nums">
-                                {fmt(m.total)}
+                                {formatCurrency(m.total, homeCurrency, m.currency, false)}
                               </span>
                               <svg className="ml-1 inline h-3.5 w-3.5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
@@ -1909,7 +1958,7 @@ function SpendingPageInner() {
                     <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Recurring charges</p>
                     {subsYearly > 0 && (
                       <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
-                        {fmt(subsYearly)}/yr
+                        {formatCurrency(subsYearly, homeCurrency, undefined, true)}/yr
                       </span>
                     )}
                   </div>
@@ -1941,7 +1990,7 @@ function SpendingPageInner() {
                             <div className="text-right">
                               <p className="text-sm font-medium text-gray-800">{fmtDec(sub.amount)}</p>
                               {yearly !== sub.amount && (
-                                <p className="text-xs text-gray-400">{fmt(yearly)}/yr</p>
+                                <p className="text-xs text-gray-400">{formatCurrency(yearly, homeCurrency, undefined, true)}/yr</p>
                               )}
                             </div>
                             {/* Only allow removing manually-added ones */}
@@ -2000,14 +2049,14 @@ function SpendingPageInner() {
                 <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 flex items-center justify-between">
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wider text-amber-600">Est. monthly cash</p>
-                    <p className="text-2xl font-bold text-amber-800 mt-1">{fmt(cashMonthlyTotal)}</p>
+                    <p className="text-2xl font-bold text-amber-800 mt-1">{formatCurrency(cashMonthlyTotal, homeCurrency, undefined, true)}</p>
                     {cashItems.some((c) => c.frequency === "once") && (
                       <p className="text-[11px] text-amber-500 mt-0.5">recurring only — one-offs excluded</p>
                     )}
                   </div>
                   <div className="text-right">
                     <p className="text-xs text-amber-600">{cashItems.length} item{cashItems.length !== 1 ? "s" : ""}</p>
-                    <p className="text-xs text-amber-500 mt-0.5">{fmt(cashMonthlyTotal * 12)}/yr</p>
+                    <p className="text-xs text-amber-500 mt-0.5">{formatCurrency(cashMonthlyTotal * 12, homeCurrency, undefined, true)}/yr</p>
                   </div>
                 </div>
               )}
@@ -2024,18 +2073,18 @@ function SpendingPageInner() {
                     <div className="flex items-center gap-4 text-sm">
                       <div>
                         <p className="text-xs text-gray-400">Withdrawn</p>
-                        <p className="font-semibold text-gray-800">{fmt(atmTotal)}</p>
+                        <p className="font-semibold text-gray-800">{formatCurrency(atmTotal, homeCurrency, undefined, true)}</p>
                       </div>
                       <div className="text-gray-200">|</div>
                       <div>
                         <p className="text-xs text-gray-400">Tracked cash</p>
-                        <p className="font-semibold text-gray-800">{fmt(cashMonthlyTotal)}</p>
+                        <p className="font-semibold text-gray-800">{formatCurrency(cashMonthlyTotal, homeCurrency, undefined, true)}</p>
                       </div>
                       <div className="text-gray-200">|</div>
                       <div>
                         <p className="text-xs text-gray-400">Unaccounted</p>
                         <p className={`font-semibold ${unaccounted > 0 ? "text-amber-600" : "text-green-600"}`}>
-                          {fmt(Math.max(0, unaccounted))}
+                          {formatCurrency(Math.max(0, unaccounted), homeCurrency, undefined, true)}
                         </p>
                       </div>
                     </div>
@@ -2101,7 +2150,7 @@ function SpendingPageInner() {
                             <div className="text-right">
                               <p className="text-sm font-semibold text-gray-800">{fmtDec(item.amount)}</p>
                               {!isOnce && item.frequency !== "monthly" && (
-                                <p className="text-xs text-gray-400">{fmt(monthly)}/mo</p>
+                                <p className="text-xs text-gray-400">{formatCurrency(monthly, homeCurrency, undefined, true)}/mo</p>
                               )}
                               {isOnce && (
                                 <p className="text-xs text-gray-400">one-time</p>
@@ -2259,7 +2308,7 @@ function SpendingPageInner() {
                       {/* Monthly preview */}
                       {cashForm.amount && cashForm.frequency && cashForm.frequency !== "once" && (
                         <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
-                          ≈ {fmt(toMonthly(cashForm.amount, cashForm.frequency as CashFrequency))}/mo · {fmt(toMonthly(cashForm.amount, cashForm.frequency as CashFrequency) * 12)}/yr
+                          ≈ {formatCurrency(toMonthly(cashForm.amount, cashForm.frequency as CashFrequency), homeCurrency, undefined, true)}/mo · {formatCurrency(toMonthly(cashForm.amount, cashForm.frequency as CashFrequency) * 12, homeCurrency, undefined, true)}/yr
                         </p>
                       )}
                     </div>

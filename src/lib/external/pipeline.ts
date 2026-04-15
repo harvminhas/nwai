@@ -182,11 +182,14 @@ function signalToInsightCard(signal: ExternalSignal, point: ExternalDataPoint) {
     if (delta !== 0) {
       const sign = delta > 0 ? "+" : "";
       const verb = direction === "up" ? "raised" : "cut";
-      title = `Bank of Canada ${verb} rates to ${d.displayValue}`;
+      const rateAuthority = point.dataType.startsWith("canada") ? "Bank of Canada" : "Federal Reserve";
+      const currency = point.dataType.startsWith("canada") ? "CAD" : "USD";
+      const locale   = point.dataType.startsWith("canada") ? "en-CA" : "en-US";
+      title = `${rateAuthority} ${verb} rates to ${d.displayValue}`;
 
       if (balTotal > 0 && monthly > 0) {
-        const formatted = new Intl.NumberFormat("en-CA", {
-          style: "currency", currency: "CAD", maximumFractionDigits: 0,
+        const formatted = new Intl.NumberFormat(locale, {
+          style: "currency", currency, maximumFractionDigits: 0,
         }).format(balTotal);
         body = `${sign}${delta}% change. Based on your ~${formatted} in variable-rate debt, your monthly interest cost could ${direction === "up" ? "rise" : "fall"} by ~$${monthly}.`;
         dollarImpact = direction === "up" ? monthly : -monthly;
@@ -195,9 +198,11 @@ function signalToInsightCard(signal: ExternalSignal, point: ExternalDataPoint) {
         body = `${sign}${delta}% change from ${d.previousValue}%. ${d.description}`;
       }
     } else {
+      const currency = point.dataType.startsWith("canada") ? "CAD" : "USD";
+      const locale   = point.dataType.startsWith("canada") ? "en-CA" : "en-US";
       title = `${d.label} holding at ${d.displayValue}`;
       body = balTotal > 0
-        ? `No change this cycle. Your variable-rate debt of ${new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 }).format(balTotal)} is unaffected.`
+        ? `No change this cycle. Your variable-rate debt of ${new Intl.NumberFormat(locale, { style: "currency", currency, maximumFractionDigits: 0 }).format(balTotal)} is unaffected.`
         : `No change this cycle. ${d.description}`;
     }
   }
@@ -376,8 +381,14 @@ export async function generateExternalCardsForUser(
     return { country: null, skipped: true, signals: [] };
   }
 
-  const profile = await getFinancialProfile(uid, db);
-  const country = detectCountry(profile);
+  const [profile, userDoc] = await Promise.all([
+    getFinancialProfile(uid, db),
+    db.collection("users").doc(uid).get(),
+  ]);
+
+  // Stored user-confirmed country takes precedence over bank-name auto-detection
+  const storedCountry = userDoc.data()?.country as "CA" | "US" | undefined;
+  const country: "CA" | "US" = storedCountry ?? detectCountry(profile);
 
   const cards: ReturnType<typeof signalToInsightCard>[] = [];
   const signals: { dataType: string; relevant: boolean; signalGenerated: boolean; skipReason: string | null }[] = [];
@@ -386,7 +397,7 @@ export async function generateExternalCardsForUser(
     const descriptor = EXTERNAL_DATA_REGISTRY.find((d) => d.dataType === point.dataType);
     if (!descriptor) continue;
 
-    const relevant = descriptor.relevant(profile);
+    const relevant = descriptor.relevant(profile, country);
     const signal = relevant ? buildSignal(point, profile) : null;
 
     signals.push({
@@ -400,17 +411,30 @@ export async function generateExternalCardsForUser(
     cards.push(signalToInsightCard(signal, point));
   }
 
-  if (cards.length > 0) {
-    const batch = db.batch();
-    const insightsRef = db.collection(`users/${uid}/agentInsights`);
-    for (const card of cards) {
-      batch.set(insightsRef.doc(card.id), card);
+  // Always write: even if cards.length === 0 we need to delete stale wrong-country cards
+  const batch = db.batch();
+  const insightsRef = db.collection(`users/${uid}/agentInsights`);
+
+  // Delete any existing external cards that belong to the wrong country so
+  // switching CA → US (or vice versa) immediately removes the old signals.
+  const wrongCountry = country === "CA" ? "us" : "canada";
+  const existingExternal = await insightsRef
+    .where("source", "==", "external")
+    .get();
+  for (const doc of existingExternal.docs) {
+    const dataType = (doc.data().dataType as string | undefined) ?? "";
+    if (dataType.startsWith(wrongCountry)) {
+      batch.delete(doc.ref);
     }
-    // Update metadata so the next visit skips regeneration if data hasn't changed
-    batch.set(metaRef, { lastGeneratedAt: latestGlobalUpdate });
-    await batch.commit();
-    console.log(`[external] wrote ${cards.length} card(s) for uid=${uid}`);
   }
+
+  for (const card of cards) {
+    batch.set(insightsRef.doc(card.id), card);
+  }
+  // Update metadata so the next visit skips regeneration if data hasn't changed
+  batch.set(metaRef, { lastGeneratedAt: latestGlobalUpdate });
+  await batch.commit();
+  console.log(`[external] wrote ${cards.length} card(s) for uid=${uid}, deleted wrong-country cards`);
 
   return { country, skipped: false, signals };
 }

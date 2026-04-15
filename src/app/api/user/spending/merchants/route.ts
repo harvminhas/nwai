@@ -10,6 +10,8 @@ export interface MerchantSummary {
   slug: string;
   name: string;          // canonical display name (most-used spelling)
   category: string;
+  /** ISO 4217 currency of the merchant's native account (e.g. "CAD", "USD") */
+  currency: string;
   total: number;
   count: number;         // transaction count
   avgAmount: number;
@@ -97,11 +99,26 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Aggregate by merchant slug across deduplicated statements.
-    // Monthly buckets use the transaction's own date, not the statement period.
+    // Read homeCurrency from user profile (for display reference only — no conversion needed)
+    const profileSnap = await db.collection("users").doc(uid).get();
+    const homeCurrency: string = profileSnap.data()?.country === "CA" ? "CAD" : "USD";
+
+    // Canadian bank names → currency is CAD
+    const CA_BANKS = /\b(td|rbc|bmo|cibc|scotiabank|desjardins|national bank|tangerine|simplii|hsbc canada|laurentian|coast capital|meridian|atb)\b/i;
+
+    /** Infer statement currency: explicit field → bank-name heuristic → homeCurrency. */
+    function inferStmtCurrency(parsed: ParsedStatementData): string {
+      if (parsed.currency) return parsed.currency.toUpperCase();
+      if (CA_BANKS.test(parsed.bankName ?? "")) return "CAD";
+      return homeCurrency;
+    }
+
+    // Aggregate by merchant slug. Each merchant belongs to one account → one currency.
+    // Store native amounts as-is; no FX conversion needed.
     const map = new Map<string, {
-      names: Record<string, number>;   // name → occurrence count
+      names: Record<string, number>;
       category: string;
+      currency: string;
       total: number;
       count: number;
       dates: string[];
@@ -113,32 +130,34 @@ export async function GET(request: NextRequest) {
       const d = doc.data();
       const parsed = d.parsedData as ParsedStatementData;
       const stmtYm = docYearMonth(d);
+      const stmtCurrency = inferStmtCurrency(parsed);
 
-      // Investment accounts hold portfolio activity, not personal spending — skip entirely
       if ((parsed.accountType ?? "").toLowerCase() === "investment") continue;
 
-      // Apply category rules
       const withRules = applyRulesAndRecalculate(parsed, rulesMap);
       const label = accountDisplayLabel(parsed);
-      const txns: ExpenseTransaction[] = (withRules.expenses?.transactions ?? []).map((t) => ({ ...t, accountLabel: label }));
+      const txns: ExpenseTransaction[] = (withRules.expenses?.transactions ?? []).map((t) => ({
+        ...t,
+        accountLabel: label,
+        currency: stmtCurrency,
+      }));
 
       for (const txn of txns) {
         const slug = merchantSlug(txn.merchant);
         if (!slug) continue;
         if (slugFilter && slug !== slugFilter) continue;
 
-        // Use the transaction's own date for the monthly bucket (transaction-date principle).
-        // Fall back to the statement month only when the transaction has no date.
         const txYm = txn.date ? txn.date.slice(0, 7) : stmtYm;
-
-        // If a month scope was requested, skip transactions outside that month
         if (monthFilter && txYm !== monthFilter) continue;
+
+        const amt = Math.abs(txn.amount);
 
         let entry = map.get(slug);
         if (!entry) {
           entry = {
             names: {},
             category: txn.category ?? "other",
+            currency: stmtCurrency,
             total: 0,
             count: 0,
             dates: [],
@@ -148,15 +167,14 @@ export async function GET(request: NextRequest) {
           map.set(slug, entry);
         }
 
-        // Track name occurrences to pick canonical name
         entry.names[txn.merchant] = (entry.names[txn.merchant] ?? 0) + 1;
         entry.category = txn.category ?? entry.category;
-        entry.total += Math.abs(txn.amount);
+        entry.total += amt;
         entry.count += 1;
         if (txn.date) entry.dates.push(txn.date);
 
         const mo = entry.monthly.get(txYm) ?? { total: 0, count: 0 };
-        mo.total += Math.abs(txn.amount);
+        mo.total += amt;
         mo.count += 1;
         entry.monthly.set(txYm, mo);
 
@@ -166,7 +184,6 @@ export async function GET(request: NextRequest) {
 
     // Build result array
     const merchants: MerchantSummary[] = Array.from(map.entries()).map(([slug, e]) => {
-      // Canonical name = most-used spelling
       const name = Object.entries(e.names).sort((a, b) => b[1] - a[1])[0]?.[0] ?? slug;
       const sortedDates = [...e.dates].sort();
       const monthly = Array.from(e.monthly.entries())
@@ -179,6 +196,7 @@ export async function GET(request: NextRequest) {
         slug,
         name,
         category: e.category,
+        currency: e.currency,
         total: e.total,
         count: e.count,
         avgAmount: e.count > 0 ? e.total / e.count : 0,
@@ -189,13 +207,12 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    // Sort by total desc
     merchants.sort((a, b) => b.total - a.total);
 
     if (slugFilter) {
-      return NextResponse.json({ merchant: merchants[0] ?? null });
+      return NextResponse.json({ merchant: merchants[0] ?? null, homeCurrency });
     }
-    return NextResponse.json({ merchants });
+    return NextResponse.json({ merchants, homeCurrency });
   } catch (err) {
     console.error("merchants route error", err);
     return NextResponse.json({ error: "Internal error" }, { status: 500 });

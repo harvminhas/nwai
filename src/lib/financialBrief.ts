@@ -14,6 +14,7 @@ import { getYearMonth } from "@/lib/consolidate";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
+import { detectCountry } from "@/lib/external/registry";
 import {
   incomeTotalForMonth,
   expenseTotalForMonth,
@@ -277,7 +278,13 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
     ? debtBreakdownLines.join("\n")
     : "  No Debt Payment transactions recorded this month";
 
+  // Stored user-confirmed country takes precedence; fall back to bank-name detection
+  const userDoc = await db.collection("users").doc(uid).get();
+  const storedCountry = userDoc.data()?.country as "CA" | "US" | undefined;
+  const country: "CA" | "US" = storedCountry ?? detectCountry(profile);
+
   return `== FINANCIAL SNAPSHOT (${month}) ==
+Country:           ${country === "CA" ? "Canada (CA)" : "United States (US)"}${storedCountry ? " (user-confirmed)" : " (auto-detected)"}
 Net worth:         ${fmt(netWorth)}
 Total assets:      ${fmt(assets)}
 Total debt:        ${fmt(debts)}

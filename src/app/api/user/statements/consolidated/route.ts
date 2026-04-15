@@ -580,7 +580,13 @@ export async function GET(request: NextRequest) {
     const monthExpTxns = expenseTxns.filter((t) =>
       t.txMonth === month && (!accountFilter || t.accountSlug === accountFilter)
     );
-    const txMonthlyExpenses = monthExpTxns.reduce((s, t) => s + t.amount, 0);
+    // Convert each transaction to home currency before summing
+    function txToHome(amount: number, currency?: string | null): number {
+      if (!currency || currency.toUpperCase() === (profile.homeCurrency ?? "USD").toUpperCase()) return amount;
+      const rate = (profile.fxRates ?? {})[currency.toUpperCase()];
+      return rate != null ? amount * rate : amount;
+    }
+    const txMonthlyExpenses = monthExpTxns.reduce((s, t) => s + txToHome(t.amount, t.currency), 0);
     // Use cache's incomeTotal for the selected month — it excludes inter-account
     // transfers and user-marked transfer sources (same filter as the history chart).
     const cachedMonthHistory = profile.monthlyHistory.find((h) => h.yearMonth === month);
@@ -599,6 +605,7 @@ export async function GET(request: NextRequest) {
           amount: t.amount,
           category: t.category,
           accountLabel: t.accountLabel,
+          currency: t.currency,
           recurring: t.recurring,
           ...(t.debtType ? { debtType: t.debtType as import("@/lib/types").DebtType } : {}),
         })),
@@ -687,8 +694,10 @@ export async function GET(request: NextRequest) {
       cashIncomeItems,
       cashCommitmentItems,
       incomeCategoryRules,
-      /** FX rates used for net worth: currency → CAD rate (e.g. { "USD": 1.42 }) */
+      /** FX rates used for net worth: currency → home-currency rate (e.g. { "CAD": 0.72 } for a USD user) */
       fxRates: profile.fxRates ?? {},
+      /** ISO-4217 home currency code for this user (e.g. "USD" or "CAD") */
+      homeCurrency: profile.homeCurrency ?? "USD",
       /**
        * Latest balance snapshot per account — pre-processed with currency overrides,
        * balance-snapshot overrides, and FX metadata. Use instead of /api/user/statements.

@@ -13,7 +13,6 @@ import type * as Firestore from "firebase-admin/firestore";
 
 const CACHE_TTL_MS   = 24 * 60 * 60 * 1000; // 24 hours
 const FRANKFURTER    = "https://api.frankfurter.app/latest";
-const HOME_CURRENCY  = "CAD";
 
 export interface FxRate {
   from:      string;
@@ -67,28 +66,34 @@ export async function getFxRate(
 
 /**
  * Given the set of currencies present across all account snapshots, returns
- * a map of { "USD": <USD→CAD rate>, "EUR": <EUR→CAD rate>, ... }.
- * CAD (home currency) is always 1.0.
+ * a map of { foreignCcy: <foreignCcy → homeCurrency rate>, ... }.
+ * The home currency maps to 1.0 (identity rate, not stored).
+ *
+ * @param homeCurrency  ISO-4217 code for the user's home currency ("CAD" | "USD").
+ *                      All rates are expressed as "how many homeCurrency per 1 foreignCcy".
  */
 export async function getFxRatesForCurrencies(
   currencies: Set<string>,
+  homeCurrency: string,
   db: Firestore.Firestore,
 ): Promise<Map<string, number>> {
+  const home = homeCurrency.toUpperCase();
   const rateMap = new Map<string, number>();
-  rateMap.set(HOME_CURRENCY, 1);
+  rateMap.set(home, 1);
 
-  const foreign = Array.from(currencies).filter((c) => c !== HOME_CURRENCY);
+  const foreign = Array.from(currencies)
+    .map((c) => c.toUpperCase())
+    .filter((c) => c !== home);
   if (foreign.length === 0) return rateMap;
 
   await Promise.all(
     foreign.map(async (currency) => {
       try {
-        const fx = await getFxRate(currency, HOME_CURRENCY, db);
+        const fx = await getFxRate(currency, home, db);
         rateMap.set(currency, fx.rate);
       } catch (e) {
-        console.error(`[fxRates] could not get rate for ${currency}:`, e);
-        // Fall back to 1.0 so the app doesn't crash — but log it clearly
-        rateMap.set(currency, 1);
+        console.error(`[fxRates] could not get rate for ${currency}→${home}:`, e);
+        rateMap.set(currency, 1); // fall back to 1:1 so the app doesn't crash
       }
     })
   );

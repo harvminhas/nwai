@@ -12,6 +12,8 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import type { AgentCard } from "@/lib/agentTypes";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import { generateExternalCardsForUser } from "@/lib/external/pipeline";
+import { detectCountry } from "@/lib/external/registry";
+import { getFinancialProfile } from "@/lib/financialProfile";
 
 // ── GET — load non-dismissed cards ────────────────────────────────────────────
 
@@ -30,20 +32,32 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const snap = await db
-      .collection("users").doc(access.targetUid)
-      .collection("agentInsights")
-      .orderBy("createdAt", "desc")
-      .limit(20)
-      .get();
+    const [snap, userDoc] = await Promise.all([
+      db.collection("users").doc(access.targetUid)
+        .collection("agentInsights")
+        .orderBy("createdAt", "desc")
+        .limit(20)
+        .get(),
+      db.collection("users").doc(access.targetUid).get(),
+    ]);
 
     const cards: AgentCard[] = snap.docs
       .map((d) => ({ id: d.id, ...d.data() } as AgentCard))
       .filter((c) => !c.dismissed);
 
+    // Country for the one-time confirmation prompt
+    const confirmedCountry = (userDoc.data()?.country as "CA" | "US" | undefined) ?? null;
+    let detectedCountry: "CA" | "US" = "US";
+    try {
+      const profile = await getFinancialProfile(access.targetUid, db);
+      detectedCountry = detectCountry(profile);
+    } catch {
+      // no statements yet
+    }
+
     console.log(`[agent-insights] uid=${access.targetUid} returning ${cards.length} card(s) (${snap.docs.length} total in collection)`);
 
-    return NextResponse.json({ cards });
+    return NextResponse.json({ cards, confirmedCountry, detectedCountry });
   } catch (err) {
     console.error("GET /api/user/agent-insights error:", err);
     return NextResponse.json({ error: "Failed to load insights" }, { status: 500 });

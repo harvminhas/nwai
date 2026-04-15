@@ -17,7 +17,7 @@ import {
   INCOME_CATEGORIES,
 } from "@/lib/incomeEngine";
 import type { SourceMonthData } from "@/lib/incomeEngine";
-import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
+import { fmt, getCurrencySymbol, formatCurrency } from "@/lib/currencyUtils";
 import type { SourceSuggestion } from "@/lib/sourceMappings";
 import { INCOME_TRANSFER_RE } from "@/lib/spendingMetrics";
 import type { CashIncomeEntry, CashIncomeFrequency, CashIncomeCategory } from "@/lib/cashIncome";
@@ -219,6 +219,7 @@ function IncomePageInner() {
   const [token, setToken]                 = useState<string | null>(null);
   const tokenRef                          = useRef<string | null>(null);
   const [suggestionListExpanded, setSuggestionListExpanded] = useState(false);
+  const [homeCurrency, setHomeCurrency]   = useState<string>("USD");
 
   // Income category rules: source slug → category
   const [incomeCategoryRules, setIncomeCategoryRules] = useState<Record<string, string>>({});
@@ -305,6 +306,7 @@ function IncomePageInner() {
         });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) { setError(json.error || "Failed to load"); return; }
+        if (json.homeCurrency) setHomeCurrency(json.homeCurrency);
 
         const hist: HistoryPoint[] = (json.history ?? []).map(
           (h: { yearMonth: string; incomeTotal?: number; expensesTotal?: number; isEstimate?: boolean }) => ({
@@ -1158,7 +1160,7 @@ function IncomePageInner() {
                         )}
                       </div>
                       <span className={`shrink-0 font-semibold text-sm tabular-nums ${isTransfer ? "text-gray-400" : "text-green-600"}`}>
-                        +{fmt(txn.amount)}
+                        +{formatCurrency(txn.amount, homeCurrency, txn.currency, false)}
                       </span>
                     </div>
                   );
