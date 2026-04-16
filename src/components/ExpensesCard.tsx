@@ -97,11 +97,13 @@ type SaveState = "idle" | "saving" | "saved" | "error";
 
 function MerchantRow({
   row,
+  currency,
   statementId,
   authToken,
   onUpdated,
 }: {
   row: MerchantRow;
+  currency?: string;
   statementId?: string;
   authToken?: string;
   onUpdated?: (merchant: string, newCategory: string) => void;
@@ -174,7 +176,7 @@ function MerchantRow({
         )}
 
         <span className="w-16 text-right text-sm font-semibold text-gray-900">
-          {fmt(row.amount)}
+          {fmt(row.amount, currency)}
         </span>
       </div>
     </div>
@@ -183,10 +185,12 @@ function MerchantRow({
 
 export default function ExpensesCard({
   expenses,
+  currency,
   statementId,
   authToken,
 }: {
   expenses: Expenses;
+  currency?: string;
   statementId?: string;
   authToken?: string;
 }) {
@@ -225,7 +229,7 @@ export default function ExpensesCard({
           <span className="text-3xl" role="img" aria-hidden>💳</span>
           <div>
             <p className="text-sm font-medium text-gray-500">Expenses</p>
-            <p className="font-bold text-2xl text-gray-900">{fmt(localExpenses.total)}</p>
+            <p className="font-bold text-2xl text-gray-900">{fmt(localExpenses.total, currency)}</p>
           </div>
         </div>
 
@@ -255,7 +259,7 @@ export default function ExpensesCard({
               <div className="flex justify-between text-sm">
                 <span className="text-gray-700">{cat.name}</span>
                 <span className="font-medium text-gray-900">
-                  {fmt(cat.amount)} ({cat.percentage}%)
+                  {fmt(cat.amount, currency)} ({cat.percentage}%)
                 </span>
               </div>
               <div className="mt-1 h-2 overflow-hidden rounded-full bg-gray-100">
@@ -282,6 +286,7 @@ export default function ExpensesCard({
               <MerchantRow
                 key={m.name}
                 row={m}
+                currency={currency}
                 statementId={statementId}
                 authToken={authToken}
                 onUpdated={handleMerchantUpdated}

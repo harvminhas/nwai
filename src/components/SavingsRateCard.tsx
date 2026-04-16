@@ -1,7 +1,7 @@
 import type { ParsedStatementData } from "@/lib/types";
 import { fmt } from "@/lib/currencyUtils";
 
-export default function SavingsRateCard({ data }: { data: ParsedStatementData }) {
+export default function SavingsRateCard({ data, currency }: { data: ParsedStatementData; currency?: string }) {
   // Derive totals from line items to guard against AI miscalculation
   const sources = data.income?.sources ?? [];
   const categories = data.expenses?.categories ?? [];
@@ -38,8 +38,8 @@ export default function SavingsRateCard({ data }: { data: ParsedStatementData })
         </p>
       </div>
       <ul className="mt-4 space-y-1 border-t border-gray-100 pt-4 text-sm text-gray-700">
-        <li>Monthly savings: {fmt(monthlySavings)}</li>
-        <li>Annual projection: {fmt(annualProjection)}</li>
+        <li>Monthly savings: {fmt(monthlySavings, currency)}</li>
+        <li>Annual projection: {fmt(annualProjection, currency)}</li>
       </ul>
     </div>
   );

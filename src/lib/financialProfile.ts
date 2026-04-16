@@ -56,7 +56,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "30"; // currency inference uses bank-name heuristic (US banks → USD)
+const SCHEMA_VERSION = "31"; // expanded CA_BANK_RE (Wealthsimple, Questrade, etc.) + confirmed currency overrides
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**

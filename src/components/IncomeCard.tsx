@@ -38,7 +38,7 @@ function groupIncomeSources(sources: IncomeSource[]): { label: string; amount: n
   return Array.from(byKey.values());
 }
 
-export default function IncomeCard({ income }: { income: Income }) {
+export default function IncomeCard({ income, currency }: { income: Income; currency?: string }) {
   const grouped = income.sources?.length
     ? groupIncomeSources(income.sources)
     : [];
@@ -52,7 +52,7 @@ export default function IncomeCard({ income }: { income: Income }) {
         <div>
           <p className="text-sm font-medium text-gray-500">Income</p>
           <p className="font-bold text-2xl text-gray-900">
-            {fmt(income.total)}
+            {fmt(income.total, currency)}
           </p>
         </div>
       </div>
@@ -64,7 +64,7 @@ export default function IncomeCard({ income }: { income: Income }) {
               className="flex justify-between text-sm text-gray-700"
             >
               <span>{item.label}</span>
-              <span className="font-medium">{fmt(item.amount)}</span>
+              <span className="font-medium">{fmt(item.amount, currency)}</span>
             </li>
           ))}
         </ul>

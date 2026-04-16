@@ -42,15 +42,15 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: `Unsupported currency. Supported: ${SUPPORTED_CURRENCIES.join(", ")}` }, { status: 400 });
     }
 
-    if (currency === "CAD") {
-      // "CAD" means "remove override" — delete the doc
-      await db.collection(`users/${uid}/accountCurrencies`).doc(body.accountSlug).delete();
-    } else {
-      await db.collection(`users/${uid}/accountCurrencies`).doc(body.accountSlug).set({
-        currency,
-        updatedAt: new Date().toISOString(),
-      });
-    }
+    // Always save the explicit override — never delete it.
+    // The old "delete on CAD" logic assumed CAD was the universal default,
+    // but for a USD-home user a CAD account needs an explicit CAD override or
+    // inferCurrencyFromBankName will fall back to USD for unknown banks.
+    await db.collection(`users/${uid}/accountCurrencies`).doc(body.accountSlug).set({
+      currency,
+      confirmed: true,
+      updatedAt: new Date().toISOString(),
+    });
 
     await invalidateFinancialProfileCache(uid, db);
     return NextResponse.json({ ok: true });

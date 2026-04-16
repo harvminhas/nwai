@@ -6,17 +6,15 @@ import { useRouter, useParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import NetWorthChart from "@/components/NetWorthChart";
-import IncomeCard from "@/components/IncomeCard";
-import ExpensesCard from "@/components/ExpensesCard";
-import SavingsRateCard from "@/components/SavingsRateCard";
 import SubscriptionsCard from "@/components/SubscriptionsCard";
 import InsightsSection from "@/components/InsightsSection";
-import type { ParsedStatementData, ManualAsset, InvestmentHolding } from "@/lib/types";
+import type { ParsedStatementData, ManualAsset, InvestmentHolding, Subscription } from "@/lib/types";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import CsvImportPanel from "@/components/CsvImportPanel";
 import type { PaymentFrequency } from "@/app/api/user/account-rates/route";
 import { CategoryPicker, categoryColor } from "@/app/account/spending/shared";
 import { useProfileRefresh } from "@/contexts/ProfileRefreshContext";
+import CashflowHeatmap from "@/components/CashflowHeatmap";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -288,6 +286,129 @@ function AprEditor({ accountKey, currentRate, extractedRate, token, onSaved }: A
   );
 }
 
+// ── FlowSections — collapsible Outflow + Incoming ──────────────────────────
+
+function FlowSections({
+  outflowRows,
+  outflowTotal,
+  incomeRows,
+  incomeTotal,
+  currency,
+  catColor,
+  hasOutflow,
+  hasIncoming,
+  collapsedRows,
+  subscriptions,
+}: {
+  outflowRows: { name: string; amount: number; pct: number }[];
+  outflowTotal: number;
+  incomeRows: { label: string; amount: number }[];
+  incomeTotal: number;
+  currency?: string;
+  catColor: (name: string) => string;
+  hasOutflow: boolean;
+  hasIncoming: boolean;
+  collapsedRows: number;
+  subscriptions: Subscription[];
+}) {
+  const [outflowExpanded, setOutflowExpanded] = useState(false);
+  const [incomingExpanded, setIncomingExpanded] = useState(false);
+
+  const visibleOutflow = outflowExpanded ? outflowRows : outflowRows.slice(0, collapsedRows);
+  const hiddenOutflow = outflowRows.length - collapsedRows;
+
+  const visibleIncome = incomingExpanded ? incomeRows : incomeRows.slice(0, collapsedRows);
+  const hiddenIncome = incomeRows.length - collapsedRows;
+
+  return (
+    <div className="mt-4 space-y-3">
+
+      {/* ── Outflow ───────────────────────────────────────────────────── */}
+      {hasOutflow && (
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Outflow</p>
+              <p className="text-xl font-bold text-gray-900 tabular-nums">{fmt(outflowTotal, currency)}</p>
+            </div>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {visibleOutflow.map((cat) => (
+              <div key={cat.name} className="flex items-center gap-3 px-5 py-3">
+                <div className="w-1.5 h-1.5 rounded-full shrink-0 mt-0.5" style={{}} >
+                  <span className={`block w-1.5 h-1.5 rounded-full ${catColor(cat.name)}`} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex justify-between items-baseline gap-2 mb-1">
+                    <span className="text-sm text-gray-700 truncate">{cat.name}</span>
+                    <span className="text-sm font-semibold text-gray-900 tabular-nums shrink-0">
+                      {fmt(cat.amount, currency)}
+                      <span className="ml-1.5 text-[11px] font-normal text-gray-400">{cat.pct}%</span>
+                    </span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-gray-100">
+                    <div className={`h-full rounded-full ${catColor(cat.name)}`} style={{ width: `${Math.min(cat.pct, 100)}%` }} />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          {outflowRows.length > collapsedRows && (
+            <button
+              onClick={() => setOutflowExpanded(!outflowExpanded)}
+              className="w-full px-5 py-3 text-xs font-medium text-purple-600 hover:text-purple-700 hover:bg-purple-50 transition border-t border-gray-100 text-left"
+            >
+              {outflowExpanded
+                ? "Show less"
+                : `+ ${hiddenOutflow} more categor${hiddenOutflow === 1 ? "y" : "ies"}`}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── Incoming ──────────────────────────────────────────────────── */}
+      {hasIncoming && (
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Incoming</p>
+              <p className="text-xl font-bold text-gray-900 tabular-nums">{fmt(incomeTotal, currency)}</p>
+            </div>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {visibleIncome.map((src) => (
+              <div key={src.label} className="flex items-center justify-between px-5 py-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="block w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
+                  <span className="text-sm text-gray-700 truncate">{src.label}</span>
+                </div>
+                <span className="text-sm font-semibold text-gray-900 tabular-nums shrink-0 ml-4">
+                  {fmt(src.amount, currency)}
+                </span>
+              </div>
+            ))}
+          </div>
+          {incomeRows.length > collapsedRows && (
+            <button
+              onClick={() => setIncomingExpanded(!incomingExpanded)}
+              className="w-full px-5 py-3 text-xs font-medium text-purple-600 hover:text-purple-700 hover:bg-purple-50 transition border-t border-gray-100 text-left"
+            >
+              {incomingExpanded
+                ? "Show less"
+                : `+ ${hiddenIncome} more source${hiddenIncome === 1 ? "" : "s"}`}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── Subscriptions ─────────────────────────────────────────────── */}
+      {subscriptions.length > 0 && (
+        <SubscriptionsCard subscriptions={subscriptions} />
+      )}
+    </div>
+  );
+}
+
 // ── main component ────────────────────────────────────────────────────────────
 
 export default function AccountDetailPage() {
@@ -333,6 +454,10 @@ export default function AccountDetailPage() {
   const [fxRates, setFxRates] = useState<Record<string, number>>({});
   const [homeCurrency, setHomeCurrency] = useState<string>("USD");
 
+  // Cash flow heatmap data
+  const [cashflowDays, setCashflowDays] = useState<import("@/app/api/user/spending/account-cashflow/route").DayStat[] | null>(null);
+  const [cashflowMonth, setCashflowMonth] = useState<string>("");
+
   // Currency override modal state
   const [showCurrencyModal, setShowCurrencyModal] = useState(false);
   const [selectedCurrency, setSelectedCurrency]   = useState<string>("CAD");
@@ -347,6 +472,14 @@ export default function AccountDetailPage() {
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const [snapError,         setSnapError]         = useState<string | null>(null);
   const [deletingSnap,      setDeletingSnap]      = useState<string | null>(null);
+
+  const loadCashflow = useCallback((token: string, month: string) => {
+    const qs = `account=${encodeURIComponent(slug)}${month ? `&month=${encodeURIComponent(month)}` : ""}`;
+    fetch(`/api/user/spending/account-cashflow?${qs}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(cf => { if (cf?.days) { setCashflowDays(cf.days); setCashflowMonth(cf.month ?? month); } })
+      .catch(() => { /* silent */ });
+  }, [slug]);
 
   const loadAccountData = useCallback(async (token: string) => {
     setLoading(true); setError(null);
@@ -368,6 +501,20 @@ export default function AccountDetailPage() {
 
       const acctHistory: StatementHistoryEntry[] = json.accountStatementHistory?.[slug] ?? [];
       setStmtHistory(acctHistory);
+
+      // Ensure txMonth points to a real (non-carry-forward) month in this account's history.
+      // json.yearMonth is the latest month with *any* transactions globally, but this account
+      // may not have an uploaded statement for that month (carry-forward). Default to the
+      // most recent real month so the correct pill is highlighted on load.
+      const realForAccount = acctHistory
+        .filter(e => !e.isCarryForward && !e.isManualSnapshot)
+        .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth));
+      if (realForAccount.length > 0) {
+        const latestReal = realForAccount[0].yearMonth;
+        setTxMonth(latestReal);
+        const cfMonth = latestReal;
+        loadCashflow(token, cfMonth);
+      }
 
       const monthMap = new Map<string, { yearMonth: string; netWorth: number; isEstimate: boolean; priority: number }>();
       for (const e of acctHistory) {
@@ -425,6 +572,7 @@ export default function AccountDetailPage() {
       );
       const histJson = await histRes.json().catch(() => ({}));
       setRateHistory(histJson.history ?? []);
+
     } catch { setError("Failed to load account"); }
     finally { setLoading(false); }
   }, [slug]);
@@ -564,6 +712,8 @@ export default function AccountDetailPage() {
       if (json.yearMonth) setYearMonth(json.yearMonth);
       setTxData((json.data as ParsedStatementData | null)?.expenses ?? null);
       setTxPayments(json.paymentsMade ?? 0);
+      // Refresh heatmap for the newly selected month
+      loadCashflow(idToken, ym);
     } finally {
       setTxLoading(false);
     }
@@ -712,20 +862,23 @@ export default function AccountDetailPage() {
   const accountType      = data.accountType ?? "other";
   const isDebtAccount    = DEBT_TYPES.has(accountType);
   const isInvestment     = accountType === "investment";
-  const currency         = (data as ParsedStatementData & { currency?: string }).currency ?? "CAD";
+  const currency         = (data as ParsedStatementData & { currency?: string }).currency ?? homeCurrency;
   const isForeignCurrency = currency.toUpperCase() !== homeCurrency.toUpperCase();
   const rawBalance       = data.netWorth ?? 0;
   // Live FX rate: account native currency → home currency (e.g. CAD→USD for a US-home user with a CAD account)
   const fxRate           = isForeignCurrency ? fxRates[currency.toUpperCase()] : undefined;
   const homeEquivalent   = fxRate != null ? rawBalance * fxRate : null;
-  const hasIncome        = !isInvestment && (accountType === "checking" || accountType === "savings" || (data.income?.total ?? 0) > 0);
-  // Investment accounts contain fund transactions (buys, sells, dividends) that the
-  // parser may surface as "expenses" — these are portfolio activity, not spending.
-  // Exclude them entirely so the Expenses card / Spent KPI don't show for investments.
-  const hasSpending      = !isInvestment && (
-    ["checking", "savings", "credit", "loan"].includes(accountType) ||
-    (data.expenses?.total ?? 0) > 0 || (data.subscriptions?.length ?? 0) > 0
-  );
+  const hasActualIncome    = (data.income?.total ?? 0) > 0;
+  const hasActualExpenses  = (data.expenses?.total ?? 0) > 0;
+  const hasActualSubs      = (data.subscriptions?.length ?? 0) > 0;
+
+  // Show Income card only when there is real income data
+  const hasIncome = !isInvestment && hasActualIncome;
+  // Show Expenses card only when there are real expense transactions
+  // Investment accounts contain fund transactions the parser surfaces as "expenses" — exclude entirely.
+  const hasSpending = !isInvestment && (hasActualExpenses || hasActualSubs);
+  // Savings Rate is only meaningful on a checking account with both income and expenses
+  const showSavingsRate = !isInvestment && accountType === "checking" && hasActualIncome && hasActualExpenses;
 
   // "Spent this month" = all expense transactions on this account, matching ExpensesCard below.
   const spentThisMonth = data.expenses?.total ?? 0;
@@ -872,17 +1025,12 @@ export default function AccountDetailPage() {
           </div>
         </div>
       )}
-      <p className="text-sm text-gray-500">
-        As of {monthLabel(yearMonth)}
-        {statementCount > 0 && ` · ${statementCount} statement${statementCount !== 1 ? "s" : ""}`}
-      </p>
-
       {/* Month pills */}
       {realMonths.length > 1 && (
-        <div className="mt-4 -mx-1 flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+        <div className="-mx-1 flex gap-1 overflow-x-auto pb-0.5 scrollbar-none mt-2">
           {realMonths.map((e) => (
             <button key={e.yearMonth} onClick={() => handleTxMonthSelect(e.yearMonth)}
-              className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+              className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium transition ${
                 txMonth === e.yearMonth ? "bg-purple-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200"
               }`}>
               {shortMonth(e.yearMonth)} {e.yearMonth.slice(2, 4)}
@@ -914,12 +1062,7 @@ export default function AccountDetailPage() {
 
       {activeTab === "overview" && <>
 
-      {/* Balance trend chart — top of overview */}
-      {correctedHistory.length >= 2 && (
-        <div className="mb-6">
-          <NetWorthChart history={correctedHistory} isDebt={isDebtAccount} />
-        </div>
-      )}
+      {/* ── KPI cards ─────────────────────────────────────────────────────────── */}
 
       {/* Backfill estimated history banner */}
       {backfillCount > 0 && (
@@ -1168,49 +1311,113 @@ export default function AccountDetailPage() {
           )}
         </div>
       ) : (
-        /* Per-account KPIs: Balance · Income · Spent */
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-6">
-          {/* Balance */}
-          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Balance</p>
-            <p className="mt-2 font-bold text-xl text-gray-900 break-all leading-tight md:text-2xl">{fmt(data.netWorth ?? 0, currency)}</p>
-            {(() => {
-              const delta = previousMonth != null ? (data.netWorth ?? 0) - previousMonth.netWorth : null;
-              if (delta === null) return <p className="mt-1.5 text-xs text-gray-400">First month tracked</p>;
-              if (delta === 0)    return <p className="mt-1.5 text-xs text-gray-400">No change</p>;
-              const abs = Math.abs(delta);
-              const label = abs >= 1000 ? `${delta > 0 ? "+" : "−"}${CURRENCY_SYMBOL[currency] ?? "$"}${Math.round(abs / 1000)}k` : `${delta > 0 ? "+" : "−"}${fmt(abs, currency)}`;
-              return <p className={`mt-1.5 text-xs font-medium ${delta > 0 ? "text-green-600" : "text-red-500"}`}>{delta > 0 ? "↑" : "↓"} {label} vs last month</p>;
-            })()}
+        /* Checking / savings hero card — mirrors Today page net worth card */
+        <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden mb-6">
+          <div className="px-5 pt-5 pb-4">
+            {/* Top row: balance left, funds incoming/outgoing right */}
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Balance</p>
+                <p className="text-3xl font-bold text-gray-900 tabular-nums tracking-tight break-all">{fmt(data.netWorth ?? 0, currency)}</p>
+                {/* Delta vs last month */}
+                {(() => {
+                  const delta = previousMonth != null ? (data.netWorth ?? 0) - previousMonth.netWorth : null;
+                  if (delta === null) return <p className="mt-1 text-xs text-gray-400">First month tracked</p>;
+                  if (delta === 0)    return <p className="mt-1 text-xs text-gray-400">No change vs last month</p>;
+                  const abs = Math.abs(delta);
+                  const label = abs >= 1000
+                    ? `${delta > 0 ? "+" : "−"}${CURRENCY_SYMBOL[currency] ?? "$"}${Math.round(abs / 1000)}k`
+                    : `${delta > 0 ? "+" : "−"}${fmt(abs, currency)}`;
+                  return <p className={`mt-1 text-xs font-medium ${delta > 0 ? "text-green-600" : "text-red-500"}`}>{delta > 0 ? "↑" : "↓"} {label} vs last month</p>;
+                })()}
+                {/* FX conversion note */}
+                {isForeignCurrency && homeEquivalent != null && fxRate != null && (
+                  <p className="text-[10px] text-gray-400 mt-1">
+                    1 {currency} = {fxRate.toFixed(4)} {homeCurrency}
+                  </p>
+                )}
+              </div>
+
+              {/* Funds Incoming / Outgoing — desktop */}
+              {(hasActualIncome || hasActualExpenses) && (
+                <div className="hidden sm:flex gap-5 shrink-0 text-right">
+                  {hasActualIncome && (
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Funds Incoming</p>
+                      <p className="mt-0.5 text-base font-bold text-green-600 tabular-nums">{fmt(data.income?.total ?? 0, currency)}</p>
+                    </div>
+                  )}
+                  {hasActualExpenses && (
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Funds Outgoing</p>
+                      <p className="mt-0.5 text-base font-bold text-red-500 tabular-nums">{fmt(spentThisMonth, currency)}</p>
+                      {spentThisMonthCount > 0 && (
+                        <p className="text-[10px] text-gray-400">{spentThisMonthCount} transactions</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Mobile: funds incoming/outgoing as a row below the balance */}
+            {(hasActualIncome || hasActualExpenses) && (
+              <div className="sm:hidden mt-3 flex gap-5 border-t border-gray-100 pt-3">
+                {hasActualIncome && (
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Funds Incoming</p>
+                    <p className="mt-0.5 text-sm font-bold text-green-600 tabular-nums">{fmt(data.income?.total ?? 0, currency)}</p>
+                  </div>
+                )}
+                {hasActualExpenses && (
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Funds Outgoing</p>
+                    <p className="mt-0.5 text-sm font-bold text-red-500 tabular-nums">{fmt(spentThisMonth, currency)}</p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
-          {/* Income — only for accounts that receive deposits */}
-          {hasIncome && (
-            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Income this month</p>
-              <p className="mt-2 font-bold text-xl text-gray-900 break-all leading-tight md:text-2xl">{fmt(data.income?.total ?? 0, currency)}</p>
-              {data.income?.total ? (
-                <p className="mt-1.5 text-xs text-gray-400">deposits &amp; transfers in</p>
-              ) : (
-                <p className="mt-1.5 text-xs text-gray-400">No deposits this month</p>
-              )}
-            </div>
-          )}
+          {/* ── Brief account insight strip ──────────────────────────────────── */}
+          {(() => {
+            const income  = data.income?.total  ?? 0;
+            const expense = spentThisMonth;
+            const balance = data.netWorth ?? 0;
+            const delta   = previousMonth != null ? balance - previousMonth.netWorth : null;
 
-          {/* Spent */}
-          {hasSpending && (
-            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Spent this month</p>
-              <p className="mt-2 font-bold text-xl text-gray-900 break-all leading-tight md:text-2xl">{fmt(spentThisMonth, currency)}</p>
-              {spentThisMonth > 0 ? (
-                <p className="mt-1.5 text-xs text-gray-400">{spentThisMonthCount} transactions incl. transfers</p>
-              ) : (
-                <p className="mt-1.5 text-xs text-gray-400">No expenses this month</p>
-              )}
-            </div>
-          )}
+            // Pick the single most useful insight for this account
+            let dot  = "bg-gray-400";
+            let text = "";
+
+            if (income > 0 && expense > 0) {
+              const net = income - expense;
+              if (net > 0) {
+                dot  = "bg-green-400";
+                text = `Net ${fmt(net, currency)} coming in this period — ${Math.round((net / income) * 100)}% of incoming funds retained.`;
+              } else {
+                dot  = "bg-amber-400";
+                text = `Outgoing exceeds incoming by ${fmt(Math.abs(net), currency)} this period.`;
+              }
+            } else if (delta !== null && delta !== 0) {
+              dot  = delta > 0 ? "bg-green-400" : "bg-red-400";
+              text = `Balance ${delta > 0 ? "grew" : "dropped"} ${fmt(Math.abs(delta), currency)} vs last month.`;
+            } else if (statementCount === 1) {
+              dot  = "bg-blue-400";
+              text = "First statement uploaded. Upload more months to see trends.";
+            }
+
+            if (!text) return null;
+            return (
+              <div className="flex items-center gap-3 border-t border-gray-100 px-5 py-3">
+                <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
+                <p className="text-sm text-gray-600">{text}</p>
+              </div>
+            );
+          })()}
         </div>
       )}
+
 
       {/* ── Payment frequency strip (debt accounts only) ─────────────────── */}
       {isDebtAccount && (
@@ -1268,19 +1475,78 @@ export default function AccountDetailPage() {
         <HoldingsCard holdings={data.holdings!} totalValue={data.netWorth ?? 0} />
       )}
 
-      {/* Spending cards */}
-      {hasSpending && (
-        <div className="mt-4 grid gap-6 lg:grid-cols-2">
-          <div className="space-y-6">
-            {hasIncome && <IncomeCard income={data.income} />}
-            <ExpensesCard expenses={data.expenses} />
-          </div>
-          <div className="space-y-6">
-            {hasIncome && <SavingsRateCard data={data} />}
-            <SubscriptionsCard subscriptions={data.subscriptions ?? []} />
-          </div>
+
+      {/* ── Cash flow heatmap — checking/savings accounts ── */}
+      {!isInvestment && !isDebtAccount && cashflowDays && (
+        <div className="mt-4">
+          <CashflowHeatmap days={cashflowDays} month={cashflowMonth} currency={currency} />
         </div>
       )}
+
+      {/* ── Outflow + Incoming collapsible sections ─────────────────────── */}
+      {(hasIncome || hasSpending || hasActualSubs) && (() => {
+        const COLLAPSED_ROWS = 4;
+
+        // ── Outflow helpers ────────────────────────────────────────────────
+        const CAT_COLORS: Record<string, string> = {
+          housing: "bg-blue-500", dining: "bg-orange-400", groceries: "bg-green-500",
+          shopping: "bg-purple-500", transportation: "bg-yellow-500",
+          entertainment: "bg-pink-500", subscriptions: "bg-indigo-500",
+          healthcare: "bg-teal-500", fees: "bg-orange-400",
+          "debt payments": "bg-red-400", "investments & savings": "bg-emerald-500",
+          transfers: "bg-cyan-500", "transfers & payments": "bg-cyan-500",
+          "cash & atm": "bg-red-400", other: "bg-gray-400",
+        };
+        const catColor = (name: string) => CAT_COLORS[name.toLowerCase()] ?? "bg-purple-500";
+
+        const rawCats = data.expenses?.categories ?? [];
+        const catByKey = new Map<string, { name: string; amount: number }>();
+        for (const c of rawCats) {
+          const k = c.name.trim().toUpperCase() || "OTHER";
+          const ex = catByKey.get(k);
+          if (ex) ex.amount += c.amount;
+          else catByKey.set(k, { name: c.name.trim() || "Other", amount: c.amount });
+        }
+        const expTotal = data.expenses?.total ?? 0;
+        const outflowRows = Array.from(catByKey.values())
+          .sort((a, b) => b.amount - a.amount)
+          .map((r) => ({ ...r, pct: expTotal > 0 ? Math.round((r.amount / expTotal) * 100) : 0 }));
+
+        // ── Incoming helpers ───────────────────────────────────────────────
+        const DEPOSIT_RE = [
+          /e[-\s]?transfer/i, /\bdeposit\b/i, /\bGC\s/i, /\bCRA\b/i,
+          /\bCANADA\b/i, /\bGST\b/i, /\bOAS\b/i, /\bCPP\b/i,
+          /\bEI\b/i, /\bCERB\b/i, /\bINTERACT?\b/i,
+        ];
+        const normalizeIncLabel = (d: string) => {
+          if (!d.trim()) return "Cash / Deposit";
+          if (DEPOSIT_RE.some((re) => re.test(d))) return "Cash / Deposit";
+          return d.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+        };
+        const srcByKey = new Map<string, { label: string; amount: number }>();
+        for (const s of data.income?.sources ?? []) {
+          const lbl = normalizeIncLabel(s.description);
+          const ex = srcByKey.get(lbl);
+          if (ex) ex.amount += s.amount;
+          else srcByKey.set(lbl, { label: lbl, amount: s.amount });
+        }
+        const incomeRows = Array.from(srcByKey.values()).sort((a, b) => b.amount - a.amount);
+
+        return (
+          <FlowSections
+            outflowRows={outflowRows}
+            outflowTotal={expTotal}
+            incomeRows={incomeRows}
+            incomeTotal={data.income?.total ?? 0}
+            currency={currency}
+            catColor={catColor}
+            hasOutflow={hasSpending}
+            hasIncoming={hasIncome}
+            collapsedRows={COLLAPSED_ROWS}
+            subscriptions={hasActualSubs ? (data.subscriptions ?? []) : []}
+          />
+        );
+      })()}
 
       <InsightsSection insights={data.insights ?? []} />
 
@@ -1289,6 +1555,12 @@ export default function AccountDetailPage() {
       {/* ── HISTORY TAB ──────────────────────────────────────────────────── */}
       {activeTab === "history" && stmtHistory.length > 0 && (
         <div className="space-y-4">
+
+          {/* Balance over time chart */}
+          {correctedHistory.length >= 2 && (
+            <NetWorthChart history={correctedHistory} isDebt={isDebtAccount} />
+          )}
+
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <p className="text-sm text-gray-500">{stmtHistory.length} entr{stmtHistory.length !== 1 ? "ies" : "y"}</p>
             <div className="flex items-center gap-2">

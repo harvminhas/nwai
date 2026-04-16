@@ -1022,6 +1022,122 @@ function EventsWidget({ events, homeCurrency = "USD" }: { events: EventSummary[]
   );
 }
 
+// ── Currency confirmation modal for pre-existing accounts ────────────────────
+
+const SUPPORTED_CURRENCIES = [
+  { code: "CAD", label: "CA$", name: "Canadian Dollar" },
+  { code: "USD", label: "US$", name: "US Dollar" },
+  { code: "EUR", label: "€",   name: "Euro" },
+  { code: "GBP", label: "£",   name: "British Pound" },
+  { code: "AUD", label: "AU$", name: "Australian Dollar" },
+];
+
+type UnconfirmedAccount = import("@/app/api/user/currency-overrides/route").UnconfirmedAccount;
+
+function CurrencyConfirmModal({
+  accounts,
+  token,
+  onDone,
+}: {
+  accounts: UnconfirmedAccount[];
+  token: string;
+  onDone: () => void;
+}) {
+  const [selections, setSelections] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const a of accounts) init[a.slug] = a.inferredCurrency;
+    return init;
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await Promise.all(
+        accounts.map(a =>
+          fetch("/api/user/currency-overrides", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ accountSlug: a.slug, currency: selections[a.slug], confirmed: true }),
+          })
+        )
+      );
+      onDone();
+    } catch {
+      setError("Something went wrong. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+        {/* Header */}
+        <div className="px-6 pt-6 pb-4 border-b border-gray-100">
+          <div className="flex items-center gap-3 mb-1">
+            <div className="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center shrink-0">
+              <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-gray-900">Confirm account currencies</h2>
+              <p className="text-xs text-gray-500 mt-0.5">
+                We detected {accounts.length} account{accounts.length !== 1 ? "s" : ""} without a confirmed currency. Please verify each one.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Account list */}
+        <div className="px-6 py-4 space-y-3 max-h-80 overflow-y-auto">
+          {accounts.map(a => (
+            <div key={a.slug} className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-gray-900 truncate">{a.accountName}</p>
+                <p className="text-xs text-gray-400 truncate">{a.bankName} · {a.accountType}</p>
+              </div>
+              <select
+                value={selections[a.slug]}
+                onChange={e => setSelections(s => ({ ...s, [a.slug]: e.target.value }))}
+                className="shrink-0 text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white font-medium text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {SUPPORTED_CURRENCIES.map(c => (
+                  <option key={c.code} value={c.code}>{c.label} {c.name}</option>
+                ))}
+              </select>
+            </div>
+          ))}
+        </div>
+
+        {error && (
+          <p className="px-6 text-xs text-red-600">{error}</p>
+        )}
+
+        {/* Footer */}
+        <div className="px-6 pb-6 pt-3 flex items-center justify-between gap-3 border-t border-gray-100">
+          <button
+            onClick={onDone}
+            className="text-sm text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            Skip for now
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-5 py-2 rounded-xl bg-gray-900 text-white text-sm font-medium hover:bg-gray-700 transition-colors disabled:opacity-50"
+          >
+            {saving ? "Saving…" : "Confirm currencies"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function TodayPage() {
   const router = useRouter();
   const { planId } = usePlan();
@@ -1056,6 +1172,8 @@ export default function TodayPage() {
   const [detectedCountry,  setDetectedCountry]  = useState<"CA" | "US">("US");
   const [countryConfirming, setCountryConfirming] = useState(false);
   const [homeCurrency, setHomeCurrency] = useState<string>("USD");
+  const [unconfirmedAccounts, setUnconfirmedAccounts] = useState<import("@/app/api/user/currency-overrides/route").UnconfirmedAccount[]>([]);
+  const [showCurrencyModal, setShowCurrencyModal] = useState(false);
   const [currencyInfo, setCurrencyInfo] = useState<{
     homeCurrency: string;
     showExchange: boolean;
@@ -1132,6 +1250,17 @@ export default function TodayPage() {
       const resolvedCountry = (cardJson.confirmedCountry ?? cardJson.detectedCountry ?? "US") as "CA" | "US";
       setHomeCurrency(insJson.homeCurrency ?? (resolvedCountry === "CA" ? "CAD" : "USD"));
       if (fxJson.homeCurrency) setCurrencyInfo(fxJson);
+
+      // Check for accounts with unconfirmed currencies (fire-and-forget, non-blocking)
+      fetch("/api/user/currency-overrides", { headers })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data?.unconfirmed?.length) {
+            setUnconfirmedAccounts(data.unconfirmed);
+            setShowCurrencyModal(true);
+          }
+        })
+        .catch(() => { /* silent */ });
     } catch { setError("Failed to load today view"); }
     finally { setLoading(false); }
   }, [buildHeaders]);
@@ -1822,6 +1951,19 @@ export default function TodayPage() {
 
   return (
     <>
+    {/* Currency confirmation modal for pre-existing unconfirmed accounts */}
+    {showCurrencyModal && token && unconfirmedAccounts.length > 0 && (
+      <CurrencyConfirmModal
+        accounts={unconfirmedAccounts}
+        token={token}
+        onDone={() => {
+          setShowCurrencyModal(false);
+          setUnconfirmedAccounts([]);
+          // Trigger a full refresh so charts and totals update with confirmed currencies
+          handleRefresh();
+        }}
+      />
+    )}
     <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
       <PromoDashboardBanner />

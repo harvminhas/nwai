@@ -241,7 +241,9 @@ export async function GET(request: NextRequest) {
       )?.currency;
       enrichedConsolidated = {
         ...consolidatedWithRules,
-        ...(snapCurrency && snapCurrency !== "CAD" ? { currency: snapCurrency } : {}),
+        // Always carry the currency override through — even CAD, so a user who
+        // changed from USD back to CAD sees the correct symbol immediately.
+        ...(snapCurrency ? { currency: snapCurrency } : {}),
       };
     } else {
       const nw = getNetWorth(profile);

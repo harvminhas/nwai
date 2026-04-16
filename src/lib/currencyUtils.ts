@@ -16,8 +16,8 @@
 /** Default when no home currency is known yet. */
 export const HOME_CURRENCY = "USD";
 
-const CA_BANK_RE = /\b(td|rbc|bmo|cibc|scotiabank|desjardins|national bank|tangerine|simplii|hsbc canada|laurentian|coast capital|meridian|atb)\b/i;
-const US_BANK_RE = /\b(bank of america|chase|wells fargo|citibank|citi|capital one|us bank|pnc|suntrust|bb&t|truist|regions|fifth third|ally|discover|american express|amex|usaa|navy federal|td bank)\b/i;
+const CA_BANK_RE = /\b(td|rbc|bmo|cibc|scotiabank|desjardins|national bank|tangerine|simplii|hsbc canada|laurentian|coast capital|meridian|atb|wealthsimple|questrade|eq bank|manulife|sun life|great.west|industrial alliance|ia financial|ci financial|empire life|canada life|ivari|rbc direct|td direct|bmo investorline|qtrade|virtual brokers|credential|aviso|servus|alterna|motusbank|oaken|nbc|bnc|canadian western|cwb|envision|first west|khalsa credit|libro credit|nexbank|prospera|valley first|interior savings|island savings|gulf and fraser)\b/i;
+const US_BANK_RE = /\b(bank of america|chase|wells fargo|citibank|citi|capital one|us bank|pnc|suntrust|bb&t|truist|regions|fifth third|ally|discover|american express|amex|usaa|navy federal|td bank|fidelity|schwab|vanguard|merrill|etrade|e.trade|robinhood|sofi|marcus|synchrony|barclays us|citizens bank|key bank|huntington|m&t bank)\b/i;
 
 /**
  * Infer the ISO 4217 currency for a statement given the bank name and any
