@@ -19,16 +19,18 @@ import {
   incomeTotalForMonth,
   expenseTotalForMonth,
 } from "@/lib/extractTransactions";
-import { SCHEDULED_DEBT_TYPES, debtTxKey } from "@/lib/debtUtils";
+import { SCHEDULED_DEBT_TYPES } from "@/lib/debtUtils";
+import { getNetWorth } from "@/lib/profileMetrics";
 import type { ParsedStatementData } from "@/lib/types";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function fmt(v: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency", currency: "USD",
-    minimumFractionDigits: 0, maximumFractionDigits: 0,
-  }).format(v);
+function makeFmt(currency: string) {
+  return (v: number) =>
+    new Intl.NumberFormat("en-US", {
+      style: "currency", currency,
+      minimumFractionDigits: 0, maximumFractionDigits: 0,
+    }).format(v);
 }
 
 export function docYearMonth(d: FirebaseFirestore.DocumentData): string {
@@ -77,24 +79,33 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
   if (!latestTxMonth) return "No financial data available yet.";
 
   const month = latestTxMonth;
+  const home  = (profile.homeCurrency ?? "USD").toUpperCase();
+  const fmt   = makeFmt(home);
 
-  const manualTotal     = manualAssets.reduce((s, a) => s + (a.value ?? 0), 0);
-  const manualLiabTotal = manualLiabilities.reduce((s, l) => s + (l.balance ?? 0), 0);
   const rateMap = new Map<string, number>();
   for (const r of accountRates) {
     if (r.rate != null) rateMap.set(r.accountKey, r.rate);
   }
 
-  // Net worth
-  const statementAssets = accountSnapshots.reduce((s, a) => s + Math.max(0, a.balance), 0);
-  const statementDebts  = accountSnapshots.reduce((s, a) => s + Math.max(0, -a.balance), 0);
-  const assets   = statementAssets + manualTotal;
-  const debts    = statementDebts  + manualLiabTotal;
-  const netWorth = assets - debts;
+  // ── FX helper (matches getNetWorth logic) ──────────────────────────────────
+  const fxRates = profile.fxRates ?? {};
+  function toHome(amount: number, currency?: string): number {
+    const cur = (currency ?? home).toUpperCase();
+    if (cur === home) return amount;
+    const rate = fxRates[cur];
+    return rate ? amount * rate : amount; // fall back to 1:1 if rate missing
+  }
 
+  // Use getNetWorth — single source of truth for the headline figure (multi-currency aware)
+  const nwResult  = getNetWorth(profile, month);
+  const netWorth  = nwResult.total;
+  const assets    = nwResult.totalAssets;
+  const debts     = nwResult.totalDebts;
+
+  // Liquid assets with FX conversion (matches dashboard logic)
   const liquidAssets = accountSnapshots
     .filter((a) => /checking|savings|cash/i.test(a.accountType))
-    .reduce((s, a) => s + Math.max(0, a.balance), 0);
+    .reduce((s, a) => s + toHome(Math.max(0, a.balance), a.currency), 0);
 
   // Monthly figures — use the pre-computed monthlyHistory so cash income and cash
   // commitments are included and the numbers match exactly what the UI cards show.
@@ -119,12 +130,20 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
     : 0;
   const efTarget        = monthlyExp * 6;
 
-  // Account lines with real APRs
+  // Account lines with real APRs — show native currency per-account, with home-currency
+  // equivalent in parentheses when the account is in a foreign currency.
   const accountLines = accountSnapshots.map((a) => {
-    const acctId = a.accountId ? ` (*${a.accountId.slice(-4)})` : "";
-    const apr    = rateMap.get(a.slug);
-    const aprStr = apr != null ? ` at ${apr}% APR` : "";
-    return `  ${a.bankName}${acctId} [${a.accountType}]: ${fmt(a.balance)}${aprStr}`;
+    const acctId  = a.accountId ? ` (*${a.accountId.slice(-4)})` : "";
+    const apr     = rateMap.get(a.slug);
+    const aprStr  = apr != null ? ` at ${apr}% APR` : "";
+    const acctCcy = (a.currency ?? home).toUpperCase();
+    const nativeFmt = makeFmt(acctCcy);
+    const nativeStr = nativeFmt(a.balance);
+    // Show home-currency equivalent only when account is in a different currency
+    const homeEqStr = acctCcy !== home
+      ? ` (≈ ${fmt(toHome(a.balance, acctCcy))} ${home})`
+      : "";
+    return `  ${a.bankName}${acctId} [${a.accountType}, ${acctCcy}]: ${nativeStr}${homeEqStr}${aprStr}`;
   });
   for (const a of manualAssets) {
     accountLines.push(`  ${a.label ?? "Manual asset"} [manual asset]: ${fmt(a.value ?? 0)}`);
