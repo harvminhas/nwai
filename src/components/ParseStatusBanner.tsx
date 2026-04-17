@@ -38,7 +38,7 @@ export function addPendingParse(id: string, name?: string) {
   } catch { /* ignore SSR / private-mode errors */ }
 }
 
-// ── Age bucket prompt types ───────────────────────────────────────────────────
+// ── Account setup modal types ─────────────────────────────────────────────────
 
 interface BackfillPrompt {
   statementId: string;
@@ -47,9 +47,9 @@ interface BackfillPrompt {
   accountType: string;
   firstBalance: number;
   firstStatementYearMonth: string;
-  oldestMonth: string; // oldest month in the user's history — used for ">6 mo" bucket
-  slugIsAccountNumber: boolean; // true when slug is ••••XXXX (vs bank-name fallback)
-  inferredCurrency: string; // best-guess currency (e.g. "CAD", "USD")
+  oldestMonth: string;
+  slugIsAccountNumber: boolean;
+  inferredCurrency: string;
 }
 
 const SUPPORTED_CURRENCIES = [
@@ -61,37 +61,49 @@ const SUPPORTED_CURRENCIES = [
 ];
 
 const AGE_BUCKETS = [
-  { id: "new",    label: "< 1 month",  months: 0,  help: "This is a brand-new account — no backfill needed." },
-  { id: "1to3",   label: "1–3 months", months: 2,  help: "We'll estimate 2 months of balance history." },
-  { id: "3to6",   label: "3–6 months", months: 4,  help: "We'll estimate 4 months of balance history." },
-  { id: "over6",  label: "> 6 months", months: -1, help: "We'll estimate back to your earliest tracked month." },
+  { id: "new",   label: "< 1 month",  months: 0,  help: "Brand-new account — no backfill needed." },
+  { id: "1to3",  label: "1–3 months", months: 2,  help: "We'll estimate 2 months of balance history." },
+  { id: "3to6",  label: "3–6 months", months: 4,  help: "We'll estimate 4 months of balance history." },
+  { id: "over6", label: "> 6 months", months: -1, help: "We'll estimate back to your earliest tracked month." },
 ] as const;
 
 type BucketId = typeof AGE_BUCKETS[number]["id"];
 
-// ── Backfill prompt modal ─────────────────────────────────────────────────────
+// Step sequence: country (optional) → currency → age
+type Step = "country" | "currency" | "age";
 
-function BackfillPromptModal({
+// ── Account setup modal (replaces inline BackfillPromptModal + country banner) ─
+
+function AccountSetupModal({
   prompt,
   idToken,
+  needsCountry,
+  detectedCountry,
   onDone,
+  onCountryConfirmed,
 }: {
   prompt: BackfillPrompt;
   idToken: string;
+  needsCountry: boolean;
+  detectedCountry: "CA" | "US";
   onDone: () => void;
+  onCountryConfirmed: (country: "CA" | "US") => void;
 }) {
-  // Step 1: currency confirmation. Step 2: account age.
-  const [step,         setStep]         = useState<1 | 2>(1);
-  const [currency,     setCurrency]     = useState<string>(prompt.inferredCurrency || "USD");
-  const [selected,     setSelected]     = useState<BucketId | null>(null);
-  const [saving,       setSaving]       = useState(false);
-  const [saveError,    setSaveError]    = useState<string | null>(null);
+  const firstStep: Step = needsCountry ? "country" : "currency";
+  const [step,     setStep]     = useState<Step>(firstStep);
+  const [country,  setCountry]  = useState<"CA" | "US">(detectedCountry);
+  const [currency, setCurrency] = useState<string>(prompt.inferredCurrency || "USD");
+  const [selected, setSelected] = useState<BucketId | null>(null);
+  const [saving,   setSaving]   = useState(false);
+  const [saveError,setSaveError]= useState<string | null>(null);
+
+  // Total steps for the progress indicator
+  const totalSteps = needsCountry ? 3 : 2;
+  const stepNum    = step === "country" ? 1 : step === "currency" ? (needsCountry ? 2 : 1) : (needsCountry ? 3 : 2);
 
   const displayId = prompt.slugIsAccountNumber
-    ? `••••${prompt.accountSlug}`
+    ? `••••${prompt.accountSlug.slice(-4)}`
     : prompt.accountSlug;
-
-  const handleCurrencyNext = () => setStep(2);
 
   const handleSave = async () => {
     if (!selected) return;
@@ -100,44 +112,46 @@ function BackfillPromptModal({
 
     const bucket = AGE_BUCKETS.find((b) => b.id === selected)!;
     const backfillMonths = bucket.months === -1
-      ? (prompt.oldestMonth
-          ? monthsDiff(prompt.oldestMonth, prompt.firstStatementYearMonth)
-          : 12)
+      ? (prompt.oldestMonth ? monthsDiff(prompt.oldestMonth, prompt.firstStatementYearMonth) : 12)
       : bucket.months;
 
     try {
-      // Save confirmed currency first
-      const ccyRes = await fetch("/api/user/currency-overrides", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
-        body:    JSON.stringify({ accountSlug: prompt.accountSlug, currency, confirmed: true }),
-      });
-      if (!ccyRes.ok) {
-        setSaveError("Couldn't save currency. Please try again.");
-        return;
+      // Save country if we collected it
+      if (needsCountry) {
+        await fetch("/api/user/profile", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+          body: JSON.stringify({ country }),
+        });
+        onCountryConfirmed(country);
       }
 
-      // Then save account age / backfill
-      const bfRes = await fetch("/api/user/account-backfills", {
-        method:  "POST",
+      // Save confirmed currency
+      const ccyRes = await fetch("/api/user/currency-overrides", {
+        method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
-        body:    JSON.stringify({
-          statementId:             prompt.statementId,
-          accountSlug:             prompt.accountSlug,
-          accountName:             prompt.accountName,
-          accountType:             prompt.accountType,
+        body: JSON.stringify({ accountSlug: prompt.accountSlug, currency, confirmed: true }),
+      });
+      if (!ccyRes.ok) { setSaveError("Couldn't save currency — please try again."); return; }
+
+      // Save account age / backfill
+      const bfRes = await fetch("/api/user/account-backfills", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({
+          statementId: prompt.statementId,
+          accountSlug: prompt.accountSlug,
+          accountName: prompt.accountName,
+          accountType: prompt.accountType,
           backfillMonths,
-          firstBalance:            prompt.firstBalance,
+          firstBalance: prompt.firstBalance,
           firstStatementYearMonth: prompt.firstStatementYearMonth,
         }),
       });
-      if (!bfRes.ok) {
-        setSaveError("Something went wrong saving account history. Please try again.");
-        return;
-      }
+      if (!bfRes.ok) { setSaveError("Couldn't save account history — please try again."); return; }
+
       onDone();
-    } catch (e) {
-      console.error("[backfill] save failed:", e);
+    } catch {
       setSaveError("Network error — please try again.");
     } finally {
       setSaving(false);
@@ -147,113 +161,158 @@ function BackfillPromptModal({
   const selectedBucket = AGE_BUCKETS.find((b) => b.id === selected);
 
   return (
-    <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4">
-      <div className="flex items-start gap-3">
-        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100">
-          <svg className="h-4 w-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-          </svg>
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-sm font-semibold text-blue-900">
-              New account — {prompt.accountName || displayId}
-            </p>
-            <span className="text-[10px] font-medium text-blue-400">Step {step} of 2</span>
-          </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl overflow-hidden">
 
-          {step === 1 ? (
+        {/* Header */}
+        <div className="px-6 pt-6 pb-4 border-b border-gray-100">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">New account detected</p>
+              <h2 className="mt-0.5 text-base font-bold text-gray-900">
+                {prompt.accountName || displayId}
+              </h2>
+            </div>
+            {/* Progress dots */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              {Array.from({ length: totalSteps }).map((_, i) => (
+                <span key={i} className={`h-1.5 w-1.5 rounded-full transition ${i + 1 <= stepNum ? "bg-purple-600" : "bg-gray-200"}`} />
+              ))}
+              <span className="ml-1 text-[10px] font-medium text-gray-400">{stepNum}/{totalSteps}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="px-6 py-5">
+
+          {/* ── Step: Country ──────────────────────────────────────── */}
+          {step === "country" && (
             <>
-              <p className="mt-1 text-xs text-blue-700">
-                What currency is this account in?
+              <p className="text-sm font-semibold text-gray-800">Where are your accounts based?</p>
+              <p className="mt-1 text-xs text-gray-500">
+                We detected <span className="font-medium">{detectedCountry === "CA" ? "Canada" : "United States"}</span> from your bank. Confirm so we can tailor tax tips, savings benchmarks, and market signals.
               </p>
-              <p className="mt-0.5 text-[11px] text-blue-500">
-                We detected <strong>{prompt.inferredCurrency}</strong> — confirm or change below.
-                This affects how balances and transactions are displayed.
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                {(["CA", "US"] as const).map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => setCountry(c)}
+                    className={`flex flex-col items-center gap-1.5 rounded-xl border-2 py-4 transition ${
+                      country === c
+                        ? "border-purple-500 bg-purple-50"
+                        : "border-gray-200 bg-gray-50 hover:border-gray-300"
+                    }`}
+                  >
+                    <span className="text-2xl">{c === "CA" ? "🍁" : "🇺🇸"}</span>
+                    <span className={`text-sm font-semibold ${country === c ? "text-purple-700" : "text-gray-700"}`}>
+                      {c === "CA" ? "Canada" : "United States"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* ── Step: Currency ─────────────────────────────────────── */}
+          {step === "currency" && (
+            <>
+              <p className="text-sm font-semibold text-gray-800">What currency is this account in?</p>
+              <p className="mt-1 text-xs text-gray-500">
+                We detected <span className="font-medium">{prompt.inferredCurrency}</span> — confirm or change. This affects how balances and transactions are displayed.
               </p>
-              <div className="mt-3 flex flex-wrap gap-2">
+              <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {SUPPORTED_CURRENCIES.map((c) => (
                   <button
                     key={c.code}
                     onClick={() => setCurrency(c.code)}
-                    className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+                    className={`flex items-center gap-2 rounded-xl border-2 px-3 py-2.5 text-left transition ${
                       currency === c.code
-                        ? "border-blue-500 bg-blue-600 text-white"
-                        : "border-blue-200 bg-white text-blue-700 hover:border-blue-400"
+                        ? "border-purple-500 bg-purple-50"
+                        : "border-gray-200 bg-gray-50 hover:border-gray-300"
                     }`}
                   >
-                    {c.label} {c.name}
+                    <span className={`text-base font-bold ${currency === c.code ? "text-purple-700" : "text-gray-600"}`}>{c.label}</span>
+                    <span className={`text-xs ${currency === c.code ? "text-purple-600" : "text-gray-500"}`}>{c.name}</span>
                   </button>
                 ))}
               </div>
-              <div className="mt-3 flex items-center gap-2">
-                <button
-                  onClick={handleCurrencyNext}
-                  className="rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition"
-                >
-                  Next →
-                </button>
-                <button onClick={onDone} className="text-xs text-blue-500 hover:text-blue-700">
-                  Skip
-                </button>
-              </div>
             </>
-          ) : (
+          )}
+
+          {/* ── Step: Age ──────────────────────────────────────────── */}
+          {step === "age" && (
             <>
-              <p className="mt-1 text-xs text-blue-700">
-                How long have you had this account? We&apos;ll estimate its history so your net worth chart doesn&apos;t show a false spike.
+              <p className="text-sm font-semibold text-gray-800">How long have you had this account?</p>
+              <p className="mt-1 text-xs text-gray-500">
+                We&apos;ll fill in estimated balance history so your net worth chart doesn&apos;t show a false spike when this account first appears.
               </p>
-              <div className="mt-3 flex flex-wrap gap-2">
+              <div className="mt-4 grid grid-cols-2 gap-2">
                 {AGE_BUCKETS.map((b) => (
                   <button
                     key={b.id}
                     onClick={() => setSelected(b.id)}
-                    className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+                    className={`rounded-xl border-2 px-3 py-3 text-left transition ${
                       selected === b.id
-                        ? "border-blue-500 bg-blue-600 text-white"
-                        : "border-blue-200 bg-white text-blue-700 hover:border-blue-400"
+                        ? "border-purple-500 bg-purple-50"
+                        : "border-gray-200 bg-gray-50 hover:border-gray-300"
                     }`}
                   >
-                    {b.label}
+                    <p className={`text-sm font-semibold ${selected === b.id ? "text-purple-700" : "text-gray-700"}`}>{b.label}</p>
+                    <p className="mt-0.5 text-[11px] text-gray-400 leading-snug">{b.help}</p>
                   </button>
                 ))}
               </div>
-              {selectedBucket && (
-                <p className="mt-2 text-[11px] text-blue-600">{selectedBucket.help}</p>
-              )}
-              <div className="mt-3 flex items-center gap-2">
-                <button
-                  onClick={() => setStep(1)}
-                  className="text-xs text-blue-500 hover:text-blue-700"
-                >
-                  ← Back
-                </button>
-                <button
-                  onClick={handleSave}
-                  disabled={!selected || saving}
-                  className="rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-40 transition"
-                >
-                  {saving ? "Saving…" : "Confirm"}
-                </button>
-                <button onClick={onDone} className="text-xs text-blue-500 hover:text-blue-700">
-                  Skip
-                </button>
-              </div>
               {saveError && (
-                <p className="mt-2 text-[11px] font-medium text-red-600">{saveError}</p>
+                <p className="mt-3 text-xs font-medium text-red-600">{saveError}</p>
               )}
-
-              {/* Soft duplicate advisory */}
-              <div className="mt-3 rounded-lg border border-blue-200 bg-white/70 px-3 py-2">
-                <p className="text-[11px] text-blue-700">
-                  <span className="font-semibold">Already tracking this account?</span>{" "}
-                  {prompt.slugIsAccountNumber
-                    ? <>If {displayId} is the same card listed under a different number, go to <a href="/account/liabilities?tab=accounts" className="underline hover:text-blue-900">Accounts</a> and delete the old entry, then re-upload.</>
-                    : <>If this account is already tracked under a different name, go to <a href="/account/liabilities?tab=accounts" className="underline hover:text-blue-900">Accounts</a> and delete the duplicate, then re-upload.</>
-                  }
+              {prompt.slugIsAccountNumber && (
+                <p className="mt-3 text-[11px] text-gray-400">
+                  <span className="font-medium">Already tracking {displayId}?</span>{" "}
+                  <a href="/account/liabilities?tab=accounts" className="underline hover:text-gray-600">Remove the duplicate</a> then re-upload.
                 </p>
-              </div>
+              )}
             </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between gap-3 px-6 pb-6">
+          <button
+            onClick={() => {
+              if (step === "currency" && needsCountry) setStep("country");
+              else if (step === "age") setStep("currency");
+              else onDone();
+            }}
+            className="text-xs font-medium text-gray-400 hover:text-gray-600 transition"
+          >
+            {step === firstStep ? "Skip for now" : "← Back"}
+          </button>
+
+          {step === "country" && (
+            <button
+              onClick={() => setStep("currency")}
+              className="rounded-xl bg-purple-600 px-5 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
+            >
+              Continue →
+            </button>
+          )}
+          {step === "currency" && (
+            <button
+              onClick={() => setStep("age")}
+              className="rounded-xl bg-purple-600 px-5 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
+            >
+              Continue →
+            </button>
+          )}
+          {step === "age" && (
+            <button
+              onClick={handleSave}
+              disabled={!selected || saving}
+              className="rounded-xl bg-purple-600 px-5 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-40 transition"
+            >
+              {saving ? "Saving…" : "Done ✓"}
+            </button>
           )}
         </div>
       </div>
@@ -272,11 +331,24 @@ function monthsDiff(from: string, to: string): number {
 type ParseItemStatus = "analyzing" | "done" | "error";
 interface ParseItem extends PendingParse { status: ParseItemStatus }
 
-export default function ParseStatusBanner({ onRefresh }: { onRefresh: () => void }) {
+export default function ParseStatusBanner({
+  onRefresh,
+  confirmedCountry,
+  detectedCountry = "US",
+  onCountryConfirmed,
+}: {
+  onRefresh: () => void;
+  confirmedCountry?: string | null;
+  detectedCountry?: "CA" | "US";
+  onCountryConfirmed?: (country: "CA" | "US") => void;
+}) {
   const router                              = useRouter();
   const [items,          setItems]          = useState<ParseItem[]>([]);
   const [showDone,       setShowDone]       = useState(false);
   const [idToken,        setIdToken]        = useState<string | null>(null);
+  // Resolved country state — starts from the prop, then self-fetches when prop is absent
+  const [resolvedCountry,    setResolvedCountry]    = useState<string | null | undefined>(confirmedCountry);
+  const [resolvedDetected,   setResolvedDetected]   = useState<"CA" | "US">(detectedCountry);
   const onRefreshRef                        = useRef(onRefresh);
   const refreshedRef                        = useRef(false);
 
@@ -297,13 +369,35 @@ export default function ParseStatusBanner({ onRefresh }: { onRefresh: () => void
   };
 
   useEffect(() => { onRefreshRef.current = onRefresh; }, [onRefresh]);
+  // Keep resolved country in sync if the parent passes a fresh value
+  useEffect(() => { setResolvedCountry(confirmedCountry); }, [confirmedCountry]);
+  useEffect(() => { setResolvedDetected(detectedCountry); }, [detectedCountry]);
 
   // Get auth token for the backfill POST
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
-      if (user) setIdToken(await user.getIdToken());
+      if (user) {
+        const tok = await user.getIdToken();
+        setIdToken(tok);
+        // If the parent didn't supply country info, fetch it ourselves so the
+        // account-setup modal knows whether to show the country step.
+        if (confirmedCountry === undefined) {
+          fetch("/api/user/agent-insights", {
+            headers: { Authorization: `Bearer ${tok}` },
+          })
+            .then((r) => r.ok ? r.json() : null)
+            .then((d) => {
+              if (d) {
+                setResolvedCountry(d.confirmedCountry ?? null);
+                setResolvedDetected(d.detectedCountry ?? "US");
+              }
+            })
+            .catch(() => { /* non-blocking */ });
+        }
+      }
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -403,11 +497,14 @@ export default function ParseStatusBanner({ onRefresh }: { onRefresh: () => void
 
   return (
     <>
-      {/* Backfill age-bucket prompt — shown when a new account is detected */}
+      {/* Account setup modal — shown when a new account is detected */}
       {backfillPrompt && idToken && (
-        <BackfillPromptModal
+        <AccountSetupModal
           prompt={backfillPrompt}
           idToken={idToken}
+          needsCountry={resolvedCountry === null}
+          detectedCountry={resolvedDetected}
+          onCountryConfirmed={(c) => { setResolvedCountry(c); onCountryConfirmed?.(c); }}
           onDone={() => { setBackfillPrompt(null); onRefreshRef.current(); router.refresh(); }}
         />
       )}

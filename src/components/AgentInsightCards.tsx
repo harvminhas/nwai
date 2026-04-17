@@ -37,12 +37,13 @@ const CATEGORY_LABEL: Record<string, string> = {
 // ── single expandable row ─────────────────────────────────────────────────────
 
 interface RowProps {
-  card:      AgentCard;
-  token:     string;
-  onDismiss: (id: string) => void;
+  card:         AgentCard;
+  token:        string;
+  onDismiss:    (id: string) => void;
+  homeCurrency: string;
 }
 
-function InsightRow({ card, token, onDismiss }: RowProps) {
+function InsightRow({ card, token, onDismiss, homeCurrency }: RowProps) {
   const [open, setOpen] = useState(false);
 
   const href  = CATEGORY_HREF[card.category]  ?? "/account/spending";
@@ -70,7 +71,7 @@ function InsightRow({ card, token, onDismiss }: RowProps) {
         <p className="flex-1 min-w-0 truncate text-sm font-medium text-gray-800">{card.title}</p>
         {card.dollarImpact != null && card.dollarImpact !== 0 && (
           <span className="shrink-0 text-xs font-semibold text-gray-500 tabular-nums">
-            {fmt(card.dollarImpact)}{card.impactLabel ? ` ${card.impactLabel}` : ""}
+            {fmt(card.dollarImpact, homeCurrency)}{card.impactLabel ? ` ${card.impactLabel}` : ""}
           </span>
         )}
         <svg
@@ -110,11 +111,12 @@ function InsightRow({ card, token, onDismiss }: RowProps) {
 // ── main component ────────────────────────────────────────────────────────────
 
 interface AgentInsightCardsProps {
-  cards: AgentCard[];
-  token: string;
+  cards:        AgentCard[];
+  token:        string;
+  homeCurrency?: string;
 }
 
-export default function AgentInsightCards({ cards: initialCards, token }: AgentInsightCardsProps) {
+export default function AgentInsightCards({ cards: initialCards, token, homeCurrency = "USD" }: AgentInsightCardsProps) {
   const [cards, setCards]   = useState<AgentCard[]>(initialCards);
   const [showAll, setShowAll] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -181,7 +183,7 @@ export default function AgentInsightCards({ cards: initialCards, token }: AgentI
       </div>
 
       {visible.map((card) => (
-        <InsightRow key={card.id} card={card} token={token} onDismiss={handleDismiss} />
+        <InsightRow key={card.id} card={card} token={token} onDismiss={handleDismiss} homeCurrency={homeCurrency} />
       ))}
 
       {hidden > 0 && (

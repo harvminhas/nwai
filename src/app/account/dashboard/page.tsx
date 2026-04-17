@@ -1170,7 +1170,11 @@ export default function TodayPage() {
   const [topSpending,  setTopSpending]  = useState<{ category: string; amount: number }[]>([]);
   const [confirmedCountry, setConfirmedCountry] = useState<"CA" | "US" | null>(null);
   const [detectedCountry,  setDetectedCountry]  = useState<"CA" | "US">("US");
-  const [countryConfirming, setCountryConfirming] = useState(false);
+
+  // Returns true if a new-account setup modal is pending (persisted in localStorage)
+  function hasPendingBackfill() {
+    try { return !!localStorage.getItem("nwai_backfill_prompt"); } catch { return false; }
+  }
   const [homeCurrency, setHomeCurrency] = useState<string>("USD");
   const [unconfirmedAccounts, setUnconfirmedAccounts] = useState<import("@/app/api/user/currency-overrides/route").UnconfirmedAccount[]>([]);
   const [showCurrencyModal, setShowCurrencyModal] = useState(false);
@@ -1181,20 +1185,6 @@ export default function TodayPage() {
     usdPerCad: number | null;
     rateDate: string | null;
   } | null>(null);
-
-  async function confirmCountry(country: "CA" | "US") {
-    if (!token) return;
-    setCountryConfirming(true);
-    try {
-      await fetch("/api/user/profile", {
-        method: "PATCH",
-        headers: { ...buildHeaders(token), "Content-Type": "application/json" },
-        body: JSON.stringify({ country }),
-      });
-      setConfirmedCountry(country);
-    } catch { /* silent — user can retry */ }
-    finally { setCountryConfirming(false); }
-  }
 
   function toggleAlert(id: string) {
     setExpandedAlerts((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -1951,15 +1941,14 @@ export default function TodayPage() {
 
   return (
     <>
-    {/* Currency confirmation modal for pre-existing unconfirmed accounts */}
-    {showCurrencyModal && token && unconfirmedAccounts.length > 0 && (
+    {/* Currency confirmation modal — only shown when no account setup modal is active */}
+    {showCurrencyModal && token && unconfirmedAccounts.length > 0 && !hasPendingBackfill() && (
       <CurrencyConfirmModal
         accounts={unconfirmedAccounts}
         token={token}
         onDone={() => {
           setShowCurrencyModal(false);
           setUnconfirmedAccounts([]);
-          // Trigger a full refresh so charts and totals update with confirmed currencies
           handleRefresh();
         }}
       />
@@ -1967,7 +1956,14 @@ export default function TodayPage() {
     <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
       <PromoDashboardBanner />
-      {token && <ParseStatusBanner onRefresh={() => load(token)} />}
+      {token && (
+        <ParseStatusBanner
+          onRefresh={() => load(token)}
+          confirmedCountry={confirmedCountry}
+          detectedCountry={detectedCountry}
+          onCountryConfirmed={(c) => setConfirmedCountry(c)}
+        />
+      )}
       {token && needsRefresh && (
         <RefreshToast token={token} onRefreshed={() => { setNeedsRefresh(false); load(token); }} />
       )}
@@ -2021,39 +2017,6 @@ export default function TodayPage() {
 
       {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
 
-      {/* ── Country confirmation — shown once after first statement upload ─── */}
-      {!loading && statementCount >= 1 && confirmedCountry === null && (
-        <div className="mb-5 rounded-xl border border-blue-100 bg-blue-50 px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-3">
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-blue-900">
-              {detectedCountry === "CA" ? "🍁" : "🇺🇸"} Confirm your home country
-            </p>
-            <p className="text-xs text-blue-700 mt-0.5">
-              We detected{" "}
-              <span className="font-semibold">
-                {detectedCountry === "CA" ? "Canada" : "United States"}
-              </span>{" "}
-              from your bank. Is that right? This helps us tailor tax tips, savings advice, and market signals to you.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={() => confirmCountry(detectedCountry)}
-              disabled={countryConfirming}
-              className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 transition"
-            >
-              Yes, {detectedCountry === "CA" ? "Canada 🍁" : "United States 🇺🇸"}
-            </button>
-            <button
-              onClick={() => confirmCountry(detectedCountry === "CA" ? "US" : "CA")}
-              disabled={countryConfirming}
-              className="rounded-lg border border-blue-200 bg-white px-4 py-2 text-xs font-semibold text-blue-700 hover:border-blue-300 disabled:opacity-50 transition"
-            >
-              No, {detectedCountry === "CA" ? "United States 🇺🇸" : "Canada 🍁"}
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* ── Zero / First-time / Rich layouts ────────────────────────────────── */}
       {!loading && statementCount === 0 ? (

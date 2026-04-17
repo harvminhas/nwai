@@ -752,7 +752,7 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
 
         {/* ── Agent insight cards ───────────────────────────────────────────── */}
         {idToken && (
-          <AgentInsightCards cards={agentCards} token={idToken} />
+          <AgentInsightCards cards={agentCards} token={idToken} homeCurrency={homeCurrency} />
         )}
 
         {/* ── Net worth chart ───────────────────────────────────────────────── */}
