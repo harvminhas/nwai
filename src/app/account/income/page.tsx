@@ -26,19 +26,19 @@ import { PROFILE_REFRESHED_EVENT, useProfileRefresh } from "@/contexts/ProfileRe
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function fmtShort(v: number) {
-  const sym = getCurrencySymbol();
+function fmtShort(v: number, ccy?: string) {
+  const sym = getCurrencySymbol(ccy);
   const abs = Math.abs(v);
   if (abs >= 1_000_000) return `${sym}${(abs / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `${sym}${Math.round(abs / 1_000)}k`;
-  return fmt(v);
+  return fmt(v, ccy);
 }
-function fmtAxis(v: number) {
-  const sym = getCurrencySymbol();
+function fmtAxis(v: number, ccy?: string) {
+  const sym = getCurrencySymbol(ccy);
   const abs = Math.abs(v);
   if (abs >= 1_000_000) return `${sym}${(abs / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `${sym}${Math.round(abs / 1_000)}k`;
-  return v === 0 ? `${sym}0` : fmt(v);
+  return v === 0 ? `${sym}0` : fmt(v, ccy);
 }
 function shortMonth(ym: string) {
   const [y, m] = ym.split("-");
@@ -111,6 +111,7 @@ function isGenericSourceName(description: string): boolean {
 function clusterByAmount(
   description: string,
   txns: IncomeTransaction[],
+  ccy?: string,
 ): { description: string; transactions: IncomeTransaction[] }[] {
   if (!isGenericSourceName(description) || txns.length <= 1) {
     return [{ description, transactions: txns }];
@@ -129,7 +130,7 @@ function clusterByAmount(
   for (const cluster of clusters) {
     const avg = cluster.txns.reduce((s, t) => s + t.amount, 0) / cluster.txns.length;
     if (avg >= 200 && cluster.txns.length >= 2) {
-      result.push({ description: `${description} — ${fmt(Math.round(avg))}`, transactions: cluster.txns });
+      result.push({ description: `${description} — ${fmt(Math.round(avg), ccy)}`, transactions: cluster.txns });
     } else {
       miscTxns.push(...cluster.txns);
     }
@@ -646,7 +647,7 @@ function IncomePageInner() {
   const expandedSources: { description: string; amount: number; txns: IncomeTransaction[] }[] = [];
   for (const [desc, txns] of rawSourceMap.entries()) {
     if (transactions.length > 0) {
-      const clusters = clusterByAmount(desc, txns);
+      const clusters = clusterByAmount(desc, txns, homeCurrency);
       for (const c of clusters) {
         expandedSources.push({
           description: c.description,
@@ -773,7 +774,7 @@ function IncomePageInner() {
       <div className="mb-1">
         <h1 className="font-bold text-3xl text-gray-900">Income</h1>
         <p className="mt-0.5 text-sm text-gray-400">
-          {current?.txIncome != null ? fmt(current.txIncome) : ""}{selectedMonth ? ` · ${longMonth(selectedMonth)}` : ""}
+          {current?.txIncome != null ? fmt(current.txIncome, homeCurrency) : ""}{selectedMonth ? ` · ${longMonth(selectedMonth)}` : ""}
         </p>
       </div>
 
@@ -877,13 +878,13 @@ function IncomePageInner() {
               {(current as (ConsolidatedData & { cashOnly?: boolean }) | null | undefined)?.cashOnly ? (
                 // Month has no statement — show cash income breakdown only
                 <div className="mt-3">
-                  <p className="mt-2 font-bold text-4xl text-gray-900">{fmt(current?.txIncome ?? 0)}</p>
+                  <p className="mt-2 font-bold text-4xl text-gray-900">{fmt(current?.txIncome ?? 0, homeCurrency)}</p>
                   <p className="mt-1 text-xs text-amber-600 font-medium">Cash income only · no statement uploaded</p>
                   <div className="mt-3 space-y-1.5">
                     {cashItems.filter((c) => selectedMonth && occurrencesInMonth(c, selectedMonth) > 0).map((c) => (
                       <div key={c.id} className="flex items-center justify-between text-sm">
                         <span className="text-gray-700">{c.name}</span>
-                        <span className="font-medium text-green-700">+{fmt(c.amount * (selectedMonth ? occurrencesInMonth(c, selectedMonth) : 0))}</span>
+                        <span className="font-medium text-green-700">+{fmt(c.amount * (selectedMonth ? occurrencesInMonth(c, selectedMonth) : 0), homeCurrency)}</span>
                       </div>
                     ))}
                   </div>
@@ -897,7 +898,7 @@ function IncomePageInner() {
                   <p className="mt-1 text-xs text-gray-400 leading-relaxed">
                     No chequing or savings statement uploaded for {selectedMonth ? longMonth(selectedMonth) : "this period"}.
                     Your {regularHistoryPoints.length}-month average is{" "}
-                    <span className="font-semibold text-gray-600">{fmt(avgIncome)}/mo</span>.
+                    <span className="font-semibold text-gray-600">{fmt(avgIncome, homeCurrency)}/mo</span>.
                   </p>
                   <Link href="/upload" className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-700 hover:bg-purple-100 transition">
                     Upload a statement →
@@ -905,10 +906,10 @@ function IncomePageInner() {
                 </div>
               ) : (
                 <>
-                  <p className="mt-2 font-bold text-4xl text-gray-900">{fmt(current?.txIncome ?? income?.total ?? 0)}</p>
+                  <p className="mt-2 font-bold text-4xl text-gray-900">{fmt(current?.txIncome ?? income?.total ?? 0, homeCurrency)}</p>
                   {incomeDelta !== null && incomeDelta !== 0 && (
                     <p className={`mt-1 text-xs font-medium ${incomeDelta > 0 ? "text-green-600" : "text-amber-500"}`}>
-                      {incomeDelta > 0 ? "↑" : "↓"} {fmtShort(Math.abs(incomeDelta))} vs {prevPoint ? shortMonth(prevPoint.yearMonth) : "last month"}
+                      {incomeDelta > 0 ? "↑" : "↓"} {fmtShort(Math.abs(incomeDelta), homeCurrency)} vs {prevPoint ? shortMonth(prevPoint.yearMonth) : "last month"}
                     </p>
                   )}
                   {incomeDelta === null && <p className="mt-1 text-xs text-gray-400">First month tracked</p>}
@@ -916,7 +917,7 @@ function IncomePageInner() {
                     <div className="mt-1">
                       <button onClick={() => setShowOneTime((v) => !v)}
                         className="flex items-center gap-1 text-xs text-amber-600 hover:text-amber-700 transition">
-                        <span>{fmt(oneTimeTotal)} in one-time deposits — excluded from averages</span>
+                        <span>{fmt(oneTimeTotal, homeCurrency)} in one-time deposits — excluded from averages</span>
                         <svg className={`h-3 w-3 transition-transform ${showOneTime ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
                         </svg>
@@ -927,7 +928,7 @@ function IncomePageInner() {
                             const acct = transactions.find((t) => (t.source ?? "Other").trim() === s.description)?.accountLabel;
                             return (
                               <p key={s.description} className="text-xs text-amber-500">
-                                {fmt(s.amount)} · {s.description}
+                                {fmt(s.amount, homeCurrency)} · {s.description}
                                 {acct ? <span className="text-amber-400"> · {acct}</span> : ""}
                               </p>
                             );
@@ -939,10 +940,10 @@ function IncomePageInner() {
                   {regularTotal > 0 && (
                     <div className="mt-4 flex flex-wrap gap-2">
                       <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${surplus >= 0 ? "border-green-200 bg-green-50 text-green-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
-                        {surplus >= 0 ? "surplus" : "deficit"} {surplus >= 0 ? "+" : ""}{fmt(surplus)}
+                        {surplus >= 0 ? "surplus" : "deficit"} {surplus >= 0 ? "+" : ""}{fmt(surplus, homeCurrency)}
                       </span>
                       {expensesTotal > 0 && (
-                        <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-600">spent {fmt(expensesTotal)}</span>
+                        <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-600">spent {fmt(expensesTotal, homeCurrency)}</span>
                       )}
                     </div>
                   )}
@@ -956,7 +957,7 @@ function IncomePageInner() {
                 <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-gray-400">Monthly income</p>
                 {avgIncome > 0 && (
                   <p className="mb-3 text-xs text-gray-400">
-                    {regularHistoryPoints.length}-month avg <span className="font-semibold text-gray-600">{fmt(avgIncome)} / mo</span>
+                    {regularHistoryPoints.length}-month avg <span className="font-semibold text-gray-600">{fmt(avgIncome, homeCurrency)} / mo</span>
                   </p>
                 )}
                 <div className="h-44 relative"
@@ -977,11 +978,11 @@ function IncomePageInner() {
                       style={{ cursor: "pointer" }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
                       <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
-                      <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={52} />
+                      <YAxis tickFormatter={(v) => fmtAxis(v, homeCurrency)} tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={52} />
                       <Tooltip
                         formatter={(v, name) => {
                           const label = name === "projected" ? "Est. income" : "Income";
-                          return [typeof v === "number" ? fmt(v) : String(v), label];
+                          return [typeof v === "number" ? fmt(v, homeCurrency) : String(v), label];
                         }}
                         contentStyle={{ borderRadius: "8px", border: "1px solid #e5e7eb", fontSize: "13px" }}
                         labelStyle={{ fontWeight: 600, color: "#111827" }} />
@@ -1055,7 +1056,7 @@ function IncomePageInner() {
                   <p className="text-xs font-semibold uppercase tracking-wider text-purple-500">{longMonth(selectedMonth)}</p>
                   <button onClick={() => setSelectedMonth(null)} className="text-xs text-gray-400 hover:text-gray-600 transition">✕ close</button>
                 </div>
-                <p className="text-3xl font-bold text-gray-900">{fmt(current.txIncome ?? income?.total ?? 0)}</p>
+                <p className="text-3xl font-bold text-gray-900">{fmt(current.txIncome ?? income?.total ?? 0, homeCurrency)}</p>
                 {(() => {
                   const monthSources = current.income?.sources ?? [];
                   const monthTxns = current.income?.transactions ?? [];
@@ -1066,7 +1067,7 @@ function IncomePageInner() {
                         {cashItems.filter((c) => occurrencesInMonth(c, selectedMonth) > 0).map((c) => (
                           <div key={c.id} className="flex items-center justify-between text-sm">
                             <span className="text-gray-700">{c.name}</span>
-                            <span className="font-medium text-green-700">+{fmt(c.amount * occurrencesInMonth(c, selectedMonth))}</span>
+                            <span className="font-medium text-green-700">+{fmt(c.amount * occurrencesInMonth(c, selectedMonth), homeCurrency)}</span>
                           </div>
                         ))}
                       </div>
@@ -1093,13 +1094,13 @@ function IncomePageInner() {
                       {rows.map(([desc, amt]) => (
                         <div key={desc} className="flex items-center justify-between text-sm">
                           <span className="truncate text-gray-700 max-w-[70%]">{desc}</span>
-                          <span className="font-medium text-green-700 tabular-nums shrink-0 ml-2">+{fmt(amt)}</span>
+                          <span className="font-medium text-green-700 tabular-nums shrink-0 ml-2">+{fmt(amt, homeCurrency)}</span>
                         </div>
                       ))}
                       {cashItems.filter((c) => occurrencesInMonth(c, selectedMonth) > 0).map((c) => (
                         <div key={c.id} className="flex items-center justify-between text-sm">
                           <span className="truncate text-gray-700 max-w-[70%]">{c.name} <span className="text-amber-500 text-xs">(cash)</span></span>
-                          <span className="font-medium text-green-700 tabular-nums shrink-0 ml-2">+{fmt(c.amount * occurrencesInMonth(c, selectedMonth))}</span>
+                          <span className="font-medium text-green-700 tabular-nums shrink-0 ml-2">+{fmt(c.amount * occurrencesInMonth(c, selectedMonth), homeCurrency)}</span>
                         </div>
                       ))}
                     </div>
@@ -1236,7 +1237,7 @@ function IncomePageInner() {
                             </div>
                             <div className="shrink-0 flex items-center gap-2">
                               <div className="text-right">
-                                <span className="font-semibold text-sm text-gray-900 tabular-nums">{fmt(src.amount)}</span>
+                                <span className="font-semibold text-sm text-gray-900 tabular-nums">{fmt(src.amount, homeCurrency)}</span>
                                 <span className="ml-2 text-xs text-gray-400">{src.pct}%</span>
                               </div>
                               <svg className="h-4 w-4 text-gray-300 group-hover:text-purple-400 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
@@ -1266,7 +1267,7 @@ function IncomePageInner() {
                         <span className="flex items-center gap-1.5">
                           <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium">transfer</span>
                           {s.description}
-                          <span className="text-gray-300">{fmt(s.amount)}</span>
+                          <span className="text-gray-300">{fmt(s.amount, homeCurrency)}</span>
                         </span>
                         {transferSources.has(s.description) && (
                           <button onClick={() => handleRestoreTransfer(s.description)} className="text-[10px] text-purple-400 hover:text-purple-600 hover:underline">restore</button>
@@ -1275,7 +1276,7 @@ function IncomePageInner() {
                     ))}
                     {manuallyExcludedSources.map((s) => (
                       <div key={s.description} className="flex items-center justify-between text-xs text-gray-400">
-                        <span>{s.description} <span className="text-gray-300">{fmt(s.amount)}</span></span>
+                        <span>{s.description} <span className="text-gray-300">{fmt(s.amount, homeCurrency)}</span></span>
                         <button onClick={() => handleRestoreSource(s.description)} className="text-[10px] text-purple-400 hover:text-purple-600 hover:underline">restore</button>
                       </div>
                     ))}
@@ -1357,8 +1358,8 @@ function IncomePageInner() {
                   <p className="text-xs text-green-600 mt-0.5">{cashItems.filter((c) => c.frequency !== "once").length} recurring source{cashItems.filter((c) => c.frequency !== "once").length !== 1 ? "s" : ""}</p>
                 </div>
                 <div className="text-right">
-                  <p className="font-bold text-lg text-green-700">{fmt(Math.round(cashMonthlyTotal))}<span className="text-sm font-normal">/mo</span></p>
-                  <p className="text-xs text-green-500">{fmt(Math.round(cashMonthlyTotal * 12))}/yr</p>
+                  <p className="font-bold text-lg text-green-700">{fmt(Math.round(cashMonthlyTotal), homeCurrency)}<span className="text-sm font-normal">/mo</span></p>
+                  <p className="text-xs text-green-500">{fmt(Math.round(cashMonthlyTotal * 12), homeCurrency)}/yr</p>
                 </div>
               </div>
             )}
@@ -1401,11 +1402,11 @@ function IncomePageInner() {
                         </p>
                         {item.notes && <p className="text-xs text-gray-400 mt-0.5 italic">{item.notes}</p>}
                         {!isOnce && monthly > 0 && (
-                          <p className="text-[11px] text-gray-400 mt-0.5">≈ {fmt(Math.round(monthly))}/mo · {fmt(Math.round(monthly * 12))}/yr</p>
+                          <p className="text-[11px] text-gray-400 mt-0.5">≈ {fmt(Math.round(monthly), homeCurrency)}/mo · {fmt(Math.round(monthly * 12), homeCurrency)}/yr</p>
                         )}
                       </div>
                       <div className="shrink-0 text-right">
-                        <p className="font-semibold text-sm text-green-600 tabular-nums">+{fmt(item.amount)}</p>
+                        <p className="font-semibold text-sm text-green-600 tabular-nums">+{fmt(item.amount, homeCurrency)}</p>
                         {!isOnce && <p className="text-[10px] text-gray-400 mt-0.5">{CASH_INCOME_FREQ_OPTIONS.find((f) => f.value === item.frequency)?.label}</p>}
                       </div>
                       <div className="shrink-0 flex gap-1.5 mt-0.5 opacity-0 group-hover:opacity-100 transition">
@@ -1524,9 +1525,9 @@ function IncomePageInner() {
               {/* Preview */}
               {cashForm.amount && cashForm.frequency && cashForm.frequency !== "once" && (
                 <div className="rounded-lg bg-green-50 border border-green-100 px-3 py-2 text-xs text-green-700">
-                  ≈ {fmt(Math.round(parseFloat(cashForm.amount || "0") * (CASH_INCOME_FREQ_MONTHLY[cashForm.frequency] ?? 0)))}/mo
+                  ≈ {fmt(Math.round(parseFloat(cashForm.amount || "0") * (CASH_INCOME_FREQ_MONTHLY[cashForm.frequency] ?? 0)), homeCurrency)}/mo
                   {" · "}
-                  {fmt(Math.round(parseFloat(cashForm.amount || "0") * (CASH_INCOME_FREQ_MONTHLY[cashForm.frequency] ?? 0) * 12))}/yr
+                  {fmt(Math.round(parseFloat(cashForm.amount || "0") * (CASH_INCOME_FREQ_MONTHLY[cashForm.frequency] ?? 0) * 12), homeCurrency)}/yr
                 </div>
               )}
             </div>

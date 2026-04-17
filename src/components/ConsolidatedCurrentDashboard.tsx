@@ -16,20 +16,20 @@ import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function fmtShort(v: number) {
-  const sym = getCurrencySymbol();
+function fmtShort(v: number, ccy: string) {
+  const sym = getCurrencySymbol(ccy);
   const abs = Math.abs(v);
   const sign = v < 0 ? "-" : "+";
   if (abs >= 1_000_000) return `${sign}${sym}${(abs / 1_000_000).toFixed(2)}M`;
   if (abs >= 1_000)     return `${sign}${sym}${Math.round(abs / 1_000)}k`;
-  return `${sign}${fmt(Math.abs(v))}`;
+  return `${sign}${fmt(Math.abs(v), ccy)}`;
 }
-function fmtNW(v: number) {
-  const sym = getCurrencySymbol();
+function fmtNW(v: number, ccy: string) {
+  const sym = getCurrencySymbol(ccy);
   const abs = Math.abs(v);
   if (abs >= 1_000_000) return `${sym}${(abs / 1_000_000).toFixed(2)}M`;
   if (abs >= 1_000)     return `${sym}${Math.round(abs / 1_000)}k`;
-  return fmt(v);
+  return fmt(v, ccy);
 }
 function monthLabel(ym: string) {
   const [y, m] = ym.split("-");
@@ -72,6 +72,7 @@ function computeSignals(
   history: HistoryPoint[],
   liquidAssets: number,
   hasDebts: boolean,
+  ccy: string = "USD",
 ): Signal[] {
   const sorted = [...history].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
   const idx    = sorted.findIndex((h) => h.yearMonth === currentYm);
@@ -87,9 +88,9 @@ function computeSignals(
     const pct   = (prev.netWorth ?? 0) !== 0 ? delta / Math.abs(prev.netWorth ?? 0) : 0;
     // fillPct: map [-10%, +10%] → [0, 100]; 0% = 50, +5% = 75, -5% = 25
     const fillPct = Math.round(Math.min(100, Math.max(0, (pct * 500 + 1) * 50)));
-    if (pct > 0.005) return { ...base, status: "pass",    detail: `Up ${fmtShort(delta)} vs last month`,          fillPct };
+    if (pct > 0.005) return { ...base, status: "pass",    detail: `Up ${fmtShort(delta, ccy)} vs last month`,          fillPct };
     if (pct >= -0.005) return { ...base, status: "warning", detail: "Flat this month (within 0.5%)",               fillPct: 50 };
-    return              { ...base, status: "fail",    detail: `Down ${fmtShort(Math.abs(delta))} vs last month`, fillPct };
+    return              { ...base, status: "fail",    detail: `Down ${fmtShort(Math.abs(delta), ccy)} vs last month`, fillPct };
   })();
 
   // ── 2. Savings rate (25%) ─────────────────────────────────────────────────
@@ -101,7 +102,7 @@ function computeSignals(
     const fillPct = Math.round(Math.min(100, Math.max(0, (rate + 0.5) / 0.8 * 100)));
     if (rate >= 0.10) return { ...base, status: "pass",    detail: `Saving ${Math.round(rate * 100)}% of income`,                        fillPct };
     if (rate >= 0)   return { ...base, status: "warning", detail: `Saving ${Math.round(rate * 100)}% — target is 10%`,                   fillPct };
-    return            { ...base, status: "fail",    detail: `Spending ${fmt(cur.expensesTotal - cur.incomeTotal)} more than earned`, fillPct };
+    return            { ...base, status: "fail",    detail: `Spending ${fmt(cur.expensesTotal - cur.incomeTotal, ccy)} more than earned`, fillPct };
   })();
 
   // ── 3. Debt plan adherence (20%) ──────────────────────────────────────────
@@ -113,9 +114,9 @@ function computeSignals(
     // fillPct: paid-down ratio vs total debt; clamp [-10%, +10%] change → [0, 100]
     const changePct = cur.debtTotal > 0 ? delta / cur.debtTotal : 0;
     const fillPct = Math.round(Math.min(100, Math.max(0, (-changePct * 500 + 1) * 50)));
-    if (delta < -10) return { ...base, status: "pass",    detail: `Paid down ${fmt(Math.abs(delta))} this month`,  fillPct };
+    if (delta < -10) return { ...base, status: "pass",    detail: `Paid down ${fmt(Math.abs(delta), ccy)} this month`,  fillPct };
     if (delta <= 50) return { ...base, status: "warning", detail: "Debt unchanged this month",                     fillPct: 50 };
-    return            { ...base, status: "fail",    detail: `Debt increased by ${fmt(delta)} this month`,   fillPct };
+    return            { ...base, status: "fail",    detail: `Debt increased by ${fmt(delta, ccy)} this month`,   fillPct };
   })();
 
   // ── 4. Spending vs budget (15%) ───────────────────────────────────────────
@@ -128,7 +129,7 @@ function computeSignals(
     const fillPct = Math.round(Math.min(100, Math.max(0, 100 - Math.max(0, ratio - 1) * 200)));
     if (ratio <= 1.0)  return { ...base, status: "pass",    detail: `Spending at ${Math.round(ratio * 100)}% of avg — on target`,         fillPct };
     if (ratio <= 1.10) return { ...base, status: "warning", detail: `Spending at ${Math.round(ratio * 100)}% of avg — slightly elevated`, fillPct };
-    return              { ...base, status: "fail",    detail: `Spending at ${Math.round(ratio * 100)}% of avg — ${fmt(cur.expensesTotal - avg)} over`, fillPct };
+    return              { ...base, status: "fail",    detail: `Spending at ${Math.round(ratio * 100)}% of avg — ${fmt(cur.expensesTotal - avg, ccy)} over`, fillPct };
   })();
 
   // ── 5. Goal trajectory (5%) ───────────────────────────────────────────────
@@ -433,6 +434,7 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   const [assetLabels, setAssetLabels] = useState<string[]>([]);
   const [debtLabels, setDebtLabels]   = useState<string[]>([]);
   const [liquidAssets, setLiquidAssets] = useState(0);
+  const [homeCurrency, setHomeCurrency] = useState("USD");
   const [modalOpen, setModalOpen]     = useState(false);
   const [agentCards, setAgentCards]   = useState<AgentCard[]>([]);
   const [idToken, setIdToken]         = useState<string | null>(null);
@@ -459,6 +461,7 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
         setAssetLabels(json.assetLabels ?? []);
         setDebtLabels(json.debtLabels ?? []);
         setLiquidAssets(json.liquidAssets ?? 0);
+        if (json.homeCurrency) setHomeCurrency(json.homeCurrency);
         const incomplete: string[] = json.incompleteMonths ?? [];
         setIncompleteMonths(incomplete);
         setHistory(Array.isArray(json.history)
@@ -575,14 +578,14 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   const saved = income - expenses;
 
   // ── scoring ────────────────────────────────────────────────────────────────
-  const signals   = computeSignals(yearMonth, history, liquidAssets, hasDebts);
+  const signals   = computeSignals(yearMonth, history, liquidAssets, hasDebts, homeCurrency);
   const score     = computeScore(signals);
 
   // Compute previous month's status for hysteresis
   const sorted    = [...history].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
   const prevIdx   = sorted.findIndex((h) => h.yearMonth === yearMonth) - 1;
   const prevYm    = prevIdx >= 0 ? sorted[prevIdx].yearMonth : null;
-  const prevSigs  = prevYm ? computeSignals(prevYm, history, liquidAssets, hasDebts) : null;
+  const prevSigs  = prevYm ? computeSignals(prevYm, history, liquidAssets, hasDebts, homeCurrency) : null;
   const prevScore = prevSigs ? computeScore(prevSigs) : null;
   const curRaw    = rawStatus(score, signals);
   const prevRaw   = prevSigs && prevScore != null ? rawStatus(prevScore, prevSigs) : null;
@@ -636,7 +639,7 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
           </div>
           <div className="mt-2 flex items-end gap-4">
             <p className="text-5xl font-extrabold tracking-tight text-gray-900 tabular-nums leading-none">
-              {fmtNW(netWorth)}
+              {fmtNW(netWorth, homeCurrency)}
             </p>
             {nwDelta != null && (
               <div className="relative mb-1 group/nwbadge">
@@ -651,7 +654,7 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
                     ? <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg>
                     : <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
                   }
-                  {fmtShort(nwDelta)} this month
+                  {fmtShort(nwDelta, homeCurrency)} this month
                   {isLikelyNewAccount && (
                     <svg className="h-3.5 w-3.5 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -674,8 +677,8 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
           {saved !== 0 && income > 0 && (
             <p className="mt-2 text-xs text-gray-400">
               {saved >= 0
-                ? <><span className="font-medium text-blue-600">{fmt(saved)}</span> saved this month</>
-                : <><span className="font-medium text-red-500">{fmt(Math.abs(saved))}</span> over budget this month</>
+                ? <><span className="font-medium text-blue-600">{fmt(saved, homeCurrency)}</span> saved this month</>
+                : <><span className="font-medium text-red-500">{fmt(Math.abs(saved), homeCurrency)}</span> over budget this month</>
               }
             </p>
           )}
@@ -691,23 +694,23 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
           {/* Assets */}
           <Link href="/account/assets" className="group rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:border-purple-200 hover:shadow transition">
             <p className="text-xs text-gray-400">Assets</p>
-            <p className="mt-1 text-xl font-bold text-gray-900 tabular-nums">{fmtNW(assets)}</p>
+            <p className="mt-1 text-xl font-bold text-gray-900 tabular-nums">{fmtNW(assets, homeCurrency)}</p>
             {assetSubLabel
               ? <p className="mt-1 text-xs text-gray-400 truncate">{assetSubLabel}</p>
               : assetDelta != null
-                ? <p className={`mt-1 text-xs font-medium ${assetDelta >= 0 ? "text-green-600" : "text-red-500"}`}>{fmtShort(assetDelta)} vs last mo</p>
+                ? <p className={`mt-1 text-xs font-medium ${assetDelta >= 0 ? "text-green-600" : "text-red-500"}`}>{fmtShort(assetDelta, homeCurrency)} vs last mo</p>
                 : null}
           </Link>
 
           {/* Debts */}
           <Link href="/account/liabilities" className="group rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:border-purple-200 hover:shadow transition">
             <p className="text-xs text-gray-400">Debts</p>
-            <p className="mt-1 text-xl font-bold text-red-500 tabular-nums">{fmtNW(debts)}</p>
+            <p className="mt-1 text-xl font-bold text-red-500 tabular-nums">{fmtNW(debts, homeCurrency)}</p>
             {debtSubLabel
               ? <p className="mt-1 text-xs text-gray-400 truncate">{debtSubLabel}</p>
               : debtDelta != null && debts > 0
                 ? <p className={`mt-1 text-xs font-medium ${debtDelta <= 0 ? "text-green-600" : "text-red-500"}`}>
-                    {debtDelta <= 0 ? `${fmtShort(Math.abs(debtDelta))} paid down` : `${fmtShort(debtDelta)} more`}
+                    {debtDelta <= 0 ? `${fmtShort(Math.abs(debtDelta), homeCurrency)} paid down` : `${fmtShort(debtDelta, homeCurrency)} more`}
                   </p>
                 : null}
           </Link>
@@ -716,11 +719,11 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
           <Link href="/account/income" className="group rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:border-purple-200 hover:shadow transition">
             <p className="text-xs text-gray-400">Avg income/mo</p>
             <p className="mt-1 text-xl font-bold text-green-600 tabular-nums">
-              {avgIncome > 0 ? fmtNW(avgIncome) : "—"}
+              {avgIncome > 0 ? fmtNW(avgIncome, homeCurrency) : "—"}
             </p>
             {income > 0 && avgIncome > 0 ? (
               <p className={`mt-1 text-xs font-medium ${income >= avgIncome ? "text-green-600" : "text-amber-500"}`}>
-                {fmt(income)} this month
+                {fmt(income, homeCurrency)} this month
               </p>
             ) : (
               <p className="mt-1 text-xs text-gray-400">
@@ -733,11 +736,11 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
           <Link href="/account/spending" className="group rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:border-purple-200 hover:shadow transition">
             <p className="text-xs text-gray-400">Typical spending/mo</p>
             <p className="mt-1 text-xl font-bold text-gray-900 tabular-nums">
-              {medianExpenses > 0 ? fmtNW(medianExpenses) : "—"}
+              {medianExpenses > 0 ? fmtNW(medianExpenses, homeCurrency) : "—"}
             </p>
             {expenses > 0 && medianExpenses > 0 ? (
               <p className={`mt-1 text-xs font-medium ${expenses <= medianExpenses ? "text-green-600" : "text-red-500"}`}>
-                {fmt(expenses)} this month
+                {fmt(expenses, homeCurrency)} this month
               </p>
             ) : (
               <p className="mt-1 text-xs text-gray-400">
