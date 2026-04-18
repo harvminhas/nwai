@@ -4,8 +4,9 @@
  * PromoDashboardBanner
  *
  * Shown at the top of the dashboard for free-plan users when an active
- * promo campaign exists. Users must TYPE their code — it is never revealed
- * by the API, so the offer stays exclusive to people who know the code.
+ * promo campaign exists. Renders as a slim collapsible pill — clicking
+ * "Enter code →" expands the code input inline. Users must TYPE their
+ * code — it is never revealed by the API.
  */
 
 import { useEffect, useState } from "react";
@@ -27,16 +28,16 @@ function durationLabel(days: number): string {
 export default function PromoDashboardBanner() {
   const { planId, refresh } = usePlan();
 
-  const [campaign,   setCampaign]   = useState<FeaturedCampaign | null>(null);
-  const [code,       setCode]       = useState("");
-  const [idToken,    setIdToken]    = useState<string | null>(null);
-  const [applying,   setApplying]   = useState(false);
-  const [error,      setError]      = useState<string | null>(null);
-  const [success,    setSuccess]    = useState(false);
-  const [expiresAt,  setExpiresAt]  = useState<string | null>(null);
-  const [dismissed,  setDismissed]  = useState(false);
+  const [campaign,  setCampaign]  = useState<FeaturedCampaign | null>(null);
+  const [code,      setCode]      = useState("");
+  const [idToken,   setIdToken]   = useState<string | null>(null);
+  const [applying,  setApplying]  = useState(false);
+  const [error,     setError]     = useState<string | null>(null);
+  const [success,   setSuccess]   = useState(false);
+  const [expiresAt, setExpiresAt] = useState<string | null>(null);
+  const [dismissed, setDismissed] = useState(false);
+  const [expanded,  setExpanded]  = useState(false);
 
-  // Fetch active campaign on mount
   useEffect(() => {
     if (planId !== "free") return;
     fetch("/api/promo/featured")
@@ -45,7 +46,6 @@ export default function PromoDashboardBanner() {
       .catch(() => {});
   }, [planId]);
 
-  // Auth token for redemption
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
@@ -71,7 +71,7 @@ export default function PromoDashboardBanner() {
       }
       setExpiresAt(data.expiresAt ?? null);
       setSuccess(true);
-      await refresh(); // update plan context immediately
+      await refresh();
     } catch {
       setError("Something went wrong. Please try again.");
     } finally {
@@ -79,42 +79,27 @@ export default function PromoDashboardBanner() {
     }
   }
 
-  // Only render for free users with an active campaign
   if (planId !== "free" || !campaign || dismissed) return null;
 
   const duration = durationLabel(campaign.durationDays);
 
+  // ── Success state ────────────────────────────────────────────────────────
   if (success) {
     const expiry = expiresAt
       ? new Date(expiresAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
       : null;
-
     return (
-      <div className="mb-4 rounded-2xl border border-green-200 bg-green-50 px-6 py-5">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-start gap-4">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-green-100">
-              <svg className="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-            </div>
-            <div>
-              <p className="text-base font-bold text-green-900">You&apos;re on Pro! 🎉</p>
-              <p className="mt-0.5 text-sm text-green-700">
-                {duration} of Pro access is now active.{" "}
-                {expiry && <span>Access expires <strong>{expiry}</strong>.</span>}
-              </p>
-              <p className="mt-1 text-xs text-green-600">
-                All features are unlocked — forecasts, AI insights, goals, debt planner, and more.
-              </p>
-            </div>
+      <div className="mb-4 rounded-xl border border-green-200 bg-green-50 px-4 py-2.5">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <span className="text-base shrink-0">🎉</span>
+            <span className="text-sm font-semibold text-green-800">You&apos;re on Pro!</span>
+            <span className="text-xs text-green-600">
+              {duration} active.{expiry && <> Expires <strong>{expiry}</strong>.</>}
+            </span>
           </div>
-          <button
-            onClick={() => setDismissed(true)}
-            className="shrink-0 text-green-400 hover:text-green-600 transition"
-            aria-label="Dismiss"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <button onClick={() => setDismissed(true)} className="shrink-0 text-green-400 hover:text-green-600 transition" aria-label="Dismiss">
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
@@ -123,52 +108,62 @@ export default function PromoDashboardBanner() {
     );
   }
 
+  // ── Collapsed / expanded pill ────────────────────────────────────────────
   return (
-    <div className="mb-4 rounded-xl border border-purple-200 bg-gradient-to-r from-purple-50 to-white px-5 py-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-3 min-w-0 flex-1">
-          <span className="text-xl shrink-0 mt-0.5" aria-hidden="true">🎉</span>
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-bold text-purple-900">
-              Special offer — get {duration} of Pro free
-            </p>
-            <p className="text-xs text-purple-600 mt-0.5">
-              Have a promo code? Enter it below to unlock all Pro features instantly.
-            </p>
+    <div className="mb-4 rounded-xl border border-purple-200 bg-purple-50/60 overflow-hidden">
 
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <input
-                value={code}
-                onChange={(e) => { setCode(e.target.value.toUpperCase()); setError(null); }}
-                onKeyDown={(e) => e.key === "Enter" && handleApply()}
-                placeholder="Enter code"
-                maxLength={32}
-                className="w-44 rounded-lg border border-purple-200 bg-white px-3 py-1.5 text-sm font-mono uppercase tracking-wide placeholder:normal-case placeholder:tracking-normal focus:outline-none focus:ring-2 focus:ring-purple-400"
-              />
-              <button
-                onClick={handleApply}
-                disabled={applying || !code.trim()}
-                className="rounded-lg bg-purple-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50 transition"
-              >
-                {applying ? "Applying…" : "Apply"}
-              </button>
-            </div>
-
-            {error && (
-              <p className="mt-1.5 text-xs text-red-600">{error}</p>
-            )}
-          </div>
-        </div>
+      {/* Slim header row — always visible */}
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="flex items-center gap-2 min-w-0 flex-1 text-left group"
+        >
+          <span className="text-sm shrink-0" aria-hidden="true">🎉</span>
+          <span className="text-xs font-semibold text-purple-800 group-hover:text-purple-900 transition truncate">
+            Special offer — get {duration} of Pro free
+          </span>
+          <span className="ml-1 text-xs text-purple-400 shrink-0 group-hover:text-purple-600 transition">
+            {expanded ? "hide" : "enter code →"}
+          </span>
+        </button>
         <button
           onClick={() => setDismissed(true)}
-          className="shrink-0 text-purple-300 hover:text-purple-500 transition mt-0.5"
+          className="shrink-0 text-purple-300 hover:text-purple-500 transition"
           aria-label="Dismiss"
         >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
       </div>
+
+      {/* Expanded code entry */}
+      {expanded && (
+        <div className="border-t border-purple-100 bg-white px-4 py-3">
+          <p className="text-xs text-purple-600 mb-2">
+            Have a promo code? Enter it below to unlock all Pro features instantly.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              value={code}
+              onChange={(e) => { setCode(e.target.value.toUpperCase()); setError(null); }}
+              onKeyDown={(e) => e.key === "Enter" && handleApply()}
+              placeholder="Enter code"
+              maxLength={32}
+              autoFocus
+              className="w-44 rounded-lg border border-purple-200 bg-white px-3 py-1.5 text-sm font-mono uppercase tracking-wide placeholder:normal-case placeholder:tracking-normal focus:outline-none focus:ring-2 focus:ring-purple-400"
+            />
+            <button
+              onClick={handleApply}
+              disabled={applying || !code.trim()}
+              className="rounded-lg bg-purple-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50 transition"
+            >
+              {applying ? "Applying…" : "Apply"}
+            </button>
+          </div>
+          {error && <p className="mt-1.5 text-xs text-red-600">{error}</p>}
+        </div>
+      )}
     </div>
   );
 }

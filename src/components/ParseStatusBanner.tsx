@@ -15,7 +15,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { doc, onSnapshot } from "firebase/firestore";
+import { collection, doc, getDocs, limit, onSnapshot, query, where } from "firebase/firestore";
 import { getFirebaseClient } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 
@@ -69,37 +69,25 @@ const AGE_BUCKETS = [
 
 type BucketId = typeof AGE_BUCKETS[number]["id"];
 
-// Step sequence: country (optional) → currency → age
-type Step = "country" | "currency" | "age";
+// Step sequence: currency → age (2 steps only)
+type Step = "currency" | "age";
 
-// ── Account setup modal (replaces inline BackfillPromptModal + country banner) ─
+// ── Account setup modal — currency + age only ─────────────────────────────────
 
 function AccountSetupModal({
   prompt,
   idToken,
-  needsCountry,
-  detectedCountry,
   onDone,
-  onCountryConfirmed,
 }: {
   prompt: BackfillPrompt;
   idToken: string;
-  needsCountry: boolean;
-  detectedCountry: "CA" | "US";
   onDone: () => void;
-  onCountryConfirmed: (country: "CA" | "US") => void;
 }) {
-  const firstStep: Step = needsCountry ? "country" : "currency";
-  const [step,     setStep]     = useState<Step>(firstStep);
-  const [country,  setCountry]  = useState<"CA" | "US">(detectedCountry);
-  const [currency, setCurrency] = useState<string>(prompt.inferredCurrency || "USD");
-  const [selected, setSelected] = useState<BucketId | null>(null);
-  const [saving,   setSaving]   = useState(false);
-  const [saveError,setSaveError]= useState<string | null>(null);
-
-  // Total steps for the progress indicator
-  const totalSteps = needsCountry ? 3 : 2;
-  const stepNum    = step === "country" ? 1 : step === "currency" ? (needsCountry ? 2 : 1) : (needsCountry ? 3 : 2);
+  const [step,      setStep]      = useState<Step>("currency");
+  const [currency,  setCurrency]  = useState<string>(prompt.inferredCurrency || "USD");
+  const [selected,  setSelected]  = useState<BucketId | null>(null);
+  const [saving,    setSaving]    = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const displayId = prompt.slugIsAccountNumber
     ? `••••${prompt.accountSlug.slice(-4)}`
@@ -109,24 +97,11 @@ function AccountSetupModal({
     if (!selected) return;
     setSaving(true);
     setSaveError(null);
-
     const bucket = AGE_BUCKETS.find((b) => b.id === selected)!;
     const backfillMonths = bucket.months === -1
       ? (prompt.oldestMonth ? monthsDiff(prompt.oldestMonth, prompt.firstStatementYearMonth) : 12)
       : bucket.months;
-
     try {
-      // Save country if we collected it
-      if (needsCountry) {
-        await fetch("/api/user/profile", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
-          body: JSON.stringify({ country }),
-        });
-        onCountryConfirmed(country);
-      }
-
-      // Save confirmed currency
       const ccyRes = await fetch("/api/user/currency-overrides", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
@@ -134,7 +109,6 @@ function AccountSetupModal({
       });
       if (!ccyRes.ok) { setSaveError("Couldn't save currency — please try again."); return; }
 
-      // Save account age / backfill
       const bfRes = await fetch("/api/user/account-backfills", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
@@ -149,7 +123,6 @@ function AccountSetupModal({
         }),
       });
       if (!bfRes.ok) { setSaveError("Couldn't save account history — please try again."); return; }
-
       onDone();
     } catch {
       setSaveError("Network error — please try again.");
@@ -157,8 +130,6 @@ function AccountSetupModal({
       setSaving(false);
     }
   };
-
-  const selectedBucket = AGE_BUCKETS.find((b) => b.id === selected);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
@@ -168,70 +139,43 @@ function AccountSetupModal({
         <div className="px-6 pt-6 pb-4 border-b border-gray-100">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">New account detected</p>
-              <h2 className="mt-0.5 text-base font-bold text-gray-900">
-                {prompt.accountName || displayId}
-              </h2>
+              <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">New account</p>
+              <h2 className="mt-0.5 text-base font-bold text-gray-900">{prompt.accountName || displayId}</h2>
             </div>
-            {/* Progress dots */}
-            <div className="flex items-center gap-1.5 shrink-0">
-              {Array.from({ length: totalSteps }).map((_, i) => (
-                <span key={i} className={`h-1.5 w-1.5 rounded-full transition ${i + 1 <= stepNum ? "bg-purple-600" : "bg-gray-200"}`} />
-              ))}
-              <span className="ml-1 text-[10px] font-medium text-gray-400">{stepNum}/{totalSteps}</span>
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="flex items-center gap-1.5">
+                {(["currency", "age"] as Step[]).map((s, i) => (
+                  <span key={s} className={`h-1.5 w-1.5 rounded-full transition ${
+                    (step === "currency" ? 0 : 1) >= i ? "bg-purple-600" : "bg-gray-200"
+                  }`} />
+                ))}
+                <span className="ml-1 text-[10px] font-medium text-gray-400">
+                  {step === "currency" ? "1" : "2"}/2
+                </span>
+              </div>
+              <button onClick={onDone} className="flex h-6 w-6 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition" aria-label="Dismiss">
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
           </div>
         </div>
 
         {/* Body */}
         <div className="px-6 py-5">
-
-          {/* ── Step: Country ──────────────────────────────────────── */}
-          {step === "country" && (
-            <>
-              <p className="text-sm font-semibold text-gray-800">Where are your accounts based?</p>
-              <p className="mt-1 text-xs text-gray-500">
-                We detected <span className="font-medium">{detectedCountry === "CA" ? "Canada" : "United States"}</span> from your bank. Confirm so we can tailor tax tips, savings benchmarks, and market signals.
-              </p>
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                {(["CA", "US"] as const).map((c) => (
-                  <button
-                    key={c}
-                    onClick={() => setCountry(c)}
-                    className={`flex flex-col items-center gap-1.5 rounded-xl border-2 py-4 transition ${
-                      country === c
-                        ? "border-purple-500 bg-purple-50"
-                        : "border-gray-200 bg-gray-50 hover:border-gray-300"
-                    }`}
-                  >
-                    <span className="text-2xl">{c === "CA" ? "🍁" : "🇺🇸"}</span>
-                    <span className={`text-sm font-semibold ${country === c ? "text-purple-700" : "text-gray-700"}`}>
-                      {c === "CA" ? "Canada" : "United States"}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-
-          {/* ── Step: Currency ─────────────────────────────────────── */}
           {step === "currency" && (
             <>
               <p className="text-sm font-semibold text-gray-800">What currency is this account in?</p>
               <p className="mt-1 text-xs text-gray-500">
-                We detected <span className="font-medium">{prompt.inferredCurrency}</span> — confirm or change. This affects how balances and transactions are displayed.
+                We detected <span className="font-medium">{prompt.inferredCurrency}</span> — confirm or change below.
               </p>
               <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {SUPPORTED_CURRENCIES.map((c) => (
-                  <button
-                    key={c.code}
-                    onClick={() => setCurrency(c.code)}
+                  <button key={c.code} onClick={() => setCurrency(c.code)}
                     className={`flex items-center gap-2 rounded-xl border-2 px-3 py-2.5 text-left transition ${
-                      currency === c.code
-                        ? "border-purple-500 bg-purple-50"
-                        : "border-gray-200 bg-gray-50 hover:border-gray-300"
-                    }`}
-                  >
+                      currency === c.code ? "border-purple-500 bg-purple-50" : "border-gray-200 bg-gray-50 hover:border-gray-300"
+                    }`}>
                     <span className={`text-base font-bold ${currency === c.code ? "text-purple-700" : "text-gray-600"}`}>{c.label}</span>
                     <span className={`text-xs ${currency === c.code ? "text-purple-600" : "text-gray-500"}`}>{c.name}</span>
                   </button>
@@ -240,32 +184,24 @@ function AccountSetupModal({
             </>
           )}
 
-          {/* ── Step: Age ──────────────────────────────────────────── */}
           {step === "age" && (
             <>
               <p className="text-sm font-semibold text-gray-800">How long have you had this account?</p>
               <p className="mt-1 text-xs text-gray-500">
-                We&apos;ll fill in estimated balance history so your net worth chart doesn&apos;t show a false spike when this account first appears.
+                We&apos;ll fill in estimated balance history so your net worth chart doesn&apos;t show a false spike.
               </p>
               <div className="mt-4 grid grid-cols-2 gap-2">
                 {AGE_BUCKETS.map((b) => (
-                  <button
-                    key={b.id}
-                    onClick={() => setSelected(b.id)}
+                  <button key={b.id} onClick={() => setSelected(b.id)}
                     className={`rounded-xl border-2 px-3 py-3 text-left transition ${
-                      selected === b.id
-                        ? "border-purple-500 bg-purple-50"
-                        : "border-gray-200 bg-gray-50 hover:border-gray-300"
-                    }`}
-                  >
+                      selected === b.id ? "border-purple-500 bg-purple-50" : "border-gray-200 bg-gray-50 hover:border-gray-300"
+                    }`}>
                     <p className={`text-sm font-semibold ${selected === b.id ? "text-purple-700" : "text-gray-700"}`}>{b.label}</p>
                     <p className="mt-0.5 text-[11px] text-gray-400 leading-snug">{b.help}</p>
                   </button>
                 ))}
               </div>
-              {saveError && (
-                <p className="mt-3 text-xs font-medium text-red-600">{saveError}</p>
-              )}
+              {saveError && <p className="mt-3 text-xs font-medium text-red-600">{saveError}</p>}
               {prompt.slugIsAccountNumber && (
                 <p className="mt-3 text-[11px] text-gray-400">
                   <span className="font-medium">Already tracking {displayId}?</span>{" "}
@@ -279,40 +215,24 @@ function AccountSetupModal({
         {/* Footer */}
         <div className="flex items-center justify-between gap-3 px-6 pb-6">
           <button
-            onClick={() => {
-              if (step === "currency" && needsCountry) setStep("country");
-              else if (step === "age") setStep("currency");
-              else onDone();
-            }}
-            className="text-xs font-medium text-gray-400 hover:text-gray-600 transition"
+            onClick={() => step === "age" && setStep("currency")}
+            className={`text-xs font-medium text-gray-400 hover:text-gray-600 transition ${step === "currency" ? "invisible" : ""}`}
           >
-            {step === firstStep ? "Skip for now" : "← Back"}
+            ← Back
           </button>
-
-          {step === "country" && (
-            <button
-              onClick={() => setStep("currency")}
-              className="rounded-xl bg-purple-600 px-5 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
-            >
-              Continue →
-            </button>
-          )}
           {step === "currency" && (
-            <button
-              onClick={() => setStep("age")}
-              className="rounded-xl bg-purple-600 px-5 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
-            >
+            <button onClick={() => setStep("age")} className="rounded-xl bg-purple-600 px-5 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition">
               Continue →
             </button>
           )}
           {step === "age" && (
-            <button
-              onClick={handleSave}
-              disabled={!selected || saving}
-              className="rounded-xl bg-purple-600 px-5 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-40 transition"
-            >
-              {saving ? "Saving…" : "Done ✓"}
-            </button>
+            <div className="flex items-center gap-3">
+              <button onClick={onDone} className="text-xs font-medium text-gray-400 hover:text-gray-600 transition">Skip</button>
+              <button onClick={handleSave} disabled={!selected || saving}
+                className="rounded-xl bg-purple-600 px-5 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-40 transition">
+                {saving ? "Saving…" : "Done ✓"}
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -333,24 +253,17 @@ interface ParseItem extends PendingParse { status: ParseItemStatus }
 
 export default function ParseStatusBanner({
   onRefresh,
-  confirmedCountry,
-  detectedCountry = "US",
-  onCountryConfirmed,
+  onBackfillDetected,
 }: {
   onRefresh: () => void;
-  confirmedCountry?: string | null;
-  detectedCountry?: "CA" | "US";
-  onCountryConfirmed?: (country: "CA" | "US") => void;
+  onBackfillDetected?: () => void;
 }) {
-  const router                              = useRouter();
-  const [items,          setItems]          = useState<ParseItem[]>([]);
-  const [showDone,       setShowDone]       = useState(false);
-  const [idToken,        setIdToken]        = useState<string | null>(null);
-  // Resolved country state — starts from the prop, then self-fetches when prop is absent
-  const [resolvedCountry,    setResolvedCountry]    = useState<string | null | undefined>(confirmedCountry);
-  const [resolvedDetected,   setResolvedDetected]   = useState<"CA" | "US">(detectedCountry);
-  const onRefreshRef                        = useRef(onRefresh);
-  const refreshedRef                        = useRef(false);
+  const router                        = useRouter();
+  const [items,       setItems]       = useState<ParseItem[]>([]);
+  const [showDone,    setShowDone]    = useState(false);
+  const [idToken,     setIdToken]     = useState<string | null>(null);
+  const onRefreshRef                  = useRef(onRefresh);
+  const refreshedRef                  = useRef(false);
 
   // Persist the backfill prompt to localStorage so it survives parent remounts
   // (e.g. when the dashboard triggers setLoading(true) during a data refresh).
@@ -360,45 +273,81 @@ export default function ParseStatusBanner({
       return raw ? (JSON.parse(raw) as BackfillPrompt) : null;
     } catch { return null; }
   });
+  const onBackfillDetectedRef = useRef(onBackfillDetected);
+  useEffect(() => { onBackfillDetectedRef.current = onBackfillDetected; }, [onBackfillDetected]);
+
   const setBackfillPrompt = (p: BackfillPrompt | null) => {
     setBackfillPromptState(p);
     try {
-      if (p) localStorage.setItem(BACKFILL_PROMPT_KEY, JSON.stringify(p));
-      else    localStorage.removeItem(BACKFILL_PROMPT_KEY);
+      if (p) {
+        localStorage.setItem(BACKFILL_PROMPT_KEY, JSON.stringify(p));
+        onBackfillDetectedRef.current?.();
+      } else {
+        localStorage.removeItem(BACKFILL_PROMPT_KEY);
+      }
     } catch { /* ignore */ }
   };
 
-  useEffect(() => { onRefreshRef.current = onRefresh; }, [onRefresh]);
-  // Keep resolved country in sync if the parent passes a fresh value
-  useEffect(() => { setResolvedCountry(confirmedCountry); }, [confirmedCountry]);
-  useEffect(() => { setResolvedDetected(detectedCountry); }, [detectedCountry]);
+  // If a backfill prompt was restored from localStorage on mount (i.e. from a
+  // previous page), notify the parent immediately so it can dismiss conflicting
+  // modals before they even appear.
+  useEffect(() => {
+    if (backfillPrompt) onBackfillDetectedRef.current?.();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Get auth token for the backfill POST
+  useEffect(() => { onRefreshRef.current = onRefresh; }, [onRefresh]);
+
+  // Get auth token for backfill POST
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        const tok = await user.getIdToken();
-        setIdToken(tok);
-        // If the parent didn't supply country info, fetch it ourselves so the
-        // account-setup modal knows whether to show the country step.
-        if (confirmedCountry === undefined) {
-          fetch("/api/user/agent-insights", {
-            headers: { Authorization: `Bearer ${tok}` },
-          })
-            .then((r) => r.ok ? r.json() : null)
-            .then((d) => {
-              if (d) {
-                setResolvedCountry(d.confirmedCountry ?? null);
-                setResolvedDetected(d.detectedCountry ?? "US");
-              }
-            })
-            .catch(() => { /* non-blocking */ });
-        }
-      }
+      if (user) setIdToken(await user.getIdToken());
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Fallback: query Firestore once after auth is ready for any statement that
+  // still has backfillPromptNeeded=true but was never caught by the pending-parses
+  // listener (e.g. guest upload → account creation where nwai_pending_parses was
+  // already cleared by the upload page before the user navigated to sign up).
+  const fallbackQueriedRef = useRef(false);
+  useEffect(() => {
+    if (!idToken || fallbackQueriedRef.current) return;
+    // If we already have a backfill prompt (from localStorage or snapshot), skip.
+    try {
+      if (localStorage.getItem(BACKFILL_PROMPT_KEY)) { fallbackQueriedRef.current = true; return; }
+    } catch { /* ignore */ }
+    fallbackQueriedRef.current = true;
+
+    const { auth, db } = getFirebaseClient();
+    const user = auth.currentUser;
+    if (!user) return;
+
+    const q = query(
+      collection(db, "statements"),
+      where("userId", "==", user.uid),
+      where("backfillPromptNeeded", "==", true),
+      limit(1)
+    );
+    getDocs(q).then((snap) => {
+      if (snap.empty) return;
+      const stmtDoc  = snap.docs[0];
+      const data     = stmtDoc.data() as Record<string, unknown>;
+      const parsed   = data.parsedData as Record<string, unknown> | undefined;
+      setBackfillPrompt({
+        statementId:             stmtDoc.id,
+        accountSlug:             (data.accountSlug             as string)  ?? "",
+        accountName:             (parsed?.accountName          as string)  ?? (data.accountSlug as string) ?? "New account",
+        accountType:             (parsed?.accountType          as string)  ?? "other",
+        firstBalance:            (parsed?.netWorth             as number)  ?? 0,
+        firstStatementYearMonth: (data.yearMonth               as string)  ?? "",
+        oldestMonth:             (data.backfillOldestMonth     as string)  ?? "",
+        slugIsAccountNumber:     (data.slugIsAccountNumber     as boolean) ?? false,
+        inferredCurrency:        (data.inferredCurrency        as string)  ?? "USD",
+      });
+    }).catch(console.error);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idToken]);
 
   useEffect(() => {
     let pending: PendingParse[] = [];
@@ -497,14 +446,11 @@ export default function ParseStatusBanner({
 
   return (
     <>
-      {/* Account setup modal — shown when a new account is detected */}
+      {/* Account setup modal — currency + age, shown when a new account is detected */}
       {backfillPrompt && idToken && (
         <AccountSetupModal
           prompt={backfillPrompt}
           idToken={idToken}
-          needsCountry={resolvedCountry === null}
-          detectedCountry={resolvedDetected}
-          onCountryConfirmed={(c) => { setResolvedCountry(c); onCountryConfirmed?.(c); }}
           onDone={() => { setBackfillPrompt(null); onRefreshRef.current(); router.refresh(); }}
         />
       )}

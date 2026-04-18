@@ -56,7 +56,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "31"; // expanded CA_BANK_RE (Wealthsimple, Questrade, etc.) + confirmed currency overrides
+const SCHEMA_VERSION = "32"; // auto-detect homeCurrency from bank names when country unconfirmed
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -270,9 +270,17 @@ export async function buildAndCacheFinancialProfile(
       db.collection("users").doc(uid).get(),
     ]);
 
-  // Home currency: user-confirmed country takes precedence over auto-detection
+  // Home currency: user-confirmed country takes precedence over auto-detection.
+  // When no country is saved, detect from bank names — default to "USD" (not "CAD")
+  // so that unrecognised / US-bank users are not wrongly assigned CAD.
   const storedCountry = userDocSnap.data()?.country as "CA" | "US" | undefined;
-  const homeCurrency = storedCountry === "US" ? "USD" : "CAD";
+  const CA_BANK_DETECT = /\b(td|rbc|bmo|cibc|scotiabank|national bank|desjardins|tangerine|simplii|hsbc canada|laurentian|atb|wealthsimple|questrade|eq bank)\b/i;
+  const bankText = txData.accountSnapshots
+    .flatMap((a) => [a.bankName ?? "", a.accountName ?? ""])
+    .join(" ");
+  const autoCountry: "CA" | "US" = CA_BANK_DETECT.test(bankText) ? "CA" : "US";
+  const effectiveCountry = storedCountry ?? autoCountry;
+  const homeCurrency = effectiveCountry === "US" ? "USD" : "CAD";
 
   // Currency overrides: accountSlug → ISO currency code (e.g. "USD")
   const currencyOverrides = new Map<string, string>();

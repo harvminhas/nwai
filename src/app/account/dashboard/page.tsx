@@ -1034,103 +1034,60 @@ const SUPPORTED_CURRENCIES = [
 
 type UnconfirmedAccount = import("@/app/api/user/currency-overrides/route").UnconfirmedAccount;
 
-function CurrencyConfirmModal({
-  accounts,
+// ── Home Currency Modal — shown ONCE when user has statements but no confirmed country ──
+
+function HomeCurrencyModal({
+  detectedCountry,
   token,
   onDone,
 }: {
-  accounts: UnconfirmedAccount[];
+  detectedCountry: "CA" | "US";
   token: string;
-  onDone: () => void;
+  onDone: (country: "CA" | "US") => void;
 }) {
-  const [selections, setSelections] = useState<Record<string, string>>(() => {
-    const init: Record<string, string> = {};
-    for (const a of accounts) init[a.slug] = a.inferredCurrency;
-    return init;
-  });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<"CA" | "US">(detectedCountry);
+  const [saving,   setSaving]   = useState(false);
 
   const handleSave = async () => {
     setSaving(true);
-    setError(null);
     try {
-      await Promise.all(
-        accounts.map(a =>
-          fetch("/api/user/currency-overrides", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ accountSlug: a.slug, currency: selections[a.slug], confirmed: true }),
-          })
-        )
-      );
-      onDone();
-    } catch {
-      setError("Something went wrong. Please try again.");
-    } finally {
-      setSaving(false);
-    }
+      await fetch("/api/user/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ country: selected }),
+      });
+      onDone(selected);
+    } catch { /* silent — user can retry */ }
+    finally { setSaving(false); }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
-        {/* Header */}
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+      <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl overflow-hidden">
         <div className="px-6 pt-6 pb-4 border-b border-gray-100">
-          <div className="flex items-center gap-3 mb-1">
-            <div className="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center shrink-0">
-              <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-              </svg>
-            </div>
-            <div>
-              <h2 className="text-base font-semibold text-gray-900">Confirm account currencies</h2>
-              <p className="text-xs text-gray-500 mt-0.5">
-                We detected {accounts.length} account{accounts.length !== 1 ? "s" : ""} without a confirmed currency. Please verify each one.
-              </p>
-            </div>
+          <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">One quick thing</p>
+          <h2 className="mt-1 text-base font-bold text-gray-900">Where are you based?</h2>
+          <p className="mt-1 text-xs text-gray-500">This sets your home currency for net worth and totals.</p>
+        </div>
+        <div className="px-6 py-5">
+          <div className="grid grid-cols-2 gap-3">
+            {(["CA", "US"] as const).map((c) => (
+              <button key={c} onClick={() => setSelected(c)}
+                className={`flex flex-col items-center gap-2 rounded-xl border-2 py-4 transition ${
+                  selected === c ? "border-purple-500 bg-purple-50" : "border-gray-200 bg-gray-50 hover:border-gray-300"
+                }`}>
+                <span className="text-2xl">{c === "CA" ? "🍁" : "🇺🇸"}</span>
+                <span className={`text-sm font-semibold ${selected === c ? "text-purple-700" : "text-gray-700"}`}>
+                  {c === "CA" ? "Canada (CA$)" : "United States (US$)"}
+                </span>
+              </button>
+            ))}
           </div>
         </div>
-
-        {/* Account list */}
-        <div className="px-6 py-4 space-y-3 max-h-80 overflow-y-auto">
-          {accounts.map(a => (
-            <div key={a.slug} className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-gray-900 truncate">{a.accountName}</p>
-                <p className="text-xs text-gray-400 truncate">{a.bankName} · {a.accountType}</p>
-              </div>
-              <select
-                value={selections[a.slug]}
-                onChange={e => setSelections(s => ({ ...s, [a.slug]: e.target.value }))}
-                className="shrink-0 text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white font-medium text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {SUPPORTED_CURRENCIES.map(c => (
-                  <option key={c.code} value={c.code}>{c.label} {c.name}</option>
-                ))}
-              </select>
-            </div>
-          ))}
-        </div>
-
-        {error && (
-          <p className="px-6 text-xs text-red-600">{error}</p>
-        )}
-
-        {/* Footer */}
-        <div className="px-6 pb-6 pt-3 flex items-center justify-between gap-3 border-t border-gray-100">
-          <button
-            onClick={onDone}
-            className="text-sm text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            Skip for now
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-5 py-2 rounded-xl bg-gray-900 text-white text-sm font-medium hover:bg-gray-700 transition-colors disabled:opacity-50"
-          >
-            {saving ? "Saving…" : "Confirm currencies"}
+        <div className="px-6 pb-6 flex justify-end">
+          <button onClick={handleSave} disabled={saving}
+            className="rounded-xl bg-purple-600 px-6 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50 transition">
+            {saving ? "Saving…" : "Confirm"}
           </button>
         </div>
       </div>
@@ -1170,14 +1127,11 @@ export default function TodayPage() {
   const [topSpending,  setTopSpending]  = useState<{ category: string; amount: number }[]>([]);
   const [confirmedCountry, setConfirmedCountry] = useState<"CA" | "US" | null>(null);
   const [detectedCountry,  setDetectedCountry]  = useState<"CA" | "US">("US");
-
-  // Returns true if a new-account setup modal is pending (persisted in localStorage)
-  function hasPendingBackfill() {
+  const [backfillActive,   setBackfillActive]   = useState(() => {
     try { return !!localStorage.getItem("nwai_backfill_prompt"); } catch { return false; }
-  }
+  });
+  const [showHomeCurrency, setShowHomeCurrency] = useState(false);
   const [homeCurrency, setHomeCurrency] = useState<string>("USD");
-  const [unconfirmedAccounts, setUnconfirmedAccounts] = useState<import("@/app/api/user/currency-overrides/route").UnconfirmedAccount[]>([]);
-  const [showCurrencyModal, setShowCurrencyModal] = useState(false);
   const [currencyInfo, setCurrencyInfo] = useState<{
     homeCurrency: string;
     showExchange: boolean;
@@ -1214,8 +1168,10 @@ export default function TodayPage() {
       setInsights(insJson.insights ?? []);
       const radarData = insJson.radar ?? [];
       setRadar(radarData);
-      // Show onboarding modal if data is sparse and user hasn't dismissed it
-      if (radarData.length === 0 && !localStorage.getItem(DISMISS_KEY)) {
+      // Show onboarding modal only when no account-setup modal is pending
+      const pendingBackfill = (() => { try { return !!localStorage.getItem("nwai_backfill_prompt"); } catch { return false; } })();
+      // Show onboarding modal only after home currency is confirmed and no backfill pending
+      if (radarData.length === 0 && !localStorage.getItem(DISMISS_KEY) && !pendingBackfill && cardJson.confirmedCountry) {
         setShowOnboarding(true);
       }
       setFreshness(insJson.freshness ?? null);
@@ -1233,24 +1189,19 @@ export default function TodayPage() {
       setMonthCount(insJson.monthCount ?? 0);
       setStatementCount(insJson.statementCount ?? 0);
       setTopSpending(insJson.topSpending ?? []);
-      setConfirmedCountry(cardJson.confirmedCountry ?? null);
-      setDetectedCountry(cardJson.detectedCountry ?? "US");
-      // homeCurrency from profile (authoritative after schema v27 rebuild).
-      // Fall back to the confirmed/detected country so the symbol is never wrong.
-      const resolvedCountry = (cardJson.confirmedCountry ?? cardJson.detectedCountry ?? "US") as "CA" | "US";
+      const confirmedCty = cardJson.confirmedCountry ?? null;
+      const detectedCty  = (cardJson.detectedCountry ?? "US") as "CA" | "US";
+      setConfirmedCountry(confirmedCty);
+      setDetectedCountry(detectedCty);
+      const resolvedCountry = (confirmedCty ?? detectedCty) as "CA" | "US";
       setHomeCurrency(insJson.homeCurrency ?? (resolvedCountry === "CA" ? "CAD" : "USD"));
       if (fxJson.homeCurrency) setCurrencyInfo(fxJson);
 
-      // Check for accounts with unconfirmed currencies (fire-and-forget, non-blocking)
-      fetch("/api/user/currency-overrides", { headers })
-        .then(r => r.ok ? r.json() : null)
-        .then(data => {
-          if (data?.unconfirmed?.length) {
-            setUnconfirmedAccounts(data.unconfirmed);
-            setShowCurrencyModal(true);
-          }
-        })
-        .catch(() => { /* silent */ });
+      // Show home currency modal once if country is not yet confirmed and not mid-backfill
+      setBackfillActive(pendingBackfill);
+      if (!confirmedCty && !pendingBackfill && (insJson.statementCount ?? 0) >= 1) {
+        setShowHomeCurrency(true);
+      }
     } catch { setError("Failed to load today view"); }
     finally { setLoading(false); }
   }, [buildHeaders]);
@@ -1941,15 +1892,15 @@ export default function TodayPage() {
 
   return (
     <>
-    {/* Currency confirmation modal — only shown when no account setup modal is active */}
-    {showCurrencyModal && token && unconfirmedAccounts.length > 0 && !hasPendingBackfill() && (
-      <CurrencyConfirmModal
-        accounts={unconfirmedAccounts}
+    {/* Home currency modal — shown once when country is not yet confirmed */}
+    {showHomeCurrency && token && (
+      <HomeCurrencyModal
+        detectedCountry={detectedCountry}
         token={token}
-        onDone={() => {
-          setShowCurrencyModal(false);
-          setUnconfirmedAccounts([]);
-          handleRefresh();
+        onDone={(country) => {
+          setConfirmedCountry(country);
+          setShowHomeCurrency(false);
+          setHomeCurrency(country === "CA" ? "CAD" : "USD");
         }}
       />
     )}
@@ -1959,9 +1910,11 @@ export default function TodayPage() {
       {token && (
         <ParseStatusBanner
           onRefresh={() => load(token)}
-          confirmedCountry={confirmedCountry}
-          detectedCountry={detectedCountry}
-          onCountryConfirmed={(c) => setConfirmedCountry(c)}
+          onBackfillDetected={() => {
+            setBackfillActive(true);
+            setShowOnboarding(false);
+            setShowHomeCurrency(false);
+          }}
         />
       )}
       {token && needsRefresh && (
@@ -1969,22 +1922,22 @@ export default function TodayPage() {
       )}
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="mb-5 flex items-start justify-between gap-4">
-        <div>
+      <div className="mb-5 flex items-start justify-between gap-3">
+        <div className="min-w-0">
           <h1 className="text-3xl font-bold text-gray-900">Today</h1>
-          <p className="mt-0.5 text-sm text-gray-400">{todayLabel()}</p>
+          <p className="mt-0.5 text-sm text-gray-400 whitespace-nowrap">{todayLabel()}</p>
         </div>
 
         {/* Right side: currency widget + freshness CTA */}
         <div className="flex items-center gap-2 shrink-0">
-          {/* Currency widget */}
+          {/* Currency widget — exchange rate hidden on mobile */}
           {currencyInfo && (
             <div className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm">
               <span className="text-sm font-bold text-gray-800">
                 {currencyInfo.homeCurrency === "CAD" ? "🍁" : "🇺🇸"} {currencyInfo.homeCurrency}
               </span>
               {currencyInfo.showExchange && currencyInfo.cadPerUsd !== null && currencyInfo.usdPerCad !== null && (
-                <>
+                <span className="hidden sm:flex items-center gap-1.5">
                   <span className="text-gray-300 text-sm">·</span>
                   <span className="text-xs text-gray-500 font-medium">
                     {currencyInfo.homeCurrency === "USD"
@@ -1992,22 +1945,27 @@ export default function TodayPage() {
                       : `1 USD = $${currencyInfo.cadPerUsd.toFixed(4)} CAD`}
                   </span>
                   {currencyInfo.rateDate && (
-                    <span className="text-[10px] text-gray-400 hidden sm:inline">
+                    <span className="text-[10px] text-gray-400">
                       {new Date(currencyInfo.rateDate + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                     </span>
                   )}
-                </>
+                </span>
               )}
             </div>
           )}
 
-          {/* Freshness CTA — only shown when user has statements */}
+          {/* Freshness CTA — label truncated on mobile */}
           {statementCount > 0 && overdueAccounts.length > 0 && (
             <Link href="/account/activity?tab=coverage"
-              className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-sm hover:border-gray-300 hover:shadow-md transition">
+              className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm hover:border-gray-300 hover:shadow-md transition">
               <span className="h-2 w-2 rounded-full bg-orange-400 shrink-0" />
-              {overdueAccounts.length} statement{overdueAccounts.length > 1 ? "s" : ""} to upload
-              <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <span className="text-sm font-semibold text-gray-700 hidden sm:inline">
+                {overdueAccounts.length} statement{overdueAccounts.length > 1 ? "s" : ""} to upload
+              </span>
+              <span className="text-sm font-semibold text-gray-700 sm:hidden">
+                {overdueAccounts.length} to upload
+              </span>
+              <svg className="h-4 w-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
               </svg>
             </Link>
@@ -2509,8 +2467,8 @@ export default function TodayPage() {
 
     </div> {/* end mx-auto max-w-5xl */}
 
-    {/* Onboarding modal */}
-    {showOnboarding && (
+    {/* Onboarding modal — only after home currency is confirmed, and not mid-backfill */}
+    {showOnboarding && confirmedCountry && !backfillActive && (
       <OnboardingModal
         radar={radar}
         onDismiss={() => {
