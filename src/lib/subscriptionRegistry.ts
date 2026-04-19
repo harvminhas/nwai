@@ -85,6 +85,18 @@ export function effectiveSubscriptionAmount(rec: SubscriptionRecord): number | n
   return v;
 }
 
+/**
+ * Returns the user-confirmed base/plan price when set (e.g. the flat $19/mo Cursor Pro fee),
+ * otherwise falls back to effectiveSubscriptionAmount.
+ * Use this for forward projections so variable usage charges don't inflate the forecast.
+ */
+export function effectiveBaseAmount(rec: SubscriptionRecord): number | null {
+  if (rec.baseAmount != null && Number.isFinite(rec.baseAmount) && rec.baseAmount > 0) {
+    return rec.baseAmount;
+  }
+  return effectiveSubscriptionAmount(rec);
+}
+
 export function effectiveSubscriptionFrequency(rec: SubscriptionRecord): SubscriptionFrequency | null {
   const lockedFreq = rec.lockedFields?.includes("frequency") || rec.status === "user_confirmed";
   const f = lockedFreq ? rec.frequency : (rec.frequency ?? rec.suggestedFrequency);
@@ -100,7 +112,7 @@ export async function syncStatementAiSubscriptions(
   db: Firestore.Firestore,
   docs: { yearMonth: string; parsed: ParsedStatementData }[],
 ): Promise<void> {
-  const bySlug = new Map<string, { name: string; amount: number; frequency: string; anchorYmd: string }>();
+  const bySlug = new Map<string, { name: string; amount: number; frequency: string; anchorYmd: string; currency: string | undefined }>();
   const sorted = [...docs].sort((a, b) => b.yearMonth.localeCompare(a.yearMonth));
 
   for (const { yearMonth, parsed } of sorted) {
@@ -113,6 +125,7 @@ export async function syncStatementAiSubscriptions(
         amount: sub.amount,
         frequency: sub.frequency,
         anchorYmd,
+        currency: parsed.currency ?? undefined,
       });
     }
   }
@@ -120,7 +133,7 @@ export async function syncStatementAiSubscriptions(
   const subsRef = db.collection("users").doc(uid).collection("subscriptions");
   const now = new Date().toISOString();
 
-  for (const [slug, { name, amount, frequency, anchorYmd }] of bySlug) {
+  for (const [slug, { name, amount, frequency, anchorYmd, currency }] of bySlug) {
     const snap = await subsRef.doc(slug).get();
     const freqNorm = mapToSubscriptionFrequency(frequency);
 
@@ -133,6 +146,7 @@ export async function syncStatementAiSubscriptions(
         suggestedFrequency: freqNorm,
         amount: null,
         frequency: null,
+        ...(currency ? { currency } : {}),
         lockedFields: [],
         statementAiTagged: true,
         firstSeenAt: anchorYmd,
@@ -162,6 +176,8 @@ export async function syncStatementAiSubscriptions(
     if (!existing.lockedFields?.includes("frequency")) {
       updates.suggestedFrequency = freqNorm;
     }
+    // Backfill currency if the record was created before this field existed
+    if (currency && !existing.currency) updates.currency = currency;
     const lastSeen = existing.lastSeenAt && existing.lastSeenAt > anchorYmd ? existing.lastSeenAt : anchorYmd;
     updates.lastSeenAt = lastSeen;
     await subsRef.doc(slug).update(updates);

@@ -24,6 +24,7 @@ Rules for generating insights:
 5. BE ACTIONABLE: Each card must have at least one action the user can take right now.
 6. AVOID DUPLICATES: Don't generate two insights about the same issue.
 7. DON'T FABRICATE: If there's no strong signal for an insight, skip it. Fewer good insights beat more mediocre ones.
+8. USE GROUNDED VALUES: The snapshot ends with a "GROUNDED IMPACT VALUES" section containing code-computed figures that exactly match what the spending, liabilities, and goals pages show. You MUST use those exact numbers for dollarImpact — copy them verbatim. Do not re-derive, re-calculate, or estimate when a grounded value is available.
 
 The financial snapshot includes a "Country:" field — use it to tailor every insight to the right jurisdiction:
 - Canada (CA): reference RRSP, TFSA, FHSA, RESP, CRA, BoC, CPP/OAS; use Canadian spelling

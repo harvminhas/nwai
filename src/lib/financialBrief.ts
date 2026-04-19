@@ -152,16 +152,18 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
     accountLines.push(`  ${l.label ?? "Manual liability"} [manual liability]: -${fmt(l.balance ?? 0)}`);
   }
 
-  // Income by source with individual deposits
+  // Income by source with individual deposits — convert to home currency at insert time
+  // to match the monthlyHistory totals (which are also in home currency).
   const incomeBySource = new Map<string, { displayName: string; entries: { ym: string; amount: number }[] }>();
   for (const txn of incomeTxns) {
-    const name = (txn.source || txn.description || "Unknown").trim();
-    const key  = name.toLowerCase();
-    const entry = incomeBySource.get(key);
+    const name       = (txn.source || txn.description || "Unknown").trim();
+    const key        = name.toLowerCase();
+    const homeAmount = toHome(txn.amount, txn.currency);
+    const entry      = incomeBySource.get(key);
     if (entry) {
-      entry.entries.push({ ym: txn.txMonth, amount: txn.amount });
+      entry.entries.push({ ym: txn.txMonth, amount: homeAmount });
     } else {
-      incomeBySource.set(key, { displayName: name, entries: [{ ym: txn.txMonth, amount: txn.amount }] });
+      incomeBySource.set(key, { displayName: name, entries: [{ ym: txn.txMonth, amount: homeAmount }] });
     }
   }
   const incomeSection = Array.from(incomeBySource.values())
@@ -177,16 +179,18 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
     )
     .join("\n");
 
-  // Expense transactions grouped by merchant — key is lowercased to merge case variants
+  // Expense transactions grouped by merchant — convert to home currency at insert time so
+  // all per-merchant amounts, totals, and sort order are consistent with what the UI shows.
   const allExpenseTxns = expenseTxns.slice(0, TOKEN_BUDGET);
   const expenseByMerchant = new Map<string, { displayName: string; txns: { date: string; amount: number; category: string }[] }>();
   for (const t of allExpenseTxns) {
-    const key = t.merchant.toLowerCase().trim();
-    const entry = expenseByMerchant.get(key);
+    const key        = t.merchant.toLowerCase().trim();
+    const homeAmount = toHome(t.amount, t.currency);
+    const entry      = expenseByMerchant.get(key);
     if (entry) {
-      entry.txns.push({ date: t.date, amount: t.amount, category: t.category });
+      entry.txns.push({ date: t.date, amount: homeAmount, category: t.category });
     } else {
-      expenseByMerchant.set(key, { displayName: t.merchant, txns: [{ date: t.date, amount: t.amount, category: t.category }] });
+      expenseByMerchant.set(key, { displayName: t.merchant, txns: [{ date: t.date, amount: homeAmount, category: t.category }] });
     }
   }
 
@@ -225,7 +229,7 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
   const confirmedSubsSection = confirmedSubs.length > 0
     ? confirmedSubs
         .map((s) => {
-          const amount = s.amount ?? s.suggestedAmount;
+          const amount = toHome(s.amount ?? s.suggestedAmount, s.currency);
           const freq   = s.frequency ?? s.suggestedFrequency;
           return `  ${s.name} [${freq}]: ${fmt(amount)}/${freq} — confirmed ${s.occurrenceCount} occurrences`;
         })
@@ -291,11 +295,57 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
   const debtBreakdownLines = debtTxnsThisMonth.map((t) => {
     const isScheduled = SCHEDULED_DEBT_TYPES.has((t as { debtType?: string }).debtType ?? "");
     const tag = isScheduled ? "scheduled/required" : "minimum (CC/LOC — default)";
-    return `  ${t.date}  ${t.merchant}  ${fmt(t.amount)}  [${tag}]`;
+    return `  ${t.date}  ${t.merchant}  ${fmt(toHome(t.amount, t.currency))}  [${tag}]`;
   });
   const debtBreakdownSection = debtBreakdownLines.length > 0
     ? debtBreakdownLines.join("\n")
     : "  No Debt Payment transactions recorded this month";
+
+  // ── Grounded impact values ─────────────────────────────────────────────────
+  // These are code-computed from the same profile cache the UI uses. The AI must
+  // use these exact figures for dollarImpact rather than re-deriving from text.
+
+  // 1. Subscription annual cost — annualise each confirmed sub at its stored frequency
+  const SUB_FREQ_PER_YEAR: Record<string, number> = { weekly: 52, biweekly: 26, monthly: 12, quarterly: 4, annual: 1 };
+  const subAnnualTotal = confirmedSubs.reduce((sum, s) => {
+    const amount  = toHome(s.amount ?? s.suggestedAmount, s.currency);
+    const freq    = s.frequency ?? s.suggestedFrequency;
+    return sum + amount * (SUB_FREQ_PER_YEAR[freq] ?? 12);
+  }, 0);
+
+  // 2. Annual interest cost per debt account that has a stored APR
+  const debtInterestLines: string[] = [];
+  let totalDebtInterest = 0;
+  for (const a of accountSnapshots) {
+    if (a.balance >= 0) continue;
+    const apr = rateMap.get(a.slug);
+    if (!apr) continue;
+    const balance        = Math.abs(toHome(a.balance, a.currency));
+    const annualInterest = balance * (apr / 100);
+    totalDebtInterest   += annualInterest;
+    debtInterestLines.push(
+      `  ${a.bankName}${a.accountId ? ` (*${a.accountId.slice(-4)})` : ""} [${a.accountType}]: ` +
+      `${fmt(balance)} balance at ${apr}% APR → ${fmt(annualInterest)}/year in interest`
+    );
+  }
+
+  // 3. Emergency fund status
+  const efGap          = Math.max(0, efTarget - liquidAssets);
+  const efCoveredMo    = efTarget > 0 ? (liquidAssets / efTarget) * 6 : 0;
+  const efGrounded     = efGap > 0
+    ? `${fmt(efGap)} short of 6-month target (have ${efCoveredMo.toFixed(1)} months covered)`
+    : `fully funded (${((liquidAssets / Math.max(efTarget, 1)) * 100).toFixed(0)}% of 6-month target)`;
+
+  const groundedLines = [
+    confirmedSubs.length > 0
+      ? `  Confirmed subscription annual cost: ${fmt(subAnnualTotal)}/year across ${confirmedSubs.length} subscription${confirmedSubs.length !== 1 ? "s" : ""}`
+      : null,
+    debtInterestLines.length > 0
+      ? `  Total annual interest on tracked debt: ${fmt(totalDebtInterest)}/year\n${debtInterestLines.join("\n")}`
+      : null,
+    `  Emergency fund: ${efGrounded}`,
+    `  Savings rate (this month): ${savingsRate.toFixed(1)}% — net ${fmt(monthlySav)} on income ${fmt(monthlyIncome)}`,
+  ].filter(Boolean).join("\n");
 
   // Stored user-confirmed country takes precedence; fall back to bank-name detection
   const userDoc = await db.collection("users").doc(uid).get();
@@ -304,6 +354,7 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
 
   return `== FINANCIAL SNAPSHOT (${month}) ==
 Country:           ${country === "CA" ? "Canada (CA)" : "United States (US)"}${storedCountry ? " (user-confirmed)" : " (auto-detected)"}
+Home currency:     ${home} (all amounts below are in ${home} unless a native currency is shown in brackets)
 Net worth:         ${fmt(netWorth)}
 Total assets:      ${fmt(assets)}
 Total debt:        ${fmt(debts)}
@@ -337,5 +388,8 @@ ${truncationNote}
 ${expenseSection || "  No expense transactions found"}
 ${confirmedSubsSection ? `\n== CONFIRMED SUBSCRIPTIONS (code-verified frequency) ==\n${confirmedSubsSection}\n` : ""}${suggestedSubsSection ? `\n== UNCONFIRMED SUBSCRIPTIONS (pending more data) ==\n${suggestedSubsSection}\n` : ""}${subs ? `\n== SUBSCRIPTIONS / RECURRING (AI-extracted, frequency unverified) ==\n${subs}\n` : ""}${cashSection ? `\n== CASH COMMITMENTS (off-statement, est. ${fmt(cashMonthly)}/mo) ==\n${cashSection}\n` : ""}${goalsSection ? `\n== GOALS ==\n${goalsSection}\n` : ""}
 == MONTHLY TREND (by transaction date) ==
-${historyLines.join("\n") || "  Not enough history yet"}`;
+${historyLines.join("\n") || "  Not enough history yet"}
+
+== GROUNDED IMPACT VALUES (code-computed from the same cache as all UI pages — use these exact figures for dollarImpact, do not re-derive) ==
+${groundedLines}`;
 }

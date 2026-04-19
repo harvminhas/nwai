@@ -46,7 +46,7 @@ export const subscriptionsDetector: InsightDetector = {
     // Group transactions by merchant slug within the relevant window.
     // Only process Subscriptions-category transactions — other recurring patterns
     // (groceries, gas, etc.) must be user-confirmed from the merchant page.
-    const byMerchant = new Map<string, { name: string; dates: string[]; amounts: number[] }>();
+    const byMerchant = new Map<string, { name: string; dates: string[]; amounts: number[]; currency: string | undefined }>();
     for (const txn of expenseTxns) {
       if (!relevantSet.has(txn.txMonth)) continue;
       if ((txn.category ?? "").toLowerCase() !== "subscriptions") continue;
@@ -56,14 +56,16 @@ export const subscriptionsDetector: InsightDetector = {
       if (entry) {
         entry.dates.push(txn.date);
         entry.amounts.push(txn.amount);
+        // Keep the most recent transaction's currency (newest-first sort from profile)
+        if (!entry.currency && txn.currency) entry.currency = txn.currency;
       } else {
-        byMerchant.set(slug, { name: txn.merchant, dates: [txn.date], amounts: [txn.amount] });
+        byMerchant.set(slug, { name: txn.merchant, dates: [txn.date], amounts: [txn.amount], currency: txn.currency });
       }
     }
 
     const subsRef = db.collection("users").doc(uid).collection("subscriptions");
 
-    for (const [slug, { name, dates, amounts }] of byMerchant) {
+    for (const [slug, { name, dates, amounts, currency }] of byMerchant) {
       if (dates.length < 1) continue;
 
       // Detect recurrence pattern
@@ -96,6 +98,7 @@ export const subscriptionsDetector: InsightDetector = {
           suggestedFrequency: frequency!,
           amount:             isConfirmed ? avgAmount : null,
           frequency:          isConfirmed ? frequency : null,
+          ...(currency ? { currency } : {}),
           lockedFields:       [],
           firstSeenAt:        firstSeen,
           lastSeenAt:         lastSeen,
@@ -130,6 +133,8 @@ export const subscriptionsDetector: InsightDetector = {
           suggestedFrequency: frequency!,
           updatedAt:          now,
         };
+        // Backfill currency if the record was created before this field existed
+        if (currency && !existing.currency) updates.currency = currency;
 
         if (existing.status === "suggested" && isConfirmed) {
           // Promote to confirmed

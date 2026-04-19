@@ -15,7 +15,9 @@ import type { RecurringFrequency } from "@/lib/merchantForecast";
 import {
   applyRecurringRuleToSubscriptionDoc,
   releaseSubscriptionUserLock,
+  effectiveSubscriptionFrequency,
 } from "@/lib/subscriptionRegistry";
+import type { SubscriptionRecord } from "@/lib/insights/types";
 import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
 
 const VALID = new Set<RecurringFrequency>([
@@ -48,15 +50,25 @@ export async function GET(req: NextRequest) {
 
   const cancelled = subSnap.exists ? (subSnap.data()?.upcomingSuppressed ?? false) : false;
 
-  if (!cadenceSnap.exists) {
-    return NextResponse.json({ cadence: null, cancelled });
+  // If the user has explicitly saved a cadence, use it.
+  if (cadenceSnap.exists) {
+    const d = cadenceSnap.data() as { frequency?: string };
+    const frequency = d.frequency as RecurringFrequency | undefined;
+    if (frequency && VALID.has(frequency)) {
+      return NextResponse.json({ cadence: { frequency }, cancelled });
+    }
   }
-  const d = cadenceSnap.data() as { frequency?: string };
-  const frequency = d.frequency as RecurringFrequency | undefined;
-  if (!frequency || !VALID.has(frequency)) {
-    return NextResponse.json({ cadence: null, cancelled });
+
+  // Fall back to the subscriptions doc (insights-detected or user-confirmed frequency).
+  if (subSnap.exists) {
+    const subRec = subSnap.data() as SubscriptionRecord;
+    const freq = effectiveSubscriptionFrequency(subRec) as RecurringFrequency | null;
+    if (freq && VALID.has(freq)) {
+      return NextResponse.json({ cadence: { frequency: freq }, cancelled });
+    }
   }
-  return NextResponse.json({ cadence: { frequency }, cancelled });
+
+  return NextResponse.json({ cadence: null, cancelled });
 }
 
 export async function PUT(req: NextRequest) {

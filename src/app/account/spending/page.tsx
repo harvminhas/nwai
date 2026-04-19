@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback, Suspense } from "react";
+import { useEffect, useState, useRef, useCallback, Suspense, Fragment } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
@@ -14,7 +14,7 @@ import { detectFrequency, FREQUENCY_CONFIG, type Frequency } from "@/lib/incomeE
 import { SCHEDULED_DEBT_TYPES, debtTxKey, defaultDebtTag, splitDebtPayments } from "@/lib/debtUtils";
 import {
   BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
-  ReferenceLine, ResponsiveContainer, PieChart, Pie,
+  ReferenceLine, ResponsiveContainer,
   AreaChart, Area,
 } from "recharts";
 import { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon } from "./shared";
@@ -23,6 +23,7 @@ import { getParentCategory, isSubtype, CATEGORY_TAXONOMY } from "@/lib/categoryT
 import { fmt, getCurrencySymbol, formatCurrency } from "@/lib/currencyUtils";
 import RefreshToast from "@/components/RefreshToast";
 import { PROFILE_REFRESHED_EVENT, useProfileRefresh } from "@/contexts/ProfileRefreshContext";
+import { FORECAST_FREQUENCY_OPTIONS } from "@/lib/merchantForecast";
 
 // Re-export shared items for other pages that used to import from this file
 export { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon } from "./shared";
@@ -183,6 +184,94 @@ function toMonthly(amount: number, freq: CashFrequency): number {
   return amount * (opt ? opt.perYear / 12 : 1);
 }
 
+// ── subscription avatar helpers ───────────────────────────────────────────────
+
+const SUB_AVATAR_COLORS = [
+  "bg-purple-100 text-purple-700",
+  "bg-blue-100 text-blue-700",
+  "bg-green-100 text-green-700",
+  "bg-red-100 text-red-700",
+  "bg-amber-100 text-amber-700",
+  "bg-teal-100 text-teal-700",
+  "bg-pink-100 text-pink-700",
+  "bg-indigo-100 text-indigo-700",
+  "bg-orange-100 text-orange-700",
+  "bg-cyan-100 text-cyan-700",
+];
+
+function subAvatarColor(name: string): string {
+  let hash = 0;
+  for (const c of name) hash = ((hash * 31) + c.charCodeAt(0)) >>> 0;
+  return SUB_AVATAR_COLORS[hash % SUB_AVATAR_COLORS.length];
+}
+
+/**
+ * Classify a subscription as fixed (predictable) or variable (usage-based).
+ * Variable when: user confirmed a baseAmount and actual charges run ≥5% above it,
+ * or when recent per-charge amounts have a coefficient of variation > 15%.
+ */
+function classifySubscription(
+  amount: number,
+  merchantMonthly: { ym: string; total: number; count: number }[] | undefined,
+  baseAmount: number | null | undefined,
+  ym3moAgo: string,
+): "fixed" | "variable" {
+  if (baseAmount != null && baseAmount > 0 && amount > baseAmount * 1.05) return "variable";
+  if (merchantMonthly) {
+    const recent = merchantMonthly
+      .filter((m) => m.ym >= ym3moAgo && m.count > 0)
+      .map((m) => m.total / m.count);
+    if (recent.length >= 2) {
+      const avg = recent.reduce((s, v) => s + v, 0) / recent.length;
+      if (avg > 0) {
+        const cv = Math.sqrt(recent.reduce((s, v) => s + (v - avg) ** 2, 0) / recent.length) / avg;
+        if (cv > 0.15) return "variable";
+      }
+    }
+  }
+  return "fixed";
+}
+
+function subInitials(name: string): string {
+  return name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("").slice(0, 2) || "?";
+}
+
+/** Compute next occurrence date from last seen date + frequency. */
+function nextSubDate(lastDate: string, frequency: string): { date: string; daysFromNow: number } | null {
+  const freqDays: Record<string, number> = { weekly: 7, biweekly: 14, monthly: 30, quarterly: 91, annual: 365 };
+  const gap = freqDays[frequency] ?? 30;
+  const last = new Date(lastDate + "T12:00:00Z");
+  const next = new Date(last.getTime() + gap * 86_400_000);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const daysFromNow = Math.round((next.getTime() - today.getTime()) / 86_400_000);
+  return { date: next.toISOString().slice(0, 10), daysFromNow };
+}
+
+/** Find the most recent month where avg transaction amount jumped ≥4% vs prior months. */
+function findHikeMonth(monthly: { ym: string; total: number; count: number }[]): string | null {
+  const sorted = [...monthly].filter((m) => m.count > 0).sort((a, b) => a.ym.localeCompare(b.ym));
+  if (sorted.length < 2) return null;
+  let hikeMo: string | null = null;
+  for (let i = 1; i < sorted.length; i++) {
+    const curr = sorted[i]; const prev = sorted[i - 1];
+    const currAvg = curr.total / curr.count; const prevAvg = prev.total / prev.count;
+    if (currAvg > prevAvg * 1.04 && currAvg - prevAvg > 0.5) hikeMo = curr.ym;
+  }
+  return hikeMo;
+}
+
+/** Format a YYYY-MM string as "MMM YYYY", e.g. "2026-01" → "Jan 2026". */
+function fmtYM(ym: string): string {
+  const [y, m] = ym.split("-");
+  if (!y || !m) return ym;
+  return new Date(parseInt(y), parseInt(m) - 1, 1).toLocaleDateString("en-US", { month: "short", year: "numeric" });
+}
+
+/** Format an ISO date as "MMM D", e.g. "2026-02-14" → "Feb 14". */
+function fmtMD(iso: string): string {
+  return new Date(iso + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 /** Returns the YYYY-MM string for N months ago (0 = current month). */
@@ -273,6 +362,12 @@ function SpendingPageInner() {
   const [merchantSearch, setMerchantSearch]     = useState("");
   const [merchantsMonth, setMerchantsMonth]     = useState<string | null>(null); // which month is currently loaded
 
+  // All-time merchants (no month filter) — loaded eagerly for Overview insight cards
+  const [allTimeMerchants, setAllTimeMerchants] = useState<import("@/app/api/user/spending/merchants/route").MerchantSummary[] | null>(null);
+
+  // Firestore subscription registry — all-time canonical list from insights pipeline
+  const [firestoreSubs, setFirestoreSubs] = useState<import("@/lib/insights/types").SubscriptionRecord[] | null>(null);
+
   // Transactions with optimistic category overrides
   const [txns, setTxns]             = useState<ExpenseTransaction[]>([]);
   // Show all transactions (including those outside the selected calendar month)
@@ -302,6 +397,18 @@ function SpendingPageInner() {
   const [catIncludeAll, setCatIncludeAll] = useState(false);
   const [homeCurrency, setHomeCurrency] = useState<string>("USD");
   const [fxRates, setFxRates]           = useState<Record<string, number>>({});
+
+  // ── recurring tab view state ─────────────────────────────────────────────────
+  const [subViewMode, setSubViewMode] = useState<"monthly" | "annual">("monthly");
+  const [subShowAll, setSubShowAll]   = useState(false);
+  const [showAllChanges, setShowAllChanges] = useState(false);
+  const [showAllFixed,   setShowAllFixed]   = useState(false);
+  const [showAllVariable, setShowAllVariable] = useState(false);
+  // ── subscription inline confirm state ────────────────────────────────────────
+  const [confirmingSlug, setConfirmingSlug] = useState<string | null>(null);
+  const [confirmFreq, setConfirmFreq]       = useState<string>("monthly");
+  const [confirmBase, setConfirmBase]       = useState<string>("");
+  const [confirmSaving, setConfirmSaving]   = useState(false);
 
   // ── cash commitments ────────────────────────────────────────────────────────
   const [cashItems, setCashItems] = useState<CashCommitment[]>([]);
@@ -356,6 +463,26 @@ function SpendingPageInner() {
     finally { setMerchantsLoading(false); }
   }, [merchants, merchantsMonth]);
 
+  const loadAllTimeMerchants = useCallback(async (tok: string) => {
+    if (allTimeMerchants !== null) return;
+    try {
+      const res = await fetch("/api/user/spending/merchants", { headers: { Authorization: `Bearer ${tok}` } });
+      const json = await res.json().catch(() => ({}));
+      setAllTimeMerchants(json.merchants ?? []);
+    } catch { /* non-fatal */ }
+  }, [allTimeMerchants]);
+
+  const firestoreSubsLoaded = useRef(false);
+  const loadFirestoreSubs = useCallback(async (tok: string) => {
+    if (firestoreSubsLoaded.current) return;
+    firestoreSubsLoaded.current = true;
+    try {
+      const res = await fetch("/api/user/subscriptions", { headers: { Authorization: `Bearer ${tok}` } });
+      const json = await res.json().catch(() => ({}));
+      setFirestoreSubs(json.subscriptions ?? []);
+    } catch { firestoreSubsLoaded.current = false; /* allow retry */ }
+  }, []); // stable — guard lives in a ref, not state
+
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
@@ -408,6 +535,10 @@ function SpendingPageInner() {
         // If landing directly on the merchants tab, pre-load merchant data now that we have the month
         if (activeTab === "merchants" && currentYM) loadMerchants(tok, currentYM);
 
+        // Load all-time merchant data for Overview insight cards (fire and forget)
+        loadAllTimeMerchants(tok).catch(() => {});
+        loadFirestoreSubs(tok).catch(() => {});
+
         // Build frequency map from cross-month recurring history
         const rh: Record<string, { yearMonth: string; dates: string[] }[]> = json.recurringHistory ?? {};
         const freqMap = new Map<string, Frequency>();
@@ -423,7 +554,7 @@ function SpendingPageInner() {
       } catch { setError("Failed to load spending data"); }
       finally { setLoading(false); }
     });
-  }, [router, loadRecurring, loadCash]);
+  }, [router, loadRecurring, loadCash, loadAllTimeMerchants, loadFirestoreSubs]);
 
   // ── month switching ───────────────────────────────────────────────────────
 
@@ -602,6 +733,48 @@ function SpendingPageInner() {
     } catch { setToast("Failed to save"); }
   }
 
+  async function handleConfirmSub(slug: string) {
+    if (!token || confirmSaving) return;
+    setConfirmSaving(true);
+    const baseRaw = confirmBase.replace(/[^0-9.]/g, "");
+    const baseAmt = baseRaw ? parseFloat(baseRaw) : NaN;
+    const hasBase = Number.isFinite(baseAmt) && baseAmt > 0;
+    try {
+      await fetch("/api/user/subscriptions", {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slug,
+          frequency: confirmFreq,
+          ...(hasBase ? { baseAmount: baseAmt } : {}),
+        }),
+      });
+      setFirestoreSubs((prev) =>
+        prev
+          ? prev.map((r) =>
+              r.merchantSlug === slug
+                ? {
+                    ...r,
+                    status: "user_confirmed" as const,
+                    frequency: confirmFreq as import("@/lib/insights/types").SubscriptionFrequency,
+                    ...(hasBase ? { baseAmount: baseAmt } : {}),
+                    lockedFields: Array.from(
+                      new Set([...(r.lockedFields ?? []), "frequency", ...(hasBase ? ["baseAmount"] : [])])
+                    ),
+                  }
+                : r
+            )
+          : prev
+      );
+      setConfirmingSlug(null);
+      setToast("Subscription confirmed");
+    } catch {
+      setToast("Failed to save");
+    } finally {
+      setConfirmSaving(false);
+    }
+  }
+
   // ── cash commitment handlers ───────────────────────────────────────────────
 
   async function handleCashSave() {
@@ -662,11 +835,32 @@ function SpendingPageInner() {
 
   const cashMonthlyTotal = cashItems.reduce((s, c) => s + toMonthly(c.amount, c.frequency), 0);
 
-  // AI-detected subscriptions from the statement
-  const aiSubscriptions: Subscription[] = data?.subscriptions ?? [];
+  // ── Canonical subscription list ──────────────────────────────────────────────
+  // Primary source: Firestore users/{uid}/subscriptions (all-time, maintained by
+  // insights pipeline). Falls back to current-month statement AI subs when the
+  // Firestore collection is still loading or empty.
+  const statementSubs: Subscription[] = data?.subscriptions ?? [];
+
+  const effectiveSubs: Subscription[] = (() => {
+    if (!firestoreSubs) return statementSubs; // still loading — use statement fallback
+    if (firestoreSubs.length === 0) return statementSubs; // empty registry — fallback
+    // Map SubscriptionRecord → Subscription shape
+    return firestoreSubs
+      .filter((rec) => rec.name)
+      .map((rec) => ({
+        name:      rec.name,
+        amount:    (rec.amount ?? rec.suggestedAmount) ?? 0,
+        frequency: (rec.frequency ?? rec.suggestedFrequency) ?? "monthly",
+      }));
+  })();
+
+  // Slug-keyed lookup for per-row status/baseAmount access without changing Subscription type
+  const firestoreSubsMap = new Map(
+    (firestoreSubs ?? []).map((rec) => [rec.merchantSlug, rec])
+  );
 
   // Slug set for fast lookup in transaction rows
-  const aiSubSlugs = new Set(aiSubscriptions.map((s) => merchantSlug(s.name)));
+  const aiSubSlugs = new Set(effectiveSubs.map((s) => merchantSlug(s.name)));
 
   // Helper: get best known frequency for a merchant
   function resolvedFrequency(name: string, fallback: string): string {
@@ -676,7 +870,7 @@ function SpendingPageInner() {
     return fallback || "monthly";
   }
 
-  // Merge AI subs + user-marked recurring (user-marked take precedence by name)
+  // Merge Firestore subs + user-marked recurring (user-marked take precedence by slug)
   // Exclude "never" rules from both lists — those are user-dismissed entries
   const manualOnly = Array.from(recurringRules.values()).filter(
     (r) => !aiSubSlugs.has(merchantSlug(r.name)) && r.frequency !== "never"
@@ -687,7 +881,7 @@ function SpendingPageInner() {
       .map(([slug]) => slug)
   );
   const allSubscriptions: (Subscription & { source: "ai" | "manual"; detectedFrequency: string })[] = [
-    ...aiSubscriptions
+    ...effectiveSubs
       .filter((s) => !dismissedSlugs.has(merchantSlug(s.name)))
       .map((s) => ({
         ...s,
@@ -866,6 +1060,273 @@ function SpendingPageInner() {
   const hasData = total > 0 || excludedTotal > 0 || allSubscriptions.length > 0 || txns.length > 0 || cashItems.length > 0;
   const mergingExpenseSuggestions = expenseSuggestions.filter((s) => suggestionDecisions[s.pairKey] !== "rejected");
 
+  // ── Overview insight cards ─────────────────────────────────────────────────
+  const ym12moAgo = monthsAgoYm(12);
+  const ym24moAgo = monthsAgoYm(24);
+  const ym6moAgo  = monthsAgoYm(6);
+
+  // Card 1: Subscriptions
+  const subMonthlyTotal = allSubscriptions.reduce((s, sub) => {
+    return s + (sub.frequency === "annual" ? sub.amount / 12 : sub.amount);
+  }, 0);
+
+  // Card 2: Top Merchants 12 MO
+  const topMerchantsData = (() => {
+    if (!allTimeMerchants || allTimeMerchants.length === 0) return null;
+    const withTotals = allTimeMerchants.map((m) => ({
+      ...m,
+      total12mo: m.monthly.filter((mo) => mo.ym >= ym12moAgo).reduce((s, mo) => s + mo.total, 0),
+    })).filter((m) => m.total12mo > 0);
+    if (withTotals.length === 0) return null;
+    withTotals.sort((a, b) => b.total12mo - a.total12mo);
+    const grand12mo = withTotals.reduce((s, m) => s + m.total12mo, 0);
+    const top3 = withTotals.slice(0, 3);
+    const top3Total = top3.reduce((s, m) => s + m.total12mo, 0);
+    const top3Pct = grand12mo > 0 ? Math.round((top3Total / grand12mo) * 100) : 0;
+    return { top3, top3Total, top3Pct, grand12mo };
+  })();
+
+  // Card 3: Cash withdrawals 12 MO
+  const cashWithdrawalsData = (() => {
+    if (!allTimeMerchants) return null;
+    const cashMerchants = allTimeMerchants.filter((m) =>
+      /^cash(\/atm)?$/i.test((m.category ?? "").trim()) ||
+      /\batm\b|cash withdrawal|interac cash|petty cash/i.test(m.name)
+    );
+    if (cashMerchants.length === 0) return null;
+    const total12 = cashMerchants.reduce((s, m) =>
+      s + m.monthly.filter((mo) => mo.ym >= ym12moAgo).reduce((ms, mo) => ms + mo.total, 0), 0);
+    const count12 = cashMerchants.reduce((s, m) =>
+      s + m.monthly.filter((mo) => mo.ym >= ym12moAgo).reduce((ms, mo) => ms + mo.count, 0), 0);
+    const totalPrev = cashMerchants.reduce((s, m) =>
+      s + m.monthly.filter((mo) => mo.ym >= ym24moAgo && mo.ym < ym12moAgo).reduce((ms, mo) => ms + mo.total, 0), 0);
+    if (total12 === 0) return null;
+    const vsLastYear = totalPrev > 0 ? Math.round(((total12 - totalPrev) / totalPrev) * 100) : null;
+    return { total12, count12, vsLastYear };
+  })();
+
+  // Card 4: New recurring costs 6 MO
+  const newRecurringData = (() => {
+    if (!allTimeMerchants || allSubscriptions.length === 0) return null;
+    const newSubs: { name: string; monthlyAmt: number }[] = [];
+    for (const sub of allSubscriptions) {
+      const slug = merchantSlug(sub.name);
+      if (!slug) continue;
+      const m = allTimeMerchants.find((mc) => mc.slug === slug);
+      if (!m || !m.firstDate) continue;
+      if (m.firstDate >= ym6moAgo) {
+        const monthly = sub.frequency === "annual" ? sub.amount / 12 : sub.amount;
+        newSubs.push({ name: sub.name, monthlyAmt: monthly });
+      }
+    }
+    if (newSubs.length === 0) return null;
+    newSubs.sort((a, b) => b.monthlyAmt - a.monthlyAmt);
+    const totalNewMonthly = newSubs.reduce((s, n) => s + n.monthlyAmt, 0);
+    return { newSubs, totalNewMonthly };
+  })();
+
+  // ── Enriched subscriptions for the Recurring tab ──────────────────────────
+  const ym3moAgo = monthsAgoYm(3);
+  const ym9moAgo = monthsAgoYm(9);
+
+  // Oldest month we have any spending data for — used to gate "New" and "Price Hike"
+  const oldestHistoryYm = history
+    .filter((h) => (h.expensesTotal ?? 0) > 0)
+    .map((h) => h.yearMonth)
+    .sort()[0] ?? null;
+  // We can only detect "new" subscriptions if we have data older than 6 months to
+  // compare against. If all statements are within 6 months, everything looks "new".
+  const hasOldEnoughHistory = oldestHistoryYm !== null && oldestHistoryYm < ym6moAgo;
+
+  const enrichedSubs = allSubscriptions.map((sub) => {
+    const slug     = merchantSlug(sub.name);
+    const merchant = allTimeMerchants?.find((m) => m.slug === slug) ?? null;
+
+    // Derive per-charge amount from actual merchant transaction history when available.
+    // Firestore amounts may reflect stale AI-extracted totals (e.g. a multi-line bill
+    // total instead of the true per-charge amount). Using the average per-transaction
+    // from recent months matches what the merchant page shows.
+    let amount = sub.amount;
+    if (merchant?.monthly) {
+      const recentMos = merchant.monthly.filter((m) => m.ym >= ym6moAgo && m.count > 0);
+      if (recentMos.length > 0) {
+        const totalSpend = recentMos.reduce((s, m) => s + m.total, 0);
+        const totalCount = recentMos.reduce((s, m) => s + m.count, 0);
+        amount = totalSpend / totalCount; // avg per-transaction = per-charge amount
+      }
+    }
+
+    const freq    = sub.frequency ?? "monthly";
+    const monthly = freq === "annual"    ? amount / 12
+                  : freq === "quarterly" ? amount / 3
+                  : freq === "biweekly"  ? amount * (30 / 14)
+                  : freq === "weekly"    ? amount * (30 / 7)
+                  : amount;
+    const yearly  = monthly * 12;
+
+    // Next charge
+    const nextChargePrediction = merchant?.lastDate
+      ? nextSubDate(merchant.lastDate, sub.frequency ?? "monthly")
+      : null;
+
+    // Price hike detection — requires:
+    //   1. Merchant has been around > 6 months (not a new subscription)
+    //   2. ≥ 2 months of data in both the recent (0–3 mo) and older (3–9 mo) windows
+    //   3. Recent avg > older avg by ≥ 4% AND > $1.00 absolute
+    const hikeMonth = merchant?.monthly ? findHikeMonth(merchant.monthly) : null;
+    let priceHikeAmt: number | null = null;
+    const merchantIsEstablished = merchant?.firstDate ? merchant.firstDate < ym6moAgo : false;
+    if (hikeMonth && merchant?.monthly && merchantIsEstablished) {
+      const recentMos = merchant.monthly.filter((m) => m.ym >= ym3moAgo && m.count > 0);
+      const olderMos  = merchant.monthly.filter((m) => m.ym >= ym9moAgo && m.ym < ym3moAgo && m.count > 0);
+      if (recentMos.length >= 2 && olderMos.length >= 2) {
+        const recentAvg = recentMos.reduce((s, m) => s + m.total / m.count, 0) / recentMos.length;
+        const olderAvg  = olderMos.reduce((s, m) => s + m.total / m.count, 0) / olderMos.length;
+        if (recentAvg > olderAvg * 1.04 && recentAvg - olderAvg > 1.0)
+          priceHikeAmt = Math.round((recentAvg - olderAvg) * 100) / 100;
+      }
+    }
+
+    // "New" = subscription has NO transactions in any statement older than 6 months,
+    // but DOES have recent transactions — AND we have old enough data to compare against.
+    // Using merchant.monthly directly is more reliable than firstDate, because firstDate
+    // only reflects the oldest uploaded statement for that merchant's account.
+    const merchantHasOldTxns    = merchant?.monthly?.some((m) => m.ym < ym6moAgo && m.count > 0) ?? false;
+    const merchantHasRecentTxns = merchant?.monthly?.some((m) => m.ym >= ym3moAgo && m.count > 0) ?? false;
+    const isNew = hasOldEnoughHistory && !merchantHasOldTxns && merchantHasRecentTxns;
+    const sinceDate = merchant?.firstDate ?? null;
+    const lastDate  = merchant?.lastDate  ?? null;
+
+    return { ...sub, amount, monthly, yearly, lastDate, sinceDate, nextChargePrediction, priceHikeAmt, hikeMonth, isNew };
+  });
+
+  const subAnnualCount  = enrichedSubs.filter((s) => (s.frequency ?? "monthly") === "annual").length;
+  const subMonthlyCount = enrichedSubs.length - subAnnualCount;
+  const priceHikeCount  = enrichedSubs.filter((s) => s.priceHikeAmt).length;
+  const priceHikeTotalMo = enrichedSubs.reduce((s, sub) => s + (sub.priceHikeAmt ?? 0), 0);
+  const newSubCount     = enrichedSubs.filter((s) => s.isNew).length;
+  const newSubTotalMo   = enrichedSubs.filter((s) => s.isNew).reduce((s, sub) => s + sub.monthly, 0);
+
+  const subNextCharge = [...enrichedSubs]
+    .filter((s) => s.nextChargePrediction && s.nextChargePrediction.daysFromNow >= -3)
+    .sort((a, b) => (a.nextChargePrediction!.daysFromNow) - (b.nextChargePrediction!.daysFromNow))[0] ?? null;
+
+  const allRecurringSorted = [...enrichedSubs].sort((a, b) => b.yearly - a.yearly);
+  const SUB_PREVIEW_COUNT  = 3;
+  const hiddenSubs         = allRecurringSorted.slice(SUB_PREVIEW_COUNT);
+  const hiddenSubsMo       = hiddenSubs.reduce((s, sub) => s + sub.monthly, 0);
+
+  // ── Fixed / Variable classification ──────────────────────────────────────────
+  const fixedSubs    = allRecurringSorted.filter((sub) => {
+    const subRec   = firestoreSubsMap.get(merchantSlug(sub.name));
+    const merchant = allTimeMerchants?.find((m) => m.slug === merchantSlug(sub.name));
+    return classifySubscription(sub.amount, merchant?.monthly, subRec?.baseAmount, ym3moAgo) === "fixed";
+  });
+  const variableSubs = allRecurringSorted.filter((sub) => {
+    const subRec   = firestoreSubsMap.get(merchantSlug(sub.name));
+    const merchant = allTimeMerchants?.find((m) => m.slug === merchantSlug(sub.name));
+    return classifySubscription(sub.amount, merchant?.monthly, subRec?.baseAmount, ym3moAgo) === "variable";
+  });
+  const fixedMonthly    = fixedSubs.reduce((s, sub) => s + sub.monthly, 0);
+  const variableMonthly = variableSubs.reduce((s, sub) => s + sub.monthly, 0);
+
+  // Variable: min/max per-charge range across recent months
+  const variableRecentAmounts = variableSubs.flatMap((sub) => {
+    const merchant = allTimeMerchants?.find((m) => m.slug === merchantSlug(sub.name));
+    if (!merchant?.monthly) return [sub.amount];
+    const recent = merchant.monthly.filter((m) => m.ym >= ym3moAgo && m.count > 0);
+    return recent.length > 0 ? recent.map((m) => m.total / m.count) : [sub.amount];
+  });
+  const variableMin = variableRecentAmounts.length > 0 ? Math.min(...variableRecentAmounts) : 0;
+  const variableMax = variableRecentAmounts.length > 0 ? Math.max(...variableRecentAmounts) : 0;
+
+  // Variable sparkline: sum per-charge amounts by month for last 6 months
+  const variableSparkData: { ym: string; v: number }[] = (() => {
+    const months: string[] = [];
+    for (let i = 5; i >= 0; i--) months.push(monthsAgoYm(i));
+    return months.map((ym) => {
+      const v = variableSubs.reduce((s, sub) => {
+        const merchant = allTimeMerchants?.find((m) => m.slug === merchantSlug(sub.name));
+        const mo = merchant?.monthly?.find((m) => m.ym === ym);
+        return s + (mo && mo.count > 0 ? mo.total / mo.count : 0);
+      }, 0);
+      return { ym, v };
+    });
+  })();
+
+  // Fixed: charges due in next 30 days
+  const fixedNext30Days = fixedSubs.reduce((s, sub) => {
+    const d = sub.nextChargePrediction?.daysFromNow;
+    return d != null && d >= 0 && d <= 30 ? s + sub.amount : s;
+  }, 0);
+
+  // Subscription creep chart: monthly fixed commitment over last 12 months
+  const creepChartData: { ym: string; baseline: number; added: number }[] = (() => {
+    if (!yearMonth) return [];
+    const months: string[] = [];
+    for (let i = 11; i >= 0; i--) months.push(monthsAgoYm(i));
+    const windowStart = months[0];
+    return months.map((ym) => {
+      let baseline = 0, added = 0;
+      for (const sub of fixedSubs) {
+        const merchant = allTimeMerchants?.find((m) => m.slug === merchantSlug(sub.name));
+        const firstYm   = merchant?.monthly?.filter((m) => m.count > 0).map((m) => m.ym).sort()[0];
+        if (!firstYm || firstYm > ym) continue;
+        if (firstYm <= windowStart) baseline += sub.monthly;
+        else added += sub.monthly;
+      }
+      return { ym, baseline, added };
+    });
+  })();
+  const creepBaseline = creepChartData[0]?.baseline ?? 0;
+  const creepAdded    = creepChartData.at(-1)?.added ?? 0;
+
+  // Recent changes: NEW · USAGE UP · PRICE HIKE · DORMANT (last 6 months)
+  type SubChangeType = "new" | "usage-up" | "hike" | "dormant";
+  const recentChanges: { sub: typeof allRecurringSorted[0]; changeType: SubChangeType; detail: string }[] = (() => {
+    const out: { sub: typeof allRecurringSorted[0]; changeType: SubChangeType; detail: string }[] = [];
+    for (const sub of allRecurringSorted) {
+      const subRec   = firestoreSubsMap.get(merchantSlug(sub.name));
+      const merchant = allTimeMerchants?.find((m) => m.slug === merchantSlug(sub.name));
+      const isVar    = classifySubscription(sub.amount, merchant?.monthly, subRec?.baseAmount, ym3moAgo) === "variable";
+      if (sub.isNew) {
+        const freq = sub.frequency ?? "monthly";
+        out.push({ sub, changeType: "new", detail: `${freq} · since ${sub.sinceDate ? fmtMD(sub.sinceDate) : "—"}` });
+      } else if (sub.priceHikeAmt && sub.priceHikeAmt > 0) {
+        if (isVar) {
+          const base = sub.amount - sub.priceHikeAmt;
+          const pct  = base > 0 ? Math.round((sub.priceHikeAmt / base) * 100) : 0;
+          out.push({ sub, changeType: "usage-up", detail: `up ${pct}% vs 3 mo ago` });
+        } else {
+          out.push({ sub, changeType: "hike", detail: `+${formatCurrency(sub.priceHikeAmt, homeCurrency, undefined, true)}/mo · ${sub.hikeMonth ? shortMonth(sub.hikeMonth) : ""}` });
+        }
+      } else if (sub.lastDate && sub.lastDate < ym3moAgo && sub.sinceDate && sub.sinceDate < ym6moAgo) {
+        out.push({ sub, changeType: "dormant", detail: `no charge since ${fmtMD(sub.lastDate)}` });
+      }
+    }
+    return out.slice(0, 6);
+  })();
+
+  // ── Month pills — shared across Transactions, Merchants and Cash tabs ────────
+  const monthPillsHistory = history.filter((h) => (h.expensesTotal ?? 0) > 0);
+  const monthPills = monthPillsHistory.length > 1 ? (
+    <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none -mx-1 mb-4">
+      {monthPillsHistory.map((h) => (
+        <button
+          key={h.yearMonth}
+          onClick={() => handleMonthSelect(h.yearMonth)}
+          className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+            selectedMonth === h.yearMonth
+              ? "bg-purple-600 text-white"
+              : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+          }`}
+        >
+          {shortMonth(h.yearMonth)} {h.yearMonth.slice(0, 4).slice(-2)}
+        </button>
+      ))}
+    </div>
+  ) : null;
+
   if (loading) return (
     <div className="flex min-h-[50vh] items-center justify-center">
       <div className="h-10 w-10 animate-spin rounded-full border-4 border-purple-600 border-t-transparent" />
@@ -901,27 +1362,6 @@ function SpendingPageInner() {
           excl. transfers<br />{catIncludeAll ? "" : "& debt pmts"}
         </p>
       </div>
-
-      {/* Month pills */}
-      {history.filter((h) => (h.expensesTotal ?? 0) > 0).length > 1 && (
-        <div className="mt-4 -mx-1 flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-          {history
-            .filter((h) => (h.expensesTotal ?? 0) > 0)
-            .map((h) => (
-              <button
-                key={h.yearMonth}
-                onClick={() => handleMonthSelect(h.yearMonth)}
-                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                  selectedMonth === h.yearMonth
-                    ? "bg-purple-600 text-white"
-                    : "bg-gray-100 text-gray-500 hover:bg-gray-200"
-                }`}
-              >
-                {shortMonth(h.yearMonth)} {h.yearMonth.slice(0, 4).slice(-2)}
-              </button>
-            ))}
-        </div>
-      )}
 
       {error && <p className="mt-4 text-red-600 text-sm">{error}</p>}
 
@@ -1434,74 +1874,25 @@ function SpendingPageInner() {
               {categories.length > 0 && (() => {
                 const COLLAPSE_CAT = 5;
                 const activeCats  = catIncludeAll ? categoriesAll : categories;
-                const activeTotal = catIncludeAll ? allTxnsTotal  : displayTotal;
-                const pieData = activeCats.map((cat) => ({
-                  name: cat.name,
-                  value: cat.amount,
-                  color: categoryColor(cat.name),
-                }));
                 const visibleCats = catExpanded ? activeCats : activeCats.slice(0, COLLAPSE_CAT);
                 const hiddenCount = Math.max(0, activeCats.length - COLLAPSE_CAT);
                 return (
                   <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-                    {/* Donut chart */}
-                    <div className="px-5 pt-5 pb-2">
-                      <div className="mb-3 flex items-center justify-between gap-3">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">By Category</p>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] text-gray-400">incl. debt pmts</span>
-                          <button
-                            onClick={() => setCatIncludeAll((v) => !v)}
-                            className={`relative inline-flex h-4 w-8 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${
-                              catIncludeAll ? "bg-indigo-500" : "bg-gray-200"
-                            }`}
-                            role="switch"
-                            aria-checked={catIncludeAll}
-                          >
-                            <span className={`inline-block h-3 w-3 rounded-full bg-white shadow transform transition-transform ${catIncludeAll ? "translate-x-4" : "translate-x-0"}`} />
-                          </button>
-                        </div>
-                      </div>
-                      <div className="relative h-52">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <PieChart style={{ outline: "none" }}>
-                            <Pie
-                              data={pieData}
-                              cx="50%"
-                              cy="50%"
-                              innerRadius="52%"
-                              outerRadius="76%"
-                              dataKey="value"
-                              paddingAngle={2}
-                              stroke="none"
-                            >
-                              {pieData.map((entry) => (
-                                <Cell key={entry.name} fill={entry.color} />
-                              ))}
-                            </Pie>
-                            <Tooltip
-                              formatter={(value, name) => [formatCurrency(Number(value), homeCurrency, undefined, true), String(name)]}
-                              contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb" }}
-                            />
-                          </PieChart>
-                        </ResponsiveContainer>
-                        {/* Centre label */}
-                        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                          <p className="text-[11px] text-gray-400">Total</p>
-                          <p className="text-lg font-bold text-gray-900 tabular-nums">
-                            {(() => {
-                              const sym = getCurrencySymbol(homeCurrency);
-                              const abs = Math.abs(activeTotal);
-                              if (abs >= 1_000_000) return `${sym}${(abs / 1_000_000).toFixed(1)}M`;
-                              if (abs >= 10_000)    return `${sym}${Math.round(abs / 1_000)}k`;
-                              if (abs >= 1_000)     return `${sym}${(abs / 1_000).toFixed(1)}k`;
-                              return formatCurrency(activeTotal, homeCurrency, undefined, true);
-                            })()}
-                          </p>
-                          {activeCats.length > 0 && (
-                            <p className="text-[11px] text-gray-400">{activeCats.length} cats</p>
-                          )}
-                        </div>
+                    {/* Card header with toggle */}
+                    <div className="px-5 pt-4 pb-3 flex items-center justify-between gap-3">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">By Category</p>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-gray-400">incl. debt pmts</span>
+                        <button
+                          onClick={() => setCatIncludeAll((v) => !v)}
+                          className={`relative inline-flex h-4 w-8 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+                            catIncludeAll ? "bg-indigo-500" : "bg-gray-200"
+                          }`}
+                          role="switch"
+                          aria-checked={catIncludeAll}
+                        >
+                          <span className={`inline-block h-3 w-3 rounded-full bg-white shadow transform transition-transform ${catIncludeAll ? "translate-x-4" : "translate-x-0"}`} />
+                        </button>
                       </div>
                     </div>
 
@@ -1638,8 +2029,103 @@ function SpendingPageInner() {
               </button>
             </div>
           )}
+
+          {/* ── Overview insight cards ─────────────────────────────────────── */}
+          {activeTab === "overview" && (allSubscriptions.length > 0 || topMerchantsData || cashWithdrawalsData || newRecurringData) && (
+            <div className="grid grid-cols-2 gap-3 mt-1">
+
+              {/* Subscriptions card */}
+              {allSubscriptions.length > 0 && (
+                <button
+                  onClick={() => switchTab("subscriptions")}
+                  className="flex flex-col gap-1.5 rounded-xl border border-gray-200 bg-white p-4 shadow-sm text-left hover:bg-gray-50 transition group"
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+                    Subscriptions · {Math.min(history.length, 12)} mo
+                  </p>
+                  <p className="text-xl font-bold text-gray-900 leading-tight tabular-nums">
+                    {formatCurrency(subsYearly, homeCurrency, undefined, true)}
+                    <span className="text-sm font-medium text-gray-500">/yr</span>
+                  </p>
+                  <p className="text-xs text-gray-500">{allSubscriptions.length} active</p>
+                  <p className="text-xs font-medium text-gray-400 group-hover:text-gray-500 transition mt-auto pt-1">
+                    {formatCurrency(subMonthlyTotal, homeCurrency, undefined, true)}/mo avg
+                  </p>
+                </button>
+              )}
+
+              {/* Top Merchants card */}
+              {topMerchantsData && (
+                <button
+                  onClick={() => switchTab("merchants")}
+                  className="flex flex-col gap-1.5 rounded-xl border border-gray-200 bg-white p-4 shadow-sm text-left hover:bg-gray-50 transition group"
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+                    Top Merchants · 12 mo
+                  </p>
+                  <p className="text-xl font-bold text-gray-900 leading-tight tabular-nums">
+                    {topMerchantsData.top3Pct}
+                    <span className="text-sm font-medium text-gray-500">%</span>
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    Top 3 · {formatCurrency(topMerchantsData.top3Total, homeCurrency, undefined, true)}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-auto pt-1 truncate">
+                    {topMerchantsData.top3.map((m) => m.name).join(", ")}
+                  </p>
+                </button>
+              )}
+
+              {/* Cash withdrawals card */}
+              {cashWithdrawalsData && (
+                <div className="flex flex-col gap-1.5 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+                    Cash · 12 mo
+                  </p>
+                  <p className="text-xl font-bold text-gray-900 leading-tight tabular-nums">
+                    {formatCurrency(cashWithdrawalsData.total12, homeCurrency, undefined, true)}
+                  </p>
+                  <p className="text-xs text-gray-500">{cashWithdrawalsData.count12} withdrawal{cashWithdrawalsData.count12 !== 1 ? "s" : ""}</p>
+                  {cashWithdrawalsData.vsLastYear !== null && (
+                    <p className={`text-xs font-medium mt-auto pt-1 ${cashWithdrawalsData.vsLastYear < 0 ? "text-green-600" : cashWithdrawalsData.vsLastYear > 0 ? "text-orange-500" : "text-gray-400"}`}>
+                      {cashWithdrawalsData.vsLastYear > 0 ? "↑" : cashWithdrawalsData.vsLastYear < 0 ? "↓" : "→"} {Math.abs(cashWithdrawalsData.vsLastYear)}% vs last year
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* New recurring costs card */}
+              {newRecurringData && (
+                <button
+                  onClick={() => switchTab("subscriptions")}
+                  className="flex flex-col gap-1.5 rounded-xl border border-gray-200 bg-white p-4 shadow-sm text-left hover:bg-gray-50 transition col-span-2"
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+                    New Recurring Costs · 6 mo
+                  </p>
+                  <p className="text-xl font-bold text-gray-900 leading-tight tabular-nums">
+                    +{formatCurrency(newRecurringData.totalNewMonthly, homeCurrency, undefined, true)}
+                    <span className="text-sm font-medium text-gray-500">/mo</span>
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {newRecurringData.newSubs.length} new subscription{newRecurringData.newSubs.length !== 1 ? "s" : ""} · {newRecurringData.newSubs[0]?.name} is the largest add
+                  </p>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 mt-auto pt-1">
+                    {newRecurringData.newSubs.slice(0, 4).map((s) => (
+                      <span key={s.name} className="text-xs text-blue-500 font-medium">
+                        {s.name} +{formatCurrency(s.monthlyAmt, homeCurrency, undefined, true)}
+                      </span>
+                    ))}
+                  </div>
+                </button>
+              )}
+            </div>
+          )}
+
           {activeTab === "transactions" && (
-            <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+            <>
+              {monthPills}
+              <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
               {txns.length === 0 ? (
                 <p className="px-5 py-10 text-center text-sm text-gray-400">No transactions found for this month.</p>
               ) : (() => {
@@ -1848,11 +2334,13 @@ function SpendingPageInner() {
                 );
               })()}
             </div>
+            </>
           )}
 
           {/* ── By Merchant tab ───────────────────────────────────────── */}
           {activeTab === "merchants" && (
             <div className="space-y-4">
+              {monthPills}
               {merchantsLoading ? (
                 <div className="flex justify-center py-16">
                   <div className="h-8 w-8 animate-spin rounded-full border-4 border-purple-200 border-t-purple-600" />
@@ -1944,7 +2432,7 @@ function SpendingPageInner() {
 
           {/* ── Recurring tab ─────────────────────────────────────────── */}
           {activeTab === "subscriptions" && (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {allSubscriptions.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center">
                   <p className="text-sm text-gray-500">No recurring charges yet.</p>
@@ -1953,80 +2441,457 @@ function SpendingPageInner() {
                   </p>
                 </div>
               ) : (
-                <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-                  <div className="flex items-center gap-3 px-5 pt-5 pb-3">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Recurring charges</p>
-                    {subsYearly > 0 && (
-                      <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
-                        {formatCurrency(subsYearly, homeCurrency, undefined, true)}/yr
-                      </span>
-                    )}
+                <>
+                  {/* ── FIXED / VARIABLE summary cards ── */}
+                  <div className="grid grid-cols-2 gap-3">
+                    {/* FIXED */}
+                    <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-5">
+                      <div className="flex items-center gap-1.5 mb-3">
+                        <span className="h-2 w-2 rounded-full bg-indigo-500" />
+                        <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Fixed</span>
+                        <span className="ml-auto text-[10px] text-gray-400">{fixedSubs.length} items</span>
+                      </div>
+                      <p className="text-2xl font-bold text-gray-900 tabular-nums leading-tight">
+                        {formatCurrency(fixedSubs.reduce((s, sub) => s + sub.yearly, 0), homeCurrency, undefined, true)}
+                        <span className="text-xs font-medium text-gray-400">/yr</span>
+                      </p>
+                      <p className="text-xs text-gray-400 mt-1">
+                        {formatCurrency(fixedMonthly, homeCurrency, undefined, true)}/mo · predictable
+                      </p>
+                      {fixedNext30Days > 0 && (
+                        <p className="text-xs text-gray-500 mt-2">
+                          Next 30 days: <span className="font-semibold">{formatCurrency(fixedNext30Days, homeCurrency, undefined, true)}</span>
+                        </p>
+                      )}
+                    </div>
+                    {/* VARIABLE */}
+                    <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-5">
+                      <div className="flex items-center gap-1.5 mb-3">
+                        <span className="h-2 w-2 rounded-full bg-amber-500" />
+                        <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Variable</span>
+                        <span className="ml-auto text-[10px] text-gray-400">{variableSubs.length} items</span>
+                      </div>
+                      {variableSubs.length > 0 ? (
+                        <>
+                          <p className="text-2xl font-bold text-gray-900 tabular-nums leading-tight">
+                            {formatCurrency(variableMin, homeCurrency, undefined, true)}
+                            <span className="text-gray-400">–</span>
+                            {formatCurrency(variableMax, homeCurrency, undefined, true)}
+                            <span className="text-xs font-medium text-gray-400">/mo</span>
+                          </p>
+                          <p className="text-xs text-gray-400 mt-1">last 3 mo range · varies</p>
+                          {variableSparkData.some((d) => d.v > 0) && (
+                            <div className="mt-2 -mx-1">
+                              <ResponsiveContainer width="100%" height={36}>
+                                <AreaChart data={variableSparkData} margin={{ top: 2, bottom: 2, left: 0, right: 0 }}>
+                                  <Area type="monotone" dataKey="v" stroke="#f59e0b" fill="#fef3c7" strokeWidth={1.5} dot={false} />
+                                </AreaChart>
+                              </ResponsiveContainer>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-sm text-gray-400 mt-2">None detected</p>
+                      )}
+                    </div>
                   </div>
-                  <div className="divide-y divide-gray-100">
-                    {allSubscriptions.map((sub) => {
-                      const monthly = sub.frequency === "annual" ? sub.amount / 12 : sub.amount;
-                      const yearly  = monthly * 12;
-                      const slug    = merchantSlug(sub.name);
+
+                  {/* ── Subscription creep chart ── */}
+                  {creepChartData.length >= 3 && (creepBaseline > 0 || creepAdded > 0) && (
+                    <div className="rounded-xl border border-gray-200 bg-white shadow-sm px-5 pt-5 pb-4">
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Subscription Creep</p>
+                        <span className="text-[10px] text-gray-400">12 MO</span>
+                      </div>
+                      <p className="text-base font-bold text-gray-900">
+                        You&apos;ve added <span className="text-indigo-600">{formatCurrency(creepAdded, homeCurrency, undefined, true)}/mo</span> in new commitments
+                      </p>
+                      <p className="text-xs text-gray-400 mt-0.5 mb-4">
+                        A year ago your fixed subscriptions totalled {formatCurrency(creepBaseline, homeCurrency, undefined, true)}/mo. Today: {formatCurrency(fixedMonthly, homeCurrency, undefined, true)}/mo.
+                      </p>
+                      <ResponsiveContainer width="100%" height={110}>
+                        <AreaChart data={creepChartData} margin={{ top: 4, bottom: 0, left: 0, right: 0 }}>
+                          <XAxis dataKey="ym" tickFormatter={(ym: string) => shortMonth(ym)} tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
+                          <Tooltip
+                            formatter={(v) => formatCurrency(Number(v), homeCurrency, undefined, true)}
+                            labelFormatter={(ym) => shortMonth(String(ym))}
+                            contentStyle={{ fontSize: 11, borderRadius: 8, border: "1px solid #e5e7eb" }}
+                          />
+                          <Area type="monotone" dataKey="baseline" stackId="1" stroke="#818cf8" fill="#e0e7ff" strokeWidth={1.5} dot={false} name="Existing" />
+                          <Area type="monotone" dataKey="added" stackId="1" stroke="#a5b4fc" fill="#ede9fe" strokeWidth={1} dot={false} name="Added" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                      <div className="flex gap-4 mt-2">
+                        <span className="flex items-center gap-1.5 text-[10px] text-gray-400">
+                          <span className="h-2 w-4 rounded-sm bg-indigo-200" />Existing commitments
+                        </span>
+                        <span className="flex items-center gap-1.5 text-[10px] text-gray-400">
+                          <span className="h-2 w-4 rounded-sm bg-violet-200" />+ Added in last 12 mo
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── Next upcoming charge ── */}
+                  {subNextCharge && (
+                    <div className="rounded-xl border border-gray-200 bg-white shadow-sm px-5 py-3.5 flex items-center gap-3">
+                      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${subNextCharge.nextChargePrediction ? subAvatarColor(new Date(subNextCharge.nextChargePrediction.date + "T12:00:00").toLocaleDateString("en-US", { month: "short" }).toUpperCase()) : subAvatarColor(subNextCharge.name)}`}>
+                        {subNextCharge.nextChargePrediction
+                          ? new Date(subNextCharge.nextChargePrediction.date + "T12:00:00").toLocaleDateString("en-US", { month: "short" }).toUpperCase()
+                          : subInitials(subNextCharge.name)}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-900">{subNextCharge.name}</p>
+                        <p className="text-xs text-gray-400">
+                          Next charge · {subNextCharge.nextChargePrediction ? fmtMD(subNextCharge.nextChargePrediction.date) : "—"}
+                          {subNextCharge.nextChargePrediction && (() => {
+                            const d = subNextCharge.nextChargePrediction.daysFromNow;
+                            if (d === 0) return " · Today";
+                            if (d === 1) return " · Tomorrow";
+                            if (d < 0) return " · Overdue";
+                            return ` · in ${d} days`;
+                          })()}
+                        </p>
+                      </div>
+                      <p className="text-sm font-bold text-gray-900 tabular-nums shrink-0">
+                        {formatCurrency(subNextCharge.amount, homeCurrency, undefined, false)}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* ── Recent changes ── */}
+                  {recentChanges.length > 0 && (
+                    <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Recent Changes</p>
+                        <span className="text-[10px] text-gray-400">{recentChanges.length} detected · 6 mo</span>
+                      </div>
+                      <div className="divide-y divide-gray-100">
+                        {(showAllChanges ? recentChanges : recentChanges.slice(0, 4)).map(({ sub, changeType, detail }) => {
+                          const slug = merchantSlug(sub.name);
+                          const badgeStyle: Record<SubChangeType, string> = {
+                            "new":      "bg-purple-50 text-purple-600",
+                            "usage-up": "bg-orange-50 text-orange-600",
+                            "hike":     "bg-red-50 text-red-500",
+                            "dormant":  "bg-gray-100 text-gray-400",
+                          };
+                          const badgeLabel: Record<SubChangeType, string> = {
+                            "new":      "NEW",
+                            "usage-up": "USAGE UP",
+                            "hike":     "PRICE HIKE",
+                            "dormant":  "DORMANT",
+                          };
+                          const isDormant = changeType === "dormant";
+                          const subRec = firestoreSubsMap.get(slug);
+                          const baseAmt = subRec?.baseAmount;
+                          const freqLabel = sub.frequency ?? "monthly";
+                          const periodSuffix = freqLabel === "annual" ? "yr" : freqLabel === "quarterly" ? "qtr" : freqLabel === "weekly" ? "wk" : freqLabel === "biweekly" ? "2wk" : "mo";
+                          return (
+                            <div key={sub.name} className={`flex items-center gap-3 px-5 py-3 ${isDormant ? "opacity-60" : ""}`}>
+                              <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${subAvatarColor(sub.name)}`}>
+                                {subInitials(sub.name)}
+                              </span>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <p className={`text-sm font-semibold text-gray-900 truncate ${isDormant ? "line-through text-gray-400" : ""}`}>{sub.name}</p>
+                                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${badgeStyle[changeType]}`}>
+                                    {badgeLabel[changeType]}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-gray-400 mt-0.5 capitalize">{detail}</p>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <p className={`text-sm font-bold tabular-nums ${isDormant ? "text-gray-400 line-through" : "text-gray-900"}`}>
+                                  {formatCurrency(baseAmt && baseAmt > 0 ? baseAmt : sub.amount, homeCurrency, undefined, false)}/{periodSuffix}
+                                </p>
+                                <p className="text-[10px] text-gray-400 tabular-nums">
+                                  {formatCurrency(sub.yearly, homeCurrency, undefined, true)}/yr
+                                </p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {recentChanges.length > 4 && (
+                        <button
+                          onClick={() => setShowAllChanges((v) => !v)}
+                          className="flex w-full items-center justify-center gap-1 border-t border-gray-100 px-5 py-3 text-xs font-medium text-gray-400 hover:bg-gray-50 transition"
+                        >
+                          {showAllChanges ? (
+                            <>Show less <svg className="h-3.5 w-3.5 rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg></>
+                          ) : (
+                            <>+{recentChanges.length - 4} more <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg></>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ── Fixed · Predictable list ── */}
+                  {fixedSubs.length > 0 && (() => {
+                    const renderRow = (sub: typeof allRecurringSorted[0]) => {
+                      const slug         = merchantSlug(sub.name);
+                      const subRec       = firestoreSubsMap.get(slug);
+                      const isUserConf   = subRec?.status === "user_confirmed";
+                      const isConfirming = confirmingSlug === slug;
+                      const freqLabel    = sub.frequency ?? "monthly";
+                      const freqColors: Record<string, string> = {
+                        annual: "bg-indigo-50 text-indigo-600", quarterly: "bg-teal-50 text-teal-600",
+                        monthly: "bg-gray-100 text-gray-500", biweekly: "bg-purple-50 text-purple-600",
+                        weekly: "bg-orange-50 text-orange-600",
+                      };
+                      const freqColor    = freqColors[freqLabel] ?? freqColors.monthly;
+                      const isAnnual     = freqLabel === "annual";
+                      const dateParts: string[] = [];
+                      if (sub.lastDate) dateParts.push(`Last ${fmtMD(sub.lastDate)}`);
+                      if (isAnnual && sub.nextChargePrediction) dateParts.push(`Next ${fmtMD(sub.nextChargePrediction.date)}`);
+                      const periodSuffix = freqLabel === "annual" ? "yr" : freqLabel === "quarterly" ? "qtr" : freqLabel === "weekly" ? "wk" : freqLabel === "biweekly" ? "2wk" : "mo";
+                      const baseAmt      = subRec?.baseAmount;
+                      const baseYearly   = baseAmt != null && baseAmt > 0
+                        ? (freqLabel === "annual" ? baseAmt : freqLabel === "quarterly" ? baseAmt * 4 : freqLabel === "biweekly" ? baseAmt * (365 / 14) : freqLabel === "weekly" ? baseAmt * 52 : baseAmt * 12)
+                        : null;
                       return (
-                        <div key={sub.name} className="flex items-center gap-3 px-5 py-3.5">
-                          <RecurringListIcon name={sub.name} />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
-                              <p className="text-sm font-medium text-gray-800">{sub.name}</p>
-                              {sub.source === "ai" ? (
-                                <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-400">auto-detected</span>
-                              ) : (
-                                <span className="rounded-full bg-purple-50 px-1.5 py-0.5 text-[10px] font-medium text-purple-500">manual</span>
+                        <Fragment key={sub.name}>
+                          <div className="flex items-center gap-3 px-5 py-3.5">
+                            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(sub.name)}`}>
+                              {subInitials(sub.name)}
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-sm font-semibold text-gray-900 truncate">{sub.name}</p>
+                                <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${freqColor}`}>{freqLabel}</span>
+                                {isUserConf && <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold bg-green-50 text-green-600">confirmed</span>}
+                              </div>
+                              {dateParts.length > 0 && <p className="text-[11px] text-gray-400 mt-0.5">{dateParts.join(" · ")}</p>}
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(baseYearly ?? sub.yearly, homeCurrency, undefined, true)}/yr</p>
+                              <p className="text-[11px] text-gray-400 tabular-nums">
+                                {baseAmt != null && baseAmt > 0
+                                  ? <>from {formatCurrency(baseAmt, homeCurrency, undefined, false)}/{periodSuffix}</>
+                                  : <>{formatCurrency(sub.amount, homeCurrency, undefined, false)}/{periodSuffix}</>}
+                              </p>
+                              {baseAmt != null && baseAmt > 0 && Math.abs(sub.amount - baseAmt) / (baseAmt || 1) > 0.03 && (
+                                <p className="text-[10px] text-gray-300 tabular-nums">avg {formatCurrency(sub.amount, homeCurrency, undefined, false)}/{periodSuffix}</p>
                               )}
                             </div>
-                            <p className="text-xs text-gray-400">
-                              {sub.detectedFrequency}
-                              {sub.detectedFrequency !== (sub.frequency ?? "monthly") && (
-                                <span className="ml-1 text-teal-500">(detected)</span>
-                              )}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-3 shrink-0">
-                            <div className="text-right">
-                              <p className="text-sm font-medium text-gray-800">{fmtDec(sub.amount)}</p>
-                              {yearly !== sub.amount && (
-                                <p className="text-xs text-gray-400">{formatCurrency(yearly, homeCurrency, undefined, true)}/yr</p>
-                              )}
-                            </div>
-                            {/* Only allow removing manually-added ones */}
-                            {sub.source === "manual" && (
+                            {sub.source !== "manual" ? (
                               <button
-                                onClick={async () => {
-                                  if (!token) return;
-                                  setRecurringRules((prev) => { const next = new Map(prev); next.delete(slug); return next; });
-                                  await fetch(`/api/user/recurring-rules?slug=${encodeURIComponent(slug)}`, {
-                                    method: "DELETE", headers: { Authorization: `Bearer ${token}` },
-                                  });
+                                onClick={() => {
+                                  if (isConfirming) { setConfirmingSlug(null); return; }
+                                  setConfirmFreq(freqLabel);
+                                  setConfirmBase(baseAmt != null && baseAmt > 0 ? String(baseAmt) : sub.amount > 0 ? String(Math.round(sub.amount * 100) / 100) : "");
+                                  setConfirmingSlug(slug);
                                 }}
-                                className="text-xs text-red-400 hover:text-red-600 transition"
-                                title="Remove"
+                                className={`ml-1 shrink-0 rounded px-2 py-1 text-[11px] font-semibold transition ${isConfirming ? "bg-gray-100 text-gray-400 hover:bg-gray-200" : isUserConf ? "text-gray-400 hover:text-gray-600" : "bg-purple-50 text-purple-600 hover:bg-purple-100"}`}
+                                title={isConfirming ? "Close" : isUserConf ? "Edit" : "Confirm"}
                               >
-                                ✕
+                                {isConfirming ? (
+                                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                ) : isUserConf ? (
+                                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l-4 1 1-4 9.293-9.293a1 1 0 011.414 0l2.586 2.586a1 1 0 010 1.414L9 13z" /></svg>
+                                ) : "Confirm"}
                               </button>
+                            ) : (
+                              <button onClick={async () => { if (!token) return; setRecurringRules((prev) => { const next = new Map(prev); next.delete(slug); return next; }); await fetch(`/api/user/recurring-rules?slug=${encodeURIComponent(slug)}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }); }} className="ml-1 text-[11px] text-red-400 hover:text-red-600 transition" title="Remove">✕</button>
                             )}
                           </div>
-                        </div>
+                          {isConfirming && (
+                            <div className="border-t border-purple-100 bg-purple-50/40 px-5 py-3">
+                              <div className="flex flex-wrap items-end gap-3">
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-medium uppercase tracking-wide text-gray-400">Frequency</label>
+                                  <div className="relative">
+                                    <select value={confirmFreq} onChange={(e) => setConfirmFreq(e.target.value)} className="appearance-none cursor-pointer rounded-lg border border-gray-200 bg-white py-1.5 pl-2.5 pr-7 text-xs font-medium text-gray-700 focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-400">
+                                      {FORECAST_FREQUENCY_OPTIONS.filter((o) => o.id !== "oneoff").map((o) => (
+                                        <option key={o.id} value={o.id === "yearly" ? "annual" : o.id}>{o.label}</option>
+                                      ))}
+                                    </select>
+                                    <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-gray-400">▾</span>
+                                  </div>
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-medium uppercase tracking-wide text-gray-400">Plan price <span className="normal-case font-normal text-gray-300">(optional)</span></label>
+                                  <div className="flex items-center gap-1.5">
+                                    <input type="number" min="0" step="0.01" value={confirmBase} onChange={(e) => setConfirmBase(e.target.value)} placeholder="e.g. 19.00" className="w-28 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs tabular-nums text-gray-800 placeholder-gray-300 focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-400" />
+                                    <span className="text-xs text-gray-400">/{confirmFreq === "annual" ? "yr" : confirmFreq === "quarterly" ? "qtr" : confirmFreq === "weekly" ? "wk" : confirmFreq === "biweekly" ? "2wk" : "mo"}</span>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2 pb-0.5">
+                                  <button onClick={() => handleConfirmSub(slug)} disabled={confirmSaving} className="rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 disabled:opacity-50 transition">{confirmSaving ? "Saving…" : "Save"}</button>
+                                  <button onClick={() => setConfirmingSlug(null)} className="text-xs text-gray-400 hover:text-gray-600 transition">Dismiss</button>
+                                </div>
+                              </div>
+                              <p className="mt-1.5 text-[10px] text-gray-400">avg charge: {formatCurrency(sub.amount, homeCurrency, undefined, false)}/{periodSuffix} · clear to track the full average</p>
+                            </div>
+                          )}
+                        </Fragment>
                       );
-                    })}
-                  </div>
-                </div>
-              )}
+                    };
+                    return (
+                      <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                          <div className="flex items-center gap-2">
+                            <span className="h-2 w-2 rounded-full bg-indigo-500" />
+                            <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Fixed · Predictable</p>
+                          </div>
+                          <span className="text-[10px] text-gray-400">{fixedSubs.length} active · {formatCurrency(fixedMonthly, homeCurrency, undefined, true)}/mo</span>
+                        </div>
+                        <div className="divide-y divide-gray-100">
+                          {(showAllFixed ? fixedSubs : fixedSubs.slice(0, 4)).map(renderRow)}
+                        </div>
+                        {fixedSubs.length > 4 && (
+                          <button
+                            onClick={() => setShowAllFixed((v) => !v)}
+                            className="flex w-full items-center justify-center gap-1 border-t border-gray-100 px-5 py-3 text-xs font-medium text-gray-400 hover:bg-gray-50 transition"
+                          >
+                            {showAllFixed ? (
+                              <>Show less <svg className="h-3.5 w-3.5 rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg></>
+                            ) : (
+                              <>+{fixedSubs.length - 4} more <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg></>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
 
-              <p className="text-xs text-gray-400 px-1">
-                <span className="font-medium text-gray-500">Auto-detected</span> entries come from your statement.{" "}
-                <span className="font-medium text-gray-500">Manual</span> entries are ones you&apos;ve tagged as recurring in the Transactions tab.
-              </p>
+                  {/* ── Variable · Usage-based list ── */}
+                  {variableSubs.length > 0 && (() => {
+                    const renderRow = (sub: typeof allRecurringSorted[0]) => {
+                      const slug         = merchantSlug(sub.name);
+                      const subRec       = firestoreSubsMap.get(slug);
+                      const isUserConf   = subRec?.status === "user_confirmed";
+                      const isConfirming = confirmingSlug === slug;
+                      const freqLabel    = sub.frequency ?? "monthly";
+                      const freqColors: Record<string, string> = {
+                        annual: "bg-indigo-50 text-indigo-600", quarterly: "bg-teal-50 text-teal-600",
+                        monthly: "bg-gray-100 text-gray-500", biweekly: "bg-purple-50 text-purple-600",
+                        weekly: "bg-orange-50 text-orange-600",
+                      };
+                      const freqColor   = freqColors[freqLabel] ?? freqColors.monthly;
+                      const isAnnual    = freqLabel === "annual";
+                      const dateParts: string[] = [];
+                      if (sub.lastDate) dateParts.push(`Last ${fmtMD(sub.lastDate)}`);
+                      if (isAnnual && sub.nextChargePrediction) dateParts.push(`Next ${fmtMD(sub.nextChargePrediction.date)}`);
+                      const periodSuffix = freqLabel === "annual" ? "yr" : freqLabel === "quarterly" ? "qtr" : freqLabel === "weekly" ? "wk" : freqLabel === "biweekly" ? "2wk" : "mo";
+                      const baseAmt      = subRec?.baseAmount;
+                      const overageAmt   = baseAmt != null && baseAmt > 0 ? sub.amount - baseAmt : null;
+                      return (
+                        <Fragment key={sub.name}>
+                          <div className="flex items-center gap-3 px-5 py-3.5">
+                            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(sub.name)}`}>
+                              {subInitials(sub.name)}
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-sm font-semibold text-gray-900 truncate">{sub.name}</p>
+                                <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${freqColor}`}>{freqLabel}</span>
+                                {isUserConf && <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold bg-green-50 text-green-600">confirmed</span>}
+                              </div>
+                              {dateParts.length > 0 && <p className="text-[11px] text-gray-400 mt-0.5">{dateParts.join(" · ")}</p>}
+                              {overageAmt != null && overageAmt > 0 && (
+                                <p className="text-[11px] text-amber-500 mt-0.5">
+                                  +{formatCurrency(overageAmt, homeCurrency, undefined, false)}/{periodSuffix} avg usage above plan
+                                </p>
+                              )}
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(sub.amount, homeCurrency, undefined, false)}/{periodSuffix}</p>
+                              {baseAmt != null && baseAmt > 0 && (
+                                <p className="text-[11px] text-gray-400 tabular-nums">plan {formatCurrency(baseAmt, homeCurrency, undefined, false)}</p>
+                              )}
+                            </div>
+                            {sub.source !== "manual" ? (
+                              <button
+                                onClick={() => {
+                                  if (isConfirming) { setConfirmingSlug(null); return; }
+                                  setConfirmFreq(freqLabel);
+                                  setConfirmBase(baseAmt != null && baseAmt > 0 ? String(baseAmt) : sub.amount > 0 ? String(Math.round(sub.amount * 100) / 100) : "");
+                                  setConfirmingSlug(slug);
+                                }}
+                                className={`ml-1 shrink-0 rounded px-2 py-1 text-[11px] font-semibold transition ${isConfirming ? "bg-gray-100 text-gray-400 hover:bg-gray-200" : isUserConf ? "text-gray-400 hover:text-gray-600" : "bg-purple-50 text-purple-600 hover:bg-purple-100"}`}
+                                title={isConfirming ? "Close" : isUserConf ? "Edit" : "Confirm"}
+                              >
+                                {isConfirming ? (
+                                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                ) : isUserConf ? (
+                                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l-4 1 1-4 9.293-9.293a1 1 0 011.414 0l2.586 2.586a1 1 0 010 1.414L9 13z" /></svg>
+                                ) : "Confirm"}
+                              </button>
+                            ) : (
+                              <button onClick={async () => { if (!token) return; setRecurringRules((prev) => { const next = new Map(prev); next.delete(slug); return next; }); await fetch(`/api/user/recurring-rules?slug=${encodeURIComponent(slug)}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }); }} className="ml-1 text-[11px] text-red-400 hover:text-red-600 transition" title="Remove">✕</button>
+                            )}
+                          </div>
+                          {isConfirming && (
+                            <div className="border-t border-purple-100 bg-purple-50/40 px-5 py-3">
+                              <div className="flex flex-wrap items-end gap-3">
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-medium uppercase tracking-wide text-gray-400">Frequency</label>
+                                  <div className="relative">
+                                    <select value={confirmFreq} onChange={(e) => setConfirmFreq(e.target.value)} className="appearance-none cursor-pointer rounded-lg border border-gray-200 bg-white py-1.5 pl-2.5 pr-7 text-xs font-medium text-gray-700 focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-400">
+                                      {FORECAST_FREQUENCY_OPTIONS.filter((o) => o.id !== "oneoff").map((o) => (
+                                        <option key={o.id} value={o.id === "yearly" ? "annual" : o.id}>{o.label}</option>
+                                      ))}
+                                    </select>
+                                    <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-gray-400">▾</span>
+                                  </div>
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-medium uppercase tracking-wide text-gray-400">Plan price <span className="normal-case font-normal text-gray-300">(optional)</span></label>
+                                  <div className="flex items-center gap-1.5">
+                                    <input type="number" min="0" step="0.01" value={confirmBase} onChange={(e) => setConfirmBase(e.target.value)} placeholder="e.g. 19.00" className="w-28 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs tabular-nums text-gray-800 placeholder-gray-300 focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-400" />
+                                    <span className="text-xs text-gray-400">/{confirmFreq === "annual" ? "yr" : confirmFreq === "quarterly" ? "qtr" : confirmFreq === "weekly" ? "wk" : confirmFreq === "biweekly" ? "2wk" : "mo"}</span>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2 pb-0.5">
+                                  <button onClick={() => handleConfirmSub(slug)} disabled={confirmSaving} className="rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 disabled:opacity-50 transition">{confirmSaving ? "Saving…" : "Save"}</button>
+                                  <button onClick={() => setConfirmingSlug(null)} className="text-xs text-gray-400 hover:text-gray-600 transition">Dismiss</button>
+                                </div>
+                              </div>
+                              <p className="mt-1.5 text-[10px] text-gray-400">avg charge: {formatCurrency(sub.amount, homeCurrency, undefined, false)}/{periodSuffix} · set plan price to separate usage from base cost</p>
+                            </div>
+                          )}
+                        </Fragment>
+                      );
+                    };
+                    return (
+                      <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                          <div className="flex items-center gap-2">
+                            <span className="h-2 w-2 rounded-full bg-amber-500" />
+                            <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Variable · Usage-based</p>
+                          </div>
+                          <span className="text-[10px] text-gray-400">{variableSubs.length} active</span>
+                        </div>
+                        <div className="divide-y divide-gray-100">
+                          {(showAllVariable ? variableSubs : variableSubs.slice(0, 4)).map(renderRow)}
+                        </div>
+                        {variableSubs.length > 4 && (
+                          <button
+                            onClick={() => setShowAllVariable((v) => !v)}
+                            className="flex w-full items-center justify-center gap-1 border-t border-gray-100 px-5 py-3 text-xs font-medium text-gray-400 hover:bg-gray-50 transition"
+                          >
+                            {showAllVariable ? (
+                              <>Show less <svg className="h-3.5 w-3.5 rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg></>
+                            ) : (
+                              <>+{variableSubs.length - 4} more <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg></>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </>
+              )}
             </div>
           )}
+
 
           {/* ── Cash tab ──────────────────────────────────────────────────── */}
           {activeTab === "cash" && (
             <div className="space-y-4">
+              {monthPills}
               {/* Header row */}
               <div className="flex items-center justify-between">
                 <div>

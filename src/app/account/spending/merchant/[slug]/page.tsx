@@ -546,7 +546,6 @@ export default function MerchantDetailPage() {
                 <div className="flex items-center gap-2 flex-wrap">
                   <p className="text-xs text-gray-500">
                     {txn.date ? fmtDateShort(txn.date) : shortMonth(txn.ym)}
-                    <span className="ml-2 text-gray-400">{shortMonth(txn.ym)}</span>
                   </p>
                   {txn.accountLabel && (
                     <span className="text-xs text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">{txn.accountLabel}</span>

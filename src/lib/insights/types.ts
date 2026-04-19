@@ -104,6 +104,19 @@ export interface SubscriptionRecord {
    */
   amount: number | null;
   frequency: SubscriptionFrequency | null;
+  /**
+   * User-confirmed fixed/plan price (e.g. the $19/mo Cursor Pro base).
+   * Separate from `amount` which reflects the actual (variable) charge average.
+   * Used for forward projections so usage spikes don't inflate the forecast.
+   */
+  baseAmount?: number | null;
+  /**
+   * ISO 4217 currency of the subscription charges (e.g. "CAD", "USD").
+   * Derived from the source transaction's account currency. Used for FX
+   * conversion when the subscription account is in a foreign currency.
+   * Optional for backward compatibility with existing Firestore documents.
+   */
+  currency?: string;
   /** Fields the user has explicitly set. Insights will never overwrite these. */
   lockedFields: string[];
   /** Present on docs seeded from statement `parsedData.subscriptions` (insights pipeline). */

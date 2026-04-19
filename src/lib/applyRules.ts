@@ -2,6 +2,7 @@ import type { ParsedStatementData, ExpenseCategory } from "./types";
 
 /** Stable key for a merchant name used as Firestore doc ID and rule lookup. */
 export function merchantSlug(merchant: string): string {
+  if (!merchant) return "";
   return merchant
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
