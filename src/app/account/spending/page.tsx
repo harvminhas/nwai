@@ -205,6 +205,34 @@ function subAvatarColor(name: string): string {
   return SUB_AVATAR_COLORS[hash % SUB_AVATAR_COLORS.length];
 }
 
+function merchantInitials(name: string): string {
+  const words = name.trim().split(/\s+/);
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + (words[1][0] ?? "")).toUpperCase();
+}
+
+function MerchantSparkline({ monthly, color, fromYm }: {
+  monthly: { ym: string; total: number }[];
+  color: string;
+  fromYm: string;
+}) {
+  const pts = [...monthly].filter((m) => m.ym >= fromYm).sort((a, b) => a.ym.localeCompare(b.ym));
+  if (pts.length < 2) return null;
+  const max = Math.max(...pts.map((p) => p.total));
+  if (max === 0) return null;
+  const W = 64, H = 28, pad = 3;
+  const xCoord = (i: number) => (i / (pts.length - 1)) * W;
+  const yCoord = (v: number) => H - pad - ((v / max) * (H - pad * 2));
+  const linePath = pts.map((p, i) => `${i === 0 ? "M" : "L"}${xCoord(i).toFixed(1)},${yCoord(p.total).toFixed(1)}`).join(" ");
+  const fillPath = `${linePath} L${W},${H} L0,${H} Z`;
+  return (
+    <svg width={W} height={H} className="shrink-0 overflow-visible">
+      <path d={fillPath} fill={color} fillOpacity={0.12} />
+      <path d={linePath} fill="none" stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 /**
  * Classify a subscription as fixed (predictable) or variable (usage-based).
  * Variable when: user confirmed a baseAmount and actual charges run ≥5% above it,
@@ -364,6 +392,10 @@ function SpendingPageInner() {
 
   // All-time merchants (no month filter) — loaded eagerly for Overview insight cards
   const [allTimeMerchants, setAllTimeMerchants] = useState<import("@/app/api/user/spending/merchants/route").MerchantSummary[] | null>(null);
+
+  // By Merchant tab state
+  const [merchantTimeFilter, setMerchantTimeFilter] = useState<"3mo" | "6mo" | "12mo" | "all">("12mo");
+  const [mShowAllTop, setMShowAllTop] = useState(false);
 
   // Firestore subscription registry — all-time canonical list from insights pipeline
   const [firestoreSubs, setFirestoreSubs] = useState<import("@/lib/insights/types").SubscriptionRecord[] | null>(null);
@@ -1064,6 +1096,7 @@ function SpendingPageInner() {
   const ym12moAgo = monthsAgoYm(12);
   const ym24moAgo = monthsAgoYm(24);
   const ym6moAgo  = monthsAgoYm(6);
+  const ym3moAgo  = monthsAgoYm(3);
 
   // Card 1: Subscriptions
   const subMonthlyTotal = allSubscriptions.reduce((s, sub) => {
@@ -1125,8 +1158,72 @@ function SpendingPageInner() {
     return { newSubs, totalNewMonthly };
   })();
 
+  // ── By Merchant tab computed data ─────────────────────────────────────────
+  const merchantFilterYm = merchantTimeFilter === "3mo" ? ym3moAgo
+    : merchantTimeFilter === "6mo" ? ym6moAgo
+    : merchantTimeFilter === "12mo" ? ym12moAgo
+    : "0000-00"; // "all"
+  const mFilterLabel = merchantTimeFilter === "3mo" ? "3 MO"
+    : merchantTimeFilter === "6mo" ? "6 MO"
+    : merchantTimeFilter === "12mo" ? "12 MO" : "ALL TIME";
+
+  // Aggregate each merchant for the selected period
+  const mFiltered = !allTimeMerchants ? [] : allTimeMerchants.map((m) => {
+    const slice = merchantTimeFilter === "all" ? m.monthly : m.monthly.filter((mo) => mo.ym >= merchantFilterYm);
+    const total = slice.reduce((s, mo) => s + mo.total, 0);
+    const count = slice.reduce((s, mo) => s + mo.count, 0);
+    return { ...m, total, count, avgAmount: count > 0 ? total / count : 0 };
+  }).filter((m) => m.total > 0).sort((a, b) => b.total - a.total);
+
+  const mGrandTotal   = mFiltered.reduce((s, m) => s + m.total, 0);
+  const mTotalTxns    = mFiltered.reduce((s, m) => s + m.count, 0);
+  const mRepeat       = mFiltered.filter((m) => m.count > 1);
+  const mOneOff       = mFiltered.filter((m) => m.count === 1);
+  const mAllRepeat    = (allTimeMerchants ?? []).filter((m) => {
+    const c = m.monthly.reduce((s, mo) => s + mo.count, 0);
+    return c > 1;
+  });
+  const mAllOneOff    = (allTimeMerchants ?? []).filter((m) => {
+    const c = m.monthly.reduce((s, mo) => s + mo.count, 0);
+    return c === 1;
+  });
+
+  // Summary card: 12-month total spend + top-3 share (fixed 12mo window for the card)
+  const mGrandTotal12 = !allTimeMerchants ? 0
+    : allTimeMerchants.reduce((s, m) => s + m.monthly.filter((mo) => mo.ym >= ym12moAgo).reduce((t, mo) => t + mo.total, 0), 0);
+  const mTotalCount12 = !allTimeMerchants ? 0
+    : allTimeMerchants.reduce((s, m) => s + m.monthly.filter((mo) => mo.ym >= ym12moAgo).reduce((t, mo) => t + mo.count, 0), 0);
+  const mTop3         = mFiltered.slice(0, 3);
+  const mTop3Total    = mTop3.reduce((s, m) => s + m.total, 0);
+  const mTop3Pct      = mGrandTotal > 0 ? Math.round((mTop3Total / mGrandTotal) * 100) : 0;
+  const mTop3Names    = mTop3.map((m) => m.name);
+
+  // New · 90 days: first seen in last ~3 months
+  const mNew90d = (allTimeMerchants ?? [])
+    .filter((m) => m.firstDate && m.firstDate >= ym3moAgo)
+    .sort((a, b) => (b.firstDate ?? "").localeCompare(a.firstDate ?? ""));
+
+  // Trending: 3 mo vs prior 3 mo, merchants with |change| >= 15% and min $30 spend
+  const mTrending = (allTimeMerchants ?? []).map((m) => {
+    const recentTotal = m.monthly.filter((mo) => mo.ym >= ym3moAgo).reduce((s, mo) => s + mo.total, 0);
+    const priorTotal  = m.monthly.filter((mo) => mo.ym >= ym6moAgo && mo.ym < ym3moAgo).reduce((s, mo) => s + mo.total, 0);
+    if (recentTotal < 30 || priorTotal < 30) return null;
+    const delta = recentTotal - priorTotal;
+    const pct   = Math.round((delta / priorTotal) * 100);
+    const mult  = recentTotal / priorTotal;
+    if (Math.abs(pct) < 15) return null;
+    return { ...m, recentTotal, priorTotal, delta, pct, mult };
+  }).filter((m): m is NonNullable<typeof m> => m !== null)
+    .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct))
+    .slice(0, 6);
+
+  // One-offs: summary category breakdown
+  const mOneOffTotal = mOneOff.reduce((s, m) => s + m.total, 0);
+  const mOneOffCatCounts: Record<string, number> = {};
+  for (const m of mOneOff) mOneOffCatCounts[m.category] = (mOneOffCatCounts[m.category] ?? 0) + 1;
+  const mOneOffTopCats = Object.entries(mOneOffCatCounts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([cat]) => cat);
+
   // ── Enriched subscriptions for the Recurring tab ──────────────────────────
-  const ym3moAgo = monthsAgoYm(3);
   const ym9moAgo = monthsAgoYm(9);
 
   // Oldest month we have any spending data for — used to gate "New" and "Price Hike"
@@ -2340,92 +2437,287 @@ function SpendingPageInner() {
           {/* ── By Merchant tab ───────────────────────────────────────── */}
           {activeTab === "merchants" && (
             <div className="space-y-4">
-              {monthPills}
-              {merchantsLoading ? (
+              {!allTimeMerchants ? (
                 <div className="flex justify-center py-16">
                   <div className="h-8 w-8 animate-spin rounded-full border-4 border-purple-200 border-t-purple-600" />
                 </div>
-              ) : !merchants || merchants.length === 0 ? (
+              ) : allTimeMerchants.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center">
                   <p className="text-sm text-gray-500">No merchant data yet.</p>
                 </div>
               ) : (
-                <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-                  {/* Search bar */}
-                  <div className="px-5 pt-4 pb-3 border-b border-gray-100">
+                <>
+                  {/* ── Summary card ── */}
+                  <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                    <div className="grid grid-cols-4 divide-x divide-gray-100">
+                      <div className="px-4 py-4">
+                        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Merchants</p>
+                        <p className="text-xl font-bold text-gray-900 leading-tight">{allTimeMerchants.length}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{mAllRepeat.length} repeat · {mAllOneOff.length} one-off</p>
+                      </div>
+                      <div className="px-4 py-4">
+                        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Total Spend</p>
+                        <p className="text-xl font-bold text-gray-900 leading-tight tabular-nums">
+                          {formatCurrency(mGrandTotal12, homeCurrency, undefined, true)}
+                        </p>
+                        <p className="text-xs text-gray-400 mt-0.5">{mTotalCount12.toLocaleString()} transactions</p>
+                      </div>
+                      <div className="px-4 py-4">
+                        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Top 3 Share</p>
+                        <p className={`text-xl font-bold leading-tight ${mTop3Pct > 50 ? "text-orange-500" : "text-gray-900"}`}>{mTop3Pct}%</p>
+                        <p className="text-xs text-gray-400 mt-0.5 truncate">{mTop3Names.join(", ")}</p>
+                      </div>
+                      <div className="px-4 py-4">
+                        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">New · 90d</p>
+                        <p className={`text-xl font-bold leading-tight ${mNew90d.length > 0 ? "text-purple-600" : "text-gray-900"}`}>{mNew90d.length}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">first seen this quarter</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ── Search ── */}
+                  <div className="rounded-xl border border-gray-200 bg-white shadow-sm px-4 py-3">
                     <div className="relative">
                       <svg className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z" />
                       </svg>
                       <input
                         type="text"
-                        placeholder="Search merchants…"
+                        placeholder={`Search ${allTimeMerchants.length} merchants…`}
                         value={merchantSearch}
                         onChange={(e) => setMerchantSearch(e.target.value)}
-                        className="w-full rounded-lg border border-gray-200 bg-gray-50 py-2 pl-9 pr-4 text-sm text-gray-800 placeholder-gray-400 focus:border-purple-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-purple-400"
+                        className="w-full rounded-lg border border-gray-200 bg-gray-50 py-2 pl-9 pr-12 text-sm text-gray-800 placeholder-gray-400 focus:border-purple-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-purple-400"
                       />
+                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-300 font-mono">⌘K</span>
                     </div>
                   </div>
-                  {/* Column headers */}
-                  <div className="grid grid-cols-12 gap-2 px-5 py-2 text-xs font-medium text-gray-400 border-b border-gray-100">
-                    <div className="col-span-5">Merchant</div>
-                    <div className="col-span-2 text-center">Visits</div>
-                    <div className="col-span-2 text-right">Avg/visit</div>
-                    <div className="col-span-3 text-right">Total</div>
-                  </div>
-                  {/* Rows */}
-                  <div className="divide-y divide-gray-100">
-                    {merchants
-                      .filter((m) =>
-                        !merchantSearch ||
-                        m.name.toLowerCase().includes(merchantSearch.toLowerCase()) ||
-                        m.category.toLowerCase().includes(merchantSearch.toLowerCase())
-                      )
-                      .map((m) => {
-                        const color = categoryColor(m.category);
-                        const maxTotal = merchants[0]?.total ?? 1;
-                        const barPct = Math.round((m.total / maxTotal) * 100);
-                        return (
-                          <Link
-                            key={m.slug}
-                            href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`}
-                            className="grid grid-cols-12 gap-2 items-center px-5 py-3 transition hover:bg-gray-50"
+
+                  {merchantSearch ? (
+                    /* ── Search results (flat list) ── */
+                    <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                      <div className="px-5 py-2.5 border-b border-gray-100">
+                        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+                          {allTimeMerchants.filter((m) => m.name.toLowerCase().includes(merchantSearch.toLowerCase()) || m.category.toLowerCase().includes(merchantSearch.toLowerCase())).length} results
+                        </p>
+                      </div>
+                      <div className="divide-y divide-gray-100">
+                        {allTimeMerchants
+                          .filter((m) => m.name.toLowerCase().includes(merchantSearch.toLowerCase()) || m.category.toLowerCase().includes(merchantSearch.toLowerCase()))
+                          .sort((a, b) => b.total - a.total)
+                          .map((m) => {
+                            const color = categoryColor(m.category);
+                            const allTotal = m.monthly.reduce((s, mo) => s + mo.total, 0);
+                            const allCount = m.monthly.reduce((s, mo) => s + mo.count, 0);
+                            return (
+                              <Link key={m.slug} href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex items-center gap-3 px-5 py-3.5 hover:bg-gray-50 transition">
+                                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(m.name)}</span>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-semibold text-gray-900 truncate">{m.name}</p>
+                                  <p className="text-[11px] text-gray-400 mt-0.5">
+                                    <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />{m.category}</span>
+                                    {" · "}{allCount} visit{allCount !== 1 ? "s" : ""}
+                                    {allCount > 0 ? ` · ${formatCurrency(allTotal / allCount, homeCurrency, m.currency, false)} avg` : ""}
+                                  </p>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(allTotal, homeCurrency, m.currency, false)}</p>
+                                </div>
+                                <svg className="h-3.5 w-3.5 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                              </Link>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {/* ── Time filter pills ── */}
+                      <div className="flex gap-2">
+                        {(["3mo", "6mo", "12mo", "all"] as const).map((f) => (
+                          <button
+                            key={f}
+                            onClick={() => { setMerchantTimeFilter(f); setMShowAllTop(false); }}
+                            className={`rounded-full px-3 py-1 text-xs font-medium transition ${merchantTimeFilter === f ? "bg-gray-900 text-white" : "bg-white border border-gray-200 text-gray-600 hover:border-gray-300"}`}
                           >
-                            <div className="col-span-5 min-w-0">
-                              <p className="truncate text-sm font-medium text-gray-800">{m.name}</p>
-                              <div className="mt-1 flex items-center gap-1.5">
-                                <span
-                                  className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] capitalize font-medium"
-                                  style={{ backgroundColor: color + "18", color }}
-                                >
-                                  {m.category}
-                                </span>
-                                {/* spend bar */}
-                                <div className="h-1.5 flex-1 rounded-full bg-gray-100 overflow-hidden max-w-[60px]">
-                                  <div
-                                    className="h-full rounded-full"
-                                    style={{ width: `${barPct}%`, backgroundColor: color + "88" }}
-                                  />
+                            {f === "3mo" ? "3 mo" : f === "6mo" ? "6 mo" : f === "12mo" ? "12 mo" : "All time"}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* ── TOP BY TOTAL ── */}
+                      {mRepeat.length > 0 && (
+                        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                          <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                            <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Top by Total · {mFilterLabel}</p>
+                            <button onClick={() => setMShowAllTop(true)} className="text-[10px] text-purple-500 hover:text-purple-700 transition">{mRepeat.length} total · view all</button>
+                          </div>
+                          <div className="divide-y divide-gray-100">
+                            {(mShowAllTop ? mRepeat : mRepeat.slice(0, 4)).map((m) => {
+                              const color = categoryColor(m.category);
+                              const pctOfSpend = mGrandTotal > 0 ? Math.round((m.total / mGrandTotal) * 100) : 0;
+                              return (
+                                <Link key={m.slug} href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex items-center gap-3 px-5 py-3.5 hover:bg-gray-50 transition">
+                                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(m.name)}</span>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-semibold text-gray-900 truncate">{m.name}</p>
+                                    <p className="text-[11px] text-gray-400 mt-0.5">
+                                      <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} /><span className="uppercase text-[9px] tracking-wide font-medium" style={{ color }}>{m.category}</span></span>
+                                      {" · "}{m.count} visit{m.count !== 1 ? "s" : ""}
+                                      {m.count > 0 ? ` · ${formatCurrency(m.avgAmount, homeCurrency, m.currency, false)} avg` : ""}
+                                    </p>
+                                  </div>
+                                  <MerchantSparkline monthly={m.monthly} color={color} fromYm={ym6moAgo} />
+                                  <div className="text-right shrink-0 min-w-[72px]">
+                                    <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(m.total, homeCurrency, m.currency, false)}</p>
+                                    <p className="text-[11px] text-gray-400 mt-0.5">{pctOfSpend}% of spend</p>
+                                  </div>
+                                  <svg className="h-3.5 w-3.5 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                                </Link>
+                              );
+                            })}
+                          </div>
+                          {!mShowAllTop && mRepeat.length > 4 && (
+                            <button
+                              onClick={() => setMShowAllTop(true)}
+                              className="flex w-full items-center justify-between border-t border-gray-100 px-5 py-3.5 hover:bg-gray-50 transition"
+                            >
+                              <div className="flex items-center gap-2.5">
+                                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-100 text-[10px] font-bold text-gray-500">+{mRepeat.length - 4}</span>
+                                <div>
+                                  <p className="text-sm text-gray-600">{mRepeat.length - 4} more repeat merchants</p>
+                                  <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">View all</p>
                                 </div>
                               </div>
+                              <div className="text-right">
+                                <p className="text-sm font-semibold text-gray-700 tabular-nums">{formatCurrency(mRepeat.slice(4).reduce((s, m) => s + m.total, 0), homeCurrency, undefined, true)}</p>
+                                <p className="text-[11px] text-gray-400">{mGrandTotal > 0 ? Math.round((mRepeat.slice(4).reduce((s, m) => s + m.total, 0) / mGrandTotal) * 100) : 0}% of spend</p>
+                              </div>
+                            </button>
+                          )}
+                          {mShowAllTop && mRepeat.length > 4 && (
+                            <button onClick={() => setMShowAllTop(false)} className="flex w-full items-center justify-center gap-1 border-t border-gray-100 px-5 py-3 text-xs font-medium text-gray-400 hover:bg-gray-50 transition">
+                              Show less <svg className="h-3.5 w-3.5 rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* ── TRENDING · 3 MO VS PRIOR 3 ── */}
+                      {mTrending.length > 0 && (
+                        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                          <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                            <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Trending · 3 mo vs prior 3</p>
+                            <span className="text-[10px] text-gray-400">{mTrending.length} notable changes</span>
+                          </div>
+                          <div className="divide-y divide-gray-100">
+                            {mTrending.map((m) => {
+                              const isUp     = m.delta > 0;
+                              const color    = categoryColor(m.category);
+                              const sparkColor = isUp ? "#ef4444" : "#22c55e";
+                              const pctLabel = Math.abs(m.pct) >= 100
+                                ? `${isUp ? "↑" : "↓"} ${(m.mult).toFixed(1)}×`
+                                : `${isUp ? "↑" : "↓"} ${Math.abs(m.pct)}%`;
+                              return (
+                                <Link key={m.slug} href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex items-center gap-3 px-5 py-3.5 hover:bg-gray-50 transition">
+                                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(m.name)}</span>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                      <p className="text-sm font-semibold text-gray-900 truncate">{m.name}</p>
+                                      <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${isUp ? "bg-red-50 text-red-500" : "bg-green-50 text-green-600"}`}>{pctLabel}</span>
+                                    </div>
+                                    <p className="text-[11px] text-gray-400 mt-0.5">
+                                      {formatCurrency(m.recentTotal, homeCurrency, m.currency, false)} vs {formatCurrency(m.priorTotal, homeCurrency, m.currency, false)} prior 3 mo
+                                    </p>
+                                  </div>
+                                  <MerchantSparkline monthly={m.monthly} color={sparkColor} fromYm={ym6moAgo} />
+                                  <div className="text-right shrink-0 min-w-[72px]">
+                                    <p className={`text-sm font-bold tabular-nums ${isUp ? "text-red-500" : "text-green-600"}`}>
+                                      {isUp ? "+" : ""}{formatCurrency(m.delta, homeCurrency, m.currency, false)}
+                                    </p>
+                                    <p className="text-[11px] text-gray-400">vs prior 3 mo</p>
+                                  </div>
+                                  <svg className="h-3.5 w-3.5 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                                </Link>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ── NEW · 90 DAYS ── */}
+                      {mNew90d.length > 0 && (
+                        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                          <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                            <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">New · 90 Days</p>
+                            <span className="text-[10px] text-gray-400">{mNew90d.length} first-seen</span>
+                          </div>
+                          <div className="divide-y divide-gray-100">
+                            {mNew90d.slice(0, 3).map((m) => {
+                              const color    = categoryColor(m.category);
+                              const allCount = m.monthly.reduce((s, mo) => s + mo.count, 0);
+                              const allTotal = m.monthly.reduce((s, mo) => s + mo.total, 0);
+                              const isRecurring = allSubscriptions.some((s) => merchantSlug(s.name) === m.slug);
+                              return (
+                                <Link key={m.slug} href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex items-center gap-3 px-5 py-3.5 hover:bg-gray-50 transition">
+                                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(m.name)}</span>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                      <p className="text-sm font-semibold text-gray-900 truncate">{m.name}</p>
+                                      <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold bg-purple-50 text-purple-600">NEW</span>
+                                      {isRecurring && <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium bg-indigo-50 text-indigo-500">recurring</span>}
+                                    </div>
+                                    <p className="text-[11px] text-gray-400 mt-0.5">
+                                      <span className="inline-flex items-center gap-1 mr-1"><span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />{m.category}</span>
+                                      · First seen {m.firstDate ? fmtMD(m.firstDate) : "—"} · {allCount} visit{allCount !== 1 ? "s" : ""}
+                                    </p>
+                                  </div>
+                                  <div className="text-right shrink-0">
+                                    <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(allTotal, homeCurrency, m.currency, false)}</p>
+                                    <p className="text-[11px] text-gray-400 tabular-nums">{formatCurrency(allTotal / Math.max(allCount, 1), homeCurrency, m.currency, false)} avg</p>
+                                  </div>
+                                  <svg className="h-3.5 w-3.5 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                                </Link>
+                              );
+                            })}
+                          </div>
+                          {mNew90d.length > 3 && (
+                            <div className="flex items-center justify-between border-t border-gray-100 px-5 py-3.5">
+                              <div className="flex items-center gap-2.5">
+                                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-100 text-[10px] font-bold text-gray-500">+{mNew90d.length - 3}</span>
+                                <p className="text-sm text-gray-600">{mNew90d.length - 3} more new merchants</p>
+                              </div>
+                              <p className="text-sm font-semibold text-gray-700 tabular-nums">{formatCurrency(mNew90d.slice(3).reduce((s, m) => s + m.monthly.reduce((t, mo) => t + mo.total, 0), 0), homeCurrency, undefined, true)}</p>
                             </div>
-                            <div className="col-span-2 text-center text-sm text-gray-600">{m.count}</div>
-                            <div className="col-span-2 text-right text-sm text-gray-600 tabular-nums">
-                              {formatCurrency(m.avgAmount, homeCurrency, m.currency, false)}
+                          )}
+                        </div>
+                      )}
+
+                      {/* ── ONE-OFFS ── */}
+                      {mOneOff.length > 0 && (
+                        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                          <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                            <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">One-offs · {mFilterLabel}</p>
+                            <span className="text-[10px] text-gray-400">{mOneOff.length} single-visit · {formatCurrency(mOneOffTotal, homeCurrency, undefined, true)}</span>
+                          </div>
+                          <div className="flex items-center gap-3 px-5 py-4">
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gray-100 text-sm font-bold text-gray-400">…</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-semibold text-gray-900">{mOneOff.length} merchants visited once</p>
+                              {mOneOffTopCats.length > 0 && (
+                                <p className="text-[11px] text-gray-400 mt-0.5">
+                                  Mostly {mOneOffTopCats.join(", ").toLowerCase()} · {formatCurrency(mOneOff.length > 0 ? mOneOffTotal / mOneOff.length : 0, homeCurrency, undefined, false)} avg
+                                </p>
+                              )}
                             </div>
-                            <div className="col-span-3 text-right">
-                              <span className="text-sm font-semibold text-gray-800 tabular-nums">
-                                {formatCurrency(m.total, homeCurrency, m.currency, false)}
-                              </span>
-                              <svg className="ml-1 inline h-3.5 w-3.5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                              </svg>
+                            <div className="text-right shrink-0">
+                              <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(mOneOffTotal, homeCurrency, undefined, false)}</p>
+                              <p className="text-[11px] text-gray-400">{mGrandTotal > 0 ? Math.round((mOneOffTotal / mGrandTotal) * 100) : 0}% of spend</p>
                             </div>
-                          </Link>
-                        );
-                      })}
-                  </div>
-                </div>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </>
               )}
             </div>
           )}
