@@ -2565,20 +2565,20 @@ function SpendingPageInner() {
                 <>
                   {/* ── Summary card ── */}
                   <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-                    <div className="grid grid-cols-4 divide-x divide-gray-100">
-                      <div className="px-4 py-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 divide-y sm:divide-y-0 divide-x-0 sm:divide-x divide-gray-100">
+                      <div className="px-4 py-4 border-b border-r border-gray-100 sm:border-b-0 sm:border-r">
                         <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Merchants</p>
                         <p className="text-xl font-bold text-gray-900 leading-tight">{allTimeMerchants.length}</p>
                         <p className="text-xs text-gray-400 mt-0.5">{mAllRepeat.length} repeat · {mAllOneOff.length} one-off</p>
                       </div>
-                      <div className="px-4 py-4">
+                      <div className="px-4 py-4 border-b border-gray-100 sm:border-b-0 sm:border-r">
                         <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Total Spend</p>
                         <p className="text-xl font-bold text-gray-900 leading-tight tabular-nums">
                           {formatCurrency(mGrandTotal12, homeCurrency, undefined, true)}
                         </p>
-                        <p className="text-xs text-gray-400 mt-0.5">{mTotalCount12.toLocaleString()} transactions</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{mTotalCount12.toLocaleString()} txns</p>
                       </div>
-                      <div className="px-4 py-4">
+                      <div className="px-4 py-4 border-r border-gray-100 sm:border-r">
                         <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Top 3 Share</p>
                         <p className={`text-xl font-bold leading-tight ${mTop3Pct > 50 ? "text-orange-500" : "text-gray-900"}`}>{mTop3Pct}%</p>
                         <p className="text-xs text-gray-400 mt-0.5 truncate">{mTop3Names.join(", ")}</p>
@@ -2625,7 +2625,7 @@ function SpendingPageInner() {
                             const allTotal = m.monthly.reduce((s, mo) => s + mo.total, 0);
                             const allCount = m.monthly.reduce((s, mo) => s + mo.count, 0);
                             return (
-                              <Link key={m.slug} href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex items-center gap-3 px-5 py-3.5 hover:bg-gray-50 transition">
+                              <Link key={m.slug} href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 sm:py-3.5 hover:bg-gray-50 transition">
                                 <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(m.name)}</span>
                                 <div className="flex-1 min-w-0">
                                   <p className="text-sm font-semibold text-gray-900 truncate">{m.name}</p>
@@ -2671,7 +2671,7 @@ function SpendingPageInner() {
                               const color = categoryColor(m.category);
                               const pctOfSpend = mGrandTotal > 0 ? Math.round((m.total / mGrandTotal) * 100) : 0;
                               return (
-                                <Link key={m.slug} href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex items-center gap-3 px-5 py-3.5 hover:bg-gray-50 transition">
+                                <Link key={m.slug} href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 sm:py-3.5 hover:bg-gray-50 transition">
                                   <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(m.name)}</span>
                                   <div className="flex-1 min-w-0">
                                     <p className="text-sm font-semibold text-gray-900 truncate">{m.name}</p>
@@ -2681,10 +2681,12 @@ function SpendingPageInner() {
                                       {m.count > 0 ? ` · ${formatCurrency(m.avgAmount, homeCurrency, m.currency, false)} avg` : ""}
                                     </p>
                                   </div>
-                                  <MerchantSparkline monthly={m.monthly} color={color} fromYm={ym6moAgo} />
-                                  <div className="text-right shrink-0 min-w-[72px]">
-                                    <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(m.total, homeCurrency, m.currency, false)}</p>
-                                    <p className="text-[11px] text-gray-400 mt-0.5">{pctOfSpend}% of spend</p>
+                                  <div className="hidden sm:block">
+                                    <MerchantSparkline monthly={m.monthly} color={color} fromYm={ym6moAgo} />
+                                  </div>
+                                  <div className="text-right shrink-0 min-w-[60px] sm:min-w-[72px]">
+                                    <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(m.total, homeCurrency, m.currency, true)}</p>
+                                    <p className="text-[11px] text-gray-400 mt-0.5">{pctOfSpend}%</p>
                                   </div>
                                   <svg className="h-3.5 w-3.5 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
                                 </Link>
@@ -2733,7 +2735,7 @@ function SpendingPageInner() {
                                 ? `${isUp ? "↑" : "↓"} ${(m.mult).toFixed(1)}×`
                                 : `${isUp ? "↑" : "↓"} ${Math.abs(m.pct)}%`;
                               return (
-                                <Link key={m.slug} href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex items-center gap-3 px-5 py-3.5 hover:bg-gray-50 transition">
+                                <Link key={m.slug} href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 sm:py-3.5 hover:bg-gray-50 transition">
                                   <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(m.name)}</span>
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-1.5">
@@ -2744,8 +2746,10 @@ function SpendingPageInner() {
                                       {formatCurrency(m.recentTotal, homeCurrency, m.currency, false)} vs {formatCurrency(m.priorTotal, homeCurrency, m.currency, false)} prior 3 mo
                                     </p>
                                   </div>
-                                  <MerchantSparkline monthly={m.monthly} color={sparkColor} fromYm={ym6moAgo} />
-                                  <div className="text-right shrink-0 min-w-[72px]">
+                                  <div className="hidden sm:block">
+                                    <MerchantSparkline monthly={m.monthly} color={sparkColor} fromYm={ym6moAgo} />
+                                  </div>
+                                  <div className="text-right shrink-0 min-w-[60px] sm:min-w-[72px]">
                                     <p className={`text-sm font-bold tabular-nums ${isUp ? "text-red-500" : "text-green-600"}`}>
                                       {isUp ? "+" : ""}{formatCurrency(m.delta, homeCurrency, m.currency, false)}
                                     </p>
@@ -2773,7 +2777,7 @@ function SpendingPageInner() {
                               const allTotal = m.monthly.reduce((s, mo) => s + mo.total, 0);
                               const isRecurring = allSubscriptions.some((s) => merchantSlug(s.name) === m.slug);
                               return (
-                                <Link key={m.slug} href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex items-center gap-3 px-5 py-3.5 hover:bg-gray-50 transition">
+                                <Link key={m.slug} href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 sm:py-3.5 hover:bg-gray-50 transition">
                                   <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(m.name)}</span>
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-1.5">
