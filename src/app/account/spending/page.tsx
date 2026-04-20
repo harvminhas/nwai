@@ -148,6 +148,7 @@ const TABS = [
   { id: "overview",       label: "Overview" },
   { id: "transactions",   label: "Transactions" },
   { id: "merchants",      label: "By Merchant" },
+  { id: "categories",     label: "By Category" },
   { id: "subscriptions",  label: "Recurring" },
   { id: "cash",           label: "Cash" },
 ] as const;
@@ -397,6 +398,14 @@ function SpendingPageInner() {
   const [merchantTimeFilter, setMerchantTimeFilter] = useState<"3mo" | "6mo" | "12mo" | "all">("12mo");
   const [mShowAllTop, setMShowAllTop] = useState(false);
 
+  // By Category tab state
+  const [catTimeFilter, setCatTimeFilter] = useState<"3mo" | "6mo" | "12mo" | "all">("12mo");
+  const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+  const [expandedSubtypes, setExpandedSubtypes] = useState<Set<string>>(new Set());
+  const [catShowTransfers, setCatShowTransfers] = useState(false);
+  const [catOpenPicker, setCatOpenPicker] = useState<string | null>(null);
+  const catPickerBtnRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+
   // Firestore subscription registry — all-time canonical list from insights pipeline
   const [firestoreSubs, setFirestoreSubs] = useState<import("@/lib/insights/types").SubscriptionRecord[] | null>(null);
 
@@ -495,14 +504,18 @@ function SpendingPageInner() {
     finally { setMerchantsLoading(false); }
   }, [merchants, merchantsMonth]);
 
+  const allTimeMerchantsLoaded = useRef(false);
   const loadAllTimeMerchants = useCallback(async (tok: string) => {
-    if (allTimeMerchants !== null) return;
+    if (allTimeMerchantsLoaded.current) return;
+    allTimeMerchantsLoaded.current = true;
     try {
       const res = await fetch("/api/user/spending/merchants", { headers: { Authorization: `Bearer ${tok}` } });
       const json = await res.json().catch(() => ({}));
       setAllTimeMerchants(json.merchants ?? []);
-    } catch { /* non-fatal */ }
-  }, [allTimeMerchants]);
+    } catch {
+      allTimeMerchantsLoaded.current = false; // allow retry on error
+    }
+  }, []); // stable — no state deps, guard via ref
 
   const firestoreSubsLoaded = useRef(false);
   const loadFirestoreSubs = useCallback(async (tok: string) => {
@@ -650,6 +663,38 @@ function SpendingPageInner() {
       }
     } catch {
       setToast("Failed to save rule");
+    }
+  }
+
+  async function handleMerchantCategoryChange(merchantName: string, newCategory: string) {
+    if (!token) return;
+    setCatOpenPicker(null);
+
+    // Capture old category for rollback, then optimistically update the UI
+    const prevCategory = allTimeMerchants?.find((m) => m.name === merchantName)?.category ?? "";
+    setAllTimeMerchants((prev) =>
+      prev?.map((m) => m.name === merchantName ? { ...m, category: newCategory } : m) ?? prev
+    );
+
+    try {
+      const res = await fetch("/api/user/category-rules", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ merchant: merchantName, category: newCategory }),
+      });
+      if (res.ok) {
+        setToast(`Category updated: "${merchantName}" → ${newCategory}`);
+      } else {
+        setToast("Failed to save category");
+        setAllTimeMerchants((prev) =>
+          prev?.map((m) => m.name === merchantName ? { ...m, category: prevCategory } : m) ?? prev
+        );
+      }
+    } catch {
+      setToast("Failed to save category");
+      setAllTimeMerchants((prev) =>
+        prev?.map((m) => m.name === merchantName ? { ...m, category: prevCategory } : m) ?? prev
+      );
     }
   }
 
@@ -1223,6 +1268,72 @@ function SpendingPageInner() {
   for (const m of mOneOff) mOneOffCatCounts[m.category] = (mOneOffCatCounts[m.category] ?? 0) + 1;
   const mOneOffTopCats = Object.entries(mOneOffCatCounts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([cat]) => cat);
 
+  // ── By Category tab computed data ─────────────────────────────────────────
+  type MerchantSummaryItem = NonNullable<typeof allTimeMerchants>[0];
+  const catFilterYm    = catTimeFilter === "3mo" ? ym3moAgo : catTimeFilter === "6mo" ? ym6moAgo : catTimeFilter === "12mo" ? ym12moAgo : "0000-00";
+  const catFilterLabel = catTimeFilter === "3mo" ? "3 MO" : catTimeFilter === "6mo" ? "6 MO" : catTimeFilter === "12mo" ? "12 MO" : "ALL TIME";
+
+  const NON_SPENDING_CATS = new Set([
+    "Transfers", "Transfer Out", "Transfers & Payments",
+    "Interest", "Investments & Savings",
+  ]);
+
+  const categoryRows = (() => {
+    if (!allTimeMerchants) return [];
+    // Roll every merchant's category up to its parent before grouping
+    const byCategory = new Map<string, MerchantSummaryItem[]>();
+    for (const m of allTimeMerchants) {
+      const key = getParentCategory(m.category || "Other");
+      if (!byCategory.has(key)) byCategory.set(key, []);
+      byCategory.get(key)!.push(m);
+    }
+    return Array.from(byCategory.entries()).map(([name, merchants]) => {
+      // Aggregate monthly data across all merchants in this category
+      const monthlyMap = new Map<string, { total: number; count: number }>();
+      for (const m of merchants) {
+        for (const mo of m.monthly) {
+          const ex = monthlyMap.get(mo.ym) ?? { total: 0, count: 0 };
+          monthlyMap.set(mo.ym, { total: ex.total + mo.total, count: ex.count + mo.count });
+        }
+      }
+      const monthly = Array.from(monthlyMap.entries())
+        .map(([ym, v]) => ({ ym, ...v }))
+        .sort((a, b) => a.ym.localeCompare(b.ym));
+
+      // Total for selected period
+      const slice = catTimeFilter === "all" ? monthly : monthly.filter((mo) => mo.ym >= catFilterYm);
+      const total = slice.reduce((s, mo) => s + mo.total, 0);
+      const count = slice.reduce((s, mo) => s + mo.count, 0);
+
+      // 3 mo vs prior 3 mo trend (independent of time filter — always shows recent velocity)
+      const recentTotal = monthly.filter((mo) => mo.ym >= ym3moAgo).reduce((s, mo) => s + mo.total, 0);
+      const priorTotal  = monthly.filter((mo) => mo.ym >= ym6moAgo && mo.ym < ym3moAgo).reduce((s, mo) => s + mo.total, 0);
+      const trendPct: number | null = priorTotal > 10
+        ? Math.round(((recentTotal - priorTotal) / priorTotal) * 100)
+        : null;
+
+      // Top merchants for this category in selected period
+      const topMerchants = merchants.map((m) => {
+        const mSlice = catTimeFilter === "all" ? m.monthly : m.monthly.filter((mo) => mo.ym >= catFilterYm);
+        const mTotal = mSlice.reduce((s, mo) => s + mo.total, 0);
+        const mCount = mSlice.reduce((s, mo) => s + mo.count, 0);
+        return { ...m, total: mTotal, count: mCount, avgAmount: mCount > 0 ? mTotal / mCount : 0 };
+      }).filter((m) => m.total > 0).sort((a, b) => b.total - a.total);
+
+      return { name, color: categoryColor(name), total, count, avgAmount: count > 0 ? total / count : 0, monthly, topMerchants, recentTotal, priorTotal, trendPct };
+    }).filter((c) => c.total > 0 && (catShowTransfers || !NON_SPENDING_CATS.has(c.name))).sort((a, b) => b.total - a.total);
+  })();
+
+  const catGrandTotal   = categoryRows.reduce((s, c) => s + c.total, 0);
+  const catTop3Total    = categoryRows.slice(0, 3).reduce((s, c) => s + c.total, 0);
+  const catTop3Pct      = catGrandTotal > 0 ? Math.round((catTop3Total / catGrandTotal) * 100) : 0;
+  const catTop3Names    = categoryRows.slice(0, 3).map((c) => c.name);
+  const catFastest      = categoryRows
+    .filter((c) => c.trendPct != null && c.trendPct > 0)
+    .sort((a, b) => (b.trendPct ?? 0) - (a.trendPct ?? 0))[0] ?? null;
+  const catAllTxns12    = !allTimeMerchants ? 0
+    : allTimeMerchants.reduce((s, m) => s + m.monthly.filter((mo) => mo.ym >= ym12moAgo).reduce((t, mo) => t + mo.count, 0), 0);
+
   // ── Enriched subscriptions for the Recurring tab ──────────────────────────
   const ym9moAgo = monthsAgoYm(9);
 
@@ -1431,7 +1542,7 @@ function SpendingPageInner() {
   );
 
   return (
-    <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
+    <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
       {token && needsRefresh && (
         <RefreshToast
@@ -1496,6 +1607,11 @@ function SpendingPageInner() {
                 {tab.id === "cash" && cashItems.length > 0 && (
                   <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
                     {cashItems.length}
+                  </span>
+                )}
+                {tab.id === "categories" && allTimeMerchants && allTimeMerchants.length > 0 && (
+                  <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
+                    {new Set(allTimeMerchants.map((m) => m.category || "Other")).size}
                   </span>
                 )}
               </button>
@@ -2717,6 +2833,250 @@ function SpendingPageInner() {
                       )}
                     </>
                   )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── By Category tab ───────────────────────────────────────── */}
+          {activeTab === "categories" && (
+            <div className="space-y-4">
+              {!allTimeMerchants ? (
+                <div className="flex justify-center py-16">
+                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-purple-200 border-t-purple-600" />
+                </div>
+              ) : categoryRows.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center">
+                  <p className="text-sm text-gray-500">No category data yet.</p>
+                </div>
+              ) : (
+                <>
+                  {/* ── Summary card ── */}
+                  <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                    <div className="grid grid-cols-4 divide-x divide-gray-100">
+                      <div className="px-4 py-4">
+                        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Categories</p>
+                        <p className="text-xl font-bold text-gray-900 leading-tight">{categoryRows.length}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{catAllTxns12.toLocaleString()} transactions · 12 mo</p>
+                      </div>
+                      <div className="px-4 py-4">
+                        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Total Spend</p>
+                        <p className="text-xl font-bold text-gray-900 leading-tight tabular-nums">
+                          {formatCurrency(mGrandTotal12, homeCurrency, undefined, true)}
+                        </p>
+                        <p className="text-xs text-gray-400 mt-0.5">12-month window</p>
+                      </div>
+                      <div className="px-4 py-4">
+                        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Top 3 Share</p>
+                        <p className={`text-xl font-bold leading-tight ${catTop3Pct > 75 ? "text-orange-500" : "text-gray-900"}`}>{catTop3Pct}%</p>
+                        <p className="text-xs text-gray-400 mt-0.5 truncate">{catTop3Names.join(", ")}</p>
+                      </div>
+                      <div className="px-4 py-4">
+                        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Fastest Growing</p>
+                        {catFastest ? (
+                          <>
+                            <p className="text-xl font-bold text-orange-500 leading-tight">↑ {catFastest.trendPct}%</p>
+                            <p className="text-xs text-gray-400 mt-0.5 truncate">{catFastest.name} · 3 mo vs prior</p>
+                          </>
+                        ) : (
+                          <p className="text-xl font-bold text-gray-400 leading-tight">—</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ── Time filter pills + transfers toggle ── */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex gap-2">
+                      {(["3mo", "6mo", "12mo", "all"] as const).map((f) => (
+                        <button
+                          key={f}
+                          onClick={() => { setCatTimeFilter(f); setExpandedCategory(null); }}
+                          className={`rounded-full px-3 py-1 text-xs font-medium transition ${catTimeFilter === f ? "bg-gray-900 text-white" : "bg-white border border-gray-200 text-gray-600 hover:border-gray-300"}`}
+                        >
+                          {f === "3mo" ? "3 mo" : f === "6mo" ? "6 mo" : f === "12mo" ? "12 mo" : "All time"}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => setCatShowTransfers((v) => !v)}
+                      className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium border transition ${catShowTransfers ? "bg-gray-900 border-gray-900 text-white" : "bg-white border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600"}`}
+                    >
+                      <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                      </svg>
+                      {catShowTransfers ? "Hiding transfers" : "Show transfers"}
+                    </button>
+                  </div>
+
+                  {/* ── All categories ranked ── */}
+                  <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                    <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                      <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">All Categories · {catFilterLabel}</p>
+                      <span className="text-[10px] text-gray-400">{categoryRows.length} categories</span>
+                    </div>
+                    <div className="divide-y divide-gray-100">
+                      {categoryRows.map((cat) => {
+                        const pct       = catGrandTotal > 0 ? Math.round((cat.total / catGrandTotal) * 100) : 0;
+                        const isExpanded = expandedCategory === cat.name;
+                        const hasTrend   = cat.trendPct != null && Math.abs(cat.trendPct) >= 10;
+                        const trendUp    = (cat.trendPct ?? 0) > 0;
+                        return (
+                          <Fragment key={cat.name}>
+                            {/* Category row — click name/details to navigate, chevron to expand */}
+                            <div className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-gray-50 transition">
+                              {/* Color swatch — clicking navigates to category page */}
+                              <Link href={`/account/spending/category/${encodeURIComponent(cat.name)}`} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full hover:opacity-80 transition" style={{ backgroundColor: cat.color + "20" }}>
+                                <span className="h-3 w-3 rounded-full" style={{ backgroundColor: cat.color }} />
+                              </Link>
+                              {/* Name + meta — clicking navigates to category page */}
+                              <Link href={`/account/spending/category/${encodeURIComponent(cat.name)}`} className="flex-1 min-w-0 group">
+                                <div className="flex items-center gap-1.5">
+                                  <p className="text-sm font-semibold text-gray-900 group-hover:text-purple-600 transition">{cat.name}</p>
+                                  {hasTrend && (
+                                    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${trendUp ? "bg-red-50 text-red-500" : "bg-green-50 text-green-600"}`}>
+                                      {trendUp ? "↑" : "↓"} {Math.abs(cat.trendPct!)}%
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] text-gray-400 mt-0.5">
+                                  {cat.count.toLocaleString()} txn{cat.count !== 1 ? "s" : ""} · {formatCurrency(cat.avgAmount, homeCurrency, undefined, false)} avg · {cat.topMerchants.length} merchant{cat.topMerchants.length !== 1 ? "s" : ""}
+                                </p>
+                                {/* Share bar */}
+                                <div className="mt-2 h-1 w-full rounded-full bg-gray-100">
+                                  <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: cat.color }} />
+                                </div>
+                              </Link>
+                              {/* Sparkline */}
+                              <MerchantSparkline monthly={cat.monthly} color={cat.color} fromYm={ym12moAgo} />
+                              {/* Total + share */}
+                              <div className="text-right shrink-0 min-w-[72px]">
+                                <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(cat.total, homeCurrency, undefined, false)}</p>
+                                <p className="text-[11px] text-gray-400 mt-0.5">{pct}% of spend</p>
+                              </div>
+                              {/* Chevron — only this toggles the accordion */}
+                              <button
+                                onClick={() => {
+                                  if (isExpanded) {
+                                    setExpandedCategory(null);
+                                    setExpandedSubtypes(new Set());
+                                  } else {
+                                    setExpandedCategory(cat.name);
+                                  }
+                                }}
+                                className="p-1 rounded hover:bg-gray-200 transition shrink-0"
+                                aria-label={isExpanded ? "Collapse" : "Expand subtypes"}
+                              >
+                                <svg className={`h-3.5 w-3.5 text-gray-400 transition-transform ${isExpanded ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                </svg>
+                              </button>
+                            </div>
+
+                            {/* Level 2: subtype rows — each expands to show merchants */}
+                            {isExpanded && (() => {
+                              const subtypeMap = new Map<string, typeof cat.topMerchants>();
+                              for (const m of cat.topMerchants) {
+                                const sub = isSubtype(m.category || "") ? m.category : cat.name;
+                                if (!subtypeMap.has(sub)) subtypeMap.set(sub, []);
+                                subtypeMap.get(sub)!.push(m);
+                              }
+                              const subtypes = Array.from(subtypeMap.entries())
+                                .map(([name, ms]) => ({ name, total: ms.reduce((s, m) => s + m.total, 0), merchants: ms }))
+                                .sort((a, b) => b.total - a.total);
+                              return (
+                                <div className="border-t border-gray-100">
+                                  {subtypes.map((st) => {
+                                    const stKey = `${cat.name}::${st.name}`;
+                                    const stExpanded = expandedSubtypes.has(stKey);
+                                    const stColor = categoryColor(st.name) || cat.color;
+                                    const stPct = cat.total > 0 ? Math.round((st.total / cat.total) * 100) : 0;
+                                    return (
+                                      <Fragment key={st.name}>
+                                        {/* Subtype row — click to expand/collapse merchants */}
+                                        <button
+                                          onClick={() => setExpandedSubtypes((prev) => {
+                                            const next = new Set(prev);
+                                            next.has(stKey) ? next.delete(stKey) : next.add(stKey);
+                                            return next;
+                                          })}
+                                          className="w-full flex items-center gap-3 pl-8 pr-4 py-3 bg-gray-50 hover:bg-gray-100 transition text-left border-b border-gray-200 last:border-0 group"
+                                          style={{ borderLeft: `3px solid ${stColor}` }}
+                                        >
+                                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full" style={{ backgroundColor: stColor + "25" }}>
+                                            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: stColor }} />
+                                          </span>
+                                          <div className="flex-1 min-w-0">
+                                            <p className="text-xs font-semibold text-gray-800 group-hover:text-gray-900">{st.name}</p>
+                                            <p className="text-[10px] text-gray-400 mt-0.5">{st.merchants.length} merchant{st.merchants.length !== 1 ? "s" : ""} · {stPct}% of {cat.name}</p>
+                                          </div>
+                                          <p className="text-xs font-bold text-gray-800 tabular-nums shrink-0">{formatCurrency(st.total, homeCurrency, undefined, false)}</p>
+                                          {/* Prominent expand indicator */}
+                                          <span className={`ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors ${stExpanded ? "bg-gray-300" : "bg-gray-200 group-hover:bg-gray-300"}`}>
+                                            <svg className={`h-3 w-3 text-gray-600 transition-transform ${stExpanded ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                            </svg>
+                                          </span>
+                                        </button>
+
+                                        {/* Level 3: merchants under this subtype */}
+                                        {stExpanded && (
+                                          <div className="bg-gray-50/60">
+                                            {st.merchants.map((m) => {
+                                              const mPct = cat.total > 0 ? Math.round((m.total / cat.total) * 100) : 0;
+                                              const mCatColor = categoryColor(m.category || cat.name);
+                                              const isPickerOpen = catOpenPicker === m.slug;
+                                              return (
+                                                <div key={m.slug} className="flex items-center gap-3 pl-16 pr-5 py-2.5 hover:bg-gray-100/60 transition border-b border-gray-100 last:border-0">
+                                                  <Link
+                                                    href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`}
+                                                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold hover:opacity-80 transition ${subAvatarColor(m.name)}`}
+                                                  >
+                                                    {merchantInitials(m.name)}
+                                                  </Link>
+                                                  <div className="flex-1 min-w-0">
+                                                    <Link href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="text-xs font-medium text-gray-800 truncate hover:text-purple-600 hover:underline block">{m.name}</Link>
+                                                    <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                                      <span className="text-[10px] text-gray-400">{m.count} visit{m.count !== 1 ? "s" : ""} · {formatCurrency(m.avgAmount, homeCurrency, m.currency, false)} avg</span>
+                                                      <button
+                                                        ref={(el) => { if (el) catPickerBtnRefs.current.set(m.slug, el); else catPickerBtnRefs.current.delete(m.slug); }}
+                                                        onClick={() => setCatOpenPicker(isPickerOpen ? null : m.slug)}
+                                                        className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 transition hover:border-purple-300 hover:bg-purple-50 hover:text-purple-700"
+                                                      >
+                                                        <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: mCatColor }} />
+                                                        {m.category || cat.name}
+                                                        <svg className="h-2.5 w-2.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                                                      </button>
+                                                      {isPickerOpen && catPickerBtnRefs.current.has(m.slug) && (
+                                                        <CategoryPicker
+                                                          anchorRef={{ current: catPickerBtnRefs.current.get(m.slug)! }}
+                                                          current={m.category || cat.name}
+                                                          onSelect={(newCat) => handleMerchantCategoryChange(m.name, newCat)}
+                                                          onClose={() => setCatOpenPicker(null)}
+                                                        />
+                                                      )}
+                                                    </div>
+                                                  </div>
+                                                  <div className="text-right shrink-0">
+                                                    <p className="text-xs font-semibold text-gray-800 tabular-nums">{formatCurrency(m.total, homeCurrency, m.currency, false)}</p>
+                                                    <p className="text-[10px] text-gray-400">{mPct}% of {cat.name}</p>
+                                                  </div>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        )}
+                                      </Fragment>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })()}
+                          </Fragment>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </>
               )}
             </div>

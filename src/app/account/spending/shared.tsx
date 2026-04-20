@@ -52,12 +52,13 @@ export function CategoryPicker({ anchorRef, current, onSelect, onClose }: Catego
   const menuRef = useRef<HTMLDivElement>(null);
   const [style, setStyle] = useState<React.CSSProperties>({ visibility: "hidden" });
 
-  // Track which parent categories are expanded to show their subtypes
+  // All parents collapsed by default; only pre-expand the current selection's parent
   const currentParent = getParentCategory(current).toLowerCase();
-  const [expanded, setExpanded] = useState<Set<string>>(() => {
-    // Pre-expand the parent of the currently selected category
-    return new Set([currentParent]);
-  });
+  const currentIsSubtype = current.toLowerCase() !== currentParent;
+  const [expanded, setExpanded] = useState<Set<string>>(() =>
+    // Only pre-expand if the current value is actually a subtype (not a parent)
+    currentIsSubtype ? new Set([currentParent]) : new Set()
+  );
 
   useEffect(() => {
     if (!anchorRef.current) return;
