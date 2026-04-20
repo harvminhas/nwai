@@ -12,6 +12,7 @@ import ParseStatusBanner, { addPendingParse } from "@/components/ParseStatusBann
 import PromoDashboardBanner from "@/components/PromoDashboardBanner";
 import UploadZone from "@/components/UploadZone";
 import RefreshToast from "@/components/RefreshToast";
+import { PROFILE_REFRESHED_EVENT } from "@/contexts/ProfileRefreshContext";
 import { fmt } from "@/lib/currencyUtils";
 import { usePlan } from "@/contexts/PlanContext";
 import { useActiveProfile } from "@/contexts/ActiveProfileContext";
@@ -1230,6 +1231,14 @@ export default function TodayPage() {
     });
   }, [router, load]);
 
+  // Reload when RefreshToast completes a rebuild (category rules, etc.)
+  useEffect(() => {
+    if (!token) return;
+    const handler = () => load(token);
+    window.addEventListener(PROFILE_REFRESHED_EVENT, handler);
+    return () => window.removeEventListener(PROFILE_REFRESHED_EVENT, handler);
+  }, [token, load]);
+
   // Re-load when the active profile switches (own ↔ shared account)
   useEffect(() => {
     if (token) load(token);
@@ -1952,6 +1961,24 @@ export default function TodayPage() {
                 </span>
               )}
             </div>
+          )}
+
+          {/* Manual rebuild button — always visible, subtle */}
+          {token && (
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              title="Sync latest data"
+              className="flex items-center justify-center h-9 w-9 rounded-xl border border-gray-200 bg-white shadow-sm hover:border-gray-300 hover:shadow-md transition disabled:opacity-40"
+            >
+              <svg
+                className={`h-4 w-4 text-gray-500 ${refreshing ? "animate-spin" : ""}`}
+                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round"
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
           )}
 
           {/* Freshness CTA — label truncated on mobile */}

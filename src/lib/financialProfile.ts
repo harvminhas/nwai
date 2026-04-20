@@ -21,7 +21,7 @@
 
 import type * as Firestore from "firebase-admin/firestore";
 import { extractAllTransactions } from "./extractTransactions";
-import { computeTypicalSpend, CORE_EXCLUDE_RE, INCOME_TRANSFER_RE } from "./spendingMetrics";
+import { computeTypicalSpend, CORE_EXCLUDE_RE, INCOME_TRANSFER_RE, isCoreExcluded } from "./spendingMetrics";
 import type { CashIncomeEntry } from "./cashIncome";
 import { occurrencesInMonth } from "./cashIncome";
 import type { CashCommitment } from "@/app/api/user/cash-commitments/route";
@@ -564,7 +564,7 @@ export async function buildAndCacheFinancialProfile(
       yearMonth: ym,
       expensesTotal: monthExp.reduce((s, t) => s + toHome(t.amount, t.currency), 0) + cashCommitmentsForMonth,
       coreExpensesTotal: monthExp
-        .filter((t) => !CORE_EXCLUDE_RE.test((t.category ?? "").trim()))
+        .filter((t) => !isCoreExcluded(t.category ?? ""))
         .reduce((s, t) => s + toHome(t.amount, t.currency), 0) + cashCommitmentsForMonth,
       debtPaymentsTotal: debtTxns.reduce((s, t) => s + toHome(t.amount, t.currency), 0),
       minDebtPaymentsTotal,
@@ -665,9 +665,10 @@ export async function buildAndCacheFinancialProfile(
     cashCommitmentEntries,
   };
 
-  // Persist — JSON round-trip strips `undefined` fields (Firestore rejects them)
+  // Persist — JSON round-trip strips `undefined` fields (Firestore rejects them).
+  // Explicitly set cacheStale: false to clear any pending invalidation flag.
   await db.collection("users").doc(uid).set(
-    { financialProfile: JSON.parse(JSON.stringify(profile)) },
+    { financialProfile: { ...JSON.parse(JSON.stringify(profile)), cacheStale: false } },
     { merge: true }
   );
 
@@ -715,10 +716,10 @@ export async function getFinancialProfile(
     } else {
       const ageMs = Date.now() - new Date(cached.updatedAt).getTime();
 
-      // Hot path: cache is < 5 min old — return immediately, no version check
-      if (ageMs < HOT_WINDOW_MS) {
+      // Hot path: cache is < 5 min old AND not stale — return immediately
+      if (ageMs < HOT_WINDOW_MS && !cached.cacheStale) {
         full = cached;
-      } else if (ageMs < MAX_CACHE_MS) {
+      } else if (ageMs < MAX_CACHE_MS && !cached.cacheStale) {
         // Warm path: cache is between 5 min and 24 h — check data version
         const completedSnap = await db
           .collection("statements")
@@ -730,7 +731,7 @@ export async function getFinancialProfile(
           ? cached
           : await buildAndCacheFinancialProfile(uid, db);
       } else {
-        // Expired — force rebuild
+        // Expired or stale (category rules changed) — force rebuild
         full = await buildAndCacheFinancialProfile(uid, db);
       }
     }
@@ -764,8 +765,10 @@ export async function invalidateFinancialProfileCache(
   uid: string,
   db: Firestore.Firestore,
 ): Promise<void> {
-  await db.collection("users").doc(uid).set(
-    { financialProfile: { updatedAt: new Date(0).toISOString() } },
-    { merge: true }
-  );
+  // Use update() with dotted paths so only these two sub-fields change;
+  // the rest of the cached profile data is preserved for the rebuild to overwrite.
+  await db.collection("users").doc(uid).update({
+    "financialProfile.updatedAt": new Date(0).toISOString(),
+    "financialProfile.cacheStale": true,
+  });
 }

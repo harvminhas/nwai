@@ -684,6 +684,7 @@ function SpendingPageInner() {
       });
       if (res.ok) {
         setToast(`Category updated: "${merchantName}" → ${newCategory}`);
+        requestProfileRefresh();
       } else {
         setToast("Failed to save category");
         setAllTimeMerchants((prev) =>
