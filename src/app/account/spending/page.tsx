@@ -1542,7 +1542,7 @@ function SpendingPageInner() {
   );
 
   return (
-    <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
+    <div className="mx-auto max-w-2xl lg:max-w-5xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
       {token && needsRefresh && (
         <RefreshToast
@@ -1585,10 +1585,10 @@ function SpendingPageInner() {
       {hasData && (
         <>
           {/* Tab bar */}
-          <div className="mt-5 mb-6 flex border-b border-gray-200">
+          <div className="mt-5 mb-6 flex overflow-x-auto border-b border-gray-200 scrollbar-none [-ms-overflow-style:none] [scrollbar-width:none]">
             {TABS.map((tab) => (
               <button key={tab.id} onClick={() => switchTab(tab.id)}
-                className={`relative mr-6 pb-3 text-sm font-medium transition-colors ${
+                className={`relative shrink-0 mr-6 pb-3 text-sm font-medium transition-colors ${
                   activeTab === tab.id
                     ? "text-gray-900 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:rounded-full after:bg-gray-900 after:content-['']"
                     : "text-gray-400 hover:text-gray-600"
@@ -2853,20 +2853,20 @@ function SpendingPageInner() {
                 <>
                   {/* ── Summary card ── */}
                   <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-                    <div className="grid grid-cols-4 divide-x divide-gray-100">
-                      <div className="px-4 py-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 divide-y sm:divide-y-0 divide-x-0 sm:divide-x divide-gray-100">
+                      <div className="px-4 py-4 border-b border-r border-gray-100 sm:border-b-0 sm:border-r">
                         <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Categories</p>
                         <p className="text-xl font-bold text-gray-900 leading-tight">{categoryRows.length}</p>
-                        <p className="text-xs text-gray-400 mt-0.5">{catAllTxns12.toLocaleString()} transactions · 12 mo</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{catAllTxns12.toLocaleString()} txns · 12 mo</p>
                       </div>
-                      <div className="px-4 py-4">
+                      <div className="px-4 py-4 border-b border-gray-100 sm:border-b-0 sm:border-r">
                         <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Total Spend</p>
                         <p className="text-xl font-bold text-gray-900 leading-tight tabular-nums">
                           {formatCurrency(mGrandTotal12, homeCurrency, undefined, true)}
                         </p>
                         <p className="text-xs text-gray-400 mt-0.5">12-month window</p>
                       </div>
-                      <div className="px-4 py-4">
+                      <div className="px-4 py-4 border-r border-gray-100 sm:border-r">
                         <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Top 3 Share</p>
                         <p className={`text-xl font-bold leading-tight ${catTop3Pct > 75 ? "text-orange-500" : "text-gray-900"}`}>{catTop3Pct}%</p>
                         <p className="text-xs text-gray-400 mt-0.5 truncate">{catTop3Names.join(", ")}</p>
@@ -2924,14 +2924,14 @@ function SpendingPageInner() {
                         return (
                           <Fragment key={cat.name}>
                             {/* Category row — click name/details to navigate, chevron to expand */}
-                            <div className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-gray-50 transition">
-                              {/* Color swatch — clicking navigates to category page */}
-                              <Link href={`/account/spending/category/${encodeURIComponent(cat.name)}`} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full hover:opacity-80 transition" style={{ backgroundColor: cat.color + "20" }}>
+                            <div className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 sm:py-3.5 hover:bg-gray-50 transition">
+                              {/* Color swatch */}
+                              <Link href={`/account/spending/category/${encodeURIComponent(cat.name)}`} className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-full hover:opacity-80 transition" style={{ backgroundColor: cat.color + "20" }}>
                                 <span className="h-3 w-3 rounded-full" style={{ backgroundColor: cat.color }} />
                               </Link>
-                              {/* Name + meta — clicking navigates to category page */}
+                              {/* Name + meta */}
                               <Link href={`/account/spending/category/${encodeURIComponent(cat.name)}`} className="flex-1 min-w-0 group">
-                                <div className="flex items-center gap-1.5">
+                                <div className="flex items-center gap-1.5 flex-wrap">
                                   <p className="text-sm font-semibold text-gray-900 group-hover:text-purple-600 transition">{cat.name}</p>
                                   {hasTrend && (
                                     <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${trendUp ? "bg-red-50 text-red-500" : "bg-green-50 text-green-600"}`}>
@@ -2939,20 +2939,25 @@ function SpendingPageInner() {
                                     </span>
                                   )}
                                 </div>
-                                <p className="text-[11px] text-gray-400 mt-0.5">
+                                <p className="text-[11px] text-gray-400 mt-0.5 hidden sm:block">
                                   {cat.count.toLocaleString()} txn{cat.count !== 1 ? "s" : ""} · {formatCurrency(cat.avgAmount, homeCurrency, undefined, false)} avg · {cat.topMerchants.length} merchant{cat.topMerchants.length !== 1 ? "s" : ""}
                                 </p>
+                                <p className="text-[11px] text-gray-400 mt-0.5 sm:hidden">
+                                  {cat.count.toLocaleString()} txns · {cat.topMerchants.length} merchants
+                                </p>
                                 {/* Share bar */}
-                                <div className="mt-2 h-1 w-full rounded-full bg-gray-100">
+                                <div className="mt-1.5 h-1 w-full rounded-full bg-gray-100">
                                   <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: cat.color }} />
                                 </div>
                               </Link>
-                              {/* Sparkline */}
-                              <MerchantSparkline monthly={cat.monthly} color={cat.color} fromYm={ym12moAgo} />
+                              {/* Sparkline — hidden on mobile */}
+                              <div className="hidden sm:block">
+                                <MerchantSparkline monthly={cat.monthly} color={cat.color} fromYm={ym12moAgo} />
+                              </div>
                               {/* Total + share */}
-                              <div className="text-right shrink-0 min-w-[72px]">
-                                <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(cat.total, homeCurrency, undefined, false)}</p>
-                                <p className="text-[11px] text-gray-400 mt-0.5">{pct}% of spend</p>
+                              <div className="text-right shrink-0 min-w-[60px] sm:min-w-[72px]">
+                                <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(cat.total, homeCurrency, undefined, true)}</p>
+                                <p className="text-[11px] text-gray-400 mt-0.5">{pct}%</p>
                               </div>
                               {/* Chevron — only this toggles the accordion */}
                               <button
