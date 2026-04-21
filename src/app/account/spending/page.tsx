@@ -391,6 +391,9 @@ function SpendingPageInner() {
   const [merchantsLoading, setMerchantsLoading] = useState(false);
   const [merchantSearch, setMerchantSearch]     = useState("");
   const [merchantsMonth, setMerchantsMonth]     = useState<string | null>(null); // which month is currently loaded
+  const [mergeSelected, setMergeSelected]       = useState<Set<string>>(new Set()); // slugs selected for merge
+  const [mergeCanonicalSlug, setMergeCanonicalSlug] = useState<string>(""); // which one to keep
+  const [mergingMerchants, setMergingMerchants] = useState(false);
 
   // All-time merchants (no month filter) — loaded eagerly for Overview insight cards
   const [allTimeMerchants, setAllTimeMerchants] = useState<import("@/app/api/user/spending/merchants/route").MerchantSummary[] | null>(null);
@@ -769,6 +772,46 @@ function SpendingPageInner() {
       if (s.affectsCache) setNeedsRefresh(true);
     } finally {
       setMergingSubPairKey(null);
+    }
+  }
+
+  async function handleMergeMerchants(
+    canonicalSlug: string,
+    aliasResults: import("@/app/api/user/spending/merchants/route").MerchantSummary[]
+  ) {
+    if (!token) return;
+    const canonical = aliasResults.find((m) => m.slug === canonicalSlug) ?? aliasResults[0];
+    const aliases   = aliasResults.filter((m) => m.slug !== canonical.slug);
+    if (aliases.length === 0) return;
+    setMergingMerchants(true);
+    try {
+      const { pairKey, normaliseName } = await import("@/lib/sourceMappings");
+      const mappings = aliases.map((alias) => ({
+        pairKey:   pairKey(canonical.name, alias.name),
+        type:      "expense" as const,
+        canonical: canonical.name,
+        alias:     alias.name,
+        confidence: "high" as const,
+        status:    "confirmed" as const,
+        createdAt: new Date().toISOString(),
+        affectsCache: canonical.category !== alias.category,
+      }));
+      await fetch("/api/user/source-mappings", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ mappings }),
+      });
+      // Remove merged aliases from local merchant list
+      const aliasNames = new Set(aliases.map((a) => normaliseName(a.name)));
+      setAllTimeMerchants((prev) => prev ? prev.filter((m) => !aliasNames.has(normaliseName(m.name))) : prev);
+      setExpenseSuggestions((prev) => prev.filter((s) => !aliasNames.has(normaliseName(s.alias))));
+      if (mappings.some((m) => m.affectsCache)) setNeedsRefresh(true);
+      // Reset merge state
+      setMergeSelected(new Set());
+      setMergeCanonicalSlug("");
+      setMerchantSearch("");
+    } finally {
+      setMergingMerchants(false);
     }
   }
 
@@ -2646,41 +2689,106 @@ function SpendingPageInner() {
                   </div>
 
                   {merchantSearch ? (
-                    /* ── Search results (flat list) ── */
-                    <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-                      <div className="px-5 py-2.5 border-b border-gray-100">
-                        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">
-                          {allTimeMerchants.filter((m) => m.name.toLowerCase().includes(merchantSearch.toLowerCase()) || m.category.toLowerCase().includes(merchantSearch.toLowerCase())).length} results
-                        </p>
-                      </div>
-                      <div className="divide-y divide-gray-100">
-                        {allTimeMerchants
-                          .filter((m) => m.name.toLowerCase().includes(merchantSearch.toLowerCase()) || m.category.toLowerCase().includes(merchantSearch.toLowerCase()))
-                          .sort((a, b) => b.total - a.total)
-                          .map((m) => {
-                            const color = categoryColor(m.category);
-                            const allTotal = m.monthly.reduce((s, mo) => s + mo.total, 0);
-                            const allCount = m.monthly.reduce((s, mo) => s + mo.count, 0);
-                            return (
-                              <Link key={m.slug} href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 sm:py-3.5 hover:bg-gray-50 transition">
-                                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(m.name)}</span>
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-sm font-semibold text-gray-900 truncate">{m.name}</p>
-                                  <p className="text-[11px] text-gray-400 mt-0.5">
-                                    <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />{m.category}</span>
-                                    {" · "}{allCount} visit{allCount !== 1 ? "s" : ""}
-                                    {allCount > 0 ? ` · ${formatCurrency(allTotal / allCount, homeCurrency, m.currency, false)} avg` : ""}
-                                  </p>
+                    /* ── Search results with merge select ── */
+                    (() => {
+                      const searchResults = allTimeMerchants
+                        .filter((m) => m.name.toLowerCase().includes(merchantSearch.toLowerCase()) || m.category.toLowerCase().includes(merchantSearch.toLowerCase()))
+                        .sort((a, b) => b.total - a.total);
+                      const mergeReady = mergeSelected.size >= 2;
+                      const effectiveCanonical = mergeCanonicalSlug || (searchResults.find((m) => mergeSelected.has(m.slug))?.slug ?? "");
+                      return (
+                        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                          <div className="px-5 py-2.5 border-b border-gray-100 flex items-center justify-between">
+                            <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+                              {searchResults.length} result{searchResults.length !== 1 ? "s" : ""}
+                            </p>
+                            {searchResults.length >= 2 && (
+                              <button
+                                onClick={() => { setMergeSelected(new Set()); setMergeCanonicalSlug(""); }}
+                                className="text-[10px] text-purple-500 hover:text-purple-700 transition"
+                              >
+                                {mergeSelected.size > 0 ? "Clear selection" : "Select to merge"}
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Merge action bar */}
+                          {mergeReady && (
+                            <div className="border-b border-purple-100 bg-purple-50/60 px-4 py-2.5 flex items-center gap-3 flex-wrap">
+                              <span className="text-xs font-semibold text-purple-800">{mergeSelected.size} selected</span>
+                              <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                                <span className="text-xs text-purple-600">Keep:</span>
+                                <select
+                                  value={effectiveCanonical}
+                                  onChange={(e) => setMergeCanonicalSlug(e.target.value)}
+                                  className="flex-1 min-w-0 rounded-lg border border-purple-200 bg-white px-2 py-1 text-xs font-medium text-gray-800 focus:outline-none focus:ring-1 focus:ring-purple-400"
+                                >
+                                  {searchResults.filter((m) => mergeSelected.has(m.slug)).map((m) => (
+                                    <option key={m.slug} value={m.slug}>{m.name}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  const selectedResults = searchResults.filter((m) => mergeSelected.has(m.slug));
+                                  void handleMergeMerchants(effectiveCanonical, selectedResults);
+                                }}
+                                disabled={mergingMerchants}
+                                className="shrink-0 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 disabled:opacity-50 transition"
+                              >
+                                {mergingMerchants ? "Merging…" : "Merge"}
+                              </button>
+                            </div>
+                          )}
+
+                          <div className="divide-y divide-gray-100">
+                            {searchResults.map((m) => {
+                              const color = categoryColor(m.category);
+                              const allTotal = m.monthly.reduce((s, mo) => s + mo.total, 0);
+                              const allCount = m.monthly.reduce((s, mo) => s + mo.count, 0);
+                              const isChecked = mergeSelected.has(m.slug);
+                              const isCanonical = effectiveCanonical === m.slug && mergeReady;
+                              return (
+                                <div key={m.slug} className={`flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 transition ${isChecked ? "bg-purple-50/40" : "hover:bg-gray-50"}`}>
+                                  {/* Checkbox — always visible in search mode when ≥2 results */}
+                                  {searchResults.length >= 2 && (
+                                    <button
+                                      onClick={() => {
+                                        const next = new Set(mergeSelected);
+                                        next.has(m.slug) ? next.delete(m.slug) : next.add(m.slug);
+                                        setMergeSelected(next);
+                                        if (!next.has(mergeCanonicalSlug)) setMergeCanonicalSlug("");
+                                      }}
+                                      className={`shrink-0 h-4 w-4 rounded border flex items-center justify-center transition ${isChecked ? "border-purple-500 bg-purple-500" : "border-gray-300 bg-white hover:border-purple-400"}`}
+                                    >
+                                      {isChecked && <svg className="h-2.5 w-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
+                                    </button>
+                                  )}
+                                  <Link href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex flex-1 items-center gap-2 sm:gap-3 min-w-0">
+                                    <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(m.name)}</span>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-1.5">
+                                        <p className="text-sm font-semibold text-gray-900 truncate">{m.name}</p>
+                                        {isCanonical && <span className="shrink-0 rounded-full bg-purple-100 px-1.5 py-0.5 text-[9px] font-semibold text-purple-600 uppercase tracking-wide">keep</span>}
+                                      </div>
+                                      <p className="text-[11px] text-gray-400 mt-0.5">
+                                        <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />{m.category}</span>
+                                        {" · "}{allCount} visit{allCount !== 1 ? "s" : ""}
+                                        {allCount > 0 ? ` · ${formatCurrency(allTotal / allCount, homeCurrency, m.currency, false)} avg` : ""}
+                                      </p>
+                                    </div>
+                                    <div className="text-right shrink-0">
+                                      <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(allTotal, homeCurrency, m.currency, false)}</p>
+                                    </div>
+                                    <svg className="h-3.5 w-3.5 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                                  </Link>
                                 </div>
-                                <div className="text-right shrink-0">
-                                  <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(allTotal, homeCurrency, m.currency, false)}</p>
-                                </div>
-                                <svg className="h-3.5 w-3.5 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
-                              </Link>
-                            );
-                          })}
-                      </div>
-                    </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })()
                   ) : (
                     <>
                       {/* ── Time filter pills ── */}

@@ -1038,9 +1038,11 @@ export async function GET(req: NextRequest) {
     statusType   = "alert";
     const overdueAccounts = freshness.accounts.filter((a) => a.isOverdue).map((a) => a.name);
     statusText   = overdueAccounts.length > 0
-      ? `${overdueAccounts.join(", ")} statement${overdueAccounts.length > 1 ? "s" : ""} overdue — upload to refresh predictions`
-      : `Statements overdue — predictions may be unreliable`;
-    statusDetail = "Upload your latest bank statement to get accurate predictions. Most predictions use data from your last upload.";
+      ? `${overdueAccounts.length} statement${overdueAccounts.length > 1 ? "s" : ""} overdue`
+      : `Statements overdue`;
+    statusDetail = overdueAccounts.length > 0
+      ? `${overdueAccounts.join(", ")} — upload to refresh predictions`
+      : "Upload your latest bank statement to get accurate predictions. Most predictions use data from your last upload.";
   } else if (alerts.some((a) => a.type === "spending_pace")) {
     statusType   = "warn";
     statusText   = "Spending ahead of income";

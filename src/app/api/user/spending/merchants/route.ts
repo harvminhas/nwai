@@ -3,6 +3,7 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import { getYearMonth } from "@/lib/consolidate";
 import { applyRulesAndRecalculate, merchantSlug } from "@/lib/applyRules";
+import { normaliseName } from "@/lib/sourceMappings";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { inferCurrencyFromBankName } from "@/lib/currencyUtils";
 import type { ParsedStatementData, ExpenseTransaction } from "@/lib/types";
@@ -63,13 +64,23 @@ export async function GET(request: NextRequest) {
     if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const uid = access.targetUid;
 
-    // Load category rules
-    const rulesSnap = await db
-      .collection("users").doc(uid).collection("categoryRules").get();
+    // Load category rules + confirmed source mappings in parallel
+    const [rulesSnap, mappingsSnap] = await Promise.all([
+      db.collection("users").doc(uid).collection("categoryRules").get(),
+      db.collection(`users/${uid}/sourceMappings`).where("status", "==", "confirmed").where("type", "==", "expense").get(),
+    ]);
     const rulesMap = new Map<string, string>();
     for (const r of rulesSnap.docs) {
       const d = r.data();
       if (d.slug && d.category) rulesMap.set(d.slug as string, d.category as string);
+    }
+    // Build alias → canonical name map
+    const aliasToCanonical = new Map<string, string>(); // normalisedAlias → canonicalName
+    for (const doc of mappingsSnap.docs) {
+      const d = doc.data() as { canonical: string; alias: string };
+      if (d.canonical && d.alias) {
+        aliasToCanonical.set(normaliseName(d.alias), d.canonical);
+      }
     }
 
     // Load all completed statements
@@ -137,20 +148,48 @@ export async function GET(request: NextRequest) {
       }));
 
       for (const txn of txns) {
-        const slug = merchantSlug(txn.merchant);
-        if (!slug) continue;
-        if (slugFilter && slug !== slugFilter) continue;
+        // Resolve alias → canonical via confirmed source mappings
+        const canonicalName = aliasToCanonical.get(normaliseName(txn.merchant));
+        const effectiveMerchant = canonicalName ?? txn.merchant;
+        const effectiveTxn = canonicalName ? { ...txn, merchant: effectiveMerchant } : txn;
 
-        const txYm = txn.date ? txn.date.slice(0, 7) : stmtYm;
+        const slug = merchantSlug(effectiveMerchant);
+        if (!slug) continue;
+        // When a slug filter is set we still aggregate ALL merchants so we can
+        // compute similar-merchant suggestions; we just skip transaction storage
+        // for non-target merchants to keep memory usage reasonable.
+        const isTarget = !slugFilter || slug === slugFilter;
+        if (slugFilter && !isTarget) {
+          // Lightweight aggregation only — totals, no transaction list
+          const txYm = effectiveTxn.date ? effectiveTxn.date.slice(0, 7) : stmtYm;
+          if (monthFilter && txYm !== monthFilter) continue;
+          const amt = Math.abs(effectiveTxn.amount);
+          let entry = map.get(slug);
+          if (!entry) {
+            entry = { names: {}, category: effectiveTxn.category ?? "other", currency: stmtCurrency, total: 0, count: 0, dates: [], monthly: new Map(), transactions: [] };
+            map.set(slug, entry);
+          }
+          entry.names[effectiveMerchant] = (entry.names[effectiveMerchant] ?? 0) + 1;
+          entry.category = effectiveTxn.category ?? entry.category;
+          entry.total += amt;
+          entry.count += 1;
+          if (effectiveTxn.date) entry.dates.push(effectiveTxn.date);
+          const mo = entry.monthly.get(txYm) ?? { total: 0, count: 0 };
+          mo.total += amt; mo.count += 1;
+          entry.monthly.set(txYm, mo);
+          continue;
+        }
+
+        const txYm = effectiveTxn.date ? effectiveTxn.date.slice(0, 7) : stmtYm;
         if (monthFilter && txYm !== monthFilter) continue;
 
-        const amt = Math.abs(txn.amount);
+        const amt = Math.abs(effectiveTxn.amount);
 
         let entry = map.get(slug);
         if (!entry) {
           entry = {
             names: {},
-            category: txn.category ?? "other",
+            category: effectiveTxn.category ?? "other",
             currency: stmtCurrency,
             total: 0,
             count: 0,
@@ -161,18 +200,18 @@ export async function GET(request: NextRequest) {
           map.set(slug, entry);
         }
 
-        entry.names[txn.merchant] = (entry.names[txn.merchant] ?? 0) + 1;
-        entry.category = txn.category ?? entry.category;
+        entry.names[effectiveMerchant] = (entry.names[effectiveMerchant] ?? 0) + 1;
+        entry.category = effectiveTxn.category ?? entry.category;
         entry.total += amt;
         entry.count += 1;
-        if (txn.date) entry.dates.push(txn.date);
+        if (effectiveTxn.date) entry.dates.push(effectiveTxn.date);
 
         const mo = entry.monthly.get(txYm) ?? { total: 0, count: 0 };
         mo.total += amt;
         mo.count += 1;
         entry.monthly.set(txYm, mo);
 
-        entry.transactions.push({ ...txn, ym: txYm });
+        entry.transactions.push({ ...effectiveTxn, ym: txYm });
       }
     }
 
@@ -204,7 +243,48 @@ export async function GET(request: NextRequest) {
     merchants.sort((a, b) => b.total - a.total);
 
     if (slugFilter) {
-      return NextResponse.json({ merchant: merchants[0] ?? null, homeCurrency });
+      const target = merchants.find((m) => m.slug === slugFilter) ?? merchants[0] ?? null;
+
+      // Find similar merchants using:
+      //   Rule 1 (relaxed): shorter is a prefix of longer, ≥5 chars, ≥30% coverage
+      //   Rule 2: first word matches exactly, ≥5 chars
+      const normName = (s: string) =>
+        s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+      const firstWord = (s: string) => normName(s).split(" ")[0] ?? "";
+
+      const similarMerchants: MerchantSummary[] = target
+        ? merchants.filter((m) => {
+            if (m.slug === target.slug) return false;
+            const a = normName(target.name);
+            const b = normName(m.name);
+            const shorter = a.length <= b.length ? a : b;
+            const longer  = a.length <= b.length ? b : a;
+            // Rule 1: prefix, relaxed to 30% coverage
+            if (shorter.length >= 5 && longer.startsWith(shorter) && shorter.length / longer.length >= 0.3) return true;
+            // Rule 2: shared first word ≥5 chars
+            const fw = firstWord(target.name);
+            if (fw.length >= 5 && fw === firstWord(m.name)) return true;
+            return false;
+          })
+        : [];
+
+      // Category peers — top merchants in the same category (excluding target)
+      let categoryPeers: { name: string; slug: string; total: number; currency: string }[] = [];
+      let categoryTotal = 0;
+      if (target) {
+        const targetCat = (target.category || "other").toLowerCase().trim();
+        const sameCat = merchants.filter(
+          (m) => (m.category || "other").toLowerCase().trim() === targetCat,
+        );
+        categoryTotal = sameCat.reduce((s, m) => s + m.total, 0);
+        categoryPeers = sameCat
+          .filter((m) => m.slug !== slugFilter)
+          .sort((a, b) => b.total - a.total)
+          .slice(0, 5)
+          .map((m) => ({ name: m.name, slug: m.slug, total: m.total, currency: m.currency }));
+      }
+
+      return NextResponse.json({ merchant: target, similarMerchants, categoryPeers, categoryTotal, homeCurrency });
     }
     return NextResponse.json({ merchants, homeCurrency });
   } catch (err) {

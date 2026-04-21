@@ -1122,6 +1122,7 @@ export default function TodayPage() {
   const [dismissedRadar,   setDismissedRadar]   = useState<Set<string>>(new Set());
   const [sigExpanded,      setSigExpanded]      = useState(false);
   const [statusOpen,       setStatusOpen]       = useState(false);
+  const [freshnessExpanded, setFreshnessExpanded] = useState(false);
   const [showOnboarding,   setShowOnboarding]   = useState(false);
   const [showAllUpcoming,      setShowAllUpcoming]      = useState(false);
   const [includeDebtInExpenses, setIncludeDebtInExpenses] = useState(false);
@@ -1397,46 +1398,64 @@ export default function TodayPage() {
   // ── FreshnessBar ─────────────────────────────────────────────────────────────
   function FreshnessBar() {
     if (!freshness) return null;
-    const { state, daysOverdue, accounts } = freshness;
+    const { state, accounts } = freshness;
     const isFresh = state === "fresh";
     const isStale = state === "stale";
     const bg      = isFresh ? "bg-green-50 border-green-200" : isStale ? "bg-red-50 border-red-200" : "bg-amber-50 border-amber-200";
     const text    = isFresh ? "text-green-800" : isStale ? "text-red-700" : "text-amber-800";
     const sub     = isFresh ? "text-green-600" : isStale ? "text-red-600" : "text-amber-600";
-    const icon    = isFresh
-      ? <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-      : <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
 
     const overdueAccounts = accounts.filter((a) => a.isOverdue);
+    const overdueCount = overdueAccounts.length;
+
     const headline = isFresh
       ? "Statements up to date"
-      : overdueAccounts.length > 0
-      ? `Latest statements ready to upload: ${overdueAccounts.map((a) => a.name).join(", ")}`
+      : overdueCount > 0
+      ? `${overdueCount} statement${overdueCount !== 1 ? "s" : ""} overdue`
       : "Some statements may be due soon";
 
-    const subline = isFresh
-      ? accounts.slice(0, 5).map((a) => a.name).join("  ·  ")
-      : "";
+    const canExpand = !isFresh && overdueCount > 0;
 
     return (
-      <div className={`mb-4 flex items-start justify-between gap-3 rounded-xl border px-4 py-3 ${bg}`}>
-        <div className={`flex items-start gap-2.5 ${text}`}>
-          {icon}
-          <div>
-            <p className="text-sm font-semibold">{headline}</p>
-            {subline && <p className={`mt-0.5 text-xs ${sub}`}>{subline}</p>}
-          </div>
+      <div className={`mb-4 rounded-xl border ${bg} overflow-hidden`}>
+        <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+          <button
+            className={`flex items-center gap-2 flex-1 min-w-0 text-left ${canExpand ? "cursor-pointer" : "cursor-default"}`}
+            onClick={() => canExpand && setFreshnessExpanded((v) => !v)}
+            disabled={!canExpand}
+          >
+            {isFresh
+              ? <svg className={`h-3.5 w-3.5 shrink-0 ${text}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+              : <svg className={`h-3.5 w-3.5 shrink-0 ${text}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            }
+            <span className={`text-xs font-semibold ${text}`}>{headline}</span>
+            {canExpand && (
+              <svg className={`h-3 w-3 shrink-0 ${sub} transition-transform ${freshnessExpanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            )}
+            {isFresh && (
+              <span className={`text-xs ${sub} truncate`}>{accounts.slice(0, 4).map((a) => a.name).join("  ·  ")}</span>
+            )}
+          </button>
+          <Link
+            href="/account/activity?tab=coverage"
+            className={`shrink-0 rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${
+              isFresh
+                ? "border-green-200 text-green-700 hover:bg-green-100"
+                : "border-amber-300 bg-white text-amber-700 hover:bg-amber-50"
+            }`}
+          >
+            {isFresh ? "View" : "Upload →"}
+          </Link>
         </div>
-        <Link
-          href={isFresh ? "/account/activity?tab=coverage" : "/account/activity?tab=coverage"}
-          className={`shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
-            isFresh
-              ? "border-green-200 text-green-700 hover:bg-green-100"
-              : "border-amber-300 bg-white text-amber-700 hover:bg-amber-50"
-          }`}
-        >
-          {isFresh ? "View coverage" : "View & upload"}
-        </Link>
+        {canExpand && freshnessExpanded && (
+          <div className={`border-t px-4 py-2 flex flex-wrap gap-x-3 gap-y-1 ${isStale ? "border-red-100 bg-red-50/60" : "border-amber-100 bg-amber-50/60"}`}>
+            {overdueAccounts.map((a) => (
+              <span key={a.name} className={`text-xs ${sub}`}>{a.name}</span>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -2131,18 +2150,23 @@ export default function TodayPage() {
               {statusBanner && (
                 <button
                   onClick={() => setStatusOpen((v) => !v)}
-                  className="w-full flex items-center gap-3 border-t border-gray-100 px-5 py-3 text-left hover:bg-gray-50/50 transition"
+                  className="w-full flex items-center gap-2 border-t border-gray-100 px-5 py-2.5 text-left hover:bg-gray-50/50 transition"
                 >
                   <span className={`h-2 w-2 shrink-0 rounded-full ${statusBanner.type === "ok" ? "bg-green-400" : statusBanner.type === "alert" ? "bg-red-400" : "bg-orange-400"}`} />
-                  <p className="flex-1 text-sm font-medium text-gray-700 min-w-0">{statusBanner.text}</p>
-                  <Link href="/account/spending" onClick={(e) => e.stopPropagation()}
+                  <p className="flex-1 text-xs font-medium text-gray-700 min-w-0 truncate">{statusBanner.text}</p>
+                  {statusBanner.detail && (
+                    <svg className={`h-3 w-3 shrink-0 text-gray-400 transition-transform ${statusOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  )}
+                  <Link href="/account/activity?tab=coverage" onClick={(e) => e.stopPropagation()}
                     className="shrink-0 text-xs font-semibold text-purple-600 hover:underline whitespace-nowrap">
-                    View breakdown →
+                    Upload →
                   </Link>
                 </button>
               )}
               {statusOpen && statusBanner?.detail && (
-                <div className="border-t border-gray-100 bg-gray-50/60 px-5 py-3">
+                <div className="border-t border-gray-100 bg-gray-50/60 px-5 py-2.5">
                   <p className="text-xs text-gray-500 leading-relaxed">{statusBanner.detail}</p>
                 </div>
               )}
