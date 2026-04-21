@@ -84,6 +84,14 @@ export interface ExpenseTransaction {
   accountLabel?: string;
   /** ISO 4217 currency of the source account (e.g. "CAD", "USD"). Populated at API aggregation time. */
   currency?: string;
+  /** Firestore statement document ID — populated at API aggregation time. */
+  stmtId?: string;
+  /**
+   * Stable account identifier (`buildAccountSlug(bankName, accountId)`) — populated at API
+   * aggregation time. Used as the account portion of txnKey so overrides survive statement
+   * re-uploads (which produce a new stmtId but the same accountSlug).
+   */
+  accountSlug?: string;
 }
 
 export interface Expenses {

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import { getYearMonth } from "@/lib/consolidate";
-import { applyRulesAndRecalculate, merchantSlug } from "@/lib/applyRules";
+import { applyRulesAndRecalculate, merchantSlug, txnKey } from "@/lib/applyRules";
 import { normaliseName } from "@/lib/sourceMappings";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { inferCurrencyFromBankName } from "@/lib/currencyUtils";
@@ -11,7 +11,10 @@ import type { ParsedStatementData, ExpenseTransaction } from "@/lib/types";
 export interface MerchantSummary {
   slug: string;
   name: string;          // canonical display name (most-used spelling)
+  /** Dominant category (highest spend). Kept for backward compat. */
   category: string;
+  /** All unique categories across this merchant's transactions. */
+  categories: string[];
   /** ISO 4217 currency of the merchant's native account (e.g. "CAD", "USD") */
   currency: string;
   total: number;
@@ -64,23 +67,47 @@ export async function GET(request: NextRequest) {
     if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const uid = access.targetUid;
 
-    // Load category rules + confirmed source mappings in parallel
-    const [rulesSnap, mappingsSnap] = await Promise.all([
+    // Load category rules, confirmed source mappings, and txn overrides in parallel
+    const [rulesSnap, mappingsSnap, overridesSnap] = await Promise.all([
       db.collection("users").doc(uid).collection("categoryRules").get(),
-      db.collection(`users/${uid}/sourceMappings`).where("status", "==", "confirmed").where("type", "==", "expense").get(),
+      db.collection(`users/${uid}/sourceMappings`).get(),
+      db.collection(`users/${uid}/txnCategoryOverrides`).get(),
     ]);
     const rulesMap = new Map<string, string>();
     for (const r of rulesSnap.docs) {
       const d = r.data();
       if (d.slug && d.category) rulesMap.set(d.slug as string, d.category as string);
     }
-    // Build alias → canonical name map
-    const aliasToCanonical = new Map<string, string>(); // normalisedAlias → canonicalName
+    // Build txn override map: txnKey → category
+    const txnOverrides = new Map<string, string>();
+    for (const doc of overridesSnap.docs) {
+      const d = doc.data() as { category: string };
+      if (d.category) txnOverrides.set(doc.id, d.category);
+    }
+
+    // Build alias → canonical name map keyed by merchantSlug, then resolve chains
+    // e.g.  "SCOTIALN VSA A6K6W2" → "SCOTIALN VSA" → "SCOTIALN"
+    // should resolve to "SCOTIALN VSA A6K6W2" → "SCOTIALN" directly.
+    const rawAliasMap = new Map<string, string>(); // aliasSlug → canonicalName (one level)
     for (const doc of mappingsSnap.docs) {
-      const d = doc.data() as { canonical: string; alias: string };
-      if (d.canonical && d.alias) {
-        aliasToCanonical.set(normaliseName(d.alias), d.canonical);
+      const d = doc.data() as { canonical: string; alias: string; status?: string; type?: string };
+      if (d.canonical && d.alias && d.status === "confirmed" && (!d.type || d.type === "expense")) {
+        rawAliasMap.set(merchantSlug(d.alias), d.canonical);
       }
+    }
+
+    // Resolve full chains so multi-hop merges work
+    const aliasToCanonical = new Map<string, string>();
+    for (const [aliasSlug, firstCanonical] of rawAliasMap) {
+      let current = firstCanonical;
+      const visited = new Set<string>([aliasSlug]);
+      for (let hop = 0; hop < 10; hop++) {
+        const nextCanonical = rawAliasMap.get(merchantSlug(current));
+        if (!nextCanonical || visited.has(merchantSlug(current))) break;
+        visited.add(merchantSlug(current));
+        current = nextCanonical;
+      }
+      aliasToCanonical.set(aliasSlug, current);
     }
 
     // Load all completed statements
@@ -139,19 +166,48 @@ export async function GET(request: NextRequest) {
 
       if ((parsed.accountType ?? "").toLowerCase() === "investment") continue;
 
-      const withRules = applyRulesAndRecalculate(parsed, rulesMap);
+      const stmtId = doc.id;
+      // accountSlug is stable across re-uploads (same bankName + accountId = same slug).
+      // txnKey uses accountSlug so category overrides survive statement re-uploads.
+      const acctSlug = buildAccountSlug(parsed.bankName, parsed.accountId);
+      // Inject stmtId + accountSlug BEFORE applyRulesAndRecalculate so txnKey lookups work
+      const parsedWithIds: typeof parsed = parsed.expenses
+        ? {
+            ...parsed,
+            expenses: {
+              ...parsed.expenses,
+              transactions: (parsed.expenses.transactions ?? []).map((t) => ({
+                ...t,
+                stmtId,
+                accountSlug: acctSlug,
+              })),
+            },
+          }
+        : parsed;
+      // Don't pass txnOverrides here — the transactions still have raw (pre-alias) merchant
+      // names, so any key built inside applyRulesAndRecalculate would use the wrong slug.
+      // Overrides are applied below, after alias resolution, using the canonical merchant name.
+      const withRules = applyRulesAndRecalculate(parsedWithIds, rulesMap);
       const label = accountDisplayLabel(parsed);
       const txns: ExpenseTransaction[] = (withRules.expenses?.transactions ?? []).map((t) => ({
         ...t,
         accountLabel: label,
         currency: stmtCurrency,
+        stmtId,
+        accountSlug: acctSlug,
       }));
 
       for (const txn of txns) {
-        // Resolve alias → canonical via confirmed source mappings
-        const canonicalName = aliasToCanonical.get(normaliseName(txn.merchant));
+        // Resolve alias → canonical via confirmed source mappings (slug-based lookup)
+        const canonicalName = aliasToCanonical.get(merchantSlug(txn.merchant));
         const effectiveMerchant = canonicalName ?? txn.merchant;
-        const effectiveTxn = canonicalName ? { ...txn, merchant: effectiveMerchant } : txn;
+        const txnWithCanonical = canonicalName ? { ...txn, merchant: effectiveMerchant } : txn;
+        // Apply per-transaction override AFTER alias resolution so the key uses the canonical
+        // merchant name — exactly the name the PUT route received from the UI.
+        const overrideCategory = txnOverrides.get(txnKey(acctSlug, txnWithCanonical));
+        const effectiveTxn = overrideCategory
+          ? { ...txnWithCanonical, category: overrideCategory }
+          : txnWithCanonical;
 
         const slug = merchantSlug(effectiveMerchant);
         if (!slug) continue;
@@ -225,10 +281,22 @@ export async function GET(request: NextRequest) {
       const transactions = [...e.transactions].sort((a, b) =>
         (b.date ?? b.ym).localeCompare(a.date ?? a.ym)
       );
+      // All unique categories across transactions (for per-txn category model)
+      const categoryTotals = new Map<string, number>();
+      for (const t of transactions) {
+        const cat = t.category || "Other";
+        categoryTotals.set(cat, (categoryTotals.get(cat) ?? 0) + Math.abs(t.amount));
+      }
+      const categories = [...categoryTotals.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([c]) => c);
+      const dominantCategory = categories[0] ?? e.category;
+
       return {
         slug,
         name,
-        category: e.category,
+        category: dominantCategory,
+        categories,
         currency: e.currency,
         total: e.total,
         count: e.count,

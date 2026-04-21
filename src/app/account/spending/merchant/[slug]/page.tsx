@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import { useRouter, useParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
@@ -10,6 +10,7 @@ import {
   CartesianGrid, Tooltip, Cell,
 } from "recharts";
 import { categoryColor, CategoryPicker } from "@/app/account/spending/shared";
+import { txnKey } from "@/lib/applyRules";
 import type { MerchantSummary } from "@/app/api/user/spending/merchants/route";
 import { formatCurrency, getCurrencySymbol } from "@/lib/currencyUtils";
 import {
@@ -94,6 +95,10 @@ export default function MerchantDetailPage() {
   const [mergeSelected, setMergeSelected]       = useState<Set<string>>(new Set());
   const [mergingHere, setMergingHere]           = useState(false);
   const [similarExpanded, setSimilarExpanded]   = useState(false);
+  // Per-transaction category picker
+  const [txnPickerKey, setTxnPickerKey]         = useState<string | null>(null);
+  const txnPickerBtnRefs                        = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const [savingTxnKey, setSavingTxnKey]         = useState<string | null>(null);
   const [categoryPeers, setCategoryPeers]       = useState<{ name: string; slug: string; total: number; currency: string }[]>([]);
   const [categoryTotal, setCategoryTotal]       = useState(0);
 
@@ -107,7 +112,7 @@ export default function MerchantDetailPage() {
         setIdToken(tok);
         const res = await fetch(
           `/api/user/spending/merchants?slug=${encodeURIComponent(slug)}`,
-          { headers: { Authorization: `Bearer ${tok}` } },
+          { headers: { Authorization: `Bearer ${tok}` }, cache: "no-store" },
         );
         const json = await res.json().catch(() => ({}));
         if (!res.ok || !json.merchant) {
@@ -199,6 +204,54 @@ export default function MerchantDetailPage() {
     else { setSortField(field); setSortDir("desc"); }
   }
 
+  // Must be declared before early returns so hook order is stable
+  const handleTxnCategorySelect = useCallback(async (
+    key: string,
+    newCategory: string,
+    txn: import("@/lib/types").ExpenseTransaction & { ym: string },
+  ) => {
+    setTxnPickerKey(null);
+    if (!idToken || !txn.stmtId) return;
+    setSavingTxnKey(key);
+    setMerchant((m) => m ? {
+      ...m,
+      transactions: m.transactions.map((t) =>
+        (t.stmtId === txn.stmtId && t.date === txn.date &&
+          Math.round(Math.abs(t.amount) * 100) === Math.round(Math.abs(txn.amount) * 100) &&
+          t.merchant === txn.merchant)
+          ? { ...t, category: newCategory }
+          : t,
+      ),
+    } : m);
+    try {
+      await fetch("/api/user/txn-category", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          stmtId: txn.stmtId,
+          date: txn.date,
+          amount: txn.amount,
+          merchant: txn.merchant,
+          category: newCategory,
+        }),
+      });
+      requestProfileRefresh();
+    } catch {
+      setMerchant((m) => m ? {
+        ...m,
+        transactions: m.transactions.map((t) =>
+          (t.stmtId === txn.stmtId && t.date === txn.date &&
+            Math.round(Math.abs(t.amount) * 100) === Math.round(Math.abs(txn.amount) * 100) &&
+            t.merchant === txn.merchant)
+            ? { ...t, category: txn.category }
+            : t,
+        ),
+      } : m);
+    } finally {
+      setSavingTxnKey(null);
+    }
+  }, [idToken, requestProfileRefresh]);
+
   if (loading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
@@ -209,7 +262,7 @@ export default function MerchantDetailPage() {
 
   if (subOnlyRecord) {
     return (
-      <div className="mx-auto max-w-2xl px-4 py-8">
+      <div className="mx-auto max-w-2xl lg:max-w-5xl px-4 py-8">
         <Link href="/account/spending?tab=merchants" className="mb-6 inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
@@ -265,7 +318,7 @@ export default function MerchantDetailPage() {
 
   if (error || !merchant) {
     return (
-      <div className="mx-auto max-w-2xl px-4 py-12 text-center">
+      <div className="mx-auto max-w-2xl lg:max-w-5xl px-4 py-12 text-center">
         <p className="text-sm text-red-500">{error ?? "Merchant not found."}</p>
         <Link href="/account/spending?tab=merchants" className="mt-4 inline-block text-sm text-purple-600 hover:underline">← Back to Merchants</Link>
       </div>
@@ -329,6 +382,39 @@ export default function MerchantDetailPage() {
     : daysUntilNext <= 7 ? "This week"
     : daysUntilNext <= 14 ? "Next week"
     : `${fmtDate(expectedDate!.toISOString().slice(0, 10))}`;
+
+  // Use payment-style vocabulary for debt / bill merchants.
+  // Check both categories (may be miscategorised by AI) and merchant name
+  // (catches credit cards like "CIBC Mastercard", "TD Visa", "Scotia MC" etc.)
+  const PAYMENT_CAT_KEYWORDS  = ["payment", "mortgage", "insurance", "utilities", "loan"];
+  const PAYMENT_NAME_KEYWORDS = ["mastercard", "visa", "amex", "mc", "credit card", "line of credit",
+                                 "mortgage", "insurance", "loan", "hydro", "hydro one", "rogers", "bell ",
+                                 "telus", "internet", "utility"];
+  const nameLower = merchant.name.toLowerCase();
+  const isPaymentMerchant =
+    merchant.categories.some((c) => PAYMENT_CAT_KEYWORDS.some((kw) => c.toLowerCase().includes(kw))) ||
+    PAYMENT_NAME_KEYWORDS.some((kw) => nameLower.includes(kw));
+  // Physical visit merchants (dining, groceries, retail, fuel, entertainment) use "visit/trip"
+  // language. Everything else (payments, subscriptions, utilities, online) uses neutral terms.
+  const VISIT_CATEGORIES = ["dining", "restaurant", "groceries", "grocery", "shopping",
+                            "retail", "gas", "fuel", "entertainment", "clothing", "coffee"];
+  const isVisitMerchant =
+    !isPaymentMerchant &&
+    merchant.categories.some((c) => VISIT_CATEGORIES.some((kw) => c.toLowerCase().includes(kw)));
+
+  const vocab = {
+    visit:         isPaymentMerchant ? "payment"  : isVisitMerchant ? "visit"  : "charge",
+    visits:        isPaymentMerchant ? "payments" : isVisitMerchant ? "visits" : "charges",
+    trip:          isPaymentMerchant ? "payment"  : isVisitMerchant ? "trip"   : "charge",
+    largeTrip:     isPaymentMerchant ? "large payment"  : isVisitMerchant ? "large trip"   : "large charge",
+    largeVisits:   isPaymentMerchant ? "large payments" : isVisitMerchant ? "large visits" : "large charges",
+    tripLabel:     isPaymentMerchant ? "Typical amount" : isVisitMerchant ? "Typical trip" : "Typical charge",
+    tripDistTitle: isPaymentMerchant ? "Payment distribution"  : isVisitMerchant ? "Trip size distribution"  : "Charge distribution",
+    lastVisit:     isPaymentMerchant ? "Last Payment"          : isVisitMerchant ? "Last Visit"              : "Last Charge",
+    nextVisit:     isPaymentMerchant ? "Expected Next Payment" : isVisitMerchant ? "Expected Next Visit"     : "Expected Next Charge",
+    cadence:       isPaymentMerchant ? "payment schedule"      : isVisitMerchant ? "cadence"                 : "billing cadence",
+    cadenceCard:   isPaymentMerchant ? "Consistent payment schedule." : isVisitMerchant ? "Consistent visit cadence." : "Consistent billing cadence.",
+  };
 
   // Category share + rank
   const categoryShare = categoryTotal > 0 ? Math.round((merchant.total / categoryTotal) * 100) : null;
@@ -430,6 +516,7 @@ export default function MerchantDetailPage() {
     }
   }
 
+
   async function handleMergeSimilar() {
     if (!idToken || mergeSelected.size === 0 || !merchant) return;
     setMergingHere(true);
@@ -452,9 +539,26 @@ export default function MerchantDetailPage() {
         body: JSON.stringify({ mappings }),
       });
       const mergedNames = new Set(aliases.map((a) => normaliseName(a.name)));
-      setSimilarMerchants((prev) => prev.filter((m) => !mergedNames.has(normaliseName(m.name))));
       setMergeSelected(new Set());
       if (mappings.some((m) => m.affectsCache)) requestProfileRefresh();
+
+      // Brief pause so Firestore write propagates before we re-query
+      await new Promise((r) => setTimeout(r, 600));
+
+      // Reload merchant data so alias transactions fold into this merchant immediately.
+      // cache: "no-store" prevents the browser from serving a stale cached response.
+      const res = await fetch(
+        `/api/user/spending/merchants?slug=${encodeURIComponent(slug)}`,
+        { headers: { Authorization: `Bearer ${idToken}` }, cache: "no-store" },
+      );
+      const json = await res.json().catch(() => ({}));
+      if (json.merchant) {
+        setMerchant(json.merchant);
+        setCategoryPeers(json.categoryPeers ?? []);
+        setCategoryTotal(json.categoryTotal ?? 0);
+      }
+      // Remove any similar merchants that were just merged
+      setSimilarMerchants((prev) => prev.filter((m) => !mergedNames.has(normaliseName(m.name))));
     } finally {
       setMergingHere(false);
     }
@@ -464,7 +568,7 @@ export default function MerchantDetailPage() {
 
   return (
     <MerchantForecastProvider slug={slug} merchantName={merchant.name} avgAmount={merchant.avgAmount} lastSeenDate={merchant.lastDate} idToken={idToken}>
-      <div className="mx-auto max-w-2xl space-y-4 px-4 py-6">
+      <div className="mx-auto max-w-2xl lg:max-w-5xl space-y-4 px-4 py-6">
 
         {/* Back nav */}
         <Link href="/account/spending?tab=merchants" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
@@ -477,11 +581,13 @@ export default function MerchantDetailPage() {
         {/* ── Similar merchants — collapsible banner at top ── */}
         {similarMerchants.length > 0 && (
           <div className="overflow-hidden rounded-xl border border-amber-200 bg-amber-50/50">
-            {/* Header row — always visible, click to expand */}
-            <button
-              type="button"
+            {/* Header row — always visible; div avoids nested-button hydration error */}
+            <div
+              role="button"
+              tabIndex={0}
               onClick={() => setSimilarExpanded((v) => !v)}
-              className="flex w-full items-center gap-2 px-4 py-3 text-left"
+              onKeyDown={(e) => e.key === "Enter" && setSimilarExpanded((v) => !v)}
+              className="flex w-full cursor-pointer items-center gap-2 px-4 py-3 text-left"
             >
               <svg className="h-4 w-4 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
@@ -504,7 +610,7 @@ export default function MerchantDetailPage() {
               >
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
               </svg>
-            </button>
+            </div>
 
             {/* Expandable body */}
             {similarExpanded && (
@@ -537,7 +643,7 @@ export default function MerchantDetailPage() {
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium text-gray-800">{m.name}</p>
                           <p className="mt-0.5 text-xs text-gray-500">
-                            {allCount} visit{allCount !== 1 ? "s" : ""} · {formatCurrency(allTotal, homeCurrency, m.currency, true)} total
+                            {allCount} {vocab.visit}{allCount !== 1 ? "s" : ""} · {formatCurrency(allTotal, homeCurrency, m.currency, true)} total
                             {m.category && m.category !== merchant.category && (
                               <span className="ml-1.5 text-amber-600">· {m.category}</span>
                             )}
@@ -581,28 +687,22 @@ export default function MerchantDetailPage() {
           <p className="mt-1 text-sm text-gray-400">
             {formatCurrency(monthlyAvg, homeCurrency, undefined, true)}/mo avg · {activeMonths} active month{activeMonths !== 1 ? "s" : ""}
           </p>
-          {/* Inline controls */}
+          {/* Inline controls — cadence + status only; category lives on transactions */}
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button
-              ref={categoryBtnRef}
-              type="button"
-              onClick={() => setCategoryPickerOpen((o) => !o)}
-              className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-medium text-gray-700 transition hover:border-purple-300 hover:bg-purple-50 hover:text-purple-800"
-            >
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
-              {merchant.category || "Other"}
-              <svg className="h-3 w-3 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-            {categoryPickerOpen && categoryBtnRef.current && (
-              <CategoryPicker
-                anchorRef={categoryBtnRef}
-                current={merchant.category || "Other"}
-                onSelect={handleMerchantCategorySelect}
-                onClose={() => setCategoryPickerOpen(false)}
-              />
+            {/* Category pills derived from transactions (read-only) */}
+            {(merchant.categories ?? [merchant.category]).slice(0, 3).map((cat) => (
+              <span
+                key={cat}
+                className="inline-flex items-center gap-1 rounded-full border border-gray-100 bg-gray-50 px-2.5 py-1 text-xs font-medium text-gray-600"
+              >
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: categoryColor(cat) }} />
+                {cat}
+              </span>
+            ))}
+            {(merchant.categories ?? []).length > 3 && (
+              <span className="text-xs text-gray-400">+{(merchant.categories).length - 3} more</span>
             )}
+            <span className="text-gray-200">·</span>
             <MerchantSpendCadencePill />
             <button
               type="button"
@@ -636,7 +736,7 @@ export default function MerchantDetailPage() {
             <p className="text-[11px] text-gray-400">{last30dCount} in last 30d</p>
           </div>
           <div className="px-4 py-3.5">
-            <p className="text-[11px] text-gray-400">Typical trip</p>
+            <p className="text-[11px] text-gray-400">{vocab.tripLabel}</p>
             <p className="mt-0.5 text-base font-bold text-gray-900 tabular-nums">
               {showRange
                 ? `${formatCurrency(Math.round(tripLow / 5) * 5, homeCurrency, undefined, true)}–${formatCurrency(Math.round(tripHigh / 5) * 5, homeCurrency, undefined, true)}`
@@ -663,7 +763,7 @@ export default function MerchantDetailPage() {
         {daysSince !== null && (
           <div className="grid grid-cols-2 divide-x divide-gray-100 overflow-hidden rounded-xl border border-gray-200 bg-white">
             <div className="px-4 py-4">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Last Visit</p>
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">{vocab.lastVisit}</p>
               <p className="mt-1.5 text-2xl font-bold text-gray-900">
                 {daysSince === 0 ? "Today" : daysSince === 1 ? "Yesterday" : `${daysSince} days ago`}
               </p>
@@ -677,9 +777,9 @@ export default function MerchantDetailPage() {
             </div>
             {avgGap > 0 ? (
               <div className="px-4 py-4">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Expected Next Visit</p>
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">{vocab.nextVisit}</p>
                 <p className="mt-1.5 text-2xl font-bold text-gray-900">{nextVisitLabel}</p>
-                <p className="mt-0.5 text-xs text-gray-400">Based on {avgGap}-day cadence</p>
+                <p className="mt-0.5 text-xs text-gray-400">Based on {avgGap}-day {vocab.cadence}</p>
                 <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
                   <div
                     className="h-full rounded-full transition-all"
@@ -776,7 +876,7 @@ export default function MerchantDetailPage() {
                 <span className="font-semibold text-orange-500">{shortMonth(outlierMonth.ym)}</span> was{" "}
                 <span className="font-medium text-gray-700">{outlierMonth.pct}% above typical.</span>
                 {outlierMonth.bigTxn && outlierMonth.bigTxn.date
-                  ? ` One ${outlierMonth.pct > 50 ? "large" : "notable"} trip on ${fmtDate(outlierMonth.bigTxn.date)} (${formatCurrency(Math.abs(outlierMonth.bigTxn.amount), homeCurrency, outlierMonth.bigTxn.currency, true)}) drove most of the spike.`
+                  ? ` One ${outlierMonth.pct > 50 ? "large" : "notable"} ${vocab.trip} on ${fmtDate(outlierMonth.bigTxn.date)} (${formatCurrency(Math.abs(outlierMonth.bigTxn.amount), homeCurrency, outlierMonth.bigTxn.currency, true)}) drove most of the spike.`
                   : ""}
               </p>
             )}
@@ -788,14 +888,14 @@ export default function MerchantDetailPage() {
           <InsightCard icon="warn">
             <span className="font-semibold">{shortMonth(outlierMonth.ym)}</span> was {outlierMonth.pct}% above your typical month.
             {outlierMonth.bigTxn?.date
-              ? ` One ${outlierMonth.pct > 50 ? "large" : "notable"} trip on ${fmtDate(outlierMonth.bigTxn.date)} (${formatCurrency(Math.abs(outlierMonth.bigTxn.amount), homeCurrency, outlierMonth.bigTxn.currency, true)}) drove most of the spike — similar in size to your previous large visits.`
+              ? ` One ${outlierMonth.pct > 50 ? "large" : "notable"} ${vocab.trip} on ${fmtDate(outlierMonth.bigTxn.date)} (${formatCurrency(Math.abs(outlierMonth.bigTxn.amount), homeCurrency, outlierMonth.bigTxn.currency, true)}) drove most of the spike — similar in size to your previous ${vocab.largeVisits}.`
               : ""}
           </InsightCard>
         )}
         {avgGap > 0 && merchant.count >= 5 && (
           <InsightCard icon="check">
-            <span className="font-semibold">Consistent visit cadence.</span>{" "}
-            {merchant.count} visit{merchant.count !== 1 ? "s" : ""} in {activeMonths} month{activeMonths !== 1 ? "s" : ""} with a typical {avgGap}-day gap — this is a predictable pattern we can use in forecasts.
+            <span className="font-semibold">{vocab.cadenceCard}</span>{" "}
+            {merchant.count} {vocab.visit}{merchant.count !== 1 ? "s" : ""} in {activeMonths} month{activeMonths !== 1 ? "s" : ""} with a typical {avgGap}-day gap — this is a predictable pattern we can use in forecasts.
           </InsightCard>
         )}
         {annualDiff !== null && Math.abs(annualDiff) > 50 && (
@@ -812,7 +912,7 @@ export default function MerchantDetailPage() {
         {tripBuckets.length > 1 && (
           <div className="rounded-xl border border-gray-200 bg-white p-4">
             <p className="mb-3 text-sm font-semibold text-gray-700">
-              Trip size distribution · {merchant.count} visits
+              {vocab.tripDistTitle} · {merchant.count} {vocab.visits}
             </p>
             <div className="space-y-2">
               {tripBuckets.map((b) => (
@@ -863,6 +963,8 @@ export default function MerchantDetailPage() {
           <div className="divide-y divide-gray-100">
             {sortedTxns.map((txn, i) => {
               const isLargeTrip = outlierMonth && txn.ym === outlierMonth.ym && txn.date === outlierMonth.bigTxn?.date;
+              const key = txn.stmtId ? txnKey(txn.stmtId, txn) : `fallback-${i}`;
+              const isSaving = savingTxnKey === key;
               return (
                 <div key={i} className="flex items-center justify-between px-5 py-3">
                   <div className="min-w-0">
@@ -874,15 +976,41 @@ export default function MerchantDetailPage() {
                         <span className="text-xs text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">{txn.accountLabel}</span>
                       )}
                       {isLargeTrip && (
-                        <span className="text-[10px] font-medium text-orange-600 bg-orange-50 rounded px-1.5 py-0.5">large trip</span>
+                        <span className="text-[10px] font-medium text-orange-600 bg-orange-50 rounded px-1.5 py-0.5">{vocab.largeTrip}</span>
                       )}
                     </div>
-                    <span
-                      className="mt-0.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs capitalize"
-                      style={{ backgroundColor: categoryColor(txn.category) + "18", color: categoryColor(txn.category) }}
-                    >
-                      {txn.category}
-                    </span>
+                    {/* Category badge — tappable inline picker */}
+                    <div className="relative mt-0.5">
+                      <button
+                        ref={(el) => { if (el) txnPickerBtnRefs.current.set(key, el); else txnPickerBtnRefs.current.delete(key); }}
+                        type="button"
+                        disabled={isSaving || !txn.stmtId}
+                        onClick={() => setTxnPickerKey((prev) => prev === key ? null : key)}
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs transition
+                          ${txn.stmtId ? "cursor-pointer hover:ring-2 hover:ring-offset-1" : "cursor-default"}
+                          ${isSaving ? "opacity-50" : ""}`}
+                        style={{
+                          backgroundColor: categoryColor(txn.category) + "18",
+                          color: categoryColor(txn.category),
+                          // @ts-expect-error CSS variable
+                          "--tw-ring-color": categoryColor(txn.category) + "60",
+                        }}
+                        title={txn.stmtId ? "Change category" : undefined}
+                      >
+                        {isSaving
+                          ? <span className="h-2 w-2 animate-spin rounded-full border border-current border-t-transparent" />
+                          : <svg className="h-2.5 w-2.5 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>}
+                        <span className="capitalize">{txn.category}</span>
+                      </button>
+                      {txnPickerKey === key && txnPickerBtnRefs.current.get(key) && (
+                        <CategoryPicker
+                          anchorRef={{ current: txnPickerBtnRefs.current.get(key)! }}
+                          current={txn.category}
+                          onSelect={(cat) => void handleTxnCategorySelect(key, cat, txn)}
+                          onClose={() => setTxnPickerKey(null)}
+                        />
+                      )}
+                    </div>
                   </div>
                   <p className="ml-4 shrink-0 text-sm font-semibold text-gray-800 tabular-nums">
                     −{fmtDec(Math.abs(txn.amount), txn.currency ?? homeCurrency)}

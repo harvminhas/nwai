@@ -145,14 +145,20 @@ export async function GET(request: NextRequest) {
     // month with actual transactions" — statement dates can be in the future
     // (e.g. a March statement with a statementDate of April 1) and should not
     // override the month that genuinely has the most recent transaction data.
-    const [rulesSnap, profile, sourceMappingsSnap, cashIncomeSnap, incomeCatRulesSnap, cashCommitmentsSnap] = await Promise.all([
+    const [rulesSnap, profile, sourceMappingsSnap, cashIncomeSnap, incomeCatRulesSnap, cashCommitmentsSnap, txnOverridesSnap] = await Promise.all([
       db.collection(`users/${uid}/categoryRules`).get(),
       getFinancialProfile(uid, db),
       db.collection(`users/${uid}/sourceMappings`).get(),
       db.collection(`users/${uid}/cashIncome`).get(),
       db.collection(`users/${uid}/incomeCategoryRules`).get(),
       db.collection(`users/${uid}/cashCommitments`).get(),
+      db.collection(`users/${uid}/txnCategoryOverrides`).get(),
     ]);
+    const txnOverridesMap = new Map<string, string>();
+    for (const doc of txnOverridesSnap.docs) {
+      const d = doc.data() as { category: string };
+      if (d.category) txnOverridesMap.set(doc.id, d.category);
+    }
     const categoryRulesMap = new Map<string, string>();
     for (const ruleDoc of rulesSnap.docs) {
       const r = ruleDoc.data();
@@ -221,9 +227,9 @@ export async function GET(request: NextRequest) {
     const currentStatements = carryForwardStatements(allCompleted, month);
     const consolidated = consolidateStatements(currentStatements.map(tagTransactions), month);
 
-    // Apply user category rules to transactions and recalculate aggregates
-    const consolidatedWithRules = categoryRulesMap.size > 0
-      ? applyRulesAndRecalculate(consolidated, categoryRulesMap)
+    // Apply category rules + per-transaction overrides
+    const consolidatedWithRules = (categoryRulesMap.size > 0 || txnOverridesMap.size > 0)
+      ? applyRulesAndRecalculate(consolidated, categoryRulesMap, txnOverridesMap)
       : consolidated;
 
     // Net worth:
