@@ -1313,7 +1313,7 @@ function LiabilitiesPageInner() {
   );
 
   return (
-    <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
+    <div className="mx-auto max-w-2xl lg:max-w-5xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
       {/* Header */}
       <div className="mb-1 flex items-start justify-between gap-4">

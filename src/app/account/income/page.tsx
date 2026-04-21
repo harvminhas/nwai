@@ -15,6 +15,7 @@ import {
   scoreSource, detectFrequency,
   FREQUENCY_CONFIG, RELIABILITY_CONFIG, GENERIC_SOURCE_NAMES,
   INCOME_CATEGORIES,
+  type Reliability,
 } from "@/lib/incomeEngine";
 import type { SourceMonthData } from "@/lib/incomeEngine";
 import { fmt, getCurrencySymbol, formatCurrency } from "@/lib/currencyUtils";
@@ -214,6 +215,7 @@ function IncomePageInner() {
   const [labelDraft, setLabelDraft]       = useState("");
   const labelInputRef                     = useRef<HTMLInputElement>(null);
   const [showOneTime, setShowOneTime]     = useState(false);
+  const [srcTimeScope, setSrcTimeScope]   = useState<"3" | "6" | "12" | "all">("12");
   const [suggestions, setSuggestions]     = useState<SourceSuggestion[]>([]);
   const [suggestionDecisions, setSuggestionDecisions] = useState<Record<string, "confirmed" | "rejected">>({});
   const [applyingMappings, setApplyingMappings] = useState(false);
@@ -734,6 +736,47 @@ function IncomePageInner() {
   const tabMonths       = sortedHistory.slice(-6).map((h) => h.yearMonth);
   const txCount         = transactions.length;
 
+  // ── all-time derivations ──────────────────────────────────────────────────────
+  const allTimeIncome = sortedHistory.reduce((s, h) => s + h.incomeTotal, 0);
+
+  // For By Source all-time view
+  const srcScopeCutoff = (() => {
+    if (srcTimeScope === "all") return "";
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - parseInt(srcTimeScope));
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  })();
+  const srcScopeHistory = srcTimeScope === "all" ? sortedHistory : sortedHistory.filter((h) => h.yearMonth >= srcScopeCutoff);
+  const srcScopeIncome  = srcScopeHistory.reduce((s, h) => s + h.incomeTotal, 0);
+
+  const allTimeScoredSources: {
+    description: string; total: number; months: number; avgMonthly: number;
+    freqResult: ReturnType<typeof detectFrequency>;
+    sparkData: { ym: string; v: number }[];
+    pct: number; color: string;
+    reliability: Reliability; score: number;
+  }[] = Object.entries(sourceHistory)
+    .map(([description, monthHistory], i) => {
+      const isTransferSrc = isTransferSource(description) || transferSources.has(description) || incomeCategoryRules[sourceSlug(description)] === "Transfer";
+      const isExcludedSrc = excludedSources.has(description);
+      if (isTransferSrc || isExcludedSrc) return null;
+      const filtered = srcTimeScope === "all" ? monthHistory : monthHistory.filter((h) => h.yearMonth >= srcScopeCutoff);
+      if (filtered.length === 0) return null;
+      const total = filtered.reduce((s, h) => s + h.amount, 0);
+      const months = filtered.length;
+      const avgMonthly = months > 0 ? total / months : 0;
+      const allDates = filtered.flatMap((h) => (h.transactions ?? []).map((t) => t.date).filter(Boolean) as string[]);
+      const freqResult = detectFrequency(allDates);
+      const sparkData = srcScopeHistory.map((h) => ({
+        ym: h.yearMonth,
+        v: filtered.find((m) => m.yearMonth === h.yearMonth)?.amount ?? 0,
+      }));
+      const pct = srcScopeIncome > 0 ? Math.round((total / srcScopeIncome) * 100) : 0;
+      const scored = scoreSource(description, filtered, months, freqResult);
+      return { description, total, months, avgMonthly, freqResult, sparkData, pct, color: SOURCE_COLORS[i % SOURCE_COLORS.length], ...scored };
+    })
+    .filter((s): s is NonNullable<typeof s> => s !== null)
+    .sort((a, b) => b.total - a.total);
+
   // Cash income derived
   const cashMonthlyTotal = cashItems.reduce((s, c) => s + toMonthly(c.amount, c.frequency), 0);
 
@@ -749,12 +792,12 @@ function IncomePageInner() {
     </div>
   );
   if (error) return (
-    <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8">
+    <div className="mx-auto max-w-2xl lg:max-w-5xl px-4 pt-4 pb-8 sm:py-8">
       <p className="text-red-600">{error}</p>
     </div>
   );
   if (history.length === 0) return (
-    <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8">
+    <div className="mx-auto max-w-2xl lg:max-w-5xl px-4 pt-4 pb-8 sm:py-8">
       <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-12 text-center">
         <p className="text-sm text-gray-500">No income data yet.</p>
         <p className="mt-1 text-xs text-gray-400">Upload a chequing or savings statement to see your income breakdown.</p>
@@ -768,54 +811,39 @@ function IncomePageInner() {
   // ── main render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
+    <div className="mx-auto max-w-2xl lg:max-w-5xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
       {/* Header */}
       <div className="mb-1">
         <h1 className="font-bold text-3xl text-gray-900">Income</h1>
         <p className="mt-0.5 text-sm text-gray-400">
-          {current?.txIncome != null ? fmt(current.txIncome, homeCurrency) : ""}{selectedMonth ? ` · ${longMonth(selectedMonth)}` : ""}
+          {avgIncome > 0 ? `${fmt(avgIncome, homeCurrency)}/mo avg` : ""}{regularHistoryPoints.length > 0 ? ` · ${regularHistoryPoints.length} months tracked` : ""}
         </p>
       </div>
 
-      {/* Month tabs */}
-      {tabMonths.length > 1 && (
-        <div className="mt-3 flex gap-1.5 overflow-x-auto pb-1">
-          {tabMonths.map((ym) => (
-            <button key={ym} onClick={() => fetchMonth(ym)}
-              className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                ym === selectedMonth
-                  ? "bg-purple-600 text-white"
-                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+      {/* Section tabs */}
+      <div className="mt-3 overflow-x-auto">
+        <div className="flex border-b border-gray-200 min-w-max">
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => switchTab(tab.id)}
+              className={`relative mr-4 pb-2.5 text-sm font-medium transition-colors shrink-0 ${
+                activeTab === tab.id
+                  ? "text-gray-900 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-600"
+                  : "text-gray-400 hover:text-gray-600"
               }`}
             >
-              {shortMonth(ym)}
+              {tab.label}
+              {tab.id === "transactions" && txCount > 0 && (
+                <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">{txCount}</span>
+              )}
+              {tab.id === "cash" && cashItems.length > 0 && (
+                <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">{cashItems.length}</span>
+              )}
             </button>
           ))}
         </div>
-      )}
-
-      {/* Section tabs */}
-      <div className="mt-3 flex border-b border-gray-200">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => switchTab(tab.id)}
-            className={`relative mr-4 pb-2.5 text-sm font-medium transition-colors ${
-              activeTab === tab.id
-                ? "text-gray-900 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-600"
-                : "text-gray-400 hover:text-gray-600"
-            }`}
-          >
-            {tab.label}
-            {tab.id === "transactions" && txCount > 0 && (
-              <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">{txCount}</span>
-            )}
-            {tab.id === "cash" && cashItems.length > 0 && (
-              <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">{cashItems.length}</span>
-            )}
-          </button>
-        ))}
       </div>
 
       <div className="mt-5 space-y-4">
@@ -870,85 +898,35 @@ function IncomePageInner() {
               </div>
             )}
 
-            {/* Summary card */}
-            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                total received · {selectedMonth ? longMonth(selectedMonth) : ""}
-              </p>
-              {(current as (ConsolidatedData & { cashOnly?: boolean }) | null | undefined)?.cashOnly ? (
-                // Month has no statement — show cash income breakdown only
-                <div className="mt-3">
-                  <p className="mt-2 font-bold text-4xl text-gray-900">{fmt(current?.txIncome ?? 0, homeCurrency)}</p>
-                  <p className="mt-1 text-xs text-amber-600 font-medium">Cash income only · no statement uploaded</p>
-                  <div className="mt-3 space-y-1.5">
-                    {cashItems.filter((c) => selectedMonth && occurrencesInMonth(c, selectedMonth) > 0).map((c) => (
-                      <div key={c.id} className="flex items-center justify-between text-sm">
-                        <span className="text-gray-700">{c.name}</span>
-                        <span className="font-medium text-green-700">+{fmt(c.amount * (selectedMonth ? occurrencesInMonth(c, selectedMonth) : 0), homeCurrency)}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <Link href="/upload" className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-700 hover:bg-purple-100 transition">
-                    Upload a statement →
-                  </Link>
-                </div>
-              ) : (current?.txIncome ?? income?.total ?? 0) === 0 && avgIncome > 0 ? (
-                <div className="mt-3">
-                  <p className="font-semibold text-gray-500 text-lg">No deposits detected</p>
-                  <p className="mt-1 text-xs text-gray-400 leading-relaxed">
-                    No chequing or savings statement uploaded for {selectedMonth ? longMonth(selectedMonth) : "this period"}.
-                    Your {regularHistoryPoints.length}-month average is{" "}
-                    <span className="font-semibold text-gray-600">{fmt(avgIncome, homeCurrency)}/mo</span>.
-                  </p>
-                  <Link href="/upload" className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-700 hover:bg-purple-100 transition">
-                    Upload a statement →
-                  </Link>
-                </div>
-              ) : (
-                <>
-                  <p className="mt-2 font-bold text-4xl text-gray-900">{fmt(current?.txIncome ?? income?.total ?? 0, homeCurrency)}</p>
-                  {incomeDelta !== null && incomeDelta !== 0 && (
-                    <p className={`mt-1 text-xs font-medium ${incomeDelta > 0 ? "text-green-600" : "text-amber-500"}`}>
-                      {incomeDelta > 0 ? "↑" : "↓"} {fmtShort(Math.abs(incomeDelta), homeCurrency)} vs {prevPoint ? shortMonth(prevPoint.yearMonth) : "last month"}
-                    </p>
-                  )}
-                  {incomeDelta === null && <p className="mt-1 text-xs text-gray-400">First month tracked</p>}
-                  {oneTimeTotal > 0 && (
-                    <div className="mt-1">
-                      <button onClick={() => setShowOneTime((v) => !v)}
-                        className="flex items-center gap-1 text-xs text-amber-600 hover:text-amber-700 transition">
-                        <span>{fmt(oneTimeTotal, homeCurrency)} in one-time deposits — excluded from averages</span>
-                        <svg className={`h-3 w-3 transition-transform ${showOneTime ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                        </svg>
-                      </button>
-                      {showOneTime && (
-                        <div className="mt-1.5 space-y-0.5 pl-2 border-l-2 border-amber-100">
-                          {oneTimeSources.map((s) => {
-                            const acct = transactions.find((t) => (t.source ?? "Other").trim() === s.description)?.accountLabel;
-                            return (
-                              <p key={s.description} className="text-xs text-amber-500">
-                                {fmt(s.amount, homeCurrency)} · {s.description}
-                                {acct ? <span className="text-amber-400"> · {acct}</span> : ""}
-                              </p>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {regularTotal > 0 && (
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${surplus >= 0 ? "border-green-200 bg-green-50 text-green-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
-                        {surplus >= 0 ? "surplus" : "deficit"} {surplus >= 0 ? "+" : ""}{fmt(surplus, homeCurrency)}
-                      </span>
-                      {expensesTotal > 0 && (
-                        <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-600">spent {fmt(expensesTotal, homeCurrency)}</span>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
+            {/* All-time summary strip */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Total tracked</p>
+                <p className="text-xl font-bold text-gray-900 tabular-nums">{fmtShort(allTimeIncome, homeCurrency)}</p>
+                <p className="text-xs text-gray-400 mt-0.5">{regularHistoryPoints.length} months</p>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Monthly avg</p>
+                <p className="text-xl font-bold text-gray-900 tabular-nums">{avgIncome > 0 ? fmtShort(avgIncome, homeCurrency) : "—"}</p>
+                <p className="text-xs text-gray-400 mt-0.5">regular deposits</p>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Sources</p>
+                <p className="text-xl font-bold text-gray-900 tabular-nums">{Object.keys(sourceHistory).filter((d) => !isTransferSource(d) && !excludedSources.has(d) && !transferSources.has(d) && incomeCategoryRules[sourceSlug(d)] !== "Transfer").length}</p>
+                <p className="text-xs text-gray-400 mt-0.5">income streams</p>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Best month</p>
+                {(() => {
+                  const best = sortedHistory.reduce((a, b) => b.incomeTotal > a.incomeTotal ? b : a, sortedHistory[0]);
+                  return best ? (
+                    <>
+                      <p className="text-xl font-bold text-gray-900 tabular-nums">{fmtShort(best.incomeTotal, homeCurrency)}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">{shortMonth(best.yearMonth)}</p>
+                    </>
+                  ) : <p className="text-xl font-bold text-gray-400">—</p>;
+                })()}
+              </div>
             </div>
 
             {/* Monthly income trend chart */}
@@ -1116,6 +1094,23 @@ function IncomePageInner() {
         {/* TRANSACTIONS TAB                                                      */}
         {/* ══════════════════════════════════════════════════════════════════════ */}
         {activeTab === "transactions" && (
+          <div className="space-y-3">
+            {/* Month selector — only shown here */}
+            {tabMonths.length > 1 && (
+              <div className="flex gap-1.5 overflow-x-auto pb-1">
+                {tabMonths.map((ym) => (
+                  <button key={ym} onClick={() => fetchMonth(ym)}
+                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                      ym === selectedMonth
+                        ? "bg-purple-600 text-white"
+                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    }`}
+                  >
+                    {shortMonth(ym)}
+                  </button>
+                ))}
+              </div>
+            )}
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
             <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
@@ -1169,6 +1164,7 @@ function IncomePageInner() {
               </div>
             )}
           </div>
+          </div>
         )}
 
         {/* ══════════════════════════════════════════════════════════════════════ */}
@@ -1176,160 +1172,125 @@ function IncomePageInner() {
         {/* ══════════════════════════════════════════════════════════════════════ */}
         {activeTab === "sources" && (
           <>
-            {scoredSources.length === 0 ? (
+            {/* Scope selector */}
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">All income sources</p>
+              <div className="flex gap-1">
+                {(["3", "6", "12", "all"] as const).map((s) => (
+                  <button key={s} onClick={() => setSrcTimeScope(s)}
+                    className={`rounded-full px-2.5 py-1 text-xs font-semibold transition ${srcTimeScope === s ? "bg-purple-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`}>
+                    {s === "all" ? "All" : `${s}mo`}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {allTimeScoredSources.length === 0 ? (
               <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-8 text-center">
-                <p className="text-sm text-gray-500">No income sources for this month.</p>
+                <p className="text-sm text-gray-500">No income sources found.</p>
               </div>
             ) : (
-              <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                <p className="mb-4 text-xs font-semibold uppercase tracking-wider text-gray-400">By source</p>
-                <div className="space-y-5">
-                  {scoredSources.map((src) => {
-                    const fcfg        = FREQUENCY_CONFIG[src.freqResult.frequency];
-                    const hasFreqData = src.freqResult.sampleCount >= 2;
-                    const gapHint     = hasFreqData && src.freqResult.medianGap != null
-                      ? src.freqResult.stdDev != null && src.freqResult.stdDev <= 3
-                        ? `every ${src.freqResult.medianGap}d`
-                        : `~${src.freqResult.medianGap}d gaps`
-                      : null;
-                    const srcTxns     = (expandedTxnMap.get(src.description) ?? []).slice().sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
-                    const srcAccounts = [...new Set(srcTxns.map((t) => t.accountLabel).filter(Boolean))];
-                    const baseDescription = src.description.replace(/#\d+$/, "");
-                    const customLabel     = sourceLabels[src.description];
-                    const displayName     = customLabel ?? baseDescription;
-                    const needsName       = !customLabel && isGenericSourceName(baseDescription);
-                    const isEditing       = editingLabel === src.description;
-                    return (
-                      <div key={src.description} className={src.reliability === "one-time" ? "opacity-60" : ""}>
-                        {isEditing && (
-                          <div className="mb-1.5 flex items-center gap-1.5">
-                            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: src.color }} />
-                            <input ref={labelInputRef} value={labelDraft} onChange={(e) => setLabelDraft(e.target.value)}
-                              onKeyDown={(e) => { if (e.key === "Enter") saveLabel(src.description); if (e.key === "Escape") cancelEditLabel(); }}
-                              className="flex-1 rounded border border-purple-300 bg-white px-2 py-0.5 text-sm font-medium text-gray-900 outline-none focus:ring-1 focus:ring-purple-400" autoFocus />
-                            <button onClick={() => saveLabel(src.description)} className="text-[11px] font-semibold text-purple-600 hover:text-purple-800">Save</button>
-                            <button onClick={cancelEditLabel} className="text-[11px] text-gray-400 hover:text-gray-600">Cancel</button>
-                          </div>
-                        )}
-                        <Link href={`/account/income/${encodeURIComponent(src.description)}`}
-                          className={`block w-full text-left group ${isEditing ? "pointer-events-none" : ""}`}>
-                          <div className="flex items-start justify-between gap-2 mb-1.5">
-                            <div className="flex items-center gap-2 min-w-0">
-                              {!isEditing && <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: src.color }} />}
-                              <span className="font-medium text-sm text-gray-800 truncate group-hover:text-purple-600 transition-colors">{displayName}</span>
-                              {needsName && <span className="shrink-0 rounded-full border border-dashed border-purple-300 px-2 py-0.5 text-[10px] text-purple-400 italic">tap ✎ to name</span>}
-                              {srcAccounts.length > 0 && <span className="text-[10px] text-gray-400 truncate">→ {srcAccounts.join(", ")}</span>}
-                              <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); startEditLabel(src.description); }}
-                                title="Rename source"
-                                className="shrink-0 rounded-full p-0.5 text-gray-300 hover:text-purple-500 hover:bg-purple-50 transition opacity-0 group-hover:opacity-100">
-                                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                              </button>
-                              <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleMarkAsTransfer(src.description); }}
-                                title="Mark as transfer (not income)"
-                                className="shrink-0 rounded-full p-0.5 text-gray-300 hover:text-blue-400 hover:bg-blue-50 transition opacity-0 group-hover:opacity-100">
-                                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
-                              </button>
-                              <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleExcludeSource(src.description); }}
-                                title="Exclude from income"
-                                className="shrink-0 rounded-full p-0.5 text-gray-300 hover:text-red-400 hover:bg-red-50 transition opacity-0 group-hover:opacity-100">
-                                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                              </button>
-                            </div>
-                            <div className="shrink-0 flex items-center gap-2">
-                              <div className="text-right">
-                                <span className="font-semibold text-sm text-gray-900 tabular-nums">{fmt(src.amount, homeCurrency)}</span>
-                                <span className="ml-2 text-xs text-gray-400">{src.pct}%</span>
-                              </div>
-                              <svg className="h-4 w-4 text-gray-300 group-hover:text-purple-400 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
-                            </div>
-                          </div>
-                          <div className="mb-2 h-1.5 w-full rounded-full bg-gray-100 overflow-hidden">
-                            <div className="h-full rounded-full transition-all" style={{ width: `${src.pct}%`, backgroundColor: src.color }} />
-                          </div>
-                          <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="rounded-xl border border-gray-200 bg-white shadow-sm divide-y divide-gray-100 overflow-hidden">
+                {allTimeScoredSources.map((src) => {
+                  const fcfg        = FREQUENCY_CONFIG[src.freqResult.frequency];
+                  const rcfg        = RELIABILITY_CONFIG[src.reliability];
+                  const baseDescription = src.description.replace(/#\d+$/, "");
+                  const customLabel     = sourceLabels[src.description];
+                  const displayName     = customLabel ?? baseDescription;
+                  const needsName       = !customLabel && isGenericSourceName(baseDescription);
+                  const isEditing       = editingLabel === src.description;
+                  const needsMoreData   = src.months < 2;
+                  return (
+                    <div key={src.description} className={`px-4 py-3 group ${src.reliability === "one-time" ? "opacity-60" : ""}`}>
+                      {isEditing && (
+                        <div className="mb-1.5 flex items-center gap-1.5">
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: src.color }} />
+                          <input ref={labelInputRef} value={labelDraft} onChange={(e) => setLabelDraft(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") saveLabel(src.description); if (e.key === "Escape") cancelEditLabel(); }}
+                            className="flex-1 rounded border border-purple-300 bg-white px-2 py-0.5 text-sm font-medium text-gray-900 outline-none focus:ring-1 focus:ring-purple-400" autoFocus />
+                          <button onClick={() => saveLabel(src.description)} className="text-[11px] font-semibold text-purple-600 hover:text-purple-800">Save</button>
+                          <button onClick={cancelEditLabel} className="text-[11px] text-gray-400 hover:text-gray-600">Cancel</button>
+                        </div>
+                      )}
+                      <Link href={`/account/income/${encodeURIComponent(src.description)}`}
+                        className={`flex items-center gap-3 ${isEditing ? "pointer-events-none" : ""}`}>
+                        {/* Colour dot */}
+                        {!isEditing && <span className="h-2.5 w-2.5 shrink-0 rounded-full mt-0.5" style={{ backgroundColor: src.color }} />}
+                        {/* Name + badges */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-medium text-sm text-gray-800 truncate group-hover:text-purple-600 transition-colors">{displayName}</span>
+                            {needsName && <span className="shrink-0 rounded-full border border-dashed border-purple-300 px-2 py-0.5 text-[10px] text-purple-400 italic">tap ✎ to name</span>}
                             <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold border ${fcfg.badge}`}>{fcfg.label}</span>
-                            {gapHint && <span className="text-[10px] text-gray-400 tabular-nums">{gapHint}</span>}
-                            {src.reliability === "one-time" && <span className="text-[10px] text-gray-400">· excluded from avg</span>}
-                            {srcTxns.length > 0 && <span className="text-[10px] text-gray-300">· {srcTxns.length} deposit{srcTxns.length !== 1 ? "s" : ""} this month</span>}
+                            {!needsMoreData && <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold border ${rcfg.badge}`}>{rcfg.label}</span>}
                           </div>
-                        </Link>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-xs text-gray-400">{src.months} mo · {fmt(Math.round(src.avgMonthly), homeCurrency)}/mo avg</span>
+                          </div>
+                        </div>
+                        {/* Action buttons (hover) */}
+                        <div className="shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+                          <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); startEditLabel(src.description); }} title="Rename" className="rounded-full p-1 text-gray-300 hover:text-purple-500 hover:bg-purple-50 transition">
+                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                          </button>
+                          <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleMarkAsTransfer(src.description); }} title="Mark as transfer" className="rounded-full p-1 text-gray-300 hover:text-blue-400 hover:bg-blue-50 transition">
+                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
+                          </button>
+                          <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleExcludeSource(src.description); }} title="Exclude" className="rounded-full p-1 text-gray-300 hover:text-red-400 hover:bg-red-50 transition">
+                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
+                        </div>
+                        {/* Total + share */}
+                        <div className="shrink-0 text-right">
+                          <p className="font-semibold text-sm text-gray-900 tabular-nums">{fmt(Math.round(src.total), homeCurrency)}</p>
+                          <p className="text-xs text-gray-400">{src.pct}%</p>
+                        </div>
+                        <svg className="h-4 w-4 text-gray-300 group-hover:text-purple-400 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                      </Link>
+                      {/* Share bar */}
+                      <div className="mt-2 h-1 w-full rounded-full bg-gray-100 overflow-hidden">
+                        <div className="h-full rounded-full transition-all" style={{ width: `${src.pct}%`, backgroundColor: src.color }} />
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
-                {/* Hidden sources footer */}
-                {(autoFilteredSources.length > 0 || manuallyExcludedSources.length > 0) && (
-                  <div className="mt-4 border-t border-gray-100 pt-3 space-y-1">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">Not counted as income</p>
-                    {autoFilteredSources.map((s) => (
+            {/* Hidden / excluded sources */}
+            {(() => {
+              const hiddenTransfers = Object.entries(sourceHistory)
+                .filter(([d]) => isTransferSource(d) || transferSources.has(d) || incomeCategoryRules[sourceSlug(d)] === "Transfer")
+                .map(([d, h]) => ({ description: d, total: h.reduce((s, m) => s + m.amount, 0) }));
+              const hiddenExcluded = Object.entries(sourceHistory)
+                .filter(([d]) => excludedSources.has(d))
+                .map(([d, h]) => ({ description: d, total: h.reduce((s, m) => s + m.amount, 0) }));
+              if (hiddenTransfers.length === 0 && hiddenExcluded.length === 0) return null;
+              return (
+                <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Not counted as income</p>
+                  <div className="space-y-1">
+                    {hiddenTransfers.map((s) => (
                       <div key={s.description} className="flex items-center justify-between text-xs text-gray-400">
                         <span className="flex items-center gap-1.5">
-                          <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium">transfer</span>
+                          <span className="rounded-full bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium">transfer</span>
                           {s.description}
-                          <span className="text-gray-300">{fmt(s.amount, homeCurrency)}</span>
                         </span>
                         {transferSources.has(s.description) && (
                           <button onClick={() => handleRestoreTransfer(s.description)} className="text-[10px] text-purple-400 hover:text-purple-600 hover:underline">restore</button>
                         )}
                       </div>
                     ))}
-                    {manuallyExcludedSources.map((s) => (
+                    {hiddenExcluded.map((s) => (
                       <div key={s.description} className="flex items-center justify-between text-xs text-gray-400">
-                        <span>{s.description} <span className="text-gray-300">{fmt(s.amount, homeCurrency)}</span></span>
+                        <span>{s.description}</span>
                         <button onClick={() => handleRestoreSource(s.description)} className="text-[10px] text-purple-400 hover:text-purple-600 hover:underline">restore</button>
                       </div>
                     ))}
                   </div>
-                )}
-              </div>
-            )}
-
-            {/* Reliability */}
-            {scoredSources.filter((s) => s.reliability !== "one-time").length > 0 && (
-              <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-gray-400">Reliability by source</p>
-                <p className="mb-4 text-xs text-gray-400">Based on amount consistency, timing, and frequency across months</p>
-                <div className="space-y-4">
-                  {scoredSources.filter((s) => s.reliability !== "one-time").map((src) => {
-                    const rcfg = RELIABILITY_CONFIG[src.reliability];
-                    const fcfg = FREQUENCY_CONFIG[src.freqResult.frequency];
-                    const needsMoreData = totalMonths < 2 || (sourceHistory[src.description]?.length ?? 0) < 2;
-                    return (
-                      <div key={src.description}>
-                        <div className="flex items-center justify-between mb-1.5">
-                          <span className="text-xs font-medium text-gray-700 truncate max-w-[160px]">
-                            {sourceLabels[src.description] ?? src.description.replace(/#\d+$/, "")}
-                          </span>
-                          {needsMoreData ? (
-                            <span className="text-[10px] text-gray-400 italic">building — needs more months</span>
-                          ) : (
-                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold border ${rcfg.badge}`}>{rcfg.label}</span>
-                          )}
-                        </div>
-                        <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
-                          {needsMoreData ? (
-                            <div className="h-full w-1/4 rounded-full bg-gray-200 animate-pulse" />
-                          ) : (
-                            <div className="h-full rounded-full transition-all" style={{ width: `${src.score}%`, backgroundColor: rcfg.barColor }} />
-                          )}
-                        </div>
-                        {src.freqResult.sampleCount >= 2 && (
-                          <div className="mt-2 flex items-center gap-2">
-                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold border ${fcfg.badge}`}>{fcfg.label}</span>
-                            <span className="text-[10px] text-gray-400">
-                              {fcfg.description}
-                              {src.freqResult.medianGap != null && <> · median gap <span className="font-medium text-gray-600">{src.freqResult.medianGap}d</span></>}
-                              {src.freqResult.stdDev != null && src.freqResult.stdDev > 0 && <> ±{src.freqResult.stdDev}d</>}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </>
         )}
 

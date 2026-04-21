@@ -90,3 +90,28 @@ export async function PATCH(req: NextRequest) {
 
   return NextResponse.json({ ok: true });
 }
+
+/**
+ * DELETE /api/user/subscriptions
+ * Body: { slug }
+ *
+ * Removes a subscription record (used when merging a duplicate into its canonical entry).
+ */
+export async function DELETE(req: NextRequest) {
+  const { db } = getFirebaseAdmin();
+  const access = await resolveAccess(req, db);
+  if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const uid = access.targetUid;
+
+  const body = await req.json().catch(() => ({})) as { slug?: string };
+  const slug = typeof body.slug === "string" ? body.slug.trim() : "";
+  if (!slug) return NextResponse.json({ error: "slug required" }, { status: 400 });
+
+  try {
+    await db.doc(`users/${uid}/subscriptions/${slug}`).delete();
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error("[subscriptions] DELETE error uid=" + uid, err);
+    return NextResponse.json({ error: "Failed to delete" }, { status: 500 });
+  }
+}

@@ -22,6 +22,7 @@
 import type * as Firestore from "firebase-admin/firestore";
 import { extractAllTransactions } from "./extractTransactions";
 import { computeTypicalSpend, CORE_EXCLUDE_RE, INCOME_TRANSFER_RE, isCoreExcluded } from "./spendingMetrics";
+import { getParentCategory } from "./categoryTaxonomy";
 import type { CashIncomeEntry } from "./cashIncome";
 import { occurrencesInMonth } from "./cashIncome";
 import type { CashCommitment } from "@/app/api/user/cash-commitments/route";
@@ -551,7 +552,11 @@ export async function buildAndCacheFinancialProfile(
       const count = commitmentOccurrencesInMonth(entry, ym);
       return sum + (count > 0 ? entry.amount * count : 0);
     }, 0);
-    const debtTxns = monthExp.filter((t) => /^debt payments$/i.test((t.category ?? "").trim()));
+    // Match both "Debt Payments" parent AND any subtype (e.g. "Credit Card Payment", "Loan Payment")
+    const debtTxns = monthExp.filter((t) => {
+      const cat = (t.category ?? "").trim();
+      return /^debt payments$/i.test(cat) || getParentCategory(cat) === "Debt Payments";
+    });
     // Classify using native amounts (classification is currency-agnostic), then scale to home
     // currency using the same ratio as the full converted debt total.
     const debtTxnsTyped = debtTxns as (import("./types").ExpenseTransaction & { debtType?: string })[];

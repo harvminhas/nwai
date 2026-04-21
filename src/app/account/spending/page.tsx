@@ -384,6 +384,7 @@ function SpendingPageInner() {
   const [suggestionDecisions, setSuggestionDecisions] = useState<Record<string, "confirmed" | "rejected">>({});
   const [applyingMappings, setApplyingMappings] = useState(false);
   const [suggestionListExpanded, setSuggestionListExpanded] = useState(false);
+  const [mergingSubPairKey, setMergingSubPairKey] = useState<string | null>(null);
 
   // All-time merchant aggregation (loaded lazily when By Merchant tab is opened)
   const [merchants, setMerchants]         = useState<import("@/app/api/user/spending/merchants/route").MerchantSummary[] | null>(null);
@@ -743,6 +744,34 @@ function SpendingPageInner() {
     }
   }
 
+  async function handleMergeSubPair(s: import("@/lib/sourceMappings").SourceSuggestion) {
+    if (!token) return;
+    setMergingSubPairKey(s.pairKey);
+    try {
+      // 1. Persist a confirmed source mapping (deduplicates expense charts & totals)
+      await fetch("/api/user/source-mappings", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mappings: [{ ...s, status: "confirmed", createdAt: new Date().toISOString() }],
+        }),
+      });
+      // 2. Delete the alias subscription record from Firestore
+      const aliasSlug = merchantSlug(s.alias);
+      await fetch("/api/user/subscriptions", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ slug: aliasSlug }),
+      });
+      // 3. Remove from local state
+      setExpenseSuggestions((prev) => prev.filter((x) => x.pairKey !== s.pairKey));
+      setFirestoreSubs((prev) => prev ? prev.filter((r) => r.merchantSlug !== aliasSlug) : prev);
+      if (s.affectsCache) setNeedsRefresh(true);
+    } finally {
+      setMergingSubPairKey(null);
+    }
+  }
+
   async function handleDebtTagChange(txKey: string, tag: string) {
     const next = { ...debtTags, [txKey]: tag };
     setDebtTags(next);
@@ -939,6 +968,13 @@ function SpendingPageInner() {
 
   // Slug set for fast lookup in transaction rows
   const aiSubSlugs = new Set(effectiveSubs.map((s) => merchantSlug(s.name)));
+
+  // Detect likely-duplicate subscriptions: filter expense suggestions to pairs where BOTH
+  // merchants have a subscription entry. These appear as a banner in the Recurring tab.
+  const subNameSlugs = new Set(effectiveSubs.map((s) => merchantSlug(s.name)));
+  const subDupeSuggestions = expenseSuggestions.filter(
+    (s) => subNameSlugs.has(merchantSlug(s.canonical)) && subNameSlugs.has(merchantSlug(s.alias))
+  );
 
   // Helper: get best known frequency for a merchant
   function resolvedFrequency(name: string, fallback: string): string {
@@ -3095,6 +3131,37 @@ function SpendingPageInner() {
           {/* ── Recurring tab ─────────────────────────────────────────── */}
           {activeTab === "subscriptions" && (
             <div className="space-y-3">
+              {/* ── Duplicate subscription banner ── */}
+              {subDupeSuggestions.length > 0 && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50/50 overflow-hidden">
+                  <div className="px-4 py-3 flex items-center gap-2">
+                    <svg className="h-4 w-4 text-amber-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                    </svg>
+                    <p className="text-sm font-semibold text-amber-900">
+                      {subDupeSuggestions.length} possible duplicate subscription{subDupeSuggestions.length !== 1 ? "s" : ""} detected
+                    </p>
+                  </div>
+                  <div className="border-t border-amber-100 divide-y divide-amber-100/60">
+                    {subDupeSuggestions.map((s) => (
+                      <div key={s.pairKey} className="flex items-center gap-3 px-4 py-2.5">
+                        <div className="flex-1 min-w-0">
+                          <span className="text-sm font-medium text-gray-800">{s.canonical}</span>
+                          <svg className="inline h-3 w-3 mx-1.5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
+                          <span className="text-sm text-gray-500">{s.alias}</span>
+                        </div>
+                        <button
+                          onClick={() => handleMergeSubPair(s)}
+                          disabled={mergingSubPairKey === s.pairKey}
+                          className="shrink-0 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 disabled:opacity-50 transition"
+                        >
+                          {mergingSubPairKey === s.pairKey ? "Merging…" : "Merge"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {allSubscriptions.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center">
                   <p className="text-sm text-gray-500">No recurring charges yet.</p>

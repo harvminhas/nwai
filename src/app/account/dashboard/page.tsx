@@ -399,7 +399,7 @@ function GettingStartedPanel({
 
 // ── Feature preview section (shown when real features have no data yet) ───────
 
-function FeaturePreviewSection({ upcoming }: { upcoming: UpcomingItem[] }) {
+function FeaturePreviewSection({ upcoming, monthCount }: { upcoming: UpcomingItem[]; monthCount: number }) {
   // Mirror the same segmentation used in the main feed
   const dateItems = upcoming.filter((i) => !i.isThisMonth && i.daysFromNow >= 0);
   const thisMonth = upcoming.filter((i) => i.isThisMonth);
@@ -409,6 +409,9 @@ function FeaturePreviewSection({ upcoming }: { upcoming: UpcomingItem[] }) {
 
   // Nothing to preview
   if (!missingNextUp && !missingThisMonth) return null;
+
+  // User has enough data but no patterns found — don't show misleading "upload more" cards
+  if (monthCount >= 2) return null;
 
   return (
     <div className="mt-6 space-y-4">
@@ -2006,7 +2009,7 @@ export default function TodayPage() {
       {/* ── Zero / First-time / Rich layouts ────────────────────────────────── */}
       {!loading && statementCount === 0 ? (
         <ZeroStatementsLayout token={token} onUploaded={() => token && load(token)} homeCurrency={homeCurrency} />
-      ) : statementCount <= 3 && !loading ? (
+      ) : statementCount <= 2 && !loading ? (
         <FirstTimeLayout
           agentCards={agentCards}
           netWorth={netWorth}
@@ -2014,7 +2017,7 @@ export default function TodayPage() {
           statementCount={statementCount}
           monthCount={monthCount}
           savingsMonth={savingsRate?.month ?? ""}
-          savingsRateCard={savingsRate && savingsRate.income > 0 ? <SavingsRateCard /> : null}
+          savingsRateCard={savingsRate && (savingsRate.income > 0 || savingsRate.expenses > 0) ? <SavingsRateCard /> : null}
           savingsRaw={savingsRate ? {
             income:       savingsRate.income,
             expenses:     savingsRate.expenses,
@@ -2058,12 +2061,14 @@ export default function TodayPage() {
                       </p>
                     )}
                   </div>
-                  {savingsRate && savingsRate.income > 0 && (
+                  {savingsRate && (savingsRate.income > 0 || savingsRate.expenses > 0) && (
                     <div className="hidden sm:flex gap-5 shrink-0 text-right">
-                      <div>
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Income</p>
-                        <p className="mt-0.5 text-base font-bold text-green-600 tabular-nums">{fmt(savingsRate.income, homeCurrency)}</p>
-                      </div>
+                      {savingsRate.income > 0 && (
+                        <div>
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Income</p>
+                          <p className="mt-0.5 text-base font-bold text-green-600 tabular-nums">{fmt(savingsRate.income, homeCurrency)}</p>
+                        </div>
+                      )}
                       <div>
                         <div className="flex items-center justify-end gap-1.5">
                           <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Expenses</p>
@@ -2089,12 +2094,14 @@ export default function TodayPage() {
                   )}
                 </div>
                 {/* Mobile: income/expenses as a row below the net worth number */}
-                {savingsRate && savingsRate.income > 0 && (
+                {savingsRate && (savingsRate.income > 0 || savingsRate.expenses > 0) && (
                   <div className="sm:hidden mt-3 flex gap-5 border-t border-gray-100 pt-3">
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Income</p>
-                      <p className="mt-0.5 text-sm font-bold text-green-600 tabular-nums">{fmt(savingsRate.income, homeCurrency)}</p>
-                    </div>
+                    {savingsRate.income > 0 && (
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Income</p>
+                        <p className="mt-0.5 text-sm font-bold text-green-600 tabular-nums">{fmt(savingsRate.income, homeCurrency)}</p>
+                      </div>
+                    )}
                     <div>
                       <div className="flex items-center gap-1.5">
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Expenses</p>
@@ -2293,8 +2300,8 @@ export default function TodayPage() {
             <ThisMonthGroup items={thisMonth} ratePill={ratePill} homeCurrency={homeCurrency} />
           )}
 
-          {/* Caught-up / getting-started panel */}
-          {!hasUpcoming && visibleRadar.length === 0 && !statusBanner && (
+          {/* Caught-up / getting-started panel — only when truly nothing to show */}
+          {!hasUpcoming && visibleRadar.length === 0 && !statusBanner && !(savingsRate && savingsRate.expenses > 0) && (
             <GettingStartedPanel
               netWorth={netWorth}
               savingsRate={savingsRate}
@@ -2302,7 +2309,7 @@ export default function TodayPage() {
             />
           )}
 
-          <FeaturePreviewSection upcoming={upcoming} />
+          <FeaturePreviewSection upcoming={upcoming} monthCount={monthCount} />
 
           {/* ── What we noticed — non-external agent cards ───────────────── */}
           {agentCards.filter(c => c.source !== "external" && !c.dismissed).length > 0 && (

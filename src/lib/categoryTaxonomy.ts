@@ -57,7 +57,14 @@ export const CATEGORY_TAXONOMY: Record<ParentCategory, readonly string[]> = {
   Taxes:                  ["Property Tax", "Income Tax", "HST / GST", "Sales Tax", "Business Tax", "Capital Gains Tax"],
   "Debt Payments":        ["Credit Card Payment", "Loan Payment", "Mortgage Payment", "Line of Credit", "Student Loan"],
   Insurance:              ["Life Insurance", "Disability Insurance", "Critical Illness", "Tenant Insurance", "Pet Insurance"],
-  "Investments & Savings":["RRSP", "TFSA", "RESP", "Stocks & ETFs", "Mutual Funds", "GICs & Bonds", "Crypto", "Emergency Fund"],
+  "Investments & Savings":[
+    // Canada registered accounts
+    "CA: RRSP", "CA: TFSA", "CA: RESP", "CA: RDSP", "CA: FHSA",
+    // US registered accounts
+    "US: 401(k)", "US: IRA", "US: Roth IRA", "US: 529 Plan", "US: HSA",
+    // General (either country)
+    "Stocks & ETFs", "Mutual Funds", "GICs & Bonds", "Crypto", "Emergency Fund",
+  ],
   Transfers:              ["Transfer In", "Incoming Transfer"],
   "Transfer Out":         [],
   "Transfers & Payments": [],
@@ -327,13 +334,27 @@ const CATEGORY_ALIASES: Record<string, ParentCategory> = {
   "pet insurance":          "Insurance",
   "insurance":              "Insurance",
 
-  // Investments & Savings
+  // Investments & Savings — CA registered accounts
   "investment":             "Investments & Savings",
   "investments":            "Investments & Savings",
   "savings":                "Investments & Savings",
   "rrsp":                   "Investments & Savings",
   "tfsa":                   "Investments & Savings",
   "resp":                   "Investments & Savings",
+  "rdsp":                   "Investments & Savings",
+  "fhsa":                   "Investments & Savings",
+  "first home savings":     "Investments & Savings",
+  // Investments & Savings — US registered accounts
+  "401k":                   "Investments & Savings",
+  "401(k)":                 "Investments & Savings",
+  "ira":                    "Investments & Savings",
+  "roth ira":               "Investments & Savings",
+  "roth":                   "Investments & Savings",
+  "529":                    "Investments & Savings",
+  "529 plan":               "Investments & Savings",
+  "hsa":                    "Investments & Savings",
+  "health savings":         "Investments & Savings",
+  // Investments & Savings — general
   "stocks":                 "Investments & Savings",
   "etf":                    "Investments & Savings",
   "mutual fund":            "Investments & Savings",
