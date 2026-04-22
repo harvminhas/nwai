@@ -10,8 +10,10 @@ import { getNetWorth, getTypicalMonthlySpend, getTypicalMonthlyIncome, getTypica
 import type { ParsedStatementData, ManualAsset, AssetCategory } from "@/lib/types";
 import type { BalanceSnapshot } from "@/app/api/user/balance-snapshots/route";
 import type { AccountBackfillEntry } from "@/app/api/user/account-backfills/route";
-import { buildSuggestions } from "@/lib/sourceMappings";
+import { buildSuggestions, resolveCanonical } from "@/lib/sourceMappings";
 import type { SourceMapping } from "@/lib/sourceMappings";
+import { occurrencesInMonth, datesInMonth } from "@/lib/cashIncome";
+import type { CashIncomeEntry } from "@/lib/cashIncome";
 
 /** Human-readable label for a statement's account, e.g. "TD ••••7780" */
 function accountDisplayLabel(parsed: ParsedStatementData): string {
@@ -170,6 +172,11 @@ export async function GET(request: NextRequest) {
       id: d.id,
       ...(d.data() as Omit<SourceMapping, "id">),
     }));
+    // Confirmed income mappings — applied when building incomeSourceHistory so
+    // merged aliases are folded into the canonical name before suggestions run.
+    const confirmedIncomeMappings = existingMappings.filter(
+      (m) => m.type === "income" && m.status === "confirmed"
+    );
 
     // Cash income entries and income category rules — passed to the income page
     const cashIncomeItems = cashIncomeSnap.docs.map((d) => d.data());
@@ -322,11 +329,20 @@ export async function GET(request: NextRequest) {
         });
         if (hasRealIncome) {
           for (const src of c.income?.sources ?? []) {
-            if (!incomeSourceHistory[src.description]) incomeSourceHistory[src.description] = [];
+            // Apply confirmed income mappings: fold alias names into their canonical
+            const canonicalName = resolveCanonical(src.description, confirmedIncomeMappings);
+            if (!incomeSourceHistory[canonicalName]) incomeSourceHistory[canonicalName] = [];
             const srcTxns = (c.income?.transactions ?? [])
               .filter((t) => t.source === src.description)
               .map((t) => ({ date: t.date, amount: t.amount }));
-            incomeSourceHistory[src.description].push({ yearMonth: ym, amount: src.amount, transactions: srcTxns });
+            // Aggregate into existing month entry if canonical already has one (two aliases in same month)
+            const existing = incomeSourceHistory[canonicalName].find((h) => h.yearMonth === ym);
+            if (existing) {
+              existing.amount += src.amount;
+              existing.transactions.push(...srcTxns);
+            } else {
+              incomeSourceHistory[canonicalName].push({ yearMonth: ym, amount: src.amount, transactions: srcTxns });
+            }
           }
         }
 
@@ -527,6 +543,32 @@ export async function GET(request: NextRequest) {
       history.sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
     }
 
+    // ── Inject cash income entries into incomeSourceHistory ──────────────────
+    // Cash income is already folded into history[].incomeTotal via the profile
+    // cache, but it was never represented as named sources. Adding it here means
+    // the By Source tab (and any insight logic that reads incomeSourceHistory)
+    // sees cash income alongside statement-detected sources.
+    {
+      const cashEntries = (cashIncomeItems as CashIncomeEntry[]).filter((e) => e.frequency !== "once");
+      for (const entry of cashEntries) {
+        for (const { yearMonth: ym } of history) {
+          const occ = occurrencesInMonth(entry, ym);
+          if (occ <= 0) continue;
+          const amount = entry.amount * occ;
+          if (!incomeSourceHistory[entry.name]) incomeSourceHistory[entry.name] = [];
+          // Avoid duplicating if already present (e.g. from a statement with same description)
+          if (!incomeSourceHistory[entry.name].some((h) => h.yearMonth === ym)) {
+            const txDates = datesInMonth(entry, ym);
+            incomeSourceHistory[entry.name].push({
+              yearMonth: ym,
+              amount,
+              transactions: txDates.map((date) => ({ date, amount: entry.amount })),
+            });
+          }
+        }
+      }
+    }
+
     // ── Incomplete months detection ──────────────────────────────────────────
     // A month is "incomplete" if at least one account that exists today used
     // a carry-forward (i.e. had no real statement uploaded for that month).
@@ -623,10 +665,12 @@ export async function GET(request: NextRequest) {
     // ── Income source suggestions (prefix-match dedup hints) ─────────────────
     // Only computed on the all-accounts view (not per-account detail pages) to
     // avoid partial data confusing the comparison.
+    // Pass only income-typed mappings so expense mappings don't block income suggestions.
+    const incomeSourceKeys = Object.keys(incomeSourceHistory);
     const incomeSuggestions = !accountFilter
       ? buildSuggestions(
-          Array.from(new Set(profile.incomeTxns.map((t) => t.source).filter(Boolean))),
-          existingMappings,
+          incomeSourceKeys,
+          existingMappings.filter((m) => m.type === "income"),
           "income"
         )
       : [];
@@ -644,7 +688,7 @@ export async function GET(request: NextRequest) {
           }
           const raw = buildSuggestions(
             Array.from(merchantCategories.keys()),
-            existingMappings,
+            existingMappings.filter((m) => m.type === "expense"),
             "expense"
           );
           // Flag pairs where categories differ — merging would affect spending totals

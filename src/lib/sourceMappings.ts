@@ -102,8 +102,8 @@ export function buildSuggestions(
         confidence = "high";
       }
 
-      // Rule 2: identical after suffix strip (min 5 chars)
-      if (!confidence && a.stripped === b.stripped && a.stripped.length >= 5) {
+      // Rule 2: identical after suffix strip (min 3 chars — suffix-strip is already precise)
+      if (!confidence && a.stripped === b.stripped && a.stripped.length >= 3) {
         confidence = "high";
       }
 

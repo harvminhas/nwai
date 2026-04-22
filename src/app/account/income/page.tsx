@@ -7,7 +7,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import {
-  ResponsiveContainer, LineChart, Line, XAxis, YAxis,
+  ResponsiveContainer, AreaChart, Area, XAxis, YAxis,
   CartesianGrid, Tooltip,
 } from "recharts";
 import type { IncomeTransaction, IncomeSource } from "@/lib/types";
@@ -22,7 +22,7 @@ import { fmt, getCurrencySymbol, formatCurrency } from "@/lib/currencyUtils";
 import type { SourceSuggestion } from "@/lib/sourceMappings";
 import { INCOME_TRANSFER_RE } from "@/lib/spendingMetrics";
 import type { CashIncomeEntry, CashIncomeFrequency, CashIncomeCategory } from "@/lib/cashIncome";
-import { CASH_INCOME_FREQ_MONTHLY, occurrencesInMonth } from "@/lib/cashIncome";
+import { CASH_INCOME_FREQ_MONTHLY, occurrencesInMonth, datesInMonth } from "@/lib/cashIncome";
 import { PROFILE_REFRESHED_EVENT, useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -66,6 +66,25 @@ function toMonthly(amount: number, freq: CashIncomeFrequency): number {
 }
 function sourceSlug(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 60);
+}
+
+/** Merge synthetic cash income transactions into a consolidated data income object.
+ *  Avoids duplicating entries that already exist with the same source name. */
+function mergeCashTransactions(
+  income: { total: number; sources: IncomeSource[]; transactions?: IncomeTransaction[] },
+  cashEntries: CashIncomeEntry[],
+  yearMonth: string,
+): { total: number; sources: IncomeSource[]; transactions: IncomeTransaction[] } {
+  const existing = income.transactions ?? [];
+  const existingNames = new Set(existing.map((t) => (t.source ?? "").toLowerCase()));
+  const synthetic: IncomeTransaction[] = [];
+  for (const entry of cashEntries) {
+    if (existingNames.has(entry.name.toLowerCase())) continue; // already in statement
+    for (const date of datesInMonth(entry, yearMonth)) {
+      synthetic.push({ source: entry.name, amount: entry.amount, date, category: entry.category, accountLabel: "Cash" });
+    }
+  }
+  return { ...income, transactions: [...existing, ...synthetic] };
 }
 
 // ── visual config ─────────────────────────────────────────────────────────────
@@ -145,11 +164,24 @@ function clusterByAmount(
 
 const TABS = [
   { id: "overview",     label: "Overview" },
-  { id: "transactions", label: "Transactions" },
   { id: "sources",      label: "By Source" },
+  { id: "categories",   label: "By Category" },
   { id: "cash",         label: "Cash" },
+  { id: "transactions", label: "Transactions" },
 ] as const;
 type TabId = typeof TABS[number]["id"];
+
+const INCOME_CAT_COLORS: Record<string, string> = {
+  "Salary":     "#10b981",
+  "Freelance":  "#6366f1",
+  "Rent":       "#f59e0b",
+  "Business":   "#3b82f6",
+  "Government": "#8b5cf6",
+  "Investment": "#14b8a6",
+  "Gift":       "#ec4899",
+  "Transfer":   "#6b7280",
+  "Other":      "#9ca3af",
+};
 
 // ── local types ───────────────────────────────────────────────────────────────
 
@@ -218,6 +250,7 @@ function IncomePageInner() {
   const [srcTimeScope, setSrcTimeScope]   = useState<"3" | "6" | "12" | "all">("12");
   const [suggestions, setSuggestions]     = useState<SourceSuggestion[]>([]);
   const [suggestionDecisions, setSuggestionDecisions] = useState<Record<string, "confirmed" | "rejected">>({});
+  const [expandedIncomeCatRows, setExpandedIncomeCatRows] = useState<Set<string>>(new Set());
   const [applyingMappings, setApplyingMappings] = useState(false);
   const [token, setToken]                 = useState<string | null>(null);
   const tokenRef                          = useRef<string | null>(null);
@@ -258,10 +291,11 @@ function IncomePageInner() {
       });
       const json = await res.json().catch(() => ({}));
       if (res.ok && json.data) {
+        const rawIncome = json.data.income ?? { total: 0, sources: [], transactions: [] };
         setDataByMonth((prev) => ({
           ...prev,
           [ym]: {
-            income: json.data.income ?? { total: 0, sources: [], transactions: [] },
+            income: mergeCashTransactions(rawIncome, cashEntries, ym),
             expenses: json.data.expenses ?? { total: 0 },
             savingsRate: json.data.savingsRate ?? 0,
             txIncome: json.txMonthlyIncome ?? json.data.income?.total ?? 0,
@@ -273,13 +307,12 @@ function IncomePageInner() {
         setDataByMonth((prev) => ({
           ...prev,
           [ym]: {
-            income: { total: cashTotal, sources: [], transactions: [] },
+            income: mergeCashTransactions({ total: cashTotal, sources: [], transactions: [] }, cashEntries, ym),
             expenses: { total: 0 },
             savingsRate: 0,
             txIncome: cashTotal,
             txExpenses: 0,
-            cashOnly: true,
-          } as ConsolidatedData & { cashOnly?: boolean },
+          },
         }));
       }
     } catch { /* best-effort */ }
@@ -335,12 +368,16 @@ function IncomePageInner() {
         setSuggestionDecisions(defaultDecisions);
 
         const latestYm: string = json.yearMonth ?? null;
-        setSelectedMonth(latestYm);
+        // Default to the most recent month with actual income — avoids showing an
+        // empty detail panel when the current month's statements aren't fully uploaded.
+        const defaultYm = [...hist].reverse().find((h) => h.incomeTotal > 0)?.yearMonth ?? latestYm;
+        setSelectedMonth(defaultYm);
         const initialCashItems = (json.cashIncomeItems ?? []) as CashIncomeEntry[];
         if (latestYm && json.data) {
+          const rawIncome = json.data.income ?? { total: 0, sources: [], transactions: [] };
           setDataByMonth({
             [latestYm]: {
-              income: json.data.income ?? { total: 0, sources: [], transactions: [] },
+              income: mergeCashTransactions(rawIncome, initialCashItems, latestYm),
               expenses: json.data.expenses ?? { total: 0 },
               savingsRate: json.data.savingsRate ?? 0,
               txIncome: json.txMonthlyIncome ?? json.data.income?.total ?? 0,
@@ -390,8 +427,9 @@ function IncomePageInner() {
       // Reset entire cache so deleted/changed items don't show stale data
       const freshCache: Record<string, ConsolidatedData> = {};
       if (latestYm && json.data) {
+        const rawIncome = json.data.income ?? { total: 0, sources: [], transactions: [] };
         freshCache[latestYm] = {
-          income: json.data.income ?? { total: 0, sources: [], transactions: [] },
+          income: mergeCashTransactions(rawIncome, freshCashItems, latestYm),
           expenses: json.data.expenses ?? { total: 0 },
           savingsRate: json.data.savingsRate ?? 0,
           txIncome: json.txMonthlyIncome ?? json.data.income?.total ?? 0,
@@ -426,10 +464,11 @@ function IncomePageInner() {
       });
       const json = await res.json().catch(() => ({}));
       if (res.ok && json.data) {
+        const rawIncome = json.data.income ?? { total: 0, sources: [], transactions: [] };
         setDataByMonth((prev) => ({
           ...prev,
           [ym]: {
-            income: json.data.income ?? { total: 0, sources: [], transactions: [] },
+            income: mergeCashTransactions(rawIncome, cashItems, ym),
             expenses: json.data.expenses ?? { total: 0 },
             savingsRate: json.data.savingsRate ?? 0,
             txIncome: json.txMonthlyIncome ?? json.data.income?.total ?? 0,
@@ -437,20 +476,17 @@ function IncomePageInner() {
           },
         }));
       } else {
-        // No statement for this month — synthesise a cash-income-only entry so the
-        // Overview tab can still show the user's declared recurring cash income.
         const cashTotal = cashItems.reduce((sum, entry) =>
           sum + occurrencesInMonth(entry, ym) * entry.amount, 0);
         setDataByMonth((prev) => ({
           ...prev,
           [ym]: {
-            income: { total: cashTotal, sources: [], transactions: [] },
+            income: mergeCashTransactions({ total: cashTotal, sources: [], transactions: [] }, cashItems, ym),
             expenses: { total: 0 },
             savingsRate: 0,
             txIncome: cashTotal,
             txExpenses: 0,
-            cashOnly: true,
-          } as ConsolidatedData & { cashOnly?: boolean },
+          },
         }));
       }
     } catch { /* ignore */ }
@@ -780,6 +816,129 @@ function IncomePageInner() {
   // Cash income derived
   const cashMonthlyTotal = cashItems.reduce((s, c) => s + toMonthly(c.amount, c.frequency), 0);
 
+  // ── Income category breakdown ─────────────────────────────────────────────────
+  // Groups allTimeScoredSources + cash items by category (respects srcTimeScope).
+  const incomeCategoryBreakdown = (() => {
+    type CatEntry = { total: number; sources: { name: string; total: number; isCash: boolean }[] };
+    const catMap = new Map<string, CatEntry>();
+    for (const src of allTimeScoredSources) {
+      const cat = incomeCategoryRules[sourceSlug(src.description)] || "Other";
+      if (!catMap.has(cat)) catMap.set(cat, { total: 0, sources: [] });
+      const e = catMap.get(cat)!;
+      e.total += src.total;
+      e.sources.push({ name: src.description, total: src.total, isCash: false });
+    }
+    for (const item of cashItems) {
+      const cashTotal = srcScopeHistory.reduce((s, h) => s + occurrencesInMonth(item, h.yearMonth) * item.amount, 0);
+      if (cashTotal <= 0) continue;
+      const cat = item.category || "Other";
+      if (!catMap.has(cat)) catMap.set(cat, { total: 0, sources: [] });
+      const e = catMap.get(cat)!;
+      e.total += cashTotal;
+      e.sources.push({ name: item.name, total: cashTotal, isCash: true });
+    }
+    const grandTotal = Array.from(catMap.values()).reduce((s, e) => s + e.total, 0);
+    return Array.from(catMap.entries())
+      .sort((a, b) => b[1].total - a[1].total)
+      .map(([name, data]) => ({
+        name,
+        total: data.total,
+        pct: grandTotal > 0 ? Math.round((data.total / grandTotal) * 100) : 0,
+        sources: data.sources.sort((a, b) => b.total - a.total),
+        color: INCOME_CAT_COLORS[name] ?? "#9ca3af",
+      }));
+  })();
+
+  // Reliability score: weighted avg of top-source scores (0–100), or 0 if no sources
+  const reliabilityScore = (() => {
+    const sources = allTimeScoredSources.filter((s) => s.months >= 2);
+    if (sources.length === 0) return cashItems.length > 0 ? 90 : 0;
+    const totalWeight = sources.reduce((s, x) => s + x.avgMonthly, 0);
+    if (totalWeight === 0) return 0;
+    return Math.round(sources.reduce((s, x) => s + x.score * (x.avgMonthly / totalWeight), 0));
+  })();
+  const reliabilityLabel = reliabilityScore >= 80 ? "Strong cadence" : reliabilityScore >= 55 ? "Good cadence" : "Irregular";
+  const reliabilityColor = reliabilityScore >= 80 ? "#10b981" : reliabilityScore >= 55 ? "#f59e0b" : "#ef4444";
+
+  // Next expected: find the cash item or scored source with the nearest future occurrence
+  const nextExpected = (() => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayYM  = todayStr.slice(0, 7);
+    const nextYM   = (() => { const d = new Date(); d.setMonth(d.getMonth() + 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; })();
+    let best: { name: string; amount: number; date: string } | null = null;
+    for (const entry of cashItems) {
+      if (entry.frequency === "once") continue;
+      for (const ym of [todayYM, nextYM]) {
+        const dates = datesInMonth(entry, ym).filter((d) => d > todayStr);
+        if (dates.length > 0) {
+          const d = dates[0];
+          if (!best || d < best.date) best = { name: entry.name, amount: entry.amount, date: d };
+          break;
+        }
+      }
+    }
+    return best;
+  })();
+
+  // "On your radar" cards — up to 4 items combining: upcoming, late, trend, new source
+  const radarItems = (() => {
+    const todayStr  = new Date().toISOString().slice(0, 10);
+    const todayYM   = todayStr.slice(0, 7);
+    const nextYM    = (() => { const d = new Date(); d.setMonth(d.getMonth() + 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; })();
+    const items: { type: "upcoming" | "late" | "trend" | "new"; title: string; sub: string; amount?: number; positive?: boolean }[] = [];
+
+    // Upcoming cash income (next 14 days)
+    const upcoming: { entry: typeof cashItems[0]; date: string }[] = [];
+    for (const entry of cashItems) {
+      if (entry.frequency === "once") continue;
+      for (const ym of [todayYM, nextYM]) {
+        const dates = datesInMonth(entry, ym).filter((d) => d > todayStr);
+        if (dates.length > 0) { upcoming.push({ entry, date: dates[0] }); break; }
+      }
+    }
+    upcoming.sort((a, b) => a.date.localeCompare(b.date));
+    for (const { entry, date } of upcoming.slice(0, 2)) {
+      const diffDays = Math.round((new Date(date).getTime() - new Date(todayStr).getTime()) / 86_400_000);
+      const when = diffDays === 0 ? "today" : diffDays === 1 ? "tomorrow" : diffDays <= 7 ? `in ${diffDays} days` : `${date.slice(5).replace("-", "/")}`;
+      items.push({ type: "upcoming", title: `${entry.name} expected ${when}`, sub: `${entry.name} · monthly cadence, reliable`, amount: entry.amount, positive: true });
+    }
+
+    // Late income: monthly cash items whose expected date this month has already passed
+    for (const entry of cashItems) {
+      if (entry.frequency !== "monthly") continue;
+      const datesThisMonth = datesInMonth(entry, todayYM);
+      for (const d of datesThisMonth) {
+        if (d < todayStr) {
+          const diffDays = Math.round((new Date(todayStr).getTime() - new Date(d).getTime()) / 86_400_000);
+          const anchor = entry.nextDate ? `usually arrives by the ${new Date(entry.nextDate + "T12:00:00").getDate()}th` : "usually arrives mid-month";
+          items.push({ type: "late", title: `${entry.name} is ${diffDays} day${diffDays !== 1 ? "s" : ""} late`, sub: `${entry.name} · ${anchor}`, amount: entry.amount });
+        }
+      }
+    }
+
+    // Income trend vs 3-mo avg
+    const recent3 = sortedHistory.slice(-3).filter((h) => !h.isEstimate);
+    const prev3   = sortedHistory.slice(-6, -3).filter((h) => !h.isEstimate);
+    if (recent3.length >= 2 && prev3.length >= 2) {
+      const recentAvg = recent3.reduce((s, h) => s + h.incomeTotal, 0) / recent3.length;
+      const prevAvg   = prev3.reduce((s, h) => s + h.incomeTotal, 0) / prev3.length;
+      if (prevAvg > 0) {
+        const pct = Math.round(((recentAvg - prevAvg) / prevAvg) * 100);
+        if (Math.abs(pct) >= 5) {
+          const dir = pct > 0 ? "up" : "down";
+          items.push({ type: "trend", title: `Income ${dir} ${Math.abs(pct)}% vs. 3-mo avg`, sub: `Average ${dir} from ${fmt(Math.round(prevAvg), homeCurrency)} to ${fmt(Math.round(recentAvg), homeCurrency)}`, positive: pct > 0 });
+        }
+      }
+    }
+
+    return items.slice(0, 4);
+  })();
+
+  // All-time source count (statement + cash)
+  const allSourceCount = Object.keys(sourceHistory).filter(
+    (d) => !isTransferSource(d) && !excludedSources.has(d) && !transferSources.has(d) && incomeCategoryRules[sourceSlug(d)] !== "Transfer"
+  ).length + cashItems.length;
+
   // ── render helpers ────────────────────────────────────────────────────────────
 
   const mergingCount = suggestions.filter((s) => suggestionDecisions[s.pairKey] !== "rejected").length;
@@ -837,6 +996,12 @@ function IncomePageInner() {
               {tab.label}
               {tab.id === "transactions" && txCount > 0 && (
                 <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">{txCount}</span>
+              )}
+              {tab.id === "sources" && allSourceCount > 0 && (
+                <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">{allSourceCount}</span>
+              )}
+              {tab.id === "categories" && incomeCategoryBreakdown.length > 0 && (
+                <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">{incomeCategoryBreakdown.length}</span>
               )}
               {tab.id === "cash" && cashItems.length > 0 && (
                 <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">{cashItems.length}</span>
@@ -900,21 +1065,35 @@ function IncomePageInner() {
 
             {/* All-time summary strip */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {/* Monthly Average */}
               <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Total tracked</p>
-                <p className="text-xl font-bold text-gray-900 tabular-nums">{fmtShort(allTimeIncome, homeCurrency)}</p>
-                <p className="text-xs text-gray-400 mt-0.5">{regularHistoryPoints.length} months</p>
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Monthly average</p>
+                <p className="text-xl font-bold text-gray-900 tabular-nums">{avgIncome > 0 ? fmt(avgIncome, homeCurrency) : "—"}</p>
+                <p className="text-xs text-gray-400 mt-0.5">across {regularHistoryPoints.length} months</p>
               </div>
+              {/* Reliability */}
               <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Monthly avg</p>
-                <p className="text-xl font-bold text-gray-900 tabular-nums">{avgIncome > 0 ? fmtShort(avgIncome, homeCurrency) : "—"}</p>
-                <p className="text-xs text-gray-400 mt-0.5">regular deposits</p>
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Reliability</p>
+                <p className="text-xl font-bold text-gray-900 tabular-nums">{reliabilityScore}<span className="text-sm font-normal text-gray-400">/100</span></p>
+                <div className="mt-1.5 h-1.5 w-full rounded-full bg-gray-100 overflow-hidden">
+                  <div className="h-full rounded-full transition-all" style={{ width: `${reliabilityScore}%`, backgroundColor: reliabilityColor }} />
+                </div>
+                <p className="text-xs mt-1" style={{ color: reliabilityColor }}>{reliabilityLabel}</p>
               </div>
+              {/* Next Expected */}
               <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Sources</p>
-                <p className="text-xl font-bold text-gray-900 tabular-nums">{Object.keys(sourceHistory).filter((d) => !isTransferSource(d) && !excludedSources.has(d) && !transferSources.has(d) && incomeCategoryRules[sourceSlug(d)] !== "Transfer").length}</p>
-                <p className="text-xs text-gray-400 mt-0.5">income streams</p>
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Next expected</p>
+                {nextExpected ? (
+                  <>
+                    <p className="text-sm font-semibold text-gray-900 truncate">{nextExpected.name}</p>
+                    <p className="text-xs text-green-600 mt-0.5 font-medium">+{fmt(nextExpected.amount, homeCurrency)} · {(() => {
+                      const d = new Date(nextExpected.date + "T12:00:00");
+                      return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+                    })()}</p>
+                  </>
+                ) : <p className="text-sm text-gray-400 mt-1">—</p>}
               </div>
+              {/* Best Month */}
               <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
                 <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Best month</p>
                 {(() => {
@@ -922,7 +1101,7 @@ function IncomePageInner() {
                   return best ? (
                     <>
                       <p className="text-xl font-bold text-gray-900 tabular-nums">{fmtShort(best.incomeTotal, homeCurrency)}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">{shortMonth(best.yearMonth)}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">{longMonth(best.yearMonth)}</p>
                     </>
                   ) : <p className="text-xl font-bold text-gray-400">—</p>;
                 })()}
@@ -952,8 +1131,18 @@ function IncomePageInner() {
                   }}
                 >
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}
+                    <AreaChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}
                       style={{ cursor: "pointer" }}>
+                      <defs>
+                        <linearGradient id="incomeGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#7c3aed" stopOpacity={0.18} />
+                          <stop offset="95%" stopColor="#7c3aed" stopOpacity={0.01} />
+                        </linearGradient>
+                        <linearGradient id="incomeGradProj" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#a78bfa" stopOpacity={0.12} />
+                          <stop offset="95%" stopColor="#a78bfa" stopOpacity={0.01} />
+                        </linearGradient>
+                      </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
                       <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
                       <YAxis tickFormatter={(v) => fmtAxis(v, homeCurrency)} tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={52} />
@@ -964,8 +1153,9 @@ function IncomePageInner() {
                         }}
                         contentStyle={{ borderRadius: "8px", border: "1px solid #e5e7eb", fontSize: "13px" }}
                         labelStyle={{ fontWeight: 600, color: "#111827" }} />
-                      {/* Actual months — solid line */}
-                      <Line type="monotone" dataKey="income" stroke="#7c3aed" strokeWidth={2}
+                      {/* Actual months — solid area */}
+                      <Area type="monotone" dataKey="income" stroke="#7c3aed" strokeWidth={2}
+                        fill="url(#incomeGrad)" fillOpacity={1}
                         connectNulls={false}
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         dot={(props: any) => {
@@ -983,15 +1173,15 @@ function IncomePageInner() {
                           );
                         }}
                         activeDot={{ r: 6, fill: "#fff", stroke: "#7c3aed", strokeWidth: 2 }} />
-                      {/* Projected months — dashed line */}
-                      <Line type="monotone" dataKey="projected" stroke="#7c3aed" strokeWidth={2}
+                      {/* Projected months — dashed area */}
+                      <Area type="monotone" dataKey="projected" stroke="#a78bfa" strokeWidth={2}
                         strokeDasharray="5 4" strokeOpacity={0.55}
+                        fill="url(#incomeGradProj)" fillOpacity={0.5}
                         connectNulls={false}
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         dot={(props: any) => {
                           const ym = props.payload?.ym as string | undefined;
                           const isSelected = ym === selectedMonth;
-                          // Don't render a dot at the boundary (already rendered by actual line)
                           if (ym === latestStmtMonth) return <g key={`p-boundary-${ym}`} />;
                           if (props.cx == null || props.cy == null) return <g key={`p-${ym}`} />;
                           return (
@@ -1005,7 +1195,7 @@ function IncomePageInner() {
                           );
                         }}
                         activeDot={{ r: 6, fill: "#fff", stroke: "#a78bfa", strokeWidth: 2 }} />
-                    </LineChart>
+                    </AreaChart>
                   </ResponsiveContainer>
                 </div>
                 <div className="mt-2 flex items-center justify-center gap-4">
@@ -1020,6 +1210,51 @@ function IncomePageInner() {
               </div>
             )}
 
+            {/* On your radar */}
+            {radarItems.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">On your radar</p>
+                  <p className="text-xs text-gray-400">{radarItems.length} item{radarItems.length !== 1 ? "s" : ""}</p>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {radarItems.map((item, i) => (
+                    <div key={i} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm flex items-start gap-3">
+                      {item.type === "upcoming" && (
+                        <div className="shrink-0 mt-0.5 h-7 w-7 rounded-full bg-purple-100 flex items-center justify-center">
+                          <svg className="h-3.5 w-3.5 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        </div>
+                      )}
+                      {item.type === "late" && (
+                        <div className="shrink-0 mt-0.5 h-7 w-7 rounded-full bg-amber-100 flex items-center justify-center">
+                          <svg className="h-3.5 w-3.5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>
+                        </div>
+                      )}
+                      {item.type === "trend" && (
+                        <div className={`shrink-0 mt-0.5 h-7 w-7 rounded-full flex items-center justify-center ${item.positive ? "bg-green-100" : "bg-red-100"}`}>
+                          <svg className={`h-3.5 w-3.5 ${item.positive ? "text-green-500" : "text-red-500"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d={item.positive ? "M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" : "M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"} /></svg>
+                        </div>
+                      )}
+                      {item.type === "new" && (
+                        <div className="shrink-0 mt-0.5 h-7 w-7 rounded-full bg-blue-100 flex items-center justify-center">
+                          <svg className="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800">{item.title}</p>
+                        <p className="text-xs text-gray-400 mt-0.5 truncate">{item.sub}</p>
+                      </div>
+                      {item.amount != null && (
+                        <p className={`shrink-0 text-sm font-semibold tabular-nums ${item.positive ? "text-green-600" : item.type === "late" ? "text-amber-600" : "text-gray-700"}`}>
+                          {item.positive ? "+" : ""}{fmt(item.amount, homeCurrency)}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Loading state while month data is fetching */}
             {selectedMonth && !current && (
               <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm text-center text-sm text-gray-400 animate-pulse">
@@ -1027,60 +1262,80 @@ function IncomePageInner() {
               </div>
             )}
 
-            {/* Selected-month detail panel — shown below the chart after clicking a dot */}
+            {/* Month detail */}
             {selectedMonth && current && (
-              <div className="rounded-xl border border-purple-100 bg-purple-50/40 p-5 shadow-sm">
+              <div className="rounded-xl border border-purple-100 bg-white p-5 shadow-sm">
                 <div className="flex items-center justify-between mb-3">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-purple-500">{longMonth(selectedMonth)}</p>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-purple-500">Month detail</p>
                   <button onClick={() => setSelectedMonth(null)} className="text-xs text-gray-400 hover:text-gray-600 transition">✕ close</button>
                 </div>
-                <p className="text-3xl font-bold text-gray-900">{fmt(current.txIncome ?? income?.total ?? 0, homeCurrency)}</p>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">{longMonth(selectedMonth)}</p>
+                <p className="text-3xl font-bold text-gray-900 mb-4">{fmt(current.txIncome ?? income?.total ?? 0, homeCurrency)}</p>
                 {(() => {
-                  const monthSources = current.income?.sources ?? [];
                   const monthTxns = current.income?.transactions ?? [];
-                  if (monthTxns.length === 0 && monthSources.length === 0 && (current as { cashOnly?: boolean }).cashOnly) {
+                  const monthSources = current.income?.sources ?? [];
+                  const cashForMonth = cashItems.filter((c) => occurrencesInMonth(c, selectedMonth) > 0);
+                  const isExcluded = (desc: string) =>
+                    isTransferSource(desc) || transferSources.has(desc) || excludedSources.has(desc);
+
+                  // Build per-source rows with individual transaction details
+                  const txnRows = monthTxns
+                    .filter((t) => !isExcluded((t.source ?? "").trim()))
+                    .map((t) => ({
+                      name: (t.source ?? "Other").trim(),
+                      amount: t.amount,
+                      date: t.date,
+                      isCash: t.accountLabel === "Cash",
+                      category: t.category,
+                    }));
+
+                  const srcRows = monthSources
+                    .filter((s) => !isExcluded(s.description))
+                    .map((s) => ({ name: s.description, amount: s.amount, date: undefined, isCash: false, category: undefined }));
+
+                  const rows = txnRows.length > 0 ? txnRows : srcRows;
+
+                  if (rows.length === 0 && cashForMonth.length === 0) {
                     return (
-                      <div className="mt-3 space-y-1.5">
-                        <p className="text-xs text-amber-600 font-medium mb-2">Cash income only · no statement uploaded</p>
-                        {cashItems.filter((c) => occurrencesInMonth(c, selectedMonth) > 0).map((c) => (
-                          <div key={c.id} className="flex items-center justify-between text-sm">
-                            <span className="text-gray-700">{c.name}</span>
-                            <span className="font-medium text-green-700">+{fmt(c.amount * occurrencesInMonth(c, selectedMonth), homeCurrency)}</span>
-                          </div>
-                        ))}
+                      <div className="text-sm text-gray-400 space-y-1">
+                        <p>No income data for this month.</p>
+                        {latestStmtMonth && latestStmtMonth !== selectedMonth && (
+                          <button onClick={() => void fetchMonth(latestStmtMonth)}
+                            className="text-xs text-purple-500 hover:text-purple-700 underline underline-offset-2">
+                            Jump to {longMonth(latestStmtMonth)}
+                          </button>
+                        )}
                       </div>
                     );
                   }
-                  const isExcluded = (desc: string) =>
-                    isTransferSource(desc) || transferSources.has(desc) || excludedSources.has(desc);
-                  const rows = monthTxns.length > 0
-                    ? Array.from(
-                        monthTxns
-                          .filter((t) => !isExcluded((t.source ?? "").trim()))
-                          .reduce((m, t) => {
-                            const k = (t.source ?? "Other").trim();
-                            m.set(k, (m.get(k) ?? 0) + t.amount);
-                            return m;
-                          }, new Map<string, number>())
-                      ).sort((a, b) => b[1] - a[1])
-                    : monthSources
-                        .filter((s) => !isExcluded(s.description))
-                        .map((s) => [s.description, s.amount] as [string, number]);
-                  if (rows.length === 0) return <p className="mt-2 text-sm text-gray-400">No statement data for this month.</p>;
+
+                  const freqLabel = (entry: typeof cashItems[0]) => {
+                    const map: Record<string, string> = { weekly: "weekly", biweekly: "bi-weekly", monthly: "monthly", quarterly: "quarterly", annual: "annual", once: "one-time" };
+                    return map[entry.frequency] ?? entry.frequency;
+                  };
+
                   return (
-                    <div className="mt-3 space-y-1.5">
-                      {rows.map(([desc, amt]) => (
-                        <div key={desc} className="flex items-center justify-between text-sm">
-                          <span className="truncate text-gray-700 max-w-[70%]">{desc}</span>
-                          <span className="font-medium text-green-700 tabular-nums shrink-0 ml-2">+{fmt(amt, homeCurrency)}</span>
-                        </div>
-                      ))}
-                      {cashItems.filter((c) => occurrencesInMonth(c, selectedMonth) > 0).map((c) => (
-                        <div key={c.id} className="flex items-center justify-between text-sm">
-                          <span className="truncate text-gray-700 max-w-[70%]">{c.name} <span className="text-amber-500 text-xs">(cash)</span></span>
-                          <span className="font-medium text-green-700 tabular-nums shrink-0 ml-2">+{fmt(c.amount * occurrencesInMonth(c, selectedMonth), homeCurrency)}</span>
-                        </div>
-                      ))}
+                    <div className="space-y-0 divide-y divide-gray-50">
+                      {rows.length === 0 && cashForMonth.length > 0 && (
+                        <p className="text-xs text-amber-600 font-medium mb-3">Cash income only · no statement uploaded</p>
+                      )}
+                      {rows.map((row, i) => {
+                        const cashEntry = cashItems.find((c) => c.name.toLowerCase() === row.name.toLowerCase());
+                        return (
+                          <div key={i} className="flex items-center justify-between py-3">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-gray-800 truncate">{row.name}</p>
+                              <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                {row.date && <span className="text-xs text-gray-400">{fmtDate(row.date)}</span>}
+                                {cashEntry && <span className="text-[10px] rounded-full bg-gray-100 px-1.5 py-0.5 text-gray-500 font-medium">{freqLabel(cashEntry)}</span>}
+                                {row.isCash && <span className="flex items-center gap-0.5 text-[10px] rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-amber-600 font-medium"><span className="h-1.5 w-1.5 rounded-full bg-amber-400 inline-block" />cash</span>}
+                                {row.isCash && <span className="text-[10px] rounded-full bg-green-50 border border-green-200 px-1.5 py-0.5 text-green-600 font-medium">confirmed</span>}
+                              </div>
+                            </div>
+                            <span className="shrink-0 ml-3 font-semibold text-sm text-green-700 tabular-nums">+{fmt(row.amount, homeCurrency)}</span>
+                          </div>
+                        );
+                      })}
                     </div>
                   );
                 })()}
@@ -1125,7 +1380,7 @@ function IncomePageInner() {
                 {transactions.map((txn, i) => {
                   const rawSrc  = (txn.source ?? "Other").trim();
                   const slug    = sourceSlug(rawSrc);
-                  const currentCategory = incomeCategoryRules[slug] ?? "";
+                  const currentCategory = incomeCategoryRules[slug] ?? txn.category ?? "";
                   const isTransfer = isTransferSource(rawSrc) || transferSources.has(rawSrc) || currentCategory === "Transfer";
                   const isSaving  = savingCategoryRule === slug;
                   return (
@@ -1169,6 +1424,99 @@ function IncomePageInner() {
 
         {/* ══════════════════════════════════════════════════════════════════════ */}
         {/* BY SOURCE TAB                                                         */}
+        {/* ══════════════════════════════════════════════════════════════════════ */}
+        {/* CATEGORIES TAB                                                        */}
+        {/* ══════════════════════════════════════════════════════════════════════ */}
+        {activeTab === "categories" && (
+          <>
+            {/* Scope selector — shared with By Source */}
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">Income by category</p>
+              <div className="flex gap-1">
+                {(["3", "6", "12", "all"] as const).map((s) => (
+                  <button key={s} onClick={() => setSrcTimeScope(s)}
+                    className={`rounded-full px-2.5 py-1 text-xs font-semibold transition ${srcTimeScope === s ? "bg-purple-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`}>
+                    {s === "all" ? "All" : `${s}mo`}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {incomeCategoryBreakdown.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-8 text-center">
+                <p className="text-sm text-gray-500">No income data to categorize.</p>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                <div className="divide-y divide-gray-100">
+                  {incomeCategoryBreakdown.map((cat) => {
+                    const isOpen = expandedIncomeCatRows.has(cat.name);
+                    const toggleCat = () => setExpandedIncomeCatRows((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(cat.name)) next.delete(cat.name); else next.add(cat.name);
+                      return next;
+                    });
+                    return (
+                      <div key={cat.name}>
+                        {/* Category row */}
+                        <div className="flex items-center group hover:bg-gray-50 transition">
+                          <button onClick={toggleCat} className="flex flex-1 items-center gap-4 px-5 py-3 min-w-0 text-left">
+                            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: cat.color }} />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-sm font-medium text-gray-800">{cat.name}</span>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span className="text-sm font-semibold text-gray-700 tabular-nums">{fmt(Math.round(cat.total), homeCurrency)}</span>
+                                  <span className="text-xs text-gray-400 w-8 text-right">{cat.pct}%</span>
+                                </div>
+                              </div>
+                              <div className="h-1 overflow-hidden rounded-full bg-gray-100">
+                                <div className="h-full rounded-full" style={{ width: `${Math.min(cat.pct, 100)}%`, backgroundColor: cat.color }} />
+                              </div>
+                            </div>
+                          </button>
+                          <button onClick={toggleCat} className="shrink-0 px-3 py-3 text-gray-300 hover:text-gray-500 transition">
+                            <svg className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </button>
+                        </div>
+
+                        {/* Expanded source rows */}
+                        {isOpen && (
+                          <div className="border-t border-gray-50 bg-gray-50/60">
+                            {cat.sources.map((src) => {
+                              const srcPct = cat.total > 0 ? Math.round((src.total / cat.total) * 100) : 0;
+                              const href = src.isCash
+                                ? "/account/income?tab=cash"
+                                : `/account/income/${encodeURIComponent(src.name)}`;
+                              return (
+                                <Link key={src.name} href={href}
+                                  className="flex items-center gap-3 pl-10 pr-5 py-2.5 hover:bg-gray-100 transition group/sub">
+                                  <span className="h-1.5 w-1.5 shrink-0 rounded-full opacity-60" style={{ backgroundColor: cat.color }} />
+                                  <span className="flex-1 text-[13px] text-gray-600 truncate group-hover/sub:text-purple-600 transition-colors">{src.name}</span>
+                                  {src.isCash && (
+                                    <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">cash</span>
+                                  )}
+                                  <span className="text-[13px] text-gray-500 tabular-nums shrink-0">{fmt(Math.round(src.total), homeCurrency)}</span>
+                                  <span className="text-xs text-gray-400 w-7 text-right shrink-0">{srcPct}%</span>
+                                  <svg className="h-3.5 w-3.5 text-gray-300 group-hover/sub:text-purple-400 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                  </svg>
+                                </Link>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
         {/* ══════════════════════════════════════════════════════════════════════ */}
         {activeTab === "sources" && (
           <>

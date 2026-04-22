@@ -10,7 +10,10 @@ import type { ParsedStatementData, ExpenseTransaction } from "@/lib/types";
 
 export interface MerchantSummary {
   slug: string;
-  name: string;          // canonical display name (most-used spelling)
+  /** Most-used spelling from statement transactions — used for matching. */
+  name: string;
+  /** User-set display name override. When present, show this instead of `name`. */
+  displayName?: string;
   /** Dominant category (highest spend). Kept for backward compat. */
   category: string;
   /** All unique categories across this merchant's transactions. */
@@ -67,12 +70,19 @@ export async function GET(request: NextRequest) {
     if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const uid = access.targetUid;
 
-    // Load category rules, confirmed source mappings, and txn overrides in parallel
-    const [rulesSnap, mappingsSnap, overridesSnap] = await Promise.all([
+    // Load category rules, confirmed source mappings, txn overrides, and display names in parallel
+    const [rulesSnap, mappingsSnap, overridesSnap, displayNamesSnap] = await Promise.all([
       db.collection("users").doc(uid).collection("categoryRules").get(),
       db.collection(`users/${uid}/sourceMappings`).get(),
       db.collection(`users/${uid}/txnCategoryOverrides`).get(),
+      db.collection(`users/${uid}/merchantDisplayNames`).get(),
     ]);
+    // slug → user-set display name
+    const displayNameMap = new Map<string, string>();
+    for (const doc of displayNamesSnap.docs) {
+      const d = doc.data() as { displayName?: string };
+      if (d.displayName) displayNameMap.set(doc.id, d.displayName);
+    }
     const rulesMap = new Map<string, string>();
     for (const r of rulesSnap.docs) {
       const d = r.data();
@@ -295,6 +305,7 @@ export async function GET(request: NextRequest) {
       return {
         slug,
         name,
+        displayName: displayNameMap.get(slug),
         category: dominantCategory,
         categories,
         currency: e.currency,
@@ -311,7 +322,9 @@ export async function GET(request: NextRequest) {
     merchants.sort((a, b) => b.total - a.total);
 
     if (slugFilter) {
-      const target = merchants.find((m) => m.slug === slugFilter) ?? merchants[0] ?? null;
+      // Never fall back to merchants[0] — if the exact slug isn't found the merchant may have
+      // been merged (alias) into a canonical. Return null so the client handles it gracefully.
+      const target = merchants.find((m) => m.slug === slugFilter) ?? null;
 
       // Find similar merchants using:
       //   Rule 1 (relaxed): shorter is a prefix of longer, ≥5 chars, ≥30% coverage
@@ -327,14 +340,20 @@ export async function GET(request: NextRequest) {
             const b = normName(m.name);
             const shorter = a.length <= b.length ? a : b;
             const longer  = a.length <= b.length ? b : a;
-            // Rule 1: prefix, relaxed to 30% coverage
+            // Rule 1: name prefix, relaxed to 30% coverage
             if (shorter.length >= 5 && longer.startsWith(shorter) && shorter.length / longer.length >= 0.3) return true;
             // Rule 2: shared first word ≥5 chars
             const fw = firstWord(target.name);
             if (fw.length >= 5 && fw === firstWord(m.name)) return true;
+            // Rule 3: slug prefix — most robust since slugs are already normalised.
+            // Catches e.g. "coursera-org" ↔ "coursera-org-schiphol".
+            const ss = target.slug.length <= m.slug.length ? target.slug : m.slug;
+            const sl = target.slug.length <= m.slug.length ? m.slug    : target.slug;
+            if (ss.length >= 4 && (sl === ss || sl.startsWith(ss + "-"))) return true;
             return false;
           })
         : [];
+      if (slugFilter) console.log(`[similar] slug=${slugFilter} target=${target?.name} candidates=${merchants.length} similar=${similarMerchants.map(m => m.slug).join(",")}`);
 
       // Category peers — top merchants in the same category (excluding target)
       let categoryPeers: { name: string; slug: string; total: number; currency: string }[] = [];

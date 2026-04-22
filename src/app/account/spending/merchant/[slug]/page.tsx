@@ -99,6 +99,10 @@ export default function MerchantDetailPage() {
   const [txnPickerKey, setTxnPickerKey]         = useState<string | null>(null);
   const txnPickerBtnRefs                        = useRef<Map<string, HTMLButtonElement>>(new Map());
   const [savingTxnKey, setSavingTxnKey]         = useState<string | null>(null);
+  // Merchant display name editing
+  const [editingName, setEditingName]           = useState(false);
+  const [nameInput, setNameInput]               = useState("");
+  const [savingName, setSavingName]             = useState(false);
   const [categoryPeers, setCategoryPeers]       = useState<{ name: string; slug: string; total: number; currency: string }[]>([]);
   const [categoryTotal, setCategoryTotal]       = useState(0);
 
@@ -330,6 +334,8 @@ export default function MerchantDetailPage() {
   const color        = categoryColor(merchant.category);
   const sym          = getCurrencySymbol(homeCurrency);
   const activeMonths = merchant.monthly.length;
+  // User-set display name takes precedence; falls back to auto-derived statement name
+  const displayedName = merchant.displayName ?? merchant.name;
   const monthlyAvg   = activeMonths > 0 ? merchant.total / activeMonths : 0;
 
   // Typical trip range (P25 – P75)
@@ -458,9 +464,9 @@ export default function MerchantDetailPage() {
   const annualRounded = Math.round(annualPace / 50) * 50;
   const insightText =
     annualDiff !== null && Math.abs(annualDiff) > 50
-      ? `At your current pace, you'll spend ~${formatCurrency(annualRounded, homeCurrency, undefined, true)} at ${merchant.name} this year — about ${formatCurrency(Math.abs(Math.round(annualDiff / 50) * 50), homeCurrency, undefined, true)} ${annualDiff > 0 ? "more" : "less"} than last year's run rate.`
+      ? `At your current pace, you'll spend ~${formatCurrency(annualRounded, homeCurrency, undefined, true)} at ${displayedName} this year — about ${formatCurrency(Math.abs(Math.round(annualDiff / 50) * 50), homeCurrency, undefined, true)} ${annualDiff > 0 ? "more" : "less"} than last year's run rate.`
       : annualPace > 50
-      ? `At your current pace, you'll spend ~${formatCurrency(annualRounded, homeCurrency, undefined, true)} at ${merchant.name} this year.`
+      ? `At your current pace, you'll spend ~${formatCurrency(annualRounded, homeCurrency, undefined, true)} at ${displayedName} this year.`
       : null;
 
   // Trip size distribution
@@ -567,7 +573,7 @@ export default function MerchantDetailPage() {
   // ── render ────────────────────────────────────────────────────────────────────
 
   return (
-    <MerchantForecastProvider slug={slug} merchantName={merchant.name} avgAmount={merchant.avgAmount} lastSeenDate={merchant.lastDate} idToken={idToken}>
+    <MerchantForecastProvider slug={slug} merchantName={displayedName} avgAmount={merchant.avgAmount} lastSeenDate={merchant.lastDate} idToken={idToken}>
       <div className="mx-auto max-w-2xl lg:max-w-5xl space-y-4 px-4 py-6">
 
         {/* Back nav */}
@@ -616,7 +622,7 @@ export default function MerchantDetailPage() {
             {similarExpanded && (
               <div className="border-t border-amber-100">
                 <p className="px-4 py-2 text-xs text-amber-600">
-                  These may be the same place — merge them into <span className="font-semibold">{merchant.name}</span>
+                  These may be the same place — merge them into <span className="font-semibold">{displayedName}</span>
                 </p>
                 <div className="divide-y divide-amber-100/60 border-t border-amber-100/60">
                   {similarMerchants.map((m) => {
@@ -679,11 +685,75 @@ export default function MerchantDetailPage() {
         {/* ── Hero ── */}
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">
-            Total Spent · {merchant.name}
+            Total Spent
           </p>
-          <p className="mt-0.5 text-4xl font-bold tracking-tight text-gray-900">
-            {formatCurrency(merchant.total, homeCurrency, undefined, true)}
-          </p>
+          {/* Editable merchant display name */}
+          {editingName ? (
+            <form
+              className="mt-1 flex items-center gap-2"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const trimmed = nameInput.trim();
+                if (!trimmed || !idToken) { setEditingName(false); return; }
+                setSavingName(true);
+                try {
+                  if (trimmed === merchant.name) {
+                    // Reset to auto-derived name
+                    await fetch("/api/user/merchant-display-name", {
+                      method: "DELETE",
+                      headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+                      body: JSON.stringify({ slug }),
+                    });
+                    setMerchant((m) => m ? { ...m, displayName: undefined } : m);
+                  } else {
+                    await fetch("/api/user/merchant-display-name", {
+                      method: "PUT",
+                      headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+                      body: JSON.stringify({ slug, displayName: trimmed }),
+                    });
+                    setMerchant((m) => m ? { ...m, displayName: trimmed } : m);
+                  }
+                } finally {
+                  setSavingName(false);
+                  setEditingName(false);
+                }
+              }}
+            >
+              <input
+                autoFocus
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
+                className="text-2xl font-bold tracking-tight text-gray-900 border-b-2 border-indigo-400 bg-transparent outline-none w-full"
+              />
+              <button type="submit" disabled={savingName} className="shrink-0 rounded-lg bg-indigo-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50">
+                {savingName ? "…" : "Save"}
+              </button>
+              <button type="button" onClick={() => setEditingName(false)} className="shrink-0 text-xs text-gray-400 hover:text-gray-600">
+                Cancel
+              </button>
+            </form>
+          ) : (
+            <div className="mt-0.5 flex items-center gap-2 group">
+              <p className="text-4xl font-bold tracking-tight text-gray-900">
+                {merchant.displayName ?? merchant.name}
+              </p>
+              <button
+                type="button"
+                title="Rename merchant"
+                onClick={() => { setNameInput(merchant.displayName ?? merchant.name); setEditingName(true); }}
+                className="opacity-0 group-hover:opacity-100 transition-opacity rounded p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2a2 2 0 01.586-1.414z" />
+                </svg>
+              </button>
+              {merchant.displayName && (
+                <span className="text-xs text-gray-400 hidden group-hover:inline">
+                  ({merchant.name})
+                </span>
+              )}
+            </div>
+          )}
           <p className="mt-1 text-sm text-gray-400">
             {formatCurrency(monthlyAvg, homeCurrency, undefined, true)}/mo avg · {activeMonths} active month{activeMonths !== 1 ? "s" : ""}
           </p>
@@ -902,7 +972,7 @@ export default function MerchantDetailPage() {
           <InsightCard icon="info">
             At your current pace, you&apos;ll spend{" "}
             <span className="font-semibold">~{formatCurrency(annualRounded, homeCurrency, undefined, true)}</span>{" "}
-            at {merchant.name} this year — about{" "}
+            at {displayedName} this year — about{" "}
             <span className="font-semibold">{formatCurrency(Math.abs(Math.round(annualDiff / 50) * 50), homeCurrency, undefined, true)}</span>{" "}
             {annualDiff > 0 ? "more" : "less"} than last year&apos;s run rate.
           </InsightCard>

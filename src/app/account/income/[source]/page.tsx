@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useRouter, useParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
@@ -17,6 +17,8 @@ import {
 } from "@/lib/incomeEngine";
 import type { SourceMonthData } from "@/lib/incomeEngine";
 import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
+import { pairKey } from "@/lib/sourceMappings";
+import type { SourceSuggestion, SourceMapping } from "@/lib/sourceMappings";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -51,38 +53,96 @@ export default function IncomeSourcePage() {
   const params = useParams();
   const sourceName = decodeURIComponent(params.source as string);
 
-  const [history, setHistory]       = useState<SourceMonthData[]>([]);
-  const [totalMonths, setTotalMonths] = useState(0);
-  const [loading, setLoading]       = useState(true);
-  const [error, setError]           = useState<string | null>(null);
+  const [history, setHistory]             = useState<SourceMonthData[]>([]);
+  const [totalMonths, setTotalMonths]     = useState(0);
+  const [loading, setLoading]             = useState(true);
+  const [error, setError]                 = useState<string | null>(null);
   const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
+  const [token, setToken]                 = useState<string | null>(null);
+
+  // Merge state
+  const [similarSources, setSimilarSources]   = useState<SourceSuggestion[]>([]);
+  const [mergeExpanded, setMergeExpanded]     = useState(false);
+  const [mergeSelected, setMergeSelected]     = useState<Set<string>>(new Set());
+  const [merging, setMerging]                 = useState(false);
+
+  const loadData = useCallback(async (tok: string) => {
+    try {
+      const consolidatedRes = await fetch("/api/user/statements/consolidated", {
+        headers: { Authorization: `Bearer ${tok}` },
+      });
+      const json = await consolidatedRes.json().catch(() => ({}));
+      if (!consolidatedRes.ok) { setError(json.error ?? "Failed to load"); return; }
+
+      const sourceHist: Record<string, SourceMonthData[]> = json.incomeSourceHistory ?? {};
+      const months = (sourceHist[sourceName] ?? [])
+        .slice()
+        .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth));
+      setHistory(months);
+      setTotalMonths(json.totalMonthsTracked ?? 0);
+      if (months.length > 0) setExpandedMonth(months[0].yearMonth);
+
+      // Use server-computed incomeSuggestions (includes both statement + cash sources,
+      // already filtered against existing mappings). Filter to pairs involving this source.
+      const allSuggestions: SourceSuggestion[] = json.incomeSuggestions ?? [];
+      const lc = sourceName.toLowerCase();
+      const relevant = allSuggestions.filter(
+        (s) => s.canonical.toLowerCase() === lc || s.alias.toLowerCase() === lc
+      );
+      const normalised = relevant.map((s) => {
+        const matchesCanonical = s.canonical.toLowerCase() === lc;
+        return matchesCanonical
+          ? { ...s, canonical: sourceName }
+          : { ...s, canonical: sourceName, alias: s.canonical };
+      });
+      setSimilarSources(normalised);
+    } catch { setError("Failed to load source data"); }
+    finally { setLoading(false); }
+  }, [sourceName]);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
       if (!user) { router.push("/login"); return; }
       setLoading(true); setError(null);
-      try {
-        const token = await user.getIdToken();
-        const res = await fetch("/api/user/statements/consolidated", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) { setError(json.error ?? "Failed to load"); return; }
-
-        const sourceHist: Record<string, SourceMonthData[]> = json.incomeSourceHistory ?? {};
-        const months = (sourceHist[sourceName] ?? [])
-          .slice()
-          .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth));
-        setHistory(months);
-        setTotalMonths(json.totalMonthsTracked ?? 0);
-
-        // Auto-expand the most recent month
-        if (months.length > 0) setExpandedMonth(months[0].yearMonth);
-      } catch { setError("Failed to load source data"); }
-      finally { setLoading(false); }
+      const tok = await user.getIdToken();
+      setToken(tok);
+      await loadData(tok);
     });
-  }, [router, sourceName]);
+  }, [router, loadData]);
+
+  // ── merge handler ─────────────────────────────────────────────────────────
+
+  async function handleMerge() {
+    if (!token || mergeSelected.size === 0) return;
+    setMerging(true);
+    try {
+      const toSave: SourceMapping[] = Array.from(mergeSelected).map((alias) => {
+        const key = pairKey(sourceName, alias);
+        return {
+          id:           key.replace(/\|/g, "_"),
+          pairKey:      key,
+          type:         "income" as const,
+          canonical:    sourceName,
+          alias,
+          status:       "confirmed" as const,
+          affectsCache: false,
+          createdAt:    new Date().toISOString(),
+        };
+      });
+      await fetch("/api/user/source-mappings", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ mappings: toSave }),
+      });
+      setMergeSelected(new Set());
+      setSimilarSources((prev) => prev.filter((s) => !mergeSelected.has(s.alias)));
+      setMergeExpanded(false);
+      // Reload so history reflects the merge
+      setLoading(true);
+      await loadData(token);
+    } finally { setMerging(false); }
+  }
 
   // ── derived ───────────────────────────────────────────────────────────────
 
@@ -117,13 +177,13 @@ export default function IncomeSourcePage() {
     </div>
   );
   if (error) return (
-    <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8">
+    <div className="mx-auto max-w-2xl lg:max-w-5xl px-4 pt-4 pb-8 sm:py-8">
       <p className="text-red-600">{error}</p>
     </div>
   );
 
   return (
-    <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
+    <div className="mx-auto max-w-2xl lg:max-w-5xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
       {/* Back nav */}
       <Link
@@ -136,15 +196,71 @@ export default function IncomeSourcePage() {
         Income
       </Link>
 
+      {/* Similar sources — merge banner */}
+      {similarSources.length > 0 && (
+        <div className="mb-4 rounded-xl border border-purple-200 bg-purple-50/40 overflow-hidden">
+          <div role="button" tabIndex={0}
+            className="flex w-full items-center gap-2 px-4 py-3 text-left cursor-pointer hover:bg-purple-50 transition"
+            onClick={() => setMergeExpanded((v) => !v)}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setMergeExpanded((v) => !v); }}
+          >
+            <svg className="h-4 w-4 shrink-0 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            <p className="flex-1 text-sm font-semibold text-purple-900">
+              {similarSources.length} similar source{similarSources.length !== 1 ? "s" : ""} found — merge to combine history
+            </p>
+            {mergeSelected.size >= 1 && (
+              <button
+                onClick={(e) => { e.stopPropagation(); void handleMerge(); }}
+                disabled={merging}
+                className="shrink-0 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 disabled:opacity-50 transition"
+              >
+                {merging ? "Merging…" : `Merge ${mergeSelected.size}`}
+              </button>
+            )}
+            <svg className={`h-4 w-4 shrink-0 text-purple-400 transition-transform ${mergeExpanded ? "rotate-180" : ""}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
+          {mergeExpanded && (
+            <div className="border-t border-purple-100 divide-y divide-purple-100/60">
+              {similarSources.map((s) => {
+                const checked = mergeSelected.has(s.alias);
+                return (
+                  <button key={s.alias}
+                    onClick={() => setMergeSelected((prev) => {
+                      const next = new Set(prev);
+                      checked ? next.delete(s.alias) : next.add(s.alias);
+                      return next;
+                    })}
+                    className={`flex w-full items-center gap-3 px-4 py-2.5 text-left transition hover:bg-purple-50/60 ${checked ? "" : "opacity-60"}`}
+                  >
+                    <span className={`shrink-0 h-4 w-4 rounded border flex items-center justify-center transition ${checked ? "border-purple-500 bg-purple-500" : "border-gray-300 bg-white"}`}>
+                      {checked && <svg className="h-2.5 w-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
+                    </span>
+                    <span className="flex-1 text-sm text-gray-800 truncate">{s.alias}</span>
+                    <svg className="h-3 w-3 shrink-0 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" /></svg>
+                    <span className="text-sm text-gray-500 truncate">{sourceName}</span>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${s.confidence === "high" ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"}`}>
+                      {s.confidence}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Header */}
       <div className="mb-6">
         <h1 className="text-3xl font-bold text-gray-900 truncate">{sourceName}</h1>
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          {/* Frequency badge */}
           <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${fcfg.badge}`}>
             {fcfg.label}
           </span>
-          {/* Reliability badge */}
           {!needsMoreData && (
             <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${rcfg.badge}`}>
               {rcfg.label}
@@ -161,8 +277,8 @@ export default function IncomeSourcePage() {
         {/* ── KPI strip ────────────────────────────────────────────────────── */}
         <div className="grid grid-cols-3 gap-3">
           {[
-            { label: "Total earned", value: fmt(totalEarned) },
-            { label: "Avg per month", value: fmt(avgPerMonth) },
+            { label: "Total earned",   value: fmt(totalEarned) },
+            { label: "Avg per month",  value: fmt(avgPerMonth) },
             { label: "Months tracked", value: String(history.length) },
           ].map(({ label, value }) => (
             <div key={label} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm text-center">
@@ -214,13 +330,13 @@ export default function IncomeSourcePage() {
             <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">Reliability signals</p>
             <div className="space-y-3">
               {[
-                { label: "Amount consistency", score: reliabilityResult!.amountScore, weight: "50%" },
-                { label: "Timing consistency", score: reliabilityResult!.timingScore, weight: "30%" },
+                { label: "Amount consistency", score: reliabilityResult!.amountScore,    weight: "50%" },
+                { label: "Timing consistency", score: reliabilityResult!.timingScore,    weight: "30%" },
                 { label: "Frequency",          score: reliabilityResult!.frequencyScore, weight: "20%" },
               ].map(({ label, score, weight }) => (
                 <div key={label}>
                   <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-                    <span>{label} <span className="text-gray-300">·{weight}</span></span>
+                    <span>{label} <span className="text-gray-300">· {weight}</span></span>
                     <span className="font-semibold text-gray-700">{score}/100</span>
                   </div>
                   <div className="h-1.5 overflow-hidden rounded-full bg-gray-100">
@@ -258,7 +374,6 @@ export default function IncomeSourcePage() {
                       className="w-full px-5 py-3.5 flex items-center gap-4 text-left hover:bg-gray-50 transition"
                       onClick={() => setExpandedMonth(isOpen ? null : h.yearMonth)}
                     >
-                      {/* Month bar indicator */}
                       <div className="shrink-0 w-1 h-8 rounded-full overflow-hidden bg-gray-100">
                         <div
                           className="w-full rounded-full bg-purple-400 transition-all"
@@ -282,14 +397,11 @@ export default function IncomeSourcePage() {
                       </div>
                     </button>
 
-                    {/* Transaction list */}
                     {isOpen && sorted.length > 0 && (
                       <div className="border-t border-gray-100 bg-gray-50 divide-y divide-gray-100">
                         {sorted.map((txn, i) => (
                           <div key={i} className="flex items-center justify-between px-5 py-3">
-                            <div>
-                              <p className="text-sm font-medium text-gray-700">{txn.date ? fmtDate(txn.date) : "—"}</p>
-                            </div>
+                            <p className="text-sm font-medium text-gray-700">{txn.date ? fmtDate(txn.date) : "—"}</p>
                             <span className="text-sm font-semibold text-green-600 tabular-nums">+{fmt(txn.amount)}</span>
                           </div>
                         ))}

@@ -41,7 +41,7 @@ export const CASH_INCOME_FREQ_MONTHLY: Record<CashIncomeFrequency, number> = {
  * this entry is expected to land in that month.
  *
  * Rules:
- *  - Only counts months on or after the entry's createdAt month (no retroactive backfill).
+ *  - Only counts months on or after the entry's startDate month (no retroactive backfill).
  *  - For "once": counts 1 only if nextDate falls within yearMonth.
  *  - For recurring: uses the day-of-month from nextDate and the frequency cadence.
  */
@@ -100,5 +100,79 @@ export function occurrencesInMonth(entry: CashIncomeEntry, yearMonth: string): n
 
     default:
       return 0;
+  }
+}
+
+/**
+ * Returns the ISO YYYY-MM-DD dates on which a cash income entry lands in a
+ * given month.  Mirrors occurrencesInMonth but yields actual dates instead of
+ * a count — used to build synthetic income transactions.
+ */
+export function datesInMonth(entry: CashIncomeEntry, yearMonth: string): string[] {
+  if (entry.startDate && yearMonth < entry.startDate.slice(0, 7)) return [];
+
+  const [ty, tm] = yearMonth.split("-").map(Number);
+  const monthStart = new Date(ty, tm - 1, 1).getTime();
+  const monthEnd   = new Date(ty, tm, 0).getTime();
+
+  const clampDay = (day: number) => {
+    const maxDay = new Date(ty, tm, 0).getDate();
+    const d = new Date(ty, tm - 1, Math.min(day, maxDay));
+    return d.toISOString().slice(0, 10);
+  };
+
+  if (entry.frequency === "once") {
+    if (!entry.nextDate) return [];
+    return entry.nextDate.slice(0, 7) === yearMonth ? [entry.nextDate] : [];
+  }
+
+  if (!entry.nextDate) {
+    // No anchor — place on the 1st for monthly, skip otherwise
+    return entry.frequency === "monthly" ? [`${yearMonth}-01`] : [];
+  }
+
+  const anchorDate  = new Date(entry.nextDate + "T12:00:00");
+  const anchorMonth = entry.nextDate.slice(0, 7);
+  const [ay, am]    = anchorMonth.split("-").map(Number);
+  const monthDiff   = (ty - ay) * 12 + (tm - am);
+
+  switch (entry.frequency) {
+    case "monthly":
+      return [clampDay(anchorDate.getDate())];
+
+    case "quarterly":
+      return monthDiff >= 0 && monthDiff % 3 === 0 ? [entry.nextDate] : [];
+
+    case "annual":
+      return monthDiff >= 0 && monthDiff % 12 === 0 ? [entry.nextDate] : [];
+
+    case "biweekly": {
+      const step = 14 * 86_400_000;
+      const anchorMs = anchorDate.getTime();
+      const stepsNeeded = Math.ceil((monthStart - anchorMs) / step);
+      let cursor = anchorMs + stepsNeeded * step;
+      const dates: string[] = [];
+      while (cursor <= monthEnd) {
+        if (cursor >= monthStart) dates.push(new Date(cursor).toISOString().slice(0, 10));
+        cursor += step;
+      }
+      return dates;
+    }
+
+    case "weekly": {
+      const step = 7 * 86_400_000;
+      const anchorMs = anchorDate.getTime();
+      const stepsNeeded = Math.ceil((monthStart - anchorMs) / step);
+      let cursor = anchorMs + stepsNeeded * step;
+      const dates: string[] = [];
+      while (cursor <= monthEnd) {
+        if (cursor >= monthStart) dates.push(new Date(cursor).toISOString().slice(0, 10));
+        cursor += step;
+      }
+      return dates;
+    }
+
+    default:
+      return [];
   }
 }

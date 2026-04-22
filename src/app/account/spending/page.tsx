@@ -146,11 +146,11 @@ function RecurringListIcon({ name }: { name: string }) {
 
 const TABS = [
   { id: "overview",       label: "Overview" },
-  { id: "transactions",   label: "Transactions" },
   { id: "merchants",      label: "By Merchant" },
   { id: "categories",     label: "By Category" },
   { id: "subscriptions",  label: "Recurring" },
   { id: "cash",           label: "Cash" },
+  { id: "transactions",   label: "Transactions" },
 ] as const;
 type TabId = typeof TABS[number]["id"];
 
@@ -210,6 +210,11 @@ function merchantInitials(name: string): string {
   const words = name.trim().split(/\s+/);
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
   return (words[0][0] + (words[1][0] ?? "")).toUpperCase();
+}
+
+/** Returns the user-facing display name for a merchant (display name override → statement name). */
+function mdn(m: { name: string; displayName?: string }): string {
+  return m.displayName ?? m.name;
 }
 
 function MerchantSparkline({ monthly, color, fromYm }: {
@@ -1499,7 +1504,22 @@ function SpendingPageInner() {
     .filter((s) => s.nextChargePrediction && s.nextChargePrediction.daysFromNow >= -3)
     .sort((a, b) => (a.nextChargePrediction!.daysFromNow) - (b.nextChargePrediction!.daysFromNow))[0] ?? null;
 
-  const allRecurringSorted = [...enrichedSubs].sort((a, b) => b.yearly - a.yearly);
+  // Deduplicate subscriptions whose slugs are merged aliases of the same canonical merchant.
+  // e.g. "COURSERA.ORG SCHIPHOL" (slug "coursera-org-schiphol") and "COURSERA.ORG"
+  // (slug "coursera-org") both get AI-detected; once merged they should show as one entry.
+  // Sorted highest-yearly-first so we keep the "main" one when deduplicating.
+  const _sortedForDedup = [...enrichedSubs].sort((a, b) => b.yearly - a.yearly);
+  const _seenCanonicals = new Set<string>();
+  const allRecurringSorted = _sortedForDedup.filter((sub) => {
+    const slug = merchantSlug(sub.name);
+    const canonical =
+      allTimeMerchants?.find((m) => m.slug === slug)?.slug ??
+      allTimeMerchants?.find((m) => slug.startsWith(m.slug + "-"))?.slug ??
+      slug; // no merchant match — treat own slug as canonical
+    if (_seenCanonicals.has(canonical)) return false;
+    _seenCanonicals.add(canonical);
+    return true;
+  });
   const SUB_PREVIEW_COUNT  = 3;
   const hiddenSubs         = allRecurringSorted.slice(SUB_PREVIEW_COUNT);
   const hiddenSubsMo       = hiddenSubs.reduce((s, sub) => s + sub.monthly, 0);
@@ -2364,7 +2384,7 @@ function SpendingPageInner() {
                     Top 3 · {formatCurrency(topMerchantsData.top3Total, homeCurrency, undefined, true)}
                   </p>
                   <p className="text-xs text-gray-400 mt-auto pt-1 truncate">
-                    {topMerchantsData.top3.map((m) => m.name).join(", ")}
+                    {topMerchantsData.top3.map((m) => mdn(m)).join(", ")}
                   </p>
                 </button>
               )}
@@ -2692,7 +2712,7 @@ function SpendingPageInner() {
                     /* ── Search results with merge select ── */
                     (() => {
                       const searchResults = allTimeMerchants
-                        .filter((m) => m.name.toLowerCase().includes(merchantSearch.toLowerCase()) || m.category.toLowerCase().includes(merchantSearch.toLowerCase()))
+                        .filter((m) => mdn(m).toLowerCase().includes(merchantSearch.toLowerCase()) || m.name.toLowerCase().includes(merchantSearch.toLowerCase()) || m.category.toLowerCase().includes(merchantSearch.toLowerCase()))
                         .sort((a, b) => b.total - a.total);
                       const mergeReady = mergeSelected.size >= 2;
                       const effectiveCanonical = mergeCanonicalSlug || (searchResults.find((m) => mergeSelected.has(m.slug))?.slug ?? "");
@@ -2724,7 +2744,7 @@ function SpendingPageInner() {
                                   className="flex-1 min-w-0 rounded-lg border border-purple-200 bg-white px-2 py-1 text-xs font-medium text-gray-800 focus:outline-none focus:ring-1 focus:ring-purple-400"
                                 >
                                   {searchResults.filter((m) => mergeSelected.has(m.slug)).map((m) => (
-                                    <option key={m.slug} value={m.slug}>{m.name}</option>
+                                    <option key={m.slug} value={m.slug}>{mdn(m)}</option>
                                   ))}
                                 </select>
                               </div>
@@ -2765,10 +2785,10 @@ function SpendingPageInner() {
                                     </button>
                                   )}
                                   <Link href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex flex-1 items-center gap-2 sm:gap-3 min-w-0">
-                                    <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(m.name)}</span>
+                                    <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(mdn(m))}</span>
                                     <div className="flex-1 min-w-0">
                                       <div className="flex items-center gap-1.5">
-                                        <p className="text-sm font-semibold text-gray-900 truncate">{m.name}</p>
+                                        <p className="text-sm font-semibold text-gray-900 truncate">{mdn(m)}</p>
                                         {isCanonical && <span className="shrink-0 rounded-full bg-purple-100 px-1.5 py-0.5 text-[9px] font-semibold text-purple-600 uppercase tracking-wide">keep</span>}
                                       </div>
                                       <p className="text-[11px] text-gray-400 mt-0.5">
@@ -2817,9 +2837,9 @@ function SpendingPageInner() {
                               const pctOfSpend = mGrandTotal > 0 ? Math.round((m.total / mGrandTotal) * 100) : 0;
                               return (
                                 <Link key={m.slug} href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 sm:py-3.5 hover:bg-gray-50 transition">
-                                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(m.name)}</span>
+                                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(mdn(m))}</span>
                                   <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-semibold text-gray-900 truncate">{m.name}</p>
+                                    <p className="text-sm font-semibold text-gray-900 truncate">{mdn(m)}</p>
                                     <p className="text-[11px] text-gray-400 mt-0.5">
                                       <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} /><span className="uppercase text-[9px] tracking-wide font-medium" style={{ color }}>{m.category}</span></span>
                                       {" · "}{m.count} visit{m.count !== 1 ? "s" : ""}
@@ -2881,10 +2901,10 @@ function SpendingPageInner() {
                                 : `${isUp ? "↑" : "↓"} ${Math.abs(m.pct)}%`;
                               return (
                                 <Link key={m.slug} href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 sm:py-3.5 hover:bg-gray-50 transition">
-                                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(m.name)}</span>
+                                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(mdn(m))}</span>
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-1.5">
-                                      <p className="text-sm font-semibold text-gray-900 truncate">{m.name}</p>
+                                      <p className="text-sm font-semibold text-gray-900 truncate">{mdn(m)}</p>
                                       <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${isUp ? "bg-red-50 text-red-500" : "bg-green-50 text-green-600"}`}>{pctLabel}</span>
                                     </div>
                                     <p className="text-[11px] text-gray-400 mt-0.5">
@@ -2923,10 +2943,10 @@ function SpendingPageInner() {
                               const isRecurring = allSubscriptions.some((s) => merchantSlug(s.name) === m.slug);
                               return (
                                 <Link key={m.slug} href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 sm:py-3.5 hover:bg-gray-50 transition">
-                                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(m.name)}</span>
+                                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(mdn(m))}</span>
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-1.5">
-                                      <p className="text-sm font-semibold text-gray-900 truncate">{m.name}</p>
+                                      <p className="text-sm font-semibold text-gray-900 truncate">{mdn(m)}</p>
                                       <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold bg-purple-50 text-purple-600">NEW</span>
                                       {isRecurring && <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium bg-indigo-50 text-indigo-500">recurring</span>}
                                     </div>
@@ -3186,10 +3206,10 @@ function SpendingPageInner() {
                                                     href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`}
                                                     className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold hover:opacity-80 transition ${subAvatarColor(m.name)}`}
                                                   >
-                                                    {merchantInitials(m.name)}
+                                                    {merchantInitials(mdn(m))}
                                                   </Link>
                                                   <div className="flex-1 min-w-0">
-                                                    <Link href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="text-xs font-medium text-gray-800 truncate hover:text-purple-600 hover:underline block">{m.name}</Link>
+                                                    <Link href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="text-xs font-medium text-gray-800 truncate hover:text-purple-600 hover:underline block">{mdn(m)}</Link>
                                                     <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                                                       <span className="text-[10px] text-gray-400">{m.count} visit{m.count !== 1 ? "s" : ""} · {formatCurrency(m.avgAmount, homeCurrency, m.currency, false)} avg</span>
                                                       <button
@@ -3370,15 +3390,21 @@ function SpendingPageInner() {
                   )}
 
                   {/* ── Next upcoming charge ── */}
-                  {subNextCharge && (
-                    <div className="rounded-xl border border-gray-200 bg-white shadow-sm px-5 py-3.5 flex items-center gap-3">
+                  {subNextCharge && (() => {
+                    const ncSlug = merchantSlug(subNextCharge.name);
+                    const ncMerchant = allTimeMerchants?.find((m) => m.slug === ncSlug) ??
+                      allTimeMerchants?.find((m) => ncSlug.startsWith(m.slug + "-"));
+                    const ncLinkSlug = ncMerchant?.slug ?? ncSlug;
+                    const ncDisplayName = ncMerchant ? mdn(ncMerchant) : subNextCharge.name;
+                    return (
+                    <Link href={`/account/spending/merchant/${encodeURIComponent(ncLinkSlug)}`} className="rounded-xl border border-gray-200 bg-white shadow-sm px-5 py-3.5 flex items-center gap-3 hover:bg-gray-50 transition">
                       <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${subNextCharge.nextChargePrediction ? subAvatarColor(new Date(subNextCharge.nextChargePrediction.date + "T12:00:00").toLocaleDateString("en-US", { month: "short" }).toUpperCase()) : subAvatarColor(subNextCharge.name)}`}>
                         {subNextCharge.nextChargePrediction
                           ? new Date(subNextCharge.nextChargePrediction.date + "T12:00:00").toLocaleDateString("en-US", { month: "short" }).toUpperCase()
-                          : subInitials(subNextCharge.name)}
+                          : merchantInitials(ncDisplayName)}
                       </span>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-gray-900">{subNextCharge.name}</p>
+                        <p className="text-sm font-semibold text-gray-900">{ncDisplayName}</p>
                         <p className="text-xs text-gray-400">
                           Next charge · {subNextCharge.nextChargePrediction ? fmtMD(subNextCharge.nextChargePrediction.date) : "—"}
                           {subNextCharge.nextChargePrediction && (() => {
@@ -3393,8 +3419,9 @@ function SpendingPageInner() {
                       <p className="text-sm font-bold text-gray-900 tabular-nums shrink-0">
                         {formatCurrency(subNextCharge.amount, homeCurrency, undefined, false)}
                       </p>
-                    </div>
-                  )}
+                    </Link>
+                    );
+                  })()}
 
                   {/* ── Recent changes ── */}
                   {recentChanges.length > 0 && (
@@ -3423,14 +3450,18 @@ function SpendingPageInner() {
                           const baseAmt = subRec?.baseAmount;
                           const freqLabel = sub.frequency ?? "monthly";
                           const periodSuffix = freqLabel === "annual" ? "yr" : freqLabel === "quarterly" ? "qtr" : freqLabel === "weekly" ? "wk" : freqLabel === "biweekly" ? "2wk" : "mo";
+                          const changeMerchant = allTimeMerchants?.find((m) => m.slug === slug) ??
+                            allTimeMerchants?.find((m) => slug.startsWith(m.slug + "-"));
+                          const changeLinkSlug = changeMerchant?.slug ?? slug;
+                          const changeDisplayName = changeMerchant ? mdn(changeMerchant) : sub.name;
                           return (
-                            <div key={sub.name} className={`flex items-center gap-3 px-5 py-3 ${isDormant ? "opacity-60" : ""}`}>
+                            <Link key={sub.name} href={`/account/spending/merchant/${encodeURIComponent(changeLinkSlug)}`} className={`flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition ${isDormant ? "opacity-60" : ""}`}>
                               <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${subAvatarColor(sub.name)}`}>
-                                {subInitials(sub.name)}
+                                {merchantInitials(changeDisplayName)}
                               </span>
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-1.5 flex-wrap">
-                                  <p className={`text-sm font-semibold text-gray-900 truncate ${isDormant ? "line-through text-gray-400" : ""}`}>{sub.name}</p>
+                                  <p className={`text-sm font-semibold text-gray-900 truncate ${isDormant ? "line-through text-gray-400" : ""}`}>{changeDisplayName}</p>
                                   <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${badgeStyle[changeType]}`}>
                                     {badgeLabel[changeType]}
                                   </span>
@@ -3445,7 +3476,7 @@ function SpendingPageInner() {
                                   {formatCurrency(sub.yearly, homeCurrency, undefined, true)}/yr
                                 </p>
                               </div>
-                            </div>
+                            </Link>
                           );
                         })}
                       </div>
@@ -3469,6 +3500,7 @@ function SpendingPageInner() {
                     const renderRow = (sub: typeof allRecurringSorted[0]) => {
                       const slug         = merchantSlug(sub.name);
                       const subRec       = firestoreSubsMap.get(slug);
+
                       const isUserConf   = subRec?.status === "user_confirmed";
                       const isConfirming = confirmingSlug === slug;
                       const freqLabel    = sub.frequency ?? "monthly";
@@ -3487,20 +3519,28 @@ function SpendingPageInner() {
                       const baseYearly   = baseAmt != null && baseAmt > 0
                         ? (freqLabel === "annual" ? baseAmt : freqLabel === "quarterly" ? baseAmt * 4 : freqLabel === "biweekly" ? baseAmt * (365 / 14) : freqLabel === "weekly" ? baseAmt * 52 : baseAmt * 12)
                         : null;
+                      // Find the merchant — if the slug is a merged alias (e.g. "coursera-org-schiphol"
+                      // folded into "coursera-org"), fall back to the canonical via prefix match.
+                      const subMerchant  = allTimeMerchants?.find((m) => m.slug === slug) ??
+                        allTimeMerchants?.find((m) => slug.startsWith(m.slug + "-"));
+                      const linkSlug     = subMerchant?.slug ?? slug;
+                      const displayName  = subMerchant ? mdn(subMerchant) : sub.name;
                       return (
                         <Fragment key={sub.name}>
                           <div className="flex items-center gap-3 px-5 py-3.5">
+                            <Link href={`/account/spending/merchant/${encodeURIComponent(linkSlug)}`} className="flex flex-1 min-w-0 items-center gap-3 hover:opacity-80 transition-opacity">
                             <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(sub.name)}`}>
-                              {subInitials(sub.name)}
+                              {merchantInitials(displayName)}
                             </span>
-                            <div className="flex-1 min-w-0">
+                            <div className="min-w-0">
                               <div className="flex items-center gap-1.5">
-                                <p className="text-sm font-semibold text-gray-900 truncate">{sub.name}</p>
+                                <p className="text-sm font-semibold text-gray-900 truncate">{displayName}</p>
                                 <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${freqColor}`}>{freqLabel}</span>
                                 {isUserConf && <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold bg-green-50 text-green-600">confirmed</span>}
                               </div>
                               {dateParts.length > 0 && <p className="text-[11px] text-gray-400 mt-0.5">{dateParts.join(" · ")}</p>}
                             </div>
+                            </Link>
                             <div className="text-right shrink-0">
                               <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(baseYearly ?? sub.yearly, homeCurrency, undefined, true)}/yr</p>
                               <p className="text-[11px] text-gray-400 tabular-nums">
@@ -3614,15 +3654,20 @@ function SpendingPageInner() {
                       const periodSuffix = freqLabel === "annual" ? "yr" : freqLabel === "quarterly" ? "qtr" : freqLabel === "weekly" ? "wk" : freqLabel === "biweekly" ? "2wk" : "mo";
                       const baseAmt      = subRec?.baseAmount;
                       const overageAmt   = baseAmt != null && baseAmt > 0 ? sub.amount - baseAmt : null;
+                      const subMerchant  = allTimeMerchants?.find((m) => m.slug === slug) ??
+                        allTimeMerchants?.find((m) => slug.startsWith(m.slug + "-"));
+                      const linkSlug     = subMerchant?.slug ?? slug;
+                      const displayName  = subMerchant ? mdn(subMerchant) : sub.name;
                       return (
                         <Fragment key={sub.name}>
                           <div className="flex items-center gap-3 px-5 py-3.5">
+                            <Link href={`/account/spending/merchant/${encodeURIComponent(linkSlug)}`} className="flex flex-1 min-w-0 items-center gap-3 hover:opacity-80 transition-opacity">
                             <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(sub.name)}`}>
-                              {subInitials(sub.name)}
+                              {merchantInitials(displayName)}
                             </span>
-                            <div className="flex-1 min-w-0">
+                            <div className="min-w-0">
                               <div className="flex items-center gap-1.5">
-                                <p className="text-sm font-semibold text-gray-900 truncate">{sub.name}</p>
+                                <p className="text-sm font-semibold text-gray-900 truncate">{displayName}</p>
                                 <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${freqColor}`}>{freqLabel}</span>
                                 {isUserConf && <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold bg-green-50 text-green-600">confirmed</span>}
                               </div>
@@ -3633,6 +3678,7 @@ function SpendingPageInner() {
                                 </p>
                               )}
                             </div>
+                            </Link>
                             <div className="text-right shrink-0">
                               <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(sub.amount, homeCurrency, undefined, false)}/{periodSuffix}</p>
                               {baseAmt != null && baseAmt > 0 && (
