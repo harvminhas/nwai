@@ -44,17 +44,26 @@ export async function PUT(req: NextRequest) {
   const uid = await getUid(req);
   if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = await req.json().catch(() => ({}));
-  const { source, category } = body as { source?: string; category?: string };
-  if (!source || !category) {
-    return NextResponse.json({ error: "source and category are required" }, { status: 400 });
+  const { source, category, frequencyOverride } = body as { source?: string; category?: string; frequencyOverride?: string | null };
+  if (!source) {
+    return NextResponse.json({ error: "source is required" }, { status: 400 });
   }
   const { db } = getFirebaseAdmin();
   const slug = sourceSlug(source);
   const now = new Date().toISOString();
-  await db.doc(`users/${uid}/incomeCategoryRules/${slug}`).set(
-    { source, slug, category, updatedAt: now },
-    { merge: true }
-  );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const payload: Record<string, any> = { source, slug, updatedAt: now };
+  if (category !== undefined) payload.category = category;
+  if (frequencyOverride !== undefined) {
+    if (frequencyOverride === null) {
+      // Use FieldValue.delete() to remove the field
+      const { FieldValue } = await import("firebase-admin/firestore");
+      payload.frequencyOverride = FieldValue.delete();
+    } else {
+      payload.frequencyOverride = frequencyOverride;
+    }
+  }
+  await db.doc(`users/${uid}/incomeCategoryRules/${slug}`).set(payload, { merge: true });
 
   // If the user marks a source as Transfer, also add it to transferIncomeSources pref
   // and invalidate the financial profile cache so incomeTotal is recomputed.

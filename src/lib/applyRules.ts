@@ -1,4 +1,4 @@
-import type { ParsedStatementData, ExpenseCategory, ExpenseTransaction } from "./types";
+import type { ParsedStatementData, ExpenseCategory, ExpenseTransaction, IncomeTransaction } from "./types";
 
 /** Stable key for a merchant name used as Firestore doc ID and rule lookup. */
 export function merchantSlug(merchant: string): string {
@@ -16,6 +16,15 @@ export function merchantSlug(merchant: string): string {
  */
 export function txnKey(accountSlug: string, txn: Pick<ExpenseTransaction, "date" | "amount" | "merchant">): string {
   return `${accountSlug}::${txn.date ?? ""}::${Math.round(Math.abs(txn.amount) * 100)}::${merchantSlug(txn.merchant)}`;
+}
+
+/**
+ * Stable composite key that uniquely identifies an income transaction for
+ * category overrides. Mirrors txnKey but uses source slug instead of merchant.
+ * "cash" is used as accountSlug for synthetic cash-income entries.
+ */
+export function incomeTxnKey(accountSlug: string, txn: Pick<IncomeTransaction, "date" | "amount" | "source">): string {
+  return `${accountSlug}::${txn.date ?? ""}::${Math.round(Math.abs(txn.amount) * 100)}::${merchantSlug(txn.source ?? "")}`;
 }
 
 /**

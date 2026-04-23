@@ -51,6 +51,8 @@ export interface IncomeTransaction {
   accountLabel?: string;
   /** ISO 4217 currency of the source account (e.g. "CAD", "USD"). Populated at API aggregation time. */
   currency?: string;
+  /** Stable account slug (bankName+accountId) used as part of the per-transaction key. "cash" for synthetic cash-income entries. */
+  accountSlug?: string;
 }
 
 export interface Income {

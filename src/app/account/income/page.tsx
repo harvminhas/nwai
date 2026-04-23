@@ -14,11 +14,12 @@ import type { IncomeTransaction, IncomeSource } from "@/lib/types";
 import {
   scoreSource, detectFrequency,
   FREQUENCY_CONFIG, RELIABILITY_CONFIG, GENERIC_SOURCE_NAMES,
-  INCOME_CATEGORIES,
+  INCOME_CATEGORIES, INCOME_CAT_COLORS,
   type Reliability,
 } from "@/lib/incomeEngine";
 import type { SourceMonthData } from "@/lib/incomeEngine";
 import { fmt, getCurrencySymbol, formatCurrency } from "@/lib/currencyUtils";
+import { incomeTxnKey } from "@/lib/applyRules";
 import type { SourceSuggestion } from "@/lib/sourceMappings";
 import { INCOME_TRANSFER_RE } from "@/lib/spendingMetrics";
 import type { CashIncomeEntry, CashIncomeFrequency, CashIncomeCategory } from "@/lib/cashIncome";
@@ -81,7 +82,7 @@ function mergeCashTransactions(
   for (const entry of cashEntries) {
     if (existingNames.has(entry.name.toLowerCase())) continue; // already in statement
     for (const date of datesInMonth(entry, yearMonth)) {
-      synthetic.push({ source: entry.name, amount: entry.amount, date, category: entry.category, accountLabel: "Cash" });
+      synthetic.push({ source: entry.name, amount: entry.amount, date, category: entry.category, accountLabel: "Cash", accountSlug: "cash" });
     }
   }
   return { ...income, transactions: [...existing, ...synthetic] };
@@ -171,17 +172,6 @@ const TABS = [
 ] as const;
 type TabId = typeof TABS[number]["id"];
 
-const INCOME_CAT_COLORS: Record<string, string> = {
-  "Salary":     "#10b981",
-  "Freelance":  "#6366f1",
-  "Rent":       "#f59e0b",
-  "Business":   "#3b82f6",
-  "Government": "#8b5cf6",
-  "Investment": "#14b8a6",
-  "Gift":       "#ec4899",
-  "Transfer":   "#6b7280",
-  "Other":      "#9ca3af",
-};
 
 // ── local types ───────────────────────────────────────────────────────────────
 
@@ -257,9 +247,15 @@ function IncomePageInner() {
   const [suggestionListExpanded, setSuggestionListExpanded] = useState(false);
   const [homeCurrency, setHomeCurrency]   = useState<string>("USD");
 
-  // Income category rules: source slug → category
+  // Income category rules: source slug → category (source-level default)
   const [incomeCategoryRules, setIncomeCategoryRules] = useState<Record<string, string>>({});
   const [savingCategoryRule, setSavingCategoryRule]   = useState<string | null>(null);
+  // Per-transaction income splits: incomeTxnKey → splits array
+  const [incomeTxnSplits, setIncomeTxnSplits]         = useState<Record<string, { category: string; amount: number }[]>>({});
+  // Split editor state
+  const [editingSplitTxn, setEditingSplitTxn]         = useState<string | null>(null);
+  const [splitDraft, setSplitDraft]                   = useState<{ category: string; amount: string }[]>([]);
+  const [savingTxnKey, setSavingTxnKey]               = useState<string | null>(null);
 
   // Cash income
   const [cashItems, setCashItems]         = useState<CashIncomeEntry[]>([]);
@@ -359,6 +355,7 @@ function IncomePageInner() {
         setTotalMonths(json.totalMonthsTracked ?? hist.length);
         setSourceHistory(json.incomeSourceHistory ?? {});
         setIncomeCategoryRules(json.incomeCategoryRules ?? {});
+        setIncomeTxnSplits(json.incomeTxnSplits ?? {});
         setCashItems((json.cashIncomeItems ?? []) as CashIncomeEntry[]);
 
         const incomeSugg = json.incomeSuggestions ?? [];
@@ -421,6 +418,7 @@ function IncomePageInner() {
       setTotalMonths(json.totalMonthsTracked ?? hist.length);
       setSourceHistory(json.incomeSourceHistory ?? {});
       setIncomeCategoryRules(json.incomeCategoryRules ?? {});
+      setIncomeTxnSplits(json.incomeTxnSplits ?? {});
       const freshCashItems = (json.cashIncomeItems ?? []) as CashIncomeEntry[];
       setCashItems(freshCashItems);
       const latestYm: string = json.yearMonth ?? null;
@@ -572,6 +570,45 @@ function IncomePageInner() {
       }
     } finally {
       setSavingCategoryRule(null);
+    }
+  }
+
+  // ── per-transaction income splits ────────────────────────────────────────────
+
+  function openSplitEditor(txKey: string, existingSplits: { category: string; amount: number }[]) {
+    setEditingSplitTxn(txKey);
+    setSplitDraft(existingSplits.map((s) => ({ category: s.category, amount: String(s.amount) })));
+  }
+
+  function closeSplitEditor() {
+    setEditingSplitTxn(null);
+    setSplitDraft([]);
+  }
+
+  async function handleSaveSplits(
+    txn: { source: string; amount: number; date?: string; accountSlug?: string },
+    rawSplits: { category: string; amount: string }[],
+  ) {
+    if (!token) return;
+    const acctSlug = txn.accountSlug ?? "unknown";
+    const key = incomeTxnKey(acctSlug, txn);
+    // Filter out blank/zero rows, parse amounts
+    const splits = rawSplits
+      .filter((s) => s.category && parseFloat(s.amount) > 0)
+      .map((s) => ({ category: s.category, amount: parseFloat(s.amount) }));
+    setSavingTxnKey(key);
+    try {
+      await fetch("/api/user/income-txn-category", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ accountSlug: acctSlug, date: txn.date, amount: txn.amount, source: txn.source, splits }),
+      });
+      setIncomeTxnSplits((prev) =>
+        splits.length === 0 ? (({ [key]: _, ...rest }) => rest)(prev) : { ...prev, [key]: splits }
+      );
+    } finally {
+      setSavingTxnKey(null);
+      closeSplitEditor();
     }
   }
 
@@ -817,26 +854,59 @@ function IncomePageInner() {
   const cashMonthlyTotal = cashItems.reduce((s, c) => s + toMonthly(c.amount, c.frequency), 0);
 
   // ── Income category breakdown ─────────────────────────────────────────────────
-  // Groups allTimeScoredSources + cash items by category (respects srcTimeScope).
+  // Iterates each transaction in scope, applies incomeTxnSplits so that per-txn
+  // overrides (e.g. one Bonus deposit inside a Salary source) are counted correctly.
   const incomeCategoryBreakdown = (() => {
     type CatEntry = { total: number; sources: { name: string; total: number; isCash: boolean }[] };
     const catMap = new Map<string, CatEntry>();
-    for (const src of allTimeScoredSources) {
-      const cat = incomeCategoryRules[sourceSlug(src.description)] || "Other";
+
+    function addToMap(cat: string, srcName: string, amount: number, isCash: boolean) {
       if (!catMap.has(cat)) catMap.set(cat, { total: 0, sources: [] });
       const e = catMap.get(cat)!;
-      e.total += src.total;
-      e.sources.push({ name: src.description, total: src.total, isCash: false });
+      e.total += amount;
+      // Accumulate into existing source entry if already present for this category
+      const existing = e.sources.find((s) => s.name === srcName && s.isCash === isCash);
+      if (existing) existing.total += amount;
+      else e.sources.push({ name: srcName, total: amount, isCash });
     }
+
+    for (const src of allTimeScoredSources) {
+      const srcCat = incomeCategoryRules[sourceSlug(src.description)] || "Other";
+      const filtered = srcTimeScope === "all"
+        ? (sourceHistory[src.description] ?? [])
+        : (sourceHistory[src.description] ?? []).filter((h) => h.yearMonth >= srcScopeCutoff);
+
+      for (const month of filtered) {
+        if (month.transactions.length === 0) {
+          // No individual transactions — treat whole month amount as source category
+          addToMap(srcCat, src.description, month.amount, false);
+          continue;
+        }
+        for (const txn of month.transactions) {
+          const acctSlug = txn.accountSlug ?? "unknown";
+          const txKey    = incomeTxnKey(acctSlug, { source: src.description, amount: txn.amount, date: txn.date });
+          const splits   = incomeTxnSplits[txKey] ?? [];
+          if (splits.length > 0) {
+            const splitTotal = splits.reduce((s, x) => s + x.amount, 0);
+            const residual   = Math.max(0, txn.amount - splitTotal);
+            if (residual > 0.005) addToMap(srcCat, src.description, residual, false);
+            for (const sp of splits) {
+              if (sp.amount > 0.005) addToMap(sp.category, src.description, sp.amount, false);
+            }
+          } else {
+            addToMap(srcCat, src.description, txn.amount, false);
+          }
+        }
+      }
+    }
+
     for (const item of cashItems) {
       const cashTotal = srcScopeHistory.reduce((s, h) => s + occurrencesInMonth(item, h.yearMonth) * item.amount, 0);
       if (cashTotal <= 0) continue;
       const cat = item.category || "Other";
-      if (!catMap.has(cat)) catMap.set(cat, { total: 0, sources: [] });
-      const e = catMap.get(cat)!;
-      e.total += cashTotal;
-      e.sources.push({ name: item.name, total: cashTotal, isCash: true });
+      addToMap(cat, item.name, cashTotal, true);
     }
+
     const grandTotal = Array.from(catMap.values()).reduce((s, e) => s + e.total, 0);
     return Array.from(catMap.entries())
       .sort((a, b) => b[1].total - a[1].total)
@@ -1378,41 +1448,143 @@ function IncomePageInner() {
             ) : (
               <div className="divide-y divide-gray-100">
                 {transactions.map((txn, i) => {
-                  const rawSrc  = (txn.source ?? "Other").trim();
-                  const slug    = sourceSlug(rawSrc);
-                  const currentCategory = incomeCategoryRules[slug] ?? txn.category ?? "";
-                  const isTransfer = isTransferSource(rawSrc) || transferSources.has(rawSrc) || currentCategory === "Transfer";
-                  const isSaving  = savingCategoryRule === slug;
+                  const rawSrc   = (txn.source ?? "Other").trim();
+                  const acctSlug = txn.accountSlug ?? "unknown";
+                  const txKey    = incomeTxnKey(acctSlug, { source: rawSrc, amount: txn.amount, date: txn.date });
+                  const isCash   = acctSlug === "cash";
+                  const srcCat   = incomeCategoryRules[sourceSlug(rawSrc)] ?? txn.category ?? "Other";
+                  const splits   = incomeTxnSplits[txKey] ?? [];
+                  const splitTotal = splits.reduce((s, x) => s + x.amount, 0);
+                  const residual   = Math.max(0, txn.amount - splitTotal);
+                  const isTransfer = isTransferSource(rawSrc) || transferSources.has(rawSrc) || srcCat === "Transfer";
+                  const isEditing  = editingSplitTxn === txKey;
+                  const isSaving   = savingTxnKey === txKey;
+
                   return (
-                    <div key={i} className={`flex items-center gap-3 px-5 py-3 ${isTransfer ? "opacity-50" : ""}`}>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-800 truncate">{sourceLabels[rawSrc] ?? rawSrc}</p>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          {txn.date && <span className="text-xs text-gray-400">{fmtDate(txn.date)}</span>}
-                          {txn.accountLabel && <span className="text-xs text-gray-300">· {txn.accountLabel}</span>}
-                          {isTransfer && <span className="text-[10px] font-semibold rounded-full bg-gray-100 px-1.5 py-0.5 text-gray-400">transfer</span>}
+                    <div key={i} className={`${isTransfer ? "opacity-50" : ""}`}>
+                      {/* Main row */}
+                      <div className="flex items-center gap-3 px-5 py-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-800 truncate">{sourceLabels[rawSrc] ?? rawSrc}</p>
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                            {txn.date && <span className="text-xs text-gray-400">{fmtDate(txn.date)}</span>}
+                            {txn.accountLabel && <span className="text-xs text-gray-300">· {txn.accountLabel}</span>}
+                            {isTransfer && <span className="text-[10px] font-semibold rounded-full bg-gray-100 px-1.5 py-0.5 text-gray-400">transfer</span>}
+                            {/* Category summary pills */}
+                            {!isTransfer && splits.length === 0 && srcCat && (
+                              <span className="text-[10px] font-medium rounded-full px-1.5 py-0.5"
+                                style={{ backgroundColor: `${INCOME_CAT_COLORS[srcCat] ?? "#9ca3af"}22`, color: INCOME_CAT_COLORS[srcCat] ?? "#9ca3af" }}>
+                                {srcCat}
+                              </span>
+                            )}
+                            {!isTransfer && splits.length > 0 && (
+                              <>
+                                <span className="text-[10px] font-medium rounded-full px-1.5 py-0.5"
+                                  style={{ backgroundColor: `${INCOME_CAT_COLORS[srcCat] ?? "#9ca3af"}22`, color: INCOME_CAT_COLORS[srcCat] ?? "#9ca3af" }}>
+                                  {srcCat} {fmt(residual, homeCurrency)}
+                                </span>
+                                {splits.map((sp, si) => (
+                                  <span key={si} className="text-[10px] font-medium rounded-full px-1.5 py-0.5"
+                                    style={{ backgroundColor: `${INCOME_CAT_COLORS[sp.category] ?? "#9ca3af"}22`, color: INCOME_CAT_COLORS[sp.category] ?? "#9ca3af" }}>
+                                    {sp.category} {fmt(sp.amount, homeCurrency)}
+                                  </span>
+                                ))}
+                              </>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                      {/* Category picker */}
-                      <div className="shrink-0">
-                        {isSaving ? (
-                          <span className="text-xs text-gray-400">Saving…</span>
-                        ) : (
-                          <select
-                            value={currentCategory}
-                            onChange={(e) => handleSetCategory(rawSrc, e.target.value)}
-                            className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-xs font-medium text-gray-700 hover:border-purple-300 focus:outline-none focus:ring-1 focus:ring-purple-400 cursor-pointer"
+                        {/* Split button — hidden for cash entries & transfers */}
+                        {!isCash && !isTransfer && (
+                          <button
+                            onClick={() => isEditing ? closeSplitEditor() : openSplitEditor(txKey, splits)}
+                            className={`shrink-0 rounded-lg border px-2 py-1 text-[11px] font-semibold transition ${
+                              isEditing
+                                ? "border-purple-300 bg-purple-50 text-purple-700"
+                                : splits.length > 0
+                                  ? "border-purple-200 bg-purple-50/60 text-purple-600 hover:bg-purple-100"
+                                  : "border-gray-200 bg-gray-50 text-gray-400 hover:border-purple-200 hover:text-purple-500"
+                            }`}
                           >
-                            <option value="">Categorize…</option>
-                            {INCOME_CATEGORIES.map((cat) => (
-                              <option key={cat} value={cat}>{cat}</option>
-                            ))}
-                          </select>
+                            {splits.length > 0 ? `${splits.length + 1} splits` : "Split"}
+                          </button>
                         )}
+                        <span className={`shrink-0 font-semibold text-sm tabular-nums ${isTransfer ? "text-gray-400" : "text-green-600"}`}>
+                          +{formatCurrency(txn.amount, homeCurrency, txn.currency, false)}
+                        </span>
                       </div>
-                      <span className={`shrink-0 font-semibold text-sm tabular-nums ${isTransfer ? "text-gray-400" : "text-green-600"}`}>
-                        +{formatCurrency(txn.amount, homeCurrency, txn.currency, false)}
-                      </span>
+
+                      {/* Inline split editor */}
+                      {isEditing && (
+                        <div className="mx-5 mb-3 rounded-xl border border-purple-100 bg-purple-50/40 p-3 space-y-2">
+                          {/* Residual row (auto-calculated) */}
+                          <div className="flex items-center gap-2 rounded-lg bg-white/70 px-3 py-2">
+                            <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: INCOME_CAT_COLORS[srcCat] ?? "#9ca3af" }} />
+                            <span className="flex-1 text-xs font-medium text-gray-600">{srcCat} <span className="text-gray-400 font-normal">(residual)</span></span>
+                            <span className="text-xs font-semibold text-gray-700 tabular-nums">
+                              {fmt(Math.max(0, txn.amount - splitDraft.reduce((s, x) => s + (parseFloat(x.amount) || 0), 0)), homeCurrency)}
+                            </span>
+                          </div>
+
+                          {/* Editable split rows */}
+                          {splitDraft.map((sp, si) => (
+                            <div key={si} className="flex items-center gap-2">
+                              <select
+                                value={sp.category}
+                                onChange={(e) => setSplitDraft((prev) => prev.map((r, ri) => ri === si ? { ...r, category: e.target.value } : r))}
+                                className="flex-1 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs font-medium text-gray-700 focus:outline-none focus:ring-1 focus:ring-purple-400"
+                              >
+                                {INCOME_CATEGORIES.filter((c) => c !== "Transfer").map((cat) => (
+                                  <option key={cat} value={cat}>{cat}</option>
+                                ))}
+                              </select>
+                              <div className="relative w-28">
+                                <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">{getCurrencySymbol(homeCurrency)}</span>
+                                <input
+                                  type="number" min="0" step="0.01"
+                                  value={sp.amount}
+                                  onChange={(e) => setSplitDraft((prev) => prev.map((r, ri) => ri === si ? { ...r, amount: e.target.value } : r))}
+                                  className="w-full rounded-lg border border-gray-200 bg-white pl-5 pr-2 py-1.5 text-xs tabular-nums text-gray-700 focus:outline-none focus:ring-1 focus:ring-purple-400"
+                                />
+                              </div>
+                              <button onClick={() => setSplitDraft((prev) => prev.filter((_, ri) => ri !== si))}
+                                className="shrink-0 rounded-full p-1 text-gray-300 hover:text-red-400 hover:bg-red-50 transition">
+                                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            </div>
+                          ))}
+
+                          {/* Add split button — disabled when no residual left */}
+                          {splitDraft.reduce((s, x) => s + (parseFloat(x.amount) || 0), 0) < txn.amount - 0.005 && (
+                            <button
+                              onClick={() => setSplitDraft((prev) => [...prev, { category: "Bonus", amount: "" }])}
+                              className="flex items-center gap-1 text-xs font-medium text-purple-500 hover:text-purple-700 transition"
+                            >
+                              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                              </svg>
+                              Add split
+                            </button>
+                          )}
+
+                          {/* Save / Cancel */}
+                          <div className="flex items-center justify-end gap-2 pt-1 border-t border-purple-100">
+                            <button onClick={closeSplitEditor}
+                              className="text-xs text-gray-400 hover:text-gray-600 transition">Cancel</button>
+                            <button
+                              disabled={isSaving}
+                              onClick={() => void handleSaveSplits(
+                                { source: rawSrc, amount: txn.amount, date: txn.date, accountSlug: acctSlug },
+                                splitDraft,
+                              )}
+                              className="rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 disabled:opacity-50 transition"
+                            >
+                              {isSaving ? "Saving…" : "Save"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1487,9 +1659,7 @@ function IncomePageInner() {
                           <div className="border-t border-gray-50 bg-gray-50/60">
                             {cat.sources.map((src) => {
                               const srcPct = cat.total > 0 ? Math.round((src.total / cat.total) * 100) : 0;
-                              const href = src.isCash
-                                ? "/account/income?tab=cash"
-                                : `/account/income/${encodeURIComponent(src.name)}`;
+                              const href = `/account/income/${encodeURIComponent(src.name)}`;
                               return (
                                 <Link key={src.name} href={href}
                                   className="flex items-center gap-3 pl-10 pr-5 py-2.5 hover:bg-gray-100 transition group/sub">
@@ -1540,14 +1710,18 @@ function IncomePageInner() {
             ) : (
               <div className="rounded-xl border border-gray-200 bg-white shadow-sm divide-y divide-gray-100 overflow-hidden">
                 {allTimeScoredSources.map((src) => {
-                  const fcfg        = FREQUENCY_CONFIG[src.freqResult.frequency];
-                  const rcfg        = RELIABILITY_CONFIG[src.reliability];
+                  const fcfg            = FREQUENCY_CONFIG[src.freqResult.frequency];
+                  const rcfg            = RELIABILITY_CONFIG[src.reliability];
                   const baseDescription = src.description.replace(/#\d+$/, "");
                   const customLabel     = sourceLabels[src.description];
                   const displayName     = customLabel ?? baseDescription;
                   const needsName       = !customLabel && isGenericSourceName(baseDescription);
                   const isEditing       = editingLabel === src.description;
                   const needsMoreData   = src.months < 2;
+                  const srcSlug         = sourceSlug(src.description);
+                  const srcCategory     = incomeCategoryRules[srcSlug] ?? "";
+                  const isSavingSrcCat  = savingCategoryRule === srcSlug;
+                  const catColor        = INCOME_CAT_COLORS[srcCategory] ?? "#9ca3af";
                   return (
                     <div key={src.description} className={`px-4 py-3 group ${src.reliability === "one-time" ? "opacity-60" : ""}`}>
                       {isEditing && (
@@ -1574,6 +1748,26 @@ function IncomePageInner() {
                           </div>
                           <div className="flex items-center gap-2 mt-0.5">
                             <span className="text-xs text-gray-400">{src.months} mo · {fmt(Math.round(src.avgMonthly), homeCurrency)}/mo avg</span>
+                            {/* Category picker — inline, stopPropagation so link doesn't fire */}
+                            {isSavingSrcCat ? (
+                              <span className="text-[10px] text-gray-400">Saving…</span>
+                            ) : (
+                              <select
+                                value={srcCategory}
+                                onClick={(e) => e.preventDefault()}
+                                onChange={(e) => { e.preventDefault(); e.stopPropagation(); void handleSetCategory(src.description, e.target.value); }}
+                                className="rounded-full border px-2 py-0.5 text-[10px] font-semibold cursor-pointer focus:outline-none focus:ring-1 focus:ring-purple-300 transition"
+                                style={srcCategory
+                                  ? { borderColor: `${catColor}55`, backgroundColor: `${catColor}18`, color: catColor }
+                                  : { borderColor: "#e5e7eb", backgroundColor: "#f9fafb", color: "#9ca3af" }
+                                }
+                              >
+                                <option value="">Categorize…</option>
+                                {INCOME_CATEGORIES.map((cat) => (
+                                  <option key={cat} value={cat}>{cat}</option>
+                                ))}
+                              </select>
+                            )}
                           </div>
                         </div>
                         {/* Action buttons (hover) */}
@@ -1694,35 +1888,45 @@ function IncomePageInner() {
                   const color   = CATEGORY_COLORS[item.category] ?? "#9ca3af";
                   const isOnce  = item.frequency === "once";
                   return (
-                    <div key={item.id} className="flex items-start gap-3 px-4 py-3.5 group">
-                      <div className="mt-0.5 h-8 w-8 shrink-0 rounded-full flex items-center justify-center text-white text-xs font-bold"
-                        style={{ backgroundColor: color }}>
-                        {item.category.slice(0, 1)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-semibold text-gray-800 truncate">{item.name}</p>
-                          {isOnce && <span className="shrink-0 rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">one-off</span>}
+                    <div key={item.id} className="flex items-center gap-3 px-4 py-3.5 group hover:bg-gray-50 transition">
+                      {/* Navigable area */}
+                      <Link
+                        href={`/account/income/${encodeURIComponent(item.name)}`}
+                        className="flex flex-1 items-center gap-3 min-w-0"
+                      >
+                        <div className="mt-0.5 h-8 w-8 shrink-0 rounded-full flex items-center justify-center text-white text-xs font-bold"
+                          style={{ backgroundColor: color }}>
+                          {item.category.slice(0, 1)}
                         </div>
-                        <p className="text-xs text-gray-400 mt-0.5">
-                          {item.category}
-                          {!isOnce && ` · ${CASH_INCOME_FREQ_OPTIONS.find((f) => f.value === item.frequency)?.label ?? item.frequency}`}
-                          {item.nextDate && ` · ${isOnce ? "On" : "Next"} ${fmtDateFull(item.nextDate)}`}
-                        </p>
-                        {item.notes && <p className="text-xs text-gray-400 mt-0.5 italic">{item.notes}</p>}
-                        {!isOnce && monthly > 0 && (
-                          <p className="text-[11px] text-gray-400 mt-0.5">≈ {fmt(Math.round(monthly), homeCurrency)}/mo · {fmt(Math.round(monthly * 12), homeCurrency)}/yr</p>
-                        )}
-                      </div>
-                      <div className="shrink-0 text-right">
-                        <p className="font-semibold text-sm text-green-600 tabular-nums">+{fmt(item.amount, homeCurrency)}</p>
-                        {!isOnce && <p className="text-[10px] text-gray-400 mt-0.5">{CASH_INCOME_FREQ_OPTIONS.find((f) => f.value === item.frequency)?.label}</p>}
-                      </div>
-                      <div className="shrink-0 flex gap-1.5 mt-0.5 opacity-0 group-hover:opacity-100 transition">
-                        <button onClick={() => openEditCash(item)} className="rounded-full p-1 text-gray-300 hover:text-purple-500 hover:bg-purple-50 transition">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-semibold text-gray-800 truncate group-hover:text-purple-600 transition-colors">{item.name}</p>
+                            {isOnce && <span className="shrink-0 rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">one-off</span>}
+                          </div>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            {item.category}
+                            {!isOnce && ` · ${CASH_INCOME_FREQ_OPTIONS.find((f) => f.value === item.frequency)?.label ?? item.frequency}`}
+                            {item.nextDate && ` · ${isOnce ? "On" : "Next"} ${fmtDateFull(item.nextDate)}`}
+                          </p>
+                          {item.notes && <p className="text-xs text-gray-400 mt-0.5 italic">{item.notes}</p>}
+                          {!isOnce && monthly > 0 && (
+                            <p className="text-[11px] text-gray-400 mt-0.5">≈ {fmt(Math.round(monthly), homeCurrency)}/mo · {fmt(Math.round(monthly * 12), homeCurrency)}/yr</p>
+                          )}
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <p className="font-semibold text-sm text-green-600 tabular-nums">+{fmt(item.amount, homeCurrency)}</p>
+                          {!isOnce && <p className="text-[10px] text-gray-400 mt-0.5">{CASH_INCOME_FREQ_OPTIONS.find((f) => f.value === item.frequency)?.label}</p>}
+                        </div>
+                        <svg className="h-4 w-4 shrink-0 text-gray-300 group-hover:text-purple-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                        </svg>
+                      </Link>
+                      {/* Edit / delete — separate from nav */}
+                      <div className="shrink-0 flex gap-1.5 opacity-0 group-hover:opacity-100 transition">
+                        <button onClick={() => openEditCash(item)} title="Edit" className="rounded-full p-1 text-gray-300 hover:text-purple-500 hover:bg-purple-50 transition">
                           <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                         </button>
-                        <button onClick={() => deleteCashItem(item.id)} className="rounded-full p-1 text-gray-300 hover:text-red-400 hover:bg-red-50 transition">
+                        <button onClick={() => deleteCashItem(item.id)} title="Delete" className="rounded-full p-1 text-gray-300 hover:text-red-400 hover:bg-red-50 transition">
                           <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                         </button>
                       </div>

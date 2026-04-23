@@ -31,15 +31,17 @@ function accountDisplayLabel(parsed: ParsedStatementData): string {
  */
 function tagTransactions(stmt: ParsedStatementData): ParsedStatementData {
   const label = accountDisplayLabel(stmt);
+  const acctSlug = buildAccountSlug(stmt.bankName, stmt.accountId);
 
   const existingIncomeTxns = stmt.income?.transactions ?? [];
   const incomeTxns = existingIncomeTxns.length > 0
-    ? existingIncomeTxns.map((txn) => ({ ...txn, accountLabel: label }))
+    ? existingIncomeTxns.map((txn) => ({ ...txn, accountLabel: label, accountSlug: acctSlug }))
     : (stmt.income?.sources ?? []).map((src) => ({
         source: src.description,
         amount: src.amount,
         category: "Other" as const,
         accountLabel: label,
+        accountSlug: acctSlug,
       }));
 
   return {
@@ -147,7 +149,7 @@ export async function GET(request: NextRequest) {
     // month with actual transactions" — statement dates can be in the future
     // (e.g. a March statement with a statementDate of April 1) and should not
     // override the month that genuinely has the most recent transaction data.
-    const [rulesSnap, profile, sourceMappingsSnap, cashIncomeSnap, incomeCatRulesSnap, cashCommitmentsSnap, txnOverridesSnap] = await Promise.all([
+    const [rulesSnap, profile, sourceMappingsSnap, cashIncomeSnap, incomeCatRulesSnap, cashCommitmentsSnap, txnOverridesSnap, incomeTxnCatSnap] = await Promise.all([
       db.collection(`users/${uid}/categoryRules`).get(),
       getFinancialProfile(uid, db),
       db.collection(`users/${uid}/sourceMappings`).get(),
@@ -155,11 +157,24 @@ export async function GET(request: NextRequest) {
       db.collection(`users/${uid}/incomeCategoryRules`).get(),
       db.collection(`users/${uid}/cashCommitments`).get(),
       db.collection(`users/${uid}/txnCategoryOverrides`).get(),
+      db.collection(`users/${uid}/incomeTxnCategories`).get(),
     ]);
     const txnOverridesMap = new Map<string, string>();
     for (const doc of txnOverridesSnap.docs) {
       const d = doc.data() as { category: string };
       if (d.category) txnOverridesMap.set(doc.id, d.category);
+    }
+    // Income per-transaction splits: key → splits array
+    // Supports both old format { category } and new format { splits: [] }.
+    const incomeTxnSplits: Record<string, { category: string; amount: number }[]> = {};
+    for (const doc of incomeTxnCatSnap.docs) {
+      const d = doc.data() as { splits?: { category: string; amount: number }[]; category?: string; amount?: number };
+      if (Array.isArray(d.splits) && d.splits.length > 0) {
+        incomeTxnSplits[doc.id] = d.splits;
+      } else if (d.category && d.amount != null) {
+        // Migrate old single-category format: treat as a split that covers the whole amount
+        incomeTxnSplits[doc.id] = [{ category: d.category, amount: d.amount }];
+      }
     }
     const categoryRulesMap = new Map<string, string>();
     for (const ruleDoc of rulesSnap.docs) {
@@ -183,7 +198,14 @@ export async function GET(request: NextRequest) {
     // Cash commitment entries (manual recurring expenses) — passed to spending pages
     const cashCommitmentItems = cashCommitmentsSnap.docs.map((d) => d.data());
     const incomeCategoryRules = Object.fromEntries(
-      incomeCatRulesSnap.docs.map((d) => [d.data().slug as string, d.data().category as string])
+      incomeCatRulesSnap.docs
+        .filter((d) => d.data().category)
+        .map((d) => [d.data().slug as string, d.data().category as string])
+    );
+    const incomeFrequencyOverrides = Object.fromEntries(
+      incomeCatRulesSnap.docs
+        .filter((d) => d.data().frequencyOverride)
+        .map((d) => [d.data().slug as string, d.data().frequencyOverride as string])
     );
 
     // Prefer the latest month that has real transaction data over the latest
@@ -334,7 +356,7 @@ export async function GET(request: NextRequest) {
             if (!incomeSourceHistory[canonicalName]) incomeSourceHistory[canonicalName] = [];
             const srcTxns = (c.income?.transactions ?? [])
               .filter((t) => t.source === src.description)
-              .map((t) => ({ date: t.date, amount: t.amount }));
+              .map((t) => ({ date: t.date, amount: t.amount, accountSlug: t.accountSlug }));
             // Aggregate into existing month entry if canonical already has one (two aliases in same month)
             const existing = incomeSourceHistory[canonicalName].find((h) => h.yearMonth === ym);
             if (existing) {
@@ -746,6 +768,8 @@ export async function GET(request: NextRequest) {
       cashIncomeItems,
       cashCommitmentItems,
       incomeCategoryRules,
+      incomeFrequencyOverrides,
+      incomeTxnSplits,
       /** FX rates used for net worth: currency → home-currency rate (e.g. { "CAD": 0.72 } for a USD user) */
       fxRates: profile.fxRates ?? {},
       /** ISO-4217 home currency code for this user (e.g. "USD" or "CAD") */

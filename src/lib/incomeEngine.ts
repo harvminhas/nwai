@@ -9,7 +9,7 @@ export type Frequency   = "weekly" | "bi-weekly" | "monthly" | "quarterly" | "se
 export interface SourceMonthData {
   yearMonth: string;
   amount: number;
-  transactions: { date?: string; amount: number }[];
+  transactions: { date?: string; amount: number; accountSlug?: string }[];
 }
 
 export interface ReliabilityResult {
@@ -52,6 +52,7 @@ export const GENERIC_SOURCE_NAMES = [
 /** Canonical income categories — used for user recategorization and cash income entries. */
 export const INCOME_CATEGORIES = [
   "Salary",
+  "Bonus",
   "Freelance",
   "Rent",
   "Business",
@@ -62,6 +63,19 @@ export const INCOME_CATEGORIES = [
   "Other",
 ] as const;
 export type IncomeCategory = typeof INCOME_CATEGORIES[number];
+
+export const INCOME_CAT_COLORS: Record<string, string> = {
+  "Salary":     "#10b981",
+  "Bonus":      "#f59e0b",
+  "Freelance":  "#6366f1",
+  "Rent":       "#f97316",
+  "Business":   "#3b82f6",
+  "Government": "#8b5cf6",
+  "Investment": "#14b8a6",
+  "Gift":       "#ec4899",
+  "Transfer":   "#6b7280",
+  "Other":      "#9ca3af",
+};
 
 // ── reliability scorer ────────────────────────────────────────────────────────
 
