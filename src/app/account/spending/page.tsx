@@ -8,7 +8,7 @@ import { doc, getDoc, setDoc } from "firebase/firestore";
 import { getFirebaseClient } from "@/lib/firebase";
 import type { ParsedStatementData, ExpenseTransaction, Subscription, DebtType } from "@/lib/types";
 import { isBalanceMarker, txIgnoreKey } from "@/lib/balanceMarkers";
-import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
+import { CORE_EXCLUDE_RE, isCoreExcluded } from "@/lib/spendingMetrics";
 import { merchantSlug } from "@/lib/applyRules";
 import { detectFrequency, FREQUENCY_CONFIG, type Frequency } from "@/lib/incomeEngine";
 import { SCHEDULED_DEBT_TYPES, debtTxKey, defaultDebtTag, splitDebtPayments } from "@/lib/debtUtils";
@@ -17,8 +17,8 @@ import {
   ReferenceLine, ResponsiveContainer,
   AreaChart, Area,
 } from "recharts";
-import { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon } from "./shared";
-import type { CashFrequency } from "./shared";
+import { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon, SpendingChart, monthLabel, shortMonth } from "./shared";
+import type { CashFrequency, HistoryPoint } from "./shared";
 import { getParentCategory, isSubtype, CATEGORY_TAXONOMY } from "@/lib/categoryTaxonomy";
 import { fmt, getCurrencySymbol, formatCurrency } from "@/lib/currencyUtils";
 import RefreshToast from "@/components/RefreshToast";
@@ -42,74 +42,6 @@ function Toast({ message, onDone }: { message: string; onDone: () => void }) {
     </div>
   );
 }
-
-// ── Monthly spending chart ────────────────────────────────────────────────────
-
-function SpendingChart({ history, avg, median, selectedMonth, effectiveExp, homeCurrency = "USD" }: {
-  history: HistoryPoint[];
-  avg: number | null;
-  median: number | null;
-  selectedMonth: string | null;
-  effectiveExp: (h: HistoryPoint) => number;
-  homeCurrency?: string;
-}) {
-  const data = history
-    .filter((h) => (h.expensesTotal ?? 0) > 0)
-    .map((h) => ({
-      ym: h.yearMonth,
-      label: shortMonth(h.yearMonth),
-      amount: effectiveExp(h),
-    }));
-
-  if (data.length === 0) return null;
-
-  const CustomTooltip = ({ active, payload }: { active?: boolean; payload?: { payload: { ym: string; amount: number } }[] }) => {
-    if (!active || !payload?.length) return null;
-    const { ym, amount } = payload[0].payload;
-    return (
-      <div className="rounded-lg border border-gray-100 bg-white px-3 py-2 shadow-lg text-xs">
-        <p className="font-semibold text-gray-800">{monthLabel(ym)}</p>
-        <p className="text-gray-600">{formatCurrency(amount, homeCurrency, undefined, true)}</p>
-      </div>
-    );
-  };
-
-  return (
-    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-      <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-widest text-gray-400">Monthly Spending</p>
-      {median !== null && (
-        <p className="mb-4 text-sm font-medium text-gray-600">
-          {data.length}-month median{" "}
-          <span className="font-bold text-gray-900">{formatCurrency(median, homeCurrency, undefined, true)} / mo</span>
-          {avg !== null && avg !== median && (
-            <span className="ml-2 text-xs text-gray-400">(avg {formatCurrency(avg, homeCurrency, undefined, true)})</span>
-          )}
-        </p>
-      )}
-      <div style={{ pointerEvents: "none" }}>
-        <ResponsiveContainer width="100%" height={140}>
-          <BarChart data={data} barSize={22} margin={{ top: 4, right: 4, left: -8, bottom: 0 }}>
-            <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#f3f4f6" />
-            <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
-            <YAxis width={52} tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false}
-              tickFormatter={(v: number) => { const s = getCurrencySymbol(homeCurrency); return v >= 1000 ? `${s}${Math.round(v / 1000)}k` : `${s}${v}`; }} />
-            <Tooltip content={<CustomTooltip />} cursor={{ fill: "#f5f3ff" }} />
-            {median !== null && (
-              <ReferenceLine y={median} stroke="#a78bfa" strokeDasharray="4 3" strokeWidth={1.5}
-                label={{ value: "median", position: "right", fontSize: 10, fill: "#a78bfa" }} />
-            )}
-            <Bar dataKey="amount" radius={[4, 4, 0, 0]} label={false}>
-              {data.map((entry) => (
-                <Cell key={entry.ym} fill={entry.ym === selectedMonth ? "#7c3aed" : "#c4b5fd"} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
-  );
-}
-
 
 // ── recurring item icon helper ─────────────────────────────────────────────
 // Returns "subscription" for digital service subscriptions, "recurring" for fees/memberships
@@ -146,10 +78,10 @@ function RecurringListIcon({ name }: { name: string }) {
 
 const TABS = [
   { id: "overview",       label: "Overview" },
-  { id: "merchants",      label: "By Merchant" },
   { id: "categories",     label: "By Category" },
   { id: "subscriptions",  label: "Recurring" },
   { id: "cash",           label: "Cash" },
+  { id: "merchants",      label: "By Merchant" },
   { id: "transactions",   label: "Transactions" },
 ] as const;
 type TabId = typeof TABS[number]["id"];
@@ -330,21 +262,9 @@ function fmtDec(v: number, originalCurrency?: string, homeCurrency = "USD") {
   const cur = originalCurrency ?? homeCurrency;
   return new Intl.NumberFormat("en-US", { style: "currency", currency: cur, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
 }
-function monthLabel(ym: string) {
-  const [y, m] = ym.split("-");
-  if (!m) return ym;
-  return new Date(parseInt(y), parseInt(m) - 1, 1).toLocaleDateString("en-US", { month: "short", year: "numeric" });
-}
-function shortMonth(ym: string) {
-  const [y, m] = ym.split("-");
-  if (!m) return ym;
-  return new Date(parseInt(y), parseInt(m) - 1, 1).toLocaleDateString("en-US", { month: "short" });
-}
 function fmtDate(iso: string) {
   return new Date(iso + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
-
-type HistoryPoint = { yearMonth: string; netWorth: number; expensesTotal?: number; coreExpensesTotal?: number };
 
 
 const DEBT_TYPE_LABELS: Record<string, string> = {
@@ -1067,10 +987,11 @@ function SpendingPageInner() {
       && !ignoredTxKeys.has(txIgnoreKey(t.date, t.amount, t.merchant))
   );
 
-  // Core transactions: excludes transfers and debt payments (CORE_EXCLUDE_RE)
-  const coreTxns = monthTxns.filter((t) => !CORE_EXCLUDE_RE.test((t.category ?? "").trim()));
+  // Core transactions: excludes transfers and debt payments (checks parent category too,
+  // so subtypes like "Credit Card Payment" are correctly excluded).
+  const coreTxns = monthTxns.filter((t) => !isCoreExcluded(t.category ?? ""));
   // Excluded transactions: transfers + debt payments — shown in a separate section
-  const excludedTxns = monthTxns.filter((t) => CORE_EXCLUDE_RE.test((t.category ?? "").trim()));
+  const excludedTxns = monthTxns.filter((t) => isCoreExcluded(t.category ?? ""));
 
   // Cash commitment amount for a specific yearMonth — defined here so it's available
   // for both the total and the categories breakdown below.
@@ -1088,17 +1009,20 @@ function SpendingPageInner() {
     ? coreTxns.reduce((s, t) => s + t.amount, 0)
     : (data?.expenses?.total ?? 0);
   const total        = statementTotal + cashCommitmentsForMonth;
-  const displayTotal = total;
+  // When "include all" is toggled, show gross total (incl. transfers + debt payments)
+  const allTxnsStatementTotal = monthTxns.reduce((s, t) => s + t.amount, 0);
+  const displayTotal = catIncludeAll
+    ? allTxnsStatementTotal + cashCommitmentsForMonth
+    : total;
 
   const excludedTotal = excludedTxns.reduce((s, t) => s + t.amount, 0);
 
-  // Split excluded transactions into debt payments / interest / transfers
-  const DEBT_PAY_RE  = /^debt payments$/i;
-  const INTEREST_RE  = /^interest$/i;
-  const debtTxns     = excludedTxns.filter((t) =>  DEBT_PAY_RE.test((t.category ?? "").trim()));
-  const interestTxns = excludedTxns.filter((t) =>  INTEREST_RE.test((t.category ?? "").trim()));
+  // Split excluded transactions into debt payments / interest / transfers.
+  // Uses getParentCategory so subtypes (e.g. "Credit Card Payment") roll up correctly.
+  const debtTxns     = excludedTxns.filter((t) => getParentCategory(t.category ?? "") === "Debt Payments");
+  const interestTxns = excludedTxns.filter((t) => /^interest$/i.test((t.category ?? "").trim()));
   const transferTxns = excludedTxns.filter((t) =>
-    !DEBT_PAY_RE.test((t.category ?? "").trim()) && !INTEREST_RE.test((t.category ?? "").trim())
+    getParentCategory(t.category ?? "") !== "Debt Payments" && !/^interest$/i.test((t.category ?? "").trim())
   );
   // Aggregate totals — converted to home currency
   function toHomeTxn(amount: number, tx: ExpenseTransaction): number {
@@ -1667,7 +1591,7 @@ function SpendingPageInner() {
           )}
         </div>
         <p className="mt-3 text-[10px] text-gray-400 text-right shrink-0">
-          excl. transfers<br />{catIncludeAll ? "" : "& debt pmts"}
+          {catIncludeAll ? "incl. all" : <>excl. transfers<br />&amp; debt pmts</>}
         </p>
       </div>
 
@@ -1787,6 +1711,7 @@ function SpendingPageInner() {
                     median={medianExpenses}
                     selectedMonth={selectedMonth}
                     effectiveExp={effectiveExp}
+                    onMonthClick={handleMonthSelect}
                     homeCurrency={homeCurrency}
                   />
 
@@ -1896,8 +1821,20 @@ function SpendingPageInner() {
                       const trendColor = trend === "up" ? "#ef4444" : trend === "down" ? "#22c55e" : "#9ca3af";
                       return (
                         <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">This Month</p>
-                          <p className="mt-2 font-bold text-2xl text-gray-900">{total > 0 ? formatCurrency(displayTotal, homeCurrency, undefined, true) : "—"}</p>
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">This Month</p>
+                            <button
+                              onClick={() => setCatIncludeAll((v) => !v)}
+                              className="flex items-center gap-1.5 text-[10px] text-gray-400 hover:text-gray-600 transition shrink-0"
+                              title={catIncludeAll ? "Excluding transfers & debt payments" : "Including transfers & debt payments"}
+                            >
+                              <span className={`relative inline-flex h-3.5 w-6 shrink-0 rounded-full transition-colors ${catIncludeAll ? "bg-indigo-500" : "bg-gray-200"}`}>
+                                <span className={`inline-block h-2.5 w-2.5 mt-0.5 ml-0.5 rounded-full bg-white shadow transform transition-transform ${catIncludeAll ? "translate-x-2.5" : "translate-x-0"}`} />
+                              </span>
+                              {catIncludeAll ? "all in" : "excl. debt pymts & transfers"}
+                            </button>
+                          </div>
+                          <p className="mt-2 font-bold text-2xl text-gray-900">{displayTotal > 0 ? formatCurrency(displayTotal, homeCurrency, undefined, true) : "—"}</p>
                           {expDelta !== null && total > 0 && (
                             <p className={`mt-1 text-xs font-medium ${expDelta > 0 ? "text-red-500" : "text-green-600"}`}>
                               {expDelta > 0 ? "↑" : "↓"} {formatCurrency(Math.abs(expDelta), homeCurrency, undefined, true)} vs {prevMonthLabel}
@@ -3095,11 +3032,11 @@ function SpendingPageInner() {
                             {/* Category row — click name/details to navigate, chevron to expand */}
                             <div className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 sm:py-3.5 hover:bg-gray-50 transition">
                               {/* Color swatch */}
-                              <Link href={`/account/spending/category/${encodeURIComponent(cat.name)}`} className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-full hover:opacity-80 transition" style={{ backgroundColor: cat.color + "20" }}>
+                              <Link href={`/account/spending/category/${encodeURIComponent(cat.name.toLowerCase())}`} className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-full hover:opacity-80 transition" style={{ backgroundColor: cat.color + "20" }}>
                                 <span className="h-3 w-3 rounded-full" style={{ backgroundColor: cat.color }} />
                               </Link>
                               {/* Name + meta */}
-                              <Link href={`/account/spending/category/${encodeURIComponent(cat.name)}`} className="flex-1 min-w-0 group">
+                              <Link href={`/account/spending/category/${encodeURIComponent(cat.name.toLowerCase())}`} className="flex-1 min-w-0 group">
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                   <p className="text-sm font-semibold text-gray-900 group-hover:text-purple-600 transition">{cat.name}</p>
                                   {hasTrend && (

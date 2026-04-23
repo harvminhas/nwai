@@ -3,6 +3,11 @@
 import { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
+  ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis,
+  CartesianGrid, Tooltip, ReferenceLine,
+} from "recharts";
+import { formatCurrency, getCurrencySymbol } from "@/lib/currencyUtils";
+import {
   CATEGORY_COLORS,
   categoryColor,
   CATEGORY_TAXONOMY,
@@ -208,3 +213,105 @@ export function CategoryPicker({ anchorRef, current, onSelect, onClose }: Catego
 void PARENTS_WITH_SUBTYPES;
 void PICKER_CATEGORIES;
 void isSubtype;
+
+// ── Date helpers ──────────────────────────────────────────────────────────────
+
+export function monthLabel(ym: string) {
+  const [y, m] = ym.split("-");
+  if (!m) return ym;
+  return new Date(parseInt(y), parseInt(m) - 1, 1).toLocaleDateString("en-US", { month: "short", year: "numeric" });
+}
+
+export function shortMonth(ym: string) {
+  const [y, m] = ym.split("-");
+  if (!m) return ym;
+  return new Date(parseInt(y), parseInt(m) - 1, 1).toLocaleDateString("en-US", { month: "short" });
+}
+
+// ── SpendingChart ─────────────────────────────────────────────────────────────
+
+export type HistoryPoint = { yearMonth: string; netWorth: number; expensesTotal?: number; coreExpensesTotal?: number };
+
+export function SpendingChart({ history, avg, median, selectedMonth, effectiveExp, onMonthClick, homeCurrency = "USD" }: {
+  history: HistoryPoint[];
+  avg: number | null;
+  median: number | null;
+  selectedMonth: string | null;
+  effectiveExp: (h: HistoryPoint) => number;
+  onMonthClick?: (ym: string) => void;
+  homeCurrency?: string;
+}) {
+  const data = history
+    .filter((h) => (h.expensesTotal ?? 0) > 0)
+    .map((h) => ({
+      ym: h.yearMonth,
+      label: shortMonth(h.yearMonth),
+      amount: effectiveExp(h),
+    }));
+
+  if (data.length === 0) return null;
+
+  const sym = getCurrencySymbol(homeCurrency);
+
+  function CustomTooltip({ active, payload }: { active?: boolean; payload?: { payload: { ym: string; amount: number } }[] }) {
+    if (!active || !payload?.length) return null;
+    const { ym, amount } = payload[0].payload;
+    return (
+      <div className="rounded-lg border border-gray-100 bg-white px-3 py-2 shadow-lg text-xs">
+        <p className="font-semibold text-gray-800">{monthLabel(ym)}</p>
+        <p className="text-gray-600">{formatCurrency(amount, homeCurrency, undefined, true)}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="mb-0.5 flex items-center justify-between">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Monthly Spending</p>
+        {onMonthClick && (
+          <p className="text-[10px] text-gray-300">tap a bar to select month</p>
+        )}
+      </div>
+      {median !== null && (
+        <p className="mb-4 text-sm font-medium text-gray-600">
+          {data.length}-month median{" "}
+          <span className="font-bold text-gray-900">{formatCurrency(median, homeCurrency, undefined, true)} / mo</span>
+          {avg !== null && avg !== median && (
+            <span className="ml-2 text-xs text-gray-400">(avg {formatCurrency(avg, homeCurrency, undefined, true)})</span>
+          )}
+        </p>
+      )}
+      <ResponsiveContainer width="100%" height={140}>
+          <BarChart
+          data={data}
+          barSize={22}
+          margin={{ top: 4, right: 4, left: -8, bottom: 0 }}
+          style={{ outline: "none" }}
+          tabIndex={-1}
+        >
+          <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#f3f4f6" />
+          <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
+          <YAxis width={52} tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false}
+            tickFormatter={(v: number) => v >= 1000 ? `${sym}${Math.round(v / 1000)}k` : `${sym}${v}`} />
+          <Tooltip content={<CustomTooltip />} cursor={false} />
+          {median !== null && (
+            <ReferenceLine y={median} stroke="#a78bfa" strokeDasharray="4 3" strokeWidth={1.5}
+              label={{ value: "median", position: "right", fontSize: 10, fill: "#a78bfa" }} />
+          )}
+          <Bar
+            dataKey="amount"
+            radius={[4, 4, 0, 0]}
+            label={false}
+            activeBar={false}
+            style={onMonthClick ? { cursor: "pointer" } : undefined}
+            onClick={(barData) => onMonthClick?.((barData as unknown as { ym: string }).ym)}
+          >
+            {data.map((entry) => (
+              <Cell key={entry.ym} fill={entry.ym === selectedMonth ? "#7c3aed" : "#c4b5fd"} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}

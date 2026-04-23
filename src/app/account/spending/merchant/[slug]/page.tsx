@@ -912,7 +912,7 @@ export default function MerchantDetailPage() {
             </div>
             <div className="h-44">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }} style={{ outline: "none" }}>
+                <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }} style={{ outline: "none" }} tabIndex={-1}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
                   <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
                   <YAxis tickFormatter={(v) => fmtAxis(v, sym)} tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={48} />
@@ -924,6 +924,7 @@ export default function MerchantDetailPage() {
                   <Bar
                     dataKey="total"
                     radius={[4, 4, 0, 0]}
+                    activeBar={false}
                     style={{ cursor: "pointer" }}
                     onClick={(data) => {
                       const ym = (data as unknown as { ym?: string })?.ym ?? null;

@@ -128,6 +128,7 @@ export default function SpendingCategoryPage() {
 
   const loadPage = useCallback(async (tok: string, name: string, month: string | null) => {
     setLoading(true); setError(null);
+    let autoRedirected = false;
     try {
       const consolidatedUrl = month
         ? `/api/user/statements/consolidated?month=${month}`
@@ -157,20 +158,21 @@ export default function SpendingCategoryPage() {
       setYearMonth(ym);
 
       const allTxns: ExpenseTxn[] = json.data?.expenses?.transactions ?? [];
+      // Match both the exact category AND any subtypes whose parent is this category.
+      // This makes parent-level pages (e.g. "Debt Payments") show rolled-up transactions.
+      const lowerName = name.toLowerCase();
+      const matchesCat = (cat: string | undefined) => {
+        if (!cat) return false;
+        return cat.toLowerCase() === lowerName || getParentCategory(cat).toLowerCase() === lowerName;
+      };
       const catTxns = allTxns
-        .filter((t) => t.category?.toLowerCase() === name)
+        .filter((t) => matchesCat(t.category))
         .sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
 
       // Inject matching cash commitments as synthetic transactions for this month.
-      // Match both exact category ("Maintenance & Repairs") and parent rollup ("housing").
-      const matchesCategory = (cat: string | undefined) => {
-        if (!cat) return false;
-        if (cat.toLowerCase() === name) return true;
-        return getParentCategory(cat).toLowerCase() === name;
-      };
       const matchingCommitments: ExpenseTxn[] = ym
         ? allCommitments
-            .filter((c) => matchesCategory(c.category) && commitmentAmountForMonth(c, ym) > 0)
+            .filter((c) => matchesCat(c.category) && commitmentAmountForMonth(c, ym) > 0)
             .map((c) => ({
               merchant: c.name,
               amount: commitmentAmountForMonth(c, ym),
@@ -201,10 +203,10 @@ export default function SpendingCategoryPage() {
         if (r.ok) {
           const txns: ExpenseTxn[] = j.data?.expenses?.transactions ?? [];
           const stmtAmt = txns
-            .filter((t) => t.category?.toLowerCase() === name)
+            .filter((t) => matchesCat(t.category))
             .reduce((s, t) => s + t.amount, 0);
           const cashAmt = allCommitments
-            .filter((c) => matchesCategory(c.category))
+            .filter((c) => matchesCat(c.category))
             .reduce((s, c) => s + commitmentAmountForMonth(c, h.yearMonth), 0);
           monthData.push({ label: shortMonth(h.yearMonth), amount: stmtAmt + cashAmt, ym: h.yearMonth });
         }
@@ -212,8 +214,21 @@ export default function SpendingCategoryPage() {
       monthData.push({ label: shortMonth(ym ?? ""), amount: catTotal, ym: ym ?? "" });
       monthData.sort((a, b) => a.ym.localeCompare(b.ym));
       setMonthlyHistory(monthData);
+
+      // If the requested month is empty and no explicit month was chosen,
+      // auto-jump to the most recent month that actually has spending.
+      if (!month && catTotal === 0) {
+        const bestMonth = [...monthData]
+          .sort((a, b) => b.ym.localeCompare(a.ym))
+          .find((m) => m.amount > 0);
+        if (bestMonth) {
+          autoRedirected = true;
+          loadPage(tok, name, bestMonth.ym);
+          return;
+        }
+      }
     } catch { setError("Failed to load category data"); }
-    finally { setLoading(false); }
+    finally { if (!autoRedirected) setLoading(false); }
   }, []);
 
   const { requestProfileRefresh } = useProfileRefresh();
@@ -315,6 +330,19 @@ export default function SpendingCategoryPage() {
   const topMerchants = Array.from(merchantTotals.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5);
   const color = categoryColor(rawName);
 
+  // Subtype breakdown — only when parent category contains mixed subtypes
+  const subtypeTotals = new Map<string, number>();
+  for (const t of transactions) {
+    const sub = t.category ?? "Other";
+    if (sub.toLowerCase() !== rawName.toLowerCase()) {
+      subtypeTotals.set(sub, (subtypeTotals.get(sub) ?? 0) + t.amount);
+    }
+  }
+  const subtypeBreakdown = Array.from(subtypeTotals.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, amount]) => ({ name, amount, pct: categoryTotal > 0 ? Math.round((amount / categoryTotal) * 100) : 0 }));
+  const isParentRollup = subtypeBreakdown.length > 0;
+
   if (loading) return (
     <div className="flex min-h-[50vh] items-center justify-center">
       <div className="h-10 w-10 animate-spin rounded-full border-4 border-purple-600 border-t-transparent" />
@@ -366,6 +394,37 @@ export default function SpendingCategoryPage() {
           ))}
         </div>
 
+        {/* Subtype breakdown — shown when this is a parent category */}
+        {isParentRollup && (
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">Breakdown by type</p>
+            <div className="space-y-2.5">
+              {subtypeBreakdown.map(({ name: sub, amount, pct }) => {
+                const subColor = categoryColor(sub);
+                return (
+                  <div key={sub}>
+                    <div className="flex items-center justify-between text-sm mb-1">
+                      <Link
+                        href={`/account/spending/category/${encodeURIComponent(sub.toLowerCase())}${monthParam ? `?month=${monthParam}` : ""}`}
+                        className="font-medium text-gray-700 hover:text-purple-600 hover:underline truncate"
+                      >
+                        {sub}
+                      </Link>
+                      <div className="flex items-center gap-2 shrink-0 ml-2">
+                        <span className="text-xs text-gray-400">{pct}%</span>
+                        <span className="tabular-nums text-gray-600">{formatCurrency(amount, homeCurrency, undefined, true)}</span>
+                      </div>
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-gray-100">
+                      <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: subColor }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Monthly trend chart — click a bar to see that month's detail */}
         {monthlyHistory.filter((m) => m.amount > 0).length >= 2 && (
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -377,6 +436,7 @@ export default function SpendingCategoryPage() {
                   data={monthlyHistory}
                   margin={{ top: 4, right: 8, left: 0, bottom: 0 }}
                   style={{ outline: "none" }}
+                  tabIndex={-1}
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
                   <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
@@ -395,6 +455,7 @@ export default function SpendingCategoryPage() {
                     dataKey="amount"
                     radius={[4, 4, 0, 0]}
                     maxBarSize={48}
+                    activeBar={false}
                     style={{ cursor: "pointer" }}
                     onClick={(data) => {
                       const ym = (data as unknown as { ym?: string })?.ym;
