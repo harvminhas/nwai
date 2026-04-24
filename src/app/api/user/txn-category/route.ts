@@ -36,7 +36,7 @@ export async function PUT(req: NextRequest) {
   try {
     const stmtDoc = await db.collection("statements").doc(stmtId).get();
     const p = stmtDoc.data()?.parsedData as ParsedStatementData | undefined;
-    if (p) accountSlug = buildAccountSlug(p.bankName, p.accountId);
+    if (p) accountSlug = buildAccountSlug(p.bankName, p.accountId, p.accountName, p.accountType);
   } catch {
     // Non-fatal: fall back to stmtId
   }
@@ -78,3 +78,4 @@ export async function DELETE(req: NextRequest) {
 
   return NextResponse.json({ ok: true });
 }
+

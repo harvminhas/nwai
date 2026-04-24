@@ -18,7 +18,7 @@ import type { CashIncomeEntry } from "@/lib/cashIncome";
 /** Human-readable label for a statement's account, e.g. "TD ••••7780" */
 function accountDisplayLabel(parsed: ParsedStatementData): string {
   if (parsed.accountName) return parsed.accountName;
-  const slug = buildAccountSlug(parsed.bankName, parsed.accountId);
+  const slug = buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
   const bank = (parsed.bankName ?? "").trim();
   if (slug === "unknown") return bank || "Unknown Account";
   const parts = [bank, `••••${slug}`].filter(Boolean);
@@ -31,7 +31,7 @@ function accountDisplayLabel(parsed: ParsedStatementData): string {
  */
 function tagTransactions(stmt: ParsedStatementData): ParsedStatementData {
   const label = accountDisplayLabel(stmt);
-  const acctSlug = buildAccountSlug(stmt.bankName, stmt.accountId);
+  const acctSlug = buildAccountSlug(stmt.bankName, stmt.accountId, stmt.accountName, stmt.accountType);
 
   const existingIncomeTxns = stmt.income?.transactions ?? [];
   const incomeTxns = existingIncomeTxns.length > 0
@@ -66,9 +66,10 @@ function matchesBank(parsed: ParsedStatementData, bankFilter: string | null): bo
   return (parsed.bankName ?? "").toLowerCase().replace(/\s+/g, "-") === bankFilter;
 }
 
-function matchesAccount(parsed: ParsedStatementData, accountFilter: string | null): boolean {
+function matchesAccount(d: Record<string, unknown>, parsed: ParsedStatementData, accountFilter: string | null): boolean {
   if (!accountFilter) return true;
-  return buildAccountSlug(parsed.bankName, parsed.accountId) === accountFilter;
+  const storedSlug = d.accountSlug as string | undefined;
+  return (storedSlug || buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType)) === accountFilter;
 }
 
 
@@ -133,7 +134,7 @@ export async function GET(request: NextRequest) {
       if (d.status !== "completed" || !d.parsedData) return false;
       const parsed = d.parsedData as ParsedStatementData;
       if (!matchesBank(parsed, bankFilter)) return false;
-      if (!matchesAccount(parsed, accountFilter)) return false;
+      if (!matchesAccount(d, parsed, accountFilter)) return false;
       return true;
     });
 
@@ -254,7 +255,7 @@ export async function GET(request: NextRequest) {
 
     // ── Current month: carry-forward balances for all accounts ──────────────
     const currentStatements = carryForwardStatements(allCompleted, month);
-    const consolidated = consolidateStatements(currentStatements.map(tagTransactions), month);
+    const consolidated = consolidateStatements(currentStatements.map((s) => tagTransactions(s)), month);
 
     // Apply category rules + per-transaction overrides
     const consolidatedWithRules = (categoryRulesMap.size > 0 || txnOverridesMap.size > 0)
@@ -398,20 +399,37 @@ export async function GET(request: NextRequest) {
       isManualSnapshot?: boolean; snapshotId?: string; note?: string;
     }[]>();
 
+    // Pre-build a translation map so the history loop always uses the stored
+    // d.accountSlug — carryForwardStatements returns ParsedStatementData which
+    // doesn't carry the doc's accountSlug field.
+    const parsedSlugToStored = new Map<string, string>();
+    for (const doc of allCompleted) {
+      const d  = doc.data();
+      const pd = d.parsedData as ParsedStatementData | undefined;
+      const stored = d.accountSlug as string | undefined;
+      if (pd && stored) {
+        const pSlug = buildAccountSlug(pd.bankName, pd.accountId, pd.accountName, pd.accountType);
+        if (!parsedSlugToStored.has(pSlug)) parsedSlugToStored.set(pSlug, stored);
+      }
+    }
+
     for (const ym of Array.from(yearMonths).sort()) {
       const carried = carryForwardStatements(allCompleted, ym);
       for (const parsed of carried) {
-        const slug = buildAccountSlug(parsed.bankName, parsed.accountId);
+        const pSlug = buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
+        // Use the stored accountSlug when available — it may differ from pSlug
+        // when the user confirmed a custom nickname or merged accounts.
+        const slug = parsedSlugToStored.get(pSlug) ?? pSlug;
         const realForThisMonth = allCompleted.some((doc) => {
           const d = doc.data();
           return docYearMonth(d) === ym &&
-            buildAccountSlug((d.parsedData as ParsedStatementData).bankName, (d.parsedData as ParsedStatementData).accountId) === slug;
+            ((d.accountSlug as string | undefined) || buildAccountSlug((d.parsedData as ParsedStatementData).bankName, (d.parsedData as ParsedStatementData).accountId, (d.parsedData as ParsedStatementData).accountName, (d.parsedData as ParsedStatementData).accountType)) === slug;
         });
         const sourceDoc = allCompleted
           .filter((doc) => {
             const d = doc.data();
             return docYearMonth(d) === ym &&
-              buildAccountSlug((d.parsedData as ParsedStatementData).bankName, (d.parsedData as ParsedStatementData).accountId) === slug;
+              ((d.accountSlug as string | undefined) || buildAccountSlug((d.parsedData as ParsedStatementData).bankName, (d.parsedData as ParsedStatementData).accountId, (d.parsedData as ParsedStatementData).accountName, (d.parsedData as ParsedStatementData).accountType)) === slug;
           })
           .sort((a, b) => {
             const aIsCSV = (a.data().source as string | undefined) === "csv";
@@ -478,16 +496,26 @@ export async function GET(request: NextRequest) {
       if (backfills.length > 0) {
         const historyIndex = new Map(history.map((h, i) => [h.yearMonth, i]));
 
+        // Build the set of account slugs that still have at least one real completed
+        // statement. Backfill records for slugs outside this set are orphaned (their
+        // statements were deleted) and must not be injected into history.
+        const activeSlugs = new Set(
+          allCompleted.map((doc) => doc.data().accountSlug as string | undefined).filter(Boolean)
+        );
+
         for (const bf of backfills) {
           const ym = bf.yearMonth;
           if (!ym || !bf.accountSlug || bf.balance == null || !Number.isFinite(bf.balance)) continue;
+
+          // Skip entirely if the account no longer has any real statements
+          if (!activeSlugs.has(bf.accountSlug)) continue;
 
           const hasRealStatement = allCompleted.some((doc) => {
             const d = doc.data() as FirebaseFirestore.DocumentData;
             if (docYearMonth(d) !== ym) return false;
             const parsed = d.parsedData as ParsedStatementData | undefined;
             if (!parsed) return false;
-            return buildAccountSlug(parsed.bankName, parsed.accountId) === bf.accountSlug;
+            return buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType) === bf.accountSlug;
           });
           if (hasRealStatement) continue;
 
@@ -798,3 +826,4 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Failed to load consolidated data." }, { status: 500 });
   }
 }
+

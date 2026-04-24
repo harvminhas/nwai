@@ -19,18 +19,30 @@ export function normalizeAccountId(raw: string | undefined | null): string {
 /**
  * Stable slug for an account.
  *
- * When the account ID is known, use only the last 4 digits — this is unique
- * enough in practice (one person very rarely has two accounts ending in the
- * same 4 digits at different banks) and is immune to bank name variations like
- * "TD" vs "TD Bank" vs "TD Canada Trust".
- *
- * When the account ID is not extractable, fall back to a normalized bank name
- * so that at least same-bank accounts without IDs group together rather than
- * all collapsing into a single "unknown" bucket.
+ * Priority:
+ * 1. Last 4 digits of accountId — most specific, immune to bank name variations.
+ * 2. bankName + accountType — stable across re-uploads since the AI consistently
+ *    returns the same bank name and type even when the plan/product name wording
+ *    changes. e.g. "fidelity-investment", "td-checking".
+ *    accountName is intentionally excluded: it varies too much per upload to be
+ *    a reliable key (e.g. "HPE Hewlett Packard Enterprise 401(k) Plan" vs "HPE 401(k)").
+ * 3. bankName alone — last resort when type is also absent.
  */
-export function buildAccountSlug(bankName: string | undefined | null, accountId: string | undefined | null): string {
+export function buildAccountSlug(
+  bankName: string | undefined | null,
+  accountId: string | undefined | null,
+  _accountName?: string | undefined | null,  // reserved for future use; not used in slug
+  accountType?: string | undefined | null,
+): string {
   const acct = normalizeAccountId(accountId);
   if (acct !== "unknown") return acct;
-  // Fallback: use normalized bank name when no account ID is available
-  return (bankName ?? "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "unknown";
+
+  const normalize = (s: string | undefined | null) =>
+    (s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+
+  const bank = normalize(bankName);
+  const type = normalize(accountType);
+
+  if (bank && type) return `${bank}-${type}`;
+  return bank || "unknown";
 }

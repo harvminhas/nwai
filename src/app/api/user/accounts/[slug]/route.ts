@@ -51,7 +51,7 @@ export async function DELETE(
     if (d.accountSlug === slug) return true;
     const parsed = d.parsedData as ParsedStatementData | undefined;
     if (parsed) {
-      return buildAccountSlug(parsed.bankName, parsed.accountId) === slug;
+      return buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType) === slug;
     }
     return false;
   });
@@ -65,7 +65,7 @@ export async function DELETE(
     process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
     `${process.env.FIREBASE_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}.appspot.com`;
 
-  // Delete Storage files and Firestore docs
+  // Delete Storage files and Firestore statement docs
   await Promise.all(
     toDelete.map(async (doc) => {
       const d = doc.data();
@@ -79,6 +79,19 @@ export async function DELETE(
       await doc.ref.delete();
     })
   );
+
+  // Delete all backfill records for this account slug.
+  // Backfills are tied to the account's existence — once the account is deleted
+  // the synthetic history is meaningless and must not ghost into other views.
+  const backfillSnap = await db
+    .collection(`users/${uid}/accountBackfills`)
+    .where("accountSlug", "==", slug)
+    .get();
+  if (!backfillSnap.empty) {
+    const batch = db.batch();
+    backfillSnap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
 
   // Rebuild the financial profile so the deleted account disappears immediately
   try {

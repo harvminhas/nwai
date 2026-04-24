@@ -18,8 +18,8 @@ import type { ParsedStatementData } from "@/lib/types";
 
 export const maxDuration = 120;
 
-function computeAccountSlug(parsed: { bankName?: string; accountId?: string }): string {
-  return buildAccountSlug(parsed.bankName, parsed.accountId);
+function computeAccountSlug(parsed: { bankName?: string; accountId?: string; accountName?: string; accountType?: string }): string {
+  return buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
 }
 
 const ERROR_MESSAGE =
@@ -114,9 +114,46 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Compute indexing fields for dedup queries
+    // ── Account ID: generate a stable synthetic ID when none was extracted ──────
+    // When there is no real account number, we generate a short alphanumeric ID
+    // (starts with a letter so it's distinguishable from real 4-digit card numbers)
+    // and persist it per user per bank+type. Every subsequent upload of the same
+    // account automatically reuses it — no changes needed in any data builder.
+    // bankTypeKey is the bank+type fallback slug used as the override map key.
+    const bankTypeKey = computeAccountSlug({ ...parsedData, accountId: undefined });
+    const hasRealAccountId = !!parsedData.accountId;
+    let accountConfirmNeeded = false;
+    let existingAccounts: { slug: string; label: string }[] = [];
+    let suggestedSlug: string | undefined;
+
+    if (!hasRealAccountId && userId) {
+      const overrideRef = db.collection(`users/${userId}/accountSlugOverrides`).doc(bankTypeKey);
+      const overrideDoc = await overrideRef.get();
+
+      let syntheticId: string;
+      if (overrideDoc.exists && overrideDoc.data()?.confirmedAccountId) {
+        // Reuse the previously confirmed account ID as the default
+        syntheticId = overrideDoc.data()!.confirmedAccountId as string;
+        // Pre-select the previously confirmed account in the modal — stored override
+        // takes priority over fuzzy matching which runs later as a fallback only.
+        if (overrideDoc.data()?.confirmedSlug) {
+          suggestedSlug = overrideDoc.data()!.confirmedSlug as string;
+        }
+      } else {
+        // First time seeing this bank+type — generate and persist a stable ID
+        syntheticId = "s" + Math.random().toString(36).slice(2, 5);
+        await overrideRef.set({ confirmedAccountId: syntheticId }, { merge: true });
+      }
+      parsedData = { ...parsedData, accountId: syntheticId };
+      // Always show the confirm prompt when no real account number was found —
+      // the override pre-selects the best option but the user always confirms.
+      accountConfirmNeeded = true;
+    }
+
+    // Compute slug from (possibly patched) parsedData — now always stable
     const slug = computeAccountSlug(parsedData);
     const yearMonth = parsedData.statementDate ? getYearMonth(parsedData.statementDate) : null;
+    const slugIsAccountNumber = /^\d{4}$/.test(slug ?? "");
 
     // ── New-account detection — check before writing "completed" so we can
     // include backfillPromptNeeded in the SAME update. A separate update would
@@ -124,8 +161,6 @@ export async function POST(request: NextRequest) {
     // listener has already unsubscribed following the "completed" event.
     let backfillPromptNeeded = false;
     let backfillOldestMonth: string | null = null;
-    // inferredCurrency: best-guess currency for the new account.
-    // The user confirms or overrides this in the currency prompt.
     const inferredCurrency = inferCurrencyFromBankName(parsedData.bankName, parsedData.currency);
     if (userId && slug) {
       try {
@@ -133,21 +168,65 @@ export async function POST(request: NextRequest) {
           .collection("statements")
           .where("userId", "==", userId)
           .where("status", "==", "completed")
-          .select("accountSlug", "yearMonth")
           .get();
 
+        // Build existing accounts list (shown in prompt when accountConfirmNeeded)
+        if (accountConfirmNeeded) {
+          type Candidate = { slug: string; label: string; yearMonth: string; isAcctNum: boolean };
+          const byNormLabel = new Map<string, Candidate>();
+          for (const d of allUserStmts.docs) {
+            const dd = d.data();
+            const s  = dd.accountSlug as string | undefined;
+            if (!s) continue;
+            const p = dd.parsedData as Record<string, unknown> | undefined;
+            const label =
+              (p?.accountName as string | undefined) ||
+              `${p?.bankName ?? ""} ${p?.accountType ?? ""}`.trim() ||
+              s;
+            const normLabel = label.toLowerCase().replace(/[®™\s]+/g, " ").replace(/[^a-z0-9 ]/g, "").trim();
+            const isAcctNum = /^\d{4}$/.test(s);
+            const ym        = (dd.yearMonth as string) ?? "";
+            const existing  = byNormLabel.get(normLabel);
+            if (!existing) {
+              byNormLabel.set(normLabel, { slug: s, label, yearMonth: ym, isAcctNum });
+            } else {
+              const betterAcctNum = isAcctNum && !existing.isAcctNum;
+              const moreRecent    = isAcctNum === existing.isAcctNum && ym > existing.yearMonth;
+              if (betterAcctNum || moreRecent) byNormLabel.set(normLabel, { slug: s, label, yearMonth: ym, isAcctNum });
+            }
+          }
+          const bySlug = new Map<string, Candidate>();
+          for (const c of byNormLabel.values()) {
+            const prev = bySlug.get(c.slug);
+            if (!prev) { bySlug.set(c.slug, c); continue; }
+            const betterAcctNum = c.isAcctNum && !prev.isAcctNum;
+            const moreRecent    = c.isAcctNum === prev.isAcctNum && c.yearMonth > prev.yearMonth;
+            if (betterAcctNum || moreRecent) bySlug.set(c.slug, c);
+          }
+          existingAccounts = Array.from(bySlug.values())
+            .map(({ slug: s, label }) => ({ slug: s, label }))
+            .sort((a, b) => a.label.localeCompare(b.label));
+
+          // Fuzzy pre-selection
+          const bankNorm = (parsedData.bankName ?? "").toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+          const acctNorm = (parsedData.accountName ?? "").toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+          const match = existingAccounts.find((a) => {
+            const lbl = a.label.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+            return (bankNorm.length > 2 && lbl.includes(bankNorm)) ||
+                   (acctNorm.length > 4 && (lbl.includes(acctNorm) || acctNorm.includes(lbl)));
+          });
+          if (!suggestedSlug && match) suggestedSlug = match.slug;
+        }
+
+        const effectiveSlug = slug;
         const existingSlugs = new Set(
-          allUserStmts.docs
-            .map((d) => d.data().accountSlug as string)
-            .filter(Boolean)
+          allUserStmts.docs.map((d) => d.data().accountSlug as string).filter(Boolean)
         );
         // isFirstForSlug: this account has never had a completed statement before
-        const isFirstForSlug = !existingSlugs.has(slug);
+        const isFirstForSlug = !existingSlugs.has(effectiveSlug);
 
         if (isFirstForSlug) {
           backfillPromptNeeded = true;
-          // Oldest month across all other completed statements — used for the
-          // ">6 months" age bucket to know how far back to estimate.
           const allMonths = allUserStmts.docs
             .map((d) => d.data().yearMonth as string)
             .filter(Boolean)
@@ -159,10 +238,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // True when the slug is a 4-digit account number (not a bank-name fallback).
-    // Used by the client to tailor the soft-duplicate advisory message.
-    const slugIsAccountNumber = /^\d{4}$/.test(slug ?? "");
-
     await statementRef.update({
       parsedData,
       status: "completed",
@@ -171,6 +246,12 @@ export async function POST(request: NextRequest) {
       yearMonth: yearMonth ?? null,
       slugIsAccountNumber,
       // Included in this same write so the onSnapshot fires with all fields set:
+      ...(accountConfirmNeeded && {
+        accountConfirmNeeded: true,
+        bankTypeKey,   // bank+type key used as the override map key
+        existingAccounts,
+        ...(suggestedSlug ? { suggestedSlug } : {}),
+      }),
       ...(backfillPromptNeeded && {
         backfillPromptNeeded: true,
         backfillOldestMonth,

@@ -890,13 +890,7 @@ export function AssetsPage() {
                           <span className={`font-semibold text-sm ${isDebt ? "text-red-600" : "text-gray-900"}`}>
                             {isDebt ? "−" : ""}{fmt(displayBalance, a.currency)}
                           </span>
-                          <button
-                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); openSnapshot(a); }}
-                            title="Update balance"
-                            className="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-500 opacity-0 group-hover:opacity-100 hover:border-purple-300 hover:text-purple-600 transition"
-                          >
-                            Update
-                          </button>
+                          {/* Update balance button hidden — functionality needs rework */}
                           <svg className="h-4 w-4 text-gray-300 group-hover:text-purple-400 transition-colors"
                             fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />

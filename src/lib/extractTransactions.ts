@@ -11,7 +11,7 @@
 
 import type * as Firestore from "firebase-admin/firestore";
 import type { ParsedStatementData } from "./types";
-import { buildAccountSlug } from "./accountSlug";
+import { buildAccountSlug, normalizeAccountId } from "./accountSlug";
 import { inferCurrencyFromBankName } from "./currencyUtils";
 import { getYearMonth } from "./consolidate";
 import { txFingerprint } from "./txFingerprint";
@@ -104,6 +104,23 @@ function docYearMonth(d: FirebaseFirestore.DocumentData): string {
   return ym;
 }
 
+// ── slug resolution ───────────────────────────────────────────────────────────
+/**
+ * Stable slug for a statement document.
+ *
+ * Priority:
+ * 1. If parsedData has a real account number that normalises to 4 digits, always
+ *    use that — even if d.accountSlug was set to an old bankName-based fallback.
+ *    This collapses legacy statements ("td-investment") with newer ones ("1234").
+ * 2. Stored d.accountSlug (set by the parse route).
+ * 3. buildAccountSlug fallback from parsedData fields.
+ */
+function resolveSlug(d: Record<string, unknown>, parsed: ParsedStatementData): string {
+  const normalizedId = normalizeAccountId(parsed.accountId);
+  if (normalizedId !== "unknown" && /^\d{4}$/.test(normalizedId)) return normalizedId;
+  return (d.accountSlug as string | undefined) || buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
+}
+
 // ── main extraction ───────────────────────────────────────────────────────────
 
 export async function extractAllTransactions(
@@ -134,7 +151,7 @@ export async function extractAllTransactions(
     const stmtYm = docYearMonth(d);
     if (!stmtYm) continue;
     const parsed = d.parsedData as ParsedStatementData;
-    const slug = buildAccountSlug(parsed.bankName, parsed.accountId);
+    const slug = resolveSlug(d, parsed);
     const key = `${slug}|${stmtYm}`;
     const existing = bestDocPerSlugYm.get(key);
     if (!existing) {
@@ -162,7 +179,7 @@ export async function extractAllTransactions(
 
       const stmtYm = docYearMonth(d);
       const parsed = d.parsedData as ParsedStatementData;
-      const slug = buildAccountSlug(parsed.bankName, parsed.accountId);
+      const slug = resolveSlug(d, parsed);
       const bank  = (parsed.bankName ?? "").trim();
       const label = parsed.accountName
         ?? (slug === "unknown" ? bank || "Unknown Account" : [bank, `••••${slug}`].filter(Boolean).join(" "));
@@ -213,7 +230,7 @@ export async function extractAllTransactions(
 
       const stmtYm = docYearMonth(d);
       const parsed = d.parsedData as ParsedStatementData;
-      const slug = buildAccountSlug(parsed.bankName, parsed.accountId);
+      const slug = (d.accountSlug as string | undefined) || buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
       for (const txn of parsed.income?.transactions ?? []) {
         const date = txn.date ?? `${stmtYm}-01`;
         const txMonth = date.slice(0, 7);
@@ -236,13 +253,40 @@ export async function extractAllTransactions(
 
   // ── 4. Latest balance snapshot per account (carry-forward) ───────────────
   // For net worth / account balances only — NOT used for spending amounts.
+  //
+  // Non-real-account-number slugs (synthetic IDs, old bankName-based slugs) are
+  // merged by normalized label+accountType so the same physical account doesn't
+  // appear multiple times when its slug varied across uploads.
+  function labelDedupeKey(label: string, acctType: string): string {
+    const tokens = (label ?? "").toLowerCase()
+      .replace(/[^a-z0-9 ]/g, " ")
+      .split(/\s+/)
+      .filter((t) => t.length > 4)
+      .sort();
+    return tokens.join(" ") + "|" + acctType;
+  }
+  const slugByLabelKey = new Map<string, string>(); // labelKey → canonical slug
+
   const latestStmtPerSlug = new Map<string, { parsed: ParsedStatementData; stmtYm: string }>();
   for (const doc of allDocs) {
     const d = doc.data();
     const stmtYm = docYearMonth(d);
     if (!stmtYm) continue;
     const parsed = d.parsedData as ParsedStatementData;
-    const slug = buildAccountSlug(parsed.bankName, parsed.accountId);
+    let slug = resolveSlug(d, parsed);
+
+    // Merge non-real-account-number slugs by label+type
+    if (!/^\d{4}$/.test(slug)) {
+      const label = parsed.accountName ?? parsed.bankName ?? slug;
+      const key = labelDedupeKey(label, parsed.accountType ?? "other");
+      const canonical = slugByLabelKey.get(key);
+      if (canonical) {
+        slug = canonical;
+      } else {
+        slugByLabelKey.set(key, slug);
+      }
+    }
+
     const existing = latestStmtPerSlug.get(slug);
     if (!existing || stmtYm > existing.stmtYm) {
       latestStmtPerSlug.set(slug, { parsed, stmtYm });
@@ -322,3 +366,4 @@ export function buildMonthlyTrend(
     expenses: expenseTotalForMonth(expenseTxns, ym),
   }));
 }
+

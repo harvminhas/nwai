@@ -276,7 +276,7 @@ For an investment / retirement account (401k, RRSP, TFSA, brokerage):
   "debts": 0,
   "statementDate": "2026-02-28",
   "bankName": "Fidelity",
-  "accountId": "Z12345678",
+  "accountId": "unknown",
   "accountName": "HPE Hewlett Packard Enterprise 401(k) Plan",
   "accountType": "investment",
   "currency": "USD",
@@ -425,6 +425,19 @@ function validateParsedData(data: unknown): data is ParsedStatementData {
   );
 }
 
+// Known values the AI hallucinates by copying from prompt examples.
+// Treat them as absent so buildAccountSlug falls back to bank+accountName.
+const HALLUCINATED_ACCOUNT_IDS = new Set([
+  "z12345678", "12345678", "unknown", "1234", "••••1234",
+  "xxxx1234", "****1234", "example", "sample",
+]);
+
+function sanitizeAccountId(raw: string | undefined): string | null {
+  if (!raw) return null;
+  if (HALLUCINATED_ACCOUNT_IDS.has(raw.toLowerCase().trim())) return null;
+  return raw;
+}
+
 /** Fill in any missing optional fields so downstream code never crashes. */
 function coerceDefaults(data: Record<string, unknown>): ParsedStatementData {
   const income = (data.income ?? {}) as Record<string, unknown>;
@@ -435,7 +448,7 @@ function coerceDefaults(data: Record<string, unknown>): ParsedStatementData {
     debts: typeof data.debts === "number" ? data.debts : undefined,
     statementDate: data.statementDate as string,
     bankName: data.bankName as string,
-    accountId: typeof data.accountId === "string" ? data.accountId : undefined,
+    ...((() => { const id = sanitizeAccountId(typeof data.accountId === "string" ? data.accountId : undefined); return id ? { accountId: id } : {}; })()),
     accountName: typeof data.accountName === "string" ? data.accountName : undefined,
     accountType: (data.accountType as ParsedStatementData["accountType"]) ?? "other",
     interestRate: typeof data.interestRate === "number" ? data.interestRate : null,

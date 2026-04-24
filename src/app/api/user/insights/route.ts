@@ -145,7 +145,7 @@ export async function GET(req: NextRequest) {
             ? (raw as Date).toISOString() : String(raw)).slice(0, 7);
         }
         if (!ym || ym > currentYm) continue;
-        const slug = buildAccountSlug(p.bankName, p.accountId);
+        const slug = buildAccountSlug(p.bankName, p.accountId, p.accountName, p.accountType);
         if (!latestPerAccount.has(slug)) latestPerAccount.set(slug, p);
       }
       consolidated = consolidateStatements(Array.from(latestPerAccount.values()), currentYm);
@@ -945,7 +945,7 @@ export async function GET(req: NextRequest) {
   for (const doc of stmtSnap.docs) {
     const p = doc.data().parsedData as ParsedStatementData | undefined;
     if (!p?.statementDate) continue;
-    const slug  = buildAccountSlug(p.bankName, p.accountId);
+    const slug  = buildAccountSlug(p.bankName, p.accountId, p.accountName, p.accountType);
     const dates = acctStmtDatesMap.get(slug) ?? [];
     dates.push(p.statementDate);
     acctStmtDatesMap.set(slug, dates);
@@ -1134,3 +1134,4 @@ export async function GET(req: NextRequest) {
     }, { status: 200 });
   }
 }
+

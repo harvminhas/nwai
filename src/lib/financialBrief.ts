@@ -49,7 +49,7 @@ export function docYearMonth(d: FirebaseFirestore.DocumentData): string {
 
 // keep this in sync with chat/route.ts accountSlug helper
 export function statementAccountSlug(parsed: ParsedStatementData): string {
-  return buildAccountSlug(parsed.bankName, parsed.accountId);
+  return buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
 }
 
 // ── main builder ──────────────────────────────────────────────────────────────
@@ -393,3 +393,4 @@ ${historyLines.join("\n") || "  Not enough history yet"}
 == GROUNDED IMPACT VALUES (code-computed from the same cache as all UI pages — use these exact figures for dollarImpact, do not re-derive) ==
 ${groundedLines}`;
 }
+

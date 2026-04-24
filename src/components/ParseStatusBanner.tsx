@@ -50,6 +50,12 @@ interface BackfillPrompt {
   oldestMonth: string;
   slugIsAccountNumber: boolean;
   inferredCurrency: string;
+  // Account confirmation fields (shown when accountId was not found on statement)
+  accountConfirmNeeded?: boolean;
+  bankTypeKey?: string;
+  existingAccounts?: { slug: string; label: string }[];
+  suggestedSlug?: string; // pre-selected hint from a prior override
+  backfillPromptNeeded?: boolean;
 }
 
 const SUPPORTED_CURRENCIES = [
@@ -69,10 +75,14 @@ const AGE_BUCKETS = [
 
 type BucketId = typeof AGE_BUCKETS[number]["id"];
 
-// Step sequence: currency → age (2 steps only)
-type Step = "currency" | "age";
+// Step sequence: account (optional) → currency → age
+type Step = "account" | "currency" | "age";
 
-// ── Account setup modal — currency + age only ─────────────────────────────────
+// ── Account setup modal ───────────────────────────────────────────────────────
+
+function toNicknameSlug(raw: string): string {
+  return raw.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "my-account";
+}
 
 function AccountSetupModal({
   prompt,
@@ -83,15 +93,76 @@ function AccountSetupModal({
   idToken: string;
   onDone: () => void;
 }) {
-  const [step,      setStep]      = useState<Step>("currency");
-  const [currency,  setCurrency]  = useState<string>(prompt.inferredCurrency || "USD");
-  const [selected,  setSelected]  = useState<BucketId | null>(null);
-  const [saving,    setSaving]    = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const hasAccountConfirm = !!prompt.accountConfirmNeeded;
+  const existingAccounts  = prompt.existingAccounts ?? [];
+
+  // If a prior override exists (suggestedSlug), pre-select "existing" with that account.
+  // Otherwise default to "existing" only if there are existing accounts to pick from.
+  const defaultChoice: "new" | "existing" =
+    hasAccountConfirm && (prompt.suggestedSlug || existingAccounts.length > 0) ? "existing" : "new";
+  const defaultExistingSlug =
+    prompt.suggestedSlug ??
+    existingAccounts[0]?.slug ??
+    "";
+
+  const [step,              setStep]             = useState<Step>(hasAccountConfirm ? "account" : "currency");
+  const [accountChoice,     setAccountChoice]     = useState<"new" | "existing">(defaultChoice);
+  const [nickname,          setNickname]          = useState<string>(prompt.accountName || "");
+  const [selectedExisting,  setSelectedExisting]  = useState<string>(defaultExistingSlug);
+  const [currency,          setCurrency]          = useState<string>(prompt.inferredCurrency || "USD");
+  const [selected,          setSelected]          = useState<BucketId | null>(null);
+  const [saving,            setSaving]            = useState(false);
+  const [saveError,         setSaveError]         = useState<string | null>(null);
+
+  // The slug that will actually be used for currency/backfill saves
+  const [resolvedSlug,      setResolvedSlug]      = useState<string>(prompt.accountSlug);
 
   const displayId = prompt.slugIsAccountNumber
     ? `••••${prompt.accountSlug.slice(-4)}`
     : prompt.accountSlug;
+
+  // Steps shown: depends on whether adding to existing (skip age)
+  const stepsToShow: Step[] = hasAccountConfirm
+    ? accountChoice === "existing"
+      ? ["account", "currency"]
+      : ["account", "currency", "age"]
+    : ["currency", "age"];
+
+  const stepIndex = stepsToShow.indexOf(step);
+
+  // Confirm account choice and advance to currency step
+  const handleAccountContinue = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      // For "new account" the slug stays as the synthetic ID already on the statement;
+      // the nickname is saved as the display label (parsedData.accountName) only.
+      const chosenSlug = accountChoice === "existing"
+        ? selectedExisting
+        : prompt.accountSlug; // keep the synthetic ID — don't use nickname as slug
+
+      const res = await fetch("/api/user/account-slug-confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({
+          statementId:       prompt.statementId,
+          bankTypeKey:       prompt.bankTypeKey ?? prompt.accountSlug,
+          confirmedSlug:     chosenSlug,
+          isExistingAccount: accountChoice === "existing",
+          nickname:          accountChoice === "new" && nickname.trim() ? nickname.trim() : undefined,
+        }),
+      });
+      if (!res.ok) { setSaveError("Couldn't save — please try again."); return; }
+      setResolvedSlug(chosenSlug);
+      // Merging into an existing account — no currency/age setup needed
+      if (accountChoice === "existing") { onDone(); return; }
+      setStep("currency");
+    } catch {
+      setSaveError("Network error — please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleSave = async () => {
     if (!selected) return;
@@ -105,7 +176,7 @@ function AccountSetupModal({
       const ccyRes = await fetch("/api/user/currency-overrides", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
-        body: JSON.stringify({ accountSlug: prompt.accountSlug, currency, confirmed: true }),
+        body: JSON.stringify({ accountSlug: resolvedSlug, currency, confirmed: true }),
       });
       if (!ccyRes.ok) { setSaveError("Couldn't save currency — please try again."); return; }
 
@@ -114,7 +185,7 @@ function AccountSetupModal({
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
         body: JSON.stringify({
           statementId: prompt.statementId,
-          accountSlug: prompt.accountSlug,
+          accountSlug: resolvedSlug,
           accountName: prompt.accountName,
           accountType: prompt.accountType,
           backfillMonths,
@@ -131,6 +202,35 @@ function AccountSetupModal({
     }
   };
 
+  // After currency step: if adding to existing account skip age
+  const handleCurrencyDone = async () => {
+    if (accountChoice === "existing" || !prompt.backfillPromptNeeded) {
+      // Just save currency and finish
+      setSaving(true);
+      setSaveError(null);
+      try {
+        const ccyRes = await fetch("/api/user/currency-overrides", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+          body: JSON.stringify({ accountSlug: resolvedSlug, currency, confirmed: true }),
+        });
+        if (!ccyRes.ok) { setSaveError("Couldn't save currency — please try again."); return; }
+        onDone();
+      } catch {
+        setSaveError("Network error — please try again.");
+      } finally {
+        setSaving(false);
+      }
+    } else {
+      setStep("age");
+    }
+  };
+
+  const goBack = () => {
+    if (step === "age")      setStep("currency");
+    else if (step === "currency" && hasAccountConfirm) setStep("account");
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
       <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl overflow-hidden">
@@ -139,18 +239,20 @@ function AccountSetupModal({
         <div className="px-6 pt-6 pb-4 border-b border-gray-100">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">New account</p>
+              <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+                {hasAccountConfirm ? "Confirm account" : "New account"}
+              </p>
               <h2 className="mt-0.5 text-base font-bold text-gray-900">{prompt.accountName || displayId}</h2>
             </div>
             <div className="flex items-center gap-3 shrink-0">
               <div className="flex items-center gap-1.5">
-                {(["currency", "age"] as Step[]).map((s, i) => (
+                {stepsToShow.map((s, i) => (
                   <span key={s} className={`h-1.5 w-1.5 rounded-full transition ${
-                    (step === "currency" ? 0 : 1) >= i ? "bg-purple-600" : "bg-gray-200"
+                    stepIndex >= i ? "bg-purple-600" : "bg-gray-200"
                   }`} />
                 ))}
                 <span className="ml-1 text-[10px] font-medium text-gray-400">
-                  {step === "currency" ? "1" : "2"}/2
+                  {stepIndex + 1}/{stepsToShow.length}
                 </span>
               </div>
               <button onClick={onDone} className="flex h-6 w-6 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition" aria-label="Dismiss">
@@ -164,6 +266,86 @@ function AccountSetupModal({
 
         {/* Body */}
         <div className="px-6 py-5">
+
+          {/* ── Account confirmation step ── */}
+          {step === "account" && (
+            <>
+              <p className="text-sm font-semibold text-gray-800">
+                We couldn&apos;t find an account number on this statement.
+              </p>
+              <p className="mt-1 text-xs text-gray-500">
+                Choose how you&apos;d like to track it.
+              </p>
+
+              <div className="mt-4 flex flex-col gap-3">
+                {/* Add to existing */}
+                {existingAccounts.length > 0 && (
+                  <label className={`flex items-start gap-3 rounded-xl border-2 px-4 py-3 cursor-pointer transition ${
+                    accountChoice === "existing" ? "border-purple-500 bg-purple-50" : "border-gray-200 bg-gray-50 hover:border-gray-300"
+                  }`}>
+                    <input
+                      type="radio"
+                      name="accountChoice"
+                      value="existing"
+                      checked={accountChoice === "existing"}
+                      onChange={() => setAccountChoice("existing")}
+                      className="mt-0.5 accent-purple-600 shrink-0"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-semibold ${accountChoice === "existing" ? "text-purple-800" : "text-gray-700"}`}>
+                        Add to existing account
+                      </p>
+                      <p className="text-[11px] text-gray-400 mt-0.5">Merge with a previously uploaded account.</p>
+                      {accountChoice === "existing" && (
+                        <select
+                          value={selectedExisting}
+                          onChange={(e) => setSelectedExisting(e.target.value)}
+                          className="mt-2 w-full rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-400"
+                        >
+                          {existingAccounts.map((a) => (
+                            <option key={a.slug} value={a.slug}>{a.label}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  </label>
+                )}
+
+                {/* New account */}
+                <label className={`flex items-start gap-3 rounded-xl border-2 px-4 py-3 cursor-pointer transition ${
+                  accountChoice === "new" ? "border-purple-500 bg-purple-50" : "border-gray-200 bg-gray-50 hover:border-gray-300"
+                }`}>
+                  <input
+                    type="radio"
+                    name="accountChoice"
+                    value="new"
+                    checked={accountChoice === "new"}
+                    onChange={() => setAccountChoice("new")}
+                    className="mt-0.5 accent-purple-600 shrink-0"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-semibold ${accountChoice === "new" ? "text-purple-800" : "text-gray-700"}`}>
+                      New account
+                    </p>
+                    <p className="text-[11px] text-gray-400 mt-0.5">Create a new account with a nickname.</p>
+                    {accountChoice === "new" && (
+                      <input
+                        type="text"
+                        value={nickname}
+                        onChange={(e) => setNickname(e.target.value)}
+                        placeholder="e.g. Fidelity Investment"
+                        className="mt-2 w-full rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-400"
+                      />
+                    )}
+                  </div>
+                </label>
+              </div>
+
+              {saveError && <p className="mt-3 text-xs font-medium text-red-600">{saveError}</p>}
+            </>
+          )}
+
+          {/* ── Currency step ── */}
           {step === "currency" && (
             <>
               <p className="text-sm font-semibold text-gray-800">What currency is this account in?</p>
@@ -181,9 +363,11 @@ function AccountSetupModal({
                   </button>
                 ))}
               </div>
+              {saveError && <p className="mt-3 text-xs font-medium text-red-600">{saveError}</p>}
             </>
           )}
 
+          {/* ── Age step ── */}
           {step === "age" && (
             <>
               <p className="text-sm font-semibold text-gray-800">How long have you had this account?</p>
@@ -215,16 +399,34 @@ function AccountSetupModal({
         {/* Footer */}
         <div className="flex items-center justify-between gap-3 px-6 pb-6">
           <button
-            onClick={() => step === "age" && setStep("currency")}
-            className={`text-xs font-medium text-gray-400 hover:text-gray-600 transition ${step === "currency" ? "invisible" : ""}`}
+            onClick={goBack}
+            className={`text-xs font-medium text-gray-400 hover:text-gray-600 transition ${
+              (step === "currency" && !hasAccountConfirm) || step === "account" ? "invisible" : ""
+            }`}
           >
             ← Back
           </button>
-          {step === "currency" && (
-            <button onClick={() => setStep("age")} className="rounded-xl bg-purple-600 px-5 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition">
-              Continue →
+
+          {step === "account" && (
+            <button
+              onClick={handleAccountContinue}
+              disabled={saving || (accountChoice === "new" && !nickname.trim()) || (accountChoice === "existing" && !selectedExisting)}
+              className="rounded-xl bg-purple-600 px-5 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-40 transition"
+            >
+              {saving ? "Saving…" : "Continue →"}
             </button>
           )}
+
+          {step === "currency" && (
+            <button
+              onClick={handleCurrencyDone}
+              disabled={saving}
+              className="rounded-xl bg-purple-600 px-5 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-40 transition"
+            >
+              {saving ? "Saving…" : accountChoice === "existing" || !prompt.backfillPromptNeeded ? "Done ✓" : "Continue →"}
+            </button>
+          )}
+
           {step === "age" && (
             <div className="flex items-center gap-3">
               <button onClick={onDone} className="text-xs font-medium text-gray-400 hover:text-gray-600 transition">Skip</button>
@@ -265,34 +467,57 @@ export default function ParseStatusBanner({
   const onRefreshRef                  = useRef(onRefresh);
   const refreshedRef                  = useRef(false);
 
-  // Persist the backfill prompt to localStorage so it survives parent remounts
+  // Persist the prompt queue to localStorage so it survives parent remounts
   // (e.g. when the dashboard triggers setLoading(true) during a data refresh).
-  const [backfillPrompt, setBackfillPromptState] = useState<BackfillPrompt | null>(() => {
+  const [promptQueue, setPromptQueueState] = useState<BackfillPrompt[]>(() => {
     try {
       const raw = localStorage.getItem(BACKFILL_PROMPT_KEY);
-      return raw ? (JSON.parse(raw) as BackfillPrompt) : null;
-    } catch { return null; }
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      // Support both legacy single-object and new array format
+      return Array.isArray(parsed) ? parsed : [parsed];
+    } catch { return []; }
   });
   const onBackfillDetectedRef = useRef(onBackfillDetected);
   useEffect(() => { onBackfillDetectedRef.current = onBackfillDetected; }, [onBackfillDetected]);
 
-  const setBackfillPrompt = (p: BackfillPrompt | null) => {
-    setBackfillPromptState(p);
-    try {
-      if (p) {
-        localStorage.setItem(BACKFILL_PROMPT_KEY, JSON.stringify(p));
-        onBackfillDetectedRef.current?.();
-      } else {
-        localStorage.removeItem(BACKFILL_PROMPT_KEY);
-      }
-    } catch { /* ignore */ }
+  // Append a new prompt to the queue (deduped by statementId so snapshots don't
+  // add duplicates). Never interrupts the active head of the queue.
+  const enqueuePrompt = (p: BackfillPrompt) => {
+    setPromptQueueState((prev) => {
+      if (prev.some((x) => x.statementId === p.statementId)) return prev;
+      const next = [...prev, p];
+      try {
+        localStorage.setItem(BACKFILL_PROMPT_KEY, JSON.stringify(next));
+      } catch { /* ignore */ }
+      return next;
+    });
+    // Called outside the updater — calling setState in a parent from inside
+    // a setState updater triggers React's "setState during render" warning.
+    onBackfillDetectedRef.current?.();
   };
 
-  // If a backfill prompt was restored from localStorage on mount (i.e. from a
-  // previous page), notify the parent immediately so it can dismiss conflicting
-  // modals before they even appear.
+  // Pop the head of the queue. Calls onRefresh after every dismissal so data
+  // stays fresh; the next modal (if any) appears automatically.
+  const dismissHead = () => {
+    setPromptQueueState((prev) => {
+      const next = prev.slice(1);
+      try {
+        if (next.length > 0) {
+          localStorage.setItem(BACKFILL_PROMPT_KEY, JSON.stringify(next));
+        } else {
+          localStorage.removeItem(BACKFILL_PROMPT_KEY);
+        }
+      } catch { /* ignore */ }
+      return next;
+    });
+    onRefreshRef.current();
+    router.refresh();
+  };
+
+  // If a prompt queue was restored from localStorage on mount, notify the parent.
   useEffect(() => {
-    if (backfillPrompt) onBackfillDetectedRef.current?.();
+    if (promptQueue.length > 0) onBackfillDetectedRef.current?.();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -313,38 +538,55 @@ export default function ParseStatusBanner({
   const fallbackQueriedRef = useRef(false);
   useEffect(() => {
     if (!idToken || fallbackQueriedRef.current) return;
-    // If we already have a backfill prompt (from localStorage or snapshot), skip.
-    try {
-      if (localStorage.getItem(BACKFILL_PROMPT_KEY)) { fallbackQueriedRef.current = true; return; }
-    } catch { /* ignore */ }
+    // If we already have items in the queue (from localStorage or snapshot), skip.
+    if (promptQueue.length > 0) { fallbackQueriedRef.current = true; return; }
     fallbackQueriedRef.current = true;
 
     const { auth, db } = getFirebaseClient();
     const user = auth.currentUser;
     if (!user) return;
 
-    const q = query(
+    // Query for statements that need either backfill or account confirmation
+    const bfQuery = query(
       collection(db, "statements"),
       where("userId", "==", user.uid),
       where("backfillPromptNeeded", "==", true),
       limit(1)
     );
-    getDocs(q).then((snap) => {
-      if (snap.empty) return;
-      const stmtDoc  = snap.docs[0];
-      const data     = stmtDoc.data() as Record<string, unknown>;
-      const parsed   = data.parsedData as Record<string, unknown> | undefined;
-      setBackfillPrompt({
-        statementId:             stmtDoc.id,
-        accountSlug:             (data.accountSlug             as string)  ?? "",
-        accountName:             (parsed?.accountName          as string)  ?? (data.accountSlug as string) ?? "New account",
-        accountType:             (parsed?.accountType          as string)  ?? "other",
-        firstBalance:            (parsed?.netWorth             as number)  ?? 0,
-        firstStatementYearMonth: (data.yearMonth               as string)  ?? "",
-        oldestMonth:             (data.backfillOldestMonth     as string)  ?? "",
-        slugIsAccountNumber:     (data.slugIsAccountNumber     as boolean) ?? false,
-        inferredCurrency:        (data.inferredCurrency        as string)  ?? "USD",
+    const acQuery = query(
+      collection(db, "statements"),
+      where("userId", "==", user.uid),
+      where("accountConfirmNeeded", "==", true),
+      limit(1)
+    );
+    Promise.all([getDocs(bfQuery), getDocs(acQuery)]).then(([bfSnap, acSnap]) => {
+      // Collect all docs that need a prompt (both queries may return results)
+      const seen = new Set<string>();
+      const docs = [...bfSnap.docs, ...acSnap.docs].filter((d) => {
+        if (seen.has(d.id)) return false;
+        seen.add(d.id);
+        return true;
       });
+      for (const stmtDoc of docs) {
+        const data   = stmtDoc.data() as Record<string, unknown>;
+        const parsed = data.parsedData as Record<string, unknown> | undefined;
+        enqueuePrompt({
+          statementId:             stmtDoc.id,
+          accountSlug:             (data.accountSlug             as string)  ?? "",
+          accountName:             (parsed?.accountName          as string)  ?? (data.accountSlug as string) ?? "New account",
+          accountType:             (parsed?.accountType          as string)  ?? "other",
+          firstBalance:            (parsed?.netWorth             as number)  ?? 0,
+          firstStatementYearMonth: (data.yearMonth               as string)  ?? "",
+          oldestMonth:             (data.backfillOldestMonth     as string)  ?? "",
+          slugIsAccountNumber:     (data.slugIsAccountNumber     as boolean) ?? false,
+          inferredCurrency:        (data.inferredCurrency        as string)  ?? "USD",
+          accountConfirmNeeded:    (data.accountConfirmNeeded    as boolean) ?? false,
+          bankTypeKey:             (data.bankTypeKey             as string)  ?? undefined,
+          existingAccounts:        (data.existingAccounts        as { slug: string; label: string }[]) ?? [],
+          suggestedSlug:           (data.suggestedSlug           as string)  ?? undefined,
+          backfillPromptNeeded:    (data.backfillPromptNeeded    as boolean) ?? false,
+        });
+      }
     }).catch(console.error);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idToken]);
@@ -379,9 +621,9 @@ export default function ParseStatusBanner({
     };
 
     const checkBackfill = (snapData: Record<string, unknown>, stmtId: string) => {
-      if (snapData.backfillPromptNeeded === true) {
+      if (snapData.backfillPromptNeeded === true || snapData.accountConfirmNeeded === true) {
         const parsedData = snapData.parsedData as Record<string, unknown> | undefined;
-        setBackfillPrompt({
+        enqueuePrompt({
           statementId:             stmtId,
           accountSlug:             (snapData.accountSlug as string) ?? "",
           accountName:             (parsedData?.accountName as string) ?? (snapData.accountSlug as string) ?? "New account",
@@ -391,6 +633,11 @@ export default function ParseStatusBanner({
           oldestMonth:             (snapData.backfillOldestMonth as string) ?? "",
           slugIsAccountNumber:     (snapData.slugIsAccountNumber as boolean) ?? false,
           inferredCurrency:        (snapData.inferredCurrency as string) ?? "USD",
+          accountConfirmNeeded:    (snapData.accountConfirmNeeded as boolean) ?? false,
+          bankTypeKey:             (snapData.bankTypeKey as string)   ?? undefined,
+          existingAccounts:        (snapData.existingAccounts as { slug: string; label: string }[]) ?? [],
+          suggestedSlug:           (snapData.suggestedSlug as string) ?? undefined,
+          backfillPromptNeeded:    (snapData.backfillPromptNeeded as boolean) ?? false,
         });
       }
     };
@@ -439,19 +686,21 @@ export default function ParseStatusBanner({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (items.length === 0 && !backfillPrompt) return null;
+  const activePrompt = promptQueue[0] ?? null;
+
+  if (items.length === 0 && promptQueue.length === 0) return null;
 
   const analyzing = items.filter((i) => i.status === "analyzing");
   const errors    = items.filter((i) => i.status === "error");
 
   return (
     <>
-      {/* Account setup modal — currency + age, shown when a new account is detected */}
-      {backfillPrompt && idToken && (
+      {/* Account setup modal — shown one at a time; queue ensures no interruptions */}
+      {activePrompt && idToken && (
         <AccountSetupModal
-          prompt={backfillPrompt}
+          prompt={activePrompt}
           idToken={idToken}
-          onDone={() => { setBackfillPrompt(null); onRefreshRef.current(); router.refresh(); }}
+          onDone={dismissHead}
         />
       )}
 

@@ -51,7 +51,7 @@ export async function PUT(req: NextRequest) {
     try {
       const stmtDoc = await db.collection("statements").doc(stmtId).get();
       const p = stmtDoc.data()?.parsedData as ParsedStatementData | undefined;
-      if (p) accountSlug = buildAccountSlug(p.bankName, p.accountId);
+      if (p) accountSlug = buildAccountSlug(p.bankName, p.accountId, p.accountName, p.accountType);
     } catch { /* fall back */ }
   }
 
@@ -92,3 +92,4 @@ export async function DELETE(req: NextRequest) {
   await db.doc(`users/${uid}/incomeTxnCategories/${body.key}`).delete();
   return NextResponse.json({ ok: true });
 }
+

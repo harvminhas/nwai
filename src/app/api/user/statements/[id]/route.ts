@@ -100,7 +100,31 @@ export async function DELETE(
   }
 
   // ── 2. Delete the Firestore document ─────────────────────────────────────
+  const accountSlug: string | undefined = data.accountSlug;
   await statementRef.delete();
+
+  // ── 3. If this was the last statement for the account, delete its backfills ─
+  // Backfill records are only meaningful while real statements exist. Keeping them
+  // after all statements are deleted causes ghost entries in history/balance views.
+  if (accountSlug) {
+    const remaining = await db
+      .collection("statements")
+      .where("userId", "==", uid)
+      .where("accountSlug", "==", accountSlug)
+      .where("status", "==", "completed")
+      .limit(1)
+      .get();
+
+    if (remaining.empty) {
+      const backfillSnap = await db
+        .collection(`users/${uid}/accountBackfills`)
+        .where("accountSlug", "==", accountSlug)
+        .get();
+      const batch = db.batch();
+      backfillSnap.docs.forEach((d) => batch.delete(d.ref));
+      if (!backfillSnap.empty) await batch.commit();
+    }
+  }
 
   // Await cache invalidation so the stale cache is gone before we respond.
   // Clients that reload immediately after deletion will always trigger a fresh rebuild.

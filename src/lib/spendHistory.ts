@@ -44,8 +44,8 @@ export function docYearMonth(d: FirebaseFirestore.DocumentData): string {
   return ym;
 }
 
-function accountSlug(parsed: ParsedStatementData): string {
-  return buildAccountSlug(parsed.bankName, parsed.accountId);
+function accountSlug(parsed: ParsedStatementData, storedSlug?: string): string {
+  return storedSlug || buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
 }
 
 /**
@@ -72,7 +72,7 @@ export function carryForwardStatements(
     const parsed     = d.parsedData as ParsedStatementData;
     const isCSV      = (d.source as string | undefined) === "csv";
     const uploadedAt = d.uploadedAt?.toDate?.()?.getTime() ?? 0;
-    const slug       = accountSlug(parsed);
+    const slug       = accountSlug(parsed, d.accountSlug as string | undefined);
     const existing   = latestPerAccount.get(slug);
 
     if (!existing || ym > existing.ym) {
@@ -97,27 +97,28 @@ export function carryForwardStatements(
     const ym = docYearMonth(d);
     if (!ym || ym > targetMonth) continue;
     const parsed = d.parsedData as ParsedStatementData;
-    const slug   = accountSlug(parsed);
+    const slug   = accountSlug(parsed, d.accountSlug as string | undefined);
     const cur    = latestPdfNetWorth.get(slug);
     if (!cur || ym >= cur.ym) latestPdfNetWorth.set(slug, { ym, netWorth: parsed.netWorth ?? 0 });
   }
 
-  return Array.from(latestPerAccount.values()).map(({ ym, parsed, isCSV }) => {
+  return Array.from(latestPerAccount.entries()).map(([slug, { ym, parsed, isCSV }]) => {
     const patchedParsed = isCSV
-      ? { ...parsed, netWorth: parsed.netWorth ?? latestPdfNetWorth.get(accountSlug(parsed))?.netWorth ?? 0 }
+      ? { ...parsed, netWorth: parsed.netWorth ?? latestPdfNetWorth.get(slug)?.netWorth ?? 0 }
       : parsed;
 
     // Carrying forward: strip transactions so older data doesn't appear in this month.
-    if (ym !== targetMonth) {
-      return {
-        ...patchedParsed,
-        income:        { total: 0, sources: [], transactions: [] },
-        expenses:      { total: 0, categories: [], transactions: [] },
-        subscriptions: [],
-        savingsRate:   0,
-      };
-    }
-    return patchedParsed;
+    const finalParsed = ym !== targetMonth
+      ? {
+          ...patchedParsed,
+          income:        { total: 0, sources: [], transactions: [] },
+          expenses:      { total: 0, categories: [], transactions: [] },
+          subscriptions: [],
+          savingsRate:   0,
+        }
+      : patchedParsed;
+
+    return finalParsed;
   });
 }
 
@@ -171,3 +172,4 @@ export async function buildMonthlySpendHistory(
 
   return history;
 }
+

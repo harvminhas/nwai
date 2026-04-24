@@ -33,7 +33,7 @@ export interface MerchantSummary {
 
 function accountDisplayLabel(parsed: ParsedStatementData): string {
   if (parsed.accountName) return parsed.accountName;
-  const slug = buildAccountSlug(parsed.bankName, parsed.accountId);
+  const slug = buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
   const bank = (parsed.bankName ?? "").trim();
   if (slug === "unknown") return bank || "Unknown Account";
   return [bank, `••••${slug}`].filter(Boolean).join(" ");
@@ -136,7 +136,7 @@ export async function GET(request: NextRequest) {
       if (!parsed) continue;
       const stmtYm = docYearMonth(d);
       if (!stmtYm) continue;
-      const acctSlug = buildAccountSlug(parsed.bankName, parsed.accountId);
+      const acctSlug = buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
       const key = `${acctSlug}|${stmtYm}`;
       const existing = bestDocPerSlugYm.get(key);
       if (!existing) {
@@ -179,7 +179,7 @@ export async function GET(request: NextRequest) {
       const stmtId = doc.id;
       // accountSlug is stable across re-uploads (same bankName + accountId = same slug).
       // txnKey uses accountSlug so category overrides survive statement re-uploads.
-      const acctSlug = buildAccountSlug(parsed.bankName, parsed.accountId);
+      const acctSlug = buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
       // Inject stmtId + accountSlug BEFORE applyRulesAndRecalculate so txnKey lookups work
       const parsedWithIds: typeof parsed = parsed.expenses
         ? {
@@ -379,3 +379,4 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
 }
+

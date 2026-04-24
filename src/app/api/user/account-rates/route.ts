@@ -23,7 +23,7 @@ function authToken(req: NextRequest): string | null {
 }
 
 function toAccountKey(p: ParsedStatementData): string {
-  return buildAccountSlug(p.bankName, p.accountId);
+  return buildAccountSlug(p.bankName, p.accountId, p.accountName, p.accountType);
 }
 
 export interface AccountRateEntry {
@@ -164,3 +164,4 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "Failed to save rate" }, { status: 500 });
   }
 }
+

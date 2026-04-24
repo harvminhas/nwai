@@ -31,7 +31,7 @@ import { merchantSlug } from "./applyRules";
 import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
 import type { TypicalSpend } from "./spendingMetrics";
 import type { ManualAsset, ManualLiability, InvestmentHolding, ParsedStatementData } from "./types";
-import { buildAccountSlug } from "./accountSlug";
+import { buildAccountSlug, normalizeAccountId } from "./accountSlug";
 import { getFxRatesForCurrencies } from "./fxRates";
 import { splitDebtPayments } from "./debtUtils";
 import type { SubscriptionRecord } from "./insights/types";
@@ -57,7 +57,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "32"; // auto-detect homeCurrency from bank names when country unconfirmed
+const SCHEMA_VERSION = "37"; // skip orphaned backfill entries for deleted accounts
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -445,7 +445,7 @@ export async function buildAndCacheFinancialProfile(
     if (!parsed || parsed.accountType !== "investment") continue;
     const holdings = parsed.holdings;
     if (!holdings || holdings.length === 0) continue;
-    const slug = buildAccountSlug(parsed.bankName, parsed.accountId);
+    const slug = (d.accountSlug as string | undefined) || buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
     const ym   = d.yearMonth as string | undefined ?? "";
     const existing = latestHoldingsBySlug.get(slug);
     if (!existing || ym > existing.statementMonth) {
@@ -461,14 +461,61 @@ export async function buildAndCacheFinancialProfile(
 
   // Build per-account monthly balance history from ALL completed statement docs.
   // This replaces the need for pages to fetch /api/user/statements directly.
+
+  // Collapse multiple slugs that refer to the same physical account.
+  // This covers three legacy cases:
+  //   a) Different synthetic IDs ("sa3f", "sb2c") — each upload generated a new one
+  //   b) Old bankName+accountName slugs that vary between uploads
+  //   c) A mix of both
+  // Real 4-digit account-number slugs are always authoritative and never merged.
+  //
+  // Normalise label: lowercase, strip symbols, keep tokens >4 chars, sort alpha.
+  // "HPE Hewlett Packard Enterprise 401(k) Plan" and
+  // "Hewlett Packard Enterprise 401(k) Plan" → same key (HPE ≤4 chars, filtered out)
+  function labelDedupeKey(label: string, acctType: string): string {
+    const tokens = (label ?? "").toLowerCase()
+      .replace(/[^a-z0-9 ]/g, " ")
+      .split(/\s+/)
+      .filter((t) => t.length > 4)
+      .sort();
+    return tokens.join(" ") + "|" + acctType;
+  }
+  // Maps label+type → the first non-real-account-number slug seen (canonical)
+  const slugByLabelKey = new Map<string, string>();
+
   const balanceHistoryMap = new Map<string, { label: string; accountType: string; entries: Map<string, number> }>();
   for (const doc of completedSnap.docs) {
     const d = doc.data();
     const parsed = d.parsedData as ParsedStatementData | undefined;
     if (!parsed || parsed.netWorth == null) continue;
-    const slug = buildAccountSlug(parsed.bankName, parsed.accountId);
+    const rawSlug = (d.accountSlug as string | undefined) || buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
     const ym   = (d.yearMonth as string | undefined) ?? (parsed.statementDate ?? "").slice(0, 7);
     if (!ym) continue;
+
+    // ── Stable slug resolution ─────────────────────────────────────────────
+    // Priority 1: If parsedData carries a real account number (last-4 digits),
+    // always use that. This collapses old statements whose d.accountSlug was a
+    // bankName-based fallback (e.g. "td-investment") with newer ones keyed on
+    // the real account number ("1234").
+    const normalizedId = normalizeAccountId(parsed.accountId);
+    let slug = (normalizedId !== "unknown" && /^\d{4}$/.test(normalizedId))
+      ? normalizedId
+      : rawSlug;
+
+    // Priority 2: For any slug that is NOT a real 4-digit account number, merge
+    // all entries with the same normalized label+accountType into one entry.
+    // This handles synthetic IDs, old bankName-based slugs, and any mix.
+    if (!/^\d{4}$/.test(slug)) {
+      const label = parsed.accountName ?? parsed.bankName ?? slug;
+      const dedupeKey = labelDedupeKey(label, parsed.accountType ?? "other");
+      const canonical = slugByLabelKey.get(dedupeKey);
+      if (canonical) {
+        slug = canonical;
+      } else {
+        slugByLabelKey.set(dedupeKey, slug);
+      }
+    }
+
     if (!balanceHistoryMap.has(slug)) {
       balanceHistoryMap.set(slug, {
         label:       parsed.accountName ?? parsed.bankName ?? slug,
@@ -484,20 +531,17 @@ export async function buildAndCacheFinancialProfile(
   // Apply synthetic backfill entries — each doc is one pre-computed monthly record.
   // Real statement data (loaded above) takes priority: only fill months with no real data.
   // When the user uploads a real statement for a backfill month, it naturally wins.
+  //
+  // Guard: only apply backfill for accounts that still have at least one real statement
+  // in balanceHistoryMap. Orphaned backfill records (from deleted statements) are skipped
+  // so they don't ghost-resurrect deleted accounts in the "By Account" section.
   for (const doc of backfillsSnap.docs) {
     const bf = doc.data() as {
       accountSlug: string; accountName: string; accountType: string;
       yearMonth: string; balance: number;
     };
     if (!bf.accountSlug || !bf.yearMonth) continue;
-
-    if (!balanceHistoryMap.has(bf.accountSlug)) {
-      balanceHistoryMap.set(bf.accountSlug, {
-        label:       bf.accountName ?? bf.accountSlug,
-        accountType: bf.accountType ?? "other",
-        entries:     new Map(),
-      });
-    }
+    if (!balanceHistoryMap.has(bf.accountSlug)) continue; // no real statements → skip
     const entry = balanceHistoryMap.get(bf.accountSlug)!;
     if (!entry.entries.has(bf.yearMonth)) {
       entry.entries.set(bf.yearMonth, bf.balance);
@@ -777,3 +821,4 @@ export async function invalidateFinancialProfileCache(
     "financialProfile.cacheStale": true,
   });
 }
+

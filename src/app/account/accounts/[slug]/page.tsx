@@ -56,8 +56,8 @@ function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 /** Derive the accountKey (used by account-rates API) from parsedData fields. */
-function toAccountKey(bankName: string, accountId?: string): string {
-  return buildAccountSlug(bankName, accountId);
+function toAccountKey(bankName: string, accountId?: string, accountName?: string, accountType?: string): string {
+  return buildAccountSlug(bankName, accountId, accountName, accountType);
 }
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -547,7 +547,7 @@ export default function AccountDetailPage() {
       // can always use it — even when parsedData.bankName is missing.
       const parsed = json.data as ParsedStatementData | null;
       const key = parsed?.bankName
-        ? toAccountKey(parsed.bankName, parsed.accountId)
+        ? toAccountKey(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType)
         : slug; // fall back to URL slug which equals the accountKey
       setAccountKey(key);
 

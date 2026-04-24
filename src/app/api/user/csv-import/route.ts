@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
     if ((d.source as string | undefined) === "csv") continue; // only PDF statements define coverage
     const p = d.parsedData as ParsedStatementData | undefined;
     if (!p) continue;
-    const slug = buildAccountSlug(p.bankName, p.accountId);
+    const slug = buildAccountSlug(p.bankName, p.accountId, p.accountName, p.accountType);
     const ym   = docYearMonth(d);
     if (!ym) continue;
 
@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
     for (const doc of stmtSnap.docs) {
       const d = doc.data();
       const p = d.parsedData as ParsedStatementData | undefined;
-      if (!p || buildAccountSlug(p.bankName, p.accountId) !== accountSlug) continue;
+      if (!p || buildAccountSlug(p.bankName, p.accountId, p.accountName, p.accountType) !== accountSlug) continue;
       for (const txn of p.expenses?.transactions ?? []) {
         if (!txn.date) continue;
         existingFingerprints.add(txFingerprint(accountId, txn.date, txn.amount, txn.merchant ?? ""));
@@ -315,3 +315,4 @@ export async function POST(request: NextRequest) {
     monthsCreated: createdIds.length,
   });
 }
+

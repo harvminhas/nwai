@@ -115,7 +115,7 @@ function stmtYearMonth(s: UserStatementSummary): string {
 }
 
 function stmtAccountSlug(s: UserStatementSummary): string {
-  return buildAccountSlug(s.bankName, s.accountId);
+  return buildAccountSlug(s.bankName, s.accountId, s.accountName, s.accountType);
 }
 
 function stmtDisplayName(s: UserStatementSummary): string {
@@ -166,7 +166,7 @@ interface AccountCoverage {
 function isStatementDue(slug: string, statements: UserStatementSummary[]): boolean {
   const GRACE_DAYS = 8;
   const acctStmts = statements.filter(
-    (s) => s.status === "completed" && !s.superseded && buildAccountSlug(s.bankName, s.accountId) === slug && s.statementDate,
+    (s) => s.status === "completed" && !s.superseded && buildAccountSlug(s.bankName, s.accountId, s.accountName, s.accountType) === slug && s.statementDate,
   );
   if (acctStmts.length === 0) return false;
 
