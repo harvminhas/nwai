@@ -1558,7 +1558,7 @@ export default function AccountDetailPage() {
 
           {/* Balance over time chart */}
           {correctedHistory.length >= 2 && (
-            <NetWorthChart history={correctedHistory} isDebt={isDebtAccount} />
+            <NetWorthChart history={correctedHistory} isDebt={isDebtAccount} currency={currency} />
           )}
 
           <div className="flex items-center justify-between gap-3 flex-wrap">

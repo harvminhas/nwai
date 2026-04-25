@@ -282,25 +282,23 @@ export async function GET(request: NextRequest) {
         ...(snapCurrency ? { currency: snapCurrency } : {}),
       };
     } else {
-      const nw = getNetWorth(profile);
-      // Use monthlyHistory for assets/debts/netWorth so the delta shown in the KPI
-      // cards compares the same time-series pipeline for both current and previous
-      // month. Fall back to getNetWorth() totals if the current month isn't in the
-      // history yet (e.g. first upload).
+      // monthlyHistory is now the single source of truth — same pipeline as the
+      // Asset Growth and Debt Over Time charts (type-based filtering + carry-forward).
       const currentEntry = profile.monthlyHistory.find((h) => h.yearMonth === month);
+      const nw = getNetWorth(profile); // fallback only when monthlyHistory has no entry yet
+      const ceAssets  = currentEntry?.totalAssets ?? nw.totalAssets;
+      const ceDebts   = currentEntry?.totalDebts  ?? nw.totalDebts;
       enrichedConsolidated = {
         ...consolidatedWithRules,
-        assets:   currentEntry?.totalAssets  ?? nw.totalAssets,
-        debts:    currentEntry?.totalDebts   ?? nw.totalDebts,
-        netWorth: currentEntry?.netWorth     ?? nw.total,
+        assets:   ceAssets,
+        debts:    ceDebts,
+        // Derive netWorth from the same assets/debts so Balance = Assets - Debts always.
+        netWorth: ceAssets - ceDebts,
       };
     }
 
-    // ── Previous month (for delta calculations) ──────────────────────────────
-    // Read directly from the financial profile cache (single source of truth).
-    // profile.monthlyHistory carries per-month totalAssets/totalDebts/netWorth
-    // computed with the same dedup + FX logic as getNetWorth(), so the delta
-    // shown in the KPI cards is always consistent with the debt/assets charts.
+    // ── Previous month (for delta calculations) ───────────────────────────────
+    // All values come from monthlyHistory — same single pipeline as every chart.
     const priorMonths = Array.from(yearMonths)
       .filter((ym) => ym < month)
       .sort()
@@ -308,20 +306,23 @@ export async function GET(request: NextRequest) {
     const prevMonth = priorMonths[0] ?? null;
 
     let previousMonth: { netWorth: number; assets: number; debts: number; expenses: number } | null = null;
+    const currentHistoryEntry = profile.monthlyHistory.find((h) => h.yearMonth === month);
     if (prevMonth) {
       const prevEntry = profile.monthlyHistory.find((h) => h.yearMonth === prevMonth);
-      if (prevEntry) {
+      if (prevEntry && currentHistoryEntry) {
+        const pa = prevEntry.totalAssets ?? 0;
+        const pd = prevEntry.totalDebts  ?? 0;
         previousMonth = {
-          netWorth:  prevEntry.netWorth,
-          assets:    prevEntry.totalAssets,
-          debts:     prevEntry.totalDebts,
+          netWorth:  pa - pd,          // always derived so it equals assets - debts
+          assets:    pa,
+          debts:     pd,
           expenses:  prevEntry.expensesTotal,
         };
       }
     }
 
     // ── History + income source history + recurring expense history ──────────
-    const history: { yearMonth: string; netWorth: number; expensesTotal: number; coreExpensesTotal: number; incomeTotal: number; debtTotal: number; isEstimate?: boolean }[] = [];
+    const history: { yearMonth: string; netWorth: number; totalAssets: number; totalDebts: number; expensesTotal: number; coreExpensesTotal: number; incomeTotal: number; debtTotal: number; isEstimate?: boolean }[] = [];
 
     // incomeSourceHistory: source description → per-month amounts + transaction dates
     const incomeSourceHistory: Record<string, {
@@ -345,9 +346,13 @@ export async function GET(request: NextRequest) {
         const txDateExpenses     = cached?.expensesTotal     ?? 0;
         const txDateCoreExpenses = cached?.coreExpensesTotal ?? 0;
         const txDateIncome       = cached?.incomeTotal       ?? c.income?.total ?? 0;
-        const hNetWorth          = cached?.netWorth          ?? 0;
+        const hAssets            = cached?.totalAssets       ?? 0;
         const hDebts             = cached?.totalDebts        ?? 0;
-        history.push({ yearMonth: ym, netWorth: hNetWorth, expensesTotal: txDateExpenses, coreExpensesTotal: txDateCoreExpenses, incomeTotal: txDateIncome, debtTotal: hDebts });
+        // Always derive netWorth from totalAssets - totalDebts so the three values
+        // are guaranteed consistent regardless of what the cache stores.
+        const hNetWorth          = (hAssets > 0 || hDebts > 0) ? hAssets - hDebts : (cached?.netWorth ?? 0);
+        if (ym === month) console.log(`[consolidated] ${ym} hAssets=${hAssets} hDebts=${hDebts} hNetWorth=${hNetWorth} cachedNW=${cached?.netWorth}`);
+        history.push({ yearMonth: ym, netWorth: hNetWorth, totalAssets: hAssets, totalDebts: hDebts, expensesTotal: txDateExpenses, coreExpensesTotal: txDateCoreExpenses, incomeTotal: txDateIncome, debtTotal: hDebts });
 
         // Build per-source income history — only for months that had real statements
         const hasRealIncome = allCompleted.some((doc) => {
@@ -762,6 +767,17 @@ export async function GET(request: NextRequest) {
       paymentsMade: enrichedConsolidated.paymentsMade ?? 0,
       count: allCompleted.length,
       previousMonth,
+      /**
+       * Pre-computed month-over-month deltas — both months from monthlyHistory
+       * (same pipeline as Asset Growth + Debt Over Time charts).
+       */
+      momDeltas: (currentHistoryEntry && previousMonth)
+        ? {
+            netWorth:  currentHistoryEntry.netWorth      - previousMonth.netWorth,
+            assets:    currentHistoryEntry.totalAssets   - previousMonth.assets,
+            debts:     currentHistoryEntry.totalDebts    - previousMonth.debts,
+          }
+        : null,
       yearMonth: month,
       history,
       needsRefresh: profile.cacheStale ?? false,

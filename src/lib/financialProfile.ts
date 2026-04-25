@@ -57,7 +57,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "39"; // monthlyHistory now includes per-month totalAssets/totalDebts/netWorth
+const SCHEMA_VERSION = "41"; // back-fill uses type-based asset/debt filtering; netWorth derived at API layer
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -679,33 +679,54 @@ export async function buildAndCacheFinancialProfile(
   }
 
   // ── Per-month NW back-fill ───────────────────────────────────────────────────
-  // For each month in monthlyHistory, compute totalAssets / totalDebts / netWorth
-  // by carrying forward accountBalanceHistory entries (the same dedup + FX logic
-  // that getNetWorth uses for the latest snapshot, applied to each historical month).
+  // Use the SAME account-type-based filtering as the "Asset Growth" chart (assets page)
+  // and "Debt Over Time" chart (liabilities page) so all three charts are on one pipeline.
   {
     const manualAssetsTotal = manualAssets.reduce((s, a) => s + a.value, 0);
 
-    // Pre-sort each account's entries (already ascending, but guard just in case)
-    const sortedEntries = accountBalanceHistory.map((acct) => ({
-      acct,
-      sorted: [...acct.entries].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth)),
-    }));
+    const ASSET_TYPES = new Set(["checking", "savings", "investment", "property", "other"]);
+    const DEBT_TYPES  = new Set(["credit", "mortgage", "loan"]);
+
+    // Pre-sort entries ascending; split into asset and debt buckets by account type —
+    // matching assets/page.tsx (ASSET_TYPES) and liabilities/page.tsx (DEBT_TYPES or
+    // any account that ever carries a negative balance).
+    const assetEntries: { acct: AccountBalanceHistory; sorted: { yearMonth: string; balance: number }[] }[] = [];
+    const debtEntries:  { acct: AccountBalanceHistory; sorted: { yearMonth: string; balance: number }[] }[] = [];
+
+    for (const acct of accountBalanceHistory) {
+      const sorted = [...acct.entries].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
+      if (ASSET_TYPES.has(acct.accountType)) {
+        assetEntries.push({ acct, sorted });
+      }
+      if (DEBT_TYPES.has(acct.accountType) || acct.entries.some((e) => e.balance < 0)) {
+        debtEntries.push({ acct, sorted });
+      }
+    }
 
     for (const h of monthlyHistory) {
       let ta = 0;
       let td = 0;
-      for (const { acct, sorted } of sortedEntries) {
-        // Carry-forward: latest entry whose yearMonth <= h.yearMonth
+
+      for (const { acct, sorted } of assetEntries) {
         let bal: number | null = null;
         for (const e of sorted) {
           if (e.yearMonth <= h.yearMonth) bal = e.balance;
           else break;
         }
-        if (bal === null) continue; // account had no statements yet this month
-        const converted = toHome(bal, acct.currency);
-        ta += Math.max(0,  converted);
-        td += Math.max(0, -converted);
+        if (bal === null) continue;
+        ta += Math.max(0, toHome(bal, acct.currency)); // positive balances only
       }
+
+      for (const { acct, sorted } of debtEntries) {
+        let bal: number | null = null;
+        for (const e of sorted) {
+          if (e.yearMonth <= h.yearMonth) bal = e.balance;
+          else break;
+        }
+        if (bal === null) continue;
+        td += Math.abs(toHome(bal, acct.currency)); // abs — same as liabilities page
+      }
+
       ta += manualAssetsTotal;
       h.totalAssets = ta;
       h.totalDebts  = td;

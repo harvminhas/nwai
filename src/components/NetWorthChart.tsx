@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { getCurrencySymbol } from "@/lib/currencyUtils";
 import {
   ResponsiveContainer,
   LineChart,
@@ -26,20 +25,21 @@ function longMonthLabel(yearMonth: string): string {
     .toLocaleDateString("en-US", { month: "long", year: "numeric" });
 }
 
-function formatCurrency(value: number): string {
+function formatCurrencyFor(value: number, ccy: string): string {
   return new Intl.NumberFormat("en-US", {
-    style: "currency", currency: "USD",
+    style: "currency", currency: ccy,
     minimumFractionDigits: 0, maximumFractionDigits: 0,
   }).format(value);
 }
 
-function formatAxis(v: number): string {
-  const sym = getCurrencySymbol();
+function formatAxisFor(v: number, ccy: string): string {
   const abs = Math.abs(v);
   const sign = v < 0 ? "-" : "";
+  const sym = new Intl.NumberFormat("en-US", { style: "currency", currency: ccy, maximumFractionDigits: 0 })
+    .formatToParts(0).find(p => p.type === "currency")?.value ?? "$";
   if (abs >= 1_000_000) return `${sign}${sym}${(abs / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `${sign}${sym}${Math.round(abs / 1_000)}k`;
-  return formatCurrency(abs);
+  return formatCurrencyFor(abs, ccy);
 }
 
 // Each point has a solid value and an optional estimatedNetWorth for dotted rendering
@@ -47,6 +47,8 @@ type Point = {
   yearMonth: string;
   label: string;
   netWorth: number;
+  totalAssets: number;
+  totalDebts: number;
   netWorthSolid: number | null;    // null for estimated points (breaks solid line)
   netWorthDotted: number | null;   // null for real points (breaks dotted line)
   isEstimate: boolean;
@@ -86,9 +88,11 @@ function ChartDot({
 export default function NetWorthChart({
   history,
   isDebt = false,
+  currency = "USD",
 }: {
-  history: { yearMonth: string; netWorth: number; expensesTotal?: number; isEstimate?: boolean }[];
+  history: { yearMonth: string; netWorth: number; totalAssets?: number; totalDebts?: number; expensesTotal?: number; isEstimate?: boolean }[];
   isDebt?: boolean;
+  currency?: string;
 }) {
   const [range, setRange] = useState(3);
   const [selectedYm, setSelectedYm] = useState<string | null>(null);
@@ -101,12 +105,14 @@ export default function NetWorthChart({
   // negative axis labels like "-CA$476k" when the balance is improving.
   const displayValue = (v: number) => isDebt ? Math.abs(v) : v;
 
-  const allPoints: Point[] = history.map(({ yearMonth, netWorth, isEstimate }) => {
+  const allPoints: Point[] = history.map(({ yearMonth, netWorth, totalAssets, totalDebts, isEstimate }) => {
     const dv = displayValue(netWorth);
     return {
       yearMonth,
       label: shortMonthLabel(yearMonth),
       netWorth: dv,
+      totalAssets: totalAssets ?? 0,
+      totalDebts: totalDebts ?? 0,
       netWorthSolid: isEstimate ? null : dv,
       netWorthDotted: isEstimate ? dv : null,
       isEstimate: isEstimate ?? false,
@@ -128,9 +134,7 @@ export default function NetWorthChart({
     }
 
     return { ...pt, netWorthSolid: solid, netWorthDotted: dotted };
-  });
-
-  const data = range === 0 ? connected : connected.slice(-range);
+  });  const data = range === 0 ? connected : connected.slice(-range);
   const hasEstimates = data.some((p) => p.isEstimate);
 
   // Month detail for the selected point
@@ -190,7 +194,7 @@ export default function NetWorthChart({
               axisLine={false}
             />
             <YAxis
-              tickFormatter={formatAxis}
+              tickFormatter={(v) => formatAxisFor(v, currency)}
               tick={{ fontSize: 11, fill: "#9ca3af" }}
               tickLine={false}
               axisLine={false}
@@ -200,7 +204,7 @@ export default function NetWorthChart({
               formatter={(value, name) => {
                 if (typeof value !== "number") return [String(value), "Balance"];
                 const label = name === "netWorthDotted" ? "Balance (estimated)" : "Balance";
-                return [formatCurrency(value), label];
+                return [formatCurrencyFor(value, currency), label];
               }}
               contentStyle={{
                 borderRadius: "8px",
@@ -280,15 +284,42 @@ export default function NetWorthChart({
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-gray-800">{longMonthLabel(selPt.yearMonth)}</p>
-              <p className="mt-0.5 text-xs text-gray-400">
-                Balance:{" "}
-                <span className="font-semibold text-gray-700">{formatCurrency(selPt.netWorth)}</span>
-                {selPt.isEstimate && (
-                  <span className="ml-2 rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
-                    ~ estimated
+
+              {/* Assets / Debts / Balance row */}
+              {!isDebt && selPt.totalAssets > 0 && (
+                <div className="mt-1.5 flex items-center gap-3 text-xs">
+                  <span className="text-gray-500">
+                    Assets: <span className="font-semibold text-gray-700">{formatCurrencyFor(selPt.totalAssets, currency)}</span>
                   </span>
-                )}
-              </p>
+                  {selPt.totalDebts > 0 && (
+                    <span className="text-gray-500">
+                      Debts: <span className="font-semibold text-gray-700">{formatCurrencyFor(selPt.totalDebts, currency)}</span>
+                    </span>
+                  )}
+                  <span className="text-gray-500">
+                    Balance: <span className="font-semibold text-gray-700">{formatCurrencyFor(selPt.netWorth, currency)}</span>
+                    {selPt.isEstimate && (
+                      <span className="ml-1.5 rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
+                        ~ estimated
+                      </span>
+                    )}
+                  </span>
+                </div>
+              )}
+
+              {/* Debt-mode or no-breakdown fallback */}
+              {(isDebt || selPt.totalAssets === 0) && (
+                <p className="mt-0.5 text-xs text-gray-400">
+                  Balance:{" "}
+                  <span className="font-semibold text-gray-700">{formatCurrencyFor(selPt.netWorth, currency)}</span>
+                  {selPt.isEstimate && (
+                    <span className="ml-2 rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
+                      ~ estimated
+                    </span>
+                  )}
+                </p>
+              )}
+
               {selDelta !== null && prevPt ? (
                 <>
                   <p className={`mt-1 text-xs font-semibold ${
@@ -296,7 +327,7 @@ export default function NetWorthChart({
                       ? "text-gray-500"                                     // muted during onboarding
                       : deltaGood ? "text-green-600" : "text-amber-600"    // amber, not red
                   }`}>
-                    {selDelta > 0 ? "↑ " : "↓ "}{formatCurrency(Math.abs(selDelta))} vs {shortMonthLabel(prevPt.yearMonth)}
+                    {selDelta > 0 ? "↑ " : "↓ "}{formatCurrencyFor(Math.abs(selDelta), currency)} vs {shortMonthLabel(prevPt.yearMonth)}
                     {isDebt && selDelta < 0 && <span className="ml-1 font-normal">(paid down)</span>}
                     {isDebt && selDelta > 0 && <span className="ml-1 font-normal">(increased)</span>}
                     {!isDebt && selDelta > 0 && <span className="ml-1 font-normal">(growth)</span>}

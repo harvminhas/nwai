@@ -424,6 +424,7 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   const router = useRouter();
   const [data, setData]               = useState<ParsedStatementData | null>(null);
   const [previousMonth, setPreviousMonth] = useState<{ netWorth: number; assets: number; debts: number; expenses: number } | null>(null);
+  const [momDeltas, setMomDeltas] = useState<{ netWorth: number; assets: number; debts: number } | null>(null);
   const [yearMonth, setYearMonth]     = useState<string | null>(null);
   const [history, setHistory]         = useState<HistoryPoint[]>([]);
   const [loading, setLoading]         = useState(true);
@@ -457,6 +458,7 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
         setStatementCount(json.count ?? 0);
         setAccountCount(json.accountCount ?? 0);
         setPreviousMonth(json.previousMonth ?? null);
+        setMomDeltas(json.momDeltas ?? null);
         setYearMonth(json.yearMonth ?? null);
         setAssetLabels(json.assetLabels ?? []);
         setDebtLabels(json.debtLabels ?? []);
@@ -465,9 +467,11 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
         const incomplete: string[] = json.incompleteMonths ?? [];
         setIncompleteMonths(incomplete);
         setHistory(Array.isArray(json.history)
-          ? json.history.map((h: { yearMonth: string; netWorth: number; incomeTotal?: number; expensesTotal?: number; coreExpensesTotal?: number; debtTotal?: number }) => ({
+          ? json.history.map((h: { yearMonth: string; netWorth: number; totalAssets?: number; totalDebts?: number; incomeTotal?: number; expensesTotal?: number; coreExpensesTotal?: number; debtTotal?: number }) => ({
               yearMonth: h.yearMonth,
               netWorth: h.netWorth,
+              totalAssets: h.totalAssets ?? 0,
+              totalDebts: h.totalDebts ?? 0,
               incomeTotal: h.incomeTotal ?? 0,
               expensesTotal: h.expensesTotal ?? 0,
               coreExpensesTotal: h.coreExpensesTotal,
@@ -520,15 +524,19 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
 
   // ── derived ────────────────────────────────────────────────────────────────
 
-  const netWorth   = data.netWorth ?? 0;
-  const assets     = data.assets ?? Math.max(0, netWorth);
-  const debts      = data.debts ?? Math.max(0, -netWorth);
+  const assets     = data.assets ?? Math.max(0, data.netWorth ?? 0);
+  const debts      = data.debts ?? Math.max(0, -(data.netWorth ?? 0));
+  // Always derive netWorth from assets - debts so hero card matches chart
+  const netWorth   = (assets > 0 || debts > 0) ? assets - debts : (data.netWorth ?? 0);
   const income     = data.income?.total ?? 0;
   const hasDebts   = debts > 0;
 
-  const nwDelta    = previousMonth != null ? netWorth - previousMonth.netWorth : null;
-  const assetDelta = previousMonth != null ? assets   - previousMonth.assets   : null;
-  const debtDelta  = previousMonth != null ? debts    - previousMonth.debts    : null;
+  // Use pre-computed momDeltas (both months on the same carry-forward pipeline)
+  // so the delta is consistent with the chart. Fall back to raw comparison only
+  // if momDeltas is absent (first upload, no history).
+  const nwDelta    = momDeltas?.netWorth ?? (previousMonth != null ? netWorth - previousMonth.netWorth : null);
+  const assetDelta = momDeltas?.assets  ?? (previousMonth != null ? assets   - previousMonth.assets   : null);
+  const debtDelta  = momDeltas?.debts   ?? (previousMonth != null ? debts    - previousMonth.debts    : null);
 
   // Onboarding: ≤3 months of real history
   const isOnboarding = history.filter((h) => !h.isEstimate).length <= 3;
@@ -591,7 +599,15 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   const prevRaw   = prevSigs && prevScore != null ? rawStatus(prevScore, prevSigs) : null;
   const trackStatus = applyHysteresis(curRaw, prevRaw);
 
-  const chartHistory  = history.map((h) => ({ yearMonth: h.yearMonth, netWorth: h.netWorth, isEstimate: h.isEstimate }));
+  const chartHistory  = history.map((h) => ({
+    yearMonth:   h.yearMonth,
+    // Recompute netWorth client-side from totalAssets/totalDebts so it is always
+    // mathematically consistent — guards against any stale cache in the API response.
+    netWorth:    (h.totalAssets > 0 || h.totalDebts > 0) ? h.totalAssets - h.totalDebts : h.netWorth,
+    totalAssets: h.totalAssets,
+    totalDebts:  h.totalDebts,
+    isEstimate:  h.isEstimate,
+  }));
 
   return (
     <>
