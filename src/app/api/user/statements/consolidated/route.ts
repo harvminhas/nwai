@@ -546,6 +546,8 @@ export async function GET(request: NextRequest) {
             history.push({
               yearMonth: ym,
               netWorth: bf.balance,
+              totalAssets: Math.max(0,  bf.balance),
+              totalDebts:  Math.max(0, -bf.balance),
               expensesTotal: 0,
               coreExpensesTotal: 0,
               incomeTotal: cachedForYm?.incomeTotal ?? 0,
@@ -590,6 +592,8 @@ export async function GET(request: NextRequest) {
           history.push({
             yearMonth: cached.yearMonth,
             netWorth: 0,
+            totalAssets: 0,
+            totalDebts: 0,
             expensesTotal: 0,
             coreExpensesTotal: 0,
             incomeTotal: cached.incomeTotal,
