@@ -60,6 +60,8 @@ interface Signal {
 interface HistoryPoint {
   yearMonth: string;
   netWorth: number;
+  totalAssets: number;
+  totalDebts: number;
   incomeTotal: number;
   expensesTotal: number;
   coreExpensesTotal?: number;
