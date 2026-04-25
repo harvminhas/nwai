@@ -695,24 +695,24 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
           <Link href="/account/assets" className="group rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:border-purple-200 hover:shadow transition">
             <p className="text-xs text-gray-400">Assets</p>
             <p className="mt-1 text-xl font-bold text-gray-900 tabular-nums">{fmtNW(assets, homeCurrency)}</p>
-            {assetSubLabel
-              ? <p className="mt-1 text-xs text-gray-400 truncate">{assetSubLabel}</p>
-              : assetDelta != null
-                ? <p className={`mt-1 text-xs font-medium ${assetDelta >= 0 ? "text-green-600" : "text-red-500"}`}>{fmtShort(assetDelta, homeCurrency)} vs last mo</p>
-                : null}
+            {assetSubLabel && <p className="mt-1 text-xs text-gray-400 truncate">{assetSubLabel}</p>}
+            {assetDelta != null && (
+              <p className={`mt-0.5 text-xs font-medium ${assetDelta >= 0 ? "text-green-600" : "text-red-500"}`}>
+                {assetDelta >= 0 ? "▲" : "▼"} {fmtShort(Math.abs(assetDelta), homeCurrency)} this month
+              </p>
+            )}
           </Link>
 
           {/* Debts */}
           <Link href="/account/liabilities" className="group rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:border-purple-200 hover:shadow transition">
             <p className="text-xs text-gray-400">Debts</p>
             <p className="mt-1 text-xl font-bold text-red-500 tabular-nums">{fmtNW(debts, homeCurrency)}</p>
-            {debtSubLabel
-              ? <p className="mt-1 text-xs text-gray-400 truncate">{debtSubLabel}</p>
-              : debtDelta != null && debts > 0
-                ? <p className={`mt-1 text-xs font-medium ${debtDelta <= 0 ? "text-green-600" : "text-red-500"}`}>
-                    {debtDelta <= 0 ? `${fmtShort(Math.abs(debtDelta), homeCurrency)} paid down` : `${fmtShort(debtDelta, homeCurrency)} more`}
-                  </p>
-                : null}
+            {debtSubLabel && <p className="mt-1 text-xs text-gray-400 truncate">{debtSubLabel}</p>}
+            {debtDelta != null && debts > 0 && (
+              <p className={`mt-0.5 text-xs font-medium ${debtDelta <= 0 ? "text-green-600" : "text-red-500"}`}>
+                {debtDelta <= 0 ? `▼ ${fmtShort(Math.abs(debtDelta), homeCurrency)} paid down` : `▲ ${fmtShort(debtDelta, homeCurrency)} more`}
+              </p>
+            )}
           </Link>
 
           {/* Avg Income/mo */}

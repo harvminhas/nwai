@@ -283,15 +283,24 @@ export async function GET(request: NextRequest) {
       };
     } else {
       const nw = getNetWorth(profile);
+      // Use monthlyHistory for assets/debts/netWorth so the delta shown in the KPI
+      // cards compares the same time-series pipeline for both current and previous
+      // month. Fall back to getNetWorth() totals if the current month isn't in the
+      // history yet (e.g. first upload).
+      const currentEntry = profile.monthlyHistory.find((h) => h.yearMonth === month);
       enrichedConsolidated = {
         ...consolidatedWithRules,
-        assets:   nw.totalAssets,
-        debts:    nw.totalDebts,
-        netWorth: nw.total,
+        assets:   currentEntry?.totalAssets  ?? nw.totalAssets,
+        debts:    currentEntry?.totalDebts   ?? nw.totalDebts,
+        netWorth: currentEntry?.netWorth     ?? nw.total,
       };
     }
 
     // ── Previous month (for delta calculations) ──────────────────────────────
+    // Read directly from the financial profile cache (single source of truth).
+    // profile.monthlyHistory carries per-month totalAssets/totalDebts/netWorth
+    // computed with the same dedup + FX logic as getNetWorth(), so the delta
+    // shown in the KPI cards is always consistent with the debt/assets charts.
     const priorMonths = Array.from(yearMonths)
       .filter((ym) => ym < month)
       .sort()
@@ -300,17 +309,13 @@ export async function GET(request: NextRequest) {
 
     let previousMonth: { netWorth: number; assets: number; debts: number; expenses: number } | null = null;
     if (prevMonth) {
-      const prevStatements = carryForwardStatements(allCompleted, prevMonth);
-      if (prevStatements.length > 0) {
-        const prev = consolidateStatements(prevStatements, prevMonth);
-        const prevManualTotal = relevantManualAssets.reduce((sum, a) => sum + a.value, 0);
-        const prevAssets = (prev.assets ?? Math.max(0, prev.netWorth ?? 0)) + prevManualTotal;
-        const prevDebts = prev.debts ?? Math.max(0, -(prev.netWorth ?? 0));
+      const prevEntry = profile.monthlyHistory.find((h) => h.yearMonth === prevMonth);
+      if (prevEntry) {
         previousMonth = {
-          netWorth: prevAssets - prevDebts,
-          assets: prevAssets,
-          debts: prevDebts,
-          expenses: prev.expenses?.total ?? 0,
+          netWorth:  prevEntry.netWorth,
+          assets:    prevEntry.totalAssets,
+          debts:     prevEntry.totalDebts,
+          expenses:  prevEntry.expensesTotal,
         };
       }
     }
@@ -334,15 +339,14 @@ export async function GET(request: NextRequest) {
       const forMonth = carryForwardStatements(allCompleted, ym);
       if (forMonth.length > 0) {
         const c = consolidateStatements(forMonth, ym);
-        const hAssets = (c.assets ?? Math.max(0, c.netWorth ?? 0)) + manualAssetsTotal;
-        const hNetWorth = hAssets - (c.debts ?? Math.max(0, -(c.netWorth ?? 0)));
-        const hDebts = c.debts ?? Math.max(0, -(c.netWorth ?? 0));
-        // Expenses: read from profile cache (transaction-date-based, category rules applied)
-        // so the chart numbers are identical to what the insights route and Spending page show.
+        // NW/assets/debts: read from profile cache — same dedup + FX as getNetWorth()
+        // so the history bars and KPI deltas all use the same source of truth.
         const cached = profile.monthlyHistory.find((h) => h.yearMonth === ym);
         const txDateExpenses     = cached?.expensesTotal     ?? 0;
         const txDateCoreExpenses = cached?.coreExpensesTotal ?? 0;
         const txDateIncome       = cached?.incomeTotal       ?? c.income?.total ?? 0;
+        const hNetWorth          = cached?.netWorth          ?? 0;
+        const hDebts             = cached?.totalDebts        ?? 0;
         history.push({ yearMonth: ym, netWorth: hNetWorth, expensesTotal: txDateExpenses, coreExpensesTotal: txDateCoreExpenses, incomeTotal: txDateIncome, debtTotal: hDebts });
 
         // Build per-source income history — only for months that had real statements

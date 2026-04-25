@@ -57,7 +57,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "37"; // skip orphaned backfill entries for deleted accounts
+const SCHEMA_VERSION = "39"; // monthlyHistory now includes per-month totalAssets/totalDebts/netWorth
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -89,6 +89,16 @@ export interface MonthlyHistoryEntry {
   debtPaymentsTotal: number;
   /** Minimum / scheduled debt payments only (excl. extra payments) */
   minDebtPaymentsTotal: number;
+  /**
+   * Total assets as of this month — carry-forward of account balances through
+   * accountBalanceHistory. Same dedup and FX logic as getNetWorth(profile).
+   * Includes manual assets. Zero when no balance data available.
+   */
+  totalAssets: number;
+  /** Total liabilities as of this month (same carry-forward basis as totalAssets). */
+  totalDebts: number;
+  /** Net worth = totalAssets − totalDebts for this month. */
+  netWorth: number;
 }
 
 export interface FinancialProfileCache {
@@ -618,6 +628,10 @@ export async function buildAndCacheFinancialProfile(
       debtPaymentsTotal: debtTxns.reduce((s, t) => s + toHome(t.amount, t.currency), 0),
       minDebtPaymentsTotal,
       incomeTotal: monthIncFiltered.reduce((s, t) => s + toHome(t.amount, t.currency), 0) + cashIncomeForMonth,
+      // NW fields are filled in the post-pass below once accountBalanceHistory is ready
+      totalAssets: 0,
+      totalDebts: 0,
+      netWorth: 0,
     };
   });
 
@@ -650,6 +664,9 @@ export async function buildAndCacheFinancialProfile(
             debtPaymentsTotal: 0,
             minDebtPaymentsTotal: 0,
             incomeTotal: cashIncome,
+            totalAssets: 0,
+            totalDebts: 0,
+            netWorth: 0,
           });
           historySet.add(ym);
         }
@@ -658,6 +675,41 @@ export async function buildAndCacheFinancialProfile(
         ym = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
       }
       monthlyHistory.sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
+    }
+  }
+
+  // ── Per-month NW back-fill ───────────────────────────────────────────────────
+  // For each month in monthlyHistory, compute totalAssets / totalDebts / netWorth
+  // by carrying forward accountBalanceHistory entries (the same dedup + FX logic
+  // that getNetWorth uses for the latest snapshot, applied to each historical month).
+  {
+    const manualAssetsTotal = manualAssets.reduce((s, a) => s + a.value, 0);
+
+    // Pre-sort each account's entries (already ascending, but guard just in case)
+    const sortedEntries = accountBalanceHistory.map((acct) => ({
+      acct,
+      sorted: [...acct.entries].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth)),
+    }));
+
+    for (const h of monthlyHistory) {
+      let ta = 0;
+      let td = 0;
+      for (const { acct, sorted } of sortedEntries) {
+        // Carry-forward: latest entry whose yearMonth <= h.yearMonth
+        let bal: number | null = null;
+        for (const e of sorted) {
+          if (e.yearMonth <= h.yearMonth) bal = e.balance;
+          else break;
+        }
+        if (bal === null) continue; // account had no statements yet this month
+        const converted = toHome(bal, acct.currency);
+        ta += Math.max(0,  converted);
+        td += Math.max(0, -converted);
+      }
+      ta += manualAssetsTotal;
+      h.totalAssets = ta;
+      h.totalDebts  = td;
+      h.netWorth    = ta - td;
     }
   }
 
