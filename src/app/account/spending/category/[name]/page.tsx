@@ -1123,7 +1123,12 @@ export default function SpendingCategoryPage() {
                             return (
                               <div key={merchant}>
                                 <div className="flex items-center justify-between text-sm mb-0.5">
-                                  <span className="font-medium text-gray-700 truncate">{merchant}</span>
+                                  <button
+                                    onClick={() => openDrawer(merchantSlug(merchant))}
+                                    className="font-medium text-gray-700 truncate text-left hover:text-purple-600 hover:underline transition-colors"
+                                  >
+                                    {merchant}
+                                  </button>
                                   <span className="tabular-nums text-gray-500 shrink-0 ml-2">
                                     {formatCurrency(amount, homeCurrency, undefined, true)}
                                   </span>
@@ -1296,7 +1301,12 @@ export default function SpendingCategoryPage() {
                 return (
                   <div key={merchant}>
                     <div className="flex items-center justify-between text-sm mb-1">
-                      <span className="font-medium text-gray-700 truncate">{merchant}</span>
+                      <button
+                        onClick={() => openDrawer(merchantSlug(merchant))}
+                        className="font-medium text-gray-700 truncate text-left hover:text-purple-600 hover:underline transition-colors"
+                      >
+                        {merchant}
+                      </button>
                       <span className="tabular-nums text-gray-500 shrink-0 ml-2">
                         {formatCurrency(amount, homeCurrency, undefined, true)}
                       </span>
