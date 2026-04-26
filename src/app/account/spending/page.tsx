@@ -2615,12 +2615,12 @@ function SpendingPageInner() {
                       return (
                         <div key={i} className="flex items-center justify-between px-5 py-3.5">
                           <div className="min-w-0 flex-1">
-                            <Link
-                              href={`/account/spending/merchant/${encodeURIComponent(merchantSlug(txn.merchant))}`}
-                              className="block truncate text-sm font-medium text-gray-800 hover:text-purple-600 hover:underline"
+                            <button
+                              onClick={() => openDrawer(merchantSlug(txn.merchant))}
+                              className="block truncate text-sm font-medium text-gray-800 hover:text-purple-600 hover:underline text-left w-full"
                             >
                               {txn.merchant}
-                            </Link>
+                            </button>
                             <div className="mt-1 flex items-center gap-2 flex-wrap">
                               {txn.date && <span className="text-xs text-gray-400">{fmtDate(txn.date)}</span>}
                               {txn.accountLabel && (
@@ -2879,7 +2879,7 @@ function SpendingPageInner() {
                                       {isChecked && <svg className="h-2.5 w-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
                                     </button>
                                   )}
-                                  <Link href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex flex-1 items-center gap-2 sm:gap-3 min-w-0">
+                                  <button onClick={() => openDrawer(m.slug)} className="flex flex-1 items-center gap-2 sm:gap-3 min-w-0 text-left">
                                     <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(mdn(m))}</span>
                                     <div className="flex-1 min-w-0">
                                       <div className="flex items-center gap-1.5">
@@ -2896,7 +2896,7 @@ function SpendingPageInner() {
                                       <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(allTotal, homeCurrency, m.currency, false)}</p>
                                     </div>
                                     <svg className="h-3.5 w-3.5 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
-                                  </Link>
+                                  </button>
                                 </div>
                               );
                             })}
@@ -2931,7 +2931,7 @@ function SpendingPageInner() {
                               const color = categoryColor(m.category);
                               const pctOfSpend = mGrandTotal > 0 ? Math.round((m.total / mGrandTotal) * 100) : 0;
                               return (
-                                <Link key={m.slug} href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 sm:py-3.5 hover:bg-gray-50 transition">
+                                <button key={m.slug} onClick={() => openDrawer(m.slug)} className="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 sm:py-3.5 hover:bg-gray-50 transition w-full text-left">
                                   <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(mdn(m))}</span>
                                   <div className="flex-1 min-w-0">
                                     <p className="text-sm font-semibold text-gray-900 truncate">{mdn(m)}</p>
@@ -2949,7 +2949,7 @@ function SpendingPageInner() {
                                     <p className="text-[11px] text-gray-400 mt-0.5">{pctOfSpend}%</p>
                                   </div>
                                   <svg className="h-3.5 w-3.5 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
-                                </Link>
+                                </button>
                               );
                             })}
                           </div>
@@ -2995,7 +2995,7 @@ function SpendingPageInner() {
                                 ? `${isUp ? "↑" : "↓"} ${(m.mult).toFixed(1)}×`
                                 : `${isUp ? "↑" : "↓"} ${Math.abs(m.pct)}%`;
                               return (
-                                <Link key={m.slug} href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 sm:py-3.5 hover:bg-gray-50 transition">
+                                <button key={m.slug} onClick={() => openDrawer(m.slug)} className="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 sm:py-3.5 hover:bg-gray-50 transition w-full text-left">
                                   <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(mdn(m))}</span>
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-1.5">
@@ -3016,7 +3016,7 @@ function SpendingPageInner() {
                                     <p className="text-[11px] text-gray-400">vs prior 3 mo</p>
                                   </div>
                                   <svg className="h-3.5 w-3.5 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
-                                </Link>
+                                </button>
                               );
                             })}
                           </div>
@@ -3037,7 +3037,7 @@ function SpendingPageInner() {
                               const allTotal = m.monthly.reduce((s, mo) => s + mo.total, 0);
                               const isRecurring = allSubscriptions.some((s) => merchantSlug(s.name) === m.slug);
                               return (
-                                <Link key={m.slug} href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 sm:py-3.5 hover:bg-gray-50 transition">
+                                <button key={m.slug} onClick={() => openDrawer(m.slug)} className="flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 sm:py-3.5 hover:bg-gray-50 transition w-full text-left">
                                   <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(m.name)}`}>{merchantInitials(mdn(m))}</span>
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-1.5">
@@ -3055,7 +3055,7 @@ function SpendingPageInner() {
                                     <p className="text-[11px] text-gray-400 tabular-nums">{formatCurrency(allTotal / Math.max(allCount, 1), homeCurrency, m.currency, false)} avg</p>
                                   </div>
                                   <svg className="h-3.5 w-3.5 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
-                                </Link>
+                                </button>
                               );
                             })}
                           </div>
@@ -3502,7 +3502,7 @@ function SpendingPageInner() {
                     const ncLinkSlug = ncMerchant?.slug ?? ncSlug;
                     const ncDisplayName = ncMerchant ? mdn(ncMerchant) : subNextCharge.name;
                     return (
-                    <Link href={`/account/spending/merchant/${encodeURIComponent(ncLinkSlug)}`} className="rounded-xl border border-gray-200 bg-white shadow-sm px-5 py-3.5 flex items-center gap-3 hover:bg-gray-50 transition">
+                    <button onClick={() => openDrawer(ncLinkSlug)} className="rounded-xl border border-gray-200 bg-white shadow-sm px-5 py-3.5 flex items-center gap-3 hover:bg-gray-50 transition w-full text-left">
                       <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${subNextCharge.nextChargePrediction ? subAvatarColor(new Date(subNextCharge.nextChargePrediction.date + "T12:00:00").toLocaleDateString("en-US", { month: "short" }).toUpperCase()) : subAvatarColor(subNextCharge.name)}`}>
                         {subNextCharge.nextChargePrediction
                           ? new Date(subNextCharge.nextChargePrediction.date + "T12:00:00").toLocaleDateString("en-US", { month: "short" }).toUpperCase()
@@ -3524,7 +3524,7 @@ function SpendingPageInner() {
                       <p className="text-sm font-bold text-gray-900 tabular-nums shrink-0">
                         {formatCurrency(subNextCharge.amount, homeCurrency, undefined, false)}
                       </p>
-                    </Link>
+                    </button>
                     );
                   })()}
 
@@ -3560,7 +3560,7 @@ function SpendingPageInner() {
                           const changeLinkSlug = changeMerchant?.slug ?? slug;
                           const changeDisplayName = changeMerchant ? mdn(changeMerchant) : sub.name;
                           return (
-                            <Link key={sub.name} href={`/account/spending/merchant/${encodeURIComponent(changeLinkSlug)}`} className={`flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition ${isDormant ? "opacity-60" : ""}`}>
+                            <button key={sub.name} onClick={() => openDrawer(changeLinkSlug)} className={`flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition w-full text-left ${isDormant ? "opacity-60" : ""}`}>
                               <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${subAvatarColor(sub.name)}`}>
                                 {merchantInitials(changeDisplayName)}
                               </span>
@@ -3581,7 +3581,7 @@ function SpendingPageInner() {
                                   {formatCurrency(sub.yearly, homeCurrency, undefined, true)}/yr
                                 </p>
                               </div>
-                            </Link>
+                            </button>
                           );
                         })}
                       </div>
@@ -3633,7 +3633,7 @@ function SpendingPageInner() {
                       return (
                         <Fragment key={sub.name}>
                           <div className="flex items-center gap-3 px-5 py-3.5">
-                            <Link href={`/account/spending/merchant/${encodeURIComponent(linkSlug)}`} className="flex flex-1 min-w-0 items-center gap-3 hover:opacity-80 transition-opacity">
+                            <button onClick={() => openDrawer(linkSlug)} className="flex flex-1 min-w-0 items-center gap-3 hover:opacity-80 transition-opacity text-left">
                             <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(sub.name)}`}>
                               {merchantInitials(displayName)}
                             </span>
@@ -3645,7 +3645,7 @@ function SpendingPageInner() {
                               </div>
                               {dateParts.length > 0 && <p className="text-[11px] text-gray-400 mt-0.5">{dateParts.join(" · ")}</p>}
                             </div>
-                            </Link>
+                            </button>
                             <div className="text-right shrink-0">
                               <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(baseYearly ?? sub.yearly, homeCurrency, undefined, true)}/yr</p>
                               <p className="text-[11px] text-gray-400 tabular-nums">
@@ -3766,7 +3766,7 @@ function SpendingPageInner() {
                       return (
                         <Fragment key={sub.name}>
                           <div className="flex items-center gap-3 px-5 py-3.5">
-                            <Link href={`/account/spending/merchant/${encodeURIComponent(linkSlug)}`} className="flex flex-1 min-w-0 items-center gap-3 hover:opacity-80 transition-opacity">
+                            <button onClick={() => openDrawer(linkSlug)} className="flex flex-1 min-w-0 items-center gap-3 hover:opacity-80 transition-opacity text-left">
                             <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${subAvatarColor(sub.name)}`}>
                               {merchantInitials(displayName)}
                             </span>
@@ -3783,7 +3783,7 @@ function SpendingPageInner() {
                                 </p>
                               )}
                             </div>
-                            </Link>
+                            </button>
                             <div className="text-right shrink-0">
                               <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(sub.amount, homeCurrency, undefined, false)}/{periodSuffix}</p>
                               {baseAmt != null && baseAmt > 0 && (
