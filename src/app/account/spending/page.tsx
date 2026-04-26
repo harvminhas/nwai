@@ -3306,14 +3306,14 @@ function SpendingPageInner() {
                                               const isPickerOpen = catOpenPicker === m.slug;
                                               return (
                                                 <div key={m.slug} className="flex items-center gap-3 pl-16 pr-5 py-2.5 hover:bg-gray-100/60 transition border-b border-gray-100 last:border-0">
-                                                  <Link
-                                                    href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`}
+                                                  <button
+                                                    onClick={() => openDrawer(m.slug)}
                                                     className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold hover:opacity-80 transition ${subAvatarColor(m.name)}`}
                                                   >
                                                     {merchantInitials(mdn(m))}
-                                                  </Link>
+                                                  </button>
                                                   <div className="flex-1 min-w-0">
-                                                    <Link href={`/account/spending/merchant/${encodeURIComponent(m.slug)}`} className="text-xs font-medium text-gray-800 truncate hover:text-purple-600 hover:underline block">{mdn(m)}</Link>
+                                                    <button onClick={() => openDrawer(m.slug)} className="text-xs font-medium text-gray-800 truncate hover:text-purple-600 hover:underline block text-left w-full">{mdn(m)}</button>
                                                     <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                                                       <span className="text-[10px] text-gray-400">{m.count} visit{m.count !== 1 ? "s" : ""} · {formatCurrency(m.avgAmount, homeCurrency, m.currency, false)} avg</span>
                                                       <button
