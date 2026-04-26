@@ -19,6 +19,8 @@ import {
 } from "recharts";
 import { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, RecurringIcon, SpendingChart, monthLabel, shortMonth } from "./shared";
 import type { CashFrequency, HistoryPoint } from "./shared";
+import { CategoryListRow, CategoryNameLink } from "./CategoryListRow";
+import { MerchantDrawer, useMerchantDrawer } from "./MerchantDrawer";
 import { getParentCategory, isSubtype, CATEGORY_TAXONOMY } from "@/lib/categoryTaxonomy";
 import { fmt, getCurrencySymbol, formatCurrency } from "@/lib/currencyUtils";
 import RefreshToast from "@/components/RefreshToast";
@@ -331,9 +333,11 @@ function SpendingPageInner() {
   const [catTimeFilter, setCatTimeFilter] = useState<"3mo" | "6mo" | "12mo" | "all">("12mo");
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [expandedSubtypes, setExpandedSubtypes] = useState<Set<string>>(new Set());
+  const [overviewExpandedSubtypes, setOverviewExpandedSubtypes] = useState<Set<string>>(new Set());
   const [catShowTransfers, setCatShowTransfers] = useState(false);
   const [catOpenPicker, setCatOpenPicker] = useState<string | null>(null);
   const catPickerBtnRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const { drawerSlug, drawerOpen, openDrawer, closeDrawer } = useMerchantDrawer();
 
   // Firestore subscription registry — all-time canonical list from insights pipeline
   const [firestoreSubs, setFirestoreSubs] = useState<import("@/lib/insights/types").SubscriptionRecord[] | null>(null);
@@ -1113,6 +1117,31 @@ function SpendingPageInner() {
   const allTxnsTotal = monthTxns.reduce((s, t) => s + toHomeTxn(t.amount, t as ExpenseTransaction), 0) + cashCommitmentsForMonth;
   const categoriesAll = buildCategories(monthTxns, allTxnsTotal);
 
+  // overviewCatRows: merchant-level category data for the selected month used by the
+  // Overview "By Category" expansion panel — same rich subtype+merchant view as the
+  // By Category tab but scoped to a single month.
+  const overviewCatRows = (() => {
+    if (!allTimeMerchants) return new Map<string, { total: number; topMerchants: (NonNullable<typeof allTimeMerchants>[number] & { total: number; count: number; avgAmount: number })[] }>();
+    const byCategory = new Map<string, NonNullable<typeof allTimeMerchants>>();
+    for (const m of allTimeMerchants) {
+      const key = getParentCategory(m.category || "Other");
+      if (!byCategory.has(key)) byCategory.set(key, []);
+      byCategory.get(key)!.push(m);
+    }
+    const result = new Map<string, { total: number; topMerchants: (NonNullable<typeof allTimeMerchants>[number] & { total: number; count: number; avgAmount: number })[] }>();
+    for (const [name, merchants] of byCategory) {
+      const topMerchants = merchants.map((m) => {
+        const mSlice = m.monthly.filter((mo) => mo.ym === filterMonth);
+        const mTotal = mSlice.reduce((s, mo) => s + mo.total, 0);
+        const mCount = mSlice.reduce((s, mo) => s + mo.count, 0);
+        return { ...m, total: mTotal, count: mCount, avgAmount: mCount > 0 ? mTotal / mCount : 0 };
+      }).filter((m) => m.total > 0).sort((a, b) => b.total - a.total);
+      const total = topMerchants.reduce((s, m) => s + m.total, 0);
+      if (total > 0) result.set(name, { total, topMerchants });
+    }
+    return result;
+  })();
+
   // Always use coreExpensesTotal (transfers + debt payments excluded)
   const effectiveExp = (h: HistoryPoint) =>
     h.coreExpensesTotal !== undefined ? h.coreExpensesTotal : (h.expensesTotal ?? 0);
@@ -1281,6 +1310,8 @@ function SpendingPageInner() {
   type MerchantSummaryItem = NonNullable<typeof allTimeMerchants>[0];
   const catFilterYm    = catTimeFilter === "3mo" ? ym3moAgo : catTimeFilter === "6mo" ? ym6moAgo : catTimeFilter === "12mo" ? ym12moAgo : "0000-00";
   const catFilterLabel = catTimeFilter === "3mo" ? "3 MO" : catTimeFilter === "6mo" ? "6 MO" : catTimeFilter === "12mo" ? "12 MO" : "ALL TIME";
+  // Prior window of same length (for "all" we compare last 12mo vs previous 12mo)
+  const catTrendLabel    = "avg. month-over-month";
 
   const NON_SPENDING_CATS = new Set([
     "Transfers", "Transfer Out", "Transfers & Payments",
@@ -1314,11 +1345,31 @@ function SpendingPageInner() {
       const total = slice.reduce((s, mo) => s + mo.total, 0);
       const count = slice.reduce((s, mo) => s + mo.count, 0);
 
-      // 3 mo vs prior 3 mo trend (independent of time filter — always shows recent velocity)
+      // 3 mo vs prior 3 mo trend (used for per-row badges — always shows recent velocity)
       const recentTotal = monthly.filter((mo) => mo.ym >= ym3moAgo).reduce((s, mo) => s + mo.total, 0);
       const priorTotal  = monthly.filter((mo) => mo.ym >= ym6moAgo && mo.ym < ym3moAgo).reduce((s, mo) => s + mo.total, 0);
-      const trendPct: number | null = priorTotal > 10
+      const trendPct: number | null = priorTotal > 100 && recentTotal > 100
         ? Math.round(((recentTotal - priorTotal) / priorTotal) * 100)
+        : null;
+
+      // Average month-over-month growth within the selected window (used for KPI card)
+      const windowMonths = (catTimeFilter === "all"
+        ? monthly
+        : monthly.filter((mo) => mo.ym >= catFilterYm)
+      ).sort((a, b) => a.ym.localeCompare(b.ym));
+
+      let momSum = 0, momCount = 0;
+      for (let i = 1; i < windowMonths.length; i++) {
+        const prev = windowMonths[i - 1].total;
+        const curr = windowMonths[i].total;
+        if (prev > 100) { // prior month needs meaningful spend to avoid noise
+          momSum += (curr - prev) / prev;
+          momCount++;
+        }
+      }
+      // Require at least 2 MoM transitions (3+ active months) for a reliable signal
+      const filterTrendPct: number | null = momCount >= 2
+        ? Math.round((momSum / momCount) * 100)
         : null;
 
       // Top merchants for this category in selected period
@@ -1329,7 +1380,7 @@ function SpendingPageInner() {
         return { ...m, total: mTotal, count: mCount, avgAmount: mCount > 0 ? mTotal / mCount : 0 };
       }).filter((m) => m.total > 0).sort((a, b) => b.total - a.total);
 
-      return { name, color: categoryColor(name), total, count, avgAmount: count > 0 ? total / count : 0, monthly, topMerchants, recentTotal, priorTotal, trendPct };
+      return { name, color: categoryColor(name), total, count, avgAmount: count > 0 ? total / count : 0, monthly, topMerchants, recentTotal, priorTotal, trendPct, filterTrendPct };
     }).filter((c) => c.total > 0 && (catShowTransfers || !NON_SPENDING_CATS.has(c.name))).sort((a, b) => b.total - a.total);
   })();
 
@@ -1338,22 +1389,27 @@ function SpendingPageInner() {
   const catTop3Pct      = catGrandTotal > 0 ? Math.round((catTop3Total / catGrandTotal) * 100) : 0;
   const catTop3Names    = categoryRows.slice(0, 3).map((c) => c.name);
   const catFastest      = categoryRows
-    .filter((c) => c.trendPct != null && c.trendPct > 0)
-    .sort((a, b) => (b.trendPct ?? 0) - (a.trendPct ?? 0))[0] ?? null;
+    .filter((c) => c.filterTrendPct != null && c.filterTrendPct > 0)
+    .sort((a, b) => (b.filterTrendPct ?? 0) - (a.filterTrendPct ?? 0))[0] ?? null;
+
+  // Oldest month we have any spending data for
+  const oldestHistoryYm = history
+    .filter((h) => (h.expensesTotal ?? 0) > 0)
+    .map((h) => h.yearMonth)
+    .sort()[0] ?? null;
+  const hasOldEnoughHistory = oldestHistoryYm !== null && oldestHistoryYm < ym6moAgo;
+
+  // Need enough monthly data points for a meaningful MoM average (at least 3 months)
+  const catBaselineReady = oldestHistoryYm !== null && oldestHistoryYm < ym3moAgo &&
+    history.filter((h) => (h.expensesTotal ?? 0) > 0).length >= 3;
   const catAllTxns12    = !allTimeMerchants ? 0
     : allTimeMerchants.reduce((s, m) => s + m.monthly.filter((mo) => mo.ym >= ym12moAgo).reduce((t, mo) => t + mo.count, 0), 0);
 
   // ── Enriched subscriptions for the Recurring tab ──────────────────────────
   const ym9moAgo = monthsAgoYm(9);
 
-  // Oldest month we have any spending data for — used to gate "New" and "Price Hike"
-  const oldestHistoryYm = history
-    .filter((h) => (h.expensesTotal ?? 0) > 0)
-    .map((h) => h.yearMonth)
-    .sort()[0] ?? null;
   // We can only detect "new" subscriptions if we have data older than 6 months to
   // compare against. If all statements are within 6 months, everything looks "new".
-  const hasOldEnoughHistory = oldestHistoryYm !== null && oldestHistoryYm < ym6moAgo;
 
   const enrichedSubs = allSubscriptions.map((sub) => {
     const slug     = merchantSlug(sub.name);
@@ -2150,18 +2206,30 @@ function SpendingPageInner() {
                     <div className="divide-y divide-gray-100 border-t border-gray-100">
                       {visibleCats.map((cat) => {
                         const color      = categoryColor(cat.name);
-                        const hasSubs    = cat.subtypes && cat.subtypes.length > 0;
                         const isRowOpen  = expandedCatRows.has(cat.name);
                         const catHref    = `/account/spending/category/${encodeURIComponent(cat.name.toLowerCase())}${filterMonth ? `?month=${filterMonth}` : ""}`;
                         return (
                           <div key={cat.name}>
-                            {/* Parent row */}
-                            <div className="flex items-center gap-0 group hover:bg-gray-50 transition">
-                              <Link href={catHref} className="flex flex-1 items-center gap-4 px-5 py-3 min-w-0">
+                            {/* Row header — click to expand, name link to navigate */}
+                            <div
+                              className="flex items-center hover:bg-gray-50 transition cursor-pointer"
+                              onClick={() =>
+                                setExpandedCatRows((prev) => {
+                                  const next = new Set(prev);
+                                  next.has(cat.name) ? next.delete(cat.name) : next.add(cat.name);
+                                  return next;
+                                })
+                              }
+                            >
+                              <div className="flex flex-1 items-center gap-4 px-5 py-3 min-w-0">
                                 <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center justify-between mb-1">
-                                    <span className="text-sm font-medium text-gray-800 group-hover:text-purple-600 transition-colors">{cat.name}</span>
+                                    <CategoryNameLink
+                                      href={catHref}
+                                      name={cat.name}
+                                      className="text-sm font-medium text-gray-800"
+                                    />
                                     <div className="flex items-center gap-2 shrink-0">
                                       <span className="text-sm font-semibold text-gray-700 tabular-nums">{formatCurrency(cat.amount, homeCurrency, undefined, true)}</span>
                                       <span className="text-xs text-gray-400 w-8 text-right">{cat.percentage}%</span>
@@ -2171,61 +2239,151 @@ function SpendingPageInner() {
                                     <div className="h-full rounded-full" style={{ width: `${Math.min(cat.percentage, 100)}%`, backgroundColor: color }} />
                                   </div>
                                 </div>
-                              </Link>
-                              {/* Expand/collapse subtypes button */}
-                              {hasSubs ? (
-                                <button
-                                  onClick={() => setExpandedCatRows((prev) => {
-                                    const next = new Set(prev);
-                                    if (next.has(cat.name)) next.delete(cat.name); else next.add(cat.name);
-                                    return next;
-                                  })}
-                                  className="shrink-0 px-3 py-3 text-gray-300 hover:text-gray-500 transition"
-                                  title={isRowOpen ? "Hide breakdown" : "Show breakdown"}
-                                >
-                                  <svg className={`h-4 w-4 transition-transform ${isRowOpen ? "rotate-180" : ""}`}
-                                    fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                                  </svg>
-                                </button>
-                              ) : (
-                                <Link href={catHref} className="shrink-0 px-3 py-3">
-                                  <svg className="h-4 w-4 text-gray-300 group-hover:text-purple-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                                  </svg>
-                                </Link>
-                              )}
+                              </div>
+                              {/* Chevron */}
+                              <div className="shrink-0 w-8 flex items-center justify-center self-stretch text-gray-300">
+                                <svg className={`h-4 w-4 transition-transform duration-200 ${isRowOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </div>
                             </div>
 
-                            {/* Subtype rows (expanded) */}
-                            {hasSubs && isRowOpen && (
-                              <div className="border-t border-gray-50 bg-gray-50/60">
-                                {cat.subtypes.map((sub) => {
-                                  const subColor = categoryColor(sub.name);
-                                  const subPct   = cat.amount > 0 ? Math.round((sub.amount / cat.amount) * 100) : 0;
-                                  const isRemainder = sub.name.startsWith("Other ");
-                                  const subHref  = isRemainder
-                                    ? `/account/spending/category/${encodeURIComponent(cat.name.toLowerCase())}${filterMonth ? `?month=${filterMonth}` : ""}`
-                                    : `/account/spending/category/${encodeURIComponent(sub.name.toLowerCase())}${filterMonth ? `?month=${filterMonth}` : ""}`;
-                                  const rowContent = (
-                                    <>
-                                      <span className="h-1.5 w-1.5 shrink-0 rounded-full opacity-50" style={{ backgroundColor: subColor }} />
-                                      <span className={`flex-1 text-[13px] truncate ${isRemainder ? "text-gray-400 italic" : "text-gray-600 group-hover/sub:text-purple-600 transition-colors"}`}>{sub.name}</span>
-                                      <span className="text-[13px] text-gray-500 tabular-nums shrink-0">{formatCurrency(sub.amount, homeCurrency, undefined, true)}</span>
-                                      <span className="text-xs text-gray-400 w-7 text-right shrink-0">{subPct}%</span>
-                                      {/* Always reserve the same width as the chevron so columns stay aligned */}
-                                      <svg className="h-3.5 w-3.5 text-gray-300 group-hover/sub:text-purple-400 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                                      </svg>
-                                    </>
-                                  );
-                                  return (
-                                    <Link key={sub.name} href={subHref}
-                                      className="flex items-center gap-3 pl-10 pr-5 py-2.5 hover:bg-gray-100 transition group/sub">
-                                      {rowContent}
-                                    </Link>
-                                  );
-                                })}
+                            {/* Subtype rows (expanded) — same UX as By Category tab */}
+                            {isRowOpen && (
+                              <div className="border-t border-gray-100">
+                                {(() => {
+                                  const catData = overviewCatRows.get(cat.name);
+                                  const catCashItems = cashItems.filter((item) => {
+                                    const amt = cashCommitmentAmountForMonth(item, filterMonth);
+                                    return amt > 0 && getParentCategory(item.category || "Other") === cat.name;
+                                  });
+                                  if ((!catData || catData.topMerchants.length === 0) && catCashItems.length === 0) {
+                                    return (
+                                      <Link href={catHref} className="flex items-center gap-2 pl-10 pr-5 py-2.5 text-[13px] text-gray-400 hover:text-purple-600 transition group/fallback">
+                                        <span>View full breakdown</span>
+                                        <svg className="h-3.5 w-3.5 shrink-0 group-hover/fallback:text-purple-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                          <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                        </svg>
+                                      </Link>
+                                    );
+                                  }
+
+                                  const merchantSection = catData && catData.topMerchants.length > 0 ? (() => {
+                                    // Group merchants by their subtype category
+                                    const subtypeMap = new Map<string, typeof catData.topMerchants>();
+                                    for (const m of catData.topMerchants) {
+                                      const sub = isSubtype(m.category || "") ? m.category : cat.name;
+                                      if (!subtypeMap.has(sub)) subtypeMap.set(sub, []);
+                                      subtypeMap.get(sub)!.push(m);
+                                    }
+                                    const subtypes = Array.from(subtypeMap.entries())
+                                      .map(([name, ms]) => ({ name, total: ms.reduce((s, m) => s + m.total, 0), merchants: ms }))
+                                      .sort((a, b) => b.total - a.total);
+                                    return subtypes.map((st) => {
+                                      const stKey = `ov::${cat.name}::${st.name}`;
+                                      const stExpanded = overviewExpandedSubtypes.has(stKey);
+                                      const stColor = categoryColor(st.name) || color;
+                                      const stPct = catData.total > 0 ? Math.round((st.total / catData.total) * 100) : 0;
+                                      return (
+                                        <Fragment key={st.name}>
+                                          <button
+                                            onClick={() => setOverviewExpandedSubtypes((prev) => {
+                                              const next = new Set(prev);
+                                              next.has(stKey) ? next.delete(stKey) : next.add(stKey);
+                                              return next;
+                                            })}
+                                            className="w-full flex items-center gap-3 pl-8 pr-4 py-3 bg-gray-50 hover:bg-gray-100 transition text-left border-b border-gray-200 last:border-0 group"
+                                            style={{ borderLeft: `3px solid ${stColor}` }}
+                                          >
+                                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full" style={{ backgroundColor: stColor + "25" }}>
+                                              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: stColor }} />
+                                            </span>
+                                            <div className="flex-1 min-w-0">
+                                              <p className="text-xs font-semibold text-gray-800 group-hover:text-gray-900">{st.name}</p>
+                                              <p className="text-[10px] text-gray-400 mt-0.5">{st.merchants.length} merchant{st.merchants.length !== 1 ? "s" : ""} · {stPct}% of {cat.name}</p>
+                                            </div>
+                                            <p className="text-xs font-bold text-gray-800 tabular-nums shrink-0">{formatCurrency(st.total, homeCurrency, undefined, false)}</p>
+                                            <span className={`ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors ${stExpanded ? "bg-gray-300" : "bg-gray-200 group-hover:bg-gray-300"}`}>
+                                              <svg className={`h-3 w-3 text-gray-600 transition-transform ${stExpanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                                              </svg>
+                                            </span>
+                                          </button>
+                                          {stExpanded && (
+                                            <div className="bg-gray-50/60">
+                                              {st.merchants.map((m) => {
+                                                const mCatColor = categoryColor(m.category || cat.name);
+                                                const isPickerOpen = catOpenPicker === m.slug;
+                                                return (
+                                                  <div key={m.slug} className="flex items-center gap-3 pl-16 pr-5 py-2.5 hover:bg-gray-100/60 transition border-b border-gray-100 last:border-0">
+                                                    <button
+                                                      onClick={() => openDrawer(m.slug)}
+                                                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold hover:opacity-80 transition ${subAvatarColor(m.name)}`}
+                                                    >
+                                                      {merchantInitials(mdn(m))}
+                                                    </button>
+                                                    <div className="flex-1 min-w-0">
+                                                      <button onClick={() => openDrawer(m.slug)} className="text-xs font-medium text-gray-800 truncate hover:text-purple-600 hover:underline block text-left w-full">{mdn(m)}</button>
+                                                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                                        <span className="text-[10px] text-gray-400">{m.count} visit{m.count !== 1 ? "s" : ""} · {formatCurrency(m.avgAmount, homeCurrency, m.currency, false)} avg</span>
+                                                        <button
+                                                          ref={(el) => { if (el) catPickerBtnRefs.current.set(m.slug, el); else catPickerBtnRefs.current.delete(m.slug); }}
+                                                          onClick={(e) => { e.stopPropagation(); setCatOpenPicker(isPickerOpen ? null : m.slug); }}
+                                                          className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 transition hover:border-purple-300 hover:bg-purple-50 hover:text-purple-700"
+                                                        >
+                                                          <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: mCatColor }} />
+                                                          {m.category || cat.name}
+                                                          <svg className="h-2.5 w-2.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                                                        </button>
+                                                        {isPickerOpen && catPickerBtnRefs.current.has(m.slug) && (
+                                                          <CategoryPicker
+                                                            anchorRef={{ current: catPickerBtnRefs.current.get(m.slug)! }}
+                                                            current={m.category || cat.name}
+                                                            onSelect={(newCat) => handleMerchantCategoryChange(m.name, newCat)}
+                                                            onClose={() => setCatOpenPicker(null)}
+                                                          />
+                                                        )}
+                                                      </div>
+                                                    </div>
+                                                    <div className="text-right shrink-0">
+                                                      <p className="text-xs font-semibold text-gray-800 tabular-nums">{formatCurrency(m.total, homeCurrency, m.currency, false)}</p>
+                                                    </div>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          )}
+                                        </Fragment>
+                                      );
+                                    });
+                                  })() : null;
+
+                                  const cashSection = catCashItems.length > 0 ? (
+                                    <div className="border-t border-amber-100/60">
+                                      {catCashItems.map((item) => {
+                                        const amt = cashCommitmentAmountForMonth(item, filterMonth);
+                                        const freqLabel = CASH_FREQ_OPTIONS.find((o) => o.value === item.frequency)?.label ?? item.frequency;
+                                        return (
+                                          <div key={item.id} className="flex items-center gap-3 pl-8 pr-4 py-2.5 bg-amber-50/40 border-b border-amber-100/50 last:border-0"
+                                            style={{ borderLeft: "3px solid #f59e0b" }}>
+                                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-100">
+                                              <svg className="h-3.5 w-3.5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                              </svg>
+                                            </span>
+                                            <div className="flex-1 min-w-0">
+                                              <p className="text-xs font-semibold text-gray-800 truncate">{item.name}</p>
+                                              <p className="text-[10px] text-amber-600 mt-0.5">{freqLabel} · cash commitment</p>
+                                            </div>
+                                            <p className="text-xs font-bold text-gray-800 tabular-nums shrink-0">{formatCurrency(amt, homeCurrency, undefined, false)}</p>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : null;
+
+                                  return <>{merchantSection}{cashSection}</>;
+                                })()}
                               </div>
                             )}
                           </div>
@@ -2963,14 +3121,14 @@ function SpendingPageInner() {
                       <div className="px-4 py-4 border-b border-r border-gray-100 sm:border-b-0 sm:border-r">
                         <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Categories</p>
                         <p className="text-xl font-bold text-gray-900 leading-tight">{categoryRows.length}</p>
-                        <p className="text-xs text-gray-400 mt-0.5">{catAllTxns12.toLocaleString()} txns · 12 mo</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{categoryRows.reduce((s, c) => s + c.count, 0).toLocaleString()} txns · {catFilterLabel.toLowerCase()}</p>
                       </div>
                       <div className="px-4 py-4 border-b border-gray-100 sm:border-b-0 sm:border-r">
                         <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Total Spend</p>
                         <p className="text-xl font-bold text-gray-900 leading-tight tabular-nums">
-                          {formatCurrency(mGrandTotal12, homeCurrency, undefined, true)}
+                          {formatCurrency(catGrandTotal, homeCurrency, undefined, true)}
                         </p>
-                        <p className="text-xs text-gray-400 mt-0.5">12-month window</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{catTimeFilter === "all" ? "All time" : `${catFilterLabel.toLowerCase()} window`}</p>
                       </div>
                       <div className="px-4 py-4 border-r border-gray-100 sm:border-r">
                         <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Top 3 Share</p>
@@ -2979,10 +3137,15 @@ function SpendingPageInner() {
                       </div>
                       <div className="px-4 py-4">
                         <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Fastest Growing</p>
-                        {catFastest ? (
+                        {!catBaselineReady ? (
                           <>
-                            <p className="text-xl font-bold text-orange-500 leading-tight">↑ {catFastest.trendPct}%</p>
-                            <p className="text-xs text-gray-400 mt-0.5 truncate">{catFastest.name} · 3 mo vs prior</p>
+                            <p className="text-sm font-semibold text-gray-400 leading-tight mt-1">Baseline being created</p>
+                            <p className="text-xs text-gray-300 mt-0.5">Need 3+ months of data</p>
+                          </>
+                        ) : catFastest ? (
+                          <>
+                            <p className="text-xl font-bold text-orange-500 leading-tight">↑ {catFastest.filterTrendPct}%</p>
+                            <p className="text-xs text-gray-400 mt-0.5 truncate">{catFastest.name} · {catTrendLabel}</p>
                           </>
                         ) : (
                           <p className="text-xl font-bold text-gray-400 leading-tight">—</p>
@@ -3029,75 +3192,79 @@ function SpendingPageInner() {
                         const trendUp    = (cat.trendPct ?? 0) > 0;
                         return (
                           <Fragment key={cat.name}>
-                            {/* Category row — click name/details to navigate, chevron to expand */}
-                            <div className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 sm:py-3.5 hover:bg-gray-50 transition">
-                              {/* Color swatch */}
-                              <Link href={`/account/spending/category/${encodeURIComponent(cat.name.toLowerCase())}`} className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-full hover:opacity-80 transition" style={{ backgroundColor: cat.color + "20" }}>
-                                <span className="h-3 w-3 rounded-full" style={{ backgroundColor: cat.color }} />
-                              </Link>
-                              {/* Name + meta */}
-                              <Link href={`/account/spending/category/${encodeURIComponent(cat.name.toLowerCase())}`} className="flex-1 min-w-0 group">
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  <p className="text-sm font-semibold text-gray-900 group-hover:text-purple-600 transition">{cat.name}</p>
-                                  {hasTrend && (
-                                    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${trendUp ? "bg-red-50 text-red-500" : "bg-green-50 text-green-600"}`}>
-                                      {trendUp ? "↑" : "↓"} {Math.abs(cat.trendPct!)}%
-                                    </span>
-                                  )}
-                                </div>
-                                <p className="text-[11px] text-gray-400 mt-0.5 hidden sm:block">
-                                  {cat.count.toLocaleString()} txn{cat.count !== 1 ? "s" : ""} · {formatCurrency(cat.avgAmount, homeCurrency, undefined, false)} avg · {cat.topMerchants.length} merchant{cat.topMerchants.length !== 1 ? "s" : ""}
-                                </p>
-                                <p className="text-[11px] text-gray-400 mt-0.5 sm:hidden">
-                                  {cat.count.toLocaleString()} txns · {cat.topMerchants.length} merchants
-                                </p>
-                                {/* Share bar */}
-                                <div className="mt-1.5 h-1 w-full rounded-full bg-gray-100">
-                                  <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: cat.color }} />
-                                </div>
-                              </Link>
-                              {/* Sparkline — hidden on mobile */}
-                              <div className="hidden sm:block">
-                                <MerchantSparkline monthly={cat.monthly} color={cat.color} fromYm={ym12moAgo} />
-                              </div>
-                              {/* Total + share */}
-                              <div className="text-right shrink-0 min-w-[60px] sm:min-w-[72px]">
-                                <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(cat.total, homeCurrency, undefined, true)}</p>
-                                <p className="text-[11px] text-gray-400 mt-0.5">{pct}%</p>
-                              </div>
-                              {/* Chevron — only this toggles the accordion */}
-                              <button
-                                onClick={() => {
-                                  if (isExpanded) {
-                                    setExpandedCategory(null);
-                                    setExpandedSubtypes(new Set());
-                                  } else {
-                                    setExpandedCategory(cat.name);
-                                  }
-                                }}
-                                className="p-1 rounded hover:bg-gray-200 transition shrink-0"
-                                aria-label={isExpanded ? "Collapse" : "Expand subtypes"}
-                              >
-                                <svg className={`h-3.5 w-3.5 text-gray-400 transition-transform ${isExpanded ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                                </svg>
-                              </button>
-                            </div>
-
-                            {/* Level 2: subtype rows — each expands to show merchants */}
-                            {isExpanded && (() => {
-                              const subtypeMap = new Map<string, typeof cat.topMerchants>();
-                              for (const m of cat.topMerchants) {
-                                const sub = isSubtype(m.category || "") ? m.category : cat.name;
-                                if (!subtypeMap.has(sub)) subtypeMap.set(sub, []);
-                                subtypeMap.get(sub)!.push(m);
+                            <CategoryListRow
+                              isOpen={isExpanded}
+                              onToggle={() => {
+                                if (isExpanded) {
+                                  setExpandedCategory(null);
+                                  setExpandedSubtypes(new Set());
+                                } else {
+                                  setExpandedCategory(cat.name);
+                                }
+                              }}
+                              className="gap-2 sm:gap-3 px-3 sm:px-5 py-3 sm:py-3.5"
+                              rowContent={
+                                <>
+                                  {/* Color swatch — also navigates */}
+                                  <Link
+                                    href={`/account/spending/category/${encodeURIComponent(cat.name.toLowerCase())}`}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-full hover:opacity-80 transition"
+                                    style={{ backgroundColor: cat.color + "20" }}
+                                  >
+                                    <span className="h-3 w-3 rounded-full" style={{ backgroundColor: cat.color }} />
+                                  </Link>
+                                  {/* Name + meta */}
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <CategoryNameLink
+                                        href={`/account/spending/category/${encodeURIComponent(cat.name.toLowerCase())}`}
+                                        name={cat.name}
+                                        className="text-sm font-semibold text-gray-900"
+                                      />
+                                      {hasTrend && (
+                                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${trendUp ? "bg-red-50 text-red-500" : "bg-green-50 text-green-600"}`}>
+                                          {trendUp ? "↑" : "↓"} {Math.abs(cat.trendPct!)}%
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-[11px] text-gray-400 mt-0.5 hidden sm:block">
+                                      {cat.count.toLocaleString()} txn{cat.count !== 1 ? "s" : ""} · {formatCurrency(cat.avgAmount, homeCurrency, undefined, false)} avg · {cat.topMerchants.length} merchant{cat.topMerchants.length !== 1 ? "s" : ""}
+                                    </p>
+                                    <p className="text-[11px] text-gray-400 mt-0.5 sm:hidden">
+                                      {cat.count.toLocaleString()} txns · {cat.topMerchants.length} merchants
+                                    </p>
+                                    <div className="mt-1.5 h-1 w-full rounded-full bg-gray-100">
+                                      <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: cat.color }} />
+                                    </div>
+                                  </div>
+                                  {/* Sparkline */}
+                                  <div className="hidden sm:block">
+                                    <MerchantSparkline monthly={cat.monthly} color={cat.color} fromYm={ym12moAgo} />
+                                  </div>
+                                  {/* Total + share */}
+                                  <div className="text-right shrink-0 min-w-[60px] sm:min-w-[72px]">
+                                    <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(cat.total, homeCurrency, undefined, true)}</p>
+                                    <p className="text-[11px] text-gray-400 mt-0.5">{pct}%</p>
+                                  </div>
+                                </>
                               }
-                              const subtypes = Array.from(subtypeMap.entries())
-                                .map(([name, ms]) => ({ name, total: ms.reduce((s, m) => s + m.total, 0), merchants: ms }))
-                                .sort((a, b) => b.total - a.total);
-                              return (
-                                <div className="border-t border-gray-100">
-                                  {subtypes.map((st) => {
+                            >
+
+                              {/* Expanded subtypes — shown by CategoryListRow when isOpen */}
+                              {(() => {
+                                const subtypeMap = new Map<string, typeof cat.topMerchants>();
+                                for (const m of cat.topMerchants) {
+                                  const sub = isSubtype(m.category || "") ? m.category : cat.name;
+                                  if (!subtypeMap.has(sub)) subtypeMap.set(sub, []);
+                                  subtypeMap.get(sub)!.push(m);
+                                }
+                                const subtypes = Array.from(subtypeMap.entries())
+                                  .map(([name, ms]) => ({ name, total: ms.reduce((s, m) => s + m.total, 0), merchants: ms }))
+                                  .sort((a, b) => b.total - a.total);
+                                return (
+                                  <div className="border-t border-gray-100">
+                                    {subtypes.map((st) => {
                                     const stKey = `${cat.name}::${st.name}`;
                                     const stExpanded = expandedSubtypes.has(stKey);
                                     const stColor = categoryColor(st.name) || cat.color;
@@ -3124,8 +3291,8 @@ function SpendingPageInner() {
                                           <p className="text-xs font-bold text-gray-800 tabular-nums shrink-0">{formatCurrency(st.total, homeCurrency, undefined, false)}</p>
                                           {/* Prominent expand indicator */}
                                           <span className={`ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors ${stExpanded ? "bg-gray-300" : "bg-gray-200 group-hover:bg-gray-300"}`}>
-                                            <svg className={`h-3 w-3 text-gray-600 transition-transform ${stExpanded ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                                              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                            <svg className={`h-3 w-3 text-gray-600 transition-transform ${stExpanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
                                             </svg>
                                           </span>
                                         </button>
@@ -3183,6 +3350,7 @@ function SpendingPageInner() {
                                 </div>
                               );
                             })()}
+                            </CategoryListRow>
                           </Fragment>
                         );
                       })}
@@ -4087,6 +4255,14 @@ function SpendingPageInner() {
           </>
         );
       })()}
+
+      <MerchantDrawer
+        slug={drawerSlug}
+        token={token}
+        homeCurrency={homeCurrency}
+        isOpen={drawerOpen}
+        onClose={closeDrawer}
+      />
     </div>
   );
 }
