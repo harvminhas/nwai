@@ -1009,17 +1009,20 @@ function SpendingPageInner() {
     (s, c) => s + cashCommitmentAmountForMonth(c, filterMonth), 0
   );
 
-  const statementTotal = coreTxns.length > 0
-    ? coreTxns.reduce((s, t) => s + t.amount, 0)
-    : (data?.expenses?.total ?? 0);
-  const total        = statementTotal + cashCommitmentsForMonth;
-  // When "include all" is toggled, show gross total (incl. transfers + debt payments)
-  const allTxnsStatementTotal = monthTxns.reduce((s, t) => s + t.amount, 0);
-  const displayTotal = catIncludeAll
-    ? allTxnsStatementTotal + cashCommitmentsForMonth
-    : total;
+  // FX helper — hoisted function so it can be called anywhere in this scope.
+  function toHomeTxn(amount: number, tx: ExpenseTransaction): number {
+    const ccy = tx.currency;
+    if (!ccy || ccy.toUpperCase() === homeCurrency.toUpperCase()) return amount;
+    const rate = fxRates[ccy.toUpperCase()];
+    return rate != null ? amount * rate : amount;
+  }
 
-  const excludedTotal = excludedTxns.reduce((s, t) => s + t.amount, 0);
+  const statementTotal = coreTxns.length > 0
+    ? coreTxns.reduce((s, t) => s + toHomeTxn(t.amount, t), 0)
+    : (data?.expenses?.total ?? 0);
+  const total = statementTotal + cashCommitmentsForMonth;
+
+  const excludedTotal = excludedTxns.reduce((s, t) => s + toHomeTxn(t.amount, t), 0);
 
   // Split excluded transactions into debt payments / interest / transfers.
   // Uses getParentCategory so subtypes (e.g. "Credit Card Payment") roll up correctly.
@@ -1028,16 +1031,13 @@ function SpendingPageInner() {
   const transferTxns = excludedTxns.filter((t) =>
     getParentCategory(t.category ?? "") !== "Debt Payments" && !/^interest$/i.test((t.category ?? "").trim())
   );
-  // Aggregate totals — converted to home currency
-  function toHomeTxn(amount: number, tx: ExpenseTransaction): number {
-    const ccy = tx.currency;
-    if (!ccy || ccy.toUpperCase() === homeCurrency.toUpperCase()) return amount;
-    const rate = fxRates[ccy.toUpperCase()];
-    return rate != null ? amount * rate : amount;
-  }
   const debtTotal     = debtTxns.reduce((s, t) => s + toHomeTxn(t.amount, t), 0);
   const interestTotal = interestTxns.reduce((s, t) => s + toHomeTxn(t.amount, t), 0);
   const transferTotal = transferTxns.reduce((s, t) => s + toHomeTxn(t.amount, t), 0);
+
+  // "all in" = core expenses + debt payments — same concept as the Today page toggle.
+  // Transfers (inter-account moves) are intentionally excluded to avoid inflating the figure.
+  const displayTotal = catIncludeAll ? total + debtTotal : total;
 
   // Convert transaction amount to home currency for aggregation (used by category builders)
   function toHomeCat(amount: number, currency?: string | null): number {
@@ -1882,7 +1882,7 @@ function SpendingPageInner() {
                             <button
                               onClick={() => setCatIncludeAll((v) => !v)}
                               className="flex items-center gap-1.5 text-[10px] text-gray-400 hover:text-gray-600 transition shrink-0"
-                              title={catIncludeAll ? "Excluding transfers & debt payments" : "Including transfers & debt payments"}
+                              title={catIncludeAll ? "Excluding debt payments" : "Including debt payments"}
                             >
                               <span className={`relative inline-flex h-3.5 w-6 shrink-0 rounded-full transition-colors ${catIncludeAll ? "bg-indigo-500" : "bg-gray-200"}`}>
                                 <span className={`inline-block h-2.5 w-2.5 mt-0.5 ml-0.5 rounded-full bg-white shadow transform transition-transform ${catIncludeAll ? "translate-x-2.5" : "translate-x-0"}`} />

@@ -344,14 +344,11 @@ export function getTypicalMonthlyDebtPayments(profile: FinancialProfileCache): n
 // ── getMonthlyDebtPayments ─────────────────────────────────────────────────────
 
 /**
- * Total minimum/scheduled debt payments for a given month.
- * Uses the same min/extra split as the Spending page debt card.
- * User tag overrides (min vs extra) are baked into the cache at build time.
+ * Minimum/scheduled debt payments for a given month.
+ * Used by the SavingsRateCard where "obligated minimum" is the right concept.
  *
- * If the requested month has no debt payment data (e.g. checking account
- * statement not yet uploaded for that month), falls back to the most recent
- * month in history that has debt payments — so the savings rate toggle is
- * always available when the user has any debt obligations.
+ * Falls back to the most recent month with debt payments when the requested
+ * month has no data (e.g. checking statement not yet uploaded).
  */
 export function getMonthlyDebtPayments(profile: FinancialProfileCache, yearMonth?: string): number {
   const ym    = yearMonth ?? profile.latestTxMonth ?? "";
@@ -363,6 +360,17 @@ export function getMonthlyDebtPayments(profile: FinancialProfileCache, yearMonth
     .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth))
     .find((h) => (h.minDebtPaymentsTotal ?? 0) > 0);
   return fallback?.minDebtPaymentsTotal ?? 0;
+}
+
+/**
+ * Total actual debt payments made in a given month (all transactions, not just minimum).
+ * Use this for "total spending including debt" KPI figures where you want the real
+ * amount paid, not the obligated minimum.
+ */
+export function getMonthlyAllDebtPayments(profile: FinancialProfileCache, yearMonth?: string): number {
+  const ym    = yearMonth ?? profile.latestTxMonth ?? "";
+  const entry = profile.monthlyHistory.find((h) => h.yearMonth === ym);
+  return entry?.debtPaymentsTotal ?? 0;
 }
 
 

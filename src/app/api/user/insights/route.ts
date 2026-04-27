@@ -5,7 +5,7 @@ import type { ParsedStatementData } from "@/lib/types";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { merchantSlug } from "@/lib/applyRules";
 import { getFinancialProfile } from "@/lib/financialProfile";
-import { getNetWorth, getSavingsRate, getMonthlyIncome, getMonthlyExpenses, getLatestCompleteMonth, getMonthlyDebtPayments } from "@/lib/profileMetrics";
+import { getNetWorth, getSavingsRate, getMonthlyIncome, getMonthlyExpenses, getLatestCompleteMonth, getMonthlyAllDebtPayments } from "@/lib/profileMetrics";
 import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
 import { detectFrequency } from "@/lib/incomeEngine";
 import { projectNextDates, nextUpcoming, toDateStr } from "@/lib/projectionEngine";
@@ -1113,7 +1113,7 @@ export async function GET(req: NextRequest) {
         rate:         getSavingsRate(profile, savingsMonth),
         income:       getMonthlyIncome(profile, savingsMonth),
         expenses:     getMonthlyExpenses(profile, savingsMonth, { core: true }),
-        debtPayments: getMonthlyDebtPayments(profile, savingsMonth),
+        debtPayments: getMonthlyAllDebtPayments(profile, savingsMonth),
         month:        savingsMonth,
       };
     })(),
