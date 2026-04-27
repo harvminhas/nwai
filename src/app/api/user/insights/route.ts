@@ -70,6 +70,8 @@ export interface UpcomingItem {
   isThisMonth: boolean;
   /** predicted day-of-month date even when isThisMonth is true (already passed or far out) */
   predictedDate?: string;
+  /** number of confirmed occurrences seen in statements (for predicted/overdue items) */
+  occurrenceCount?: number;
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -460,6 +462,7 @@ export async function GET(req: NextRequest) {
       isOverdue: isOverdueSub,
       isThisMonth: false,
       predictedDate: dateStr,
+      occurrenceCount: rec.occurrenceCount ?? 0,
     });
   }
 

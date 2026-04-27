@@ -16,6 +16,8 @@ import { PROFILE_REFRESHED_EVENT } from "@/contexts/ProfileRefreshContext";
 import { fmt } from "@/lib/currencyUtils";
 import { usePlan } from "@/contexts/PlanContext";
 import { useActiveProfile } from "@/contexts/ActiveProfileContext";
+import { MerchantDrawer, useMerchantDrawer } from "@/app/account/spending/MerchantDrawer";
+import { IncomeDrawer, useIncomeDrawer } from "./IncomeDrawer";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -90,7 +92,11 @@ function getDateLabel(item: UpcomingItem): { text: string; cls: string } {
     return { text: "this month", cls: "text-gray-400" };
   }
   const { daysFromNow, date } = item;
-  if (daysFromNow < 0)   return { text: `${Math.abs(daysFromNow)}d overdue`, cls: "text-red-500 font-semibold" };
+  if (daysFromNow < 0) {
+    const d = new Date(date + "T00:00:00");
+    const dateStr = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return { text: `expected ~${dateStr}`, cls: "text-amber-600 font-semibold" };
+  }
   if (daysFromNow === 0) return { text: "Today",     cls: "text-amber-600 font-semibold" };
   if (daysFromNow === 1) return { text: "Tomorrow",  cls: "text-amber-500 font-semibold" };
   if (daysFromNow <= 7)  return { text: `In ${daysFromNow}d`, cls: "text-gray-600 font-medium" };
@@ -105,7 +111,14 @@ interface RatePill {
   direction: "up" | "down" | "unchanged";
 }
 
-function UpcomingRow({ item, muted = false, ratePill, homeCurrency = "USD" }: { item: UpcomingItem; muted?: boolean; ratePill?: RatePill; homeCurrency?: string }) {
+function UpcomingRow({ item, muted = false, ratePill, homeCurrency = "USD", confirmState, onConfirm }: {
+  item: UpcomingItem;
+  muted?: boolean;
+  ratePill?: RatePill;
+  homeCurrency?: string;
+  confirmState?: "confirmed" | "not-yet" | "stopped" | null;
+  onConfirm?: (id: string, answer: "confirmed" | "not-yet" | "stopped" | "clear", expectedDate?: string) => void;
+}) {
   const { text, cls } = getDateLabel(item);
   const pillColor = ratePill?.direction === "up"
     ? "bg-red-50 text-red-600 border-red-100"
@@ -113,36 +126,128 @@ function UpcomingRow({ item, muted = false, ratePill, homeCurrency = "USD" }: { 
     ? "bg-green-50 text-green-600 border-green-100"
     : "bg-amber-50 text-amber-600 border-amber-100";
 
+  const isExpectedOverdue = item.isOverdue && item.type !== "cash-in";
+  const rowBg = isExpectedOverdue ? "bg-amber-50/50" : "";
+
   const row = (
-    <div className={`flex items-center gap-3 px-4 py-3.5 ${item.isOverdue ? "bg-red-50/60" : ""} ${muted ? "opacity-40" : ""}`}>
-      {TYPE_ICON[item.type] ?? TYPE_ICON["cash-out"]}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <p className={`text-sm font-medium ${muted ? "text-gray-400" : "text-gray-800"}`}>{item.title}</p>
-          {ratePill && (
-            <span className={`inline-flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold leading-none ${pillColor}`}>
-              {ratePill.direction === "up" ? "↑" : ratePill.direction === "down" ? "↓" : "→"} {ratePill.label}
-            </span>
-          )}
+    <div className={`${rowBg} ${muted ? "opacity-40" : ""}`}>
+      <div className="flex items-center gap-3 px-4 py-3.5">
+        {TYPE_ICON[item.type] ?? TYPE_ICON["cash-out"]}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className={`text-sm font-medium ${muted ? "text-gray-400" : "text-gray-800"}`}>{item.title}</p>
+            {ratePill && (
+              <span className={`inline-flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold leading-none ${pillColor}`}>
+                {ratePill.direction === "up" ? "↑" : ratePill.direction === "down" ? "↓" : "→"} {ratePill.label}
+              </span>
+            )}
+          </div>
+          {item.subtitle && <p className="text-xs text-gray-400 mt-0.5">{item.subtitle}</p>}
         </div>
-        {item.subtitle && <p className="text-xs text-gray-400 mt-0.5">{item.subtitle}</p>}
+        <div className="shrink-0 text-right">
+          <p className={`text-sm font-semibold ${item.type === "cash-in" ? "text-green-600" : muted ? "text-gray-400" : "text-gray-800"}`}>
+            {item.type === "cash-in" ? "+" : "−"}{fmt(item.amount, homeCurrency)}
+          </p>
+          <p className={`text-xs mt-0.5 ${muted ? "text-gray-300" : cls}`}>{text}</p>
+        </div>
+        {item.href && !isExpectedOverdue && (
+          <svg className="h-4 w-4 shrink-0 text-gray-300 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        )}
       </div>
-      <div className="shrink-0 text-right">
-        <p className={`text-sm font-semibold ${item.type === "cash-in" ? "text-green-600" : muted ? "text-gray-400" : "text-gray-800"}`}>
-          {item.type === "cash-in" ? "+" : "−"}{fmt(item.amount, homeCurrency)}
-        </p>
-        <p className={`text-xs mt-0.5 ${muted ? "text-gray-300" : cls}`}>{text}</p>
-      </div>
-      {item.href && (
-        <svg className="h-4 w-4 shrink-0 text-gray-300 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-        </svg>
-      )}
     </div>
   );
+
+  if (isExpectedOverdue) return <div key={item.id}>{row}</div>;
   return item.href
     ? <Link key={item.id} href={item.href} className="block hover:bg-gray-50 transition">{row}</Link>
     : <div key={item.id}>{row}</div>;
+}
+
+function PredictedRow({ item, homeCurrency = "USD", confirmState, onConfirm }: {
+  item: UpcomingItem;
+  homeCurrency?: string;
+  confirmState?: "confirmed" | "not-yet" | "stopped" | null;
+  onConfirm?: (id: string, answer: "confirmed" | "not-yet" | "stopped" | "clear", expectedDate?: string) => void;
+}) {
+  const currentMonth = new Date().toLocaleDateString("en-US", { month: "long" });
+  const expectedDate = item.predictedDate ?? item.date;
+  const expectedLabel = (() => {
+    const d = new Date(expectedDate + "T00:00:00");
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  })();
+
+  // Parse frequency from subtitle e.g. "Recurring · biweekly · Chequing"
+  const freqRaw = item.subtitle?.split("·")[1]?.trim() ?? "Recurring";
+  const freqLabel = freqRaw.charAt(0).toUpperCase() + freqRaw.slice(1);
+
+  const countLabel = item.occurrenceCount && item.occurrenceCount > 0
+    ? `last ${item.occurrenceCount} confirmed`
+    : null;
+
+  const btnBase = "rounded-full border px-3 py-1 text-[12px] font-medium transition hover:bg-gray-50";
+
+  return (
+    <div className="px-5 py-4">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-bold text-gray-900">{item.title}</p>
+          <p className="mt-0.5 text-xs text-gray-500">
+            {freqLabel}{countLabel ? ` · ${countLabel}` : ""}
+          </p>
+          <p className="mt-0.5 text-xs text-gray-400">
+            Expected ~{expectedLabel} · awaiting {currentMonth} statement
+          </p>
+        </div>
+        <div className="shrink-0 text-right">
+          <p className="text-sm font-bold text-gray-800 tabular-nums">~{fmt(item.amount, homeCurrency)}</p>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mt-0.5">Predicted</p>
+        </div>
+      </div>
+
+      {confirmState == null && onConfirm && (
+        <div className="flex items-center gap-2 mt-3 flex-wrap">
+          <button onClick={() => onConfirm(item.id, "confirmed", item.date)} className={`${btnBase} border-gray-300 text-gray-700`}>
+            Yes, happened
+          </button>
+          <button onClick={() => onConfirm(item.id, "not-yet", item.date)} className={`${btnBase} border-gray-300 text-gray-700`}>
+            Not yet
+          </button>
+          <button onClick={() => onConfirm(item.id, "stopped", item.date)} className={`${btnBase} border-gray-200 text-gray-400`}>
+            No longer recurring
+          </button>
+        </div>
+      )}
+
+      {confirmState != null && onConfirm && (
+        <div className="flex items-center gap-2 mt-3">
+          {confirmState === "confirmed" && (
+            <span className="flex items-center gap-1 rounded-full border border-green-200 bg-green-50 px-3 py-1 text-[12px] font-semibold text-green-700">
+              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+              Happened
+            </span>
+          )}
+          {confirmState === "not-yet" && (
+            <span className="rounded-full border border-gray-300 bg-gray-50 px-3 py-1 text-[12px] font-medium text-gray-600">
+              Not yet
+            </span>
+          )}
+          {confirmState === "stopped" && (
+            <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-[12px] font-medium text-gray-400">
+              No longer recurring
+            </span>
+          )}
+          <button
+            onClick={() => onConfirm(item.id, "clear", item.date)}
+            className="text-[11px] text-gray-400 hover:text-gray-600 underline underline-offset-2 transition"
+          >
+            undo
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function UpcomingGroup({ title, items, emptySlot, ratePill, homeCurrency = "USD" }: { title: string; items: UpcomingItem[]; emptySlot?: React.ReactNode; ratePill?: RatePill; homeCurrency?: string }) {
@@ -1120,6 +1225,9 @@ export default function TodayPage() {
   const [expandedAlerts,   setExpandedAlerts]   = useState<Set<string>>(new Set());
   const [expandedRadar,    setExpandedRadar]    = useState<Set<string>>(new Set());
   const [dismissedRadar,   setDismissedRadar]   = useState<Set<string>>(new Set());
+  const [expectedConfirmations, setExpectedConfirmations] = useState<Map<string, "confirmed" | "not-yet" | "stopped">>(new Map());
+  const { drawerSlug, drawerOpen: merchantDrawerOpen, openDrawer: openMerchantDrawer, closeDrawer: closeMerchantDrawer } = useMerchantDrawer();
+  const { drawerSource, drawerOpen: incomeDrawerOpen, openDrawer: openIncomeDrawer, closeDrawer: closeIncomeDrawer } = useIncomeDrawer();
   const [sigExpanded,      setSigExpanded]      = useState(false);
   const [statusOpen,       setStatusOpen]       = useState(false);
   const [freshnessExpanded, setFreshnessExpanded] = useState(false);
@@ -1155,24 +1263,45 @@ export default function TodayPage() {
     setDismissedRadar((prev) => new Set([...prev, id]));
   }
 
+  async function handleExpectedConfirm(itemId: string, answer: "confirmed" | "not-yet" | "stopped" | "clear", expectedDate?: string) {
+    if (answer === "clear") {
+      setExpectedConfirmations((prev) => { const n = new Map(prev); n.delete(itemId); return n; });
+    } else {
+      setExpectedConfirmations((prev) => new Map(prev).set(itemId, answer));
+    }
+    if (!token) return;
+    await fetch("/api/user/upcoming-confirmations", {
+      method: "POST",
+      headers: { ...buildHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({ itemId, answer, expectedDate: expectedDate ?? "" }),
+    }).catch(() => {});
+  }
+
   const load = useCallback(async (tok: string) => {
     setLoading(true); setError(null);
     try {
       const headers = buildHeaders(tok);
-      const [insRes, cardRes, fxRes] = await Promise.all([
-        fetch("/api/user/insights",       { headers }),
-        fetch("/api/user/agent-insights", { headers }),
-        fetch("/api/user/currency-info",  { headers }),
+      const [insRes, cardRes, fxRes, confirmRes] = await Promise.all([
+        fetch("/api/user/insights",                    { headers }),
+        fetch("/api/user/agent-insights",              { headers }),
+        fetch("/api/user/currency-info",               { headers }),
+        fetch("/api/user/upcoming-confirmations",      { headers }),
       ]);
-      const insJson  = await insRes.json().catch(() => ({}));
-      const cardJson = await cardRes.json().catch(() => ({}));
-      const fxJson   = await fxRes.json().catch(() => ({}));
+      const insJson     = await insRes.json().catch(() => ({}));
+      const cardJson    = await cardRes.json().catch(() => ({}));
+      const fxJson      = await fxRes.json().catch(() => ({}));
+      const confirmJson = await confirmRes.json().catch(() => ({}));
       if (!insRes.ok) { setError(insJson.error || "Failed to load"); return; }
       setAlerts(insJson.alerts ?? []);
       setUpcoming(insJson.upcoming ?? []);
       setInsights(insJson.insights ?? []);
       const radarData = insJson.radar ?? [];
       setRadar(radarData);
+      // Hydrate saved confirmations
+      const savedConfs: { itemId: string; answer: "confirmed" | "not-yet" | "stopped" }[] = confirmJson.confirmations ?? [];
+      if (savedConfs.length > 0) {
+        setExpectedConfirmations(new Map(savedConfs.map((c) => [c.itemId, c.answer])));
+      }
       // Show onboarding modal only when no account-setup modal is pending
       const pendingBackfill = (() => { try { return !!localStorage.getItem("nwai_backfill_prompt"); } catch { return false; } })();
       // Show onboarding modal only after home currency is confirmed and no backfill pending
@@ -1279,7 +1408,6 @@ export default function TodayPage() {
 
   // Segment upcoming items
   const overdue    = upcoming.filter((i) => !i.isThisMonth && i.daysFromNow < 0);
-  const thisMonth  = upcoming.filter((i) => i.isThisMonth);
   const dateItems  = upcoming.filter((i) => !i.isThisMonth && i.daysFromNow >= 0);
 
   // Visible (non-dismissed) radar items
@@ -1923,6 +2051,20 @@ export default function TodayPage() {
 
   return (
     <>
+      <MerchantDrawer
+        slug={drawerSlug}
+        token={token}
+        homeCurrency={homeCurrency}
+        isOpen={merchantDrawerOpen}
+        onClose={closeMerchantDrawer}
+      />
+      <IncomeDrawer
+        sourceName={drawerSource}
+        token={token}
+        homeCurrency={homeCurrency}
+        isOpen={incomeDrawerOpen}
+        onClose={closeIncomeDrawer}
+      />
     {/* Home currency modal — shown once when country is not yet confirmed */}
     {showHomeCurrency && token && (
       <HomeCurrencyModal
@@ -2207,81 +2349,117 @@ export default function TodayPage() {
             );
           })}
 
-          {/* ── Radar / Cash Flow Pressure cards ─────────────────────────────── */}
-          {visibleRadar.map((item) => {
-            const isWarn = item.type === "warn";
-            return (
-              <div key={item.id} className={`rounded-2xl border shadow-sm overflow-hidden ${isWarn ? "border-amber-200 bg-white" : "border-green-200 bg-white"}`}>
-                <div className="px-5 pt-4 pb-1 flex items-center gap-2">
-                  <p className={`text-[10px] font-bold uppercase tracking-widest ${isWarn ? "text-amber-600" : "text-green-600"}`}>
-                    {item.pill} · {item.when}
-                  </p>
-                  <span className="ml-auto text-base font-bold tabular-nums text-gray-800">{item.amount}</span>
-                  <button
-                    aria-label="Dismiss"
-                    onClick={() => dismissRadar(item.id)}
-                    className="shrink-0 text-gray-300 hover:text-gray-500 transition"
-                  >
-                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-                <div className="px-5 pb-4">
-                  <p className="text-sm font-semibold text-gray-900">{item.title}</p>
-                  <p className="mt-0.5 text-xs text-gray-400">{item.sub}</p>
-                  {expandedRadar.has(item.id) && (
-                    <div className="mt-2 border-t border-gray-100 pt-2 space-y-1">
-                      {item.expand.breakdown.map((row, i) => (
-                        <div key={i} className="flex justify-between text-xs">
-                          <span className="text-gray-500">{row.label}</span>
-                          <span className="font-semibold text-gray-800">{row.value}</span>
-                        </div>
-                      ))}
-                      {item.expand.note && <p className="text-xs text-gray-500 mt-1">{item.expand.note}</p>}
-                    </div>
-                  )}
-                  <button
-                    onClick={() => toggleRadar(item.id)}
-                    className="mt-1.5 text-xs font-medium text-gray-400 hover:text-gray-600"
-                  >
-                    {expandedRadar.has(item.id) ? "Less ↑" : "More →"}
-                  </button>
-                </div>
+          {/* ── Top Insights / Radar cards ───────────────────────────────────── */}
+          {visibleRadar.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between px-1">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Top Insights</p>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">{visibleRadar.length} noticed</p>
               </div>
-            );
-          })}
-
-          {/* ── Overdue non-payday ───────────────────────────────────────────── */}
-          {overdueOther.length > 0 && (
-            <div className="rounded-2xl border border-red-200 bg-white shadow-sm overflow-hidden divide-y divide-gray-100">
-              <p className="px-5 py-3 text-[10px] font-bold uppercase tracking-widest text-red-500">Overdue</p>
-              {overdueOther.map((item) => (
-                <UpcomingRow key={item.id} item={item} homeCurrency={homeCurrency} />
-              ))}
+              <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden divide-y divide-gray-100">
+                {visibleRadar.map((item) => {
+                  const isWarn = item.type === "warn";
+                  return (
+                    <div key={item.id} className="px-5 py-4">
+                      <div className="flex items-start gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${isWarn ? "bg-amber-400" : "bg-green-400"}`} />
+                            <p className={`text-[10px] font-bold uppercase tracking-widest ${isWarn ? "text-amber-600" : "text-green-600"}`}>
+                              {item.pill} · {item.when}
+                            </p>
+                          </div>
+                          <p className="text-sm font-semibold text-gray-900">{item.title}</p>
+                          <p className="mt-0.5 text-xs text-gray-400">{item.sub}</p>
+                          {expandedRadar.has(item.id) && (
+                            <div className="mt-2 border-t border-gray-100 pt-2 space-y-1">
+                              {item.expand.breakdown.map((row, i) => (
+                                <div key={i} className="flex justify-between text-xs">
+                                  <span className="text-gray-500">{row.label}</span>
+                                  <span className="font-semibold text-gray-800">{row.value}</span>
+                                </div>
+                              ))}
+                              {item.expand.note && <p className="text-xs text-gray-500 mt-1">{item.expand.note}</p>}
+                            </div>
+                          )}
+                          <button
+                            onClick={() => toggleRadar(item.id)}
+                            className="mt-1.5 text-xs font-medium text-gray-400 hover:text-gray-600"
+                          >
+                            {expandedRadar.has(item.id) ? "Less ↑" : "More →"}
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-sm font-bold tabular-nums text-gray-800">{item.amount}</span>
+                          <button
+                            aria-label="Dismiss"
+                            onClick={(e) => { e.stopPropagation(); dismissRadar(item.id); }}
+                            className="text-gray-300 hover:text-gray-500 transition ml-1 -mt-0.5"
+                          >
+                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 
-          {/* ── Upcoming · By Impact ─────────────────────────────────────────── */}
-          {upcomingVisible.length > 0 && (
-            <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-              <div className="px-5 py-3 flex items-center justify-between border-b border-gray-100">
-                <div className="flex items-center gap-1.5">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Upcoming</p>
-                  <span className="text-[10px] font-medium text-gray-400">· By Impact</span>
+          {/* ── Needs Your Input ─────────────────────────────────────────────── */}
+          {(() => {
+            const visibleItems = overdueOther.filter(
+              (i) => expectedConfirmations.get(i.id) !== "confirmed" && expectedConfirmations.get(i.id) !== "stopped"
+            );
+            if (visibleItems.length === 0) return null;
+            return (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between px-1">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Needs your input</p>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">{visibleItems.length} {visibleItems.length === 1 ? "item" : "items"}</p>
                 </div>
-                {upcomingHidden > 0 && !showAllUpcoming && (
-                  <button
-                    onClick={() => setShowAllUpcoming(true)}
-                    className="text-[11px] font-semibold text-purple-600 hover:underline"
-                  >
-                    +{upcomingHidden} more
-                  </button>
-                )}
+                <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                  <div className="px-5 pt-4 pb-3 border-b border-gray-100">
+                    <p className="text-base font-bold text-gray-900">{visibleItems.length === 1 ? "Did this happen?" : "Did these happen?"}</p>
+                    <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                      Predicted from your patterns · confirming trains your forecast
+                    </p>
+                  </div>
+                  <div className="divide-y divide-gray-100">
+                    {visibleItems.map((item) => (
+                      <PredictedRow
+                        key={item.id}
+                        item={item}
+                        homeCurrency={homeCurrency}
+                        confirmState={expectedConfirmations.get(item.id) ?? null}
+                        onConfirm={handleExpectedConfirm}
+                      />
+                    ))}
+                  </div>
+                </div>
               </div>
+            );
+          })()}
+
+          {/* ── What we expect — next 30 days ────────────────────────────────── */}
+          {upcomingVisible.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between px-1">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">What we expect · next 30 days</p>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Sorted by date</p>
+              </div>
+              <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
               <div className="divide-y divide-gray-100">
                 {(showAllUpcoming ? upcomingByImpact : upcomingVisible).map((item) => {
                   const { text, cls } = getDateLabel(item);
+                  const merchantSlugFromHref = item.type === "subscription" || item.type === "cash-out" || item.type === "debt"
+                    ? item.href?.split("/").pop() ?? null
+                    : null;
+                  const isIncome = item.type === "cash-in";
+
                   const row = (
                     <div className="flex items-center gap-3 px-5 py-3.5">
                       <div className="min-w-0 flex-1">
@@ -2301,13 +2479,39 @@ export default function TodayPage() {
                         </p>
                         <p className={`text-xs mt-0.5 ${cls}`}>{text}</p>
                       </div>
+                      <svg className="h-4 w-4 shrink-0 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                      </svg>
                     </div>
                   );
+
+                  if (isIncome) {
+                    return (
+                      <button key={item.id} onClick={() => openIncomeDrawer(item.title)} className="block w-full text-left hover:bg-gray-50 transition">
+                        {row}
+                      </button>
+                    );
+                  }
+                  if (merchantSlugFromHref) {
+                    return (
+                      <button key={item.id} onClick={() => openMerchantDrawer(merchantSlugFromHref)} className="block w-full text-left hover:bg-gray-50 transition">
+                        {row}
+                      </button>
+                    );
+                  }
                   return item.href
                     ? <Link key={item.id} href={item.href} className="block hover:bg-gray-50 transition">{row}</Link>
                     : <div key={item.id}>{row}</div>;
                 })}
               </div>
+              {upcomingHidden > 0 && !showAllUpcoming && (
+                <button
+                  onClick={() => setShowAllUpcoming(true)}
+                  className="w-full border-t border-gray-100 px-5 py-2.5 text-xs font-semibold text-purple-600 hover:underline text-center hover:bg-gray-50 transition"
+                >
+                  +{upcomingHidden} more
+                </button>
+              )}
               {showAllUpcoming && (
                 <button
                   onClick={() => setShowAllUpcoming(false)}
@@ -2317,11 +2521,7 @@ export default function TodayPage() {
                 </button>
               )}
             </div>
-          )}
-
-          {/* Also-this-month strip (collapsed by default) */}
-          {thisMonth.length > 0 && (
-            <ThisMonthGroup items={thisMonth} ratePill={ratePill} homeCurrency={homeCurrency} />
+            </div>
           )}
 
           {/* Caught-up / getting-started panel — only when truly nothing to show */}
@@ -2335,7 +2535,7 @@ export default function TodayPage() {
 
           <FeaturePreviewSection upcoming={upcoming} monthCount={monthCount} />
 
-          {/* ── What we noticed — non-external agent cards ───────────────── */}
+          {/* ── What we noticed — non-external agent cards ───────────────────── */}
           {agentCards.filter(c => c.source !== "external" && !c.dismissed).length > 0 && (
             <div className="space-y-3">
               <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">What we noticed</p>
