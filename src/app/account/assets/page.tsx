@@ -882,28 +882,32 @@ export function AssetsPage() {
                   <>
                     {/* Freshness banner */}
                     {needsUpdateCnt > 0 && (
-                      <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <svg className="h-4 w-4 text-amber-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-                          </svg>
-                          <p className="text-sm font-medium text-amber-800">
-                            <span className="font-bold">{needsUpdateCnt} of {allAccounts.length}</span> accounts need fresh statements
-                          </p>
-                          <p className="hidden sm:block text-xs text-amber-600 truncate">Stale data weakens pattern detection and creates false signals on your dashboard</p>
-                        </div>
-                        <div className="shrink-0 flex items-center gap-3 text-xs text-gray-500">
-                          {/* Freshness bar */}
-                          <div className="hidden sm:flex items-center gap-1">
-                            <div className="flex h-1.5 w-24 rounded-full overflow-hidden">
-                              <div className="bg-green-500" style={{ width: `${allAccounts.length > 0 ? (freshCnt / allAccounts.length) * 100 : 0}%` }} />
-                              <div className="bg-amber-400" style={{ width: `${allAccounts.length > 0 ? (agingCnt / allAccounts.length) * 100 : 0}%` }} />
-                              <div className="bg-red-500"   style={{ width: `${allAccounts.length > 0 ? (staleCnt / allAccounts.length) * 100 : 0}%` }} />
-                            </div>
+                      <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 space-y-2">
+                        {/* Row 1: icon + headline */}
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <svg className="h-4 w-4 text-amber-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                            </svg>
+                            <p className="text-sm font-medium text-amber-800">
+                              <span className="font-bold">{needsUpdateCnt} of {allAccounts.length}</span> accounts need fresh statements
+                            </p>
                           </div>
-                          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-green-500 inline-block" />Fresh {freshCnt}</span>
-                          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-400 inline-block" />Aging {agingCnt}</span>
-                          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-500 inline-block"   />Stale {staleCnt}</span>
+                          {/* Freshness dot-badges */}
+                          <div className="shrink-0 flex items-center gap-3 text-xs text-gray-500">
+                            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-green-500 inline-block" />Fresh {freshCnt}</span>
+                            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-400 inline-block" />Aging {agingCnt}</span>
+                            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-500   inline-block" />Stale {staleCnt}</span>
+                          </div>
+                        </div>
+                        {/* Row 2: description + full-width freshness bar */}
+                        <div className="space-y-1.5">
+                          <p className="text-xs text-amber-600">Stale data weakens pattern detection and creates false signals on your dashboard</p>
+                          <div className="flex h-1.5 w-full rounded-full overflow-hidden bg-gray-200">
+                            <div className="bg-green-500 transition-all" style={{ width: `${allAccounts.length > 0 ? (freshCnt / allAccounts.length) * 100 : 0}%` }} />
+                            <div className="bg-amber-400 transition-all" style={{ width: `${allAccounts.length > 0 ? (agingCnt / allAccounts.length) * 100 : 0}%` }} />
+                            <div className="bg-red-500   transition-all" style={{ width: `${allAccounts.length > 0 ? (staleCnt / allAccounts.length) * 100 : 0}%` }} />
+                          </div>
                         </div>
                       </div>
                     )}
