@@ -90,6 +90,24 @@ function freshnessGlyph(days: number | null): string {
   return "⚠ ";
 }
 
+type FreshnessTier = "fresh" | "aging" | "stale";
+function accountFreshness(statementMonth?: string): FreshnessTier {
+  const days = daysSinceYearMonth(statementMonth);
+  if (days === null || days < 35) return "fresh";
+  if (days < 65) return "aging";
+  return "stale";
+}
+function freshnessAge(statementMonth?: string): string {
+  const days = daysSinceYearMonth(statementMonth);
+  if (days === null) return "";
+  if (days < 35) return `${days}d old`;
+  return `${Math.floor(days / 30)} mo old`;
+}
+function formatYearMonth(ym?: string): string {
+  if (!ym) return "";
+  return new Date(ym + "-01T12:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" });
+}
+
 // ── per-account monthly history ───────────────────────────────────────────────
 
 interface AssetAccountMonthly {
@@ -216,6 +234,12 @@ export function AssetsPage() {
   const [snapshotNote,    setSnapshotNote]    = useState("");
   const [snapshotSaving,  setSnapshotSaving]  = useState(false);
   const [snapshotError,   setSnapshotError]   = useState<string | null>(null);
+
+  // Accounts-tab filter + sort
+  type AcctFilter = "all" | "needs_update" | "investments" | "cash";
+  type AcctSort   = "balance_desc" | "balance_asc" | "name" | "freshness";
+  const [acctFilter, setAcctFilter] = useState<AcctFilter>("all");
+  const [acctSort,   setAcctSort]   = useState<AcctSort>("balance_desc");
 
   function switchTab(id: TabId) {
     setActiveTab(id);
@@ -694,7 +718,7 @@ export function AssetsPage() {
                 </div>
               )}
 
-              {/* KPI cards — Cash / Investments / Property / Other */}
+              {/* KPI cards — Property / Investments / Other / Cash */}
               {totalAssets > 0 && (() => {
                 const cashVal       = chartRaw.find((g) => g.label === "Cash")?.value ?? 0;
                 const investVal     = (chartRaw.find((g) => g.label === "Investments")?.value ?? 0)
@@ -708,48 +732,38 @@ export function AssetsPage() {
                                     + assets.filter((a) => a.category === "investment" || a.category === "retirement").length;
                 const propertyItems = assets.filter((a) => a.category === "property").length;
                 const otherItems    = assets.filter((a) => ["vehicle", "business", "other"].includes(a.category)).length;
+                const pct = (v: number) => totalAssets > 0 ? Math.max(2, Math.round((v / totalAssets) * 100)) : 0;
+                const cards = [
+                  { label: "Property",    value: propertyVal, count: `${propertyItems} item${propertyItems !== 1 ? "s" : ""}`,    color: "#6366f1", barColor: "bg-indigo-500" },
+                  { label: "Investments", value: investVal,   count: `${investAccts} account${investAccts !== 1 ? "s" : ""}`,     color: "#3b82f6", barColor: "bg-blue-500" },
+                  { label: "Other",       value: otherVal,    count: `${otherItems} item${otherItems !== 1 ? "s" : ""}`,          color: "#9ca3af", barColor: "bg-gray-400" },
+                  { label: "Cash",        value: cashVal,     count: `${cashAccts} account${cashAccts !== 1 ? "s" : ""}`,         color: "#f59e0b", barColor: "bg-amber-400" },
+                ];
                 return (
                   <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-amber-400" />
-                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Cash</p>
+                    {cards.map((c) => (
+                      <div key={c.label} className="relative rounded-xl border border-gray-200 bg-white pt-4 px-4 pb-3 shadow-sm overflow-hidden flex flex-col justify-between">
+                        <div>
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{c.label}</p>
+                          </div>
+                          <p className="font-bold text-xl text-gray-900 leading-tight tabular-nums">
+                            {c.value > 0 ? formatCurrency(c.value, homeCurrency, undefined, true) : "—"}
+                          </p>
+                          <p className="mt-1 text-xs text-gray-400">
+                            {c.value > 0 ? `${c.count} · ${pct(c.value)}%` : "none"}
+                          </p>
+                        </div>
+                        {/* Progress bar */}
+                        <div className="mt-3 h-0.5 w-full rounded-full bg-gray-100">
+                          <div
+                            className={`h-0.5 rounded-full ${c.barColor}`}
+                            style={{ width: c.value > 0 ? `${pct(c.value)}%` : "0%" }}
+                          />
+                        </div>
                       </div>
-                      <p className="font-bold text-xl text-gray-900 break-all leading-tight">{cashVal > 0 ? formatCurrency(cashVal, homeCurrency, undefined, true) : "—"}</p>
-                      <p className="mt-1 text-xs text-gray-400">
-                        {cashVal > 0 ? `${cashAccts} account${cashAccts !== 1 ? "s" : ""} · ${totalAssets > 0 ? ((cashVal / totalAssets) * 100).toFixed(0) : 0}%` : "none"}
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-blue-400" />
-                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Investments</p>
-                      </div>
-                      <p className="font-bold text-xl text-gray-900 break-all leading-tight">{investVal > 0 ? formatCurrency(investVal, homeCurrency, undefined, true) : "—"}</p>
-                      <p className="mt-1 text-xs text-gray-400">
-                        {investVal > 0 ? `${investAccts} item${investAccts !== 1 ? "s" : ""} · ${totalAssets > 0 ? ((investVal / totalAssets) * 100).toFixed(0) : 0}%` : "none"}
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-indigo-400" />
-                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Property</p>
-                      </div>
-                      <p className="font-bold text-xl text-gray-900 break-all leading-tight">{propertyVal > 0 ? formatCurrency(propertyVal, homeCurrency, undefined, true) : "—"}</p>
-                      <p className="mt-1 text-xs text-gray-400">
-                        {propertyVal > 0 ? `${propertyItems} item${propertyItems !== 1 ? "s" : ""} · ${totalAssets > 0 ? ((propertyVal / totalAssets) * 100).toFixed(0) : 0}%` : "none"}
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-gray-400" />
-                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Other</p>
-                      </div>
-                      <p className="font-bold text-xl text-gray-900 break-all leading-tight">{otherVal > 0 ? formatCurrency(otherVal, homeCurrency, undefined, true) : "—"}</p>
-                      <p className="mt-1 text-xs text-gray-400">
-                        {otherVal > 0 ? `${otherItems} item${otherItems !== 1 ? "s" : ""} · ${totalAssets > 0 ? ((otherVal / totalAssets) * 100).toFixed(0) : 0}%` : "none"}
-                      </p>
-                    </div>
+                    ))}
                   </div>
                 );
               })()}
@@ -788,46 +802,8 @@ export function AssetsPage() {
                 );
               })()}
 
-              {/* By account with sparklines */}
-              {accountMonthly.length > 0 && (
-                <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-                  <div className="px-5 py-3 border-b border-gray-100">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">By account</p>
-                  </div>
-                  <div className="divide-y divide-gray-50">
-                    {[...accountMonthly].sort((a, b) => b.currentBalance - a.currentBalance).map((a) => {
-                      const grew = (a.delta ?? 0) >= 0;
-                      const sparkVals = a.months.map((m) => m.balance);
-                      return (
-                        <div key={a.slug} className="flex items-center gap-3 px-5 py-3">
-                          <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: a.color }} />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-gray-800 truncate">{a.label}</p>
-                            <p className="text-xs text-gray-400 capitalize">{a.accountType}</p>
-                          </div>
-                          <div className="shrink-0">
-                            <Sparkline values={sparkVals} good="up" />
-                          </div>
-                          <div className="shrink-0 text-right w-28">
-                            <p className="text-sm font-semibold text-gray-800 tabular-nums">{fmt(a.currentBalance, currencyOverrides[a.slug])}</p>
-                            {a.delta !== null && Math.abs(a.delta) > 0 && (
-                              <p className={`text-xs font-medium tabular-nums ${grew ? "text-green-600" : "text-red-500"}`}>
-                                {grew ? "▲ " : "▼ "}{formatCurrency(Math.abs(a.delta), homeCurrency, currencyOverrides[a.slug], false)} MoM
-                              </p>
-                            )}
-                            {(a.delta === null || Math.abs(a.delta) === 0) && (
-                              <p className="text-xs text-gray-400">unchanged</p>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Asset breakdown donut */}
-              {chartRaw.length > 0 && (
+              {/* Asset breakdown donut — hidden for now */}
+              {false && chartRaw.length > 0 && (
                 <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                   <p className="mb-4 text-xs font-semibold uppercase tracking-wider text-gray-400">Asset Breakdown</p>
                   <DonutChart data={chartRaw} total={totalAssets} homeCurrency={homeCurrency} />
@@ -846,63 +822,295 @@ export function AssetsPage() {
           )}
 
           {/* ── Accounts tab ──────────────────────────────────────────────── */}
-          {activeTab === "accounts" && (
-            <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-              {allAccounts.length === 0 ? (
-                <p className="px-5 py-10 text-center text-sm text-gray-400">
-                  No accounts yet. Upload a statement to get started.
-                </p>
-              ) : (
-                <div className="divide-y divide-gray-100">
-                  {allAccounts.map((a) => {
-                    const isDebt = a.balance < 0 || ["mortgage", "loan", "credit"].includes(a.accountType ?? "");
-                    const displayBalance = isDebt ? Math.abs(a.balance) : a.balance;
-                    return (
-                      <Link
-                        key={a.slug}
-                        href={`/account/accounts/${a.slug}`}
-                        className="flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition group"
-                      >
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-gray-800 group-hover:text-purple-600 transition-colors truncate">
-                            {a.accountName ?? a.bankName}
-                          </p>
-                          <p className="text-xs text-gray-400 mt-0.5">
-                            {a.bankName}
-                            {a.accountType && <span className="ml-1.5 capitalize text-gray-300">· {a.accountType}</span>}
-                            {(() => {
-                              const ym = a.statementMonth;
-                              const days = daysSinceYearMonth(ym);
-                              const { text, cls } = freshnessLabel(days);
-                              return text ? (
-                                <span className={`ml-1.5 ${cls}`} title={ym ? `Data as of ${ym}` : undefined}>
-                                  {freshnessGlyph(days)}as of {new Date((ym ?? "") + "-01T12:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })} · {text}
-                                </span>
-                              ) : ym ? (
-                                <span className="ml-1.5 text-gray-400">
-                                  as of {new Date(ym + "-01T12:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })}
-                                </span>
-                              ) : null;
-                            })()}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className={`font-semibold text-sm ${isDebt ? "text-red-600" : "text-gray-900"}`}>
-                            {isDebt ? "−" : ""}{fmt(displayBalance, a.currency)}
-                          </span>
-                          {/* Update balance button hidden — functionality needs rework */}
-                          <svg className="h-4 w-4 text-gray-300 group-hover:text-purple-400 transition-colors"
-                            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          {activeTab === "accounts" && (() => {
+            // Freshness buckets
+            const freshCnt   = allAccounts.filter((a) => accountFreshness(a.statementMonth) === "fresh").length;
+            const agingCnt   = allAccounts.filter((a) => accountFreshness(a.statementMonth) === "aging").length;
+            const staleCnt   = allAccounts.filter((a) => accountFreshness(a.statementMonth) === "stale").length;
+            const needsUpdateCnt = agingCnt + staleCnt;
+
+            // Filter
+            const investTypes = new Set(["investment"]);
+            const cashTypes   = new Set(["checking", "savings"]);
+            const filtered = allAccounts.filter((a) => {
+              if (acctFilter === "needs_update") return accountFreshness(a.statementMonth) !== "fresh";
+              if (acctFilter === "investments")  return investTypes.has(a.accountType ?? "");
+              if (acctFilter === "cash")          return cashTypes.has(a.accountType ?? "");
+              return true;
+            });
+
+            // Convert balance to home currency for sorting
+            function toHomeBalance(a: AccountSnapshot): number {
+              if (!a.currency || a.currency.toUpperCase() === homeCurrency.toUpperCase()) return a.balance;
+              const rate = fxRates[a.currency.toUpperCase()];
+              return rate != null ? a.balance * rate : a.balance;
+            }
+
+            // Sort
+            const sorted = [...filtered].sort((a, b) => {
+              if (acctSort === "balance_asc")  return toHomeBalance(a) - toHomeBalance(b);
+              if (acctSort === "name")         return (a.accountName ?? a.bankName ?? "").localeCompare(b.accountName ?? b.bankName ?? "");
+              if (acctSort === "freshness") {
+                const order = { stale: 0, aging: 1, fresh: 2 };
+                return order[accountFreshness(a.statementMonth)] - order[accountFreshness(b.statementMonth)];
+              }
+              return toHomeBalance(b) - toHomeBalance(a); // balance_desc (default)
+            });
+
+            // Group totals (in home currency)
+            function groupTotal(types: Set<string>) {
+              return allAccounts
+                .filter((a) => types.has(a.accountType ?? ""))
+                .reduce((s, a) => s + toHomeBalance(a), 0);
+            }
+
+            // Grouped render: INVESTMENTS then CASH then OTHER
+            const groups: { key: string; label: string; types: Set<string> }[] = [
+              { key: "investments", label: "INVESTMENTS", types: investTypes },
+              { key: "cash",        label: "CASH",        types: cashTypes },
+            ];
+            // any account type that isn't investment/cash
+            const otherAccts = sorted.filter((a) => !investTypes.has(a.accountType ?? "") && !cashTypes.has(a.accountType ?? ""));
+
+            return (
+              <div className="space-y-4">
+                {allAccounts.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center">
+                    <p className="text-sm text-gray-500">No accounts yet. Upload a statement to get started.</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Freshness banner */}
+                    {needsUpdateCnt > 0 && (
+                      <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <svg className="h-4 w-4 text-amber-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
                           </svg>
+                          <p className="text-sm font-medium text-amber-800">
+                            <span className="font-bold">{needsUpdateCnt} of {allAccounts.length}</span> accounts need fresh statements
+                          </p>
+                          <p className="hidden sm:block text-xs text-amber-600 truncate">Stale data weakens pattern detection and creates false signals on your dashboard</p>
                         </div>
-                      </Link>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
+                        <div className="shrink-0 flex items-center gap-3 text-xs text-gray-500">
+                          {/* Freshness bar */}
+                          <div className="hidden sm:flex items-center gap-1">
+                            <div className="flex h-1.5 w-24 rounded-full overflow-hidden">
+                              <div className="bg-green-500" style={{ width: `${allAccounts.length > 0 ? (freshCnt / allAccounts.length) * 100 : 0}%` }} />
+                              <div className="bg-amber-400" style={{ width: `${allAccounts.length > 0 ? (agingCnt / allAccounts.length) * 100 : 0}%` }} />
+                              <div className="bg-red-500"   style={{ width: `${allAccounts.length > 0 ? (staleCnt / allAccounts.length) * 100 : 0}%` }} />
+                            </div>
+                          </div>
+                          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-green-500 inline-block" />Fresh {freshCnt}</span>
+                          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-400 inline-block" />Aging {agingCnt}</span>
+                          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-500 inline-block"   />Stale {staleCnt}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Filter + Sort bar */}
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {([
+                          { id: "all",          label: `All ${allAccounts.length}` },
+                          { id: "needs_update", label: `⚠ Needs update ${needsUpdateCnt}` },
+                          { id: "investments",  label: `Investments ${allAccounts.filter((a) => investTypes.has(a.accountType ?? "")).length}` },
+                          { id: "cash",         label: `Cash ${allAccounts.filter((a) => cashTypes.has(a.accountType ?? "")).length}` },
+                          { id: "property",     label: "Property 0", disabled: true },
+                        ] as { id: string; label: string; disabled?: boolean }[]).map((f) => (
+                          <button
+                            key={f.id}
+                            disabled={f.disabled}
+                            onClick={() => !f.disabled && setAcctFilter(f.id as AcctFilter)}
+                            className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                              acctFilter === f.id && !f.disabled
+                                ? "bg-gray-900 text-white"
+                                : f.disabled
+                                  ? "bg-gray-50 text-gray-300 cursor-default"
+                                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                            }`}
+                          >
+                            {f.label}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-1.5 text-xs text-gray-500 shrink-0">
+                        <span>Sort by</span>
+                        <select
+                          value={acctSort}
+                          onChange={(e) => setAcctSort(e.target.value as AcctSort)}
+                          className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs font-medium text-gray-700 focus:outline-none focus:ring-1 focus:ring-purple-400"
+                        >
+                          <option value="balance_desc">Balance (high to low)</option>
+                          <option value="balance_asc">Balance (low to high)</option>
+                          <option value="name">Name</option>
+                          <option value="freshness">Needs update first</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Grouped account rows */}
+                    <div className="space-y-4">
+                      {groups.map(({ key, label, types }) => {
+                        const groupRows = sorted.filter((a) => types.has(a.accountType ?? ""));
+                        if (groupRows.length === 0) return null;
+                        const gTotal = groupTotal(types);
+                        return (
+                          <div key={key} className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                            {/* Group header */}
+                            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">{label}</span>
+                                <span className="text-[10px] text-gray-400">{groupRows.length} account{groupRows.length !== 1 ? "s" : ""}</span>
+                              </div>
+                              <span className="text-sm font-semibold text-gray-800">{formatCurrency(gTotal, homeCurrency, undefined, true)}</span>
+                            </div>
+                            {/* Account rows */}
+                            <div className="divide-y divide-gray-100">
+                              {groupRows.map((a) => {
+                                const tier = accountFreshness(a.statementMonth);
+                                const dotCls = tier === "fresh" ? "bg-green-500" : tier === "aging" ? "bg-amber-400" : "bg-red-500";
+                                const monthly = accountMonthly.find((m) => m.slug === a.slug);
+                                const sparkValues = monthly ? monthly.months.slice(-8).map((m) => m.balance) : [];
+                                const delta = monthly?.delta ?? null;
+                                const isUpward = (delta ?? 0) >= 0;
+                                return (
+                                  <div key={a.slug} className="flex items-center gap-4 px-5 py-4 hover:bg-gray-50 transition group">
+                                    {/* Left: name + meta */}
+                                    <div className="min-w-0 flex-1">
+                                      <Link
+                                        href={`/account/accounts/${a.slug}`}
+                                        className="text-sm font-semibold text-gray-900 hover:text-purple-600 transition-colors truncate block"
+                                      >
+                                        {a.accountName ?? a.bankName}
+                                      </Link>
+                                      <div className="mt-0.5 flex items-center gap-1.5 flex-wrap text-xs text-gray-400">
+                                        <span>{a.bankName}</span>
+                                        {a.accountType && <><span>·</span><span className="capitalize">{a.accountType}</span></>}
+                                        <span className={`h-1.5 w-1.5 rounded-full inline-block ${dotCls}`} />
+                                        <span className={tier === "fresh" ? "text-gray-400" : tier === "aging" ? "text-amber-500 font-medium" : "text-red-500 font-medium"}>
+                                          {freshnessAge(a.statementMonth)}
+                                        </span>
+                                        {a.statementMonth && <><span>·</span><span>{formatYearMonth(a.statementMonth)}</span></>}
+                                        {tier !== "fresh" && (
+                                          <Link
+                                            href={`/account/accounts/${a.slug}`}
+                                            className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-purple-50 px-2 py-0.5 text-[10px] font-semibold text-purple-600 hover:bg-purple-100 transition"
+                                          >
+                                            ↑ Upload
+                                          </Link>
+                                        )}
+                                      </div>
+                                    </div>
+                                    {/* Middle: sparkline */}
+                                    <div className="shrink-0">
+                                      {sparkValues.length >= 2
+                                        ? <Sparkline values={sparkValues} good="up" />
+                                        : <div className="w-16 h-6 flex items-center"><div className="w-full border-t border-dashed border-gray-200" /></div>
+                                      }
+                                    </div>
+                                    {/* Right: balance + delta */}
+                                    <div className="shrink-0 text-right min-w-[80px]">
+                                      <p className="text-sm font-semibold text-gray-900 tabular-nums">
+                                        {fmt(a.balance, a.currency)}
+                                      </p>
+                                      {delta !== null && Math.abs(delta) > 0 ? (
+                                        <p className={`text-xs font-medium tabular-nums ${isUpward ? "text-green-600" : "text-red-500"}`}>
+                                          {isUpward ? "▲" : "▼"} {fmt(Math.abs(delta), a.currency)}
+                                        </p>
+                                      ) : delta !== null ? (
+                                        <p className="text-xs text-gray-400">unchanged</p>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {/* Any non-investment/non-cash accounts */}
+                      {otherAccts.length > 0 && (
+                        <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                          <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">OTHER</span>
+                              <span className="text-[10px] text-gray-400">{otherAccts.length} account{otherAccts.length !== 1 ? "s" : ""}</span>
+                            </div>
+                            <span className="text-sm font-semibold text-gray-800">
+                              {formatCurrency(otherAccts.reduce((s, a) => s + toHomeBalance(a), 0), homeCurrency, undefined, true)}
+                            </span>
+                          </div>
+                          <div className="divide-y divide-gray-100">
+                            {otherAccts.map((a) => {
+                              const tier = accountFreshness(a.statementMonth);
+                              const dotCls = tier === "fresh" ? "bg-green-500" : tier === "aging" ? "bg-amber-400" : "bg-red-500";
+                              const monthly = accountMonthly.find((m) => m.slug === a.slug);
+                              const sparkValues = monthly ? monthly.months.slice(-8).map((m) => m.balance) : [];
+                              const delta = monthly?.delta ?? null;
+                              const isUpward = (delta ?? 0) >= 0;
+                              return (
+                                <div key={a.slug} className="flex items-center gap-4 px-5 py-4 hover:bg-gray-50 transition group">
+                                  <div className="min-w-0 flex-1">
+                                    <Link href={`/account/accounts/${a.slug}`} className="text-sm font-semibold text-gray-900 hover:text-purple-600 transition-colors truncate block">
+                                      {a.accountName ?? a.bankName}
+                                    </Link>
+                                    <div className="mt-0.5 flex items-center gap-1.5 flex-wrap text-xs text-gray-400">
+                                      <span>{a.bankName}</span>
+                                      {a.accountType && <><span>·</span><span className="capitalize">{a.accountType}</span></>}
+                                      <span className={`h-1.5 w-1.5 rounded-full inline-block ${dotCls}`} />
+                                      <span className={tier === "fresh" ? "text-gray-400" : tier === "aging" ? "text-amber-500 font-medium" : "text-red-500 font-medium"}>
+                                        {freshnessAge(a.statementMonth)}
+                                      </span>
+                                      {a.statementMonth && <><span>·</span><span>{formatYearMonth(a.statementMonth)}</span></>}
+                                      {tier !== "fresh" && (
+                                        <Link href={`/account/accounts/${a.slug}`} className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-purple-50 px-2 py-0.5 text-[10px] font-semibold text-purple-600 hover:bg-purple-100 transition">
+                                          ↑ Upload
+                                        </Link>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="shrink-0">
+                                    {sparkValues.length >= 2
+                                      ? <Sparkline values={sparkValues} good="up" />
+                                      : <div className="w-16 h-6 flex items-center"><div className="w-full border-t border-dashed border-gray-200" /></div>
+                                    }
+                                  </div>
+                                  <div className="shrink-0 text-right min-w-[80px]">
+                                    <p className="text-sm font-semibold text-gray-900 tabular-nums">{fmt(a.balance, a.currency)}</p>
+                                    {delta !== null && Math.abs(delta) > 0 ? (
+                                      <p className={`text-xs font-medium tabular-nums ${isUpward ? "text-green-600" : "text-red-500"}`}>
+                                        {isUpward ? "▲" : "▼"} {fmt(Math.abs(delta), a.currency)}
+                                      </p>
+                                    ) : delta !== null ? (
+                                      <p className="text-xs text-gray-400">unchanged</p>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Footer note */}
+                    <div className="flex items-start gap-2 rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 text-xs text-gray-500">
+                      <svg className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <circle cx="12" cy="12" r="10" /><path d="M12 16v-4m0-4h.01" />
+                      </svg>
+                      <span>
+                        Property assets (Real Estate, Vehicles) are managed in{" "}
+                        <button onClick={() => switchTab("tracked")} className="font-medium text-purple-600 hover:underline">Tracked Assets</button>.
+                        {" "}They don&apos;t require statement uploads.
+                      </span>
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
 
           {/* ── Tracked Assets tab ────────────────────────────────────────── */}
           {activeTab === "tracked" && (
