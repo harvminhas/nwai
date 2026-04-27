@@ -730,6 +730,7 @@ export async function GET(request: NextRequest) {
     // avoid partial data confusing the comparison.
     // Pass only income-typed mappings so expense mappings don't block income suggestions.
     const incomeSourceKeys = Object.keys(incomeSourceHistory);
+    const incomeSourceKeySet = new Set(incomeSourceKeys.map((k) => k.toLowerCase()));
     const incomeSuggestions = !accountFilter
       ? buildSuggestions(
           incomeSourceKeys,
@@ -743,11 +744,14 @@ export async function GET(request: NextRequest) {
     // inconsistencies like "AMZN MKTP CA" vs "AMAZON.CA".
     // affectsCache is set to true when the two merchants have different categories
     // (a merge would change coreExpensesTotal for one of them).
+    // Exclude any name that is already an income source — a name is either a
+    // merchant or an income source, never both.
     const expenseSuggestions = !accountFilter
       ? (() => {
           const merchantCategories = new Map<string, string>();
           for (const t of profile.expenseTxns) {
-            if (t.merchant) merchantCategories.set(t.merchant, t.category ?? "Other");
+            if (t.merchant && !incomeSourceKeySet.has(t.merchant.toLowerCase()))
+              merchantCategories.set(t.merchant, t.category ?? "Other");
           }
           const raw = buildSuggestions(
             Array.from(merchantCategories.keys()),

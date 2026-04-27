@@ -242,6 +242,7 @@ function IncomePageInner() {
   const [suggestionDecisions, setSuggestionDecisions] = useState<Record<string, "confirmed" | "rejected">>({});
   const [expandedIncomeCatRows, setExpandedIncomeCatRows] = useState<Set<string>>(new Set());
   const [applyingMappings, setApplyingMappings] = useState(false);
+  const [mergeError, setMergeError] = useState<string | null>(null);
   const [token, setToken]                 = useState<string | null>(null);
   const tokenRef                          = useRef<string | null>(null);
   const [suggestionListExpanded, setSuggestionListExpanded] = useState(false);
@@ -618,21 +619,34 @@ function IncomePageInner() {
     if (!token) return;
     const confirmed = suggestions.filter((s) => suggestionDecisions[s.pairKey] === "confirmed");
     const rejected  = suggestions.filter((s) => suggestionDecisions[s.pairKey] === "rejected");
+    // Treat undecided suggestions (neither confirmed nor rejected) as confirmed
+    const undecided = suggestions.filter(
+      (s) => suggestionDecisions[s.pairKey] !== "confirmed" && suggestionDecisions[s.pairKey] !== "rejected"
+    );
     const toSave = [
       ...confirmed.map((s) => ({ ...s, status: "confirmed" as const, affectsCache: false, createdAt: new Date().toISOString() })),
+      ...(undecided.length > 0 ? undecided.map((s) => ({ ...s, status: "confirmed" as const, affectsCache: false, createdAt: new Date().toISOString() })) : []),
       ...rejected.map((s)  => ({ ...s, status: "rejected"  as const, affectsCache: false, createdAt: new Date().toISOString() })),
     ];
     if (toSave.length === 0) return;
     setApplyingMappings(true);
+    setMergeError(null);
     try {
-      await fetch("/api/user/source-mappings", {
+      const res = await fetch("/api/user/source-mappings", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ mappings: toSave }),
       });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        setMergeError(errJson.error ?? `Save failed (${res.status})`);
+        return;
+      }
       const appliedKeys = new Set(toSave.map((m) => m.pairKey));
       setSuggestions((prev) => prev.filter((s) => !appliedKeys.has(s.pairKey)));
       setSuggestionDecisions({});
+    } catch {
+      setMergeError("Network error — please try again.");
     } finally {
       setApplyingMappings(false);
     }
@@ -1106,6 +1120,9 @@ function IncomePageInner() {
                     {applyingMappings ? "Saving…" : "Merge All"}
                   </button>
                 </div>
+                {mergeError && (
+                  <p className="px-4 pb-3 text-xs text-red-600">{mergeError}</p>
+                )}
                 {suggestionListExpanded && (
                   <div className="border-t border-purple-100 divide-y divide-purple-100/60 max-h-72 overflow-y-auto">
                     {suggestions.map((s) => {
