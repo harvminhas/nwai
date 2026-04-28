@@ -832,17 +832,30 @@ function AccountsTab({
   function freshnessAge(statementDate?: string): number {
     if (!statementDate) return 999;
     const [y, m] = statementDate.split("-").map(Number);
-    const stmtDate = new Date(y, m - 1, 1);
+    // Periods behind: monthly cadence, available ~5 days after month end
     const today = new Date();
-    return Math.floor((today.getTime() - stmtDate.getTime()) / (1000 * 60 * 60 * 24));
+    const cy = today.getFullYear(), cm = today.getMonth() + 1, cd = today.getDate();
+    let em = cd >= 5 ? cm - 1 : cm - 2;
+    let ey = cy;
+    while (em <= 0) { em += 12; ey--; }
+    const months = (ey - y) * 12 + (em - m);
+    return Math.max(0, months);
   }
 
   function accountFreshness(statementDate?: string, source?: "manual" | "statement"): "fresh" | "aging" | "stale" {
     if (source === "manual") return "fresh";
-    const age = freshnessAge(statementDate);
-    if (age <= 35) return "fresh";
-    if (age <= 65) return "aging";
+    const periods = freshnessAge(statementDate);
+    if (periods <= 0) return "fresh";
+    if (periods === 1) return "aging";
     return "stale";
+  }
+
+  function freshnessText(statementDate?: string, source?: "manual" | "statement"): string {
+    if (source === "manual") return "";
+    const periods = freshnessAge(statementDate);
+    if (periods <= 0) return "Up to date";
+    if (periods === 1) return "1 month behind";
+    return `${periods} months behind`;
   }
 
   function formatYearMonth(ym?: string): string {
@@ -865,10 +878,10 @@ function AccountsTab({
   }
 
   const stmtLibs = libs.filter((l) => l.source === "statement");
-  const freshCnt = stmtLibs.filter((l) => accountFreshness(l.statementDate, l.source) === "fresh").length;
-  const agingCnt = stmtLibs.filter((l) => accountFreshness(l.statementDate, l.source) === "aging").length;
-  const staleCnt = stmtLibs.filter((l) => accountFreshness(l.statementDate, l.source) === "stale").length;
-  const needsUpdateCnt = agingCnt + staleCnt;
+  const currentCnt   = stmtLibs.filter((l) => accountFreshness(l.statementDate, l.source) === "fresh").length;
+  const behindCnt    = stmtLibs.filter((l) => accountFreshness(l.statementDate, l.source) === "aging").length;
+  const farBehindCnt = stmtLibs.filter((l) => accountFreshness(l.statementDate, l.source) === "stale").length;
+  const needsUpdateCnt = behindCnt + farBehindCnt;
 
   const filteredLibs = libs.filter((l) => {
     if (acctFilter === "needs_update") return l.source === "statement" && accountFreshness(l.statementDate, l.source) !== "fresh";
@@ -900,18 +913,18 @@ function AccountsTab({
         <div className="rounded-xl border border-amber-100 bg-amber-50/60 px-5 py-4">
           <div className="flex items-center justify-between mb-2">
             <p className="text-sm font-semibold text-amber-700">
-              {needsUpdateCnt} of {stmtLibs.length} account{stmtLibs.length !== 1 ? "s" : ""} need fresh statements
+              {needsUpdateCnt} of {stmtLibs.length} account{stmtLibs.length !== 1 ? "s" : ""} behind
             </p>
             <div className="flex items-center gap-3 text-xs text-gray-500">
-              {freshCnt > 0 && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-green-400" />{freshCnt} Fresh</span>}
-              {agingCnt > 0 && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-400" />{agingCnt} Aging</span>}
-              {staleCnt > 0 && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-400" />{staleCnt} Stale</span>}
+              {currentCnt > 0 && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-green-400" />{currentCnt} Up to date</span>}
+              {behindCnt > 0 && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-400" />{behindCnt} 1 behind</span>}
+              {farBehindCnt > 0 && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-400" />{farBehindCnt} 2+ behind</span>}
             </div>
           </div>
           <div className="h-1.5 w-full rounded-full overflow-hidden flex">
-            {freshCnt > 0 && <div className="h-full bg-green-400" style={{ width: `${(freshCnt / stmtLibs.length) * 100}%` }} />}
-            {agingCnt > 0 && <div className="h-full bg-amber-400" style={{ width: `${(agingCnt / stmtLibs.length) * 100}%` }} />}
-            {staleCnt > 0 && <div className="h-full bg-red-400" style={{ width: `${(staleCnt / stmtLibs.length) * 100}%` }} />}
+            {currentCnt > 0 && <div className="h-full bg-green-400" style={{ width: `${(currentCnt / stmtLibs.length) * 100}%` }} />}
+            {behindCnt > 0 && <div className="h-full bg-amber-400" style={{ width: `${(behindCnt / stmtLibs.length) * 100}%` }} />}
+            {farBehindCnt > 0 && <div className="h-full bg-red-400" style={{ width: `${(farBehindCnt / stmtLibs.length) * 100}%` }} />}
           </div>
         </div>
       )}
@@ -920,7 +933,7 @@ function AccountsTab({
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2 flex-wrap">
           {(["all", "needs_update", "mortgage", "credit_card", "loans"] as const).map((f) => {
-            const labels: Record<typeof f, string> = { all: "All", needs_update: "Needs update", mortgage: "Mortgage", credit_card: "Credit Cards", loans: "Loans" };
+            const labels: Record<typeof f, string> = { all: "All", needs_update: `Behind ${needsUpdateCnt}`, mortgage: "Mortgage", credit_card: "Credit Cards", loans: "Loans" };
             return (
               <button key={f} onClick={() => setAcctFilter(f)}
                 className={`rounded-full px-3 py-1 text-xs font-semibold transition ${acctFilter === f ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
@@ -951,7 +964,6 @@ function AccountsTab({
             <div className="divide-y divide-gray-50 rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
               {grpLibs.map((l) => {
                 const freshness = accountFreshness(l.statementDate, l.source);
-                const age = l.source === "statement" ? freshnessAge(l.statementDate) : 0;
                 const dotColor = freshness === "fresh" ? "#4ade80" : freshness === "aging" ? "#fbbf24" : "#f87171";
                 const spark = sparkValues(l);
                 const delta = libDelta(l);
@@ -979,7 +991,7 @@ function AccountsTab({
                           <>
                             <span className="text-gray-200">·</span>
                             <p className={`text-xs ${freshness === "stale" ? "text-red-500" : freshness === "aging" ? "text-amber-500" : "text-gray-400"}`}>
-                              {age}d ago · {formatYearMonth(l.statementDate)}
+                              {freshnessText(l.statementDate, l.source)} · {formatYearMonth(l.statementDate)}
                             </p>
                           </>
                         )}

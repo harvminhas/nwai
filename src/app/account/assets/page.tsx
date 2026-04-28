@@ -69,39 +69,63 @@ function timeAgo(iso: string) {
   if (days < 365) return `${Math.floor(days / 30)}mo ago`;
   return `${Math.floor(days / 365)}y ago`;
 }
-// Freshness: days since a YYYY-MM string (treated as 1st of that month)
-function daysSinceYearMonth(ym?: string): number | null {
-  if (!ym) return null;
-  const d = new Date(ym + "-01T12:00:00");
-  if (isNaN(d.getTime())) return null;
-  return Math.floor((Date.now() - d.getTime()) / 86400000);
-}
-function freshnessLabel(days: number | null): { text: string; cls: string } {
-  if (days === null) return { text: "", cls: "" };
-  const mo = Math.floor(days / 30);
-  const label = mo === 0 ? `${days}d ago` : mo === 1 ? "1 mo ago" : `${mo} mo ago`;
-  if (days < 35)  return { text: label, cls: "text-gray-400" };
-  if (days < 65)  return { text: label, cls: "text-amber-500 font-medium" };
-  return             { text: label, cls: "text-red-500 font-medium" };
-}
-function freshnessGlyph(days: number | null): string {
-  if (days === null || days < 35) return "";
-  if (days < 65) return "⚠ ";
-  return "⚠ ";
+// ── Freshness: periods-behind model (B+C) ────────────────────────────────────
+// Monthly accounts (checking/savings): statement available ~5 days after month end.
+// Investment accounts: quarterly statements, available ~15 days after quarter end.
+
+type Cadence = "monthly" | "quarterly";
+type FreshnessTier = "current" | "behind" | "far-behind";
+
+function accountCadence(accountType?: string): Cadence {
+  return accountType === "investment" ? "quarterly" : "monthly";
 }
 
-type FreshnessTier = "fresh" | "aging" | "stale";
-function accountFreshness(statementMonth?: string): FreshnessTier {
-  const days = daysSinceYearMonth(statementMonth);
-  if (days === null || days < 35) return "fresh";
-  if (days < 65) return "aging";
-  return "stale";
+function expectedLatestPeriod(cadence: Cadence): string {
+  const today = new Date();
+  const y = today.getFullYear(), m = today.getMonth() + 1, d = today.getDate();
+  if (cadence === "monthly") {
+    let em = d >= 5 ? m - 1 : m - 2;
+    let ey = y;
+    while (em <= 0) { em += 12; ey--; }
+    return `${ey}-${String(em).padStart(2, "0")}`;
+  } else {
+    // Quarterly: Mar/Jun/Sep/Dec, available ~15 days after quarter end
+    const quarterMonths = [3, 6, 9, 12];
+    for (let i = quarterMonths.length - 1; i >= 0; i--) {
+      const qm = quarterMonths[i];
+      let availY = y, availM = qm + 1;
+      if (availM > 12) { availM = 1; availY++; }
+      if (today >= new Date(availY, availM - 1, 15))
+        return `${y}-${String(qm).padStart(2, "0")}`;
+    }
+    return `${y - 1}-12`;
+  }
 }
-function freshnessAge(statementMonth?: string): string {
-  const days = daysSinceYearMonth(statementMonth);
-  if (days === null) return "";
-  if (days < 35) return `${days}d old`;
-  return `${Math.floor(days / 30)} mo old`;
+
+function periodsBehind(statementMonth: string | undefined, cadence: Cadence): number {
+  if (!statementMonth) return 99;
+  const expected = expectedLatestPeriod(cadence);
+  const [ey, em] = expected.split("-").map(Number);
+  const [sy, sm] = statementMonth.split("-").map(Number);
+  const months = (ey - sy) * 12 + (em - sm);
+  if (months <= 0) return 0;
+  return cadence === "quarterly" ? Math.floor(months / 3) : months;
+}
+
+function accountFreshness(statementMonth?: string, accountType?: string): FreshnessTier {
+  const periods = periodsBehind(statementMonth, accountCadence(accountType));
+  if (periods <= 0) return "current";
+  if (periods === 1) return "behind";
+  return "far-behind";
+}
+
+function freshnessLabel(statementMonth?: string, accountType?: string): string {
+  if (!statementMonth) return "";
+  const cadence = accountCadence(accountType);
+  const periods = periodsBehind(statementMonth, cadence);
+  if (periods <= 0) return "Up to date";
+  if (cadence === "quarterly") return periods === 1 ? "1 quarter behind" : `${periods} quarters behind`;
+  return periods === 1 ? "1 month behind" : `${periods} months behind`;
 }
 function formatYearMonth(ym?: string): string {
   if (!ym) return "";
@@ -541,12 +565,14 @@ export function AssetsPage() {
             {monthStr && <> · {monthStr}</>}
           </p>
         </div>
-        <button
-          onClick={() => openAdd()}
-          className="shrink-0 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
-        >
-          + Add asset
-        </button>
+        {activeTab === "tracked" && (
+          <button
+            onClick={() => openAdd()}
+            className="shrink-0 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
+          >
+            + Add asset
+          </button>
+        )}
       </div>
 
       {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
@@ -907,16 +933,16 @@ export function AssetsPage() {
           {/* ── Accounts tab ──────────────────────────────────────────────── */}
           {activeTab === "accounts" && (() => {
             // Freshness buckets
-            const freshCnt   = allAccounts.filter((a) => accountFreshness(a.statementMonth) === "fresh").length;
-            const agingCnt   = allAccounts.filter((a) => accountFreshness(a.statementMonth) === "aging").length;
-            const staleCnt   = allAccounts.filter((a) => accountFreshness(a.statementMonth) === "stale").length;
-            const needsUpdateCnt = agingCnt + staleCnt;
+            const currentCnt   = allAccounts.filter((a) => accountFreshness(a.statementMonth, a.accountType) === "current").length;
+            const behindCnt    = allAccounts.filter((a) => accountFreshness(a.statementMonth, a.accountType) === "behind").length;
+            const farBehindCnt = allAccounts.filter((a) => accountFreshness(a.statementMonth, a.accountType) === "far-behind").length;
+            const needsUpdateCnt = behindCnt + farBehindCnt;
 
             // Filter
             const investTypes = new Set(["investment"]);
             const cashTypes   = new Set(["checking", "savings"]);
             const filtered = allAccounts.filter((a) => {
-              if (acctFilter === "needs_update") return accountFreshness(a.statementMonth) !== "fresh";
+              if (acctFilter === "needs_update") return accountFreshness(a.statementMonth, a.accountType) !== "current";
               if (acctFilter === "investments")  return investTypes.has(a.accountType ?? "");
               if (acctFilter === "cash")          return cashTypes.has(a.accountType ?? "");
               return true;
@@ -934,8 +960,8 @@ export function AssetsPage() {
               if (acctSort === "balance_asc")  return toHomeBalance(a) - toHomeBalance(b);
               if (acctSort === "name")         return (a.accountName ?? a.bankName ?? "").localeCompare(b.accountName ?? b.bankName ?? "");
               if (acctSort === "freshness") {
-                const order = { stale: 0, aging: 1, fresh: 2 };
-                return order[accountFreshness(a.statementMonth)] - order[accountFreshness(b.statementMonth)];
+                const order: Record<FreshnessTier, number> = { "far-behind": 0, "behind": 1, "current": 2 };
+                return order[accountFreshness(a.statementMonth, a.accountType)] - order[accountFreshness(b.statementMonth, b.accountType)];
               }
               return toHomeBalance(b) - toHomeBalance(a); // balance_desc (default)
             });
@@ -973,23 +999,23 @@ export function AssetsPage() {
                               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
                             </svg>
                             <p className="text-sm font-medium text-amber-800">
-                              <span className="font-bold">{needsUpdateCnt} of {allAccounts.length}</span> accounts need fresh statements
+                              <span className="font-bold">{needsUpdateCnt} of {allAccounts.length}</span> accounts behind
                             </p>
                           </div>
-                          {/* Freshness dot-badges */}
+                          {/* Period-behind badges */}
                           <div className="shrink-0 flex items-center gap-3 text-xs text-gray-500">
-                            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-green-500 inline-block" />Fresh {freshCnt}</span>
-                            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-400 inline-block" />Aging {agingCnt}</span>
-                            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-500   inline-block" />Stale {staleCnt}</span>
+                            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-green-500 inline-block" />Up to date {currentCnt}</span>
+                            {behindCnt > 0 && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-400 inline-block" />1 behind {behindCnt}</span>}
+                            {farBehindCnt > 0 && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-500 inline-block" />2+ behind {farBehindCnt}</span>}
                           </div>
                         </div>
                         {/* Row 2: description + full-width freshness bar */}
                         <div className="space-y-1.5">
-                          <p className="text-xs text-amber-600">Stale data weakens pattern detection and creates false signals on your dashboard</p>
+                          <p className="text-xs text-amber-600">Upload missing statements so your dashboard reflects your current picture</p>
                           <div className="flex h-1.5 w-full rounded-full overflow-hidden bg-gray-200">
-                            <div className="bg-green-500 transition-all" style={{ width: `${allAccounts.length > 0 ? (freshCnt / allAccounts.length) * 100 : 0}%` }} />
-                            <div className="bg-amber-400 transition-all" style={{ width: `${allAccounts.length > 0 ? (agingCnt / allAccounts.length) * 100 : 0}%` }} />
-                            <div className="bg-red-500   transition-all" style={{ width: `${allAccounts.length > 0 ? (staleCnt / allAccounts.length) * 100 : 0}%` }} />
+                            <div className="bg-green-500 transition-all" style={{ width: `${allAccounts.length > 0 ? (currentCnt / allAccounts.length) * 100 : 0}%` }} />
+                            <div className="bg-amber-400 transition-all" style={{ width: `${allAccounts.length > 0 ? (behindCnt / allAccounts.length) * 100 : 0}%` }} />
+                            <div className="bg-red-500   transition-all" style={{ width: `${allAccounts.length > 0 ? (farBehindCnt / allAccounts.length) * 100 : 0}%` }} />
                           </div>
                         </div>
                       </div>
@@ -1000,7 +1026,7 @@ export function AssetsPage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         {([
                           { id: "all",          label: `All ${allAccounts.length}` },
-                          { id: "needs_update", label: `⚠ Needs update ${needsUpdateCnt}` },
+                          { id: "needs_update", label: `Behind ${needsUpdateCnt}` },
                           { id: "investments",  label: `Investments ${allAccounts.filter((a) => investTypes.has(a.accountType ?? "")).length}` },
                           { id: "cash",         label: `Cash ${allAccounts.filter((a) => cashTypes.has(a.accountType ?? "")).length}` },
                           { id: "property",     label: "Property 0", disabled: true },
@@ -1055,8 +1081,8 @@ export function AssetsPage() {
                             {/* Account rows */}
                             <div className="divide-y divide-gray-100">
                               {groupRows.map((a) => {
-                                const tier = accountFreshness(a.statementMonth);
-                                const dotCls = tier === "fresh" ? "bg-green-500" : tier === "aging" ? "bg-amber-400" : "bg-red-500";
+                                const tier = accountFreshness(a.statementMonth, a.accountType);
+                                const dotCls = tier === "current" ? "bg-green-500" : tier === "behind" ? "bg-amber-400" : "bg-red-500";
                                 const monthly = accountMonthly.find((m) => m.slug === a.slug);
                                 const sparkValues = monthly ? monthly.months.slice(-8).map((m) => m.balance) : [];
                                 const delta = monthly?.delta ?? null;
@@ -1075,18 +1101,10 @@ export function AssetsPage() {
                                         <span>{a.bankName}</span>
                                         {a.accountType && <><span>·</span><span className="capitalize">{a.accountType}</span></>}
                                         <span className={`h-1.5 w-1.5 rounded-full inline-block ${dotCls}`} />
-                                        <span className={tier === "fresh" ? "text-gray-400" : tier === "aging" ? "text-amber-500 font-medium" : "text-red-500 font-medium"}>
-                                          {freshnessAge(a.statementMonth)}
+                                        <span className={tier === "current" ? "text-gray-400" : tier === "behind" ? "text-amber-500 font-medium" : "text-red-500 font-medium"}>
+                                          {freshnessLabel(a.statementMonth, a.accountType)}
                                         </span>
                                         {a.statementMonth && <><span>·</span><span>{formatYearMonth(a.statementMonth)}</span></>}
-                                        {tier !== "fresh" && (
-                                          <Link
-                                            href={`/account/accounts/${a.slug}`}
-                                            className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-purple-50 px-2 py-0.5 text-[10px] font-semibold text-purple-600 hover:bg-purple-100 transition"
-                                          >
-                                            ↑ Upload
-                                          </Link>
-                                        )}
                                       </div>
                                     </div>
                                     {/* Middle: sparkline */}
@@ -1131,8 +1149,8 @@ export function AssetsPage() {
                           </div>
                           <div className="divide-y divide-gray-100">
                             {otherAccts.map((a) => {
-                              const tier = accountFreshness(a.statementMonth);
-                              const dotCls = tier === "fresh" ? "bg-green-500" : tier === "aging" ? "bg-amber-400" : "bg-red-500";
+                              const tier = accountFreshness(a.statementMonth, a.accountType);
+                              const dotCls = tier === "current" ? "bg-green-500" : tier === "behind" ? "bg-amber-400" : "bg-red-500";
                               const monthly = accountMonthly.find((m) => m.slug === a.slug);
                               const sparkValues = monthly ? monthly.months.slice(-8).map((m) => m.balance) : [];
                               const delta = monthly?.delta ?? null;
@@ -1147,15 +1165,10 @@ export function AssetsPage() {
                                       <span>{a.bankName}</span>
                                       {a.accountType && <><span>·</span><span className="capitalize">{a.accountType}</span></>}
                                       <span className={`h-1.5 w-1.5 rounded-full inline-block ${dotCls}`} />
-                                      <span className={tier === "fresh" ? "text-gray-400" : tier === "aging" ? "text-amber-500 font-medium" : "text-red-500 font-medium"}>
-                                        {freshnessAge(a.statementMonth)}
+                                      <span className={tier === "current" ? "text-gray-400" : tier === "behind" ? "text-amber-500 font-medium" : "text-red-500 font-medium"}>
+                                        {freshnessLabel(a.statementMonth, a.accountType)}
                                       </span>
                                       {a.statementMonth && <><span>·</span><span>{formatYearMonth(a.statementMonth)}</span></>}
-                                      {tier !== "fresh" && (
-                                        <Link href={`/account/accounts/${a.slug}`} className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-purple-50 px-2 py-0.5 text-[10px] font-semibold text-purple-600 hover:bg-purple-100 transition">
-                                          ↑ Upload
-                                        </Link>
-                                      )}
                                     </div>
                                   </div>
                                   <div className="shrink-0">
@@ -1204,10 +1217,6 @@ export function AssetsPage() {
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <p className="text-sm text-gray-500">Manually tracked assets not linked to a bank statement.</p>
-                <button onClick={() => openAdd()}
-                  className="shrink-0 rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-600 hover:bg-purple-100 transition">
-                  + Add
-                </button>
               </div>
 
               {assets.length === 0 ? (

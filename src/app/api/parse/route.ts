@@ -233,6 +233,63 @@ export async function POST(request: NextRequest) {
             .sort();
           backfillOldestMonth = allMonths[0] ?? null;
         }
+
+        // When there IS a real account ID but the slug is new (e.g. first upload had no
+        // account number so slug was bank-type, now a real last-4 slug appears), check
+        // for a fuzzy bank+type match against existing accounts so the user can confirm
+        // "add to existing" and skip the backfill currency/age questions entirely.
+        if (!accountConfirmNeeded && isFirstForSlug && allUserStmts.docs.length > 0) {
+          type Candidate = { slug: string; label: string; yearMonth: string; isAcctNum: boolean };
+          const byNormLabel2 = new Map<string, Candidate>();
+          for (const d of allUserStmts.docs) {
+            const dd = d.data();
+            const s  = dd.accountSlug as string | undefined;
+            if (!s) continue;
+            const p = dd.parsedData as Record<string, unknown> | undefined;
+            const label =
+              (p?.accountName as string | undefined) ||
+              `${p?.bankName ?? ""} ${p?.accountType ?? ""}`.trim() ||
+              s;
+            const normLabel = label.toLowerCase().replace(/[®™\s]+/g, " ").replace(/[^a-z0-9 ]/g, "").trim();
+            const isAcctNum = /^\d{4}$/.test(s);
+            const ym        = (dd.yearMonth as string) ?? "";
+            const existing  = byNormLabel2.get(normLabel);
+            if (!existing) {
+              byNormLabel2.set(normLabel, { slug: s, label, yearMonth: ym, isAcctNum });
+            } else {
+              const betterAcctNum = isAcctNum && !existing.isAcctNum;
+              const moreRecent    = isAcctNum === existing.isAcctNum && ym > existing.yearMonth;
+              if (betterAcctNum || moreRecent) byNormLabel2.set(normLabel, { slug: s, label, yearMonth: ym, isAcctNum });
+            }
+          }
+          const bySlug2 = new Map<string, Candidate>();
+          for (const c of byNormLabel2.values()) {
+            const prev = bySlug2.get(c.slug);
+            if (!prev) { bySlug2.set(c.slug, c); continue; }
+            if ((c.isAcctNum && !prev.isAcctNum) || (c.isAcctNum === prev.isAcctNum && c.yearMonth > prev.yearMonth))
+              bySlug2.set(c.slug, c);
+          }
+          const candidates = Array.from(bySlug2.values())
+            .map(({ slug: s, label }) => ({ slug: s, label }))
+            .sort((a, b) => a.label.localeCompare(b.label));
+
+          const bankNorm2 = (parsedData.bankName ?? "").toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+          const acctNorm2 = (parsedData.accountName ?? "").toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+          const match2 = candidates.find((a) => {
+            const lbl = a.label.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+            return (bankNorm2.length > 2 && lbl.includes(bankNorm2)) ||
+                   (acctNorm2.length > 4 && (lbl.includes(acctNorm2) || acctNorm2.includes(lbl)));
+          });
+
+          // Only prompt if there's a likely match — avoids nagging for truly new accounts.
+          // backfillPromptNeeded stays true so that if user picks "New account", the
+          // currency/age steps still follow.
+          if (match2) {
+            accountConfirmNeeded = true;
+            existingAccounts = candidates;
+            suggestedSlug = match2.slug;
+          }
+        }
       } catch (e) {
         console.error("[parse] backfill detection failed:", e);
       }
