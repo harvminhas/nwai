@@ -213,7 +213,7 @@ export function AssetsPage() {
   const [accountBalanceHistory, setAccountBalanceHistory] = useState<AccountBalanceHistory[]>([]);
   const [insights, setInsights]               = useState<Insight[]>([]);
   const [yearMonth, setYearMonth]             = useState<string | null>(null);
-  const [assetHistory, setAssetHistory]       = useState<{ ym: string; label: string; total: number; debt: number }[]>([]);
+  const [assetHistory, setAssetHistory]       = useState<{ ym: string; label: string; total: number; debt: number; isEstimate: boolean; totalSolid: number | null; totalDashed: number | null }[]>([]);
   const [accountMonthly, setAccountMonthly]   = useState<AssetAccountMonthly[]>([]);
   const [selectedAssetYm, setSelectedAssetYm] = useState<string | null>(null);
   const [loading, setLoading]                 = useState(true);
@@ -291,6 +291,10 @@ export function AssetsPage() {
         if (row.yearMonth) monthSet.add(row.yearMonth);
       }
       const allAssetMonths = Array.from(monthSet).sort();
+      // Months that have at least one REAL (non-carry-forward) statement entry
+      const realMonthSet = new Set<string>(
+        assetBalHist.flatMap((h) => h.entries.map((e) => e.yearMonth))
+      );
       const manualAssetsTotal = (aJson.assets ?? []).reduce(
         (s: number, ma: ManualAsset) => s + (ma.value ?? 0),
         0,
@@ -323,10 +327,26 @@ export function AssetsPage() {
             label,
             total: stmtAssets + manualAssetsTotal,
             debt: debtSide,
+            isEstimate: !realMonthSet.has(ym),
           };
         })
         .filter((h) => h.total > 0);
-      setAssetHistory(hist);
+
+      // Split total into solid (real) and dashed (estimated) series for the chart.
+      // Bridge points where real↔estimated transitions happen so the two lines
+      // connect smoothly (no gap).
+      const histWithSeries = hist.map((pt, i) => {
+        const prev = i > 0 ? hist[i - 1] : null;
+        const next = i < hist.length - 1 ? hist[i + 1] : null;
+        const totalSolid: number | null = pt.isEstimate ? null : pt.total;
+        let   totalDashed: number | null = pt.isEstimate ? pt.total : null;
+        // Bridge: last real point before an estimated run → also in dashed series
+        if (!pt.isEstimate && next?.isEstimate) totalDashed = pt.total;
+        // Bridge: first real point after an estimated run → also in dashed series
+        if (!pt.isEstimate && prev?.isEstimate) totalDashed = pt.total;
+        return { ...pt, totalSolid, totalDashed };
+      });
+      setAssetHistory(histWithSeries);
 
       // Build per-account monthly series from the cache's accountBalanceHistory
       const GROUP_COLORS: Record<string, string> = {
@@ -585,6 +605,56 @@ export function AssetsPage() {
                 </div>
               )}
 
+              {/* KPI cards — Property / Investments / Other / Cash */}
+              {totalAssets > 0 && (() => {
+                const cashVal       = chartRaw.find((g) => g.label === "Cash")?.value ?? 0;
+                const investVal     = (chartRaw.find((g) => g.label === "Investments")?.value ?? 0)
+                                    + (chartRaw.find((g) => g.label === "RRSP / TFSA")?.value ?? 0);
+                const propertyVal   = chartRaw.find((g) => g.label === "Real Estate")?.value ?? 0;
+                const otherVal      = (chartRaw.find((g) => g.label === "Vehicles")?.value ?? 0)
+                                    + (chartRaw.find((g) => g.label === "Business")?.value ?? 0)
+                                    + (chartRaw.find((g) => g.label === "Other")?.value ?? 0);
+                const cashAccts     = liquidSnapshots.length;
+                const investAccts   = accountSnapshots.filter((a) => a.accountType === "investment" && a.balance > 0).length
+                                    + assets.filter((a) => a.category === "investment" || a.category === "retirement").length;
+                const propertyItems = assets.filter((a) => a.category === "property").length;
+                const otherItems    = assets.filter((a) => ["vehicle", "business", "other"].includes(a.category)).length;
+                const pct = (v: number) => totalAssets > 0 ? Math.max(2, Math.round((v / totalAssets) * 100)) : 0;
+                const cards = [
+                  { label: "Property",    value: propertyVal, count: `${propertyItems} item${propertyItems !== 1 ? "s" : ""}`,    color: "#6366f1", barColor: "bg-indigo-500" },
+                  { label: "Investments", value: investVal,   count: `${investAccts} account${investAccts !== 1 ? "s" : ""}`,     color: "#3b82f6", barColor: "bg-blue-500" },
+                  { label: "Other",       value: otherVal,    count: `${otherItems} item${otherItems !== 1 ? "s" : ""}`,          color: "#9ca3af", barColor: "bg-gray-400" },
+                  { label: "Cash",        value: cashVal,     count: `${cashAccts} account${cashAccts !== 1 ? "s" : ""}`,         color: "#f59e0b", barColor: "bg-amber-400" },
+                ];
+                return (
+                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                    {cards.map((c) => (
+                      <div key={c.label} className="relative rounded-xl border border-gray-200 bg-white pt-4 px-4 pb-3 shadow-sm overflow-hidden flex flex-col justify-between">
+                        <div>
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{c.label}</p>
+                          </div>
+                          <p className="font-bold text-xl text-gray-900 leading-tight tabular-nums">
+                            {c.value > 0 ? formatCurrency(c.value, homeCurrency, undefined, true) : "—"}
+                          </p>
+                          <p className="mt-1 text-xs text-gray-400">
+                            {c.value > 0 ? `${c.count} · ${pct(c.value)}%` : "none"}
+                          </p>
+                        </div>
+                        {/* Progress bar */}
+                        <div className="mt-3 h-0.5 w-full rounded-full bg-gray-100">
+                          <div
+                            className={`h-0.5 rounded-full ${c.barColor}`}
+                            style={{ width: c.value > 0 ? `${pct(c.value)}%` : "0%" }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+
               {/* Asset Growth chart */}
               {assetHistory.length >= 2 && (
                 <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -601,7 +671,7 @@ export function AssetsPage() {
                       )}
                     </div>
                   </div>
-                  <p className="mb-2 text-xs text-gray-400">Click a point to see per-account breakdown</p>
+                  <p className="mb-2 text-xs text-gray-400">Click a point to see per-account breakdown · <span className="inline-flex items-center gap-1"><svg width="16" height="6"><line x1="0" y1="3" x2="16" y2="3" stroke="#a78bfa" strokeWidth="1.5" strokeDasharray="4 3"/></svg> estimated</span></p>
                   <div className="h-44">
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={assetHistory} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
@@ -619,16 +689,22 @@ export function AssetsPage() {
                           tickLine={false} axisLine={false} width={48}
                         />
                         <Tooltip
-                          formatter={(v) => [typeof v === "number" ? formatCurrency(v, homeCurrency, undefined, true) : v, "Total assets"]}
+                          formatter={(v, name) => {
+                            if (name === "__dashed__") return [];
+                            return [typeof v === "number" ? formatCurrency(v, homeCurrency, undefined, true) : v, "Total assets"];
+                          }}
                           labelStyle={{ fontSize: 12, color: "#6b7280" }}
                           contentStyle={{ borderRadius: "8px", border: "1px solid #e5e7eb", fontSize: 12 }}
                         />
+                        {/* Solid line — real (statement-backed) months */}
                         <Area
-                          type="monotone" dataKey="total"
+                          type="monotone" dataKey="totalSolid" name="Total assets"
                           stroke="#7c3aed" strokeWidth={2}
                           fill="url(#assetGrad)"
+                          connectNulls={false}
                           dot={(props) => {
-                            const { cx, cy, payload } = props as { cx: number; cy: number; payload: { ym: string } };
+                            const { cx, cy, payload } = props as { cx: number; cy: number; payload: { ym: string; isEstimate: boolean; totalSolid: number | null } };
+                            if (payload.totalSolid === null) return <g key={payload.ym} />;
                             const selected = payload.ym === selectedAssetYm;
                             return (
                               <circle
@@ -638,6 +714,36 @@ export function AssetsPage() {
                                 fill={selected ? "#7c3aed" : "#fff"}
                                 stroke="#7c3aed"
                                 strokeWidth={selected ? 2 : 1.5}
+                                style={{ cursor: "pointer", outline: "none" }}
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedAssetYm((prev) => prev === payload.ym ? null : payload.ym);
+                                }}
+                              />
+                            );
+                          }}
+                          activeDot={false}
+                        />
+                        {/* Dashed line — estimated (carry-forward) months */}
+                        <Area
+                          type="monotone" dataKey="totalDashed" name="__dashed__"
+                          stroke="#a78bfa" strokeWidth={1.5} strokeDasharray="5 4"
+                          fill="none"
+                          connectNulls={false}
+                          dot={(props) => {
+                            const { cx, cy, payload } = props as { cx: number; cy: number; payload: { ym: string; isEstimate: boolean; totalDashed: number | null } };
+                            if (!payload.isEstimate || payload.totalDashed === null) return <g key={payload.ym + "-d"} />;
+                            const selected = payload.ym === selectedAssetYm;
+                            return (
+                              <circle
+                                key={payload.ym + "-d"}
+                                cx={cx} cy={cy}
+                                r={selected ? 6 : 4}
+                                fill="#fff"
+                                stroke="#a78bfa"
+                                strokeWidth={1.5}
+                                strokeDasharray="3 2"
                                 style={{ cursor: "pointer", outline: "none" }}
                                 onMouseDown={(e) => e.preventDefault()}
                                 onClick={(e) => {
@@ -718,67 +824,44 @@ export function AssetsPage() {
                 </div>
               )}
 
-              {/* KPI cards — Property / Investments / Other / Cash */}
-              {totalAssets > 0 && (() => {
-                const cashVal       = chartRaw.find((g) => g.label === "Cash")?.value ?? 0;
-                const investVal     = (chartRaw.find((g) => g.label === "Investments")?.value ?? 0)
-                                    + (chartRaw.find((g) => g.label === "RRSP / TFSA")?.value ?? 0);
-                const propertyVal   = chartRaw.find((g) => g.label === "Real Estate")?.value ?? 0;
-                const otherVal      = (chartRaw.find((g) => g.label === "Vehicles")?.value ?? 0)
-                                    + (chartRaw.find((g) => g.label === "Business")?.value ?? 0)
-                                    + (chartRaw.find((g) => g.label === "Other")?.value ?? 0);
-                const cashAccts     = liquidSnapshots.length;
-                const investAccts   = accountSnapshots.filter((a) => a.accountType === "investment" && a.balance > 0).length
-                                    + assets.filter((a) => a.category === "investment" || a.category === "retirement").length;
-                const propertyItems = assets.filter((a) => a.category === "property").length;
-                const otherItems    = assets.filter((a) => ["vehicle", "business", "other"].includes(a.category)).length;
-                const pct = (v: number) => totalAssets > 0 ? Math.max(2, Math.round((v / totalAssets) * 100)) : 0;
-                const cards = [
-                  { label: "Property",    value: propertyVal, count: `${propertyItems} item${propertyItems !== 1 ? "s" : ""}`,    color: "#6366f1", barColor: "bg-indigo-500" },
-                  { label: "Investments", value: investVal,   count: `${investAccts} account${investAccts !== 1 ? "s" : ""}`,     color: "#3b82f6", barColor: "bg-blue-500" },
-                  { label: "Other",       value: otherVal,    count: `${otherItems} item${otherItems !== 1 ? "s" : ""}`,          color: "#9ca3af", barColor: "bg-gray-400" },
-                  { label: "Cash",        value: cashVal,     count: `${cashAccts} account${cashAccts !== 1 ? "s" : ""}`,         color: "#f59e0b", barColor: "bg-amber-400" },
-                ];
-                return (
-                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                    {cards.map((c) => (
-                      <div key={c.label} className="relative rounded-xl border border-gray-200 bg-white pt-4 px-4 pb-3 shadow-sm overflow-hidden flex flex-col justify-between">
-                        <div>
-                          <div className="flex items-center gap-2 mb-2">
-                            <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
-                            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{c.label}</p>
-                          </div>
-                          <p className="font-bold text-xl text-gray-900 leading-tight tabular-nums">
-                            {c.value > 0 ? formatCurrency(c.value, homeCurrency, undefined, true) : "—"}
-                          </p>
-                          <p className="mt-1 text-xs text-gray-400">
-                            {c.value > 0 ? `${c.count} · ${pct(c.value)}%` : "none"}
-                          </p>
-                        </div>
-                        {/* Progress bar */}
-                        <div className="mt-3 h-0.5 w-full rounded-full bg-gray-100">
-                          <div
-                            className={`h-0.5 rounded-full ${c.barColor}`}
-                            style={{ width: c.value > 0 ? `${pct(c.value)}%` : "0%" }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                );
-              })()}
-
               {/* What changed this month */}
-              {accountMonthly.some((a) => a.delta !== null) && (() => {
+              {assetHistory.length >= 2 && (() => {
+                // Walk back through history to find the most recent pair where
+                // at least one account balance actually changed (using carry-forward
+                // so stale accounts don't create false positives).
+                let latestYm = "", prevYm = "";
+                for (let i = assetHistory.length - 1; i >= 1; i--) {
+                  const cLat  = assetHistory[i].ym;
+                  const cPrev = assetHistory[i - 1].ym;
+                  const anyChange = accountMonthly.some((a) => {
+                    const b  = latestBalanceAtOrBefore(a, cLat);
+                    const pb = latestBalanceAtOrBefore(a, cPrev);
+                    return b !== null && pb !== null && Math.abs(b - pb) > 0;
+                  });
+                  if (anyChange) { latestYm = cLat; prevYm = cPrev; break; }
+                }
+                if (!latestYm) return null;
+
                 const changed = accountMonthly
+                  .map((a) => {
+                    const bal     = latestBalanceAtOrBefore(a, latestYm);
+                    const prevBal = latestBalanceAtOrBefore(a, prevYm);
+                    const delta   = bal !== null && prevBal !== null ? bal - prevBal : null;
+                    return { ...a, delta };
+                  })
                   .filter((a) => a.delta !== null && Math.abs(a.delta!) > 0)
                   .sort((a, b) => Math.abs(b.delta!) - Math.abs(a.delta!));
                 const netChange = changed.reduce((s, a) => s + toHome(a.delta!, currencyOverrides[a.slug]), 0);
                 if (changed.length === 0) return null;
+                const prevLabel   = new Date(prevYm   + "-01T12:00:00").toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+                const latestLabel = new Date(latestYm + "-01T12:00:00").toLocaleDateString("en-US", { month: "short", year: "2-digit" });
                 return (
                   <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                     <div className="flex items-center justify-between mb-3">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">What changed this month</p>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">What changed this month</p>
+                        <p className="text-[10px] text-gray-400 mt-0.5">{prevLabel} → {latestLabel}</p>
+                      </div>
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${netChange >= 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
                         {netChange >= 0 ? "▲ " : "▼ "}{formatCurrency(Math.abs(netChange), homeCurrency, undefined, true)} net
                       </span>
