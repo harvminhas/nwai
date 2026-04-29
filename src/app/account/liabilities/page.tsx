@@ -472,15 +472,15 @@ function OverviewTab({ libs, debtHistory, accountMonthly, paymentsMade, accountR
         </div>
 
         {/* Payments Made */}
-        <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-5 shadow-sm flex flex-col">
+        <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 p-5 shadow-sm flex flex-col">
           <div className="flex items-center gap-2 mb-2">
-            <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-blue-400" />
-            <p className="text-xs font-semibold uppercase tracking-wider text-blue-400">Payments Made</p>
+            <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-emerald-500" />
+            <p className="text-xs font-semibold uppercase tracking-wider text-emerald-600">Payments Made</p>
           </div>
           <p className="font-bold text-xl text-gray-900 break-all leading-tight">{paymentsMade > 0 ? formatCurrency(paymentsMade, homeCurrency, undefined, true) : "—"}</p>
           <p className="mt-1 text-xs text-gray-400">{paymentsMade > 0 ? "this month" : "re-upload for data"}</p>
-          <div className="mt-3 h-1 w-full rounded-full bg-blue-100 overflow-hidden">
-            <div className="h-full rounded-full bg-blue-400" style={{ width: paymentsMade > 0 ? "100%" : "0%" }} />
+          <div className="mt-3 h-1 w-full rounded-full bg-emerald-100 overflow-hidden">
+            <div className="h-full rounded-full bg-emerald-500" style={{ width: paymentsMade > 0 ? "100%" : "0%" }} />
           </div>
         </div>
       </div>

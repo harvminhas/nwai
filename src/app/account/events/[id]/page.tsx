@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { useActiveProfile } from "@/contexts/ActiveProfileContext";
-import type { UserEvent, TaggedTransaction, EventColor } from "@/lib/events/types";
+import type { UserEvent, TaggedTransaction, EventColor, VisitLog, ServiceCadence, BillingMethod, ProjectLedgerEntry } from "@/lib/events/types";
 import { EVENT_COLORS } from "@/lib/events/types";
 import { fmt } from "@/lib/currencyUtils";
 
@@ -24,6 +24,21 @@ function fmtDate(iso?: string) {
 function txDate(iso: string) {
   const d = new Date(iso + "T00:00:00");
   return d.toLocaleDateString("en-CA", { month: "short", day: "numeric" });
+}
+
+const MONTH_NAMES_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+function cadenceLabelShort(
+  cadence: ServiceCadence,
+  seasonStart?: number,
+  seasonEnd?: number,
+  billingMethod?: BillingMethod,
+): string {
+  const c = { weekly: "Weekly", biweekly: "Biweekly", monthly: "Monthly", quarterly: "Quarterly" }[cadence];
+  const isYearRound = !seasonStart || !seasonEnd || (seasonStart === 1 && seasonEnd === 12);
+  const season = isYearRound ? "year-round" : `season ${MONTH_NAMES_SHORT[seasonStart! - 1]}–${MONTH_NAMES_SHORT[seasonEnd! - 1]}`;
+  const billing = billingMethod === "per-visit" ? "per visit" : billingMethod === "monthly" ? "billed monthly" : null;
+  return [c, season, billing].filter(Boolean).join(" · ");
 }
 
 // ── Edit event modal ──────────────────────────────────────────────────────────
@@ -74,12 +89,12 @@ function EditEventModal({ event, headers, onSaved, onClose }: EditModalProps) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-md rounded-2xl bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
-          <h2 className="text-base font-semibold text-gray-900">Edit event</h2>
+          <h2 className="text-base font-semibold text-gray-900">Edit plan</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4 px-6 py-5">
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Event name *</label>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Plan name *</label>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -161,157 +176,8 @@ function EditEventModal({ event, headers, onSaved, onClose }: EditModalProps) {
   );
 }
 
-// ── Tag picker modal ──────────────────────────────────────────────────────────
-
-interface RawTx {
-  fingerprint: string;
-  date: string;
-  description: string;
-  amount: number;
-  category: string;
-  accountLabel: string;
-}
-
-interface TagPickerProps {
-  eventId: string;
-  eventName: string;
-  taggedFingerprints: Set<string>;
-  headers: Record<string, string>;
-  onTagged: (tx: RawTx) => void;
-  onClose: () => void;
-}
-
-function TagPicker({ eventId, eventName, taggedFingerprints, headers, onTagged, onClose }: TagPickerProps) {
-  const [txns, setTxns]       = useState<RawTx[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [q, setQ]             = useState("");
-  const [tagging, setTagging] = useState<string | null>(null);
-  const [pendingNote, setPendingNote] = useState<{ tx: RawTx; note: string } | null>(null);
-
-  useEffect(() => {
-    setLoading(true);
-    fetch(`/api/user/spending/transactions?months=12`, { headers })
-      .then((r) => r.json())
-      .then((j) => setTxns(j.transactions ?? []))
-      .finally(() => setLoading(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const filtered = txns.filter((t) => {
-    if (!q) return true;
-    return t.description.toLowerCase().includes(q.toLowerCase());
-  });
-
-  async function handleTag(tx: RawTx, note?: string) {
-    setTagging(tx.fingerprint);
-    setPendingNote(null);
-    try {
-      const res = await fetch("/api/user/tx-tags", {
-        method: "POST",
-        headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fingerprint: tx.fingerprint,
-          add: [eventId],
-          ...(note ? { note } : {}),
-        }),
-      });
-      if (res.ok) onTagged(tx);
-    } finally {
-      setTagging(null);
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40">
-      <div className="w-full max-w-lg rounded-t-2xl sm:rounded-2xl bg-white shadow-xl max-h-[85vh] flex flex-col">
-        <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 shrink-0">
-          <h2 className="text-sm font-semibold text-gray-900">Tag a transaction</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
-        </div>
-        <div className="px-4 pt-3 pb-2 shrink-0">
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search merchant…"
-            autoFocus
-            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
-          />
-        </div>
-
-        {/* Note input panel — appears after user clicks Tag on a tx */}
-        {pendingNote && (
-          <div className="mx-4 mb-2 rounded-xl border border-purple-100 bg-purple-50 p-3 shrink-0">
-            <p className="text-xs font-semibold text-purple-700 mb-2">
-              Add a note for &quot;{pendingNote.tx.description}&quot; <span className="font-normal">(optional)</span>
-            </p>
-            <div className="flex gap-2">
-              <input
-                value={pendingNote.note}
-                onChange={(e) => setPendingNote({ ...pendingNote, note: e.target.value })}
-                placeholder="e.g. Flight to Paris, deposit…"
-                className="flex-1 rounded-lg border border-purple-200 bg-white px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-purple-400"
-                onKeyDown={(e) => { if (e.key === "Enter") handleTag(pendingNote.tx, pendingNote.note); }}
-                autoFocus
-              />
-              <button
-                onClick={() => handleTag(pendingNote.tx, pendingNote.note)}
-                disabled={tagging !== null}
-                className="shrink-0 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-700 disabled:opacity-50"
-              >
-                {tagging ? "…" : "Confirm"}
-              </button>
-              <button
-                onClick={() => handleTag(pendingNote.tx)}
-                className="shrink-0 rounded-lg border border-purple-200 px-3 py-1.5 text-xs font-medium text-purple-600 hover:bg-purple-100"
-              >
-                Skip
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="flex-1 overflow-y-auto divide-y divide-gray-50 px-2 pb-4">
-          {loading ? (
-            <div className="py-10 text-center text-sm text-gray-400">Loading transactions…</div>
-          ) : filtered.length === 0 ? (
-            <div className="py-10 text-center text-sm text-gray-400">
-              {q ? "No transactions match your search" : "No transactions in the last 12 months"}
-            </div>
-          ) : (
-            filtered.map((tx) => {
-              const alreadyTagged = taggedFingerprints.has(tx.fingerprint);
-              return (
-                <div key={tx.fingerprint} className={`flex items-center gap-3 px-2 py-3 ${alreadyTagged ? "opacity-60" : ""}`}>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-gray-900 truncate">{tx.description}</p>
-                    <p className="text-xs text-gray-400">{txDate(tx.date)} · {tx.category} · {tx.accountLabel}</p>
-                    {alreadyTagged && (
-                      <p className="text-[11px] text-purple-500 font-medium mt-0.5">Already tagged to {eventName}</p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <span className="text-sm font-semibold text-gray-900">{fmt(tx.amount)}</span>
-                    {alreadyTagged ? (
-                      <span className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-400">Tagged ✓</span>
-                    ) : (
-                      <button
-                        onClick={() => setPendingNote({ tx, note: "" })}
-                        disabled={tagging === tx.fingerprint || pendingNote?.tx.fingerprint === tx.fingerprint}
-                        className="rounded-lg bg-purple-50 px-3 py-1.5 text-xs font-medium text-purple-700 hover:bg-purple-100 disabled:opacity-50"
-                      >
-                        {tagging === tx.fingerprint ? "…" : "Tag"}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
+// ── Tag picker — imported from shared component ───────────────────────────────
+import TagPicker, { type RawTx } from "@/components/events/TagPicker";
 
 // ── Inline note editor ────────────────────────────────────────────────────────
 
@@ -398,12 +264,30 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
   const [token, setToken]           = useState<string | null>(null);
   const [event, setEvent]           = useState<UserEvent | null>(null);
   const [tagged, setTagged]         = useState<TaggedTransaction[]>([]);
+  const [visitLogs, setVisitLogs]   = useState<VisitLog[]>([]);
+  const [ledgerEntries, setLedgerEntries] = useState<ProjectLedgerEntry[]>([]);
   const [totalSpent, setTotalSpent] = useState(0);
   const [loading, setLoading]       = useState(true);
   const [showPicker, setShowPicker] = useState(false);
   const [showEdit, setShowEdit]     = useState(false);
   const [removing, setRemoving]     = useState<string | null>(null);
+  const [removingVisit, setRemovingVisit] = useState<string | null>(null);
   const [currentYear, setCurrentYear] = useState<string | null>(null);
+  // Inline Log Event panel state (service events)
+  const [showLogVisit, setShowLogVisit]     = useState(false);
+  const [logDatePick, setLogDatePick]       = useState<"today" | "yesterday" | "custom">("today");
+  const [logCustomDate, setLogCustomDate]   = useState(() => new Date().toISOString().substring(0, 10));
+  const [logNote, setLogNote]               = useState("");
+  const [logPayType, setLogPayType]         = useState<"unbilled" | "cash" | "statement">("unbilled");
+  const [logCashAmt, setLogCashAmt]         = useState("");
+  const [savingVisit, setSavingVisit]       = useState(false);
+  const [showLedgerForm, setShowLedgerForm] = useState(false);
+  const [ledgerDate, setLedgerDate]        = useState(() => new Date().toISOString().substring(0, 10));
+  const [ledgerAmount, setLedgerAmount]      = useState("");
+  const [ledgerNote, setLedgerNote]        = useState("");
+  const [ledgerEntryType, setLedgerEntryType] = useState<"cash" | "manual">("manual");
+  const [savingLedger, setSavingLedger]       = useState(false);
+  const [removingLedger, setRemovingLedger] = useState<string | null>(null);
   const { buildHeaders, targetUid } = useActiveProfile();
 
   useEffect(() => {
@@ -424,6 +308,8 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
         if (res.ok) {
           setEvent(json.event);
           setTagged(json.transactions ?? []);
+          setVisitLogs(json.visitLogs ?? []);
+          setLedgerEntries(json.ledgerEntries ?? []);
           setTotalSpent(json.totalSpent ?? 0);
           setCurrentYear(json.currentYear ?? null);
         }
@@ -438,14 +324,20 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
     if (token) load(token);
   }, [token, load, targetUid]);
 
+
   async function handleRemove(fingerprint: string) {
     if (!token) return;
     setRemoving(fingerprint);
+    const row = tagged.find((t) => t.fingerprint === fingerprint);
     try {
       const res = await fetch("/api/user/tx-tags", {
         method: "POST",
         headers: { ...buildHeaders(token), "Content-Type": "application/json" },
-        body: JSON.stringify({ fingerprint, remove: [id] }),
+        body: JSON.stringify({
+          fingerprint,
+          remove: [id],
+          ...(row?.date ? { date: row.date } : {}),
+        }),
       });
       if (res.ok) {
         const removed = tagged.find((t) => t.fingerprint === fingerprint);
@@ -458,12 +350,135 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
   }
 
   async function handleArchive() {
-    if (!token || !confirm(`Archive "${event?.name}"? Tagged transactions will be preserved.`)) return;
+    if (!token || !confirm(`Archive "${event?.name}"? Tags and ledger entries stay in your data but won’t show on active plans.`)) return;
     const res = await fetch(`/api/user/events/${id}`, {
       method: "DELETE",
       headers: buildHeaders(token),
     });
     if (res.ok) router.push("/account/events");
+  }
+
+  async function handleRemoveVisit(visitId: string) {
+    if (!token) return;
+    setRemovingVisit(visitId);
+    try {
+      const res = await fetch(`/api/user/events/${id}/visits`, {
+        method: "DELETE",
+        headers: { ...buildHeaders(token), "Content-Type": "application/json" },
+        body: JSON.stringify({ visitId }),
+      });
+      if (res.ok) setVisitLogs((prev) => prev.filter((v) => v.id !== visitId));
+    } finally {
+      setRemovingVisit(null);
+    }
+  }
+
+  function resetLogVisit() {
+    setShowLogVisit(false);
+    setLogNote("");
+    setLogDatePick("today");
+    setLogPayType("unbilled");
+    setLogCashAmt("");
+  }
+
+  async function handleSaveVisit() {
+    if (!token) return;
+    setSavingVisit(true);
+    const todayISO     = new Date().toISOString().substring(0, 10);
+    const yesterdayISO = new Date(Date.now() - 86400000).toISOString().substring(0, 10);
+    const date = logDatePick === "today" ? todayISO : logDatePick === "yesterday" ? yesterdayISO : logCustomDate;
+    const body: Record<string, unknown> = { date };
+    if (logNote.trim()) body.note = logNote.trim();
+    if (logPayType === "cash") {
+      body.paymentMethod = "cash";
+      const amt = parseFloat(logCashAmt);
+      if (amt > 0) body.amount = amt;
+    } else if (logPayType === "statement") {
+      body.paymentMethod = "statement";
+    }
+    try {
+      const res = await fetch(`/api/user/events/${id}/visits`, {
+        method: "POST",
+        headers: { ...buildHeaders(token), "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        const openPicker = logPayType === "statement";
+        const json = await res.json();
+        setVisitLogs((prev) => [json.visit, ...prev].sort((a, b) => b.date.localeCompare(a.date)));
+        resetLogVisit();
+        if (openPicker) setShowPicker(true);
+      }
+    } finally {
+      setSavingVisit(false);
+    }
+  }
+
+  async function handleAddLedgerEntry(e: React.FormEvent) {
+    e.preventDefault();
+    if (!token) return;
+    const amt = parseFloat(ledgerAmount);
+    if (!Number.isFinite(amt) || amt <= 0) return;
+    setSavingLedger(true);
+    try {
+      const res = await fetch(`/api/user/events/${id}/ledger`, {
+        method: "POST",
+        headers: { ...buildHeaders(token), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date: ledgerDate,
+          amount: amt,
+          entryType: ledgerEntryType,
+          ...(ledgerNote.trim() ? { note: ledgerNote.trim() } : {}),
+        }),
+      });
+      if (res.ok) {
+        const json = await res.json() as { entry: ProjectLedgerEntry };
+        setLedgerEntries((prev) => [json.entry, ...prev].sort((a, b) => b.date.localeCompare(a.date)));
+        setTotalSpent((s) => s + json.entry.amount);
+        setEvent((ev) =>
+          ev
+            ? {
+                ...ev,
+                ledgerTotal: (ev.ledgerTotal ?? 0) + json.entry.amount,
+                ledgerEntryCount: (ev.ledgerEntryCount ?? 0) + 1,
+              }
+            : ev,
+        );
+        setLedgerAmount("");
+        setLedgerNote("");
+        setShowLedgerForm(false);
+      }
+    } finally {
+      setSavingLedger(false);
+    }
+  }
+
+  async function handleRemoveLedgerEntry(entryId: string) {
+    if (!token) return;
+    setRemovingLedger(entryId);
+    const removed = ledgerEntries.find((x) => x.id === entryId);
+    try {
+      const res = await fetch(`/api/user/events/${id}/ledger`, {
+        method: "DELETE",
+        headers: { ...buildHeaders(token), "Content-Type": "application/json" },
+        body: JSON.stringify({ entryId }),
+      });
+      if (res.ok && removed) {
+        setLedgerEntries((prev) => prev.filter((x) => x.id !== entryId));
+        setTotalSpent((s) => Math.max(0, s - removed.amount));
+        setEvent((ev) =>
+          ev
+            ? {
+                ...ev,
+                ledgerTotal: Math.max(0, (ev.ledgerTotal ?? 0) - removed.amount),
+                ledgerEntryCount: Math.max(0, (ev.ledgerEntryCount ?? 1) - 1),
+              }
+            : ev,
+        );
+      }
+    } finally {
+      setRemovingLedger(null);
+    }
   }
 
   function handleTagged(tx: RawTx) {
@@ -511,7 +526,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
           onClick={() => router.push("/account/events")}
           className="mb-5 flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700"
         >
-          ← Events
+          ← Plans
         </button>
 
         {/* Event header card */}
@@ -525,13 +540,29 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                 <h1 className="text-lg font-bold text-gray-900 truncate">{event.name}</h1>
                 <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                   <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${cfg.bg} ${cfg.text}`}>
-                    {event.type === "annual" ? "Annual" : "One-off"}
+                    {event.kind === "service" ? "Service" : event.type === "annual" ? "Annual" : "Project"}
                   </span>
-                  {event.date && (
-                    <span className="text-xs text-gray-400">{fmtDate(event.date)}</span>
-                  )}
-                  {event.type === "annual" && currentYear && (
-                    <span className="text-xs text-gray-400">· {currentYear} total</span>
+                  {event.kind === "service" ? (
+                    <span className="text-xs text-gray-400">
+                      {cadenceLabelShort(
+                        event.cadence ?? "monthly",
+                        event.seasonStart,
+                        event.seasonEnd,
+                        event.billingMethod,
+                      )}
+                    </span>
+                  ) : (
+                    <>
+                      {(event.startDate ?? event.date) && (
+                        <span className="text-xs text-gray-400">{fmtDate(event.startDate ?? event.date)}</span>
+                      )}
+                      {event.endDate && (
+                        <span className="text-xs text-gray-400">→ {fmtDate(event.endDate)}</span>
+                      )}
+                      {event.type === "annual" && currentYear && (
+                        <span className="text-xs text-gray-400">· {currentYear} total</span>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
@@ -561,11 +592,37 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
               )}
             </div>
             <div className="text-right">
-              <p className="text-sm font-medium text-gray-700">{tagged.length} transaction{tagged.length !== 1 ? "s" : ""}</p>
-              {pct != null && (
-                <p className={`text-xs font-medium ${pct >= 100 ? "text-red-500" : "text-gray-400"}`}>
-                  {pct}% used
-                </p>
+              {event.kind === "service" ? (
+                <>
+                  <p className="text-sm font-medium text-gray-700">
+                    {visitLogs.length} visit{visitLogs.length !== 1 ? "s" : ""} logged
+                  </p>
+                  {(() => {
+                    const cashPaid = visitLogs.filter((v) => v.paymentMethod === "cash").length;
+                    const stmtPaid = tagged.length;
+                    const paid     = cashPaid + stmtPaid;
+                    const unbilled = Math.max(0, visitLogs.length - paid);
+                    return (
+                      <p className="text-xs text-gray-400">
+                        {paid} paid · {unbilled} unbilled
+                      </p>
+                    );
+                  })()}
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-medium text-gray-700">
+                    {tagged.length} tagged
+                    {(event.ledgerEntryCount ?? ledgerEntries.length) > 0 && (
+                      <span className="text-gray-400 font-normal"> · {(event.ledgerEntryCount ?? ledgerEntries.length)} ledger</span>
+                    )}
+                  </p>
+                  {pct != null && (
+                    <p className={`text-xs font-medium ${pct >= 100 ? "text-red-500" : "text-gray-400"}`}>
+                      {pct}% used
+                    </p>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -581,10 +638,321 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
           )}
         </div>
 
-        {/* Tagged transactions */}
+        {/* ── Event logs (service events only) ──────────────────────────── */}
+        {event.kind === "service" && (
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-4">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
+              <h2 className="text-sm font-semibold text-gray-900">Visit log</h2>
+              <button
+                onClick={() => setShowLogVisit((v) => !v)}
+                className="inline-flex items-center gap-1 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 transition"
+              >
+                +Log
+              </button>
+            </div>
+
+            {/* Inline Log Event panel */}
+            {showLogVisit && (
+              <div className="border-b border-gray-50 bg-gray-50 px-5 py-4 space-y-3">
+                {/* WHEN? */}
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">When?</p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {(["today", "yesterday", "custom"] as const).map((d) => {
+                      const todayISO = new Date().toISOString().substring(0, 10);
+                      const label =
+                        d === "today"      ? `Today · ${new Date(todayISO + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+                        : d === "yesterday" ? "Yesterday"
+                        : "Pick a date";
+                      return (
+                        <button
+                          key={d}
+                          onClick={() => setLogDatePick(d)}
+                          className={`rounded-lg px-3 py-1.5 text-xs font-medium border transition ${
+                            logDatePick === d
+                              ? "bg-indigo-600 text-white border-indigo-600"
+                              : "border-gray-200 text-gray-600 bg-white hover:border-gray-300"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                    {logDatePick === "custom" && (
+                      <input
+                        type="date"
+                        value={logCustomDate}
+                        max={new Date().toISOString().substring(0, 10)}
+                        onChange={(e) => setLogCustomDate(e.target.value)}
+                        className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white"
+                      />
+                    )}
+                  </div>
+                </div>
+
+                {/* NOTE */}
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">
+                    Note <span className="font-normal normal-case">(optional)</span>
+                  </p>
+                  <input
+                    value={logNote}
+                    onChange={(e) => setLogNote(e.target.value)}
+                    placeholder="e.g. did the back hedge too"
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+
+                {/* PAID? */}
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Paid?</p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {(["unbilled", "cash", "statement"] as const).map((pt) => {
+                      const label = pt === "unbilled" ? "Not yet" : pt === "cash" ? "Cash" : "Tag transaction";
+                      return (
+                        <button
+                          key={pt}
+                          onClick={() => setLogPayType(pt)}
+                          className={`rounded-lg px-3 py-1.5 text-xs font-medium border transition ${
+                            logPayType === pt
+                              ? "bg-indigo-600 text-white border-indigo-600"
+                              : "border-gray-200 text-gray-600 bg-white hover:border-gray-300"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                    {logPayType === "cash" && (
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs text-gray-400">$</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={logCashAmt}
+                          onChange={(e) => setLogCashAmt(e.target.value)}
+                          placeholder="0.00"
+                          className="w-24 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    onClick={resetLogVisit}
+                    className="rounded-lg px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 border border-gray-200 bg-white"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveVisit}
+                    disabled={savingVisit}
+                    className="rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 transition"
+                  >
+                    {savingVisit ? "Saving…" : logPayType === "statement" ? "Save & tag" : "Save"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {visitLogs.length === 0 ? (
+              <div className="px-5 py-10 text-center">
+                <p className="text-2xl mb-2">📋</p>
+                <p className="text-sm font-medium text-gray-700 mb-1">No visits logged yet</p>
+                <p className="text-xs text-gray-400">Use &quot;+Log&quot; to record each time this service happens.</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {visitLogs.map((v) => (
+                  <div key={v.id} className="flex items-start gap-3 px-5 py-3.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-medium text-gray-800">
+                          {new Date(v.date + "T00:00:00").toLocaleDateString("en-US", {
+                            weekday: "short", month: "short", day: "numeric",
+                          })}
+                        </p>
+                        {v.paymentMethod === "cash" && (
+                          <span className="inline-flex items-center rounded-full bg-green-50 border border-green-100 px-2 py-0.5 text-[11px] font-medium text-green-700">
+                            {v.amount ? `$${v.amount.toFixed(2)} cash` : "Cash"}
+                          </span>
+                        )}
+                        {v.paymentMethod === "statement" && (
+                          <span className="inline-flex items-center rounded-full bg-blue-50 border border-blue-100 px-2 py-0.5 text-[11px] font-medium text-blue-600">
+                            Statement
+                          </span>
+                        )}
+                        {!v.paymentMethod && (
+                          <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-600">
+                            Unbilled
+                          </span>
+                        )}
+                      </div>
+                      {v.note && <p className="text-xs text-gray-400 mt-0.5">{v.note}</p>}
+                    </div>
+                    <button
+                      onClick={() => handleRemoveVisit(v.id)}
+                      disabled={removingVisit === v.id}
+                      className="rounded-lg px-2.5 py-1.5 text-xs text-gray-400 hover:text-red-500 hover:bg-red-50 disabled:opacity-40 transition"
+                    >
+                      {removingVisit === v.id ? "…" : "Remove"}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Project ledger (off-statement cash / manual — adds to budget) ── */}
+        {event.kind !== "service" && (
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-4">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-900">Project ledger</h2>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Cash, quotes, trades — anything not on a tagged bank line. Rolls into budget with tagged transactions.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLedgerForm((v) => !v)}
+                className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100 shrink-0"
+              >
+                {showLedgerForm ? "Close" : "+ Add"}
+              </button>
+            </div>
+
+            {showLedgerForm && (
+              <form onSubmit={handleAddLedgerEntry} className="border-b border-gray-50 bg-gray-50 px-5 py-4 space-y-3">
+                <div className="flex flex-wrap gap-3">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Date</p>
+                    <input
+                      type="date"
+                      value={ledgerDate}
+                      onChange={(e) => setLedgerDate(e.target.value)}
+                      className="rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Amount</p>
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs text-gray-400">$</span>
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        value={ledgerAmount}
+                        onChange={(e) => setLedgerAmount(e.target.value)}
+                        placeholder="0.00"
+                        className="w-28 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs"
+                        required
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Type</p>
+                  <div className="flex gap-2">
+                    {(["cash", "manual"] as const).map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setLedgerEntryType(t)}
+                        className={`rounded-lg px-3 py-1.5 text-xs font-medium border transition ${
+                          ledgerEntryType === t
+                            ? "bg-amber-600 text-white border-amber-600"
+                            : "border-gray-200 text-gray-600 bg-white hover:border-gray-300"
+                        }`}
+                      >
+                        {t === "cash" ? "Cash" : "Other / invoice"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Note (optional)</p>
+                  <input
+                    value={ledgerNote}
+                    onChange={(e) => setLedgerNote(e.target.value)}
+                    placeholder="e.g. contractor deposit, materials from Home Depot"
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm"
+                  />
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    type="submit"
+                    disabled={savingLedger}
+                    className="rounded-lg bg-amber-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+                  >
+                    {savingLedger ? "Saving…" : "Add to ledger"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {ledgerEntries.length === 0 ? (
+              <div className="px-5 py-8 text-center">
+                <p className="text-sm text-gray-500">No off-statement lines yet.</p>
+                <p className="text-xs text-gray-400 mt-1">Renovations, birthdays: add cash or manual totals here.</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {ledgerEntries.map((row) => (
+                  <div key={row.id} className="flex items-start gap-3 px-5 py-3.5">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-gray-800">
+                        {new Date(row.date + "T00:00:00").toLocaleDateString("en-CA", {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                        })}
+                      </p>
+                      {row.note && <p className="text-xs text-gray-400 mt-0.5">{row.note}</p>}
+                      <span
+                        className={`inline-flex mt-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                          row.entryType === "cash"
+                            ? "bg-emerald-50 text-emerald-800 border border-emerald-100"
+                            : "bg-slate-50 text-slate-600 border border-slate-100"
+                        }`}
+                      >
+                        {row.entryType === "cash" ? "Cash" : "Other / invoice"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-sm font-semibold text-gray-900">{fmt(row.amount)}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveLedgerEntry(row.id)}
+                        disabled={removingLedger === row.id}
+                        className="rounded-lg px-2.5 py-1.5 text-xs text-gray-400 hover:text-red-500 hover:bg-red-50 disabled:opacity-40"
+                      >
+                        {removingLedger === row.id ? "…" : "Remove"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Tagged transactions ────────────────────────────────────────── */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-4">
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
-            <h2 className="text-sm font-semibold text-gray-900">Tagged transactions</h2>
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">
+                {event.kind === "service" ? "Payments" : "Tagged transactions"}
+              </h2>
+              {event.kind === "service" && (
+                <p className="text-xs text-gray-400 mt-0.5">Transactions tagged to this service</p>
+              )}
+            </div>
             <button
               onClick={() => setShowPicker(true)}
               className="rounded-lg bg-purple-50 px-3 py-1.5 text-xs font-medium text-purple-700 hover:bg-purple-100"
@@ -597,7 +965,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
             <div className="px-5 py-12 text-center">
               <p className="text-3xl mb-3">🏷</p>
               <p className="text-sm font-medium text-gray-700 mb-1">No transactions tagged yet</p>
-              <p className="text-xs text-gray-400 mb-4">Tag transactions from your history to track spending for this event.</p>
+              <p className="text-xs text-gray-400 mb-4">Tag transactions from your history to track spending for this plan.</p>
               <button
                 onClick={() => setShowPicker(true)}
                 className="rounded-lg bg-purple-50 px-4 py-2 text-sm font-medium text-purple-700 hover:bg-purple-100"

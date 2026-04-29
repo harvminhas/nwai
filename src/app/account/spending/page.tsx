@@ -2032,8 +2032,8 @@ function SpendingPageInner() {
                           )}
                           {extraTotal > 0 && (
                             <div className="flex-1">
-                              <p className="text-[10px] font-semibold uppercase tracking-wider text-green-500 mb-0.5">Extra Payments</p>
-                              <p className="text-base font-bold text-green-600 tabular-nums">{formatCurrency(extraTotal, homeCurrency, undefined, true)}</p>
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600 mb-0.5">Extra Payments</p>
+                              <p className="text-base font-bold text-emerald-700 tabular-nums">{formatCurrency(extraTotal, homeCurrency, undefined, true)}</p>
                             </div>
                           )}
                           {interestTotal > 0 && (
@@ -2061,8 +2061,8 @@ function SpendingPageInner() {
                                 const tagColor = isScheduled
                                   ? "bg-gray-100 text-gray-500"
                                   : normalizedTag === "extra"
-                                    ? "bg-green-100 text-green-700"
-                                    : "bg-purple-100 text-purple-700";
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : "bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-200/80";
                                 return (
                                   <div key={i} className="flex items-center gap-3 px-5 py-3">
                                     <div className="min-w-0 flex-1">
@@ -2117,11 +2117,11 @@ function SpendingPageInner() {
                             )}
 
                             {paymentsMade > 0 && (
-                              <div className="flex items-center gap-2 px-5 py-3 bg-blue-50/50 border-t border-blue-100/50">
-                                <svg className="h-3.5 w-3.5 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <div className="flex items-center gap-2 px-5 py-3 bg-emerald-50/60 border-t border-emerald-100/80">
+                                <svg className="h-3.5 w-3.5 text-emerald-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                                 </svg>
-                                <p className="text-[11px] text-blue-700">
+                                <p className="text-[11px] text-emerald-800">
                                   {formatCurrency(paymentsMade, homeCurrency, undefined, true)} received by your CC / loan accounts — offsets the payments above.
                                 </p>
                               </div>

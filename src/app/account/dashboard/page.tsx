@@ -1070,7 +1070,7 @@ function FirstTimeLayout({ agentCards, netWorth, topSpending, statementCount, mo
   );
 }
 
-// ── Events widget (dashboard sidebar) ────────────────────────────────────────
+// ── Plans widget (dashboard sidebar) ────────────────────────────────────────
 
 import type { EventSummary, EventColor } from "@/lib/events/types";
 import { EVENT_COLORS } from "@/lib/events/types";
@@ -1084,7 +1084,7 @@ function EventsWidget({ events, homeCurrency = "USD" }: { events: EventSummary[]
   return (
     <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
       <div className="flex items-center justify-between px-4 pt-4 pb-2 border-b border-gray-100">
-        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Events</p>
+        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Plans</p>
         <Link href="/account/events" className="text-[11px] font-semibold text-purple-600 hover:underline">
           All →
         </Link>
@@ -2687,7 +2687,7 @@ export default function TodayPage() {
             {/* Savings rate mini-card */}
             <SavingsRateCard />
 
-            {/* ── Events ─────────────────────────────────────────────────────── */}
+            {/* ── Plans ─────────────────────────────────────────────────────── */}
             <EventsWidget events={activeEvents} homeCurrency={homeCurrency} />
 
           </div>

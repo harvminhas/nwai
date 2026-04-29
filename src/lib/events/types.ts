@@ -1,25 +1,97 @@
 /**
  * Events — app-layer types (Rule 14: isolated from financial engine)
  *
- * Users create named events with an optional budget and date.
+ * One user-facing model: an **Event** has a name, optional **budget**, and **timeframe**
+ * (start/end dates). Optional **kind: "service"** adds cadence/season for recurring
+ * work (lawn, cleaning); otherwise `kind` is `"project"` or omitted (one-time / dated).
+ *
  * Transactions are tagged to events via TxTag overlays stored separately
  * from parsedData — the engine is never touched.
  */
 
+export type ServiceCadence = "weekly" | "biweekly" | "monthly" | "quarterly";
+export type BillingMethod  = "per-visit" | "monthly";
+
+/** Off-statement spend for projects — stored in events/{id}/ledger subcollection */
+export interface ProjectLedgerEntry {
+  id: string;
+  /** YYYY-MM-DD */
+  date: string;
+  /** Amount counted toward project budget (always positive spend) */
+  amount: number;
+  note?: string;
+  /** How the user thinks of this line (labels only — all count the same toward budget) */
+  entryType: "cash" | "manual";
+  createdAt: string;
+}
+
+/** A single logged event entry — stored in events/{id}/visits subcollection */
+export interface VisitLog {
+  id: string;
+  /** YYYY-MM-DD */
+  date: string;
+  note?: string;
+  /**
+   * How this visit was paid.
+   * "cash"      — paid on the spot; amount is stored here.
+   * "statement" — will be (or has been) tagged via a bank statement transaction.
+   * absent      — unbilled / not yet recorded.
+   */
+  paymentMethod?: "cash" | "statement";
+  /** Cash amount (only set when paymentMethod === "cash") */
+  amount?: number;
+  createdAt: string;
+}
+
 export interface UserEvent {
   id: string;
   name: string;
-  /** Optional spending budget for this event */
+  /** UI kind — defaults to "project" for legacy events without this field */
+  kind?: "project" | "service";
   budget?: number;
-  /** Target or due date (ISO string) */
+  /** Project: start date (ISO). Legacy single-date stored as startDate or date. */
+  startDate?: string;
+  /** Project: end date (ISO) */
+  endDate?: string;
+  /** Legacy single target date — kept for backward compat */
   date?: string;
-  /** "one-off" = single occurrence, "annual" = repeats every year */
+  /** "one-off" = project, "annual" = repeating (used for service events) */
   type: "one-off" | "annual";
-  /** Tailwind color name used for the event chip (e.g. "purple", "blue") */
+  /** Tailwind color name used for the event chip */
   color: EventColor;
   createdAt: string;
   /** Soft-delete — archived events are hidden but tag history is preserved */
   archivedAt?: string;
+
+  // ── Service-specific ──────────────────────────────────────────────────────
+  cadence?: ServiceCadence;
+  /** Season start month 1-12 (inclusive). Absent = year-round. */
+  seasonStart?: number;
+  /** Season end month 1-12 (inclusive). Absent = year-round. */
+  seasonEnd?: number;
+  billingMethod?: BillingMethod;
+  /** User-supplied expected cost per visit (display only) */
+  avgPerVisit?: number;
+
+  // ── Denormalized from visit logs (maintained by visits API) ───────────────
+  /** Total logged events (all time) */
+  visitCount?: number;
+  /** ISO date of the most recent logged event */
+  lastVisitDate?: string;
+  /** All-time YYYY-MM → event count (filtered to current year in display) */
+  visitsByMonth?: Record<string, number>;
+  /** Sum of cash payments recorded on event logs */
+  cashTotal?: number;
+  /** Count of cash-paid event logs */
+  cashVisitCount?: number;
+  /** YYYY-MM → payment count (cash + tagged transactions). Used for timeline color split. */
+  paymentsByMonth?: Record<string, number>;
+
+  // ── Project ledger (maintained by ledger API) ───────────────────────────────
+  /** Sum of project ledger entries (cash / manual — not bank-tagged transactions) */
+  ledgerTotal?: number;
+  /** Number of ledger rows */
+  ledgerEntryCount?: number;
 }
 
 export type EventColor =
@@ -32,24 +104,28 @@ export type EventColor =
   | "indigo"
   | "teal";
 
-export const EVENT_COLORS: { id: EventColor; label: string; bg: string; text: string; border: string }[] = [
-  { id: "purple", label: "Purple", bg: "bg-purple-100", text: "text-purple-700", border: "border-purple-200" },
-  { id: "blue",   label: "Blue",   bg: "bg-blue-100",   text: "text-blue-700",   border: "border-blue-200"   },
-  { id: "green",  label: "Green",  bg: "bg-green-100",  text: "text-green-700",  border: "border-green-200"  },
-  { id: "amber",  label: "Amber",  bg: "bg-amber-100",  text: "text-amber-700",  border: "border-amber-200"  },
-  { id: "red",    label: "Red",    bg: "bg-red-100",    text: "text-red-700",    border: "border-red-200"    },
-  { id: "pink",   label: "Pink",   bg: "bg-pink-100",   text: "text-pink-700",   border: "border-pink-200"   },
-  { id: "indigo", label: "Indigo", bg: "bg-indigo-100", text: "text-indigo-700", border: "border-indigo-200" },
-  { id: "teal",   label: "Teal",   bg: "bg-teal-100",   text: "text-teal-700",   border: "border-teal-200"   },
+export const EVENT_COLORS: {
+  id: EventColor;
+  label: string;
+  bg: string;
+  solidBg: string;
+  text: string;
+  border: string;
+}[] = [
+  { id: "purple", label: "Purple", bg: "bg-purple-100", solidBg: "bg-purple-500", text: "text-purple-700", border: "border-purple-200" },
+  { id: "blue",   label: "Blue",   bg: "bg-blue-100",   solidBg: "bg-blue-500",   text: "text-blue-700",   border: "border-blue-200"   },
+  { id: "green",  label: "Green",  bg: "bg-green-100",  solidBg: "bg-green-500",  text: "text-green-700",  border: "border-green-200"  },
+  { id: "amber",  label: "Amber",  bg: "bg-amber-100",  solidBg: "bg-amber-500",  text: "text-amber-700",  border: "border-amber-200"  },
+  { id: "red",    label: "Red",    bg: "bg-red-100",    solidBg: "bg-red-500",    text: "text-red-700",    border: "border-red-200"    },
+  { id: "pink",   label: "Pink",   bg: "bg-pink-100",   solidBg: "bg-pink-500",   text: "text-pink-700",   border: "border-pink-200"   },
+  { id: "indigo", label: "Indigo", bg: "bg-indigo-100", solidBg: "bg-indigo-500", text: "text-indigo-700", border: "border-indigo-200" },
+  { id: "teal",   label: "Teal",   bg: "bg-teal-100",   solidBg: "bg-teal-500",   text: "text-teal-700",   border: "border-teal-200"   },
 ];
 
 /** Tag overlay — one doc per transaction fingerprint, stores event associations */
 export interface TxTag {
-  /** txFingerprint — same key used throughout the app */
   txFingerprint: string;
-  /** IDs of events this transaction is tagged to */
   eventIds: string[];
-  /** Optional user note on this transaction */
   note?: string;
   taggedAt: string;
   updatedAt: string;
@@ -67,8 +143,14 @@ export interface TaggedTransaction {
   note?: string;
 }
 
-/** Summary returned alongside event data */
+/** Summary returned alongside event data on the list endpoint */
 export interface EventSummary extends UserEvent {
+  /** Statement txns total + cash payments total */
   totalSpent: number;
+  /** Statement-tagged transaction count */
   txCount: number;
+  /** txCount + cashVisitCount (visits paid either via statement or cash) */
+  paidCount?: number;
+  /** visitCount - paidCount (logged but no payment recorded yet) */
+  unbilledCount?: number;
 }
