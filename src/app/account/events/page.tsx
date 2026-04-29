@@ -8,7 +8,7 @@ import { useActiveProfile } from "@/contexts/ActiveProfileContext";
 import type { EventSummary, EventColor, ServiceCadence, BillingMethod } from "@/lib/events/types";
 import { EVENT_COLORS } from "@/lib/events/types";
 import type { RawTx } from "@/components/events/TagPicker";
-import { fmt } from "@/lib/currencyUtils";
+import { fmt, HOME_CURRENCY, getCurrencySymbol } from "@/lib/currencyUtils";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -430,11 +430,13 @@ function CreateEventModal({ headers, onCreated, onClose, planKind }: CreateModal
 function ProjectCard({
   ev,
   headers,
+  homeCurrency,
   onTransactionTagged,
   onLedgerAdded,
 }: {
   ev: EventSummary;
   headers: Record<string, string>;
+  homeCurrency: string;
   onTransactionTagged?: (evId: string, amount: number, date?: string) => void;
   onLedgerAdded?: (evId: string, amount: number) => void;
 }) {
@@ -448,6 +450,7 @@ function ProjectCard({
   const days = ev.startDate && ev.endDate ? daysBetween(ev.startDate, ev.endDate) : null;
 
   const [showPayment, setShowPayment] = useState(false);
+  const hc = homeCurrency;
 
   function openPayment(e: React.MouseEvent) {
     e.stopPropagation();
@@ -477,8 +480,8 @@ function ProjectCard({
           </div>
         </div>
         <div className="shrink-0 text-right">
-          <p className="text-sm font-semibold text-gray-900">{fmt(ev.totalSpent)}</p>
-          {ev.budget && <p className="text-xs text-gray-400">of {fmt(ev.budget)}</p>}
+          <p className="text-sm font-semibold text-gray-900">{fmt(ev.totalSpent, hc)}</p>
+          {ev.budget && <p className="text-xs text-gray-400">of {fmt(ev.budget, hc)}</p>}
         </div>
       </div>
 
@@ -543,6 +546,7 @@ function ProjectCard({
       <TagCashPaymentPanel
         eventId={ev.id}
         headers={headers}
+        homeCurrency={hc}
         isOpen={showPayment}
         onClose={() => setShowPayment(false)}
         onTransactionTagged={onTransactionTagged}
@@ -693,6 +697,7 @@ function TagCashPaymentPanel({
   onTransactionTagged,
   postCashPayment,
   onCashSaved,
+  homeCurrency,
 }: {
   eventId: string;
   headers: Record<string, string>;
@@ -702,7 +707,10 @@ function TagCashPaymentPanel({
   postCashPayment: (p: { date: string; amount: number; note?: string }) => Promise<boolean>;
   /** After successful cash save — parent refreshes aggregates (visits ledger vs totals). */
   onCashSaved: (amount: number, date: string) => void;
+  homeCurrency?: string;
 }) {
+  const cur = homeCurrency ?? HOME_CURRENCY;
+  const curSym = getCurrencySymbol(cur).trim();
   const todayISO     = new Date().toISOString().substring(0, 10);
   const yesterdayISO = new Date(Date.now() - 86400000).toISOString().substring(0, 10);
 
@@ -893,7 +901,7 @@ function TagCashPaymentPanel({
                         </p>
                       </div>
                       <span className={`text-xs font-semibold shrink-0 ${tagged ? "text-emerald-800" : "text-gray-800"}`}>
-                        {fmt(tx.amount)}
+                        {fmt(tx.amount, cur)}
                       </span>
                       {tagged ? (
                         <button
@@ -963,7 +971,7 @@ function TagCashPaymentPanel({
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-500">Amount</span>
             <div className="flex items-center gap-1">
-              <span className="text-xs text-gray-400">$</span>
+              <span className="text-xs text-gray-400">{curSym}</span>
               <input
                 type="number"
                 min="0"
@@ -1015,16 +1023,19 @@ function TagCashPaymentPanel({
 function ServiceCard({
   ev,
   headers,
+  homeCurrency,
   onVisitLogged,
   onTransactionTagged,
 }: {
   ev: EventSummary;
   headers: Record<string, string>;
+  homeCurrency: string;
   onVisitLogged?: (evId: string, date: string) => void;
   onTransactionTagged?: (evId: string, amount: number, date?: string) => void;
 }) {
   const router = useRouter();
   const cfg    = colorCfg(ev.color);
+  const hc     = homeCurrency;
 
   const cadence       = ev.cadence       ?? "monthly";
   const seasonStart   = ev.seasonStart;
@@ -1098,8 +1109,8 @@ function ServiceCard({
           </div>
         </div>
         <div className="shrink-0 text-right">
-          <p className="text-sm font-semibold text-gray-900">{fmt(ev.totalSpent)}</p>
-          {computedAvg !== null && <p className="text-xs text-gray-400">{fmt(computedAvg)} avg / visit</p>}
+          <p className="text-sm font-semibold text-gray-900">{fmt(ev.totalSpent, hc)}</p>
+          {computedAvg !== null && <p className="text-xs text-gray-400">{fmt(computedAvg, hc)} avg / visit</p>}
         </div>
       </div>
 
@@ -1112,7 +1123,7 @@ function ServiceCard({
       {unbilled > 0 && computedAvg && (
         <div className="mb-2.5 flex items-center justify-between rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
           <p className="text-xs text-amber-700">Balance · {unbilled} event{unbilled !== 1 ? "s" : ""} since last payment</p>
-          <p className="text-xs font-semibold text-amber-700">~{fmt(unbilled * computedAvg)} owed</p>
+          <p className="text-xs font-semibold text-amber-700">~{fmt(unbilled * computedAvg, hc)} owed</p>
         </div>
       )}
 
@@ -1121,7 +1132,7 @@ function ServiceCard({
         <div className="flex items-center gap-2 flex-wrap text-xs text-gray-500">
           <span>Visits <span className="font-semibold text-gray-800">{visitCount}</span> of <span className="font-semibold text-gray-800">~{expectedTotal}</span></span>
           <span className="text-gray-200">·</span>
-          <span>Payments <span className="font-semibold text-gray-800">{paidCount}</span>{ev.totalSpent > 0 ? ` (${fmt(ev.totalSpent)})` : ""}</span>
+          <span>Payments <span className="font-semibold text-gray-800">{paidCount}</span>{ev.totalSpent > 0 ? ` (${fmt(ev.totalSpent, hc)})` : ""}</span>
           <span className="text-gray-200">·</span>
           <span className="inline-flex items-center gap-1">
             <span className="h-2 w-2 rounded-full bg-emerald-500 inline-block" />
@@ -1190,6 +1201,7 @@ function ServiceCard({
       <TagCashPaymentPanel
         eventId={ev.id}
         headers={headers}
+        homeCurrency={hc}
         isOpen={showPayment}
         onClose={() => setShowPayment(false)}
         onTransactionTagged={onTransactionTagged}
@@ -1223,6 +1235,7 @@ export default function EventsPage() {
   const [loading, setLoading]       = useState(true);
   const [createStep, setCreateStep]           = useState<null | "pick" | "plan">(null);
   const [createPlanKind, setCreatePlanKind] = useState<"project" | "service" | null>(null);
+  const [homeCurrency, setHomeCurrency] = useState(HOME_CURRENCY);
   const { buildHeaders, targetUid } = useActiveProfile();
 
   useEffect(() => {
@@ -1232,6 +1245,19 @@ export default function EventsPage() {
       else setToken(null);
     });
   }, []);
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    (async () => {
+      const res = await fetch("/api/user/currency-info", { headers: buildHeaders(token) });
+      const json = await res.json().catch(() => ({}));
+      if (!cancelled && json.homeCurrency) setHomeCurrency(json.homeCurrency);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, buildHeaders]);
 
   const load = useCallback(
     async (tok: string) => {
@@ -1372,6 +1398,7 @@ export default function EventsPage() {
                     key={ev.id}
                     ev={ev}
                     headers={headers}
+                    homeCurrency={homeCurrency}
                     onVisitLogged={handleVisitLogged}
                     onTransactionTagged={handleTransactionTagged}
                   />
@@ -1380,6 +1407,7 @@ export default function EventsPage() {
                     key={ev.id}
                     ev={ev}
                     headers={headers}
+                    homeCurrency={homeCurrency}
                     onTransactionTagged={handleTransactionTagged}
                     onLedgerAdded={handleLedgerAdded}
                   />

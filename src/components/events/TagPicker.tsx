@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fmt } from "@/lib/currencyUtils";
+import { fmt, HOME_CURRENCY } from "@/lib/currencyUtils";
 
 export interface RawTx {
   fingerprint: string;
@@ -19,6 +19,7 @@ interface TagPickerProps {
   headers: Record<string, string>;
   onTagged: (tx: RawTx) => void;
   onClose: () => void;
+  homeCurrency?: string;
 }
 
 function txDate(iso: string) {
@@ -34,7 +35,9 @@ export default function TagPicker({
   headers,
   onTagged,
   onClose,
+  homeCurrency,
 }: TagPickerProps) {
+  const cur = homeCurrency ?? HOME_CURRENCY;
   const [txns, setTxns]     = useState<RawTx[]>([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ]             = useState("");
@@ -143,7 +146,7 @@ export default function TagPicker({
                     <p className="text-xs text-gray-400">{txDate(tx.date)} · {tx.category} · {tx.accountLabel}</p>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
-                    <span className="text-sm font-semibold text-gray-900">{fmt(tx.amount)}</span>
+                    <span className="text-sm font-semibold text-gray-900">{fmt(tx.amount, cur)}</span>
                     {alreadyTagged ? (
                       <span className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-400">Tagged ✓</span>
                     ) : (

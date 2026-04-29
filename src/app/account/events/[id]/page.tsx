@@ -7,7 +7,7 @@ import { getFirebaseClient } from "@/lib/firebase";
 import { useActiveProfile } from "@/contexts/ActiveProfileContext";
 import type { UserEvent, TaggedTransaction, EventColor, VisitLog, ServiceCadence, BillingMethod, ProjectLedgerEntry } from "@/lib/events/types";
 import { EVENT_COLORS } from "@/lib/events/types";
-import { fmt } from "@/lib/currencyUtils";
+import { fmt, HOME_CURRENCY, getCurrencySymbol } from "@/lib/currencyUtils";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -46,11 +46,12 @@ function cadenceLabelShort(
 interface EditModalProps {
   event: UserEvent;
   headers: Record<string, string>;
+  homeCurrency: string;
   onSaved: (updated: UserEvent) => void;
   onClose: () => void;
 }
 
-function EditEventModal({ event, headers, onSaved, onClose }: EditModalProps) {
+function EditEventModal({ event, headers, homeCurrency, onSaved, onClose }: EditModalProps) {
   const [name, setName]     = useState(event.name);
   const [budget, setBudget] = useState(event.budget ? String(event.budget) : "");
   const [date, setDate]     = useState(event.date ?? "");
@@ -112,7 +113,9 @@ function EditEventModal({ event, headers, onSaved, onClose }: EditModalProps) {
               />
             </div>
             <div className="flex-1">
-              <label className="block text-xs font-medium text-gray-700 mb-1">Budget ($)</label>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Budget ({getCurrencySymbol(homeCurrency).trim()})
+              </label>
               <input
                 type="number"
                 min="0"
@@ -270,6 +273,8 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
   const [loading, setLoading]       = useState(true);
   const [showPicker, setShowPicker] = useState(false);
   const [showEdit, setShowEdit]     = useState(false);
+  const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
+  const [archiving, setArchiving]   = useState(false);
   const [removing, setRemoving]     = useState<string | null>(null);
   const [removingVisit, setRemovingVisit] = useState<string | null>(null);
   const [currentYear, setCurrentYear] = useState<string | null>(null);
@@ -288,6 +293,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
   const [ledgerEntryType, setLedgerEntryType] = useState<"cash" | "manual">("manual");
   const [savingLedger, setSavingLedger]       = useState(false);
   const [removingLedger, setRemovingLedger] = useState<string | null>(null);
+  const [homeCurrency, setHomeCurrency] = useState(HOME_CURRENCY);
   const { buildHeaders, targetUid } = useActiveProfile();
 
   useEffect(() => {
@@ -297,6 +303,19 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
       else setToken(null);
     });
   }, []);
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    (async () => {
+      const res = await fetch("/api/user/currency-info", { headers: buildHeaders(token) });
+      const json = await res.json().catch(() => ({}));
+      if (!cancelled && json.homeCurrency) setHomeCurrency(json.homeCurrency);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, buildHeaders]);
 
   const load = useCallback(
     async (tok: string) => {
@@ -349,13 +368,19 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
     }
   }
 
-  async function handleArchive() {
-    if (!token || !confirm(`Archive "${event?.name}"? Tags and ledger entries stay in your data but won’t show on active plans.`)) return;
-    const res = await fetch(`/api/user/events/${id}`, {
-      method: "DELETE",
-      headers: buildHeaders(token),
-    });
-    if (res.ok) router.push("/account/events");
+  async function performArchive() {
+    if (!token) return;
+    setArchiving(true);
+    try {
+      const res = await fetch(`/api/user/events/${id}`, {
+        method: "DELETE",
+        headers: buildHeaders(token),
+      });
+      if (res.ok) router.push("/account/events");
+    } finally {
+      setArchiving(false);
+      setShowArchiveConfirm(false);
+    }
   }
 
   async function handleRemoveVisit(visitId: string) {
@@ -503,6 +528,8 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
   const taggedSet = new Set(tagged.map((t) => t.fingerprint));
   const pct = event?.budget ? Math.min(100, Math.round((totalSpent / event.budget) * 100)) : null;
   const cfg = event ? colorCfg(event.color) : EVENT_COLORS[0];
+  const hc = homeCurrency;
+  const curSym = getCurrencySymbol(hc).trim();
 
   if (loading) {
     return (
@@ -575,7 +602,8 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                 Edit
               </button>
               <button
-                onClick={handleArchive}
+                type="button"
+                onClick={() => setShowArchiveConfirm(true)}
                 className="rounded-lg px-3 py-1.5 text-xs font-medium text-gray-400 hover:text-red-500 hover:bg-red-50 border border-gray-100"
               >
                 Archive
@@ -586,9 +614,9 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
           {/* Totals */}
           <div className="flex items-end justify-between mb-3">
             <div>
-              <p className="text-2xl font-bold text-gray-900">{fmt(totalSpent)}</p>
+              <p className="text-2xl font-bold text-gray-900">{fmt(totalSpent, hc)}</p>
               {event.budget && (
-                <p className="text-sm text-gray-400">of {fmt(event.budget)} budget</p>
+                <p className="text-sm text-gray-400">of {fmt(event.budget, hc)} budget</p>
               )}
             </div>
             <div className="text-right">
@@ -725,7 +753,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                     })}
                     {logPayType === "cash" && (
                       <div className="flex items-center gap-1">
-                        <span className="text-xs text-gray-400">$</span>
+                        <span className="text-xs text-gray-400">{curSym}</span>
                         <input
                           type="number"
                           min="0"
@@ -777,7 +805,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                         </p>
                         {v.paymentMethod === "cash" && (
                           <span className="inline-flex items-center rounded-full bg-green-50 border border-green-100 px-2 py-0.5 text-[11px] font-medium text-green-700">
-                            {v.amount ? `$${v.amount.toFixed(2)} cash` : "Cash"}
+                            {v.amount ? `${fmt(v.amount, hc)} cash` : "Cash"}
                           </span>
                         )}
                         {v.paymentMethod === "statement" && (
@@ -842,7 +870,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                   <div>
                     <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Amount</p>
                     <div className="flex items-center gap-1">
-                      <span className="text-xs text-gray-400">$</span>
+                      <span className="text-xs text-gray-400">{curSym}</span>
                       <input
                         type="number"
                         min="0.01"
@@ -925,7 +953,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                       </span>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-sm font-semibold text-gray-900">{fmt(row.amount)}</span>
+                      <span className="text-sm font-semibold text-gray-900">{fmt(row.amount, hc)}</span>
                       <button
                         type="button"
                         onClick={() => handleRemoveLedgerEntry(row.id)}
@@ -988,7 +1016,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                     />
                   </div>
                   <div className="flex items-center gap-3 shrink-0 pt-0.5">
-                    <span className="text-sm font-semibold text-gray-900">{fmt(tx.amount)}</span>
+                    <span className="text-sm font-semibold text-gray-900">{fmt(tx.amount, hc)}</span>
                     <button
                       onClick={() => handleRemove(tx.fingerprint)}
                       disabled={removing === tx.fingerprint}
@@ -1010,6 +1038,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
           eventName={event.name}
           taggedFingerprints={taggedSet}
           headers={headers}
+          homeCurrency={homeCurrency}
           onTagged={handleTagged}
           onClose={() => setShowPicker(false)}
         />
@@ -1019,9 +1048,53 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
         <EditEventModal
           event={event}
           headers={headers}
+          homeCurrency={homeCurrency}
           onSaved={(updated) => { setEvent(updated); setShowEdit(false); }}
           onClose={() => setShowEdit(false)}
         />
+      )}
+
+      {showArchiveConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="presentation"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !archiving) setShowArchiveConfirm(false);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-labelledby="archive-plan-title"
+            aria-modal="true"
+            className="w-full max-w-sm rounded-2xl bg-white shadow-xl p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="archive-plan-title" className="text-base font-semibold text-gray-900 mb-2">
+              Archive this plan?
+            </h3>
+            <p className="text-sm text-gray-600 mb-6">
+              Archive &quot;{event.name}&quot;? Tags and ledger entries stay in your data but won&apos;t show on active plans.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                disabled={archiving}
+                onClick={() => setShowArchiveConfirm(false)}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 border border-gray-200 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={archiving}
+                onClick={performArchive}
+                className="rounded-lg px-4 py-2 text-sm font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50"
+              >
+                {archiving ? "Archiving…" : "Archive plan"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
