@@ -1341,7 +1341,7 @@ export default function EventsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="mx-auto max-w-2xl px-4 py-8">
+      <div className="mx-auto max-w-2xl lg:max-w-5xl px-4 py-8">
 
         {/* Page header */}
         <div className="mb-7 flex items-start justify-between">
