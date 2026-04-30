@@ -31,10 +31,10 @@ type SavedGoalRecord = {
   targetDate?: string | null;
   currentAmount?: number | null;
   description?: string;
-  /** Explicit list of account slugs counting toward this goal.
-   *  undefined = use smart default (savings+checking for savings-type goals).
-   *  [] = no accounts linked. */
+  /** Asset account slugs (savings / checking / investment) — savings goals only. */
   linkedAccountSlugs?: string[];
+  /** Liability account slugs — debt payoff goals only. */
+  linkedLiabilitySlugs?: string[];
 };
 
 type GoalTemplate = {
@@ -88,6 +88,35 @@ function effectiveLinkedSlugs(goal: SavedGoalRecord, snaps: AccountSnapshot[]): 
       .map((s) => s.slug);
   }
   return [];
+}
+
+/** Debt accounts included in a user debt-payoff goal. Default = all liabilities. */
+function effectiveDebtLinkedSlugs(goal: SavedGoalRecord, liabilitySnaps: AccountSnapshot[]): string[] {
+  if (toGoalType(goal.goalType) !== "debt_payoff") return [];
+  if (Array.isArray(goal.linkedLiabilitySlugs)) return goal.linkedLiabilitySlugs;
+  return liabilitySnaps.map((s) => s.slug);
+}
+
+/** Weighted APR (percent, e.g. 19.99) for a subset of debt snapshots. */
+function balanceWeightedDebtAprSubset(
+  debtSnaps: AccountSnapshot[],
+  rateEntries: AccountRateEntry[],
+): number | null {
+  const entries = rateEntries.filter((r) => DEBT_TYPES.has(r.accountType) && r.effectiveRate != null);
+  if (entries.length === 0) return null;
+  let matchedOwed = 0;
+  let weighted = 0;
+  for (const s of debtSnaps) {
+    if (s.balance >= 0) continue;
+    const owed = Math.abs(s.balance);
+    const entry = entries.find((r) => r.accountName === s.accountName || r.bankName === s.bankName);
+    if (entry?.effectiveRate == null) continue;
+    matchedOwed += owed;
+    weighted += owed * entry.effectiveRate;
+  }
+  if (matchedOwed > 0) return weighted / matchedOwed;
+  const simple = entries.map((r) => r.effectiveRate as number);
+  return simple.reduce((a, b) => a + b, 0) / simple.length;
 }
 
 const GOAL_TYPE_LABEL: Record<GoalType, string> = {
@@ -530,6 +559,61 @@ export default function GoalsPage() {
     }
   }
 
+  async function toggleLiabilityLink(goalId: string, slug: string, add: boolean) {
+    if (!authToken) return;
+    const goal = savedGoals.find((g) => g.id === goalId);
+    if (!goal) return;
+    const previous = effectiveDebtLinkedSlugs(goal, liabilitySnaps);
+    const newSlugs = add
+      ? [...new Set([...previous, slug])]
+      : previous.filter((s) => s !== slug);
+    const finalSlugs = newSlugs.length === 0 ? previous : newSlugs;
+    if (finalSlugs.join() === previous.join()) return;
+
+    setSavedGoals((prev) =>
+      prev.map((g) => g.id === goalId ? { ...g, linkedLiabilitySlugs: finalSlugs } : g),
+    );
+    try {
+      const res = await fetch(`/api/user/goals/${goalId}`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ linkedLiabilitySlugs: finalSlugs }),
+      });
+      if (!res.ok) throw new Error(`${res.status}`);
+    } catch (err) {
+      console.error("Failed to save liability link:", err);
+      setSavedGoals((prev) =>
+        prev.map((g) => g.id === goalId ? { ...g, linkedLiabilitySlugs: previous } : g),
+      );
+    }
+  }
+
+  async function selectAllLiabilityLinks(goalId: string) {
+    if (!authToken || liabilitySnaps.length === 0) return;
+    const goal = savedGoals.find((g) => g.id === goalId);
+    if (!goal) return;
+    const allSlugs = liabilitySnaps.map((s) => s.slug);
+    const previous = effectiveDebtLinkedSlugs(goal, liabilitySnaps);
+    if (allSlugs.length === previous.length && allSlugs.every((s) => previous.includes(s))) return;
+
+    setSavedGoals((prev) =>
+      prev.map((g) => g.id === goalId ? { ...g, linkedLiabilitySlugs: allSlugs } : g),
+    );
+    try {
+      const res = await fetch(`/api/user/goals/${goalId}`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ linkedLiabilitySlugs: allSlugs }),
+      });
+      if (!res.ok) throw new Error(`${res.status}`);
+    } catch (err) {
+      console.error("Failed to save liability selection:", err);
+      setSavedGoals((prev) =>
+        prev.map((g) => g.id === goalId ? { ...g, linkedLiabilitySlugs: previous } : g),
+      );
+    }
+  }
+
   function closeGoalModal() {
     setShowAddGoal(false);
     setGoalPickerStep("pick");
@@ -651,8 +735,44 @@ export default function GoalsPage() {
       apr: null, monthlyPayment: null,
     }] : []),
 
-    // User-saved goals — progress derived from linked account balances
+    // User-saved goals
     ...savedGoals.map((g) => {
+      const gt = toGoalType(g.goalType);
+      if (gt === "debt_payoff") {
+        const debtSlugs = effectiveDebtLinkedSlugs(g, liabilitySnaps);
+        const debtSnapsSubset = liabilitySnaps.filter((s) => debtSlugs.includes(s.slug));
+        const remaining = debtSnapsSubset.reduce((sum, s) => sum + Math.abs(Math.min(0, s.balance)), 0);
+        const share = debts > 0 ? remaining / debts : remaining > 0 ? 1 : 0;
+        const subsetPeakApprox = maxDebtHistorical * share;
+        const paidDown = Math.max(0, subsetPeakApprox - remaining);
+        const pct = subsetPeakApprox > 0
+          ? Math.min(100, Math.round((paidDown / subsetPeakApprox) * 100))
+          : remaining <= 0 ? 100 : 0;
+        const subsetApr = balanceWeightedDebtAprSubset(debtSnapsSubset, rates) ?? debtInterestRate ?? 8.5;
+        const subsetPay = baseDebtPay != null && debts > 0 ? baseDebtPay * share : baseDebtPay;
+        const projMs = remaining > 0 && subsetPay != null && subsetPay > 0
+          ? (amortisedPayoffMonths(remaining, subsetApr, subsetPay) ?? null)
+          : remaining <= 0 ? 0 : null;
+        const names = debtSnapsSubset.map((s) => s.accountName ?? s.bankName).filter(Boolean);
+        const explicitlyNoDebts = Array.isArray(g.linkedLiabilitySlugs) && g.linkedLiabilitySlugs.length === 0;
+        return {
+          id: g.id,
+          source: "user" as const,
+          isComplete: !explicitlyNoDebts && remaining <= 0,
+          goalType: "debt_payoff" as GoalType,
+          emoji: g.emoji ?? "💳",
+          title: g.title ?? "Goal",
+          subtitle: names.length > 0 ? names.join(", ") : g.description ?? "",
+          currentAmount: remaining,
+          targetAmount: subsetPeakApprox > 0 ? subsetPeakApprox : null,
+          progressPct: pct,
+          projectedMonths: projMs,
+          apr: subsetApr,
+          monthlyPayment: subsetPay ?? null,
+          savedGoal: g,
+        };
+      }
+
       const linkedSlugs = effectiveLinkedSlugs(g, snapshots);
       const linkedBalance = snapshots
         .filter((s) => linkedSlugs.includes(s.slug))
@@ -1160,12 +1280,17 @@ export default function GoalsPage() {
               {/* ══ USER GOAL detail ══ */}
               {activeGoal.source === "user" && activeGoal.savedGoal && (() => {
                 const sg = activeGoal.savedGoal;
-                const linkedSlugs = effectiveLinkedSlugs(sg, snapshots);
-                // Accounts available to link: all non-debt accounts
+                const isDebtPayoffUser = toGoalType(sg.goalType) === "debt_payoff";
+                const linkedSlugs = !isDebtPayoffUser ? effectiveLinkedSlugs(sg, snapshots) : [];
+                const debtLinkedSlugs = isDebtPayoffUser ? effectiveDebtLinkedSlugs(sg, liabilitySnaps) : [];
+
                 const linkableSnaps = snapshots.filter((s) => ASSET_TYPES.has(s.accountType));
                 const savingsChecking = linkableSnaps.filter((s) => s.accountType === "savings" || s.accountType === "checking");
                 const investmentAccs  = linkableSnaps.filter((s) => s.accountType === "investment");
-                const hasLinkable = linkableSnaps.length > 0;
+                const hasLinkable = !isDebtPayoffUser && linkableSnaps.length > 0;
+
+                const debtPeak = activeGoal.targetAmount ?? 0;
+                const debtPaidDown = debtPeak > 0 ? Math.max(0, debtPeak - activeGoal.currentAmount) : 0;
 
                 return (
                   <>
@@ -1213,7 +1338,42 @@ export default function GoalsPage() {
                         )}
                       </div>
 
-                      {activeGoal.targetAmount != null && activeGoal.targetAmount > 0 ? (
+                      {isDebtPayoffUser ? (
+                        <>
+                          <div>
+                            <p className="text-4xl font-bold tabular-nums text-gray-900">{fmt(activeGoal.currentAmount, hc)}</p>
+                            <p className="text-sm text-gray-500 mt-1">
+                              {debtLinkedSlugs.length > 0
+                                ? `remaining across ${debtLinkedSlugs.length} selected debt account${debtLinkedSlugs.length !== 1 ? "s" : ""}`
+                                : "No debts selected"}
+                            </p>
+                          </div>
+                          <div className="mt-4 pb-5">
+                            <div className="flex justify-between text-xs text-gray-500 mb-2">
+                              <span>
+                                {debtPaidDown > 0
+                                  ? `${fmt(debtPaidDown, hc)} paid down from peak`
+                                  : "No reduction from peak tracked yet"}
+                              </span>
+                              <span className="font-medium tabular-nums">{activeGoal.progressPct}%</span>
+                            </div>
+                            <div className={`h-3 w-full rounded-full ${accent.track} overflow-hidden`}>
+                              <div className={`h-full rounded-full ${accent.bar} transition-all duration-500`} style={{ width: `${activeGoal.progressPct}%` }} />
+                            </div>
+                            {activeGoal.apr != null && (
+                              <p className="text-xs text-gray-400 mt-1.5 tabular-nums">Wtd. APR · {activeGoal.apr.toFixed(2)}%</p>
+                            )}
+                            {activeGoal.projectedMonths != null && activeGoal.projectedMonths > 0 && activeGoal.monthlyPayment != null && activeGoal.monthlyPayment > 0 && (
+                              <p className="text-xs text-gray-400 mt-1.5">
+                                At ~{fmt(activeGoal.monthlyPayment, hc)}/mo toward these debts · ~{activeGoal.projectedMonths} mo ({addMonths(activeGoal.projectedMonths)})
+                              </p>
+                            )}
+                            {userGoalTargetDateLabel && (
+                              <p className="text-xs text-gray-400 mt-1">Goal payoff date: {userGoalTargetDateLabel}</p>
+                            )}
+                          </div>
+                        </>
+                      ) : activeGoal.targetAmount != null && activeGoal.targetAmount > 0 ? (
                         <>
                           <div>
                             <p className="text-4xl font-bold tabular-nums text-gray-900">{fmt(activeGoal.currentAmount, hc)}</p>
@@ -1249,34 +1409,131 @@ export default function GoalsPage() {
                     </div>
 
                     {/* Stats row */}
-                    {activeGoal.targetAmount != null && activeGoal.targetAmount > 0 && (
-                      <div className="border-t border-gray-100 grid grid-cols-2 divide-x divide-gray-100">
-                        <div className="px-5 py-4">
-                          <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Target</p>
-                          <p className="text-xl font-bold text-gray-900 mt-1 tabular-nums">{fmt(activeGoal.targetAmount, hc)}</p>
+                    {isDebtPayoffUser ? (
+                      <div className="border-t border-gray-100 grid grid-cols-3 divide-x divide-gray-100">
+                        <div className="px-5 py-4 min-w-0">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Remaining</p>
+                          <p className="text-xl font-bold text-gray-900 mt-1 tabular-nums">{fmt(activeGoal.currentAmount, hc)}</p>
                         </div>
-                        <div className="px-5 py-4">
-                          <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
-                            {userGoalTargetDateLabel ? "Target date" : activeGoal.projectedMonths != null && activeGoal.projectedMonths > 0 ? "Projected" : "Savings rate"}
-                          </p>
+                        <div className="px-5 py-4 min-w-0">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Target payoff</p>
                           <p className="text-xl font-bold text-gray-900 mt-1 tabular-nums">
-                            {userGoalTargetDateLabel
-                              ? userGoalTargetDateLabel
-                              : activeGoal.projectedMonths != null && activeGoal.projectedMonths > 0
-                              ? addMonths(activeGoal.projectedMonths)
-                              : monthlySavings > 0 ? `${fmt(monthlySavings, hc)}/mo` : "—"}
+                            {userGoalTargetDateLabel ?? "—"}
                           </p>
                         </div>
+                        <div className="px-5 py-4 min-w-0">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Expected</p>
+                          <p className="text-xl font-bold text-gray-900 mt-1 tabular-nums">
+                            {activeGoal.projectedMonths != null && activeGoal.projectedMonths > 0
+                              ? addMonths(activeGoal.projectedMonths)
+                              : "—"}
+                          </p>
+                          {activeGoal.monthlyPayment != null && activeGoal.monthlyPayment > 0 && (
+                            <p className="text-[10px] text-gray-400 mt-1 tabular-nums truncate" title={`~${fmt(activeGoal.monthlyPayment, hc)}/mo toward these debts`}>
+                              ~{fmt(activeGoal.monthlyPayment, hc)}/mo
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      activeGoal.targetAmount != null && activeGoal.targetAmount > 0 && (
+                        <div className="border-t border-gray-100 grid grid-cols-2 divide-x divide-gray-100">
+                          <div className="px-5 py-4">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Target</p>
+                            <p className="text-xl font-bold text-gray-900 mt-1 tabular-nums">{fmt(activeGoal.targetAmount, hc)}</p>
+                          </div>
+                          <div className="px-5 py-4">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                              {userGoalTargetDateLabel ? "Target date" : activeGoal.projectedMonths != null && activeGoal.projectedMonths > 0 ? "Projected" : "Savings rate"}
+                            </p>
+                            <p className="text-xl font-bold text-gray-900 mt-1 tabular-nums">
+                              {userGoalTargetDateLabel
+                                ? userGoalTargetDateLabel
+                                : activeGoal.projectedMonths != null && activeGoal.projectedMonths > 0
+                                ? addMonths(activeGoal.projectedMonths)
+                                : monthlySavings > 0 ? `${fmt(monthlySavings, hc)}/mo` : "—"}
+                            </p>
+                          </div>
+                        </div>
+                      )
+                    )}
+
+                    {/* Debts tracked (payoff goals) */}
+                    {isDebtPayoffUser && liabilitySnaps.length > 0 && (
+                      <div className="border-t border-gray-100 px-6 py-5">
+                        <div className="flex items-center justify-between mb-3 gap-3">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Debts included in this goal</p>
+                            <p className="text-xs text-gray-400 mt-0.5">Toggle which balances count toward payoff</p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {debtLinkedSlugs.length < liabilitySnaps.length && (
+                              <button
+                                type="button"
+                                onClick={() => selectAllLiabilityLinks(sg.id)}
+                                className="text-xs font-semibold text-purple-700 hover:text-purple-900 whitespace-nowrap"
+                              >
+                                Select all
+                              </button>
+                            )}
+                            {debtLinkedSlugs.length > 0 && (
+                              <p className="text-xs font-semibold text-gray-700 tabular-nums">{fmt(activeGoal.currentAmount, hc)} owed</p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          {liabilitySnaps.map((s) => {
+                            const owed = Math.abs(Math.min(0, s.balance));
+                            const rate = debtRates.find((r) => r.accountName === s.accountName || r.bankName === s.bankName);
+                            const apr = rate?.effectiveRate;
+                            const isLinked = debtLinkedSlugs.includes(s.slug);
+                            return (
+                              <button
+                                key={s.slug}
+                                type="button"
+                                onClick={() => toggleLiabilityLink(sg.id, s.slug, !isLinked)}
+                                className={`w-full flex items-center justify-between rounded-xl border px-4 py-3 text-left transition ${
+                                  isLinked
+                                    ? "border-purple-200 bg-purple-50/60"
+                                    : "border-gray-100 bg-white opacity-60 hover:opacity-100 hover:bg-gray-50"
+                                }`}
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-sm font-medium text-gray-800 truncate">{s.accountName ?? s.bankName}</p>
+                                  <p className="text-xs text-gray-400">
+                                    {TYPE_LABEL[s.accountType] ?? s.accountType}
+                                    {apr != null ? ` · ${apr.toFixed(2)}% APR` : ""}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-3 shrink-0 ml-3">
+                                  <p className="text-sm font-semibold tabular-nums text-gray-700">{fmt(owed, hc)}</p>
+                                  <div className={`relative w-9 h-5 rounded-full transition-colors ${isLinked ? "bg-purple-500" : "bg-gray-200"}`}>
+                                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${isLinked ? "translate-x-4" : "translate-x-0.5"}`} />
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {debtLinkedSlugs.length === 0 && (
+                          <p className="mt-2 text-xs text-gray-400">Turn on at least one debt above to track this goal.</p>
+                        )}
                       </div>
                     )}
 
-                    {/* Account linking */}
+                    {isDebtPayoffUser && liabilitySnaps.length === 0 && (
+                      <div className="border-t border-gray-100 px-6 py-4">
+                        <p className="text-xs text-gray-500">Upload statements with credit cards, loans, or mortgages to choose which debts this goal tracks.</p>
+                      </div>
+                    )}
+
+                    {/* Asset linking (savings goals) */}
                     {hasLinkable && (
                       <div className="border-t border-gray-100 px-6 py-5">
                         <div className="flex items-center justify-between mb-3">
                           <div>
                             <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Accounts counting toward this goal</p>
-                            <p className="text-xs text-gray-400 mt-0.5">Toggle accounts on or off</p>
+                            <p className="text-xs text-gray-400 mt-0.5">Toggle savings, checking, and investments</p>
                           </div>
                           {linkedSlugs.length > 0 && (
                             <p className="text-xs font-semibold text-gray-700 tabular-nums">{fmt(activeGoal.currentAmount, hc)} total</p>
@@ -1310,7 +1567,6 @@ export default function GoalsPage() {
                                       </div>
                                       <div className="flex items-center gap-3 shrink-0 ml-3">
                                         <p className="text-sm font-semibold tabular-nums text-gray-700">{fmt(Math.max(0, s.balance), hc)}</p>
-                                        {/* Toggle pill */}
                                         <div className={`relative w-9 h-5 rounded-full transition-colors ${isLinked ? "bg-purple-500" : "bg-gray-200"}`}>
                                           <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${isLinked ? "translate-x-4" : "translate-x-0.5"}`} />
                                         </div>

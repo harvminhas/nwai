@@ -40,11 +40,12 @@ export async function POST(req: NextRequest) {
     const doc = {
       title: body.title ?? "Untitled goal",
       description: body.description ?? "",
-      goalType: body.goalType ?? "custom",
+      goalType: body.goalType ?? "savings",
       targetAmount: body.targetAmount ?? null,
       targetDate: body.targetDate ?? null,
       currentAmount: body.currentAmount ?? null,
       linkedAccountSlugs: body.linkedAccountSlugs ?? null,
+      linkedLiabilitySlugs: body.linkedLiabilitySlugs ?? null,
       emoji: body.emoji ?? "🎯",
       createdAt: new Date(),
       updatedAt: new Date(),
