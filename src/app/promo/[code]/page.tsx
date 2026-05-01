@@ -37,7 +37,7 @@ const proFeatures = [
   "Spending forecast",
   "Goals tracker",
   "Debt payoff planner",
-  "What-if scenario planner",
+  "Scenario planner",
   "Market & inflation signals",
   "CSV data export",
 ];

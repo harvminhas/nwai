@@ -22,7 +22,7 @@ const PRO_FEATURES = [
   "Goals tracking",
   "Debt payoff planner",
   "CSV / PDF export",
-  "What-if scenarios",
+  "Scenarios",
 ];
 
 interface FeaturedCampaign {

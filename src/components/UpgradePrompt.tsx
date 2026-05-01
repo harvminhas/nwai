@@ -47,7 +47,7 @@ export default function UpgradePrompt({ feature, description }: UpgradePromptPro
           {pro.features.multiUpload   && <FeatureRow label="Unlimited uploads" />}
           {pro.features.export        && <FeatureRow label="CSV / PDF export" />}
           {pro.features.aiInsights    && <FeatureRow label="AI insights & chat" />}
-          {pro.features.whatIf        && <FeatureRow label="What-if scenarios" />}
+          {pro.features.whatIf        && <FeatureRow label="Scenarios" />}
         </ul>
       </div>
 

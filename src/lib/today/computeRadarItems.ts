@@ -125,7 +125,7 @@ function detectExtraOccurrenceMonth(
         text:  `Based on ${pattern.occurrenceCount} confirmed occurrences`,
       },
       primaryAction: {
-        label: pattern.isIncome ? "Plan the extra" : "Model in What If",
+        label: pattern.isIncome ? "Plan the extra" : "Model in Scenarios",
         href:  pattern.isIncome ? "/account/goals" : "/account/spending",
       },
     },

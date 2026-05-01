@@ -1303,7 +1303,7 @@ function WhatIfWorkspace() {
       <div className="flex items-start justify-between mb-6">
         <div>
           <div className="flex items-center gap-2.5">
-            <h1 className="text-2xl font-bold text-gray-900">What if</h1>
+            <h1 className="text-2xl font-bold text-gray-900">Scenarios</h1>
             <span className="rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-semibold text-purple-700">AI</span>
           </div>
           <p className="mt-1 text-sm text-gray-400">
@@ -1314,10 +1314,10 @@ function WhatIfWorkspace() {
           onClick={() => openNewScenario("purchase")}
           className="shrink-0 flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 hover:border-purple-300 hover:text-purple-700 hover:bg-purple-50 shadow-sm transition"
         >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
           </svg>
-          + New scenario
+          New scenario
         </button>
       </div>
 
@@ -1337,7 +1337,7 @@ function WhatIfWorkspace() {
                 </svg>
               </div>
               <p className="text-sm font-semibold text-gray-700 mb-1">No scenarios yet</p>
-              <p className="text-xs text-gray-400 max-w-xs mx-auto">Click "+ New scenario" to start modelling decisions — buy a car, get a raise, pay off debt — and see how they stack up.</p>
+              <p className="text-xs text-gray-400 max-w-xs mx-auto">Click <span className="font-medium text-gray-500">New scenario</span> above to model decisions — buy a car, get a raise, pay off debt — and see how they stack up.</p>
             </div>
           ) : (
             <>

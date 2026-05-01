@@ -199,7 +199,7 @@ const pricingFeatures = [
   { label: "Spending forecast",            free: false,              pro: true },
   { label: "Goals tracker",               free: false,              pro: true },
   { label: "Debt payoff planner",          free: false,              pro: true },
-  { label: "What-if scenario planner",     free: false,              pro: true },
+  { label: "Scenario planner",     free: false,              pro: true },
   { label: "Market & inflation signals",   free: false,              pro: true },
   { label: "Data export (CSV)",            free: false,              pro: true },
 ];

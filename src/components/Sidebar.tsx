@@ -108,7 +108,7 @@ const NAV_GROUPS: { section: string; items: NavItemDef[] }[] = [
       },
       {
         href: "/account/whatif",
-        label: "What If",
+        label: "Scenarios",
         proFeature: "whatIf" as keyof PlanFeatures,
         icon: (
           <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
