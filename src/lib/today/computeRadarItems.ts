@@ -508,25 +508,81 @@ export function computeRadarItems(input: RadarInput): RadarItem[] {
   }
 
   // ── C. Subscription cluster ────────────────────────────────────────────────
-  // Combine aiSubs + cashCommitments into dated sub items for next month
+  // Only monthly subs belong in a "renewals this week" cluster. Annual/quarterly
+  // subs are projected to their real next-occurrence date and only included if
+  // that date is within 60 days. A single historical occurrence with no explicit
+  // frequency is treated as unknown cadence — no projection.
   const subItems: SubItem[] = [];
+  const clusterTodayStr = toDateStr(new Date());
 
   for (const sub of input.aiSubs) {
-    // Try to find predicted date from merchantPatternDates
     const key = sub.name.toLowerCase().trim().slice(0, 40);
     const pat = input.merchantPatternDates.get(key);
+
+    // ── determine cadence ──────────────────────────────────────────────────
+    // Priority: (1) explicit frequency from subscription record, (2) computed
+    // from historical interval, (3) unknown (no projection).
+    const explicitFreq = (sub.frequency ?? "").toLowerCase();
+    const isExplicitLong = explicitFreq === "annual" || explicitFreq === "yearly" || explicitFreq === "quarterly";
+    const isExplicitShort = explicitFreq === "monthly" || explicitFreq === "weekly" || explicitFreq === "biweekly";
+
     if (!pat || pat.dates.length === 0) {
+      // No history — no projection possible
       subItems.push({ name: sub.name, amount: sub.amount });
       continue;
     }
-    const days = pat.dates.map((d) => parseInt(d.slice(8, 10)));
-    const medianDay = days.sort((a, b) => a - b)[Math.floor(days.length / 2)];
-    // Next month occurrence
-    const nm   = new Date(); nm.setMonth(nm.getMonth() + 1); nm.setDate(1);
-    const maxD = new Date(nm.getFullYear(), nm.getMonth() + 1, 0).getDate();
-    const dd   = String(Math.min(medianDay, maxD)).padStart(2, "0");
-    const mm   = String(nm.getMonth() + 1).padStart(2, "0");
-    subItems.push({ name: sub.name, amount: sub.amount, predictedDate: `${nm.getFullYear()}-${mm}-${dd}` });
+
+    const sortedDates = [...pat.dates].sort();
+    const latestDate  = sortedDates[sortedDates.length - 1];
+
+    // Compute interval only when we have ≥2 data points
+    let computedIntervalDays: number | null = null;
+    if (sortedDates.length >= 2) {
+      let totalMs = 0;
+      for (let i = 1; i < sortedDates.length; i++) {
+        totalMs += new Date(sortedDates[i]).getTime() - new Date(sortedDates[i - 1]).getTime();
+      }
+      computedIntervalDays = totalMs / (sortedDates.length - 1) / 86_400_000;
+    }
+
+    const isLongCadence =
+      isExplicitLong ||                         // explicit annual/quarterly label
+      (computedIntervalDays !== null && computedIntervalDays > 45); // computed interval > 45 days
+
+    const isShortCadence =
+      isExplicitShort ||                        // explicit monthly/weekly label
+      (computedIntervalDays !== null && computedIntervalDays <= 45);
+
+    if (isLongCadence) {
+      // Annual/quarterly: compute real next occurrence; only include if ≤60 days away
+      const intervalForProjection = computedIntervalDays ?? (explicitFreq === "quarterly" ? 91 : 365);
+      const nextTs   = new Date(latestDate + "T00:00:00Z").getTime() + intervalForProjection * 86_400_000;
+      const nextDate = toDateStr(new Date(nextTs));
+      if (nextDate < clusterTodayStr) {
+        subItems.push({ name: sub.name, amount: sub.amount });
+        continue;
+      }
+      const daysAway = Math.round(
+        (new Date(nextDate + "T00:00:00Z").getTime() - new Date(clusterTodayStr + "T00:00:00Z").getTime()) / 86_400_000,
+      );
+      subItems.push({
+        name: sub.name,
+        amount: sub.amount,
+        ...(daysAway <= 60 ? { predictedDate: nextDate } : {}),
+      });
+    } else if (isShortCadence) {
+      // Monthly: project the median day-of-month to next month
+      const days      = pat.dates.map((d) => parseInt(d.slice(8, 10)));
+      const medianDay = days.sort((a, b) => a - b)[Math.floor(days.length / 2)];
+      const nm   = new Date(); nm.setMonth(nm.getMonth() + 1); nm.setDate(1);
+      const maxD = new Date(nm.getFullYear(), nm.getMonth() + 1, 0).getDate();
+      const dd   = String(Math.min(medianDay, maxD)).padStart(2, "0");
+      const mm   = String(nm.getMonth() + 1).padStart(2, "0");
+      subItems.push({ name: sub.name, amount: sub.amount, predictedDate: `${nm.getFullYear()}-${mm}-${dd}` });
+    } else {
+      // Single occurrence, unknown cadence — no projection
+      subItems.push({ name: sub.name, amount: sub.amount });
+    }
   }
 
   const clusterItem = detectSubscriptionCluster(subItems, nextMonthKey);
