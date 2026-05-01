@@ -176,6 +176,12 @@ function buildChartData(
 
 // ── milestone detection ───────────────────────────────────────────────────────
 
+function toHome(amount: number, currency: string | undefined, fxRates: Record<string, number>, hc: string): number {
+  if (!currency || currency.toUpperCase() === hc.toUpperCase()) return amount;
+  const rate = fxRates[currency.toUpperCase()];
+  return rate != null ? amount * rate : amount;
+}
+
 function detectMilestones(
   currentNW: number,
   monthlySavings: number,
@@ -183,6 +189,8 @@ function detectMilestones(
   snapshots: AccountSnapshot[],
   accountHistory: AccountBalanceHistoryItem[],
   sym: string,
+  fxRates: Record<string, number>,
+  hc: string,
 ): Milestone[] {
   const maxMonths = 20 * 12;
   const predicted = projectNetWorth(currentNW, monthlySavings, maxMonths);
@@ -220,13 +228,14 @@ function detectMilestones(
   const debtResults: DebtAccountResult[] = [];
 
   for (const snap of debtSnaps) {
-    const owed = Math.abs(snap.balance);
+    const owed = Math.abs(toHome(snap.balance, snap.currency, fxRates, hc));
     if (owed <= 0) continue;
     const name = snap.accountName ?? snap.bankName ?? "Debt";
     const isMortgage = snap.accountType === "mortgage";
 
     // Use accountBalanceHistory — only real uploaded months, no carry-forwards
     const acctRecord = accountHistory.find((a) => a.slug === snap.slug);
+    const acctCurrency = acctRecord?.currency ?? snap.currency;
     const acctEntries = (acctRecord?.entries ?? []).slice(-12);
 
     if (acctEntries.length < 2) {
@@ -234,13 +243,14 @@ function detectMilestones(
       continue;
     }
 
-    const oldest = acctEntries[0].balance;           // e.g. -25000 (owed more in the past)
-    const newest = acctEntries[acctEntries.length - 1].balance; // e.g. -21000 (owe less now)
+    // Convert each balance entry to home currency before computing trend
+    const oldestHome = toHome(acctEntries[0].balance, acctCurrency, fxRates, hc);
+    const newestHome = toHome(acctEntries[acctEntries.length - 1].balance, acctCurrency, fxRates, hc);
     const span = acctEntries.length - 1;
     // monthlyChange > 0 means balance moved toward 0 = debt decreasing = good
-    const monthlyChange = (newest - oldest) / span;
+    const monthlyChange = (newestHome - oldestHome) / span;
     // For debt: monthlyPaydown positive = getting paid down
-    // e.g. oldest=-25000, newest=-21000 → monthlyChange=+333 → paydown=+333 ✓
+    // e.g. oldestHome=-25000, newestHome=-21000 → monthlyChange=+333 → paydown=+333 ✓
     const monthlyPaydown = monthlyChange;
 
     if (monthlyPaydown <= 0) {
@@ -298,7 +308,10 @@ function detectMilestones(
 
   // 3. Investment portfolio doubles — aggregate with per-account sub-items
   const investSnaps = snapshots.filter((s) => s.accountType === "investment" && s.balance > 0);
-  const totalInvestment = investSnaps.reduce((sum, s) => sum + s.balance, 0);
+  // Convert each account's balance to home currency before aggregating
+  const totalInvestment = investSnaps.reduce(
+    (sum, s) => sum + toHome(s.balance, s.currency, fxRates, hc), 0
+  );
   if (totalInvestment > 0) {
     let val = totalInvestment;
     let months = 0;
@@ -309,15 +322,16 @@ function detectMilestones(
     if (months > 0 && months <= maxMonths) {
       const isLong = months > 60;
 
-      // Per-account sub-items: each account's individual doubling date
+      // Per-account sub-items — each account in home currency
       const investSubItems: MilestoneSubItem[] = investSnaps.map((s) => {
-        let v = s.balance; let m = 0;
-        while (v < s.balance * 2 && m < maxMonths) { v *= (1 + MONTHLY_RETURN_RATE); m++; }
+        const balHome = toHome(s.balance, s.currency, fxRates, hc);
+        let v = balHome; let m = 0;
+        while (v < balHome * 2 && m < maxMonths) { v *= (1 + MONTHLY_RETURN_RATE); m++; }
         const acctName = s.accountName ?? s.bankName ?? "Account";
         return {
           name: acctName,
           dateLabel: m > 60 ? `~ ${yearFromNow(m)}` : addMonthsLabel(m),
-          detail: `${fmtShort(s.balance, sym)} → ${fmtShort(s.balance * 2, sym)}`,
+          detail: `${fmtShort(balHome, sym)} → ${fmtShort(balHome * 2, sym)}`,
           growing: false,
         };
       });
@@ -395,6 +409,7 @@ export default function ForecastPage() {
   const [accountCount, setAccountCount] = useState(0);
   const [lastVerified, setLastVerified] = useState<string | null>(null);
   const [hc, setHc] = useState(HOME_CURRENCY);
+  const [fxRates, setFxRates] = useState<Record<string, number>>({});
 
   // locked module modal state
   const [retirementOpen, setRetirementOpen] = useState(false);
@@ -437,6 +452,7 @@ export default function ForecastPage() {
         setAccountCount(json.accountCount ?? 0);
         setLastVerified(json.lastUploadedAt ?? null);
         setHc(json.homeCurrency ?? HOME_CURRENCY);
+        setFxRates(json.fxRates ?? {});
       } catch {
         setError("Failed to load forecast data");
       } finally {
@@ -485,7 +501,7 @@ export default function ForecastPage() {
     : 0;
 
   const milestones = hasEnoughData
-    ? detectMilestones(netWorth, monthlySavings, history, snapshots, accountHistory, sym)
+    ? detectMilestones(netWorth, monthlySavings, history, snapshots, accountHistory, sym, fxRates, hc)
     : [];
 
   // Job loss runway
