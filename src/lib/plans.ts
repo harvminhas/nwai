@@ -7,6 +7,15 @@
  *   3. Otherwise → "free"
  */
 
+/**
+ * Free-tier upload allowances.
+ * ONE_TIME: lifetime allotment granted on signup, carries over indefinitely.
+ * MONTHLY:  refreshes on the 1st of each month, unused quota does NOT carry over.
+ * Change these constants to adjust limits without touching any other code.
+ */
+export const FREE_ONETIME_UPLOADS  = 50;
+export const FREE_MONTHLY_UPLOADS  = 8;
+
 export type PlanId = "free" | "pro";
 
 export interface PlanFeatures {
@@ -35,13 +44,13 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
     id: "free",
     name: "Free",
     price: "$0",
-    uploadsPerMonth: 5,
+    uploadsPerMonth: FREE_MONTHLY_UPLOADS,
     historyMonths: 6,
     features: {
       forecast:      false,
-      goals:         false,
+      goals:         true,
       payoffPlanner: false,
-      multiUpload:   false,
+      multiUpload:   true,
       export:        false,
       aiInsights:    false,
       multiUser:     false,

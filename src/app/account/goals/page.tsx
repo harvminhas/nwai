@@ -6,7 +6,6 @@ import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import type { AccountRateEntry } from "@/app/api/user/account-rates/route";
 import { usePlan } from "@/contexts/PlanContext";
-import UpgradePrompt from "@/components/UpgradePrompt";
 import { fmt, getCurrencySymbol, HOME_CURRENCY } from "@/lib/currencyUtils";
 import type { AccountSnapshot } from "@/lib/extractTransactions";
 
@@ -337,7 +336,7 @@ function RateEditor({
 
 export default function GoalsPage() {
   const router = useRouter();
-  const { can, loading: planLoading } = usePlan();
+  const { loading: planLoading } = usePlan();
 
   const [netWorth, setNetWorth]                       = useState(0);
   const [liquidAssets, setLiquidAssets]               = useState(0);
@@ -660,9 +659,6 @@ export default function GoalsPage() {
     <div className="flex min-h-[50vh] items-center justify-center">
       <div className="h-10 w-10 animate-spin rounded-full border-4 border-purple-600 border-t-transparent" />
     </div>
-  );
-  if (!can("goals")) return (
-    <UpgradePrompt feature="goals" description="Track debt payoff, savings milestones, and any goal you're working toward — automatically." />
   );
   if (error) return (
     <div className="mx-auto max-w-2xl lg:max-w-5xl px-4 pt-4 pb-8 sm:py-8">

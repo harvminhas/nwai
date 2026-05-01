@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { usePlan } from "@/contexts/PlanContext";
+import UpgradePrompt from "@/components/UpgradePrompt";
 import { fmt } from "@/lib/currencyUtils";
 import type {
   WhatIfScenario, FinancialSnapshot, TemplateId,
@@ -1419,6 +1420,18 @@ function WhatIfWorkspace() {
 // ── Page export ────────────────────────────────────────────────────────────────
 
 export default function WhatIfPage() {
+  const { can, loading } = usePlan();
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-24">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-purple-200 border-t-purple-600" />
+    </div>
+  );
+
+  if (!can("whatIf")) return (
+    <UpgradePrompt feature="whatIf" description="Model life changes — income shifts, big purchases, extra debt payments — and see the impact on your net worth trajectory." />
+  );
+
   return (
     <Suspense fallback={
       <div className="flex items-center justify-center py-24">

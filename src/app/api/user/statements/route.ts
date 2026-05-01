@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import type { UserStatementSummary } from "@/lib/types";
+import { FREE_ONETIME_UPLOADS, FREE_MONTHLY_UPLOADS } from "@/lib/plans";
 
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
@@ -16,10 +17,11 @@ export async function GET(request: NextRequest) {
     if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const uid = access.targetUid;
 
-    const snapshot = await db
-      .collection("statements")
-      .where("userId", "==", uid)
-      .get();
+    const [snapshot, userDoc] = await Promise.all([
+      db.collection("statements").where("userId", "==", uid).get(),
+      db.collection("users").doc(uid).get(),
+    ]);
+    const userData = userDoc.exists ? userDoc.data() ?? {} : {};
 
     const statements: UserStatementSummary[] = snapshot.docs.map((doc) => {
       const d = doc.data();
@@ -59,7 +61,29 @@ export async function GET(request: NextRequest) {
       return tB - tA;
     });
 
-    return NextResponse.json({ statements });
+    // Build quota info for display on the statements page
+    const userPlan: string = userData.plan ?? "free";
+    const isPro = userPlan === "pro" || userPlan === "family";
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const nextReset = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const storedResetAt: Date | null = userData.monthlyUploadsResetAt?.toDate?.() ?? null;
+    const isNewMonth = !storedResetAt || storedResetAt < monthStart;
+    const onetimeUsed: number = userData.onetimeUploadsUsed ?? 0;
+    const monthlyUsed: number = isNewMonth ? 0 : (userData.monthlyUploadsUsed ?? 0);
+    const quota = {
+      isPro,
+      onetimeUsed,
+      onetimeLimit: FREE_ONETIME_UPLOADS,
+      onetimeRemaining: Math.max(0, FREE_ONETIME_UPLOADS - onetimeUsed),
+      monthlyUsed,
+      monthlyLimit: FREE_MONTHLY_UPLOADS,
+      monthlyResetAt: nextReset.toISOString(),
+    };
+
+    const homeCurrency: string = userData.homeCurrency ?? userData.currency ?? "USD";
+
+    return NextResponse.json({ statements, quota, homeCurrency });
   } catch (err) {
     console.error("User statements error:", err);
     if (err && typeof err === "object" && "code" in err && (err as { code: string }).code === "auth/id-token-expired") {

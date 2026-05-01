@@ -840,6 +840,20 @@ export async function GET(request: NextRequest) {
        * Use instead of /api/user/statements for sparklines / monthly series.
        */
       accountBalanceHistory: profile.accountBalanceHistory ?? [],
+      /**
+       * Number of accounts where backfillPromptNeeded or accountConfirmNeeded is true.
+       * Used by the Today page to show a "set up accounts" nudge.
+       */
+      pendingSetupCount: (() => {
+        const slugs = new Set<string>();
+        for (const doc of snapshot.docs) {
+          const d = doc.data();
+          if (d.backfillPromptNeeded === true || d.accountConfirmNeeded === true) {
+            slugs.add((d.accountSlug as string) ?? doc.id);
+          }
+        }
+        return slugs.size;
+      })(),
     });
   } catch (err) {
     console.error("Consolidated statements error:", err);

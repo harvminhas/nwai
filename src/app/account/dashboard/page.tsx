@@ -1245,6 +1245,7 @@ export default function TodayPage() {
   });
   const [showHomeCurrency, setShowHomeCurrency] = useState(false);
   const [homeCurrency, setHomeCurrency] = useState<string>("USD");
+  const [pendingSetupCount, setPendingSetupCount] = useState(0);
   const [currencyInfo, setCurrencyInfo] = useState<{
     homeCurrency: string;
     showExchange: boolean;
@@ -1330,6 +1331,12 @@ export default function TodayPage() {
       const resolvedCountry = (confirmedCty ?? detectedCty) as "CA" | "US";
       setHomeCurrency(insJson.homeCurrency ?? (resolvedCountry === "CA" ? "CAD" : "USD"));
       if (fxJson.homeCurrency) setCurrencyInfo(fxJson);
+
+      // Check for pending account setups (fire-and-forget, doesn't block the main load)
+      fetch("/api/user/pending-setup", { headers: buildHeaders(tok) })
+        .then((r) => r.json())
+        .then((j) => setPendingSetupCount(j.pendingCount ?? 0))
+        .catch(() => {});
 
       // Show home currency modal once if country is not yet confirmed and not mid-backfill
       setBackfillActive(pendingBackfill);
@@ -2083,12 +2090,28 @@ export default function TodayPage() {
       {token && (
         <ParseStatusBanner
           onRefresh={() => load(token)}
-          onBackfillDetected={() => {
-            setBackfillActive(true);
-            setShowOnboarding(false);
-            setShowHomeCurrency(false);
-          }}
         />
+      )}
+
+      {/* Pending account setup nudge */}
+      {pendingSetupCount > 0 && (
+        <div className="mb-5 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3.5">
+          <svg className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+          </svg>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-amber-900">
+              {pendingSetupCount} account{pendingSetupCount > 1 ? "s" : ""} need{pendingSetupCount === 1 ? "s" : ""} setup
+            </p>
+            <p className="mt-0.5 text-xs text-amber-700">
+              Complete account setup to get accurate net worth tracking and unlock more uploads.
+            </p>
+          </div>
+          <a href="/account/setup"
+            className="shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 transition whitespace-nowrap">
+            Set up →
+          </a>
+        </div>
       )}
       {token && needsRefresh && (
         <RefreshToast token={token} onRefreshed={() => { setNeedsRefresh(false); load(token); }} />
