@@ -33,12 +33,13 @@ export interface VisitLog {
   note?: string;
   /**
    * How this visit was paid.
-   * "cash"      — paid on the spot; amount is stored here.
-   * "statement" — will be (or has been) tagged via a bank statement transaction.
+   * "cash"      — confirmed cash; amount stored here + written to cashCommitments.
+   * "card"      — card payment logged manually; pending reconciliation via statement.
+   * "statement" — tagged via a bank statement transaction.
    * absent      — unbilled / not yet recorded.
    */
-  paymentMethod?: "cash" | "statement";
-  /** Cash amount (only set when paymentMethod === "cash") */
+  paymentMethod?: "cash" | "card" | "statement";
+  /** Payment amount (set for cash and card manual entries) */
   amount?: number;
   createdAt: string;
 }
@@ -84,6 +85,8 @@ export interface UserEvent {
   cashTotal?: number;
   /** Count of cash-paid event logs */
   cashVisitCount?: number;
+  /** Count of card-paid (pending reconciliation) event logs */
+  cardVisitCount?: number;
   /** YYYY-MM → payment count (cash + tagged transactions). Used for timeline color split. */
   paymentsByMonth?: Record<string, number>;
 

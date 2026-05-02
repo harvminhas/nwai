@@ -90,12 +90,12 @@ function EditEventModal({ event, headers, homeCurrency, onSaved, onClose }: Edit
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-md rounded-2xl bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
-          <h2 className="text-base font-semibold text-gray-900">Edit plan</h2>
+          <h2 className="text-base font-semibold text-gray-900">Edit tracker</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4 px-6 py-5">
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Plan name *</label>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Name *</label>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -271,18 +271,12 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
   const [ledgerEntries, setLedgerEntries] = useState<ProjectLedgerEntry[]>([]);
   const [totalSpent, setTotalSpent] = useState(0);
   const [loading, setLoading]       = useState(true);
-  const [showPicker, setShowPicker] = useState(false);
   const [showEdit, setShowEdit]     = useState(false);
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
   const [archiving, setArchiving]   = useState(false);
   const [removing, setRemoving]     = useState<string | null>(null);
   const [removingVisit, setRemovingVisit] = useState<string | null>(null);
   const [currentYear, setCurrentYear] = useState<string | null>(null);
-  // Inline Log Event panel state (service events)
-  const [showLogVisit, setShowLogVisit]     = useState(false);
-  const [logDate, setLogDate]               = useState(() => new Date().toISOString().substring(0, 10));
-  const [logNote, setLogNote]               = useState("");
-  const [savingVisit, setSavingVisit]       = useState(false);
   const [showLedgerForm, setShowLedgerForm] = useState(false);
   const [ledgerDate, setLedgerDate]        = useState(() => new Date().toISOString().substring(0, 10));
   const [ledgerAmount, setLedgerAmount]      = useState("");
@@ -395,33 +389,6 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
     }
   }
 
-  function resetLogVisit() {
-    setShowLogVisit(false);
-    setLogNote("");
-    setLogDate(new Date().toISOString().substring(0, 10));
-  }
-
-  async function handleSaveVisit() {
-    if (!token) return;
-    setSavingVisit(true);
-    const date = logDate;
-    const body: Record<string, unknown> = { date };
-    if (logNote.trim()) body.note = logNote.trim();
-    try {
-      const res = await fetch(`/api/user/events/${id}/visits`, {
-        method: "POST",
-        headers: { ...buildHeaders(token), "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) {
-        const json = await res.json();
-        setVisitLogs((prev) => [json.visit, ...prev].sort((a, b) => b.date.localeCompare(a.date)));
-        resetLogVisit();
-      }
-    } finally {
-      setSavingVisit(false);
-    }
-  }
 
   async function handleAddLedgerEntry(e: React.FormEvent) {
     e.preventDefault();
@@ -537,7 +504,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
           onClick={() => router.push("/account/events")}
           className="mb-5 flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700"
         >
-          ← Plans
+          ← Trackers
         </button>
 
         {/* Event header card */}
@@ -650,113 +617,124 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
           )}
         </div>
 
-        {/* ── Event logs (service events only) ──────────────────────────── */}
-        {event.kind === "service" && (
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-4">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
-              <h2 className="text-sm font-semibold text-gray-900">Visit log</h2>
-              <button
-                onClick={() => setShowLogVisit((v) => !v)}
-                className="inline-flex items-center gap-1 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 transition"
-              >
-                +Log
-              </button>
-            </div>
+        {/* ── Activity (service events): visits + payments merged ──────── */}
+        {event.kind === "service" && (() => {
+          type ActivityItem =
+            | { kind: "visit";            date: string; id: string; note?: string }
+            | { kind: "cash";             date: string; id: string; amount?: number; note?: string }
+            | { kind: "card";             date: string; id: string; amount?: number; note?: string }
+            | { kind: "statement";        date: string; fingerprint: string; description: string; amount: number; accountLabel: string };
 
-            {/* Inline Log Event panel */}
-            {showLogVisit && (
-              <div className="border-b border-gray-50 bg-gray-50 px-5 py-4 space-y-3">
-                {/* WHEN? */}
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">When?</p>
-                  <input
-                    type="date"
-                    value={logDate}
-                    max={new Date().toISOString().substring(0, 10)}
-                    onChange={(e) => setLogDate(e.target.value)}
-                    className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                  />
-                </div>
+          const items: ActivityItem[] = [
+            // Pure visits (no payment method)
+            ...visitLogs
+              .filter((v) => !v.paymentMethod)
+              .map((v) => ({ kind: "visit" as const, date: v.date, id: v.id, note: v.note })),
+            // Cash payments
+            ...visitLogs
+              .filter((v) => v.paymentMethod === "cash")
+              .map((v) => ({ kind: "cash" as const, date: v.date, id: v.id, amount: v.amount, note: v.note })),
+            // Card placeholders
+            ...visitLogs
+              .filter((v) => v.paymentMethod === "card")
+              .map((v) => ({ kind: "card" as const, date: v.date, id: v.id, amount: v.amount, note: v.note })),
+            // Statement-tagged transactions
+            ...tagged.map((t) => ({ kind: "statement" as const, date: t.date, fingerprint: t.fingerprint, description: t.description, amount: t.amount, accountLabel: t.accountLabel })),
+          ].sort((a, b) => b.date.localeCompare(a.date));
 
-                {/* NOTE */}
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">
-                    Note <span className="font-normal normal-case">(optional)</span>
-                  </p>
-                  <input
-                    value={logNote}
-                    onChange={(e) => setLogNote(e.target.value)}
-                    placeholder="e.g. did the back hedge too"
-                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
+          const fmtDay = (iso: string) =>
+            new Date(iso + "T00:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 
-                <div className="flex items-center justify-end gap-2">
-                  <button
-                    onClick={resetLogVisit}
-                    className="rounded-lg px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 border border-gray-200 bg-white"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleSaveVisit}
-                    disabled={savingVisit}
-                    className="rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 transition"
-                  >
-                    {savingVisit ? "Saving…" : "Save"}
-                  </button>
-                </div>
+          return (
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-4">
+              <div className="px-5 py-4 border-b border-gray-50">
+                <h2 className="text-sm font-semibold text-gray-900">Activity</h2>
+                <p className="text-xs text-gray-400 mt-0.5">Visits and payments — use the tracker card to log</p>
               </div>
-            )}
-
-            {visitLogs.length === 0 ? (
-              <div className="px-5 py-10 text-center">
-                <p className="text-2xl mb-2">📋</p>
-                <p className="text-sm font-medium text-gray-700 mb-1">No visits logged yet</p>
-                <p className="text-xs text-gray-400">Use &quot;+Log&quot; to record each time this service happens.</p>
-              </div>
-            ) : (
-              <div className="divide-y divide-gray-50">
-                {visitLogs.map((v) => (
-                  <div key={v.id} className="flex items-start gap-3 px-5 py-3.5">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="text-sm font-medium text-gray-800">
-                          {new Date(v.date + "T00:00:00").toLocaleDateString("en-US", {
-                            weekday: "short", month: "short", day: "numeric",
-                          })}
-                        </p>
-                        {v.paymentMethod === "cash" && (
-                          <span className="inline-flex items-center rounded-full bg-green-50 border border-green-100 px-2 py-0.5 text-[11px] font-medium text-green-700">
-                            {v.amount ? `${fmt(v.amount, hc)} cash` : "Cash"}
-                          </span>
-                        )}
-                        {v.paymentMethod === "statement" && (
-                          <span className="inline-flex items-center rounded-full bg-blue-50 border border-blue-100 px-2 py-0.5 text-[11px] font-medium text-blue-600">
-                            Statement
-                          </span>
-                        )}
-                        {!v.paymentMethod && (
-                          <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-600">
-                            Unbilled
-                          </span>
-                        )}
+              {items.length === 0 ? (
+                <div className="px-5 py-10 text-center">
+                  <p className="text-sm text-gray-500">No activity yet.</p>
+                  <p className="text-xs text-gray-400 mt-1">Log visits and payments from the tracker card.</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-gray-50">
+                  {items.map((item) => {
+                    if (item.kind === "visit") return (
+                      <div key={`v-${item.id}`} className="flex items-start gap-3 px-5 py-3.5">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">Visit</span>
+                            <p className="text-sm font-medium text-gray-800">{fmtDay(item.date)}</p>
+                          </div>
+                          {item.note && <p className="text-xs text-gray-400 mt-0.5">{item.note}</p>}
+                        </div>
+                        <button onClick={() => handleRemoveVisit(item.id)} disabled={removingVisit === item.id}
+                          className="rounded-lg px-2.5 py-1.5 text-xs text-gray-400 hover:text-red-500 hover:bg-red-50 disabled:opacity-40 transition">
+                          {removingVisit === item.id ? "…" : "Remove"}
+                        </button>
                       </div>
-                      {v.note && <p className="text-xs text-gray-400 mt-0.5">{v.note}</p>}
-                    </div>
-                    <button
-                      onClick={() => handleRemoveVisit(v.id)}
-                      disabled={removingVisit === v.id}
-                      className="rounded-lg px-2.5 py-1.5 text-xs text-gray-400 hover:text-red-500 hover:bg-red-50 disabled:opacity-40 transition"
-                    >
-                      {removingVisit === v.id ? "…" : "Remove"}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+                    );
+                    if (item.kind === "cash") return (
+                      <div key={`c-${item.id}`} className="flex items-start gap-3 px-5 py-3.5">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center rounded-full bg-emerald-50 border border-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">Cash</span>
+                            <p className="text-sm font-medium text-gray-800">{fmtDay(item.date)}</p>
+                          </div>
+                          {item.note && <p className="text-xs text-gray-400 mt-0.5">{item.note}</p>}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {item.amount != null && <span className="text-sm font-semibold text-gray-900">{fmt(item.amount, hc)}</span>}
+                          <button onClick={() => handleRemoveVisit(item.id)} disabled={removingVisit === item.id}
+                            className="rounded-lg px-2.5 py-1.5 text-xs text-gray-400 hover:text-red-500 hover:bg-red-50 disabled:opacity-40 transition">
+                            {removingVisit === item.id ? "…" : "Remove"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                    if (item.kind === "card") return (
+                      <div key={`k-${item.id}`} className="flex items-start gap-3 px-5 py-3.5">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700">Card · Pending</span>
+                            <p className="text-sm font-medium text-gray-800">{fmtDay(item.date)}</p>
+                          </div>
+                          {item.note && <p className="text-xs text-gray-400 mt-0.5">{item.note}</p>}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {item.amount != null && <span className="text-sm font-semibold text-gray-900">{fmt(item.amount, hc)}</span>}
+                          <button onClick={() => handleRemoveVisit(item.id)} disabled={removingVisit === item.id}
+                            className="rounded-lg px-2.5 py-1.5 text-xs text-gray-400 hover:text-red-500 hover:bg-red-50 disabled:opacity-40 transition">
+                            {removingVisit === item.id ? "…" : "Remove"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                    // statement
+                    return (
+                      <div key={`s-${item.fingerprint}`} className="flex items-start gap-3 px-5 py-3.5">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center rounded-full bg-indigo-50 border border-indigo-100 px-2 py-0.5 text-[11px] font-medium text-indigo-700">Statement</span>
+                            <p className="text-sm font-medium text-gray-800 truncate">{item.description}</p>
+                          </div>
+                          <p className="text-xs text-gray-400 mt-0.5">{txDate(item.date)} · {item.accountLabel}</p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-sm font-semibold text-gray-900">{fmt(item.amount, hc)}</span>
+                          <button onClick={() => handleRemove(item.fingerprint)} disabled={removing === item.fingerprint}
+                            className="rounded-lg px-2.5 py-1.5 text-xs text-gray-400 hover:text-red-500 hover:bg-red-50 disabled:opacity-40 transition">
+                            {removing === item.fingerprint ? "…" : "Remove"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ── Project ledger (off-statement cash / manual — adds to budget) ── */}
         {event.kind !== "service" && (
@@ -893,79 +871,50 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
           </div>
         )}
 
-        {/* ── Tagged transactions ────────────────────────────────────────── */}
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-4">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
-            <div>
-              <h2 className="text-sm font-semibold text-gray-900">
-                {event.kind === "service" ? "Payments" : "Tagged transactions"}
-              </h2>
-              {event.kind === "service" && (
-                <p className="text-xs text-gray-400 mt-0.5">Transactions tagged to this service</p>
-              )}
+        {/* ── Tagged transactions (project events only) ─────────────────── */}
+        {event.kind !== "service" && (
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-4">
+            <div className="px-5 py-4 border-b border-gray-50">
+              <h2 className="text-sm font-semibold text-gray-900">Tagged transactions</h2>
             </div>
-            <button
-              onClick={() => setShowPicker(true)}
-              className="rounded-lg bg-purple-50 px-3 py-1.5 text-xs font-medium text-purple-700 hover:bg-purple-100"
-            >
-              + Tag transaction
-            </button>
+            {tagged.length === 0 ? (
+              <div className="px-5 py-10 text-center">
+                <p className="text-3xl mb-3">🏷</p>
+                <p className="text-sm font-medium text-gray-700 mb-1">No transactions tagged yet</p>
+                <p className="text-xs text-gray-400">Tag transactions from the tracker card using +Payment.</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {tagged.map((tx) => (
+                  <div key={tx.fingerprint} className="flex items-start gap-3 px-5 py-3.5">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-gray-900 truncate">{tx.description}</p>
+                      <p className="text-xs text-gray-400">{txDate(tx.date)} · {tx.category} · {tx.accountLabel}</p>
+                      <NoteEditor
+                        fingerprint={tx.fingerprint}
+                        initialNote={tx.note}
+                        headers={headers}
+                        onSaved={(note) => handleNoteUpdate(tx.fingerprint, note)}
+                      />
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0 pt-0.5">
+                      <span className="text-sm font-semibold text-gray-900">{fmt(tx.amount, hc)}</span>
+                      <button
+                        onClick={() => handleRemove(tx.fingerprint)}
+                        disabled={removing === tx.fingerprint}
+                        className="rounded-lg px-2.5 py-1.5 text-xs text-gray-400 hover:text-red-500 hover:bg-red-50 disabled:opacity-40"
+                      >
+                        {removing === tx.fingerprint ? "…" : "Remove"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-
-          {tagged.length === 0 ? (
-            <div className="px-5 py-12 text-center">
-              <p className="text-3xl mb-3">🏷</p>
-              <p className="text-sm font-medium text-gray-700 mb-1">No transactions tagged yet</p>
-              <p className="text-xs text-gray-400 mb-4">Tag transactions from your history to track spending for this plan.</p>
-              <button
-                onClick={() => setShowPicker(true)}
-                className="rounded-lg bg-purple-50 px-4 py-2 text-sm font-medium text-purple-700 hover:bg-purple-100"
-              >
-                Tag your first transaction
-              </button>
-            </div>
-          ) : (
-            <div className="divide-y divide-gray-50">
-              {tagged.map((tx) => (
-                <div key={tx.fingerprint} className="flex items-start gap-3 px-5 py-3.5">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-gray-900 truncate">{tx.description}</p>
-                    <p className="text-xs text-gray-400">{txDate(tx.date)} · {tx.category} · {tx.accountLabel}</p>
-                    <NoteEditor
-                      fingerprint={tx.fingerprint}
-                      initialNote={tx.note}
-                      headers={headers}
-                      onSaved={(note) => handleNoteUpdate(tx.fingerprint, note)}
-                    />
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0 pt-0.5">
-                    <span className="text-sm font-semibold text-gray-900">{fmt(tx.amount, hc)}</span>
-                    <button
-                      onClick={() => handleRemove(tx.fingerprint)}
-                      disabled={removing === tx.fingerprint}
-                      className="rounded-lg px-2.5 py-1.5 text-xs text-gray-400 hover:text-red-500 hover:bg-red-50 disabled:opacity-40"
-                    >
-                      {removing === tx.fingerprint ? "…" : "Remove"}
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        )}
       </div>
 
-      {showPicker && (
-        <TagPicker
-          eventId={id}
-          eventName={event.name}
-          taggedFingerprints={taggedSet}
-          headers={headers}
-          homeCurrency={homeCurrency}
-          onTagged={handleTagged}
-          onClose={() => setShowPicker(false)}
-        />
-      )}
 
       {showEdit && (
         <EditEventModal
@@ -993,10 +942,10 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
             onClick={(e) => e.stopPropagation()}
           >
             <h3 id="archive-plan-title" className="text-base font-semibold text-gray-900 mb-2">
-              Archive this plan?
+              Archive this tracker?
             </h3>
             <p className="text-sm text-gray-600 mb-6">
-              Archive &quot;{event.name}&quot;? Tags and ledger entries stay in your data but won&apos;t show on active plans.
+              Archive &quot;{event.name}&quot;? Tags and ledger entries stay in your data but won&apos;t show on active trackers.
             </p>
             <div className="flex justify-end gap-3">
               <button
@@ -1013,7 +962,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                 onClick={performArchive}
                 className="rounded-lg px-4 py-2 text-sm font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50"
               >
-                {archiving ? "Archiving…" : "Archive plan"}
+                {archiving ? "Archiving…" : "Archive tracker"}
               </button>
             </div>
           </div>

@@ -2,7 +2,10 @@
  * POST /api/user/events/[id]/visits
  *   Log an event for a recurring service.
  *   Body: { date: string (YYYY-MM-DD), note?: string,
- *           paymentMethod?: "cash" | "statement", amount?: number }
+ *           paymentMethod?: "cash" | "card" | "statement", amount?: number }
+ *
+ *   When paymentMethod === "cash", a one-off cashCommitment is also written
+ *   so the payment appears in the spending profile immediately.
  *
  * GET  /api/user/events/[id]/visits
  *   List all event logs for an event (newest first).
@@ -34,8 +37,8 @@ export async function POST(
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date))
       return NextResponse.json({ error: "date required (YYYY-MM-DD)" }, { status: 400 });
 
-    const paymentMethod = body.paymentMethod as "cash" | "statement" | undefined;
-    const rawAmount     = paymentMethod === "cash" ? Number(body.amount) : undefined;
+    const paymentMethod = body.paymentMethod as "cash" | "card" | "statement" | undefined;
+    const rawAmount     = (paymentMethod === "cash" || paymentMethod === "card") ? Number(body.amount) : undefined;
     const amount        = rawAmount && rawAmount > 0 ? rawAmount : undefined;
 
     const eventRef  = db.doc(`users/${actorUid}/events/${id}`);
@@ -67,6 +70,7 @@ export async function POST(
 
     // Atomically update denormalized event fields
     const currentLast = eventSnap.data()!.lastVisitDate as string | undefined;
+    const evName      = (eventSnap.data()!.name as string | undefined) ?? "Service";
     const updates: Record<string, unknown> = {
       visitCount: FieldValue.increment(1),
       [`visitsByMonth.${ym}`]: FieldValue.increment(1),
@@ -77,7 +81,32 @@ export async function POST(
       if (amount) updates.cashTotal = FieldValue.increment(amount);
       updates[`paymentsByMonth.${ym}`] = FieldValue.increment(1);
     }
+    if (paymentMethod === "card") {
+      updates.cardVisitCount = FieldValue.increment(1);
+      updates[`paymentsByMonth.${ym}`] = FieldValue.increment(1);
+    }
     await eventRef.update(updates);
+
+    // Cash payments → write a one-off cashCommitment so it appears in spending profile
+    if (paymentMethod === "cash" && amount) {
+      const commitmentId = randomUUID();
+      const now = new Date().toISOString();
+      await db.doc(`users/${actorUid}/cashCommitments/${commitmentId}`).set({
+        id: commitmentId,
+        name: evName,
+        amount,
+        frequency: "once",
+        category: "Services",
+        notes: `Logged via tracker · visit ${visitId}`,
+        nextDate: date,
+        startDate: date,
+        createdAt: now,
+        updatedAt: now,
+        // Back-reference so we can clean up if the visit is deleted
+        sourceVisitId: visitId,
+        sourceEventId: id,
+      });
+    }
 
     return NextResponse.json({ visit }, { status: 201 });
   } catch (err) {
@@ -132,9 +161,20 @@ export async function DELETE(
     const vData         = visitSnap.data()!;
     const visitYm       = (vData.date as string).substring(0, 7); // YYYY-MM
     const wasCash       = vData.paymentMethod === "cash";
+    const wasCard       = vData.paymentMethod === "card";
     const cashAmount    = wasCash && vData.amount ? Number(vData.amount) : 0;
 
     await visitRef.delete();
+
+    // If this was a cash visit, remove the linked cashCommitment from spending
+    if (wasCash && vData.sourceVisitId) {
+      const commitSnap = await db
+        .collection(`users/${actorUid}/cashCommitments`)
+        .where("sourceVisitId", "==", visitId)
+        .limit(1)
+        .get();
+      if (!commitSnap.empty) await commitSnap.docs[0].ref.delete();
+    }
 
     const eventRef  = db.doc(`users/${actorUid}/events/${id}`);
     const eventSnap = await eventRef.get();
@@ -146,6 +186,10 @@ export async function DELETE(
       if (wasCash) {
         updates.cashVisitCount = FieldValue.increment(-1);
         if (cashAmount > 0) updates.cashTotal = FieldValue.increment(-cashAmount);
+        updates[`paymentsByMonth.${visitYm}`] = FieldValue.increment(-1);
+      }
+      if (wasCard) {
+        updates.cardVisitCount = FieldValue.increment(-1);
         updates[`paymentsByMonth.${visitYm}`] = FieldValue.increment(-1);
       }
       // Recompute lastVisitDate if this was the most recent

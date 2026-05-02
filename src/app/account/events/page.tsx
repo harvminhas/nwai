@@ -130,7 +130,7 @@ function PlanKindPicker({ onPick, onClose }: { onPick: (k: "project" | "service"
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl p-6">
-        <h2 className="text-base font-semibold text-gray-900 mb-1">What kind of plan?</h2>
+        <h2 className="text-base font-semibold text-gray-900 mb-1">What kind of tracker?</h2>
         <p className="text-xs text-gray-500 mb-5">One-off trips and budgets, or ongoing services on a schedule.</p>
         <div className="grid grid-cols-2 gap-3 mb-5">
           <button
@@ -225,11 +225,11 @@ function CreateEventModal({ headers, onCreated, onClose, planKind }: CreateModal
       <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
           <div>
-            <h2 className="text-base font-semibold text-gray-900">New plan</h2>
+            <h2 className="text-base font-semibold text-gray-900">New tracker</h2>
             <p className="text-xs text-gray-400 mt-0.5">
               {planKind === "service"
                 ? "Recurring · name, frequency, budget"
-                : "One-time · budget and dates"}
+                : "One-time · name, budget, dates"}
             </p>
           </div>
           <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">
@@ -301,7 +301,7 @@ function CreateEventModal({ headers, onCreated, onClose, planKind }: CreateModal
               disabled={saving}
               className="flex-1 rounded-lg bg-purple-600 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50"
             >
-              {saving ? "Creating…" : "Create plan"}
+              {saving ? "Creating…" : "Create tracker"}
             </button>
           </div>
         </form>
@@ -573,7 +573,7 @@ function fmtShortDate(iso: string): string {
   return new Date(iso + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-/** Tag txn + cash — shared between one-time events (cash → ledger) and recurring (cash → visit). */
+/** Tag txn + manual entry — shared between one-time events (manual → ledger) and recurring (manual → visit). */
 function TagCashPaymentPanel({
   eventId,
   headers,
@@ -589,17 +589,17 @@ function TagCashPaymentPanel({
   isOpen: boolean;
   onClose: () => void;
   onTransactionTagged?: (evId: string, amount: number, date?: string) => void;
-  postCashPayment: (p: { date: string; amount: number; note?: string }) => Promise<boolean>;
-  /** After successful cash save — parent refreshes aggregates (visits ledger vs totals). */
+  postCashPayment: (p: { date: string; amount: number; note?: string; paymentMethod?: "cash" | "card" }) => Promise<boolean>;
+  /** After successful manual save — parent refreshes aggregates. */
   onCashSaved: (amount: number, date: string) => void;
   homeCurrency?: string;
 }) {
-  const cur = homeCurrency ?? HOME_CURRENCY;
+  const cur    = homeCurrency ?? HOME_CURRENCY;
   const curSym = getCurrencySymbol(cur).trim();
-  const todayISO     = new Date().toISOString().substring(0, 10);
-  const yesterdayISO = new Date(Date.now() - 86400000).toISOString().substring(0, 10);
+  const todayISO = new Date().toISOString().substring(0, 10);
 
-  const [paymentTab, setPaymentTab]         = useState<"tag" | "cash">("tag");
+  const [paymentTab, setPaymentTab]         = useState<"statement" | "manual">("statement");
+  const [manualMethod, setManualMethod]     = useState<"cash" | "card">("cash");
   const [allTxns, setAllTxns]               = useState<RawTx[]>([]);
   const [loadingTxns, setLoadingTxns]       = useState(false);
   const [txSearch, setTxSearch]             = useState("");
@@ -607,18 +607,19 @@ function TagCashPaymentPanel({
   const [sessionTagged, setSessionTagged]   = useState<Set<string>>(new Set());
   const [sessionUntagged, setSessionUntagged] = useState<Set<string>>(new Set());
   const [tagging, setTagging]               = useState<string | null>(null);
-  const [cashAmt, setCashAmt]               = useState("");
-  const [cashNote, setCashNote]             = useState("");
-  const [cashDatePick, setCashDatePick]     = useState<DatePick>("today");
-  const [cashCustomDate, setCashCustomDate] = useState(todayISO);
-  const [savingCash, setSavingCash]         = useState(false);
-  const selectedCashDate =
-    cashDatePick === "today" ? todayISO : cashDatePick === "yesterday" ? yesterdayISO : cashCustomDate;
+  const [manualAmt, setManualAmt]           = useState("");
+  const [manualNote, setManualNote]         = useState("");
+  const [manualDate, setManualDate]         = useState(todayISO);
+  const [savingManual, setSavingManual]     = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
-    setPaymentTab("tag");
+    setPaymentTab("statement");
+    setManualMethod("cash");
     setTxSearch("");
+    setManualAmt("");
+    setManualNote("");
+    setManualDate(new Date().toISOString().substring(0, 10));
     setLoadingTxns(true);
     (async () => {
       try {
@@ -682,26 +683,24 @@ function TagCashPaymentPanel({
     }
   }
 
-  async function handleSaveCash(e: React.MouseEvent) {
+  async function handleSaveManual(e: React.MouseEvent) {
     e.stopPropagation();
-    const amt = parseFloat(cashAmt);
+    const amt = parseFloat(manualAmt);
     if (!amt || amt <= 0) return;
-    setSavingCash(true);
+    setSavingManual(true);
     try {
       const ok = await postCashPayment({
-        date: selectedCashDate,
+        date: manualDate,
         amount: amt,
-        ...(cashNote.trim() ? { note: cashNote.trim() } : {}),
+        paymentMethod: manualMethod,
+        ...(manualNote.trim() ? { note: manualNote.trim() } : {}),
       });
       if (ok) {
-        onCashSaved(amt, selectedCashDate);
+        onCashSaved(amt, manualDate);
         onClose();
-        setCashAmt("");
-        setCashNote("");
-        setCashDatePick("today");
       }
     } finally {
-      setSavingCash(false);
+      setSavingManual(false);
     }
   }
 
@@ -723,8 +722,9 @@ function TagCashPaymentPanel({
 
   return (
     <div className="mt-3 rounded-xl border border-gray-100 bg-white overflow-hidden" onClick={(e) => e.stopPropagation()}>
+      {/* Tabs */}
       <div className="flex border-b border-gray-100">
-        {(["tag", "cash"] as const).map((tab) => (
+        {(["statement", "manual"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setPaymentTab(tab)}
@@ -732,12 +732,13 @@ function TagCashPaymentPanel({
               paymentTab === tab ? "bg-white text-gray-900 border-b-2 border-indigo-600" : "bg-gray-50 text-gray-500 hover:text-gray-700"
             }`}
           >
-            {tab === "tag" ? "Tag transaction" : "Cash entry"}
+            {tab === "statement" ? "From Statement" : "Manual Entry"}
           </button>
         ))}
       </div>
 
-      {paymentTab === "tag" && (
+      {/* From Statement tab */}
+      {paymentTab === "statement" && (
         <div className="px-4 pt-3 pb-1">
           <input
             value={txSearch}
@@ -811,71 +812,76 @@ function TagCashPaymentPanel({
               })}
             </div>
           )}
-          <button
-            onClick={() => setPaymentTab("cash")}
-            className="mt-2 text-xs text-gray-400 hover:text-gray-600 w-full text-center py-1.5"
-          >
-            None of these — log a cash payment instead →
-          </button>
+          <div className="py-2" />
         </div>
       )}
 
-      {paymentTab === "cash" && (
-        <div className="px-4 py-3 space-y-2.5">
+      {/* Manual Entry tab */}
+      {paymentTab === "manual" && (
+        <div className="px-4 py-3 space-y-3">
+          {/* Card / Cash radio */}
           <div>
-            <p className="text-xs font-medium text-gray-500 mb-1.5">Date</p>
-            <div className="flex gap-1.5">
-              {(["today", "yesterday", "custom"] as DatePick[]).map((d) => (
-                <button
-                  key={d}
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setCashDatePick(d);
-                  }}
-                  className={`rounded-lg px-2.5 py-1 text-xs font-medium transition capitalize ${cashDatePick === d ? "bg-purple-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
-                >
-                  {d}
-                </button>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">How did you pay?</p>
+            <div className="flex gap-4">
+              {(["cash", "card"] as const).map((m) => (
+                <label key={m} className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-700">
+                  <input
+                    type="radio"
+                    name="manualMethod"
+                    value={m}
+                    checked={manualMethod === m}
+                    onChange={() => setManualMethod(m)}
+                    className="accent-indigo-600"
+                  />
+                  {m === "cash" ? "Cash" : "Card"}
+                </label>
               ))}
             </div>
-            {cashDatePick === "custom" && (
-              <input
-                type="date"
-                value={cashCustomDate}
-                max={todayISO}
-                onChange={(e) => {
-                  e.stopPropagation();
-                  setCashCustomDate(e.target.value);
-                }}
-                onClick={(e) => e.stopPropagation()}
-                className="mt-1.5 w-full rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"
-              />
+            {manualMethod === "card" && (
+              <p className="mt-1.5 text-[11px] text-amber-600 bg-amber-50 rounded-lg px-2.5 py-1.5">
+                Placeholder — tag the real transaction when your statement arrives.
+              </p>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500">Amount</span>
-            <div className="flex items-center gap-1">
+
+          {/* Date */}
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Date</p>
+            <input
+              type="date"
+              value={manualDate}
+              max={todayISO}
+              onChange={(e) => { e.stopPropagation(); setManualDate(e.target.value); }}
+              onClick={(e) => e.stopPropagation()}
+              className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
+          </div>
+
+          {/* Amount */}
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Amount</p>
+            <div className="flex items-center gap-1.5">
               <span className="text-xs text-gray-400">{curSym}</span>
               <input
                 type="number"
                 min="0"
                 step="0.01"
-                value={cashAmt}
-                onChange={(e) => setCashAmt(e.target.value)}
+                value={manualAmt}
+                onChange={(e) => setManualAmt(e.target.value)}
                 placeholder="0.00"
-                className="w-28 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"
+                autoFocus
+                className="w-32 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400"
               />
             </div>
           </div>
-          <div>
-            <input
-              value={cashNote}
-              onChange={(e) => setCashNote(e.target.value)}
-              placeholder="Note (optional)"
-              className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"
-            />
-          </div>
+
+          {/* Note */}
+          <input
+            value={manualNote}
+            onChange={(e) => setManualNote(e.target.value)}
+            placeholder="Note (optional)"
+            className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
         </div>
       )}
 
@@ -890,14 +896,14 @@ function TagCashPaymentPanel({
         >
           Cancel
         </button>
-        {paymentTab === "cash" && (
+        {paymentTab === "manual" && (
           <button
             type="button"
-            onClick={handleSaveCash}
-            disabled={savingCash || !cashAmt}
+            onClick={handleSaveManual}
+            disabled={savingManual || !manualAmt}
             className="rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 transition"
           >
-            {savingCash ? "Saving…" : "Save cash payment"}
+            {savingManual ? "Saving…" : manualMethod === "cash" ? "Save cash payment" : "Save card placeholder"}
           </button>
         )}
       </div>
@@ -1077,7 +1083,7 @@ function ServiceCard({
             headers: { ...headers, "Content-Type": "application/json" },
             body: JSON.stringify({
               date: p.date,
-              paymentMethod: "cash",
+              paymentMethod: p.paymentMethod ?? "cash",
               amount: p.amount,
               ...(p.note ? { note: p.note } : {}),
             }),
@@ -1212,16 +1218,16 @@ export default function EventsPage() {
         {/* Page header */}
         <div className="mb-7 flex items-start justify-between">
           <div>
-            <h1 className="text-xl font-bold text-gray-900">Plans</h1>
+            <h1 className="text-xl font-bold text-gray-900">Trackers</h1>
             <p className="text-sm text-gray-500 mt-0.5">
-              Budget and dates for every plan; turn on a schedule for recurring work.
+              Budget events and recurring services — all in one place.
             </p>
           </div>
           <button
             onClick={() => setCreateStep("pick")}
             className="shrink-0 rounded-xl bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 shadow-sm transition"
           >
-            + New plan
+            + New tracker
           </button>
         </div>
 
@@ -1235,7 +1241,7 @@ export default function EventsPage() {
         ) : events.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-8 py-16 text-center">
             <p className="text-4xl mb-4">📋</p>
-            <h3 className="text-base font-semibold text-gray-900 mb-1">No plans yet</h3>
+            <h3 className="text-base font-semibold text-gray-900 mb-1">No trackers yet</h3>
             <p className="text-sm text-gray-500 mb-6">
               Set a budget and dates, then tag transactions or log visits — same flow for trips and recurring services.
             </p>
@@ -1243,14 +1249,14 @@ export default function EventsPage() {
               onClick={() => setCreateStep("pick")}
               className="rounded-xl bg-purple-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-purple-700"
             >
-              Create your first plan
+              Create your first tracker
             </button>
           </div>
         ) : (
           <div className="space-y-4">
             <div className="flex items-baseline justify-between">
               <div>
-                <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Your plans</h2>
+                <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Your trackers</h2>
                 <p className="text-[11px] text-gray-400 mt-0.5">
                   {oneTimeCount} one-time
                   {recurringCount ? ` · ${recurringCount} recurring` : ""}
