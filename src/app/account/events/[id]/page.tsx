@@ -280,11 +280,8 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
   const [currentYear, setCurrentYear] = useState<string | null>(null);
   // Inline Log Event panel state (service events)
   const [showLogVisit, setShowLogVisit]     = useState(false);
-  const [logDatePick, setLogDatePick]       = useState<"today" | "yesterday" | "custom">("today");
-  const [logCustomDate, setLogCustomDate]   = useState(() => new Date().toISOString().substring(0, 10));
+  const [logDate, setLogDate]               = useState(() => new Date().toISOString().substring(0, 10));
   const [logNote, setLogNote]               = useState("");
-  const [logPayType, setLogPayType]         = useState<"unbilled" | "cash" | "statement">("unbilled");
-  const [logCashAmt, setLogCashAmt]         = useState("");
   const [savingVisit, setSavingVisit]       = useState(false);
   const [showLedgerForm, setShowLedgerForm] = useState(false);
   const [ledgerDate, setLedgerDate]        = useState(() => new Date().toISOString().substring(0, 10));
@@ -401,26 +398,15 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
   function resetLogVisit() {
     setShowLogVisit(false);
     setLogNote("");
-    setLogDatePick("today");
-    setLogPayType("unbilled");
-    setLogCashAmt("");
+    setLogDate(new Date().toISOString().substring(0, 10));
   }
 
   async function handleSaveVisit() {
     if (!token) return;
     setSavingVisit(true);
-    const todayISO     = new Date().toISOString().substring(0, 10);
-    const yesterdayISO = new Date(Date.now() - 86400000).toISOString().substring(0, 10);
-    const date = logDatePick === "today" ? todayISO : logDatePick === "yesterday" ? yesterdayISO : logCustomDate;
+    const date = logDate;
     const body: Record<string, unknown> = { date };
     if (logNote.trim()) body.note = logNote.trim();
-    if (logPayType === "cash") {
-      body.paymentMethod = "cash";
-      const amt = parseFloat(logCashAmt);
-      if (amt > 0) body.amount = amt;
-    } else if (logPayType === "statement") {
-      body.paymentMethod = "statement";
-    }
     try {
       const res = await fetch(`/api/user/events/${id}/visits`, {
         method: "POST",
@@ -428,11 +414,9 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
         body: JSON.stringify(body),
       });
       if (res.ok) {
-        const openPicker = logPayType === "statement";
         const json = await res.json();
         setVisitLogs((prev) => [json.visit, ...prev].sort((a, b) => b.date.localeCompare(a.date)));
         resetLogVisit();
-        if (openPicker) setShowPicker(true);
       }
     } finally {
       setSavingVisit(false);
@@ -685,37 +669,13 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                 {/* WHEN? */}
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">When?</p>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {(["today", "yesterday", "custom"] as const).map((d) => {
-                      const todayISO = new Date().toISOString().substring(0, 10);
-                      const label =
-                        d === "today"      ? `Today · ${new Date(todayISO + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
-                        : d === "yesterday" ? "Yesterday"
-                        : "Pick a date";
-                      return (
-                        <button
-                          key={d}
-                          onClick={() => setLogDatePick(d)}
-                          className={`rounded-lg px-3 py-1.5 text-xs font-medium border transition ${
-                            logDatePick === d
-                              ? "bg-indigo-600 text-white border-indigo-600"
-                              : "border-gray-200 text-gray-600 bg-white hover:border-gray-300"
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      );
-                    })}
-                    {logDatePick === "custom" && (
-                      <input
-                        type="date"
-                        value={logCustomDate}
-                        max={new Date().toISOString().substring(0, 10)}
-                        onChange={(e) => setLogCustomDate(e.target.value)}
-                        className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white"
-                      />
-                    )}
-                  </div>
+                  <input
+                    type="date"
+                    value={logDate}
+                    max={new Date().toISOString().substring(0, 10)}
+                    onChange={(e) => setLogDate(e.target.value)}
+                    className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                  />
                 </div>
 
                 {/* NOTE */}
@@ -731,43 +691,6 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                   />
                 </div>
 
-                {/* PAID? */}
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Paid?</p>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {(["unbilled", "cash", "statement"] as const).map((pt) => {
-                      const label = pt === "unbilled" ? "Not yet" : pt === "cash" ? "Cash" : "Tag transaction";
-                      return (
-                        <button
-                          key={pt}
-                          onClick={() => setLogPayType(pt)}
-                          className={`rounded-lg px-3 py-1.5 text-xs font-medium border transition ${
-                            logPayType === pt
-                              ? "bg-indigo-600 text-white border-indigo-600"
-                              : "border-gray-200 text-gray-600 bg-white hover:border-gray-300"
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      );
-                    })}
-                    {logPayType === "cash" && (
-                      <div className="flex items-center gap-1">
-                        <span className="text-xs text-gray-400">{curSym}</span>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={logCashAmt}
-                          onChange={(e) => setLogCashAmt(e.target.value)}
-                          placeholder="0.00"
-                          className="w-24 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"
-                        />
-                      </div>
-                    )}
-                  </div>
-                </div>
-
                 <div className="flex items-center justify-end gap-2">
                   <button
                     onClick={resetLogVisit}
@@ -780,7 +703,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                     disabled={savingVisit}
                     className="rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 transition"
                   >
-                    {savingVisit ? "Saving…" : logPayType === "statement" ? "Save & tag" : "Save"}
+                    {savingVisit ? "Saving…" : "Save"}
                   </button>
                 </div>
               </div>

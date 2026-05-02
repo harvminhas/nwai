@@ -354,30 +354,6 @@ export async function GET(request: NextRequest) {
         if (ym === month) console.log(`[consolidated] ${ym} hAssets=${hAssets} hDebts=${hDebts} hNetWorth=${hNetWorth} cachedNW=${cached?.netWorth}`);
         history.push({ yearMonth: ym, netWorth: hNetWorth, totalAssets: hAssets, totalDebts: hDebts, expensesTotal: txDateExpenses, coreExpensesTotal: txDateCoreExpenses, incomeTotal: txDateIncome, debtTotal: hDebts });
 
-        // Build per-source income history — only for months that had real statements
-        const hasRealIncome = allCompleted.some((doc) => {
-          const d = doc.data() as FirebaseFirestore.DocumentData;
-          return docYearMonth(d) === ym && (d.parsedData as ParsedStatementData)?.income?.total > 0;
-        });
-        if (hasRealIncome) {
-          for (const src of c.income?.sources ?? []) {
-            // Apply confirmed income mappings: fold alias names into their canonical
-            const canonicalName = resolveCanonical(src.description, confirmedIncomeMappings);
-            if (!incomeSourceHistory[canonicalName]) incomeSourceHistory[canonicalName] = [];
-            const srcTxns = (c.income?.transactions ?? [])
-              .filter((t) => t.source === src.description)
-              .map((t) => ({ date: t.date, amount: t.amount, accountSlug: t.accountSlug }));
-            // Aggregate into existing month entry if canonical already has one (two aliases in same month)
-            const existing = incomeSourceHistory[canonicalName].find((h) => h.yearMonth === ym);
-            if (existing) {
-              existing.amount += src.amount;
-              existing.transactions.push(...srcTxns);
-            } else {
-              incomeSourceHistory[canonicalName].push({ yearMonth: ym, amount: src.amount, transactions: srcTxns });
-            }
-          }
-        }
-
         // Build per-merchant expense history — only for months with real expense data
         const hasRealExpenses = allCompleted.some((doc) => {
           const d = doc.data() as FirebaseFirestore.DocumentData;
@@ -396,6 +372,27 @@ export async function GET(request: NextRequest) {
             }
           }
         }
+      }
+    }
+
+    // ── Build incomeSourceHistory from profile.incomeTxns ────────────────────
+    // profile.incomeTxns are already extracted, deduplicated, and correct.
+    // Group by canonical source name → year-month → transactions.
+    for (const txn of (profile.incomeTxns ?? [])) {
+      const canonicalName = resolveCanonical(txn.source || txn.description || "", confirmedIncomeMappings);
+      if (!canonicalName) continue;
+      if (!incomeSourceHistory[canonicalName]) incomeSourceHistory[canonicalName] = [];
+      const entry = incomeSourceHistory[canonicalName].find((h) => h.yearMonth === txn.txMonth);
+      const row   = { date: txn.date, amount: txn.amount, accountSlug: txn.accountSlug };
+      if (entry) {
+        entry.amount += txn.amount;
+        entry.transactions.push(row);
+      } else {
+        incomeSourceHistory[canonicalName].push({
+          yearMonth:    txn.txMonth,
+          amount:       txn.amount,
+          transactions: [row],
+        });
       }
     }
 

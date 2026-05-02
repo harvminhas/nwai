@@ -177,11 +177,6 @@ function CreateEventModal({ headers, onCreated, onClose, planKind }: CreateModal
   const [endDate, setEndDate]         = useState("");
   const repeats                       = planKind === "service";
   const [cadence, setCadence]         = useState<ServiceCadence>("monthly");
-  const [yearRound, setYearRound]     = useState(true);
-  const [seasonStart, setSeasonStart] = useState(5);
-  const [seasonEnd, setSeasonEnd]     = useState(10);
-  const [billing, setBilling]         = useState<BillingMethod>("per-visit");
-  const [avgPerVisit, setAvgPerVisit] = useState("");
   const [color, setColor]             = useState<EventColor>("purple");
   const [saving, setSaving]           = useState(false);
   const [err, setErr]                 = useState<string | null>(null);
@@ -189,13 +184,13 @@ function CreateEventModal({ headers, onCreated, onClose, planKind }: CreateModal
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) { setErr("Name is required"); return; }
-    if (!startDate) { setErr("Start date is required"); return; }
     setSaving(true); setErr(null);
     try {
+      const todayISO = new Date().toISOString().substring(0, 10);
       const base = {
         name: name.trim(),
         color,
-        startDate,
+        startDate: startDate || todayISO,
         ...(endDate ? { endDate } : {}),
         ...(budget.trim() ? { budget: parseFloat(budget) } : {}),
       };
@@ -204,9 +199,6 @@ function CreateEventModal({ headers, onCreated, onClose, planKind }: CreateModal
             ...base,
             kind: "service" as const,
             cadence,
-            billingMethod: billing,
-            ...(!yearRound ? { seasonStart, seasonEnd } : {}),
-            ...(avgPerVisit.trim() ? { avgPerVisit: parseFloat(avgPerVisit) } : {}),
           }
         : {
             ...base,
@@ -236,7 +228,7 @@ function CreateEventModal({ headers, onCreated, onClose, planKind }: CreateModal
             <h2 className="text-base font-semibold text-gray-900">New plan</h2>
             <p className="text-xs text-gray-400 mt-0.5">
               {planKind === "service"
-                ? "Recurring · budget, timeframe, visit cadence"
+                ? "Recurring · name, frequency, budget"
                 : "One-time · budget and dates"}
             </p>
           </div>
@@ -256,37 +248,15 @@ function CreateEventModal({ headers, onCreated, onClose, planKind }: CreateModal
             />
           </div>
 
-          <div className="flex gap-3">
-            <div className="flex-1">
-              <label className="block text-xs font-medium text-gray-700 mb-1">Start date *</label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
-              />
-            </div>
-            <div className="flex-1">
-              <label className="block text-xs font-medium text-gray-700 mb-1">End date</label>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                min={startDate || undefined}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
-              />
-            </div>
-          </div>
-
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Budget</label>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Budget <span className="font-normal text-gray-400">(optional)</span></label>
             <input
               type="number"
               min="0"
               step="0.01"
               value={budget}
               onChange={(e) => setBudget(e.target.value)}
-              placeholder="Optional spending limit"
+              placeholder="Spending limit"
               className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
             />
           </div>
@@ -311,91 +281,6 @@ function CreateEventModal({ headers, onCreated, onClose, planKind }: CreateModal
                     </button>
                   ))}
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1.5">Season</label>
-                <div className="flex items-center gap-2 mb-2">
-                  {[{ label: "Year-round", val: true }, { label: "Specific months", val: false }].map(({ label, val }) => (
-                    <button
-                      key={label}
-                      type="button"
-                      onClick={() => setYearRound(val)}
-                      className={`rounded-full px-3 py-1 text-xs font-medium border transition ${
-                        yearRound === val
-                          ? "border-purple-400 bg-purple-50 text-purple-800"
-                          : "border-gray-200 text-gray-500 hover:border-gray-300"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                {!yearRound && (
-                  <div className="flex gap-3">
-                    <div className="flex-1">
-                      <label className="block text-[11px] text-gray-400 mb-1">From</label>
-                      <select
-                        value={seasonStart}
-                        onChange={(e) => setSeasonStart(Number(e.target.value))}
-                        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
-                      >
-                        {MONTH_NAMES.map((m, i) => (
-                          <option key={i} value={i + 1}>
-                            {m}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="flex-1">
-                      <label className="block text-[11px] text-gray-400 mb-1">To</label>
-                      <select
-                        value={seasonEnd}
-                        onChange={(e) => setSeasonEnd(Number(e.target.value))}
-                        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
-                      >
-                        {MONTH_NAMES.map((m, i) => (
-                          <option key={i} value={i + 1}>
-                            {m}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1.5">Billing</label>
-                <div className="flex gap-2">
-                  {(["per-visit", "monthly"] as BillingMethod[]).map((b) => (
-                    <button
-                      key={b}
-                      type="button"
-                      onClick={() => setBilling(b)}
-                      className={`flex-1 rounded-lg border py-2 text-xs font-medium transition ${
-                        billing === b
-                          ? "border-purple-400 bg-purple-50 text-purple-800"
-                          : "border-gray-200 text-gray-600 hover:border-gray-300"
-                      }`}
-                    >
-                      {b === "per-visit" ? "Per visit" : "Monthly"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Avg. cost per visit ($)</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={avgPerVisit}
-                  onChange={(e) => setAvgPerVisit(e.target.value)}
-                  placeholder="Optional"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
               </div>
             </>
           )}
@@ -1053,18 +938,15 @@ function ServiceCard({
   const computedAvg   = ev.avgPerVisit ?? (paidCount > 0 ? ev.totalSpent / paidCount : null);
   const nextDate      = nextExpectedDate(lastVisitDate, cadence);
 
-  const todayISO     = new Date().toISOString().substring(0, 10);
-  const yesterdayISO = new Date(Date.now() - 86400000).toISOString().substring(0, 10);
+  const todayISO = new Date().toISOString().substring(0, 10);
 
   // ── Log event panel state ─────────────────────────────────────────────────
   const [showLog, setShowLog]       = useState(false);
-  const [datePick, setDatePick]     = useState<DatePick>("today");
-  const [customDate, setCustomDate] = useState(todayISO);
+  const [selectedDate, setSelectedDate] = useState(todayISO);
   const [note, setNote]             = useState("");
   const [saving, setSaving]         = useState(false);
-  const selectedDate = datePick === "today" ? todayISO : datePick === "yesterday" ? yesterdayISO : customDate;
 
-  function resetLog() { setShowLog(false); setNote(""); setDatePick("today"); }
+  function resetLog() { setShowLog(false); setNote(""); setSelectedDate(todayISO); }
 
   async function handleSaveEvent(e: React.MouseEvent) {
     e.stopPropagation();
@@ -1130,16 +1012,9 @@ function ServiceCard({
       {/* Stats row */}
       <div className="flex items-center justify-between gap-2 flex-wrap mb-2.5">
         <div className="flex items-center gap-2 flex-wrap text-xs text-gray-500">
-          <span>Visits <span className="font-semibold text-gray-800">{visitCount}</span> of <span className="font-semibold text-gray-800">~{expectedTotal}</span></span>
+          <span>Services <span className="font-semibold text-gray-800">{visitCount}</span></span>
           <span className="text-gray-200">·</span>
           <span>Payments <span className="font-semibold text-gray-800">{paidCount}</span>{ev.totalSpent > 0 ? ` (${fmt(ev.totalSpent, hc)})` : ""}</span>
-          <span className="text-gray-200">·</span>
-          <span className="inline-flex items-center gap-1">
-            <span className="h-2 w-2 rounded-full bg-emerald-500 inline-block" />
-            Tagged {txCount}
-          </span>
-          <span className="text-gray-200">·</span>
-          <span>Cash {cashVisitCount}</span>
         </div>
         <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold bg-gray-100 text-gray-500">Recurring</span>
       </div>
@@ -1169,19 +1044,10 @@ function ServiceCard({
       {showLog && (
         <div className="mt-3 rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 space-y-3" onClick={(e) => e.stopPropagation()}>
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">When did the event happen?</p>
-            <div className="flex items-center gap-2 flex-wrap">
-              {(["today", "yesterday", "custom"] as DatePick[]).map((d) => (
-                <button key={d} onClick={() => setDatePick(d)}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium border transition ${datePick === d ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 bg-white hover:border-gray-300"}`}>
-                  {d === "today" ? `Today · ${fmtShortDate(todayISO)}` : d === "yesterday" ? "Yesterday" : "Pick a date"}
-                </button>
-              ))}
-              {datePick === "custom" && (
-                <input type="date" value={customDate} max={todayISO} onChange={(e) => setCustomDate(e.target.value)}
-                  className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white" />
-              )}
-            </div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">When?</p>
+            <input type="date" value={selectedDate} max={todayISO}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
           </div>
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Note <span className="font-normal normal-case">(optional)</span></p>

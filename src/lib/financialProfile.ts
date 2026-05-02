@@ -57,7 +57,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "41"; // back-fill uses type-based asset/debt filtering; netWorth derived at API layer
+const SCHEMA_VERSION = "42"; // incomeTxns now stores all months (not just last 6)
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -441,11 +441,12 @@ export async function buildAndCacheFinancialProfile(
   const typicalMonthly = computeTypicalSpend(allExpenseTxns, thisMonth);
   const sourceVersion  = computeSourceVersion(completedSnap.docs);
 
-  // Keep only last 12 months of raw transactions to stay well within 1 MB limit
-  const cutoff12 = allTxMonths.slice(-12)[0] ?? thisMonth;
+  // Expenses: keep last 12 months (large volume — stay within Firestore 1 MB limit)
+  const cutoff12    = allTxMonths.slice(-12)[0] ?? thisMonth;
   const expenseTxns = allExpenseTxns.filter((t) => t.txMonth >= cutoff12);
-  const cutoff6     = allTxMonths.slice(-6)[0] ?? thisMonth;
-  const incomeTxns  = allIncomeTxns.filter((t) => t.txMonth >= cutoff6);
+  // Income: keep ALL months — income transactions are small in volume and the
+  // income source detail page needs full history to build accurate per-month rows.
+  const incomeTxns  = allIncomeTxns;
 
   // Collect holdings from the most recent investment statement per account slug
   const latestHoldingsBySlug = new Map<string, PortfolioAccountHoldings>();
