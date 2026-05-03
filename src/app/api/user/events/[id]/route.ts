@@ -128,6 +128,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if (body.seasonEnd     !== undefined) updates.seasonEnd     = body.seasonEnd     ?? FieldValue.delete();
     if (body.billingMethod != null) updates.billingMethod = body.billingMethod;
     if (body.avgPerVisit   !== undefined) updates.avgPerVisit   = body.avgPerVisit ? Number(body.avgPerVisit) : FieldValue.delete();
+    if (body.vendor        !== undefined) updates.vendor        = body.vendor?.trim()    || FieldValue.delete();
+    if (body.category      !== undefined) updates.category      = body.category?.trim()  || FieldValue.delete();
+    if (body.notes         !== undefined) updates.notes         = body.notes?.trim()     || FieldValue.delete();
 
     await ref.update(updates);
     return NextResponse.json({ ok: true });

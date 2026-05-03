@@ -73,6 +73,12 @@ export interface UserEvent {
   billingMethod?: BillingMethod;
   /** User-supplied expected cost per visit (display only) */
   avgPerVisit?: number;
+  /** Vendor / provider name (e.g. "John's Lawn Care") */
+  vendor?: string;
+  /** User-defined category label (e.g. "Trip", "Home", "Medical") */
+  category?: string;
+  /** Free-text notes / description */
+  notes?: string;
 
   // ── Denormalized from visit logs (maintained by visits API) ───────────────
   /** Total logged events (all time) */
