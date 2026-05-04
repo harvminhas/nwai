@@ -141,8 +141,8 @@ export default function TagCashPaymentPanel({
   if (!isOpen) return null;
 
   const wrapper = bordered
-    ? "mt-3 rounded-xl border border-gray-100 bg-white overflow-hidden"
-    : "bg-white overflow-hidden";
+    ? "mt-3 min-w-0 max-w-full rounded-xl border border-gray-100 bg-white overflow-hidden"
+    : "min-w-0 max-w-full overflow-x-hidden bg-white overflow-hidden";
 
   return (
     <div className={wrapper} onClick={(e) => e.stopPropagation()}>
@@ -161,7 +161,7 @@ export default function TagCashPaymentPanel({
 
       {/* From Statement */}
       {(statementPickerOnly || paymentTab === "statement") && (
-        <div className="px-4 pt-3 pb-1">
+        <div className="min-w-0 overflow-x-hidden px-4 pt-3 pb-1">
           <input value={txSearch} onChange={(e) => setTxSearch(e.target.value)}
             placeholder="Search merchant…" autoFocus
             onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
@@ -173,7 +173,7 @@ export default function TagCashPaymentPanel({
               {txSearch ? "No transactions match" : "No transactions in the last 12 months"}
             </p>
           ) : (
-            <div className="-mx-4 max-h-56 overflow-y-auto">
+            <div className="-mx-4 max-h-56 overflow-x-hidden overflow-y-auto overscroll-y-contain">
               {filteredTxns.map((tx, i) => {
                 const tagged     = isTaggedFn(tx.fingerprint);
                 const prevTagged = i > 0 ? isTaggedFn(filteredTxns[i - 1].fingerprint) : true;
@@ -185,26 +185,34 @@ export default function TagCashPaymentPanel({
                         <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Other transactions</span>
                       </div>
                     )}
-                    <div className={`flex items-center gap-3 px-4 py-2.5 border-b border-gray-50 ${tagged ? "bg-emerald-50 border-l-2 border-l-emerald-400" : ""}`}>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <p className={`text-xs font-semibold truncate ${tagged ? "text-emerald-900" : "text-gray-800"}`}>{tx.description}</p>
+                    <div
+                      className={`flex min-w-0 flex-col gap-2 px-4 py-2.5 border-b border-gray-50 sm:flex-row sm:items-center sm:gap-3 ${tagged ? "bg-emerald-50 border-l-2 border-l-emerald-400" : ""}`}
+                    >
+                      <div className="min-w-0 flex-1 overflow-hidden">
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <p className={`min-w-0 flex-1 text-xs font-semibold truncate ${tagged ? "text-emerald-900" : "text-gray-800"}`}>{tx.description}</p>
                           {tagged && <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">Tagged ✓</span>}
                         </div>
-                        <p className={`text-[11px] ${tagged ? "text-emerald-600" : "text-gray-400"}`}>{fmtShortDate(tx.date)} · {tx.accountLabel}</p>
+                        <p className={`truncate text-[11px] ${tagged ? "text-emerald-600" : "text-gray-400"}`} title={`${fmtShortDate(tx.date)} · ${tx.accountLabel}`}>
+                          {fmtShortDate(tx.date)} · {tx.accountLabel}
+                        </p>
                       </div>
-                      <span className={`text-xs font-semibold shrink-0 ${tagged ? "text-emerald-800" : "text-gray-800"}`}>{fmt(tx.amount, cur)}</span>
+                      <div className="flex shrink-0 items-center justify-end gap-2 sm:gap-3">
+                      <span className={`text-xs font-semibold tabular-nums ${tagged ? "text-emerald-800" : "text-gray-800"}`}>
+                        {fmt(tx.amount, cur)}
+                      </span>
                       {tagged ? (
-                        <button onClick={() => handleUntagTx(tx)} disabled={tagging === tx.fingerprint}
-                          className="shrink-0 rounded-lg bg-white border border-red-200 px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50 disabled:opacity-50 transition">
+                        <button type="button" onClick={() => handleUntagTx(tx)} disabled={tagging === tx.fingerprint}
+                          className="shrink-0 rounded-lg border border-red-200 bg-white px-2 py-1.5 text-xs font-medium text-red-500 transition hover:bg-red-50 disabled:opacity-50 sm:px-3">
                           {tagging === tx.fingerprint ? "…" : "Untag"}
                         </button>
                       ) : (
-                        <button onClick={() => handleTagTx(tx)} disabled={tagging === tx.fingerprint}
-                          className="shrink-0 rounded-lg bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 transition">
+                        <button type="button" onClick={() => handleTagTx(tx)} disabled={tagging === tx.fingerprint}
+                          className="shrink-0 rounded-lg bg-indigo-50 px-2 py-1.5 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100 disabled:opacity-50 sm:px-3">
                           {tagging === tx.fingerprint ? "…" : "Tag"}
                         </button>
                       )}
+                      </div>
                     </div>
                   </div>
                 );

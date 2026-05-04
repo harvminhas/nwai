@@ -121,17 +121,17 @@ export default function AddExpenseModal({
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto overscroll-behavior-y-contain bg-black/40">
       <div
-        className="flex min-h-[100svh] w-full items-center justify-center p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] supports-[height:100dvh]:min-h-[100dvh] sm:min-h-full sm:p-4"
+        className="flex min-h-[100svh] min-w-0 w-full items-center justify-center p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] supports-[height:100dvh]:min-h-[100dvh] sm:min-h-full sm:p-4"
         onClick={(e) => {
           if (e.target === e.currentTarget && !savingExpense) closeAddExpenseModal();
         }}
       >
         <div
-          className="flex max-h-[85svh] max-h-[85dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+          className="flex min-h-0 min-w-0 max-h-[85svh] max-h-[85dvh] w-full max-w-[min(100%,32rem)] flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
           onClick={(e) => e.stopPropagation()}
         >
-        <div className="flex items-start justify-between border-b border-gray-100 px-5 pt-5 pb-3">
-          <div>
+        <div className="flex min-w-0 shrink-0 items-start justify-between gap-2 border-b border-gray-100 px-5 pt-5 pb-3">
+          <div className="min-w-0">
             <h2 className="text-lg font-semibold text-gray-900">Add expense</h2>
             <p className="mt-0.5 text-sm text-gray-500">to {eventName}</p>
           </div>
@@ -139,56 +139,56 @@ export default function AddExpenseModal({
             type="button"
             onClick={closeAddExpenseModal}
             disabled={savingExpense}
-            className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50"
+            className="shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50"
             aria-label="Close"
           >
             ✕
           </button>
         </div>
 
-        <div className="flex border-b border-gray-100 px-2">
+        <div className="min-w-0 shrink-0 flex border-b border-gray-100 px-2">
           <button
             type="button"
             onClick={() => setAddExpenseTab("statement")}
-            className={`flex flex-1 items-center justify-center gap-2 py-3 text-sm font-semibold transition ${
+            className={`flex min-w-0 flex-1 items-center justify-center gap-1.5 py-3 text-sm font-semibold transition ${
               addExpenseTab === "statement"
                 ? "border-b-2 border-purple-600 text-gray-900"
                 : "border-b-2 border-transparent text-gray-500 hover:text-gray-700"
             }`}
           >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
               />
             </svg>
-            From statement
+            <span className="truncate">From statement</span>
           </button>
           <button
             type="button"
             onClick={() => setAddExpenseTab("manual")}
-            className={`flex flex-1 items-center justify-center gap-2 py-3 text-sm font-semibold transition ${
+            className={`flex min-w-0 flex-1 items-center justify-center gap-1.5 py-3 text-sm font-semibold transition ${
               addExpenseTab === "manual"
                 ? "border-b-2 border-purple-600 text-gray-900"
                 : "border-b-2 border-transparent text-gray-500 hover:text-gray-700"
             }`}
           >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
               />
             </svg>
-            Manual entry
+            <span className="truncate">Manual entry</span>
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain">
           {addExpenseTab === "statement" && (
-            <div className="p-5">
-              <p className="mb-3 text-xs text-gray-600">
+            <div className="min-w-0 p-5">
+              <p className="mb-3 break-words text-xs text-gray-600">
                 Tag a transaction — it saves immediately and counts toward this project&apos;s budget.
               </p>
               <TagCashPaymentPanel
