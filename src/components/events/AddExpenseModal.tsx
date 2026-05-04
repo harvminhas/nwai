@@ -119,21 +119,28 @@ export default function AddExpenseModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto overscroll-behavior-y-contain bg-black/40">
+    <div className="fixed inset-0 z-50 overflow-x-hidden overflow-y-auto overscroll-behavior-y-contain bg-black/40">
       <div
-        className="flex min-h-[100svh] min-w-0 w-full items-center justify-center p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] supports-[height:100dvh]:min-h-[100dvh] sm:min-h-full sm:p-4"
+        className="flex min-h-[100svh] min-w-0 w-full max-w-[100vw] items-center justify-center p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] supports-[height:100dvh]:min-h-[100dvh] sm:min-h-full sm:p-4"
         onClick={(e) => {
           if (e.target === e.currentTarget && !savingExpense) closeAddExpenseModal();
         }}
       >
         <div
-          className="flex min-h-0 min-w-0 max-h-[85svh] max-h-[85dvh] w-full max-w-[min(100%,32rem)] flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="add-expense-modal-title"
+          className="box-border mx-auto flex min-h-0 min-w-0 w-full max-w-[min(32rem,calc(100vw-1.75rem-env(safe-area-inset-left)-env(safe-area-inset-right)))] max-h-[min(85svh,85dvh)] flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
           onClick={(e) => e.stopPropagation()}
         >
         <div className="flex min-w-0 shrink-0 items-start justify-between gap-2 border-b border-gray-100 px-5 pt-5 pb-3">
-          <div className="min-w-0">
-            <h2 className="text-lg font-semibold text-gray-900">Add expense</h2>
-            <p className="mt-0.5 text-sm text-gray-500">to {eventName}</p>
+          <div className="min-w-0 pr-2">
+            <h2 id="add-expense-modal-title" className="text-lg font-semibold leading-tight text-gray-900">
+              Add expense
+            </h2>
+            <p className="mt-0.5 truncate text-sm text-gray-500" title={eventName}>
+              to {eventName}
+            </p>
           </div>
           <button
             type="button"
@@ -207,9 +214,9 @@ export default function AddExpenseModal({
           )}
 
           {addExpenseTab === "manual" && (
-            <form onSubmit={handleAddManualExpense} className="flex flex-col">
+            <form onSubmit={handleAddManualExpense} className="flex min-w-0 flex-col">
               <div className="divide-y divide-gray-100">
-                <div className="grid grid-cols-1 items-center gap-2 px-5 py-3 sm:grid-cols-[minmax(0,160px)_1fr] sm:gap-6">
+                <div className="grid min-w-0 grid-cols-1 items-center gap-2 px-5 py-3 sm:grid-cols-[minmax(0,160px)_minmax(0,1fr)] sm:gap-6">
                   <label htmlFor="add-expense-desc" className="text-sm text-gray-700">
                     Description <span className="text-red-500">*</span>
                   </label>
@@ -219,15 +226,15 @@ export default function AddExpenseModal({
                     onChange={(e) => setExpenseDescription(e.target.value)}
                     placeholder="e.g. Train tickets, dinner at Sukiyabashi"
                     required
-                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-500/30"
+                    className="min-w-0 max-w-full w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-500/30"
                   />
                 </div>
-                <div className="grid grid-cols-1 gap-1 px-5 py-3 sm:grid-cols-[minmax(0,160px)_1fr] sm:gap-6 sm:items-start">
+                <div className="grid min-w-0 grid-cols-1 gap-1 px-5 py-3 sm:grid-cols-[minmax(0,160px)_minmax(0,1fr)] sm:gap-6 sm:items-start">
                   <label htmlFor="add-expense-amt" className="pt-2 text-sm text-gray-700">
                     Amount <span className="text-red-500">*</span>
                   </label>
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
                       <span className="text-sm text-gray-400">{curSym}</span>
                       <input
                         id="add-expense-amt"
@@ -238,7 +245,7 @@ export default function AddExpenseModal({
                         value={expenseAmount}
                         onChange={(e) => setExpenseAmount(e.target.value)}
                         placeholder="0.00"
-                        className="w-full max-w-[220px] rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-500/30"
+                        className="min-w-0 w-full max-w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-500/30 sm:max-w-[220px]"
                       />
                     </div>
                     <p className="mt-1.5 text-xs text-gray-400">
@@ -246,7 +253,7 @@ export default function AddExpenseModal({
                     </p>
                   </div>
                 </div>
-                <div className="grid grid-cols-1 items-center gap-2 px-5 py-3 sm:grid-cols-[minmax(0,160px)_1fr] sm:gap-6">
+                <div className="grid min-w-0 grid-cols-1 items-center gap-2 px-5 py-3 sm:grid-cols-[minmax(0,160px)_minmax(0,1fr)] sm:gap-6">
                   <label htmlFor="add-expense-date" className="text-sm text-gray-700">
                     Date <span className="text-red-500">*</span>
                   </label>
@@ -257,10 +264,10 @@ export default function AddExpenseModal({
                     value={expenseDate}
                     max={new Date().toISOString().substring(0, 10)}
                     onChange={(e) => setExpenseDate(e.target.value)}
-                    className="w-full max-w-[240px] rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-500/30"
+                    className="min-w-0 max-w-full w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-500/30 sm:max-w-[240px]"
                   />
                 </div>
-                <div className="grid grid-cols-1 items-center gap-2 px-5 py-3 sm:grid-cols-[minmax(0,160px)_1fr] sm:gap-6">
+                <div className="grid min-w-0 grid-cols-1 items-center gap-2 px-5 py-3 sm:grid-cols-[minmax(0,160px)_minmax(0,1fr)] sm:gap-6">
                   <label htmlFor="add-expense-cat" className="text-sm text-gray-700">
                     Category
                   </label>
@@ -268,7 +275,7 @@ export default function AddExpenseModal({
                     id="add-expense-cat"
                     value={expenseCategory}
                     onChange={(e) => setExpenseCategory(e.target.value)}
-                    className="w-full max-w-[280px] rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-500/30"
+                    className="min-w-0 max-w-full w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-500/30"
                   >
                     {PARENT_CATEGORIES.map((c) => (
                       <option key={c} value={c}>
@@ -277,7 +284,7 @@ export default function AddExpenseModal({
                     ))}
                   </select>
                 </div>
-                <div className="grid grid-cols-1 items-center gap-2 px-5 py-3 sm:grid-cols-[minmax(0,160px)_1fr] sm:gap-6">
+                <div className="grid min-w-0 grid-cols-1 items-center gap-2 px-5 py-3 sm:grid-cols-[minmax(0,160px)_minmax(0,1fr)] sm:gap-6">
                   <label htmlFor="add-expense-paid" className="text-sm text-gray-700">
                     Paid from
                   </label>
@@ -285,7 +292,7 @@ export default function AddExpenseModal({
                     id="add-expense-paid"
                     value={expensePaidFrom}
                     onChange={(e) => setExpensePaidFrom(e.target.value as "cash" | "card")}
-                    className="w-full max-w-[280px] rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-500/30"
+                    className="min-w-0 max-w-full w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-500/30"
                   >
                     <option value="cash">Cash</option>
                     <option value="card">Card (statement not available yet)</option>
@@ -293,7 +300,7 @@ export default function AddExpenseModal({
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 px-5 py-4">
+              <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-t border-gray-100 px-5 py-4">
                 <p className="text-sm text-gray-600">New expense</p>
                 <div className="ml-auto flex items-center gap-2">
                   <button

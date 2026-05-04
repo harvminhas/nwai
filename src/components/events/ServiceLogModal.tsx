@@ -120,18 +120,18 @@ export default function ServiceLogModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto overscroll-behavior-y-contain bg-black/40">
+    <div className="fixed inset-0 z-50 overflow-x-hidden overflow-y-auto overscroll-behavior-y-contain bg-black/40">
       <div
-        className="flex min-h-[100svh] w-full items-center justify-center p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] supports-[height:100dvh]:min-h-[100dvh] sm:min-h-full sm:p-4"
+        className="flex min-h-[100svh] min-w-0 w-full max-w-[100vw] items-center justify-center p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] supports-[height:100dvh]:min-h-[100dvh] sm:min-h-full sm:p-4"
         onClick={(e) => {
           if (e.target === e.currentTarget && !savingVisit) closeLogModal();
         }}
       >
         <div
-          className="flex max-h-[85svh] max-h-[85dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+          className="box-border mx-auto flex min-h-0 min-w-0 w-full max-w-[min(32rem,calc(100vw-1.75rem-env(safe-area-inset-left)-env(safe-area-inset-right)))] max-h-[min(85svh,85dvh)] flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
+          <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain">
         {logModalStep === "pick" && (
           <>
             <div className="flex items-start justify-between gap-4 px-5 pt-5 pb-2">

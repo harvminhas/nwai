@@ -162,10 +162,16 @@ export default function TagCashPaymentPanel({
       {/* From Statement */}
       {(statementPickerOnly || paymentTab === "statement") && (
         <div className="min-w-0 overflow-x-hidden px-4 pt-3 pb-1">
-          <input value={txSearch} onChange={(e) => setTxSearch(e.target.value)}
-            placeholder="Search merchant…" autoFocus
-            onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
-            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500 mb-3" />
+          <input
+            value={txSearch}
+            onChange={(e) => setTxSearch(e.target.value)}
+            placeholder="Search merchant…"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.preventDefault();
+            }}
+            className="mb-3 min-w-0 max-w-full box-border w-full rounded-lg border border-gray-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"
+          />
           {loadingTxns ? (
             <p className="text-xs text-gray-400 py-4 text-center">Loading…</p>
           ) : filteredTxns.length === 0 ? (
@@ -173,7 +179,7 @@ export default function TagCashPaymentPanel({
               {txSearch ? "No transactions match" : "No transactions in the last 12 months"}
             </p>
           ) : (
-            <div className="-mx-4 max-h-56 overflow-x-hidden overflow-y-auto overscroll-y-contain">
+            <div className="mx-0 max-h-56 w-full max-w-full touch-pan-y overflow-x-hidden overflow-y-auto overscroll-y-contain [-webkit-overflow-scrolling:touch]">
               {filteredTxns.map((tx, i) => {
                 const tagged     = isTaggedFn(tx.fingerprint);
                 const prevTagged = i > 0 ? isTaggedFn(filteredTxns[i - 1].fingerprint) : true;
@@ -190,7 +196,7 @@ export default function TagCashPaymentPanel({
                     >
                       <div className="min-w-0 flex-1 overflow-hidden">
                         <div className="flex min-w-0 items-center gap-1.5">
-                          <p className={`min-w-0 flex-1 text-xs font-semibold truncate ${tagged ? "text-emerald-900" : "text-gray-800"}`}>{tx.description}</p>
+                          <p className={`min-w-0 flex-1 max-w-[100%] text-xs font-semibold truncate ${tagged ? "text-emerald-900" : "text-gray-800"}`}>{tx.description}</p>
                           {tagged && <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">Tagged ✓</span>}
                         </div>
                         <p className={`truncate text-[11px] ${tagged ? "text-emerald-600" : "text-gray-400"}`} title={`${fmtShortDate(tx.date)} · ${tx.accountLabel}`}>
