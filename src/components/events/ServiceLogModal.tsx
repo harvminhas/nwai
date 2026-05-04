@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useBodyScrollLock } from "@/components/events/useBodyScrollLock";
 import TagCashPaymentPanel from "@/components/events/TagCashPaymentPanel";
 import type { RawTx } from "@/components/events/TagPicker";
 import type { VisitLog } from "@/lib/events/types";
@@ -34,6 +35,8 @@ export default function ServiceLogModal({
 
   const hc = homeCurrency;
   const curSym = getCurrencySymbol(hc).trim();
+
+  useBodyScrollLock(open);
 
   useEffect(() => {
     if (!open) return;
@@ -117,16 +120,18 @@ export default function ServiceLogModal({
   if (!open) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !savingVisit) closeLogModal();
-      }}
-    >
+    <div className="fixed inset-0 z-50 overflow-y-auto overscroll-behavior-y-contain bg-black/40">
       <div
-        className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl bg-white shadow-xl"
-        onClick={(e) => e.stopPropagation()}
+        className="flex min-h-[100svh] w-full items-center justify-center p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] supports-[height:100dvh]:min-h-[100dvh] sm:min-h-full sm:p-4"
+        onClick={(e) => {
+          if (e.target === e.currentTarget && !savingVisit) closeLogModal();
+        }}
       >
+        <div
+          className="flex max-h-[85svh] max-h-[85dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
         {logModalStep === "pick" && (
           <>
             <div className="flex items-start justify-between gap-4 px-5 pt-5 pb-2">
@@ -412,6 +417,8 @@ export default function ServiceLogModal({
             </form>
           </>
         )}
+          </div>
+        </div>
       </div>
     </div>
   );

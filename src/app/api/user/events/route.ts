@@ -7,9 +7,89 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import { getFinancialProfile } from "@/lib/financialProfile";
-import type { UserEvent, TxTag, EventSummary, VisitLog } from "@/lib/events/types";
+import type {
+  UserEvent,
+  TxTag,
+  EventSummary,
+  VisitLog,
+  ServiceRecentActivity,
+  ProjectLedgerEntry,
+  ProjectRecentExpense,
+} from "@/lib/events/types";
 import { txFingerprint } from "@/lib/txFingerprint";
 import { randomUUID } from "crypto";
+
+/** Ledger rows merged with statement tags for project list cards */
+const LEDGER_FETCH_FOR_MERGE = 25;
+
+function buildRecentProjectExpenses(
+  statements: { fingerprint: string; date: string; amount: number; merchant: string }[],
+  ledger: ProjectLedgerEntry[],
+): ProjectRecentExpense[] {
+  type Row = { sortKey: string; expense: ProjectRecentExpense };
+  const rows: Row[] = [];
+  for (const s of statements) {
+    rows.push({
+      sortKey: `${s.date}\0${s.fingerprint}`,
+      expense: {
+        kind: "statement",
+        id: s.fingerprint,
+        date: s.date,
+        amount: s.amount,
+        merchant: s.merchant,
+      },
+    });
+  }
+  for (const L of ledger) {
+    const tie = L.createdAt ?? L.id;
+    rows.push({
+      sortKey: `${L.date}\0${tie}`,
+      expense: {
+        kind: "ledger",
+        id: L.id,
+        date: L.date,
+        amount: L.amount,
+        note: L.note,
+        category: L.category,
+        entryType: L.entryType,
+      },
+    });
+  }
+  rows.sort((a, b) => b.sortKey.localeCompare(a.sortKey));
+  return rows.slice(0, 3).map((r) => r.expense);
+}
+
+/** Last N merged rows for service list cards (visits + statement payments). */
+const VISITS_FETCH_FOR_MERGE = 25;
+
+function buildRecentActivities(
+  visits: VisitLog[],
+  payments: { fingerprint: string; date: string; amount: number; merchant: string }[],
+): ServiceRecentActivity[] {
+  type Row = { sortKey: string; activity: ServiceRecentActivity };
+  const rows: Row[] = [];
+  for (const v of visits) {
+    const tie = v.createdAt ?? v.id;
+    rows.push({
+      sortKey: `${v.date}\0${tie}`,
+      activity: { kind: "visit", id: v.id, date: v.date, visit: v },
+    });
+  }
+  for (const p of payments) {
+    rows.push({
+      sortKey: `${p.date}\0${p.fingerprint}`,
+      activity: {
+        kind: "statement",
+        id: p.fingerprint,
+        date: p.date,
+        amount: p.amount,
+        merchant: p.merchant,
+      },
+    });
+  }
+  rows.sort((a, b) => b.sortKey.localeCompare(a.sortKey));
+  return rows.slice(0, 3).map((r) => r.activity);
+}
 
 export async function GET(req: NextRequest) {
   const { db } = getFirebaseAdmin();
@@ -26,12 +106,24 @@ export async function GET(req: NextRequest) {
 
     const currentYear = new Date().getFullYear().toString();
 
-    // Build fingerprint → { amount, date } for quick lookup
-    const txByFingerprint = new Map<string, { amount: number; date: string }>();
+    // Build fingerprint → txn fields for lookup (amount, date, merchant label)
+    const txByFingerprint = new Map<string, { amount: number; date: string; merchant: string }>();
     for (const tx of profile.expenseTxns) {
       const fp = txFingerprint(tx.accountSlug, tx.date, tx.amount, tx.merchant);
-      txByFingerprint.set(fp, { amount: Math.abs(tx.amount), date: tx.date });
+      txByFingerprint.set(fp, { amount: Math.abs(tx.amount), date: tx.date, merchant: tx.merchant });
     }
+
+    /** Statement-tagged payments per service event (for merged activity feed on list cards) */
+    const statementPaymentsByEvent = new Map<
+      string,
+      { fingerprint: string; date: string; amount: number; merchant: string }[]
+    >();
+
+    /** Statement-tagged tx rows per project (for list card expense feed) */
+    const projectStatementByEvent = new Map<
+      string,
+      { fingerprint: string; date: string; amount: number; merchant: string }[]
+    >();
 
     const eventsById = new Map(
       eventsSnap.docs.map((d) => [d.id, { id: d.id, ...d.data() } as UserEvent]),
@@ -68,6 +160,28 @@ export async function GET(req: NextRequest) {
             existing.lastVisitDate = tx.date;
           }
           svcVisits.set(eventId, existing);
+
+          const payRow = {
+            fingerprint: fpKey,
+            date: tx.date,
+            amount: tx.amount,
+            merchant: tx.merchant,
+          };
+          const payList = statementPaymentsByEvent.get(eventId) ?? [];
+          payList.push(payRow);
+          statementPaymentsByEvent.set(eventId, payList);
+        }
+
+        if ((ev.kind ?? "project") === "project") {
+          const stmtRow = {
+            fingerprint: fpKey,
+            date: tx.date,
+            amount: tx.amount,
+            merchant: tx.merchant,
+          };
+          const stmtList = projectStatementByEvent.get(eventId) ?? [];
+          stmtList.push(stmtRow);
+          projectStatementByEvent.set(eventId, stmtList);
         }
       }
     }
@@ -135,28 +249,64 @@ export async function GET(req: NextRequest) {
       .filter((ev) => !ev.archivedAt);
 
     const serviceIds = events.filter((e) => e.kind === "service").map((e) => e.id);
-    const recentById = new Map<string, VisitLog[]>();
+    const recentVisitsById = new Map<string, VisitLog[]>();
     if (serviceIds.length > 0) {
       await Promise.all(
         serviceIds.map(async (sid) => {
           const snap = await db
             .collection(`users/${targetUid}/events/${sid}/visits`)
             .orderBy("date", "desc")
-            .limit(3)
+            .limit(VISITS_FETCH_FOR_MERGE)
             .get();
           const logs: VisitLog[] = snap.docs.map((d) => ({ id: d.id, ...d.data() } as VisitLog));
-          recentById.set(sid, logs);
+          recentVisitsById.set(sid, logs);
         }),
       );
     }
 
-    const eventsWithLogs: EventSummary[] = events.map((ev) =>
+    const eventsWithActivities: EventSummary[] = events.map((ev) =>
       ev.kind === "service"
-        ? { ...ev, recentVisitLogs: recentById.get(ev.id) ?? [] }
+        ? {
+            ...ev,
+            recentActivities: buildRecentActivities(
+              recentVisitsById.get(ev.id) ?? [],
+              statementPaymentsByEvent.get(ev.id) ?? [],
+            ),
+          }
         : ev,
     );
 
-    return NextResponse.json({ events: eventsWithLogs });
+    const projectIds = events.filter((e) => (e.kind ?? "project") === "project").map((e) => e.id);
+    const ledgerByProjectId = new Map<string, ProjectLedgerEntry[]>();
+    if (projectIds.length > 0) {
+      await Promise.all(
+        projectIds.map(async (pid) => {
+          const snap = await db
+            .collection(`users/${targetUid}/events/${pid}/ledger`)
+            .orderBy("date", "desc")
+            .limit(LEDGER_FETCH_FOR_MERGE)
+            .get();
+          const entries: ProjectLedgerEntry[] = snap.docs.map(
+            (d) => ({ id: d.id, ...d.data() } as ProjectLedgerEntry),
+          );
+          ledgerByProjectId.set(pid, entries);
+        }),
+      );
+    }
+
+    const eventsOut: EventSummary[] = eventsWithActivities.map((ev) =>
+      (ev.kind ?? "project") === "project"
+        ? {
+            ...ev,
+            recentProjectExpenses: buildRecentProjectExpenses(
+              projectStatementByEvent.get(ev.id) ?? [],
+              ledgerByProjectId.get(ev.id) ?? [],
+            ),
+          }
+        : ev,
+    );
+
+    return NextResponse.json({ events: eventsOut });
   } catch (err) {
     console.error("[events] GET error", err);
     return NextResponse.json({ error: "Failed to load events" }, { status: 500 });

@@ -154,6 +154,47 @@ export interface TaggedTransaction {
   note?: string;
 }
 
+/**
+ * Service tracker list card — one merged timeline row (visit log and/or statement payment).
+ */
+export type ServiceRecentActivity =
+  | {
+      kind: "visit";
+      /** visits subcollection doc id */
+      id: string;
+      date: string;
+      visit: VisitLog;
+    }
+  | {
+      kind: "statement";
+      /** transaction fingerprint */
+      id: string;
+      date: string;
+      amount: number;
+      merchant: string;
+    };
+
+/**
+ * Budget tracker list card — statement tag or manual/cash ledger row.
+ */
+export type ProjectRecentExpense =
+  | {
+      kind: "statement";
+      id: string;
+      date: string;
+      amount: number;
+      merchant: string;
+    }
+  | {
+      kind: "ledger";
+      id: string;
+      date: string;
+      amount: number;
+      note?: string;
+      category?: string;
+      entryType: "cash" | "manual";
+    };
+
 /** Summary returned alongside event data on the list endpoint */
 export interface EventSummary extends UserEvent {
   /** Statement txns total + cash payments total */
@@ -164,6 +205,8 @@ export interface EventSummary extends UserEvent {
   paidCount?: number;
   /** visitCount - paidCount (logged but no payment recorded yet) */
   unbilledCount?: number;
-  /** Service trackers only — last few visit logs for list cards */
-  recentVisitLogs?: VisitLog[];
+  /** Service trackers only — last 3 activities (visits + statement payments), most recent first */
+  recentActivities?: ServiceRecentActivity[];
+  /** Budget / project trackers only — last 3 expenses (statement + ledger), most recent first */
+  recentProjectExpenses?: ProjectRecentExpense[];
 }

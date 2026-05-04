@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { useActiveProfile } from "@/contexts/ActiveProfileContext";
-import type { EventSummary, EventColor, ServiceCadence, BillingMethod, VisitLog } from "@/lib/events/types";
+import type { EventSummary, EventColor, ServiceCadence, BillingMethod, VisitLog, ServiceRecentActivity, ProjectRecentExpense } from "@/lib/events/types";
 import ServiceLogModal from "@/components/events/ServiceLogModal";
 import AddExpenseModal from "@/components/events/AddExpenseModal";
 import { EVENT_COLORS } from "@/lib/events/types";
@@ -277,6 +277,24 @@ function CreateEventModal({ headers, onCreated, onClose, planKind }: CreateModal
 
 // ── Project card ──────────────────────────────────────────────────────────────
 
+function fmtShortDate(iso: string): string {
+  return new Date(iso + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function formatProjectExpenseLine(row: ProjectRecentExpense, homeCurrency: string): string {
+  if (row.kind === "statement") {
+    const d = fmtShortDate(row.date);
+    const merchant =
+      row.merchant.length > 36 ? `${row.merchant.slice(0, 36)}…` : row.merchant;
+    return `${d} · ${fmt(row.amount, homeCurrency)} · ${merchant} · Statement`;
+  }
+  const d = fmtShortDate(row.date);
+  const label = (row.note?.trim() || row.category?.trim() || "Expense");
+  const short = label.length > 40 ? `${label.slice(0, 40)}…` : label;
+  const via = row.entryType === "cash" ? "Cash" : "Manual";
+  return `${d} · ${fmt(row.amount, homeCurrency)} · ${short} · ${via}`;
+}
+
 function ProjectCard({
   ev,
   homeCurrency,
@@ -297,9 +315,7 @@ function ProjectCard({
   const days      = ev.startDate && ev.endDate ? daysBetween(ev.startDate, ev.endDate) : null;
   const remaining = ev.budget != null ? Math.max(0, ev.budget - ev.totalSpent) : null;
 
-  const nStmt = ev.txCount ?? 0;
-  const nMan  = ev.ledgerEntryCount ?? 0;
-  const nExp  = nStmt + nMan;
+  const recentEx = ev.recentProjectExpenses ?? [];
 
   const statusLabel =
     status === "upcoming" ? "Upcoming" : status === "completed" ? "Completed" : "In progress";
@@ -339,9 +355,9 @@ function ProjectCard({
 
       {pct !== null && (
         <div className="mt-4">
-          <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
+          <div className="h-1 w-full overflow-hidden rounded-full bg-gray-100">
             <div
-              className={`h-2 rounded-full transition-all ${isOver ? "bg-red-400" : "bg-purple-500"}`}
+              className={`h-1 rounded-full transition-all ${isOver ? "bg-red-400" : "bg-purple-500"}`}
               style={{ width: `${pct}%` }}
             />
           </div>
@@ -357,12 +373,18 @@ function ProjectCard({
         </div>
       )}
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-gray-50 pt-4">
-        <p className="text-xs text-gray-400">
-          {nExp === 0
-            ? "No expenses yet"
-            : `${nExp} expense${nExp !== 1 ? "s" : ""} · ${nStmt} from statement, ${nMan} manual`}
-        </p>
+      <div className="mt-4 min-w-0 flex flex-wrap items-start justify-between gap-3 border-t border-gray-50 pt-4">
+        <div className="min-w-0 flex-1 space-y-1">
+          {recentEx.length === 0 ? (
+            <p className="text-xs text-gray-400">No expenses yet.</p>
+          ) : (
+            recentEx.map((row) => (
+              <p key={`${row.kind}:${row.id}`} className="text-xs text-gray-500 line-clamp-2">
+                {formatProjectExpenseLine(row, hc)}
+              </p>
+            ))
+          )}
+        </div>
         <button
           type="button"
           onClick={(e) => {
@@ -383,10 +405,6 @@ function ProjectCard({
 
 // ── Recurring service card ───────────────────────────────────────────────────
 
-function fmtShortDate(iso: string): string {
-  return new Date(iso + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
 function formatVisitLogLine(log: VisitLog, homeCurrency: string): string {
   const d = fmtShortDate(log.date);
   let pay: string;
@@ -405,6 +423,16 @@ function formatVisitLogLine(log: VisitLog, homeCurrency: string): string {
   return `${d} · ${pay}${note}`;
 }
 
+function formatServiceActivityLine(a: ServiceRecentActivity, homeCurrency: string): string {
+  if (a.kind === "visit") {
+    return formatVisitLogLine(a.visit, homeCurrency);
+  }
+  const d = fmtShortDate(a.date);
+  const merchant =
+    a.merchant.length > 36 ? `${a.merchant.slice(0, 36)}…` : a.merchant;
+  return `${d} · ${fmt(a.amount, homeCurrency)} · ${merchant} · Statement`;
+}
+
 function ServiceCard({
   ev,
   homeCurrency,
@@ -421,7 +449,7 @@ function ServiceCard({
   const seasonStart = ev.seasonStart;
   const seasonEnd = ev.seasonEnd;
   const billingMethod = ev.billingMethod;
-  const recent = ev.recentVisitLogs ?? [];
+  const recent = ev.recentActivities ?? [];
 
   return (
     <div
@@ -443,11 +471,11 @@ function ServiceCard({
 
               <div className="mt-3 space-y-1">
                 {recent.length === 0 ? (
-                  <p className="text-xs text-gray-400">No visits logged yet.</p>
+                  <p className="text-xs text-gray-400">No activity yet.</p>
                 ) : (
-                  recent.map((log) => (
-                    <p key={log.id} className="text-xs text-gray-500 line-clamp-2">
-                      {formatVisitLogLine(log, homeCurrency)}
+                  recent.map((row) => (
+                    <p key={`${row.kind}:${row.id}`} className="text-xs text-gray-500 line-clamp-2">
+                      {formatServiceActivityLine(row, homeCurrency)}
                     </p>
                   ))
                 )}
