@@ -30,6 +30,7 @@ export async function POST(
       date?: string;
       amount?: number;
       note?: string;
+      category?: string;
       entryType?: "cash" | "manual";
     };
     const date = body.date?.substring(0, 10);
@@ -59,6 +60,7 @@ export async function POST(
       entryType,
       createdAt: now,
       ...(body.note?.trim() ? { note: body.note.trim() } : {}),
+      ...(body.category?.trim() ? { category: body.category.trim() } : {}),
     };
 
     await db.doc(`users/${actorUid}/events/${id}/ledger/${entryId}`).set(entry);

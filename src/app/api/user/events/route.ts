@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import { getFinancialProfile } from "@/lib/financialProfile";
-import type { UserEvent, TxTag, EventSummary } from "@/lib/events/types";
+import type { UserEvent, TxTag, EventSummary, VisitLog } from "@/lib/events/types";
 import { txFingerprint } from "@/lib/txFingerprint";
 import { randomUUID } from "crypto";
 
@@ -134,7 +134,29 @@ export async function GET(req: NextRequest) {
       })
       .filter((ev) => !ev.archivedAt);
 
-    return NextResponse.json({ events });
+    const serviceIds = events.filter((e) => e.kind === "service").map((e) => e.id);
+    const recentById = new Map<string, VisitLog[]>();
+    if (serviceIds.length > 0) {
+      await Promise.all(
+        serviceIds.map(async (sid) => {
+          const snap = await db
+            .collection(`users/${targetUid}/events/${sid}/visits`)
+            .orderBy("date", "desc")
+            .limit(3)
+            .get();
+          const logs: VisitLog[] = snap.docs.map((d) => ({ id: d.id, ...d.data() } as VisitLog));
+          recentById.set(sid, logs);
+        }),
+      );
+    }
+
+    const eventsWithLogs: EventSummary[] = events.map((ev) =>
+      ev.kind === "service"
+        ? { ...ev, recentVisitLogs: recentById.get(ev.id) ?? [] }
+        : ev,
+    );
+
+    return NextResponse.json({ events: eventsWithLogs });
   } catch (err) {
     console.error("[events] GET error", err);
     return NextResponse.json({ error: "Failed to load events" }, { status: 500 });

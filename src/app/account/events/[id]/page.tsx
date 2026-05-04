@@ -8,10 +8,8 @@ import { useActiveProfile } from "@/contexts/ActiveProfileContext";
 import type { UserEvent, TaggedTransaction, EventColor, VisitLog, ServiceCadence, BillingMethod, ProjectLedgerEntry } from "@/lib/events/types";
 import { EVENT_COLORS } from "@/lib/events/types";
 import { fmt, HOME_CURRENCY, getCurrencySymbol } from "@/lib/currencyUtils";
-import TagCashPaymentPanel from "@/components/events/TagCashPaymentPanel";
-import type { RawTx } from "@/components/events/TagPicker";
-
-// ── helpers ──────────────────────────────────────────────────────────────────
+import ServiceLogModal from "@/components/events/ServiceLogModal";
+import AddExpenseModal from "@/components/events/AddExpenseModal";
 
 function colorCfg(color: EventColor) {
   return EVENT_COLORS.find((c) => c.id === color) ?? EVENT_COLORS[0];
@@ -347,14 +345,9 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
   const [removingVisit, setRemovingVisit] = useState<string | null>(null);
   const [currentYear, setCurrentYear]     = useState<string | null>(null);
 
-  // Log visit inline
-  const [showLogVisit, setShowLogVisit]   = useState(false);
-  const [logDate, setLogDate]             = useState(() => new Date().toISOString().substring(0, 10));
-  const [logNote, setLogNote]             = useState("");
-  const [savingVisit, setSavingVisit]     = useState(false);
-
-  // Log payment inline
-  const [showLogPayment, setShowLogPayment] = useState(false);
+  // Service tracker — shared log modal; project — shared add expense modal
+  const [logModalOpen, setLogModalOpen] = useState(false);
+  const [addExpenseOpen, setAddExpenseOpen] = useState(false);
 
   // Activity tab
   const [activityTab, setActivityTab]     = useState<"all" | "visits" | "payments">("all");
@@ -390,8 +383,8 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
     return () => { cancelled = true; };
   }, [token, buildHeaders]);
 
-  const load = useCallback(async (tok: string) => {
-    setLoading(true);
+  const load = useCallback(async (tok: string, opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     try {
       const res  = await fetch(`/api/user/events/${id}`, { headers: buildHeaders(tok) });
       if (res.status === 404) { router.replace("/account/events"); return; }
@@ -404,32 +397,40 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
         setTotalSpent(json.totalSpent ?? 0);
         setCurrentYear(json.currentYear ?? null);
       }
-    } finally { setLoading(false); }
+    } finally {
+      if (!opts?.silent) setLoading(false);
+    }
   }, [id, buildHeaders, router]);
 
   useEffect(() => { if (token) load(token); }, [token, load, targetUid]);
 
-  async function handleSaveVisit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!token) return;
-    setSavingVisit(true);
-    try {
-      const res = await fetch(`/api/user/events/${id}/visits`, {
-        method: "POST",
-        headers: { ...buildHeaders(token), "Content-Type": "application/json" },
-        body: JSON.stringify({ date: logDate, ...(logNote.trim() ? { note: logNote.trim() } : {}) }),
-      });
-      if (res.ok) {
-        const json = await res.json() as { visit: VisitLog };
-        if (json.visit) {
-          setVisitLogs((prev) => [json.visit, ...prev].sort((a, b) => b.date.localeCompare(a.date)));
-        }
-        setLogNote("");
-        setLogDate(new Date().toISOString().substring(0, 10));
-        setShowLogVisit(false);
-      }
-    } finally { setSavingVisit(false); }
-  }
+  /** Open log / add-expense modal when arriving from trackers list (?log=1 | ?addExpense=1). */
+  const queryConsumedRef = useRef(false);
+  useEffect(() => {
+    queryConsumedRef.current = false;
+  }, [id]);
+
+  useEffect(() => {
+    if (!event || typeof window === "undefined" || queryConsumedRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const logQ = params.get("log");
+    const addQ = params.get("addExpense");
+    if (logQ !== "1" && addQ !== "1") return;
+
+    if (logQ === "1" && event.kind === "service") {
+      setLogModalOpen(true);
+    }
+    const isProject = (event.kind ?? "project") === "project";
+    if (addQ === "1" && isProject) {
+      setAddExpenseOpen(true);
+    }
+    queryConsumedRef.current = true;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("log");
+    url.searchParams.delete("addExpense");
+    const q = url.searchParams.toString();
+    window.history.replaceState({}, "", url.pathname + (q ? `?${q}` : "") + url.hash);
+  }, [event]);
 
   async function handleRemoveVisit(visitId: string) {
     if (!token) return;
@@ -522,15 +523,6 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
         setEvent((ev) => ev ? { ...ev, ledgerTotal: Math.max(0, (ev.ledgerTotal ?? 0) - removed.amount), ledgerEntryCount: Math.max(0, (ev.ledgerEntryCount ?? 1) - 1) } : ev);
       }
     } finally { setRemovingLedger(null); }
-  }
-
-  function handleTagged(tx: RawTx) {
-    const newTx: TaggedTransaction = {
-      fingerprint: tx.fingerprint, date: tx.date, description: tx.description,
-      amount: tx.amount, category: tx.category, accountLabel: tx.accountLabel, eventIds: [id],
-    };
-    setTagged((prev) => [newTx, ...prev].sort((a, b) => b.date.localeCompare(a.date)));
-    setTotalSpent((s) => s + tx.amount);
   }
 
   function handleNoteUpdate(fingerprint: string, note: string) {
@@ -696,18 +688,19 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                   <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
                     Season Timeline · {new Date().getFullYear()}
                   </p>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => { setShowLogVisit((v) => !v); setShowLogPayment(false); }}
-                      className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 transition">
-                      + Log visit
-                    </button>
-                    <button
-                      onClick={() => { setShowLogPayment((v) => !v); setShowLogVisit(false); }}
-                      className="rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-50 transition">
-                      + Log payment
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (logModalOpen) setLogModalOpen(false);
+                      else setLogModalOpen(true);
+                    }}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                      logModalOpen
+                        ? "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                        : "bg-indigo-600 text-white hover:bg-indigo-700"
+                    }`}>
+                    {logModalOpen ? "Close" : "+ Log"}
+                  </button>
                 </div>
                 <SeasonTimeline event={event} />
 
@@ -720,53 +713,6 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                     {estimatedOwed > 0 && (
                       <span className="text-xs font-semibold text-amber-800">~{fmt(estimatedOwed, hc)} owed</span>
                     )}
-                  </div>
-                )}
-
-                {/* Inline log visit form */}
-                {showLogVisit && (
-                  <form onSubmit={handleSaveVisit} className="mt-4 rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 space-y-3">
-                    <p className="text-xs font-semibold text-gray-700">Log a visit</p>
-                    <div className="flex gap-3 flex-wrap">
-                      <div>
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Date</p>
-                        <input type="date" value={logDate} max={new Date().toISOString().substring(0, 10)}
-                          onChange={(e) => setLogDate(e.target.value)}
-                          className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs" required />
-                      </div>
-                      <div className="flex-1 min-w-[140px]">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Note (optional)</p>
-                        <input value={logNote} onChange={(e) => setLogNote(e.target.value)}
-                          placeholder="e.g. front yard only"
-                          className="w-full rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs" />
-                      </div>
-                    </div>
-                    <div className="flex justify-end gap-2">
-                      <button type="button" onClick={() => setShowLogVisit(false)}
-                        className="rounded-lg px-3 py-1.5 text-xs font-medium text-gray-500 border border-gray-200 hover:bg-white">Cancel</button>
-                      <button type="submit" disabled={savingVisit}
-                        className="rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
-                        {savingVisit ? "Saving…" : "Save visit"}
-                      </button>
-                    </div>
-                  </form>
-                )}
-
-                {/* Inline log payment form */}
-                {showLogPayment && (
-                  <div className="mt-4">
-                    <TagCashPaymentPanel
-                      eventId={id}
-                      headers={headers}
-                      isOpen={showLogPayment}
-                      onClose={() => setShowLogPayment(false)}
-                      postCashPayment={postCashPayment}
-                      onCashSaved={(_amt, _date) => { setShowLogPayment(false); }}
-                      onTransactionTagged={() => {
-                        if (token) load(token);
-                      }}
-                      homeCurrency={hc}
-                    />
                   </div>
                 )}
               </div>
@@ -1074,11 +1020,11 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
           // ── Unified payments list ────────────────────────────────────
           type PayItem =
             | { kind: "verified"; date: string; fingerprint: string; description: string; amount: number; accountLabel: string; note?: string }
-            | { kind: "pending";  date: string; id: string; note?: string; amount: number; entryType: "cash" | "manual" };
+            | { kind: "pending";  date: string; id: string; note?: string; amount: number; entryType: "cash" | "manual"; category?: string };
 
           const allPayItems: PayItem[] = [
             ...tagged.map((t) => ({ kind: "verified" as const, date: t.date, fingerprint: t.fingerprint, description: t.description, amount: t.amount, accountLabel: t.accountLabel, note: t.note })),
-            ...ledgerEntries.map((l) => ({ kind: "pending" as const, date: l.date, id: l.id, note: l.note, amount: l.amount, entryType: l.entryType })),
+            ...ledgerEntries.map((l) => ({ kind: "pending" as const, date: l.date, id: l.id, note: l.note, amount: l.amount, entryType: l.entryType, category: l.category })),
           ].sort((a, b) => b.date.localeCompare(a.date));
 
           // ── Spend velocity chart data ────────────────────────────────
@@ -1112,41 +1058,12 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                   <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
                     <div className="flex items-center justify-between mb-3">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Budget</p>
-                      <button onClick={() => { setShowLogPayment((v) => !v); }}
+                      <button type="button"
+                        onClick={() => setAddExpenseOpen(true)}
                         className="rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 transition">
-                        + Log payment
+                        + Add expense
                       </button>
                     </div>
-
-                    {showLogPayment && (
-                      <div className="mb-4">
-                        <TagCashPaymentPanel
-                          eventId={id}
-                          headers={headers}
-                          isOpen={showLogPayment}
-                          onClose={() => setShowLogPayment(false)}
-                          postCashPayment={async (p) => {
-                            if (!token) return false;
-                            const res = await fetch(`/api/user/events/${id}/ledger`, {
-                              method: "POST",
-                              headers: { ...buildHeaders(token), "Content-Type": "application/json" },
-                              body: JSON.stringify({ date: p.date, amount: p.amount, entryType: p.paymentMethod === "cash" ? "cash" : "manual", ...(p.note ? { note: p.note } : {}) }),
-                            });
-                            if (res.ok) {
-                              const json = await res.json() as { entry: ProjectLedgerEntry };
-                              if (json.entry) {
-                                setLedgerEntries((prev) => [json.entry, ...prev].sort((a, b) => b.date.localeCompare(a.date)));
-                                setTotalSpent((s) => s + json.entry.amount);
-                              }
-                            }
-                            return res.ok;
-                          }}
-                          onCashSaved={() => setShowLogPayment(false)}
-                          onTransactionTagged={() => { if (token) load(token); }}
-                          homeCurrency={hc}
-                        />
-                      </div>
-                    )}
 
                     <div className="flex items-end justify-between mb-2">
                       <div>
@@ -1204,7 +1121,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                     {visiblePayItems.length === 0 ? (
                       <div className="px-5 py-10 text-center">
                         <p className="text-sm text-gray-500">No payments yet.</p>
-                        <p className="text-xs text-gray-400 mt-1">Use &quot;+ Log payment&quot; to add cash or tag a statement transaction.</p>
+                        <p className="text-xs text-gray-400 mt-1">Use &quot;+ Add expense&quot; to tag a statement transaction or enter spending manually.</p>
                       </div>
                     ) : (
                       <div className="divide-y divide-gray-50">
@@ -1232,7 +1149,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                                   {isPending ? (item.note ?? "Manual entry") : item.description}
                                 </p>
                                 <p className={`text-xs mt-0.5 ${isCash || !isPending ? "text-gray-400" : "text-amber-600"}`}>
-                                  {statusLine}
+                                  {item.kind === "pending" && item.category ? `${item.category} · ` : ""}{statusLine}
                                   {!isPending && item.note && <> · <em>&ldquo;{item.note}&rdquo;</em></>}
                                 </p>
                                 {!isPending && (
@@ -1390,6 +1307,29 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
       </div>
 
       {/* ── Modals ─────────────────────────────────────────────────────────── */}
+
+      {isService && (
+        <ServiceLogModal
+          open={logModalOpen}
+          onClose={() => setLogModalOpen(false)}
+          eventId={id}
+          headers={headers}
+          homeCurrency={hc}
+          onAfterChange={() => { if (token) void load(token, { silent: true }); }}
+        />
+      )}
+
+      {!isService && event && (
+        <AddExpenseModal
+          open={addExpenseOpen}
+          onClose={() => setAddExpenseOpen(false)}
+          eventId={id}
+          eventName={event.name}
+          headers={headers}
+          homeCurrency={hc}
+          onAfterChange={() => { if (token) void load(token, { silent: true }); }}
+        />
+      )}
 
       {showEdit && (
         <EditEventModal event={event} headers={headers} homeCurrency={homeCurrency}

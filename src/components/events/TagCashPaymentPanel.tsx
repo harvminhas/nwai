@@ -13,12 +13,17 @@ export interface TagCashPaymentPanelProps {
   headers: Record<string, string>;
   isOpen: boolean;
   onClose: () => void;
-  onTransactionTagged?: (evId: string, amount: number, date?: string) => void;
+  onTransactionTagged?: (eventId: string, amountDelta: number, date?: string, tx?: RawTx) => void;
   postCashPayment: (p: { date: string; amount: number; note?: string; paymentMethod?: "cash" | "card" }) => Promise<boolean>;
   onCashSaved: (amount: number, date: string) => void;
   homeCurrency?: string;
   /** When true, wraps in a card with border (default). Set false for inline/borderless use. */
   bordered?: boolean;
+  /**
+   * Embed only the "From Statement" tagging list — no tabs, no footer.
+   * Use inside a parent form where Cancel/Save are handled externally.
+   */
+  statementPickerOnly?: boolean;
 }
 
 export default function TagCashPaymentPanel({
@@ -31,6 +36,7 @@ export default function TagCashPaymentPanel({
   onCashSaved,
   homeCurrency,
   bordered = true,
+  statementPickerOnly = false,
 }: TagCashPaymentPanelProps) {
   const cur    = homeCurrency ?? HOME_CURRENCY;
   const curSym = getCurrencySymbol(cur).trim();
@@ -88,7 +94,7 @@ export default function TagCashPaymentPanel({
       if (res.ok) {
         setSessionTagged((prev) => new Set([...prev, tx.fingerprint]));
         setSessionUntagged((prev) => { const s = new Set(prev); s.delete(tx.fingerprint); return s; });
-        onTransactionTagged?.(eventId, tx.amount, tx.date);
+        onTransactionTagged?.(eventId, tx.amount, tx.date, tx);
       }
     } finally { setTagging(null); }
   }
@@ -104,7 +110,7 @@ export default function TagCashPaymentPanel({
       if (res.ok) {
         setSessionUntagged((prev) => new Set([...prev, tx.fingerprint]));
         setSessionTagged((prev) => { const s = new Set(prev); s.delete(tx.fingerprint); return s; });
-        onTransactionTagged?.(eventId, -tx.amount, tx.date);
+        onTransactionTagged?.(eventId, -tx.amount, tx.date, tx);
       }
     } finally { setTagging(null); }
   }
@@ -140,23 +146,25 @@ export default function TagCashPaymentPanel({
 
   return (
     <div className={wrapper} onClick={(e) => e.stopPropagation()}>
-      {/* Tabs */}
-      <div className="flex border-b border-gray-100">
-        {(["statement", "manual"] as const).map((tab) => (
-          <button key={tab} onClick={() => setPaymentTab(tab)}
-            className={`flex-1 py-2.5 text-xs font-semibold transition ${
-              paymentTab === tab ? "bg-white text-gray-900 border-b-2 border-indigo-600" : "bg-gray-50 text-gray-500 hover:text-gray-700"
-            }`}>
-            {tab === "statement" ? "From Statement" : "Manual Entry"}
-          </button>
-        ))}
-      </div>
+      {!statementPickerOnly && (
+        <div className="flex border-b border-gray-100">
+          {(["statement", "manual"] as const).map((tab) => (
+            <button key={tab} type="button" onClick={() => setPaymentTab(tab)}
+              className={`flex-1 py-2.5 text-xs font-semibold transition ${
+                paymentTab === tab ? "bg-white text-gray-900 border-b-2 border-indigo-600" : "bg-gray-50 text-gray-500 hover:text-gray-700"
+              }`}>
+              {tab === "statement" ? "From Statement" : "Manual Entry"}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* From Statement */}
-      {paymentTab === "statement" && (
+      {(statementPickerOnly || paymentTab === "statement") && (
         <div className="px-4 pt-3 pb-1">
           <input value={txSearch} onChange={(e) => setTxSearch(e.target.value)}
             placeholder="Search merchant…" autoFocus
+            onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
             className="w-full rounded-lg border border-gray-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500 mb-3" />
           {loadingTxns ? (
             <p className="text-xs text-gray-400 py-4 text-center">Loading…</p>
@@ -208,7 +216,7 @@ export default function TagCashPaymentPanel({
       )}
 
       {/* Manual Entry */}
-      {paymentTab === "manual" && (
+      {!statementPickerOnly && paymentTab === "manual" && (
         <div className="px-4 py-3 space-y-3">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">How did you pay?</p>
@@ -249,18 +257,20 @@ export default function TagCashPaymentPanel({
         </div>
       )}
 
-      <div className="flex items-center justify-end gap-2 px-4 pb-3">
-        <button type="button" onClick={(e) => { e.stopPropagation(); onClose(); }}
-          className="rounded-lg px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 border border-gray-200">
-          Cancel
-        </button>
-        {paymentTab === "manual" && (
-          <button type="button" onClick={handleSaveManual} disabled={savingManual || !manualAmt}
-            className="rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 transition">
-            {savingManual ? "Saving…" : manualMethod === "cash" ? "Save cash payment" : "Save card placeholder"}
+      {!statementPickerOnly && (
+        <div className="flex items-center justify-end gap-2 px-4 pb-3">
+          <button type="button" onClick={(e) => { e.stopPropagation(); onClose(); }}
+            className="rounded-lg px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 border border-gray-200">
+            Cancel
           </button>
-        )}
-      </div>
+          {paymentTab === "manual" && (
+            <button type="button" onClick={handleSaveManual} disabled={savingManual || !manualAmt}
+              className="rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 transition">
+              {savingManual ? "Saving…" : manualMethod === "cash" ? "Save cash payment" : "Save card placeholder"}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -20,6 +20,8 @@ export interface ProjectLedgerEntry {
   /** Amount counted toward project budget (always positive spend) */
   amount: number;
   note?: string;
+  /** Expense category label (e.g. Dining, Travel) — optional manual-entry metadata */
+  category?: string;
   /** How the user thinks of this line (labels only — all count the same toward budget) */
   entryType: "cash" | "manual";
   createdAt: string;
@@ -162,4 +164,6 @@ export interface EventSummary extends UserEvent {
   paidCount?: number;
   /** visitCount - paidCount (logged but no payment recorded yet) */
   unbilledCount?: number;
+  /** Service trackers only — last few visit logs for list cards */
+  recentVisitLogs?: VisitLog[];
 }
