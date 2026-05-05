@@ -34,7 +34,7 @@ export async function POST(
     }
 
     // Reset so /api/parse can overwrite it
-    await ref.update({ status: "processing", errorMessage: null });
+    await ref.update({ status: "processing", errorMessage: null, parseError: null });
 
     return NextResponse.json({ ok: true, statementId });
   } catch (err) {

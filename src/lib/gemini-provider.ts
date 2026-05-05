@@ -32,6 +32,18 @@ function getModel(systemPrompt: string) {
 }
 
 /**
+ * Thrown when all retry attempts are exhausted due to a transient AI error
+ * (503 overloaded / 429 rate-limited). Lets callers show a "try again later"
+ * message rather than prompting the user to enter data manually.
+ */
+export class TransientAiError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TransientAiError";
+  }
+}
+
+/**
  * Returns true for transient server-side errors that are safe to retry:
  * - 503 Service Unavailable (model overloaded)
  * - 429 Too Many Requests (rate limit)
@@ -47,6 +59,7 @@ function isTransient(err: unknown): boolean {
 /**
  * Wraps a Gemini call with up to `maxAttempts` retries for transient errors.
  * Delays: 2s, 4s, 8s (exponential backoff, capped at 8s).
+ * Throws TransientAiError if all attempts fail with a transient error.
  */
 async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 4): Promise<T> {
   let lastErr: unknown;
@@ -55,7 +68,12 @@ async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 4): Promise<T> {
       return await fn();
     } catch (err) {
       lastErr = err;
-      if (!isTransient(err) || attempt === maxAttempts) throw err;
+      if (!isTransient(err)) throw err;
+      if (attempt === maxAttempts) {
+        throw new TransientAiError(
+          "AI is temporarily unavailable due to high demand. Please try again in a few minutes."
+        );
+      }
       const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 8000);
       console.warn(`[gemini] transient error on attempt ${attempt}/${maxAttempts}, retrying in ${delayMs}ms…`, (err as Error).message);
       await new Promise((res) => setTimeout(res, delayMs));

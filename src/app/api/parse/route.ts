@@ -8,6 +8,7 @@ import {
   parseStatementImage,
   parseStatementPdf,
 } from "@/lib/parseStatement";
+import { TransientAiError } from "@/lib/gemini-provider";
 import { merchantSlug, applyRulesAndRecalculate } from "@/lib/applyRules";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { getYearMonth } from "@/lib/consolidate";
@@ -358,6 +359,8 @@ export async function POST(request: NextRequest) {
 
     const errMessage = err instanceof Error ? err.message : String(err);
 
+    const isTransientAiError = err instanceof TransientAiError;
+
     const isAiConfigError =
       err instanceof Error &&
       (errMessage.includes("GEMINI_API_KEY") ||
@@ -372,7 +375,9 @@ export async function POST(request: NextRequest) {
     const isFirestoreNotFound = code === 5;
 
     let friendlyMessage = ERROR_MESSAGE;
-    if (isAiConfigError) {
+    if (isTransientAiError) {
+      friendlyMessage = "AI is temporarily unavailable due to high demand. Please try again in a few minutes.";
+    } else if (isAiConfigError) {
       friendlyMessage = "AI provider API key missing or invalid. Check your environment variables.";
     } else if (isFirebaseCredError) {
       friendlyMessage = "Server setup incomplete: Firebase Admin credentials missing.";
@@ -380,10 +385,11 @@ export async function POST(request: NextRequest) {
       friendlyMessage = "Firestore not set up. Create a Firestore database in Firebase Console.";
     }
 
-    // Mark statement as needs_review so the client stops polling and the user
-    // can manually complete the ingestion from the statement detail page.
-    // IMPORTANT: only overwrite if the document is NOT already "completed" —
-    // a failed re-parse must never destroy previously-parsed good data.
+    // Transient AI errors and config errors are temporary — keep as "error" so
+    // the user sees "Retry" rather than being asked to enter data manually.
+    // Genuine parse failures go to "needs_review" so the user can fill in the
+    // fields themselves from the statement detail page.
+    // IMPORTANT: never overwrite a document that is already "completed".
     if (statementId) {
       try {
         const { db } = getFirebaseAdmin();
@@ -391,11 +397,16 @@ export async function POST(request: NextRequest) {
         const snap = await ref.get();
         const currentStatus = snap.exists ? (snap.data()?.status as string | undefined) : undefined;
         if (currentStatus !== "completed") {
-          await ref.update({
-            status: "needs_review",
-            parseError: friendlyMessage,
-            ...(partialParsedData ? { partialParsedData } : {}),
-          });
+          const isRetryable = isTransientAiError || isAiConfigError || isFirebaseCredError || isFirestoreNotFound;
+          if (isRetryable) {
+            await ref.update({ status: "error", errorMessage: friendlyMessage });
+          } else {
+            await ref.update({
+              status: "needs_review",
+              parseError: friendlyMessage,
+              ...(partialParsedData ? { partialParsedData } : {}),
+            });
+          }
         }
       } catch (_) {}
     }
