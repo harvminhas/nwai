@@ -31,13 +31,48 @@ function getModel(systemPrompt: string) {
   });
 }
 
+/**
+ * Returns true for transient server-side errors that are safe to retry:
+ * - 503 Service Unavailable (model overloaded)
+ * - 429 Too Many Requests (rate limit)
+ */
+function isTransient(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return msg.includes("503") || msg.includes("429") ||
+         msg.includes("service unavailable") || msg.includes("rate limit") ||
+         msg.includes("too many requests") || msg.includes("high demand");
+}
+
+/**
+ * Wraps a Gemini call with up to `maxAttempts` retries for transient errors.
+ * Delays: 2s, 4s, 8s (exponential backoff, capped at 8s).
+ */
+async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 4): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (!isTransient(err) || attempt === maxAttempts) throw err;
+      const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 8000);
+      console.warn(`[gemini] transient error on attempt ${attempt}/${maxAttempts}, retrying in ${delayMs}ms…`, (err as Error).message);
+      await new Promise((res) => setTimeout(res, delayMs));
+    }
+  }
+  throw lastErr;
+}
+
 export const geminiProvider: AiProvider = {
   async sendPdfRequest(systemPrompt: string, userPrompt: string, pdfBase64: string): Promise<string> {
-    const model  = getModel(systemPrompt);
-    const result = await model.generateContent([
-      { inlineData: { mimeType: "application/pdf", data: pdfBase64 } },
-      userPrompt,
-    ]);
+    const model = getModel(systemPrompt);
+    const result = await withRetry(() =>
+      model.generateContent([
+        { inlineData: { mimeType: "application/pdf", data: pdfBase64 } },
+        userPrompt,
+      ])
+    );
     return result.response.text();
   },
 
@@ -47,22 +82,24 @@ export const geminiProvider: AiProvider = {
     imageBase64: string,
     mediaType: string
   ): Promise<string> {
-    const model  = getModel(systemPrompt);
-    const result = await model.generateContent([
-      {
-        inlineData: {
-          mimeType: mediaType as "image/png" | "image/jpeg" | "image/gif" | "image/webp",
-          data: imageBase64,
+    const model = getModel(systemPrompt);
+    const result = await withRetry(() =>
+      model.generateContent([
+        {
+          inlineData: {
+            mimeType: mediaType as "image/png" | "image/jpeg" | "image/gif" | "image/webp",
+            data: imageBase64,
+          },
         },
-      },
-      userPrompt,
-    ]);
+        userPrompt,
+      ])
+    );
     return result.response.text();
   },
 
   async sendTextRequest(systemPrompt: string, userPrompt: string): Promise<string> {
-    const model  = getModel(systemPrompt);
-    const result = await model.generateContent(userPrompt);
+    const model = getModel(systemPrompt);
+    const result = await withRetry(() => model.generateContent(userPrompt));
     return result.response.text();
   },
 };

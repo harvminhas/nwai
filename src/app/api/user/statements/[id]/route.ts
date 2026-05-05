@@ -18,6 +18,39 @@ async function getUid(request: NextRequest): Promise<string | null> {
 }
 
 /**
+ * GET /api/user/statements/[id]
+ * Returns full statement data (including partialParsedData and parseError)
+ * for the authenticated owner.
+ */
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const uid = await getUid(request);
+  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { id } = await params;
+  const { db } = getFirebaseAdmin();
+  const doc = await db.collection("statements").doc(id).get();
+
+  if (!doc.exists) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const data = doc.data()!;
+  if (data.userId !== uid) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  return NextResponse.json({
+    id,
+    status: data.status,
+    fileName: data.fileName,
+    uploadedAt: data.uploadedAt?.toDate?.()?.toISOString() ?? null,
+    parsedData: data.parsedData ?? null,
+    partialParsedData: data.partialParsedData ?? null,
+    parseError: data.parseError ?? data.errorMessage ?? null,
+    accountSlug: data.accountSlug ?? null,
+    yearMonth: data.yearMonth ?? null,
+  });
+}
+
+/**
  * PATCH /api/user/statements/[id]
  * Re-categorizes all transactions for a merchant and saves the rule.
  */

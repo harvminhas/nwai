@@ -240,8 +240,12 @@ export interface StatementDocument {
   fileName: string;
   fileUrl: string;
   parsedData?: ParsedStatementData;
-  status: "processing" | "completed" | "error";
+  status: "processing" | "completed" | "error" | "needs_review";
   errorMessage?: string;
+  /** Partial data captured from a failed AI parse — pre-fills the review form */
+  partialParsedData?: Partial<ParsedStatementData>;
+  /** Human-readable description of why review is needed */
+  parseError?: string;
   /** How the data was ingested: "pdf" (default) or "csv" */
   source?: "pdf" | "csv";
   /** For CSV imports: the date range of transactions in the file */
@@ -250,8 +254,10 @@ export interface StatementDocument {
 
 // API response types
 export interface StatementApiResponse {
-  status: "processing" | "completed" | "error";
+  status: "processing" | "completed" | "error" | "needs_review";
   parsedData?: ParsedStatementData;
+  partialParsedData?: Partial<ParsedStatementData>;
+  parseError?: string;
   errorMessage?: string;
   statementId?: string;
 }

@@ -49,7 +49,7 @@ export function addPendingParse(id: string, name?: string) {
 
 // ── banner ────────────────────────────────────────────────────────────────────
 
-type ParseItemStatus = "analyzing" | "done" | "error";
+type ParseItemStatus = "analyzing" | "done" | "error" | "needs_review";
 interface ParseItem extends PendingParse { status: ParseItemStatus }
 
 export default function ParseStatusBanner({
@@ -86,13 +86,16 @@ export default function ParseStatusBanner({
       if (allFinished && !refreshedRef.current) {
         refreshedRef.current = true;
         try { localStorage.removeItem(PENDING_KEY); } catch { /* */ }
-        setShowDone(true);
+        const hasNeedsReview = next.some((p) => p.status === "needs_review");
+        const hasError = next.some((p) => p.status === "error");
+        // Only show the green "ready" strip when all succeeded
+        if (!hasNeedsReview && !hasError) setShowDone(true);
         setTimeout(() => {
           onRefreshRef.current();
           onAllCompleteRef.current?.();
         }, 800);
-        // Auto-dismiss the green "ready" strip after 2.5 s
-        setTimeout(() => setItems([]), 2500);
+        // Auto-dismiss after 2.5 s when all done cleanly; keep visible for needs_review/error
+        if (!hasNeedsReview && !hasError) setTimeout(() => setItems([]), 2500);
       }
       return next;
     });
@@ -116,6 +119,7 @@ export default function ParseStatusBanner({
           const data = await res.json();
           if (data.status === "completed") { clearInterval(t); markDone(id, "done"); }
           else if (data.status === "error") { clearInterval(t); markDone(id, "error"); }
+          else if (data.status === "needs_review") { clearInterval(t); markDone(id, "needs_review"); }
         } catch { /* network blip — keep going */ }
       };
       poll();
@@ -131,6 +135,7 @@ export default function ParseStatusBanner({
         const s = (snap.data()?.status ?? "") as string;
         if (s === "completed") { unsub(); if (pollingTimer) clearInterval(pollingTimer); markDone(id, "done"); }
         else if (s === "error") { unsub(); if (pollingTimer) clearInterval(pollingTimer); markDone(id, "error"); }
+        else if (s === "needs_review") { unsub(); if (pollingTimer) clearInterval(pollingTimer); markDone(id, "needs_review"); }
       },
       () => { pollingTimer = startPolling(); }
     );
@@ -158,21 +163,15 @@ export default function ParseStatusBanner({
 
   if (items.length === 0) return null;
 
-  const analyzing = items.filter((i) => i.status === "analyzing");
-  const errors    = items.filter((i) => i.status === "error");
+  const analyzing   = items.filter((i) => i.status === "analyzing");
+  const errors      = items.filter((i) => i.status === "error");
+  const needsReview = items.filter((i) => i.status === "needs_review");
+  const allFinished = analyzing.length === 0;
 
   return (
-    <div className="mb-5">
-      {showDone ? (
-        <div className="flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 px-4 py-2.5 text-sm text-green-700">
-          <svg className="h-4 w-4 shrink-0 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-          </svg>
-          <span className="font-medium">
-            Statement{items.length > 1 ? "s" : ""} ready — refreshing…
-          </span>
-        </div>
-      ) : (
+    <div className="mb-5 space-y-2">
+      {/* Analyzing strip */}
+      {!showDone && !allFinished && (
         <div className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
           <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
           <div className="flex-1 min-w-0">
@@ -186,6 +185,46 @@ export default function ParseStatusBanner({
           {errors.length > 0 && (
             <span className="text-xs text-red-500">{errors.length} error{errors.length > 1 ? "s" : ""}</span>
           )}
+        </div>
+      )}
+
+      {/* All done cleanly */}
+      {showDone && (
+        <div className="flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 px-4 py-2.5 text-sm text-green-700">
+          <svg className="h-4 w-4 shrink-0 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+          <span className="font-medium">
+            Statement{items.length > 1 ? "s" : ""} ready — refreshing…
+          </span>
+        </div>
+      )}
+
+      {/* Needs review notice */}
+      {allFinished && needsReview.length > 0 && (
+        <div className="flex items-start gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3">
+          <svg className="mt-0.5 h-4 w-4 shrink-0 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 15.75h.007v.008H12v-.008z" />
+          </svg>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-orange-800">
+              {needsReview.length === 1
+                ? (needsReview[0].name ? `"${needsReview[0].name}" needs review` : "1 statement needs review")
+                : `${needsReview.length} statements need review`}
+            </p>
+            <p className="text-xs text-orange-600">Click the statement row to fill in the missing details.</p>
+          </div>
+        </div>
+      )}
+
+      {/* Hard errors */}
+      {allFinished && errors.length > 0 && (
+        <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+          <svg className="h-4 w-4 shrink-0 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+          <span className="font-medium">{errors.length} statement{errors.length > 1 ? "s" : ""} failed to parse — check the list below.</span>
         </div>
       )}
     </div>

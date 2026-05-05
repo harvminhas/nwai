@@ -98,6 +98,7 @@ function acctDotColor(t?: string) {
 function statusDotClass(status: string) {
   if (status === "processing") return "bg-amber-400 animate-pulse";
   if (status === "error") return "bg-red-400";
+  if (status === "needs_review") return "bg-orange-400";
   return "bg-green-500";
 }
 
@@ -424,6 +425,8 @@ export default function StatementsPage() {
                     ? `Parsing transactions… started ${timeAgo(s.uploadedAt)}`
                     : s.status === "error"
                     ? "Parse error — click retry"
+                    : s.status === "needs_review"
+                    ? "Couldn't detect details — click to complete"
                     : [s.txCount ? `${s.txCount} transactions` : null, s.uploadedAt ? `uploaded ${timeAgo(s.uploadedAt)}` : null].filter(Boolean).join(" · ");
 
                   return (
@@ -434,7 +437,7 @@ export default function StatementsPage() {
                       {/* Main info */}
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-mono text-gray-800">{s.fileName || monthStr}</p>
-                        <p className={`text-xs mt-0.5 ${s.status === "processing" ? "text-amber-500" : s.status === "error" ? "text-red-500" : "text-gray-400"}`}>
+                        <p className={`text-xs mt-0.5 ${s.status === "processing" ? "text-amber-500" : s.status === "error" ? "text-red-500" : s.status === "needs_review" ? "text-orange-500" : "text-gray-400"}`}>
                           {subtitle}
                         </p>
                       </div>
@@ -450,8 +453,8 @@ export default function StatementsPage() {
                         )}
                       </div>
 
-                      {/* Actions — visible on hover + always for confirm/error */}
-                      <div className={`shrink-0 flex items-center gap-1 ${isConfirm ? "" : "opacity-0 group-hover:opacity-100 transition-opacity"}`}>
+                      {/* Actions — visible on hover + always for confirm/error/needs_review */}
+                      <div className={`shrink-0 flex items-center gap-1 ${isConfirm || s.status === "needs_review" ? "" : "opacity-0 group-hover:opacity-100 transition-opacity"}`}>
                         {s.status === "error" && (
                           <button
                             onClick={() => handleReparse(s.id)}

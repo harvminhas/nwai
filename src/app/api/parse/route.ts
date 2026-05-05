@@ -31,6 +31,8 @@ function isPdfBuffer(buf: Buffer): boolean {
 
 export async function POST(request: NextRequest) {
   let statementId: string | undefined;
+  // Declared outside try so the catch block can capture whatever the AI returned
+  let partialParsedData: Awaited<ReturnType<typeof parseStatementImage>> | undefined;
   try {
     const body = await request.json();
     statementId = (body as { statementId?: string }).statementId;
@@ -53,8 +55,8 @@ export async function POST(request: NextRequest) {
     const fileUrl = data?.fileUrl as string;
     if (!fileUrl) {
       await statementRef.update({
-        status: "error",
-        errorMessage: ERROR_MESSAGE,
+        status: "needs_review",
+        parseError: ERROR_MESSAGE,
       });
       return NextResponse.json({ error: ERROR_MESSAGE }, { status: 400 });
     }
@@ -72,8 +74,8 @@ export async function POST(request: NextRequest) {
     // Block CSV files that may have slipped through (belt-and-suspenders)
     if (fileName.endsWith(".csv") || contentType.includes("csv")) {
       await statementRef.update({
-        status: "error",
-        errorMessage: "CSV files are not supported. Please upload a PDF or photo of your bank statement.",
+        status: "needs_review",
+        parseError: "CSV files are not supported. Please upload a PDF or photo of your bank statement.",
       });
       return NextResponse.json(
         { error: "CSV files are not supported. Please upload a PDF or photo of your bank statement." },
@@ -101,6 +103,9 @@ export async function POST(request: NextRequest) {
       }
       parsedData = await parseStatementImage(base64, mediaType);
     }
+    // Capture AI result so the catch block can persist partial data if something
+    // downstream (Firestore writes, slug logic, etc.) throws unexpectedly.
+    partialParsedData = parsedData;
 
     // Apply user's saved category rules if this is an authenticated statement
     const userId = data?.userId as string | null;
@@ -375,7 +380,8 @@ export async function POST(request: NextRequest) {
       friendlyMessage = "Firestore not set up. Create a Firestore database in Firebase Console.";
     }
 
-    // Mark statement as error so the client stops polling.
+    // Mark statement as needs_review so the client stops polling and the user
+    // can manually complete the ingestion from the statement detail page.
     // IMPORTANT: only overwrite if the document is NOT already "completed" —
     // a failed re-parse must never destroy previously-parsed good data.
     if (statementId) {
@@ -385,7 +391,11 @@ export async function POST(request: NextRequest) {
         const snap = await ref.get();
         const currentStatus = snap.exists ? (snap.data()?.status as string | undefined) : undefined;
         if (currentStatus !== "completed") {
-          await ref.update({ status: "error", errorMessage: friendlyMessage });
+          await ref.update({
+            status: "needs_review",
+            parseError: friendlyMessage,
+            ...(partialParsedData ? { partialParsedData } : {}),
+          });
         }
       } catch (_) {}
     }
