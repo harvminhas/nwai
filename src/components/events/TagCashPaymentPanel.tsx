@@ -179,7 +179,7 @@ export default function TagCashPaymentPanel({
               {txSearch ? "No transactions match" : "No transactions in the last 12 months"}
             </p>
           ) : (
-            <div className="mx-0 max-h-56 w-full max-w-full touch-pan-y overflow-x-hidden overflow-y-auto overscroll-y-contain [-webkit-overflow-scrolling:touch]">
+            <div className={statementPickerOnly ? "w-full" : "mx-0 max-h-56 w-full max-w-full touch-pan-y overflow-x-hidden overflow-y-auto overscroll-y-contain [-webkit-overflow-scrolling:touch]"}>
               {filteredTxns.map((tx, i) => {
                 const tagged     = isTaggedFn(tx.fingerprint);
                 const prevTagged = i > 0 ? isTaggedFn(filteredTxns[i - 1].fingerprint) : true;
