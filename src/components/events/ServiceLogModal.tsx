@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useBodyScrollLock } from "@/components/events/useBodyScrollLock";
 import TagCashPaymentPanel from "@/components/events/TagCashPaymentPanel";
 import type { RawTx } from "@/components/events/TagPicker";
@@ -118,11 +119,12 @@ export default function ServiceLogModal({
   }
 
   if (!open) return null;
+  if (typeof document === "undefined") return null;
 
-  return (
-    <div className="fixed inset-0 z-50 overflow-x-hidden overflow-y-auto overscroll-behavior-y-contain bg-black/40">
+  return createPortal(
+    <div className="fixed inset-0 z-[100] overflow-hidden overscroll-none bg-black/40">
       <div
-        className="flex min-h-[100svh] min-w-0 w-full max-w-[100vw] items-center justify-center p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] supports-[height:100dvh]:min-h-[100dvh] sm:min-h-full sm:p-4"
+        className="flex h-[100svh] min-h-0 min-w-0 w-full max-w-[100vw] items-center justify-center overflow-hidden p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] supports-[height:100dvh]:h-[100dvh] sm:p-4"
         onClick={(e) => {
           if (e.target === e.currentTarget && !savingVisit) closeLogModal();
         }}
@@ -420,6 +422,7 @@ export default function ServiceLogModal({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
