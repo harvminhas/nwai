@@ -138,7 +138,7 @@ export default function ServiceLogModal({
   return createPortal(
     <div ref={backdropRef} className="fixed inset-0 z-[100] overflow-hidden overscroll-none bg-black/40">
       <div
-        className="flex h-[100svh] min-h-0 min-w-0 w-full max-w-[100vw] items-center justify-center overflow-hidden p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] supports-[height:100dvh]:h-[100dvh] sm:p-4"
+        className="flex h-full min-h-0 min-w-0 w-full max-w-[100vw] items-center justify-center overflow-hidden p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] sm:p-4"
         onClick={(e) => {
           if (e.target === e.currentTarget && !savingVisit) closeLogModal();
         }}
@@ -326,7 +326,7 @@ export default function ServiceLogModal({
                     value={logDate}
                     max={new Date().toISOString().substring(0, 10)}
                     onChange={(e) => setLogDate(e.target.value)}
-                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 shadow-sm focus:border-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-900/20"
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-base text-gray-900 shadow-sm focus:border-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-900/20"
                     required
                   />
                 </div>
@@ -402,7 +402,7 @@ export default function ServiceLogModal({
                           value={logPayAmount}
                           onChange={(e) => setLogPayAmount(e.target.value)}
                           placeholder="0.00"
-                          className="w-full max-w-[200px] rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-900/20"
+                          className="w-full max-w-[200px] rounded-lg border border-gray-200 bg-white px-3 py-2 text-base text-gray-900 shadow-sm focus:border-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-900/20"
                         />
                       </div>
                     </div>

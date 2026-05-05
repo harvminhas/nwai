@@ -170,7 +170,7 @@ export default function TagCashPaymentPanel({
             onKeyDown={(e) => {
               if (e.key === "Enter") e.preventDefault();
             }}
-            className="mb-3 min-w-0 max-w-full box-border w-full rounded-lg border border-gray-200 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"
+            className="mb-3 min-w-0 max-w-full box-border w-full rounded-lg border border-gray-200 px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-purple-500"
           />
           {loadingTxns ? (
             <p className="text-xs text-gray-400 py-4 text-center">Loading…</p>
