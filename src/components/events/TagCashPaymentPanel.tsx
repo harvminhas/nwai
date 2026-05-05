@@ -142,7 +142,7 @@ export default function TagCashPaymentPanel({
 
   const wrapper = bordered
     ? "mt-3 min-w-0 max-w-full rounded-xl border border-gray-100 bg-white overflow-hidden"
-    : "min-w-0 max-w-full overflow-x-hidden bg-white overflow-hidden";
+    : "min-w-0 max-w-full bg-white";
 
   return (
     <div className={wrapper} onClick={(e) => e.stopPropagation()}>
@@ -161,12 +161,12 @@ export default function TagCashPaymentPanel({
 
       {/* From Statement */}
       {(statementPickerOnly || paymentTab === "statement") && (
-        <div className="min-w-0 overflow-x-hidden px-4 pt-3 pb-1">
+        <div className="min-w-0 px-4 pt-3 pb-1">
           <input
             value={txSearch}
             onChange={(e) => setTxSearch(e.target.value)}
             placeholder="Search merchant…"
-            autoFocus
+            autoFocus={!statementPickerOnly}
             onKeyDown={(e) => {
               if (e.key === "Enter") e.preventDefault();
             }}

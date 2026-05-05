@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useBodyScrollLock } from "@/components/events/useBodyScrollLock";
 import TagCashPaymentPanel from "@/components/events/TagCashPaymentPanel";
@@ -38,6 +38,20 @@ export default function ServiceLogModal({
   const curSym = getCurrencySymbol(hc).trim();
 
   useBodyScrollLock(open);
+
+  const backdropRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const el = backdropRef.current;
+    if (!el) return;
+    function block(e: TouchEvent) {
+      const target = e.target as Element | null;
+      if (target?.closest("[data-modal-scroll]")) return;
+      e.preventDefault();
+    }
+    el.addEventListener("touchmove", block, { passive: false });
+    return () => el.removeEventListener("touchmove", block);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -122,7 +136,7 @@ export default function ServiceLogModal({
   if (typeof document === "undefined") return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] overflow-hidden overscroll-none bg-black/40">
+    <div ref={backdropRef} className="fixed inset-0 z-[100] overflow-hidden overscroll-none bg-black/40">
       <div
         className="flex h-[100svh] min-h-0 min-w-0 w-full max-w-[100vw] items-center justify-center overflow-hidden p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] supports-[height:100dvh]:h-[100dvh] sm:p-4"
         onClick={(e) => {
@@ -133,7 +147,7 @@ export default function ServiceLogModal({
           className="box-border mx-auto flex min-h-0 min-w-0 w-full max-w-[min(32rem,calc(100vw-1.75rem-env(safe-area-inset-left)-env(safe-area-inset-right)))] max-h-[min(85svh,85dvh)] flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain">
+          <div data-modal-scroll className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain">
         {logModalStep === "pick" && (
           <>
             <div className="flex items-start justify-between gap-4 px-5 pt-5 pb-2">
