@@ -192,7 +192,7 @@ export default function TagCashPaymentPanel({
                       </div>
                     )}
                     <div
-                      className={`flex min-w-0 flex-col gap-2 px-4 py-2.5 border-b border-gray-50 sm:flex-row sm:items-center sm:gap-3 ${tagged ? "bg-emerald-50 border-l-2 border-l-emerald-400" : ""}`}
+                      className={`flex min-w-0 flex-row items-center gap-3 px-4 py-2.5 border-b border-gray-50 ${tagged ? "bg-emerald-50 border-l-2 border-l-emerald-400" : ""}`}
                     >
                       <div className="min-w-0 flex-1 overflow-hidden">
                         <div className="flex min-w-0 items-center gap-1.5">
@@ -203,7 +203,7 @@ export default function TagCashPaymentPanel({
                           {fmtShortDate(tx.date)} · {tx.accountLabel}
                         </p>
                       </div>
-                      <div className="flex shrink-0 items-center justify-end gap-2 sm:gap-3">
+                      <div className="flex shrink-0 items-center gap-2">
                       <span className={`text-xs font-semibold tabular-nums ${tagged ? "text-emerald-800" : "text-gray-800"}`}>
                         {fmt(tx.amount, cur)}
                       </span>
