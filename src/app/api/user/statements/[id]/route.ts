@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { merchantSlug, applyRulesAndRecalculate } from "@/lib/applyRules";
-import type { ParsedStatementData } from "@/lib/types";
+import type { ParsedStatementData, IncomeTransaction, ExpenseTransaction } from "@/lib/types";
 import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
 import { fireInsightEvent } from "@/lib/insights/index";
 
@@ -50,9 +50,48 @@ export async function GET(
   });
 }
 
+/** Recompute all derived totals from raw transaction arrays. */
+function recomputeTotals(
+  base: ParsedStatementData,
+  incomeTxns: IncomeTransaction[],
+  expenseTxns: ExpenseTransaction[],
+): ParsedStatementData {
+  const incomeTotal    = incomeTxns.reduce((s, t) => s + (t.amount ?? 0), 0);
+  const expensesTotal  = expenseTxns.reduce((s, t) => s + (t.amount ?? 0), 0);
+
+  const sourceMap = new Map<string, number>();
+  for (const t of incomeTxns) {
+    const k = (t.source ?? "Unknown").trim();
+    sourceMap.set(k, (sourceMap.get(k) ?? 0) + t.amount);
+  }
+  const sources = Array.from(sourceMap.entries()).map(([description, amount]) => ({ description, amount }));
+
+  const catMap = new Map<string, number>();
+  for (const t of expenseTxns) {
+    const k = (t.category ?? "Other").trim();
+    catMap.set(k, (catMap.get(k) ?? 0) + t.amount);
+  }
+  const categories = Array.from(catMap.entries()).map(([name, amount]) => ({
+    name,
+    amount,
+    percentage: expensesTotal > 0 ? Math.round((amount / expensesTotal) * 100) : 0,
+  }));
+
+  return {
+    ...base,
+    income:   { ...base.income,   transactions: incomeTxns,  total: incomeTotal,   sources },
+    expenses: { ...base.expenses, transactions: expenseTxns, total: expensesTotal, categories },
+    savingsRate: incomeTotal > 0
+      ? Math.round(((incomeTotal - expensesTotal) / incomeTotal) * 100)
+      : 0,
+  };
+}
+
 /**
  * PATCH /api/user/statements/[id]
- * Re-categorizes all transactions for a merchant and saves the rule.
+ *
+ * action = "save_transactions" — user directly edits income/expense transaction lists.
+ * action omitted               — merchant re-categorize (existing behaviour).
  */
 export async function PATCH(
   request: NextRequest,
@@ -62,11 +101,7 @@ export async function PATCH(
   if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
-  const body = await request.json().catch(() => ({}));
-  const { merchant, category } = body as { merchant?: string; category?: string };
-  if (!merchant || !category) {
-    return NextResponse.json({ error: "merchant and category are required" }, { status: 400 });
-  }
+  const body = await request.json().catch(() => ({})) as Record<string, unknown>;
 
   const { db } = getFirebaseAdmin();
   const statementRef = db.collection("statements").doc(id);
@@ -78,6 +113,28 @@ export async function PATCH(
 
   const parsedData = data?.parsedData as ParsedStatementData | undefined;
   if (!parsedData) return NextResponse.json({ error: "Statement has no parsed data" }, { status: 400 });
+
+  // ── New: user-initiated transaction edits ──────────────────────────────────
+  if (body.action === "save_transactions") {
+    const incomeTxns  = (body.incomeTxns  as IncomeTransaction[]  | undefined) ?? parsedData.income.transactions  ?? [];
+    const expenseTxns = (body.expenseTxns as ExpenseTransaction[] | undefined) ?? parsedData.expenses.transactions ?? [];
+
+    const updated = recomputeTotals(parsedData, incomeTxns, expenseTxns);
+    await statementRef.update({ parsedData: updated });
+
+    // Just mark the cache stale — the rebuild runs once on the next page
+    // that reads the financial profile (dashboard, spending, accounts, etc.).
+    // This is intentionally fire-and-forget and cheap (a single flag write).
+    invalidateFinancialProfileCache(uid, db).catch(console.error);
+
+    return NextResponse.json({ ok: true, parsedData: updated });
+  }
+
+  // ── Existing: merchant re-categorize ──────────────────────────────────────
+  const { merchant, category } = body as { merchant?: string; category?: string };
+  if (!merchant || !category) {
+    return NextResponse.json({ error: "merchant and category are required" }, { status: 400 });
+  }
 
   const slug = merchantSlug(merchant);
   const rules = new Map([[slug, category]]);

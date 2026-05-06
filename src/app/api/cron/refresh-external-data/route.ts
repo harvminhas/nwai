@@ -12,10 +12,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { refreshExternalData } from "@/lib/external/pipeline";
+import { isDebugSuperAdmin } from "@/lib/debugSuperAdmin";
 
 export const maxDuration = 120;
-
-const ALLOWED_EMAILS = ["harvminhas@gmail.com"];
 
 async function isAuthorized(request: NextRequest): Promise<boolean> {
   const token = request.headers.get("authorization")?.replace("Bearer ", "").trim();
@@ -29,7 +28,7 @@ async function isAuthorized(request: NextRequest): Promise<boolean> {
   try {
     const { auth } = getFirebaseAdmin();
     const decoded = await auth.verifyIdToken(token);
-    return !!(decoded.email && ALLOWED_EMAILS.includes(decoded.email));
+    return isDebugSuperAdmin(decoded.email);
   } catch {
     return false;
   }

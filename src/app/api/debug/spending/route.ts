@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { buildAndCacheFinancialProfile } from "@/lib/financialProfile";
 import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
+import { canUseDebugTools } from "@/lib/debugPlanGate";
 
 /**
  * GET /api/debug/spending
@@ -20,6 +21,10 @@ export async function GET(request: NextRequest) {
     const { auth, db } = getFirebaseAdmin();
     const decoded = await auth.verifyIdToken(token);
     const uid = decoded.uid;
+
+    if (!(await canUseDebugTools(uid, decoded.email, db))) {
+      return NextResponse.json({ error: "Pro subscription required" }, { status: 403 });
+    }
 
     const forceRebuild = new URL(request.url).searchParams.get("rebuild") === "1";
     const profile = forceRebuild
@@ -95,6 +100,7 @@ export async function GET(request: NextRequest) {
         balance: s.balance,
         statementMonth: s.statementMonth,
       })),
+      homeCurrency: profile.homeCurrency ?? "USD",
       fxRates: profile.fxRates ?? {},
       currentMonth: {
         month: thisMonth,

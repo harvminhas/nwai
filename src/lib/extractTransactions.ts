@@ -126,6 +126,36 @@ function resolveSlug(d: Record<string, unknown>, parsed: ParsedStatementData): s
   return (d.accountSlug as string | undefined) || buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
 }
 
+/**
+ * Merge non–4-digit slugs by normalized account label + type (same rule as
+ * latestStmtPerSlug below) so transaction `accountSlug` keys match `accountSnapshots[].slug`.
+ * Without this, consolidated APIs cannot look up per-account currency for income rows.
+ */
+function labelDedupeKey(label: string, acctType: string): string {
+  const tokens = (label ?? "").toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .split(/\s+/)
+    .filter((t) => t.length > 4)
+    .sort();
+  return tokens.join(" ") + "|" + acctType;
+}
+
+function canonicalAccountSlug(
+  d: Record<string, unknown>,
+  parsed: ParsedStatementData,
+  slugByLabelKey: Map<string, string>,
+): string {
+  let slug = resolveSlug(d, parsed);
+  if (!/^\d{4}$/.test(slug)) {
+    const label = parsed.accountName ?? parsed.bankName ?? slug;
+    const key = labelDedupeKey(label, parsed.accountType ?? "other");
+    const existing = slugByLabelKey.get(key);
+    if (existing) slug = existing;
+    else slugByLabelKey.set(key, slug);
+  }
+  return slug;
+}
+
 // ── main extraction ───────────────────────────────────────────────────────────
 
 export async function extractAllTransactions(
@@ -168,6 +198,16 @@ export async function extractAllTransactions(
     }
   }
 
+  // Pre-build label→canonical slug map in the same document order as snapshot
+  // aggregation so income/expense rows share snapshot slug keys.
+  const slugByLabelKey = new Map<string, string>();
+  for (const doc of allDocs) {
+    const d = doc.data();
+    if (!docYearMonth(d)) continue;
+    const parsed = d.parsedData as ParsedStatementData;
+    canonicalAccountSlug(d, parsed, slugByLabelKey);
+  }
+
   // ── 2. Extract expense transactions using actual transaction dates ─────────
   // Two-pass: statements first (preferred source), then CSV.
   // Fingerprint dedup catches cross-source overlap (CSV vs stmt) AND cross-statement
@@ -189,7 +229,7 @@ export async function extractAllTransactions(
 
       const stmtYm = docYearMonth(d);
       const parsed = d.parsedData as ParsedStatementData;
-      const slug = resolveSlug(d, parsed);
+      const slug = canonicalAccountSlug(d, parsed, slugByLabelKey);
       const bank  = (parsed.bankName ?? "").trim();
       const label = parsed.accountName
         ?? (slug === "unknown" ? bank || "Unknown Account" : [bank, `••••${slug}`].filter(Boolean).join(" "));
@@ -259,9 +299,7 @@ export async function extractAllTransactions(
 
       const stmtYm = docYearMonth(d);
       const parsed = d.parsedData as ParsedStatementData;
-      // Use the same slug resolver as expense extraction so account-filtered views
-      // never drop income transactions due to stored-slug vs normalized-id mismatch.
-      const slug = resolveSlug(d, parsed);
+      const slug = canonicalAccountSlug(d, parsed, slugByLabelKey);
       for (const txn of parsed.income?.transactions ?? []) {
         const absAmount = Math.abs(txn.amount ?? 0);
         if (absAmount <= 0) continue;
@@ -301,35 +339,13 @@ export async function extractAllTransactions(
   // Non-real-account-number slugs (synthetic IDs, old bankName-based slugs) are
   // merged by normalized label+accountType so the same physical account doesn't
   // appear multiple times when its slug varied across uploads.
-  function labelDedupeKey(label: string, acctType: string): string {
-    const tokens = (label ?? "").toLowerCase()
-      .replace(/[^a-z0-9 ]/g, " ")
-      .split(/\s+/)
-      .filter((t) => t.length > 4)
-      .sort();
-    return tokens.join(" ") + "|" + acctType;
-  }
-  const slugByLabelKey = new Map<string, string>(); // labelKey → canonical slug
-
   const latestStmtPerSlug = new Map<string, { parsed: ParsedStatementData; stmtYm: string }>();
   for (const doc of allDocs) {
     const d = doc.data();
     const stmtYm = docYearMonth(d);
     if (!stmtYm) continue;
     const parsed = d.parsedData as ParsedStatementData;
-    let slug = resolveSlug(d, parsed);
-
-    // Merge non-real-account-number slugs by label+type
-    if (!/^\d{4}$/.test(slug)) {
-      const label = parsed.accountName ?? parsed.bankName ?? slug;
-      const key = labelDedupeKey(label, parsed.accountType ?? "other");
-      const canonical = slugByLabelKey.get(key);
-      if (canonical) {
-        slug = canonical;
-      } else {
-        slugByLabelKey.set(key, slug);
-      }
-    }
+    const slug = canonicalAccountSlug(d, parsed, slugByLabelKey);
 
     const existing = latestStmtPerSlug.get(slug);
     if (!existing || stmtYm > existing.stmtYm) {

@@ -430,7 +430,14 @@ export default function StatementsPage() {
                     : [s.txCount ? `${s.txCount} transactions` : null, s.uploadedAt ? `uploaded ${timeAgo(s.uploadedAt)}` : null].filter(Boolean).join(" · ");
 
                   return (
-                    <div key={s.id} className="flex items-center gap-3 px-4 py-3 group">
+                    <div
+                      key={s.id}
+                      onClick={(e) => {
+                        if ((e.target as HTMLElement).closest("button, a")) return;
+                        router.push(`/account/statements/${s.id}`);
+                      }}
+                      className="flex items-center gap-3 px-4 py-3 group cursor-pointer hover:bg-gray-50/80 transition"
+                    >
                       {/* Status dot */}
                       <span className={`shrink-0 h-2 w-2 rounded-full ${statusDotClass(s.status ?? "")}`} />
 
@@ -485,6 +492,7 @@ export default function StatementsPage() {
 
                       {/* Chevron */}
                       <Link href={`/account/statements/${s.id}`}
+                        onClick={(e) => e.stopPropagation()}
                         className="shrink-0 rounded p-1 text-gray-300 hover:text-gray-500 transition">
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />

@@ -31,6 +31,7 @@ import { merchantSlug, isIncomeCategory } from "./applyRules";
 import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
 import { txFingerprint } from "./txFingerprint";
 import type { TypicalSpend } from "./spendingMetrics";
+import { resolveTxnCurrencyFromSnapshots } from "./currencyUtils";
 import type { ManualAsset, ManualLiability, InvestmentHolding, ParsedStatementData } from "./types";
 import { buildAccountSlug, normalizeAccountId } from "./accountSlug";
 import { getFxRatesForCurrencies } from "./fxRates";
@@ -58,7 +59,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "46"; // keep income/expense txns when AI returns negative-signed amounts
+const SCHEMA_VERSION = "47"; // canonical accountSlug on income/expense rows matches accountSnapshots
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -452,20 +453,23 @@ export async function buildAndCacheFinancialProfile(
     return override ? { ...s, currency: override } : s;
   });
 
-  // Build a slug → currency map so we can back-fill transactions that were
-  // parsed before the `currency` field was added to parsedData.
-  const slugCurrencyMap = new Map<string, string>(
-    mergedSnapshots
-      .filter((s) => s.currency)
-      .map((s) => [s.slug, (s.currency as string).toUpperCase()])
-  );
-
-  // Back-fill currency on any transaction that is missing it (pre-currency statements).
+  // Per-transaction display currency: align with account snapshots (incl. overrides),
+  // with case-insensitive slug match so income rows match the overview cache.
   for (const t of allExpenseTxns) {
-    if (!t.currency) t.currency = slugCurrencyMap.get(t.accountSlug) ?? homeCurrency;
+    t.currency = resolveTxnCurrencyFromSnapshots(
+      t.accountSlug,
+      mergedSnapshots,
+      t.currency,
+      homeCurrency,
+    );
   }
   for (const t of mergedIncomeTxns) {
-    if (!t.currency) t.currency = slugCurrencyMap.get(t.accountSlug) ?? homeCurrency;
+    t.currency = resolveTxnCurrencyFromSnapshots(
+      t.accountSlug,
+      mergedSnapshots,
+      t.currency,
+      homeCurrency,
+    );
   }
 
   const now = new Date();

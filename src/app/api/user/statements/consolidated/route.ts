@@ -14,6 +14,7 @@ import { buildSuggestions, resolveCanonical } from "@/lib/sourceMappings";
 import type { SourceMapping } from "@/lib/sourceMappings";
 import { occurrencesInMonth, datesInMonth } from "@/lib/cashIncome";
 import type { CashIncomeEntry } from "@/lib/cashIncome";
+import { resolveTxnCurrencyFromSnapshots } from "@/lib/currencyUtils";
 
 /** Human-readable label for a statement's account, e.g. "TD ••••7780" */
 function accountDisplayLabel(parsed: ParsedStatementData): string {
@@ -686,6 +687,7 @@ export async function GET(request: NextRequest) {
       // Transaction-date-based expenses for the requested month — from extracted data.
       const monthExpTxns = expenseTxns.filter((t) => t.txMonth === month);
       const monthIncomeTxns = (profile.incomeTxns ?? []).filter((t) => t.txMonth === month);
+      const snapshots = profile.accountSnapshots ?? [];
       // Convert each transaction to home currency before summing
       function txToHome(amount: number, currency?: string | null): number {
         if (!currency || currency.toUpperCase() === (profile.homeCurrency ?? "USD").toUpperCase()) return amount;
@@ -709,7 +711,12 @@ export async function GET(request: NextRequest) {
             amount: t.amount,
             category: t.category,
             accountLabel: t.accountLabel,
-            currency: t.currency,
+            currency: resolveTxnCurrencyFromSnapshots(
+              t.accountSlug,
+              snapshots,
+              t.currency,
+              profile.homeCurrency,
+            ),
             recurring: t.recurring,
             ...(t.debtType ? { debtType: t.debtType as import("@/lib/types").DebtType } : {}),
           })),
@@ -723,7 +730,12 @@ export async function GET(request: NextRequest) {
             date: t.date,
             category: t.category ?? "Other",
             accountSlug: t.accountSlug,
-            currency: t.currency,
+            currency: resolveTxnCurrencyFromSnapshots(
+              t.accountSlug,
+              snapshots,
+              t.currency,
+              profile.homeCurrency,
+            ),
           })),
         },
       };

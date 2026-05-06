@@ -1374,11 +1374,19 @@ function IncomePageInner() {
                       date: t.date,
                       isCash: t.accountLabel === "Cash",
                       category: t.category,
+                      currency: t.currency,
                     }));
 
                   const srcRows = monthSources
                     .filter((s) => !isExcluded(s.description))
-                    .map((s) => ({ name: s.description, amount: s.amount, date: undefined, isCash: false, category: undefined }));
+                    .map((s) => ({
+                      name: s.description,
+                      amount: s.amount,
+                      date: undefined as string | undefined,
+                      isCash: false,
+                      category: undefined as string | undefined,
+                      currency: undefined as string | undefined,
+                    }));
 
                   const rows = txnRows.length > 0 ? txnRows : srcRows;
 
@@ -1419,7 +1427,7 @@ function IncomePageInner() {
                                 {row.isCash && <span className="text-[10px] rounded-full bg-green-50 border border-green-200 px-1.5 py-0.5 text-green-600 font-medium">confirmed</span>}
                               </div>
                             </div>
-                            <span className="shrink-0 ml-3 font-semibold text-sm text-green-700 tabular-nums">+{fmt(row.amount, homeCurrency)}</span>
+                            <span className="shrink-0 ml-3 font-semibold text-sm text-green-700 tabular-nums">+{formatCurrency(row.amount, homeCurrency, row.currency, false)}</span>
                           </div>
                         );
                       })}
@@ -1498,12 +1506,12 @@ function IncomePageInner() {
                               <>
                                 <span className="text-[10px] font-medium rounded-full px-1.5 py-0.5"
                                   style={{ backgroundColor: `${INCOME_CAT_COLORS[srcCat] ?? "#9ca3af"}22`, color: INCOME_CAT_COLORS[srcCat] ?? "#9ca3af" }}>
-                                  {srcCat} {fmt(residual, homeCurrency)}
+                                  {srcCat} {fmt(residual, txn.currency)}
                                 </span>
                                 {splits.map((sp, si) => (
                                   <span key={si} className="text-[10px] font-medium rounded-full px-1.5 py-0.5"
                                     style={{ backgroundColor: `${INCOME_CAT_COLORS[sp.category] ?? "#9ca3af"}22`, color: INCOME_CAT_COLORS[sp.category] ?? "#9ca3af" }}>
-                                    {sp.category} {fmt(sp.amount, homeCurrency)}
+                                    {sp.category} {fmt(sp.amount, txn.currency)}
                                   </span>
                                 ))}
                               </>
@@ -1538,7 +1546,7 @@ function IncomePageInner() {
                             <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: INCOME_CAT_COLORS[srcCat] ?? "#9ca3af" }} />
                             <span className="flex-1 text-xs font-medium text-gray-600">{srcCat} <span className="text-gray-400 font-normal">(residual)</span></span>
                             <span className="text-xs font-semibold text-gray-700 tabular-nums">
-                              {fmt(Math.max(0, txn.amount - splitDraft.reduce((s, x) => s + (parseFloat(x.amount) || 0), 0)), homeCurrency)}
+                              {fmt(Math.max(0, txn.amount - splitDraft.reduce((s, x) => s + (parseFloat(x.amount) || 0), 0)), txn.currency)}
                             </span>
                           </div>
 
@@ -1555,7 +1563,7 @@ function IncomePageInner() {
                                 ))}
                               </select>
                               <div className="relative w-28">
-                                <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">{getCurrencySymbol(homeCurrency)}</span>
+                                <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">{getCurrencySymbol(txn.currency, homeCurrency)}</span>
                                 <input
                                   type="number" min="0" step="0.01"
                                   value={sp.amount}

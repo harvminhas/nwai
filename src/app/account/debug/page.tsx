@@ -6,6 +6,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import type { UserStatementSummary } from "@/lib/types";
 import { fmt } from "@/lib/currencyUtils";
+import { isDebugSuperAdmin } from "@/lib/debugSuperAdmin";
 
 type DebugResult = {
   statementId: string;
@@ -43,6 +44,8 @@ type SpendingDebugResult = {
     accountType: string; currency: string; balance: number; statementMonth: string;
   }[];
   fxRates: Record<string, number>;
+  /** Quote currency for fxRates (e.g. USD when home is USD). */
+  homeCurrency?: string;
   currentMonth: {
     month: string; totalBefore: number; totalAfterExcludingTransfers: number;
     difference: number; excludedByCategory: Record<string, number>;
@@ -51,8 +54,6 @@ type SpendingDebugResult = {
   negativeAmountTransactions: { date: string; merchant: string; category: string; amount: number; txMonth: string }[];
   monthSummary: { yearMonth: string; allExpenses: number; coreExpenses: number; excluded: number; income: number }[];
 };
-
-const ADMIN_EMAILS = ["harvminhas@gmail.com"];
 
 // ── Promo campaign types ──────────────────────────────────────────────────────
 interface PromoCampaign {
@@ -75,7 +76,8 @@ interface NewPromoForm {
 export default function DebugParsePage() {
   const router = useRouter();
   const [idToken, setIdToken]         = useState<string | null>(null);
-  const [isAdmin, setIsAdmin]         = useState<boolean | null>(null); // null = checking
+  const [gate, setGate]               = useState<"loading" | "ok">("loading");
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [statements, setStatements]   = useState<UserStatementSummary[]>([]);
   const [selected, setSelected]       = useState<string>("");
   const [loading, setLoading]                   = useState(false);
@@ -105,12 +107,17 @@ export default function DebugParsePage() {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
       if (!user) { router.push("/login"); return; }
-      if (!ADMIN_EMAILS.includes(user.email ?? "")) {
+      const token = await user.getIdToken();
+      const planRes = await fetch("/api/user/plan", { headers: { Authorization: `Bearer ${token}` } });
+      const planJson = (await planRes.json().catch(() => ({}))) as { plan?: string };
+      const superAdm = isDebugSuperAdmin(user.email ?? undefined);
+      const pro = planJson.plan === "pro";
+      if (!superAdm && !pro) {
         router.push("/account/dashboard");
         return;
       }
-      setIsAdmin(true);
-      const token = await user.getIdToken();
+      setIsSuperAdmin(superAdm);
+      setGate("ok");
       setIdToken(token);
       try {
         const res  = await fetch("/api/user/statements", { headers: { Authorization: `Bearer ${token}` } });
@@ -287,18 +294,19 @@ export default function DebugParsePage() {
   return (
     <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8 space-y-6">
       {/* Admin gate — spinner while auth state resolves */}
-      {isAdmin === null && (
+      {gate === "loading" && (
         <div className="flex min-h-[40vh] items-center justify-center">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-purple-600 border-t-transparent" />
         </div>
       )}
 
-      {isAdmin && (
+      {gate === "ok" && (
         <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Parse Debugger</h1>
         <p className="mt-1 text-sm text-gray-500">
           Re-sends a statement to the AI and shows the raw response, parsed JSON, and the system prompt used.
+          {!isSuperAdmin && <span className="block mt-1 text-amber-700/90">Pro debug access — operator-only sections are hidden.</span>}
         </p>
       </div>
 
@@ -500,7 +508,9 @@ export default function DebugParsePage() {
         </div>
       )}
 
-      {/* ── External Data Refresh ───────────────────────────────────────────── */}
+      {/* ── External Data Refresh (super-admin only — global side effects) ─── */}
+      {isSuperAdmin && (
+      <>
       <div>
         <h2 className="text-xl font-bold text-gray-900">External Data Refresh</h2>
         <p className="mt-1 text-sm text-gray-500">
@@ -584,6 +594,9 @@ export default function DebugParsePage() {
             </div>
           )}
         </div>
+      )}
+
+      </>
       )}
 
       {/* ── Subscription Cleanup ────────────────────────────────────────────── */}
@@ -692,7 +705,7 @@ export default function DebugParsePage() {
               <div className="mb-3 flex flex-wrap gap-2">
                 {Object.entries(spendResult.fxRates).map(([cur, rate]) => (
                   <span key={cur} className="rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-800">
-                    1 {cur} = {rate.toFixed(4)} CAD
+                    1 {cur} = {rate.toFixed(4)} {spendResult.homeCurrency ?? "USD"}
                   </span>
                 ))}
               </div>
@@ -868,7 +881,8 @@ export default function DebugParsePage() {
         </div>
       )}
 
-        {/* ── Promo Campaign Manager ─────────────────────────────────── */}
+        {/* ── Promo Campaign Manager (super-admin only) ─────────────────────── */}
+        {isSuperAdmin && (
         <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
             <div>
@@ -994,6 +1008,7 @@ export default function DebugParsePage() {
             )}
           </div>
         </div>
+        )}
         </div>
       )}
     </div>

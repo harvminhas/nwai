@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin, getStorageBucketName } from "@/lib/firebase-admin";
 import { sendPdfRequest, sendVisionRequest } from "@/lib/ai";
 import { SYSTEM_PROMPT, extractJson } from "@/lib/parseStatement";
+import { canUseDebugTools } from "@/lib/debugPlanGate";
 
 export const maxDuration = 120;
 
@@ -13,6 +14,10 @@ export async function POST(request: NextRequest) {
     const { auth, db, storage } = getFirebaseAdmin();
     const decoded = await auth.verifyIdToken(token);
     const uid = decoded.uid;
+
+    if (!(await canUseDebugTools(uid, decoded.email, db))) {
+      return NextResponse.json({ error: "Pro subscription required" }, { status: 403 });
+    }
 
     const body = await request.json().catch(() => ({}));
     const { statementId } = body as { statementId?: string };

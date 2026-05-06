@@ -40,6 +40,36 @@ export function inferCurrencyFromBankName(
   return fallback.toUpperCase();
 }
 
+/** Minimal shape for resolving a transaction's display currency from profile snapshots. */
+export interface AccountSnapshotCurrency {
+  slug: string;
+  currency?: string | null;
+}
+
+/**
+ * ISO currency for a bank transaction: match `accountSlug` to a snapshot (with
+ * case-insensitive slug match), then txn field, then home. `cash` uses home/no snapshot.
+ */
+export function resolveTxnCurrencyFromSnapshots(
+  accountSlug: string | undefined,
+  snapshots: AccountSnapshotCurrency[] | undefined,
+  txnCurrency?: string | null,
+  homeCurrency = HOME_CURRENCY,
+): string {
+  if (accountSlug && accountSlug !== "cash" && snapshots && snapshots.length > 0) {
+    const s = String(accountSlug).trim();
+    for (const snap of snapshots) {
+      if (!snap.currency) continue;
+      const ss = String(snap.slug).trim();
+      if (ss === s || ss.toLowerCase() === s.toLowerCase()) {
+        return String(snap.currency).toUpperCase();
+      }
+    }
+  }
+  if (txnCurrency) return String(txnCurrency).toUpperCase();
+  return homeCurrency.toUpperCase();
+}
+
 export const CURRENCY_SYMBOL: Record<string, string> = {
   CAD: "CA$",
   USD: "US$",

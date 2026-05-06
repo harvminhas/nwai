@@ -17,7 +17,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { stripe } from "@/lib/stripe";
 import { PLAN_ORDER, type PlanId } from "@/lib/plans";
-import type { Timestamp } from "firebase-admin/firestore";
+import type { Timestamp, Firestore } from "firebase-admin/firestore";
+import type { LinkedPartner } from "@/lib/access/types";
 
 function authToken(req: NextRequest): string | null {
   const h = req.headers.get("authorization");
@@ -48,7 +49,72 @@ export function resolvePlan(data: Record<string, unknown> | undefined): PlanId |
   return null;
 }
 
-import type { LinkedPartner } from "@/lib/access/types";
+/**
+ * Full plan resolution (Firestore + Stripe fallback + linked-partner inheritance).
+ * Shared with debug tooling and other server routes that need the authoritative plan.
+ */
+export async function getResolvedPlanId(uid: string, db: Firestore): Promise<PlanId> {
+  const doc  = await db.collection("users").doc(uid).get();
+  const data = doc.data() as Record<string, unknown> | undefined;
+
+  let plan = resolvePlan(data);
+
+  // Firestore has no subscription data yet — check Stripe directly
+  if (plan === null) {
+    const customerId = data?.stripeCustomerId as string | undefined;
+    if (customerId) {
+      try {
+        const subs = await stripe.subscriptions.list({ customer: customerId, limit: 1, status: "all" });
+        const sub  = subs.data[0];
+        if (sub?.status === "active" || sub?.status === "trialing") {
+          plan = "pro";
+          db.collection("users").doc(uid).set(
+            { plan: "pro", subscription: { id: sub.id, status: sub.status } },
+            { merge: true },
+          ).catch(() => {});
+        } else {
+          plan = "free";
+        }
+      } catch { plan = "free"; }
+    } else {
+      plan = "free";
+    }
+  }
+
+  // If this user can VIEW a Pro partner's data, they inherit Pro access
+  if (plan === "free") {
+    const canViewSnap = await db.doc(`users/${uid}/linkedPartner/data`).get();
+    if (canViewSnap.exists) {
+      const canView = canViewSnap.data() as LinkedPartner;
+      const canViewDoc = await db.collection("users").doc(canView.partnerUid).get();
+      const pdata = canViewDoc.data() as Record<string, unknown> | undefined;
+      let canViewPlan = resolvePlan(pdata);
+      if (canViewPlan === null) {
+        const customerId = pdata?.stripeCustomerId as string | undefined;
+        if (customerId) {
+          try {
+            const subs = await stripe.subscriptions.list({ customer: customerId, limit: 1, status: "all" });
+            const sub  = subs.data[0];
+            if (sub?.status === "active" || sub?.status === "trialing") {
+              canViewPlan = "pro";
+              db.collection("users").doc(canView.partnerUid).set(
+                { plan: "pro", subscription: { id: sub.id, status: sub.status } },
+                { merge: true },
+              ).catch(() => {});
+            } else {
+              canViewPlan = "free";
+            }
+          } catch { canViewPlan = "free"; }
+        } else {
+          canViewPlan = "free";
+        }
+      }
+      if (canViewPlan === "pro") plan = "pro";
+    }
+  }
+
+  return plan;
+}
 
 export async function GET(req: NextRequest) {
   const token = authToken(req);
@@ -57,43 +123,7 @@ export async function GET(req: NextRequest) {
   try {
     const { auth, db } = getFirebaseAdmin();
     const { uid } = await auth.verifyIdToken(token);
-    const doc  = await db.collection("users").doc(uid).get();
-    const data = doc.data() as Record<string, unknown> | undefined;
-
-    let plan = resolvePlan(data);
-
-    // Firestore has no subscription data yet — check Stripe directly
-    if (plan === null) {
-      const customerId = data?.stripeCustomerId as string | undefined;
-      if (customerId) {
-        try {
-          const subs = await stripe.subscriptions.list({ customer: customerId, limit: 1, status: "all" });
-          const sub  = subs.data[0];
-          if (sub?.status === "active" || sub?.status === "trialing") {
-            plan = "pro";
-            db.collection("users").doc(uid).set(
-              { plan: "pro", subscription: { id: sub.id, status: sub.status } },
-              { merge: true },
-            ).catch(() => {});
-          } else {
-            plan = "free";
-          }
-        } catch { plan = "free"; }
-      } else {
-        plan = "free";
-      }
-    }
-
-    // If this user can VIEW a Pro partner's data, they inherit Pro access
-    if (plan === "free") {
-      const canViewSnap = await db.doc(`users/${uid}/linkedPartner/data`).get();
-      if (canViewSnap.exists) {
-        const canView = canViewSnap.data() as LinkedPartner;
-        const canViewDoc = await db.collection("users").doc(canView.partnerUid).get();
-        const canViewPlan = resolvePlan(canViewDoc.data() as Record<string, unknown> | undefined);
-        if (canViewPlan === "pro") plan = "pro";
-      }
-    }
+    const plan = await getResolvedPlanId(uid, db);
 
     return NextResponse.json({ plan });
   } catch (err) {

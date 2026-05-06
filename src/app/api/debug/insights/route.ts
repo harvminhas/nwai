@@ -3,6 +3,7 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { buildFinancialBrief, type BriefMode } from "@/lib/financialBrief";
 import { SYSTEM_PROMPT } from "@/lib/agentInsights";
 import { sendTextRequest } from "@/lib/ai";
+import { canUseDebugTools } from "@/lib/debugPlanGate";
 
 export const maxDuration = 120;
 
@@ -22,9 +23,13 @@ export async function POST(request: NextRequest) {
   if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const { auth } = getFirebaseAdmin();
+    const { auth, db } = getFirebaseAdmin();
     const decoded = await auth.verifyIdToken(token);
     const uid = decoded.uid;
+
+    if (!(await canUseDebugTools(uid, decoded.email, db))) {
+      return NextResponse.json({ error: "Pro subscription required" }, { status: 403 });
+    }
 
     // 1. Build the brief (same as what the pipeline sends)
     const brief = await buildFinancialBrief(uid, "insights" as BriefMode);

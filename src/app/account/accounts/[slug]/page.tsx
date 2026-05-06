@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
-import { useRouter, useParams } from "next/navigation";
+import { useRouter, useParams, useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import NetWorthChart from "@/components/NetWorthChart";
@@ -415,6 +415,7 @@ export default function AccountDetailPage() {
   const router = useRouter();
   const params = useParams<{ slug: string }>();
   const slug = params.slug;
+  const searchParams = useSearchParams();
 
   const [data, setData]                   = useState<ParsedStatementData | null>(null);
   const [previousMonth, setPreviousMonth] = useState<{ netWorth: number; assets: number; debts: number } | null>(null);
@@ -431,6 +432,19 @@ export default function AccountDetailPage() {
   const [reparsingId, setReparsingId]     = useState<string | null>(null);
   const [showCsvImport, setShowCsvImport] = useState(false);
   const [activeTab, setActiveTab] = useState<"overview" | "transactions" | "history">("overview");
+
+  useEffect(() => {
+    const t = searchParams.get("tab");
+    if (t === "overview" || t === "transactions" || t === "history") {
+      setActiveTab(t);
+    }
+  }, [searchParams]);
+
+  /** For statement detail "back" link when opened from this account page. */
+  const statementDetailReturnQs = useMemo(
+    () => `returnTo=${encodeURIComponent(`/account/accounts/${slug}?tab=${activeTab}`)}`,
+    [slug, activeTab],
+  );
 
   // Transactions section state
   const [txMonth, setTxMonth]         = useState<string | null>(null);
@@ -474,6 +488,8 @@ export default function AccountDetailPage() {
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const [snapError,         setSnapError]         = useState<string | null>(null);
   const [deletingSnap,      setDeletingSnap]      = useState<string | null>(null);
+  /** Inline delete confirmation for History tab (same pattern as Manage uploads). */
+  const [historyDeleteConfirmId, setHistoryDeleteConfirmId] = useState<string | null>(null);
 
   const loadCashflow = useCallback((token: string, month: string) => {
     const qs = `account=${encodeURIComponent(slug)}${month ? `&month=${encodeURIComponent(month)}` : ""}`;
@@ -608,7 +624,7 @@ export default function AccountDetailPage() {
   }
 
   async function handleDelete(statementId: string) {
-    if (!idToken || !confirm("Delete this statement?")) return;
+    if (!idToken) return;
     setDeletingId(statementId);
     try {
       await fetch(`/api/user/statements/${statementId}`, {
@@ -630,7 +646,10 @@ export default function AccountDetailPage() {
             (acctHistory.find((e) => e.yearMonth === h.yearMonth)?.isCarryForward ?? false),
         })
       ));
-    } finally { setDeletingId(null); }
+    } finally {
+      setDeletingId(null);
+      setHistoryDeleteConfirmId(null);
+    }
   }
 
   function showToast(msg: string, ok: boolean) {
@@ -1632,9 +1651,23 @@ export default function AccountDetailPage() {
                   const prevReal = allReal[allReal.findIndex((e) => e.yearMonth === entry.yearMonth) + 1];
                   const rateChanged = entry.interestRate !== null && prevReal?.interestRate !== null &&
                     entry.interestRate !== prevReal?.interestRate;
+                  const canOpenStmt =
+                    !entry.isCarryForward && !!entry.statementId && !entry.isManualSnapshot;
+                  const isStmtDeleteConfirm = historyDeleteConfirmId === entry.statementId;
                   return (
-                    <tr key={entry.isManualSnapshot ? `snap-${entry.snapshotId}` : entry.yearMonth}
-                      className={`transition ${beforeBaseline ? "opacity-40" : ""} ${entry.isManualSnapshot ? "bg-purple-50/30" : ""} ${reparsingId === entry.statementId ? "bg-yellow-50 opacity-60" : ""}`}>
+                    <tr
+                      key={entry.isManualSnapshot ? `snap-${entry.snapshotId}` : entry.yearMonth}
+                      onClick={
+                        canOpenStmt
+                          ? (e) => {
+                              const t = e.target as HTMLElement;
+                              if (t.closest("button, a")) return;
+                              router.push(`/account/statements/${entry.statementId}?${statementDetailReturnQs}`);
+                            }
+                          : undefined
+                      }
+                      className={`transition ${beforeBaseline ? "opacity-40" : ""} ${entry.isManualSnapshot ? "bg-purple-50/30" : ""} ${reparsingId === entry.statementId ? "bg-yellow-50 opacity-60" : ""} ${canOpenStmt ? "cursor-pointer hover:bg-gray-50/80 group" : ""}`}
+                    >
                       <td className="px-4 py-3 font-medium text-gray-800">{shortMonth(entry.yearMonth)}</td>
                       <td className="px-4 py-3 text-right tabular-nums font-medium text-gray-900">
                         <span className={entry.isCarryForward ? "text-gray-400" : ""}>
@@ -1678,7 +1711,11 @@ export default function AccountDetailPage() {
                       <td className="px-4 py-3">
                         {!entry.isManualSnapshot && (
                           <button
-                            onClick={() => handleSetBaseline(entry.yearMonth)}
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSetBaseline(entry.yearMonth);
+                            }}
                             className={`rounded-full px-2 py-0.5 text-xs font-medium transition ${
                               isBaseline ? "bg-purple-100 text-purple-700" : "text-gray-300 hover:bg-gray-100 hover:text-gray-500"
                             }`}
@@ -1687,9 +1724,13 @@ export default function AccountDetailPage() {
                           </button>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right">
+                      <td
+                        className="px-4 py-3 text-right"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         {entry.isManualSnapshot && entry.snapshotId ? (
                           <button
+                            type="button"
                             onClick={() => handleDeleteSnapshot(entry.snapshotId!)}
                             disabled={deletingSnap === entry.snapshotId}
                             className="text-xs text-gray-400 hover:text-red-500 disabled:opacity-40"
@@ -1697,37 +1738,86 @@ export default function AccountDetailPage() {
                             {deletingSnap === entry.snapshotId ? "…" : "Delete"}
                           </button>
                         ) : !entry.isCarryForward && entry.statementId ? (
-                          <div className="flex items-center justify-end gap-2">
-                            {entry.source !== "csv" && (
-                              <button
-                                onClick={() => handleViewFile(entry.statementId)}
-                                className="text-xs text-purple-500 hover:underline"
-                                title="Open original uploaded document"
-                              >
-                                View
-                              </button>
-                            )}
-                            {entry.source === "csv" ? (
-                              <span className="text-[10px] rounded-full bg-teal-50 border border-teal-200 px-2 py-0.5 text-teal-600 font-medium">CSV</span>
+                          <div className="flex items-center justify-end gap-1">
+                            <div
+                              className={`flex items-center gap-1 transition-opacity ${
+                                isStmtDeleteConfirm ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                              }`}
+                            >
+                              {entry.source !== "csv" ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleViewFile(entry.statementId)}
+                                    className="rounded px-2 py-0.5 text-xs font-medium text-purple-600 hover:bg-purple-50"
+                                    title="Open original uploaded document"
+                                  >
+                                    View
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleReparse(entry.statementId)}
+                                    disabled={reparsingId !== null || deletingId === entry.statementId}
+                                    className="rounded px-2 py-0.5 text-xs font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-40"
+                                    title={
+                                      reparsingId !== null && reparsingId !== entry.statementId
+                                        ? "Another statement is being parsed — please wait"
+                                        : "Re-extract data from the original PDF with latest AI logic"
+                                    }
+                                  >
+                                    {reparsingId === entry.statementId
+                                      ? "Parsing…"
+                                      : "Re-parse"}
+                                  </button>
+                                </>
+                              ) : (
+                                <span className="text-[10px] rounded-full bg-teal-50 border border-teal-200 px-2 py-0.5 text-teal-600 font-medium">
+                                  CSV
+                                </span>
+                              )}
+                            </div>
+                            {isStmtDeleteConfirm ? (
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs text-gray-500">Remove?</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDelete(entry.statementId)}
+                                  disabled={deletingId === entry.statementId || reparsingId === entry.statementId}
+                                  className="rounded px-2 py-0.5 text-xs font-semibold bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 transition"
+                                >
+                                  {deletingId === entry.statementId ? "…" : "Yes"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setHistoryDeleteConfirmId(null)}
+                                  className="text-xs text-gray-400 hover:text-gray-600"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
                             ) : (
                               <button
-                                onClick={() => handleReparse(entry.statementId)}
-                                disabled={reparsingId !== null || deletingId === entry.statementId}
-                                className="text-xs text-blue-400 hover:text-blue-600 disabled:opacity-40 flex items-center gap-1"
-                                title={reparsingId !== null && reparsingId !== entry.statementId ? "Another statement is being parsed — please wait" : "Re-extract data from the original PDF with latest AI logic"}
+                                type="button"
+                                onClick={() => setHistoryDeleteConfirmId(entry.statementId)}
+                                className={`rounded p-1 text-gray-300 hover:text-red-400 hover:bg-red-50 transition ${isStmtDeleteConfirm ? "" : "opacity-0 group-hover:opacity-100"}`}
+                                title="Remove"
                               >
-                                {reparsingId === entry.statementId
-                                  ? <><span className="animate-spin inline-block">↻</span> Parsing…</>
-                                  : "Re-parse"}
+                                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
                               </button>
                             )}
-                            <button
-                              onClick={() => handleDelete(entry.statementId)}
-                              disabled={deletingId === entry.statementId || reparsingId === entry.statementId}
-                              className="text-xs text-gray-400 hover:text-red-500 disabled:opacity-40"
+                            <Link
+                              href={`/account/statements/${entry.statementId}?${statementDetailReturnQs}`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="shrink-0 rounded p-1 text-gray-300 hover:text-gray-500 transition"
+                              title="Open statement"
+                              aria-label="Open statement"
                             >
-                              {deletingId === entry.statementId ? "…" : "Delete"}
-                            </button>
+                              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                              </svg>
+                            </Link>
                           </div>
                         ) : null}
                       </td>

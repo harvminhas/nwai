@@ -51,9 +51,11 @@ interface CategoryPickerProps {
   current: string;
   onSelect: (cat: string) => void;
   onClose: () => void;
+  /** `undefined` = default banner; `null` = no banner; string = custom. */
+  headerHint?: string | null;
 }
 
-export function CategoryPicker({ anchorRef, current, onSelect, onClose }: CategoryPickerProps) {
+export function CategoryPicker({ anchorRef, current, onSelect, onClose, headerHint }: CategoryPickerProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [style, setStyle] = useState<React.CSSProperties>({ visibility: "hidden" });
 
@@ -114,12 +116,16 @@ export function CategoryPicker({ anchorRef, current, onSelect, onClose }: Catego
     });
   };
 
+  const bannerText = headerHint === undefined ? "Change category · saves as rule" : headerHint;
+
   return createPortal(
     <div ref={menuRef} style={style}
       className="rounded-xl border border-gray-200 bg-white shadow-xl ring-1 ring-black/5 flex flex-col overflow-hidden">
+      {bannerText !== null && bannerText !== "" && (
       <p className="shrink-0 px-3 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
-        Change category · saves as rule
+        {bannerText}
       </p>
+      )}
       <div className="overflow-y-auto flex-1">
         {/* ── Standard categories (two-level) ── */}
         {(Object.entries(CATEGORY_TAXONOMY) as [string, readonly string[]][]).map(([parent, subtypes]) => {
