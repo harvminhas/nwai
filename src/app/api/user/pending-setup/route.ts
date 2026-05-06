@@ -54,14 +54,18 @@ export async function GET(request: NextRequest) {
     const batchParam = request.nextUrl.searchParams.get("ids");
     const batchIds = batchParam ? batchParam.split(",").filter(Boolean) : [];
 
-    // Query for statements needing setup
+    // Query for completed statements needing setup.
+    // Only "completed" statements count — errored or needs_review statements
+    // must not block uploads or appear as pending setup.
     const [bfSnap, acSnap] = await Promise.all([
       db.collection("statements")
         .where("userId", "==", uid)
+        .where("status", "==", "completed")
         .where("backfillPromptNeeded", "==", true)
         .get(),
       db.collection("statements")
         .where("userId", "==", uid)
+        .where("status", "==", "completed")
         .where("accountConfirmNeeded", "==", true)
         .get(),
     ]);

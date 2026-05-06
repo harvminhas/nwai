@@ -435,6 +435,8 @@ export default function AccountDetailPage() {
   // Transactions section state
   const [txMonth, setTxMonth]         = useState<string | null>(null);
   const [txData, setTxData]           = useState<ParsedStatementData["expenses"] | null>(null);
+  const [txIncomeData, setTxIncomeData] = useState<ParsedStatementData["income"] | null>(null);
+  const [txSubTab, setTxSubTab]       = useState<"expenses" | "income">("expenses");
   const [txPayments, setTxPayments]   = useState<number>(0);
   const [txLoading, setTxLoading]     = useState(false);
   const [openPicker, setOpenPicker]   = useState<number | null>(null);
@@ -497,6 +499,7 @@ export default function AccountDetailPage() {
       setManualAssets(Array.isArray(json.manualAssets) ? json.manualAssets : []);
       setTxMonth(json.yearMonth ?? null);
       setTxData((json.data as ParsedStatementData | null)?.expenses ?? null);
+      setTxIncomeData((json.data as ParsedStatementData | null)?.income ?? null);
       setTxPayments(json.paymentsMade ?? 0);
 
       const acctHistory: StatementHistoryEntry[] = json.accountStatementHistory?.[slug] ?? [];
@@ -711,6 +714,7 @@ export default function AccountDetailPage() {
       if (json.previousMonth !== undefined) setPreviousMonth(json.previousMonth);
       if (json.yearMonth) setYearMonth(json.yearMonth);
       setTxData((json.data as ParsedStatementData | null)?.expenses ?? null);
+      setTxIncomeData((json.data as ParsedStatementData | null)?.income ?? null);
       setTxPayments(json.paymentsMade ?? 0);
       // Refresh heatmap for the newly selected month
       loadCashflow(idToken, ym);
@@ -912,6 +916,7 @@ export default function AccountDetailPage() {
     .filter((e) => !e.isCarryForward && !e.isManualSnapshot)
     .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth));
   const txns = txData?.transactions ?? [];
+  const incomeTxns = txIncomeData?.transactions ?? [];
 
   return (
     <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
@@ -1043,7 +1048,7 @@ export default function AccountDetailPage() {
       <div className="mt-5 mb-6 flex border-b border-gray-200">
         {([
           { id: "overview",     label: "Overview" },
-          { id: "transactions", label: "Transactions", count: txns.length },
+          { id: "transactions", label: "Transactions", count: txns.length + incomeTxns.length },
           { id: "history",      label: "History", count: stmtHistory.length },
         ] as { id: string; label: string; count?: number }[]).map((tab) => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id as "overview" | "transactions" | "history")}
@@ -1754,10 +1759,67 @@ export default function AccountDetailPage() {
               <span className="text-sm font-semibold text-emerald-900">{fmt(txPayments, currency)}</span>
             </div>
           )}
+
+          {/* Expenses / Income sub-tabs — only shown when there are income transactions */}
+          {incomeTxns.length > 0 && (
+            <div className="mb-4 flex gap-1 rounded-lg bg-gray-100 p-1">
+              <button
+                onClick={() => setTxSubTab("expenses")}
+                className={`flex-1 rounded-md py-1.5 text-xs font-medium transition-colors ${
+                  txSubTab === "expenses"
+                    ? "bg-white text-gray-900 shadow-sm"
+                    : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                Expenses{txns.length > 0 ? ` (${txns.length})` : ""}
+              </button>
+              <button
+                onClick={() => setTxSubTab("income")}
+                className={`flex-1 rounded-md py-1.5 text-xs font-medium transition-colors ${
+                  txSubTab === "income"
+                    ? "bg-white text-emerald-700 shadow-sm"
+                    : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                Income{incomeTxns.length > 0 ? ` (${incomeTxns.length})` : ""}
+              </button>
+            </div>
+          )}
+
           {txLoading ? (
             <div className="flex items-center justify-center py-16">
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-purple-600 border-t-transparent" />
             </div>
+          ) : txSubTab === "income" ? (
+            /* ── Income transactions list ──────────────────────────────────── */
+            incomeTxns.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 py-12 text-center">
+                <p className="text-sm text-gray-400">No income recorded for {txMonth ? shortMonth(txMonth) : "this month"}.</p>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-xl border border-emerald-200 bg-white shadow-sm">
+                <div className="divide-y divide-emerald-50">
+                  {incomeTxns.map((txn, i) => (
+                    <div key={i} className="flex items-center gap-3 px-4 py-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="truncate text-sm font-medium text-gray-900">{txn.source}</p>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          {txn.date && <span className="text-xs text-gray-400">{fmtDate(txn.date)}</span>}
+                          {txn.category && (
+                            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">{txn.category}</span>
+                          )}
+                        </div>
+                      </div>
+                      <p className="shrink-0 text-sm font-semibold tabular-nums text-emerald-700">+{fmt(txn.amount, currency)}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="border-t border-emerald-100 bg-emerald-50 px-4 py-2.5 flex items-center justify-between">
+                  <span className="text-xs text-emerald-600">{incomeTxns.length} transaction{incomeTxns.length !== 1 ? "s" : ""}</span>
+                  <span className="text-xs font-semibold text-emerald-800">+{fmt(txIncomeData?.total ?? 0, currency)} total</span>
+                </div>
+              </div>
+            )
           ) : txns.length === 0 ? (
             <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 py-12 text-center">
               <p className="text-sm text-gray-400">No transactions for {txMonth ? shortMonth(txMonth) : "this month"}.</p>

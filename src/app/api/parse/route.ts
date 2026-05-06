@@ -84,8 +84,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let parsedData: Awaited<ReturnType<typeof parseStatementImage>>;
+    let parsedData: Awaited<ReturnType<typeof parseStatementImage>> = undefined!;
 
+    const userId = data?.userId as string | null;
+    // Parse cache is disabled: always call AI for every upload/reparse.
+    const usedCache = false;
     if (contentType.includes("pdf") || isPdfBuffer(buffer)) {
       parsedData = await parseStatementPdf(base64);
     } else {
@@ -104,12 +107,26 @@ export async function POST(request: NextRequest) {
       }
       parsedData = await parseStatementImage(base64, mediaType);
     }
+
     // Capture AI result so the catch block can persist partial data if something
     // downstream (Firestore writes, slug logic, etc.) throws unexpectedly.
     partialParsedData = parsedData;
+    console.log("[parse][post-parse-summary]", JSON.stringify({
+      statementId,
+      usedCache,
+      incomeTxns: parsedData?.income?.transactions?.length ?? 0,
+      expenseTxns: parsedData?.expenses?.transactions?.length ?? 0,
+      incomeSources: parsedData?.income?.sources?.length ?? 0,
+      mspOrMamRows: [
+        ...(parsedData?.income?.transactions ?? []),
+        ...(parsedData?.expenses?.transactions ?? []),
+        ...(parsedData?.income?.sources ?? []),
+      ].filter((row) => /msp|mam pay/i.test(JSON.stringify(row))),
+    }));
+
+    // Parse cache intentionally disabled.
 
     // Apply user's saved category rules if this is an authenticated statement
-    const userId = data?.userId as string | null;
     if (userId) {
       const rulesSnap = await db.collection(`users/${userId}/categoryRules`).get();
       if (!rulesSnap.empty) {
@@ -131,6 +148,9 @@ export async function POST(request: NextRequest) {
     let accountConfirmNeeded = false;
     let existingAccounts: { slug: string; label: string }[] = [];
     let suggestedSlug: string | undefined;
+    // True when the user has previously confirmed this bank+type mapping —
+    // used to suppress both accountConfirmNeeded and backfillPromptNeeded.
+    let alreadyConfirmed = false;
 
     if (!hasRealAccountId && userId) {
       const overrideRef = db.collection(`users/${userId}/accountSlugOverrides`).doc(bankTypeKey);
@@ -151,9 +171,10 @@ export async function POST(request: NextRequest) {
         await overrideRef.set({ confirmedAccountId: syntheticId }, { merge: true });
       }
       parsedData = { ...parsedData, accountId: syntheticId };
-      // Always show the confirm prompt when no real account number was found —
-      // the override pre-selects the best option but the user always confirms.
-      accountConfirmNeeded = true;
+      // Only ask for confirmation if user hasn't confirmed this bank+type mapping before.
+      // If confirmedSlug is already stored, we know the user's intent — use it silently.
+      alreadyConfirmed = overrideDoc.exists && !!overrideDoc.data()?.confirmedSlug;
+      accountConfirmNeeded = !alreadyConfirmed;
     }
 
     // Compute slug from (possibly patched) parsedData — now always stable
@@ -228,8 +249,9 @@ export async function POST(request: NextRequest) {
         const existingSlugs = new Set(
           allUserStmts.docs.map((d) => d.data().accountSlug as string).filter(Boolean)
         );
-        // isFirstForSlug: this account has never had a completed statement before
-        const isFirstForSlug = !existingSlugs.has(effectiveSlug);
+        // isFirstForSlug: this account has never had a completed statement before.
+        // Skip backfill if the user already confirmed this account in a prior upload.
+        const isFirstForSlug = !existingSlugs.has(effectiveSlug) && !alreadyConfirmed;
 
         if (isFirstForSlug) {
           backfillPromptNeeded = true;
@@ -322,19 +344,33 @@ export async function POST(request: NextRequest) {
       }),
     });
 
-    // Mark older statements for the same account+month as superseded
-    if (userId && slug && yearMonth) {
-      const olderSnap = await db
+    // Mark older statements for the same account+month as superseded.
+    // Also clear stale setup flags on sibling statements for the same account —
+    // once an account has a confirmed slug the flags are no longer meaningful.
+    if (userId && slug) {
+      const siblingsSnap = await db
         .collection("statements")
         .where("userId", "==", userId)
         .where("accountSlug", "==", slug)
-        .where("yearMonth", "==", yearMonth)
         .get();
       const batch = db.batch();
       let hasBatchOps = false;
-      for (const doc of olderSnap.docs) {
-        if (doc.id !== statementId) {
-          batch.update(doc.ref, { superseded: true, supersededBy: statementId });
+      for (const doc of siblingsSnap.docs) {
+        if (doc.id === statementId) continue;
+        const updates: Record<string, unknown> = {};
+        const d = doc.data();
+        // Supersede same-month duplicates
+        if (yearMonth && (d.yearMonth as string) === yearMonth) {
+          updates.superseded = true;
+          updates.supersededBy = statementId;
+        }
+        // Clear stale setup flags from any sibling (already confirmed account)
+        if (d.backfillPromptNeeded || d.accountConfirmNeeded) {
+          updates.backfillPromptNeeded = false;
+          updates.accountConfirmNeeded = false;
+        }
+        if (Object.keys(updates).length > 0) {
+          batch.update(doc.ref, updates);
           hasBatchOps = true;
         }
       }

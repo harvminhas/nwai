@@ -25,24 +25,16 @@ function accountDisplayLabel(parsed: ParsedStatementData): string {
   return parts.join(" ");
 }
 
-/** Tag every expense and income transaction in a statement with its account label.
- *  When the AI only populated income.sources (no individual transactions), synthesize
- *  one transaction per source so the account label is preserved through consolidation.
- */
+/** Tag every expense and income transaction in a statement with its account label. */
 function tagTransactions(stmt: ParsedStatementData): ParsedStatementData {
   const label = accountDisplayLabel(stmt);
   const acctSlug = buildAccountSlug(stmt.bankName, stmt.accountId, stmt.accountName, stmt.accountType);
 
-  const existingIncomeTxns = stmt.income?.transactions ?? [];
-  const incomeTxns = existingIncomeTxns.length > 0
-    ? existingIncomeTxns.map((txn) => ({ ...txn, accountLabel: label, accountSlug: acctSlug }))
-    : (stmt.income?.sources ?? []).map((src) => ({
-        source: src.description,
-        amount: src.amount,
-        category: "Other" as const,
-        accountLabel: label,
-        accountSlug: acctSlug,
-      }));
+  const incomeTxns = (stmt.income?.transactions ?? []).map((txn) => ({
+    ...txn,
+    accountLabel: label,
+    accountSlug: acctSlug,
+  }));
 
   return {
     ...stmt,
@@ -684,43 +676,61 @@ export async function GET(request: NextRequest) {
       ? ((sortedByCreated[0].data() as FirebaseFirestore.DocumentData).createdAt?.toDate?.()?.toISOString() ?? null)
       : null;
 
-    // Transaction-date-based expenses for the requested month — from extracted data.
-    // When accountFilter is set (account detail page), also filter to that account's
-    // slug so transactions from other accounts don't leak into this view.
-    const monthExpTxns = expenseTxns.filter((t) =>
-      t.txMonth === month && (!accountFilter || t.accountSlug === accountFilter)
-    );
-    // Convert each transaction to home currency before summing
-    function txToHome(amount: number, currency?: string | null): number {
-      if (!currency || currency.toUpperCase() === (profile.homeCurrency ?? "USD").toUpperCase()) return amount;
-      const rate = (profile.fxRates ?? {})[currency.toUpperCase()];
-      return rate != null ? amount * rate : amount;
-    }
-    const txMonthlyExpenses = monthExpTxns.reduce((s, t) => s + txToHome(t.amount, t.currency), 0);
-    // Use cache's incomeTotal for the selected month — it excludes inter-account
-    // transfers and user-marked transfer sources (same filter as the history chart).
-    const cachedMonthHistory = profile.monthlyHistory.find((h) => h.yearMonth === month);
-    const txMonthlyIncome = cachedMonthHistory?.incomeTotal ?? enrichedConsolidated.income?.total ?? 0;
+    // For all-accounts views, override transaction lists with the profile-extracted
+    // streams so the spending page stays in lock-step with insights/history.
+    //
+    // For account detail views (accountFilter set), keep the statement-attached
+    // transactions from consolidatedWithRules/enrichedConsolidated so users see
+    // exactly what's on that account's selected statement month.
+    if (!accountFilter) {
+      // Transaction-date-based expenses for the requested month — from extracted data.
+      const monthExpTxns = expenseTxns.filter((t) => t.txMonth === month);
+      const monthIncomeTxns = (profile.incomeTxns ?? []).filter((t) => t.txMonth === month);
+      // Convert each transaction to home currency before summing
+      function txToHome(amount: number, currency?: string | null): number {
+        if (!currency || currency.toUpperCase() === (profile.homeCurrency ?? "USD").toUpperCase()) return amount;
+        const rate = (profile.fxRates ?? {})[currency.toUpperCase()];
+        return rate != null ? amount * rate : amount;
+      }
+      const txMonthlyExpenses = monthExpTxns.reduce((s, t) => s + txToHome(t.amount, t.currency), 0);
+      // Use cache's incomeTotal for the selected month — it excludes inter-account
+      // transfers and user-marked transfer sources (same filter as the history chart).
+      const cachedMonthHistory = profile.monthlyHistory.find((h) => h.yearMonth === month);
+      const txMonthlyIncome = cachedMonthHistory?.incomeTotal ?? enrichedConsolidated.income?.total ?? 0;
 
-    // Override enrichedConsolidated.expenses.transactions with extracted data so the
-    // spending page transaction list matches the insights route's transaction set.
-    enrichedConsolidated = {
-      ...enrichedConsolidated,
-      expenses: {
-        ...enrichedConsolidated.expenses,
-        total: txMonthlyExpenses,
-        transactions: monthExpTxns.map((t) => ({
-          date: t.date,
-          merchant: t.merchant,
-          amount: t.amount,
-          category: t.category,
-          accountLabel: t.accountLabel,
-          currency: t.currency,
-          recurring: t.recurring,
-          ...(t.debtType ? { debtType: t.debtType as import("@/lib/types").DebtType } : {}),
-        })),
-      },
-    };
+      enrichedConsolidated = {
+        ...enrichedConsolidated,
+        expenses: {
+          ...enrichedConsolidated.expenses,
+          total: txMonthlyExpenses,
+          transactions: monthExpTxns.map((t) => ({
+            date: t.date,
+            merchant: t.merchant,
+            amount: t.amount,
+            category: t.category,
+            accountLabel: t.accountLabel,
+            currency: t.currency,
+            recurring: t.recurring,
+            ...(t.debtType ? { debtType: t.debtType as import("@/lib/types").DebtType } : {}),
+          })),
+        },
+        income: {
+          ...enrichedConsolidated.income,
+          total: txMonthlyIncome,
+          transactions: monthIncomeTxns.map((t) => ({
+            source: t.source,
+            amount: t.amount,
+            date: t.date,
+            category: t.category ?? "Other",
+            accountSlug: t.accountSlug,
+            currency: t.currency,
+          })),
+        },
+      };
+    }
+
+    const txMonthlyExpenses = enrichedConsolidated.expenses?.total ?? 0;
+    const txMonthlyIncome = enrichedConsolidated.income?.total ?? 0;
 
     // ── Income source suggestions (prefix-match dedup hints) ─────────────────
     // Only computed on the all-accounts view (not per-account detail pages) to

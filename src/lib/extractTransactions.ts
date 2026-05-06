@@ -16,6 +16,7 @@ import { inferCurrencyFromBankName } from "./currencyUtils";
 import { getYearMonth } from "./consolidate";
 import { txFingerprint } from "./txFingerprint";
 import { isBalanceMarker } from "./balanceMarkers";
+import { isIncomeCategory } from "./applyRules";
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -42,6 +43,10 @@ export interface IncomeTxnRecord {
   accountSlug: string;
   /** ISO 4217 currency of the source account (e.g. "CAD", "USD"). */
   currency?: string;
+  /** Income type: "Salary" | "Government" | "Transfer In" | "Other" */
+  category?: string;
+  /** Human-readable account label e.g. "TD ••••7780". */
+  accountLabel?: string;
 }
 
 export interface AccountSnapshot {
@@ -170,6 +175,11 @@ export async function extractAllTransactions(
   const expenseTxns: ExpenseTxnRecord[] = [];
   const expFingerprintsFromStmt = new Set<string>();
 
+  // Income transactions rescued from the expenses array (e.g. user applied
+  // "Income - Salary" / "Income - Other" via the category picker).  Collected
+  // here so the income dedup loop below can merge them in one place.
+  const rescuedFromExpenses: IncomeTxnRecord[] = [];
+
   for (const pass of ["stmt", "csv"] as const) {
     for (const doc of bestDocPerSlugYm.values()) {
       const d = doc.data();
@@ -190,19 +200,38 @@ export async function extractAllTransactions(
       const isInvestmentAccount = (parsed.accountType ?? "").toLowerCase() === "investment";
       if (!isInvestmentAccount) {
         for (const txn of parsed.expenses?.transactions ?? []) {
-        const date = txn.date ?? `${stmtYm}-15`;
-        const txMonth = date.slice(0, 7);
-        const fp = txFingerprint(parsed.accountId ?? slug, date, txn.amount, txn.merchant ?? "");
-        // Skip if this fingerprint was already added (handles both stmt-stmt overlap
-        // and the stmt-before-CSV cross-source dedup in a single check)
-        if (expFingerprintsFromStmt.has(fp)) continue;
-        expFingerprintsFromStmt.add(fp);
-        if (isBalanceMarker(txn.merchant ?? "")) continue; // skip AI-leaked balance rows
-        if ((txn.amount ?? 0) <= 0) continue; // expense amounts must be positive (money out)
+          const date = txn.date ?? `${stmtYm}-15`;
+          const txMonth = date.slice(0, 7);
+          const fp = txFingerprint(parsed.accountId ?? slug, date, txn.amount, txn.merchant ?? "");
+          // Skip if this fingerprint was already added (handles both stmt-stmt overlap
+          // and the stmt-before-CSV cross-source dedup in a single check)
+          if (expFingerprintsFromStmt.has(fp)) continue;
+          expFingerprintsFromStmt.add(fp);
+          if (isBalanceMarker(txn.merchant ?? "")) continue; // skip AI-leaked balance rows
+
+          // If a user re-classified this expense as income (via the category picker),
+          // route it to income rather than expenses so it doesn't inflate spending.
+          if (isIncomeCategory(txn.category ?? "")) {
+            if (Math.abs(txn.amount ?? 0) <= 0) continue;
+            rescuedFromExpenses.push({
+              date,
+              txMonth,
+              amount: Math.abs(txn.amount ?? 0),
+              source: txn.merchant ?? "Unknown",
+              description: txn.merchant ?? "Unknown",
+              accountSlug: slug,
+              currency: inferCurrencyFromBankName(parsed.bankName, parsed.currency),
+            });
+            continue;
+          }
+
+          const absAmount = Math.abs(txn.amount ?? 0);
+          if (absAmount <= 0) continue;
+
           expenseTxns.push({
             date,
             txMonth,
-            amount: txn.amount,
+            amount: absAmount,
             merchant: txn.merchant ?? "Unknown",
             category: txn.category ?? "Other",
             accountSlug: slug,
@@ -230,25 +259,40 @@ export async function extractAllTransactions(
 
       const stmtYm = docYearMonth(d);
       const parsed = d.parsedData as ParsedStatementData;
-      const slug = (d.accountSlug as string | undefined) || buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
+      // Use the same slug resolver as expense extraction so account-filtered views
+      // never drop income transactions due to stored-slug vs normalized-id mismatch.
+      const slug = resolveSlug(d, parsed);
       for (const txn of parsed.income?.transactions ?? []) {
+        const absAmount = Math.abs(txn.amount ?? 0);
+        if (absAmount <= 0) continue;
         const date = txn.date ?? `${stmtYm}-01`;
         const txMonth = date.slice(0, 7);
-        const fp = txFingerprint(parsed.accountId ?? slug, date, txn.amount, txn.source ?? txn.category ?? "");
+        const fp = txFingerprint(parsed.accountId ?? slug, date, absAmount, txn.source ?? txn.category ?? "");
         if (incFingerprintsFromStmt.has(fp)) continue;
         incFingerprintsFromStmt.add(fp);
         incomeTxns.push({
           date,
           txMonth,
-          amount: txn.amount,
+          amount: absAmount,
           source: txn.source ?? "Income",
           description: txn.source ?? txn.category ?? "Income",
           accountSlug: slug,
           currency: inferCurrencyFromBankName(parsed.bankName, parsed.currency),
+          category: txn.category,
         });
       }
     }
   }
+
+  // Merge any expense-array transactions the user re-classified as income,
+  // deduping against what was already collected from income.transactions above.
+  for (const txn of rescuedFromExpenses) {
+    const fp = txFingerprint(txn.accountSlug, txn.date, txn.amount, txn.source);
+    if (incFingerprintsFromStmt.has(fp)) continue;
+    incFingerprintsFromStmt.add(fp);
+    incomeTxns.push(txn);
+  }
+
   incomeTxns.sort((a, b) => b.date.localeCompare(a.date));
 
   // ── 4. Latest balance snapshot per account (carry-forward) ───────────────

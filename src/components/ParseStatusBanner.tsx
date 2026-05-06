@@ -60,15 +60,9 @@ export default function ParseStatusBanner({
   /** Called once when ALL pending parses finish (success or error). Use to trigger redirects. */
   onAllComplete?: () => void;
 }) {
-  const [items, setItems]       = useState<ParseItem[]>(() => {
-    // Hydrate from localStorage on first render so items from a previous
-    // page session (e.g. after a route change) are immediately visible.
-    try {
-      const raw = localStorage.getItem(PENDING_KEY);
-      const pending: PendingParse[] = raw ? JSON.parse(raw) : [];
-      return pending.map((p) => ({ ...p, status: "analyzing" as ParseItemStatus }));
-    } catch { return []; }
-  });
+  // Always start empty so server and client produce identical HTML (no hydration mismatch).
+  // The useEffect below re-hydrates from localStorage after mount via startWatching().
+  const [items, setItems]       = useState<ParseItem[]>([]);
   const [showDone, setShowDone] = useState(false);
   const onRefreshRef            = useRef(onRefresh);
   const onAllCompleteRef        = useRef(onAllComplete);

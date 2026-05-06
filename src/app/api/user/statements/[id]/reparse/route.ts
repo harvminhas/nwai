@@ -33,10 +33,21 @@ export async function POST(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    const data = snap.data() as { fileHash?: string; userId?: string };
+    const fileHash = data?.fileHash;
+
+    // Clear parse cache for this file so a manual "Retry parse" always forces a
+    // fresh AI call instead of reusing previously cached parsedData.
+    if (uid && fileHash) {
+      await db.doc(`users/${uid}/parseCache/${fileHash}`).delete().catch(() => {
+        // Non-fatal: statement can still be reparsed even if cache deletion fails.
+      });
+    }
+
     // Reset so /api/parse can overwrite it
     await ref.update({ status: "processing", errorMessage: null, parseError: null });
 
-    return NextResponse.json({ ok: true, statementId });
+    return NextResponse.json({ ok: true, statementId, cacheCleared: Boolean(uid && fileHash) });
   } catch (err) {
     console.error("Reparse reset error:", err);
     return NextResponse.json({ error: "Failed to reset statement" }, { status: 500 });

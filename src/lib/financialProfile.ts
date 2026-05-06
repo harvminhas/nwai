@@ -27,8 +27,9 @@ import type { CashIncomeEntry } from "./cashIncome";
 import { occurrencesInMonth } from "./cashIncome";
 import type { CashCommitment } from "@/app/api/user/cash-commitments/route";
 import { commitmentOccurrencesInMonth } from "@/app/api/user/cash-commitments/route";
-import { merchantSlug } from "./applyRules";
+import { merchantSlug, isIncomeCategory } from "./applyRules";
 import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
+import { txFingerprint } from "./txFingerprint";
 import type { TypicalSpend } from "./spendingMetrics";
 import type { ManualAsset, ManualLiability, InvestmentHolding, ParsedStatementData } from "./types";
 import { buildAccountSlug, normalizeAccountId } from "./accountSlug";
@@ -57,7 +58,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "42"; // incomeTxns now stores all months (not just last 6)
+const SCHEMA_VERSION = "46"; // keep income/expense txns when AI returns negative-signed amounts
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -299,7 +300,7 @@ export async function buildAndCacheFinancialProfile(
     currencyOverrides.set(doc.id, (doc.data().currency as string).toUpperCase());
   }
 
-  const { incomeTxns: allIncomeTxns, accountSnapshots, latestTxMonth, allTxMonths } = txData;
+  const { accountSnapshots, latestTxMonth, allTxMonths } = txData;
 
   // User-marked transfer sources — deposits that should NOT count as income
   const userTransferSources = new Set<string>(
@@ -343,10 +344,41 @@ export async function buildAndCacheFinancialProfile(
     const r = doc.data();
     if (r.merchant && r.category) rulesMap.set(merchantSlug(r.merchant as string), r.category as string);
   }
-  const allExpenseTxns: ExpenseTxnRecord[] = txData.expenseTxns.map((t) => ({
+  const categorizedExpenseTxns: ExpenseTxnRecord[] = txData.expenseTxns.map((t) => ({
     ...t,
     category: rulesMap.get(merchantSlug(t.merchant)) ?? t.category,
   }));
+
+  // After applying rules, any expense whose category is now an income category
+  // (e.g. "Income - Other", "Income - Salary") was explicitly reclassified by the
+  // user as income via the category picker. Move it to income so it doesn't inflate
+  // spending totals and correctly appears on the income page.
+  const rescuedFromExpenses: IncomeTxnRecord[] = [];
+  const allExpenseTxns: ExpenseTxnRecord[] = [];
+  for (const t of categorizedExpenseTxns) {
+    if (isIncomeCategory(t.category)) {
+      rescuedFromExpenses.push({
+        date: t.date,
+        txMonth: t.txMonth,
+        amount: t.amount,
+        source: t.merchant,
+        description: t.merchant,
+        accountSlug: t.accountSlug,
+        currency: t.currency,
+        category: t.category,
+      });
+    } else {
+      allExpenseTxns.push(t);
+    }
+  }
+
+  // Merge rescued transactions with statement-level income, deduping by fingerprint
+  const rawIncomeTxns = txData.incomeTxns;
+  const incomeKeys = new Set(rawIncomeTxns.map((t) => txFingerprint(t.accountSlug, t.date, t.amount, t.source)));
+  const mergedIncomeTxns = [
+    ...rawIncomeTxns,
+    ...rescuedFromExpenses.filter((t) => !incomeKeys.has(txFingerprint(t.accountSlug, t.date, t.amount, t.source))),
+  ];
 
   // Manual assets — same shape as /api/user/assets response
   const manualAssets: ManualAsset[] = manualAssetsSnap.docs.map((d) => {
@@ -432,7 +464,7 @@ export async function buildAndCacheFinancialProfile(
   for (const t of allExpenseTxns) {
     if (!t.currency) t.currency = slugCurrencyMap.get(t.accountSlug) ?? homeCurrency;
   }
-  for (const t of allIncomeTxns) {
+  for (const t of mergedIncomeTxns) {
     if (!t.currency) t.currency = slugCurrencyMap.get(t.accountSlug) ?? homeCurrency;
   }
 
@@ -446,7 +478,7 @@ export async function buildAndCacheFinancialProfile(
   const expenseTxns = allExpenseTxns.filter((t) => t.txMonth >= cutoff12);
   // Income: keep ALL months — income transactions are small in volume and the
   // income source detail page needs full history to build accurate per-month rows.
-  const incomeTxns  = allIncomeTxns;
+  const incomeTxns  = mergedIncomeTxns;
 
   // Collect holdings from the most recent investment statement per account slug
   const latestHoldingsBySlug = new Map<string, PortfolioAccountHoldings>();
@@ -578,7 +610,7 @@ export async function buildAndCacheFinancialProfile(
   const currencySet = new Set<string>([
     ...mergedSnapshots.map((s) => (s.currency ?? "CAD").toUpperCase()),
     ...allExpenseTxns.map((t) => (t.currency ?? "CAD").toUpperCase()),
-    ...allIncomeTxns.map((t) => (t.currency ?? "CAD").toUpperCase()),
+    ...mergedIncomeTxns.map((t) => (t.currency ?? "CAD").toUpperCase()),
   ]);
   const fxRateMap = await getFxRatesForCurrencies(currencySet, homeCurrency, db);
   // Store as a plain object, excluding the home currency (implicit = 1)
@@ -597,7 +629,7 @@ export async function buildAndCacheFinancialProfile(
   // Compute per-month aggregated history from ALL months (needs toHome → must be after fxRates)
   const monthlyHistory: MonthlyHistoryEntry[] = allTxMonths.map((ym) => {
     const monthExp = allExpenseTxns.filter((t) => t.txMonth === ym);
-    const monthInc = allIncomeTxns.filter((t) => t.txMonth === ym);
+    const monthInc = mergedIncomeTxns.filter((t) => t.txMonth === ym);
     const monthIncFiltered = monthInc.filter((t) => !isIncomeTransfer(t));
     const cashIncomeForMonth = cashIncomeEntries.reduce((sum, entry) => {
       const count = occurrencesInMonth(entry, ym);

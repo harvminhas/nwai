@@ -1,10 +1,20 @@
 import type { ParsedStatementData } from "./types";
 import { sendVisionRequest, sendPdfRequest, sendTextRequest } from "./ai";
+import { isIncomeCategory, toIncomeCategoryLabel } from "./applyRules";
 
-export const SYSTEM_PROMPT = `You are a financial analysis expert. Analyze this bank statement and extract structured data.
+const LEGACY_SYSTEM_PROMPT = `ROLE: You are a deterministic financial data extraction engine. Your goal is to convert a bank statement into a structured JSON ledger with 100% accuracy.
 
 **CRITICAL — NO FABRICATION RULE:**
 Every value you return MUST be copied verbatim from the document. Do NOT guess, infer, calculate, or invent any value that is not explicitly printed on the statement. If a field is not present, use the fallback specified (null, 0, "unknown", or []). This rule applies especially to account numbers, balances, dates, and interest rates.
+
+**CRITICAL — COLUMN DOMINANCE RULE:**
+The physical column where an amount appears is the absolute and final authority on direction — not the description.
+- Any amount in a Deposit/Credit/Amount In/CR column is INCOME, regardless of what the description says.
+- Any amount in a Withdrawal/Debit/Amount Out/DR column is EXPENSE, regardless of what the description says.
+A description like "SUN LIFE" or "INSURANCE" in the credit column is still income. The column wins, always.
+
+**CRITICAL — NO OMISSION RULE:**
+Extract EVERY row that has a date and an amount. Do NOT skip rows because the description looks like a code or is alphanumeric (e.g. "260408W2107600TSFR" is a valid transaction and must be included). Every deposit row must appear in income.transactions. Every withdrawal row must appear in expenses.transactions. Zero omissions.
 
 ---
 
@@ -71,7 +81,7 @@ Record the format AND what evidence you used (header labels found, or data-patte
   ALWAYS money IN (credit/income — unless explicitly listed above):
     - PAYROLL, PAY, SALARY, WAGES
     - GC DEPOSIT, CRA, CANADA DEPOSIT, GST, OAS, CPP, EI, CERB
-    - E-TFR FRM, E-TRANSFER FROM, RECEIVE ETRANSFER, ETFR RCV
+    - E-TFR FRM, E-TRANSFER FROM, RECEIVE ETRANSFER, ETFR RCV, TSFR (on credit side)
     - DIRECT DEPOSIT
 
 ---
@@ -127,7 +137,7 @@ PASS 2 — Category: Apply the category rules below. Category assignment only ha
 **For each money-IN transaction, assign an income category:**
   - Salary: Regular employer payroll. Description contains PAYROLL, PAY, SALARY, WAGES, or deposit repeats on a predictable bi-weekly / semi-monthly schedule. Examples: "MAM PAY", "ADP PAYROLL", "CERIDIAN PAY".
   - Government: CRA, GST/HST credit, OAS, CPP, EI, CERB, provincial benefit, tax refund. Examples: "CRA DEPOSIT", "GC DEPOSIT", "GST", "OAS PMT".
-  - Transfer In: Money received from another own account. Examples: "TFR FROM SAVINGS", "E-TFR FRM".
+  - Transfer In: Money received from another own account. Examples: "TFR FROM SAVINGS", "E-TFR FRM", "260408W2107600TSFR" (any coded description containing TSFR or TFR on the credit/deposit side).
   - Other: Any other one-time or irregular deposit — e-transfers received from individuals, freelance payments, rental income, etc.
 
 **Classify as EXPENSE for all money OUT transactions. Use these categories:**
@@ -377,6 +387,117 @@ accountId examples: TD statement printing "••••3156" → use "•••�
   "subAccounts": []
 }`;
 
+const EXPERIMENTAL_SYSTEM_PROMPT = `ROLE
+You are a deterministic financial data extraction engine. Convert a bank statement into structured JSON.
+
+THE GOLDEN RULE - COLUMN DOMINANCE
+The physical column where an amount appears is the final authority on direction.
+- Deposit/Credit/Amount In/CR column => INCOME (money in)
+- Withdrawal/Debit/Amount Out/DR column => EXPENSE (money out)
+Do not override direction based on merchant name.
+
+NO FABRICATION
+Copy values exactly as printed. Do not invent values. Do not calculate values that are not explicitly shown.
+
+STEP 0 - FORMAT DETECTION
+Identify layout before classifying:
+- Format A: separate debit and credit columns
+- Format B: single amount column with CR/DR suffix
+- Format C: single amount column with +/- signs
+- Format D: single unsigned amount column
+
+Direction mapping:
+- Format A: debit column => expense, credit column => income
+- Format B: DR => expense, CR => income
+- Format C: negative => expense, positive/unsigned => income
+- Format D: infer using nearby headers/labels (withdrawal/deposit). If still ambiguous, classify as "Other" but do not drop the row.
+
+STEP 1 - ACCOUNT DETAILS
+Extract:
+- bankName
+- accountId (verbatim, if present; else "unknown")
+- accountName
+- accountType: checking | savings | credit | mortgage | investment | loan | other
+- currency (ISO code)
+- interestRate (number or null)
+
+STEP 2 - BALANCE AND DATE
+Extract:
+- statementDate (last day of statement period, YYYY-MM-DD)
+- netWorth (closing balance; negative for debt accounts)
+- assets (closing balance for asset accounts, else 0)
+- debts (closing debt balance for debt accounts, else 0)
+
+STEP 3 - TRANSACTION EXTRACTION (NO OMISSION)
+Extract every transaction row that has date + amount.
+Do not skip coded/alphanumeric descriptions (example: "260408W2107600TSFR").
+Skip only:
+- header rows
+- balance snapshot rows (Opening Balance, Closing Balance, Balance Forward, Prior Balance)
+- subtotal/total rows that are not individual transactions
+
+If descriptions wrap across lines, combine wrapped lines into one description.
+
+STEP 4 - CLASSIFICATION
+Income transactions:
+- Salary: payroll/pay/wages
+- Government: CRA/GST/OAS/CPP/EI/tax benefit
+- Transfer In: incoming transfer tokens (TFR FROM, E-TRANSFER FROM, E-TFR FRM, ETFR RCV, TSFR/TFR token on a credit-side row)
+- Other: any other incoming row
+
+Expense transactions:
+- Use one of: Housing, Dining, Groceries, Shopping, Transportation, Entertainment, Subscriptions, Healthcare, Education, Fees, Interest, Debt Payments, Investments & Savings, Transfers, Cash & ATM, Other
+- Use a specific category label when clearly identifiable
+
+Important:
+- A row in the Deposit/Credit side remains income even if merchant text looks like insurance/tax/payment.
+- A row in the Withdrawal/Debit side remains expense even if merchant text looks like payroll.
+- Transfers should be labeled Transfer In (income side) or Transfers (expense side) based on direction.
+
+STEP 5 - QUALITY CHECK
+Before returning JSON:
+- Ensure every eligible date+amount row is present in either income.transactions or expenses.transactions.
+- Ensure no eligible row is dropped.
+- All amounts must be positive numbers; direction is represented by which array the row is in.
+
+STEP 6 - OUTPUT
+Return JSON only. No markdown or explanation.
+
+Required shape:
+{
+  "netWorth": 0.0,
+  "assets": 0.0,
+  "debts": 0.0,
+  "statementDate": "YYYY-MM-DD",
+  "bankName": "",
+  "accountId": "unknown",
+  "accountName": "",
+  "accountType": "other",
+  "interestRate": null,
+  "currency": "CAD",
+  "income": {
+    "total": 0.0,
+    "sources": [],
+    "transactions": [
+      { "source": "", "amount": 0.0, "date": "YYYY-MM-DD", "category": "Other" }
+    ]
+  },
+  "expenses": {
+    "total": 0.0,
+    "categories": [],
+    "transactions": [
+      { "merchant": "", "amount": 0.0, "date": "YYYY-MM-DD", "category": "Other" }
+    ]
+  },
+  "paymentsMade": 0.0,
+  "subscriptions": [],
+  "savingsRate": 0,
+  "holdings": [],
+  "subAccounts": []
+}`;
+
+export const SYSTEM_PROMPT = LEGACY_SYSTEM_PROMPT;
+
 export function extractJson(text: string): string {
   const trimmed = text.trim();
   const start = trimmed.indexOf("{");
@@ -514,19 +635,24 @@ ${trimmed}
  * single source of truth before data is written to Firestore.
  */
 function normalizeData(data: ParsedStatementData): ParsedStatementData {
-  // Income categories the AI may misplace into the expenses array.
-  // Any expense transaction carrying one of these categories is money-IN, not money-OUT.
-  const INCOME_CATS = /^(salary|government|transfer in|other income)$/i;
-
-  const rawExpenseTxns = (data.expenses?.transactions ?? []).filter((t) => (t.amount ?? 0) > 0);
+  const rawExpenseTxns = data.expenses?.transactions ?? [];
 
   // Rescue misplaced income transactions — move them to income instead of dropping them.
+  // Uses the shared isIncomeCategory helper so parse-time and rule-application behave identically.
   const rescuedIncomeTxns = rawExpenseTxns
-    .filter((t) => INCOME_CATS.test((t.category ?? "").trim()))
-    .map((t) => ({ date: t.date, amount: t.amount, source: t.merchant ?? "Unknown", category: "Other" as const }));
+    .filter((t) => isIncomeCategory(t.category ?? ""))
+    .filter((t) => Math.abs(t.amount ?? 0) > 0)
+    .map((t) => ({
+      date: t.date,
+      amount: Math.abs(t.amount ?? 0),
+      source: t.merchant ?? "Unknown",
+      category: toIncomeCategoryLabel(t.category ?? "Other"),
+    }));
 
   const incomeTxns = [
-    ...(data.income?.transactions ?? []).filter((t) => (t.amount ?? 0) > 0),
+    ...(data.income?.transactions ?? [])
+      .filter((t) => Math.abs(t.amount ?? 0) > 0)
+      .map((t) => ({ ...t, amount: Math.abs(t.amount ?? 0) })),
     ...rescuedIncomeTxns,
   ];
 
@@ -534,7 +660,10 @@ function normalizeData(data: ParsedStatementData): ParsedStatementData {
   // but the AI occasionally returns negative amounts for credits/refunds.
   // Drop them here — the bucket (expenses vs income) is the canonical direction signal.
   // Also exclude any income-category transactions already moved above.
-  const expenseTxns = rawExpenseTxns.filter((t) => !INCOME_CATS.test((t.category ?? "").trim()));
+  const expenseTxns = rawExpenseTxns
+    .filter((t) => !isIncomeCategory(t.category ?? ""))
+    .filter((t) => Math.abs(t.amount ?? 0) > 0)
+    .map((t) => ({ ...t, amount: Math.abs(t.amount ?? 0) }));
 
   // Derive totals from individual transactions — never trust AI-computed sums.
   const incomeTotal   = incomeTxns.reduce((s, t) => s + (t.amount ?? 0), 0);
@@ -620,6 +749,42 @@ function parseJsonResponse(raw: string): ParsedStatementData {
   if (!validateParsedData(parsed)) {
     console.error("AI response failed schema validation. Parsed:", JSON.stringify(parsed).slice(0, 2000));
     throw new Error("AI response missing required fields (netWorth, statementDate, bankName)");
+  }
+  // Server-side debug log: capture exactly what the model returned before we
+  // coerce defaults / normalize so extraction bugs can be diagnosed from logs.
+  // Keep both a compact preview and the full JSON payload.
+  try {
+    const aiObj = parsed as {
+      statementDate?: string;
+      bankName?: string;
+      accountName?: string;
+      accountId?: string;
+      income?: { total?: number; sources?: unknown[]; transactions?: unknown[] };
+      expenses?: { total?: number; categories?: unknown[]; transactions?: unknown[] };
+    };
+    const incomeTxCount = Array.isArray(aiObj.income?.transactions) ? aiObj.income!.transactions!.length : 0;
+    const expenseTxCount = Array.isArray(aiObj.expenses?.transactions) ? aiObj.expenses!.transactions!.length : 0;
+    const incomeSourceCount = Array.isArray(aiObj.income?.sources) ? aiObj.income!.sources!.length : 0;
+    const mspOrMamRows = [
+      ...(Array.isArray(aiObj.income?.transactions) ? aiObj.income!.transactions! : []),
+      ...(Array.isArray(aiObj.expenses?.transactions) ? aiObj.expenses!.transactions! : []),
+      ...(Array.isArray(aiObj.income?.sources) ? aiObj.income!.sources! : []),
+    ].filter((row) => /msp|mam pay/i.test(JSON.stringify(row)));
+
+    console.log("[parse][ai-raw-summary]", JSON.stringify({
+      bankName: aiObj.bankName ?? "",
+      accountName: aiObj.accountName ?? "",
+      accountId: aiObj.accountId ?? "",
+      statementDate: aiObj.statementDate ?? "",
+      incomeTotal: aiObj.income?.total ?? 0,
+      expenseTotal: aiObj.expenses?.total ?? 0,
+      incomeTxCount,
+      expenseTxCount,
+      incomeSourceCount,
+      matchedRows: mspOrMamRows,
+    }));
+  } catch (logErr) {
+    console.warn("[parse] failed to log raw AI payload:", logErr);
   }
   return normalizeData(coerceDefaults(parsed as unknown as Record<string, unknown>));
 }

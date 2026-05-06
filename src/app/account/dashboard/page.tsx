@@ -1278,8 +1278,8 @@ export default function TodayPage() {
     }).catch(() => {});
   }
 
-  const load = useCallback(async (tok: string) => {
-    setLoading(true); setError(null);
+  const load = useCallback(async (tok: string, { silent = false }: { silent?: boolean } = {}) => {
+    if (!silent) setLoading(true); setError(null);
     try {
       const headers = buildHeaders(tok);
       const [insRes, cardRes, fxRes, confirmRes] = await Promise.all([
@@ -1344,7 +1344,7 @@ export default function TodayPage() {
         setShowHomeCurrency(true);
       }
     } catch { setError("Failed to load today view"); }
-    finally { setLoading(false); }
+    finally { if (!silent) setLoading(false); }
   }, [buildHeaders]);
 
   const handleRefresh = useCallback(async () => {
@@ -2089,7 +2089,7 @@ export default function TodayPage() {
       <PromoDashboardBanner />
       {token && (
         <ParseStatusBanner
-          onRefresh={() => load(token)}
+          onRefresh={() => load(token, { silent: true })}
         />
       )}
 
@@ -2114,7 +2114,7 @@ export default function TodayPage() {
         </div>
       )}
       {token && needsRefresh && (
-        <RefreshToast token={token} onRefreshed={() => { setNeedsRefresh(false); load(token); }} />
+        <RefreshToast token={token} onRefreshed={() => { setNeedsRefresh(false); load(token, { silent: true }); }} />
       )}
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
