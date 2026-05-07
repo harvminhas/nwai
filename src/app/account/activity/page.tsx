@@ -1,111 +1,12 @@
 "use client";
 
-import { useEffect, useState, useCallback, Suspense } from "react";
+import React, { useEffect, useState, useCallback, Suspense } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
-import type { ActivityEvent } from "@/app/api/user/activity/route";
 import type { UserStatementSummary } from "@/lib/types";
 import { buildAccountSlug } from "@/lib/accountSlug";
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-function fmtTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-}
-
-function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
-
-function dayKey(iso: string): string {
-  return iso.slice(0, 10); // YYYY-MM-DD
-}
-
-function groupLabel(key: string): string {
-  const today     = new Date();
-  const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
-  const d         = new Date(key + "T12:00:00");
-
-  const sameDay = (a: Date, b: Date) =>
-    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-
-  if (sameDay(d, today))     return "Today";
-  if (sameDay(d, yesterday)) return "Yesterday";
-
-  const daysAgo = Math.floor((today.getTime() - d.getTime()) / 86_400_000);
-  if (daysAgo <= 7)  return "This week";
-  if (daysAgo <= 30) return "This month";
-  return d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
-}
-
-// ── event icons ───────────────────────────────────────────────────────────────
-
-function EventIcon({ type, meta }: { type: ActivityEvent["type"]; meta: Record<string, unknown> }) {
-  if (type === "statement_upload") {
-    const status = meta.status as string;
-    const color  = status === "completed" ? "bg-green-100 text-green-600"
-      : status === "error" ? "bg-red-100 text-red-500"
-      : "bg-gray-100 text-gray-400";
-    return (
-      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${color}`}>
-        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round"
-            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-      </span>
-    );
-  }
-  if (type === "category_rule") {
-    return (
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-purple-100 text-purple-600">
-        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round"
-            d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-        </svg>
-      </span>
-    );
-  }
-  if (type === "recurring_rule") {
-    return (
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-100 text-teal-600">
-        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round"
-            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-        </svg>
-      </span>
-    );
-  }
-  // rate_change
-  return (
-    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-600">
-      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round"
-          d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-      </svg>
-    </span>
-  );
-}
-
-function EventBadge({ type, meta }: { type: ActivityEvent["type"]; meta: Record<string, unknown> }) {
-  if (type === "statement_upload") {
-    const status = meta.status as string;
-    if (status === "completed" && meta.superseded) {
-      return <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-400">superseded</span>;
-    }
-    if (status === "error") {
-      return <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-500">error</span>;
-    }
-    if (status === "completed") {
-      const typeLabel = (meta.accountType as string) || null;
-      if (typeLabel) return (
-        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500 capitalize">{typeLabel}</span>
-      );
-    }
-  }
-  return null;
-}
 
 // ── coverage helpers ──────────────────────────────────────────────────────────
 
@@ -144,6 +45,58 @@ function shortMo(ym: string): string {
   const [y, m] = ym.split("-");
   return new Date(parseInt(y), parseInt(m) - 1, 1)
     .toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+}
+
+function longMo(ym: string): string {
+  const [y, m] = ym.split("-");
+  return new Date(parseInt(y), parseInt(m) - 1, 1)
+    .toLocaleDateString("en-US", { month: "long", year: "numeric" });
+}
+
+function monthName(ym: string): string {
+  const [y, m] = ym.split("-");
+  return new Date(parseInt(y), parseInt(m) - 1, 1)
+    .toLocaleDateString("en-US", { month: "long" });
+}
+
+function missingMonthsLabel(months: string[]) {
+  const names = [...months].sort().map(monthName);
+  if (names.length === 0) return null;
+  const bold = (n: string, i: number) => (
+    <strong key={i} className="font-semibold text-gray-800">{n}</strong>
+  );
+  if (names.length === 1) return <>Missing {bold(names[0], 0)}</>;
+  const parts: React.ReactNode[] = [];
+  names.forEach((n, i) => {
+    if (i > 0) parts.push(i === names.length - 1 ? " and " : ", ");
+    parts.push(bold(n, i));
+  });
+  return <>Missing {parts}</>;
+}
+
+function accountTypeIcon(type: string) {
+  const t = type.toLowerCase();
+  if (t === "credit") return (
+    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+    </svg>
+  );
+  if (t === "checking" || t === "savings" || t === "cash") return (
+    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z" />
+    </svg>
+  );
+  if (t === "mortgage" || t === "loan" || t.includes("equity") || t.includes("heloc") || t.includes("line")) return (
+    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+    </svg>
+  );
+  // investment / retirement / default
+  return (
+    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+    </svg>
+  );
 }
 
 type CoverageStatus = "uploaded" | "gap" | "carried" | "future";
@@ -255,42 +208,32 @@ function buildCoverage(statements: UserStatementSummary[]): {
 // ── page ──────────────────────────────────────────────────────────────────────
 
 function ActivityContent() {
-  const router       = useRouter();
-  const searchParams = useSearchParams();
-  const [activeTab, setActiveTab] = useState<"timeline" | "coverage">("timeline");
-
-  // Set initial tab from URL param once mounted
-  useEffect(() => {
-    if (searchParams.get("tab") === "coverage") setActiveTab("coverage");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  const [events, setEvents]       = useState<ActivityEvent[]>([]);
+  const router = useRouter();
   const [statements, setStatements] = useState<UserStatementSummary[]>([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState<string | null>(null);
-  const [filter, setFilter]       = useState<ActivityEvent["type"] | "all">("all");
   const [token, setToken]         = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [deleting, setDeleting]           = useState<string | null>(null);
-  const [deleteError, setDeleteError]     = useState<string | null>(null);
-  const [refreshing, setRefreshing]       = useState(false);
+  const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
+  const [coverageHistoryExpanded, setCoverageHistoryExpanded] = useState(false);
+
+  function toggleAccount(slug: string) {
+    setExpandedAccounts((prev) => {
+      const next = new Set(prev);
+      next.has(slug) ? next.delete(slug) : next.add(slug);
+      return next;
+    });
+  }
 
   const loadData = useCallback(async (tok: string, silent = false) => {
     if (!silent) setLoading(true);
-    else setRefreshing(true);
     setError(null);
     try {
-      const [actRes, stmtRes] = await Promise.all([
-        fetch("/api/user/activity",   { headers: { Authorization: `Bearer ${tok}` } }),
-        fetch("/api/user/statements", { headers: { Authorization: `Bearer ${tok}` } }),
-      ]);
-      const actJson  = await actRes.json().catch(() => ({}));
+      const stmtRes  = await fetch("/api/user/statements", { headers: { Authorization: `Bearer ${tok}` } });
       const stmtJson = await stmtRes.json().catch(() => ({}));
-      if (!actRes.ok) { setError(actJson.error || "Failed to load"); return; }
-      setEvents(actJson.events ?? []);
+      if (!stmtRes.ok) { setError(stmtJson.error || "Failed to load"); return; }
       setStatements(stmtJson.statements ?? []);
-    } catch { setError("Failed to load activity"); }
-    finally { setLoading(false); setRefreshing(false); }
+    } catch { setError("Failed to load statements"); }
+    finally { setLoading(false); }
   }, []);
 
   useEffect(() => {
@@ -319,57 +262,6 @@ function ActivityContent() {
     };
   }, [token, loadData]);
 
-  async function handleDelete(statementId: string) {
-    if (!token) return;
-    setDeleting(statementId);
-    setDeleteError(null);
-    try {
-      const res = await fetch(`/api/user/statements/${statementId}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        setDeleteError(j.error || "Delete failed");
-        return;
-      }
-      // Remove all events for this statement from local state
-      setEvents((prev) => prev.filter((e) => e.meta?.statementId !== statementId));
-    } catch {
-      setDeleteError("Delete failed — please try again");
-    } finally {
-      setDeleting(null);
-      setConfirmDelete(null);
-    }
-  }
-
-  const filtered = filter === "all" ? events : events.filter((e) => e.type === filter);
-
-  // Group by day
-  const groups: { label: string; date: string; items: ActivityEvent[] }[] = [];
-  for (const ev of filtered) {
-    const key   = dayKey(ev.timestamp);
-    const label = groupLabel(key);
-    const last  = groups[groups.length - 1];
-    if (last && last.date === key) {
-      last.items.push(ev);
-    } else {
-      groups.push({ label, date: key, items: [ev] });
-    }
-  }
-
-  // Counts per type
-  const counts: Record<string, number> = { all: events.length };
-  for (const e of events) counts[e.type] = (counts[e.type] ?? 0) + 1;
-
-  const FILTERS: { id: ActivityEvent["type"] | "all"; label: string }[] = [
-    { id: "all",              label: "All" },
-    { id: "statement_upload", label: "Uploads" },
-    { id: "category_rule",    label: "Rules" },
-    { id: "recurring_rule",   label: "Recurring" },
-    { id: "rate_change",      label: "Rates" },
-  ];
-
   // ── coverage data ────────────────────────────────────────────────────────────
   const { accounts: coverageAccounts, months: coverageMonths, currentMonth } =
     !loading && statements.length > 0
@@ -386,6 +278,47 @@ function ActivityContent() {
 
   const dueAccounts = coverageAccounts.filter((a) => a.statementDue);
 
+  // ── new derived values for redesigned statements tab ─────────────────────────
+  const accountsNeedingUpload = coverageAccounts.filter((acc) => {
+    const hasGaps = coverageMonths.some(
+      (mo) => mo >= acc.firstMonth && mo < currentMonth && !acc.uploadedMonths.has(mo),
+    );
+    return hasGaps || acc.statementDue;
+  });
+  const needsAttentionCount  = accountsNeedingUpload.length;
+  const totalMissing         = totalGaps + dueAccounts.length;
+
+  const justArrivedAccounts  = accountsNeedingUpload.filter((a) => a.statementDue);
+  const catchingUpAccounts   = accountsNeedingUpload.filter((a) => !a.statementDue);
+
+  const lastUploadDate =
+    [...statements]
+      .filter((s) => s.status === "completed")
+      .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt))[0]?.uploadedAt ?? null;
+
+  const lastUploadLabel = lastUploadDate
+    ? (() => {
+        const days = Math.floor(
+          (Date.now() - new Date(lastUploadDate).getTime()) / 86_400_000,
+        );
+        if (days === 0) return "today";
+        if (days === 1) return "yesterday";
+        return `${days} days ago`;
+      })()
+    : null;
+
+  const coveragePct = (() => {
+    let total = 0; let uploaded = 0;
+    for (const acc of coverageAccounts) {
+      for (const mo of coverageMonths) {
+        if (mo < acc.firstMonth || mo > currentMonth) continue;
+        total++;
+        if (acc.uploadedMonths.has(mo)) uploaded++;
+      }
+    }
+    return total > 0 ? Math.round((uploaded / total) * 100) : 100;
+  })();
+
   function getCellStatus(acc: AccountCoverage, mo: string): CoverageStatus {
     if (mo > currentMonth) return "future";
     if (mo < acc.firstMonth) return "future"; // before this account existed
@@ -396,38 +329,79 @@ function ActivityContent() {
     return "gap"; // between first and last but no upload
   }
 
+  function AccountRow({
+    acc,
+    missingMonths,
+    isExpanded,
+    onToggle,
+  }: {
+    acc: AccountCoverage;
+    missingMonths: string[];
+    isExpanded: boolean;
+    onToggle: () => void;
+  }) {
+    return (
+      <div>
+        <button
+          onClick={onToggle}
+          className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-gray-50/60 transition"
+        >
+          <div className="shrink-0 flex h-9 w-9 items-center justify-center rounded-xl bg-gray-100 text-gray-600">
+            {accountTypeIcon(acc.accountType)}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-gray-900 truncate">{acc.displayName}</p>
+            <p className="text-xs text-gray-500 mt-0.5">{missingMonthsLabel(missingMonths)}</p>
+          </div>
+          <svg
+            className={`h-4 w-4 shrink-0 text-gray-400 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {isExpanded && (
+          <div className="border-t border-gray-100 bg-gray-50/50 px-4 pb-4 pt-3 flex flex-wrap gap-2">
+            {missingMonths.map((mo) => (
+              <Link
+                key={mo}
+                href="/upload"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-medium text-purple-700 hover:bg-purple-100 transition"
+              >
+                <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                </svg>
+                {longMo(mo)}
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-3xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
       {/* Header */}
       <div className="mb-6">
-        <h1 className="font-bold text-3xl text-gray-900">Activity & Coverage</h1>
-        <p className="mt-0.5 text-sm text-gray-400">Your upload history and statement coverage</p>
-      </div>
-
-      {/* Top-level tabs */}
-      <div className="mb-6 flex gap-1 border-b border-gray-200">
-        {([
-          { id: "timeline", label: "Timeline" },
-          { id: "coverage", label: totalGaps > 0 ? `Coverage · ${totalGaps} gap${totalGaps !== 1 ? "s" : ""}` : "Coverage" },
-        ] as const).map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition -mb-px ${
-              activeTab === tab.id
-                ? "border-purple-600 text-purple-700"
-                : "border-transparent text-gray-500 hover:text-gray-700"
-            }`}
-          >
-            {tab.label}
-            {tab.id === "coverage" && totalGaps > 0 && activeTab !== "coverage" && (
-              <span className="ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-600">
-                {totalGaps > 9 ? "9+" : totalGaps}
-              </span>
+        <h1 className="font-bold text-3xl text-gray-900">Statements</h1>
+        {!loading && (
+          <p className="mt-1 text-sm text-gray-500">
+            {needsAttentionCount > 0 ? (
+              <>
+                <strong className="font-semibold text-gray-900">
+                  {needsAttentionCount} account{needsAttentionCount !== 1 ? "s" : ""}
+                </strong>{" "}
+                {needsAttentionCount === 1 ? "is" : "are"} waiting for an upload. Tap any to add the file.
+              </>
+            ) : coverageAccounts.length > 0 ? (
+              "All accounts are up to date."
+            ) : (
+              "Upload your first statement to get started."
             )}
-          </button>
-        ))}
+          </p>
+        )}
       </div>
 
       {loading && (
@@ -438,288 +412,137 @@ function ActivityContent() {
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 
-      {/* ── TIMELINE tab ──────────────────────────────────────────────────────── */}
-      {!loading && activeTab === "timeline" && (
-        <>
-          {/* Filter pills */}
-          {events.length > 0 && (
-            <div className="mb-6 flex gap-1.5 flex-wrap">
-              {FILTERS.map((f) => {
-                const count = counts[f.id] ?? 0;
-                if (f.id !== "all" && count === 0) return null;
-                return (
-                  <button
-                    key={f.id}
-                    onClick={() => setFilter(f.id)}
-                    className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                      filter === f.id
-                        ? "bg-gray-900 text-white"
-                        : "bg-gray-100 text-gray-500 hover:bg-gray-200"
-                    }`}
-                  >
-                    {f.label}
-                    {count > 0 && (
-                      <span className={`ml-1.5 ${filter === f.id ? "text-gray-300" : "text-gray-400"}`}>
-                        {count}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+      {!loading && (
+        <div className="space-y-6">
 
-          {filtered.length === 0 && (
-            <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-12 text-center">
-              <p className="text-sm text-gray-500">No activity yet.</p>
-              <Link href="/upload" className="mt-2 inline-block text-sm font-medium text-purple-600 hover:underline">
-                Upload a statement to get started →
-              </Link>
-            </div>
-          )}
-
-          {deleteError && (
-            <p className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{deleteError}</p>
-          )}
-
-          <div className="space-y-8">
-            {groups.map((group) => (
-              <div key={group.date}>
-                <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">
-                  {group.label}
-                  <span className="ml-2 normal-case font-normal text-gray-300">
-                    {group.label === "Today" || group.label === "Yesterday" ? fmtDate(group.date + "T12:00:00") : ""}
-                  </span>
-                </p>
-                <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-                  <div className="divide-y divide-gray-100">
-                    {group.items.map((ev) => {
-                      const stmtId = ev.meta?.statementId as string | undefined;
-                      const isBeingDeleted   = deleting === stmtId;
-                      const isPendingConfirm = confirmDelete === stmtId;
-                      return (
-                        <div key={ev.id} className={`flex items-start gap-3 px-4 py-3.5 transition-colors ${isBeingDeleted ? "opacity-40" : ""}`}>
-                          <EventIcon type={ev.type} meta={ev.meta} />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                {ev.type === "statement_upload" && stmtId ? (
-                                  <Link href={`/dashboard/${stmtId}`} className="text-sm font-medium text-gray-800 hover:text-purple-600 transition-colors truncate block">
-                                    {ev.title}
-                                  </Link>
-                                ) : (
-                                  <p className="text-sm font-medium text-gray-800 truncate">{ev.title}</p>
-                                )}
-                                {ev.subtitle && <p className="mt-0.5 text-xs text-gray-400">{ev.subtitle}</p>}
-                                {isPendingConfirm && (
-                                  <div className="mt-2 flex items-center gap-2">
-                                    <p className="text-xs text-red-600 font-medium">Delete this statement and all its data?</p>
-                                    <button onClick={() => handleDelete(stmtId!)} disabled={isBeingDeleted}
-                                      className="rounded-md bg-red-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-red-700 transition disabled:opacity-50">
-                                      {isBeingDeleted ? "Deleting…" : "Yes, delete"}
-                                    </button>
-                                    <button onClick={() => setConfirmDelete(null)}
-                                      className="rounded-md border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 transition">
-                                      Cancel
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                              <div className="flex shrink-0 items-center gap-2">
-                                <EventBadge type={ev.type} meta={ev.meta} />
-                                <span className="text-[11px] text-gray-300 tabular-nums">{fmtTime(ev.timestamp)}</span>
-                                {ev.type === "statement_upload" && stmtId && !isPendingConfirm && (
-                                  <button onClick={() => { setConfirmDelete(stmtId); setDeleteError(null); }} disabled={isBeingDeleted}
-                                    title="Delete statement"
-                                    className="ml-1 rounded p-1 text-gray-300 hover:bg-red-50 hover:text-red-500 transition disabled:opacity-30">
-                                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                    </svg>
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {filtered.length > 0 && (
-            <p className="mt-6 text-center text-xs text-gray-300">
-              {filtered.length} event{filtered.length !== 1 ? "s" : ""}
-            </p>
-          )}
-        </>
-      )}
-
-      {/* ── COVERAGE tab ──────────────────────────────────────────────────────── */}
-      {!loading && activeTab === "coverage" && (
-        <div className="space-y-5">
-
-          {/* Legend + refresh */}
-          <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500">
-            {[
-              { color: "bg-green-500",  label: "Uploaded" },
-              { color: "bg-amber-400",  label: "Carried forward" },
-              { color: "bg-red-400",    label: "Gap — missing upload" },
-              { color: "bg-gray-100 border border-gray-200", label: "Not applicable" },
-            ].map(({ color, label }) => (
-              <span key={label} className="flex items-center gap-1.5">
-                <span className={`h-3 w-3 rounded-sm ${color}`} />
-                {label}
-              </span>
-            ))}
-            <div className="ml-auto flex items-center gap-3">
-              <button
-                onClick={() => token && loadData(token, true)}
-                disabled={refreshing}
-                className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-purple-600 transition disabled:opacity-40"
-                title="Refresh coverage"
-              >
-                <svg className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                {refreshing ? "Refreshing…" : "Refresh"}
-              </button>
-              <Link
-                href="/upload"
-                className="rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 transition"
-              >
-                Upload missing →
-              </Link>
-            </div>
-          </div>
-
-          {/* Due statements banner */}
-          {dueAccounts.length > 0 && (
-            <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3.5">
-              <div className="flex items-start gap-2.5">
-                <svg className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                </svg>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-blue-900">
-                    New statements ready to upload
-                  </p>
-                  <p className="mt-0.5 text-xs text-blue-700">
-                    {dueAccounts.map((a) => a.displayName).join(", ")}
-                  </p>
-                  <Link href="/upload" className="mt-2 inline-block text-xs font-semibold text-blue-800 underline hover:text-blue-900">
-                    Upload now →
-                  </Link>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {coverageAccounts.length === 0 ? (
+          {/* Empty state */}
+          {coverageAccounts.length === 0 && (
             <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-12 text-center">
               <p className="text-sm text-gray-500">No statements uploaded yet.</p>
               <Link href="/upload" className="mt-2 inline-block text-sm font-medium text-purple-600 hover:underline">
                 Upload your first statement →
               </Link>
             </div>
-          ) : (
-            <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
-              <table className="min-w-full text-xs">
-                <thead>
-                  <tr className="border-b border-gray-100">
-                    <th className="sticky left-0 z-10 bg-white px-4 py-3 text-left font-semibold text-gray-600 min-w-[180px]">
-                      Account
-                    </th>
-                    {coverageMonths.map((mo) => (
-                      <th
-                        key={mo}
-                        className={`px-2 py-3 text-center font-medium whitespace-nowrap ${
-                          mo === currentMonth ? "text-purple-600" : "text-gray-400"
-                        }`}
-                      >
-                        {shortMo(mo)}
-                        {mo === currentMonth && (
-                          <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-purple-500 align-middle" />
-                        )}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {coverageAccounts.map((acc) => {
-                    const gaps = coverageMonths.filter((mo) => getCellStatus(acc, mo) === "gap").length;
-                    return (
-                      <tr key={acc.slug} className={`hover:bg-gray-50/50 ${acc.statementDue ? "bg-blue-50/40" : ""}`}>
-                        <td className={`sticky left-0 z-10 px-4 py-3 hover:bg-blue-50/60 ${acc.statementDue ? "bg-blue-50/40" : "bg-white hover:bg-gray-50/50"}`}>
-                          <p className="font-medium text-gray-800 truncate max-w-[160px]" title={acc.displayName}>
-                            {acc.displayName}
-                          </p>
-                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                            <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] capitalize text-gray-500">
-                              {acc.accountType}
-                            </span>
-                            {acc.statementDue && (
-                              <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">
-                                New statement ready
-                              </span>
-                            )}
-                            {gaps > 0 && (
-                              <span className="rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-500">
-                                {gaps} gap{gaps !== 1 ? "s" : ""}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        {coverageMonths.map((mo) => {
-                          const status = getCellStatus(acc, mo);
-                          const gapTitle = mo === currentMonth && acc.statementDue
-                            ? "New statement available — upload now"
-                            : "Missing — no statement uploaded";
-                          const cell = {
-                            uploaded: { bg: "bg-green-500",   title: "Statement uploaded" },
-                            carried:  { bg: "bg-amber-400",   title: "Carried forward from previous month" },
-                            gap:      { bg: "bg-red-400",     title: gapTitle },
-                            future:   { bg: "bg-gray-100 border border-gray-200", title: "Not applicable" },
-                          }[status];
-                          return (
-                            <td key={mo} className="px-2 py-3 text-center">
-                              <span
-                                className={`inline-block h-4 w-4 rounded-sm ${cell.bg}`}
-                                title={`${acc.displayName} · ${shortMo(mo)} · ${cell.title}`}
-                              />
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+          )}
+
+          {/* ── Just arrived group ── */}
+          {justArrivedAccounts.length > 0 && (
+            <div className="space-y-2">
+              <p className="flex items-start gap-2 text-sm text-gray-600">
+                <span className="mt-[5px] h-2 w-2 shrink-0 rounded-full bg-blue-400" />
+                <span>
+                  <strong className="font-semibold text-gray-900">Just arrived</strong>
+                  {" — your latest statements are ready to download from your bank"}
+                </span>
+              </p>
+              <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden divide-y divide-gray-100">
+                {justArrivedAccounts.map((acc) => {
+                  const gapMonths = coverageMonths.filter(
+                    (mo) => mo >= acc.firstMonth && mo < currentMonth && !acc.uploadedMonths.has(mo),
+                  );
+                  const allMissing = [...gapMonths, currentMonth];
+                  const isExpanded = expandedAccounts.has(acc.slug);
+                  return (
+                    <AccountRow
+                      key={acc.slug}
+                      acc={acc}
+                      missingMonths={allMissing}
+                      isExpanded={isExpanded}
+                      onToggle={() => toggleAccount(acc.slug)}
+                    />
+                  );
+                })}
+              </div>
             </div>
           )}
 
-          {/* Gap summary */}
-          {totalGaps > 0 && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5">
-              <div className="flex items-start gap-2.5">
-                <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-                </svg>
-                <div>
-                  <p className="text-sm font-semibold text-amber-800">
-                    {totalGaps} missing statement{totalGaps !== 1 ? "s" : ""} detected
-                  </p>
-                  <p className="mt-0.5 text-xs text-amber-700">
-                    Gaps mean your financial trends for those months use estimated or carried-forward balances.
-                    Uploading missing statements will improve accuracy.
-                  </p>
-                  <Link href="/upload" className="mt-2 inline-block text-xs font-semibold text-amber-800 underline hover:text-amber-900">
-                    Upload missing statements →
-                  </Link>
-                </div>
+          {/* ── Catching up group ── */}
+          {catchingUpAccounts.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-sm text-gray-600">
+                <strong className="font-semibold text-gray-900">Catching up</strong>
+                {" — these have been waiting a bit longer"}
+              </p>
+              <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden divide-y divide-gray-100">
+                {catchingUpAccounts.map((acc) => {
+                  const gapMonths = coverageMonths.filter(
+                    (mo) => mo >= acc.firstMonth && mo < currentMonth && !acc.uploadedMonths.has(mo),
+                  );
+                  const isExpanded = expandedAccounts.has(acc.slug);
+                  return (
+                    <AccountRow
+                      key={acc.slug}
+                      acc={acc}
+                      missingMonths={gapMonths}
+                      isExpanded={isExpanded}
+                      onToggle={() => toggleAccount(acc.slug)}
+                    />
+                  );
+                })}
               </div>
+            </div>
+          )}
+
+          {/* ── Coverage history — collapsible ── */}
+          {coverageAccounts.length > 0 && (
+            <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+              <button
+                onClick={() => setCoverageHistoryExpanded((v) => !v)}
+                className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-gray-50/60 transition"
+              >
+                <div className="shrink-0 flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-gray-500">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M3 6h18M3 14h18M3 18h18" />
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800">Coverage history</p>
+                  <p className="text-xs text-gray-400">
+                    {coveragePct}% across {coverageAccounts.length} account{coverageAccounts.length !== 1 ? "s" : ""} · last {coverageMonths.length} months
+                  </p>
+                </div>
+                <svg
+                  className={`h-4 w-4 shrink-0 text-gray-400 transition-transform ${coverageHistoryExpanded ? "rotate-180" : ""}`}
+                  fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              {coverageHistoryExpanded && (
+                <div className="border-t border-gray-100 overflow-x-auto">
+                  <table className="min-w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-gray-100 bg-gray-50/60">
+                        <th className="sticky left-0 z-10 bg-gray-50 px-4 py-2.5 text-left font-semibold text-gray-600 min-w-[180px]">Account</th>
+                        {coverageMonths.map((mo) => (
+                          <th key={mo} className={`px-2 py-2.5 text-center font-medium whitespace-nowrap ${mo === currentMonth ? "text-purple-600" : "text-gray-400"}`}>
+                            {shortMo(mo)}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {coverageAccounts.map((acc) => (
+                        <tr key={acc.slug} className="hover:bg-gray-50/50">
+                          <td className="sticky left-0 z-10 bg-white px-4 py-2.5">
+                            <p className="font-medium text-gray-800 truncate max-w-[160px]">{acc.displayName}</p>
+                            <span className="text-[10px] capitalize text-gray-400">{acc.accountType}</span>
+                          </td>
+                          {coverageMonths.map((mo) => {
+                            const s = getCellStatus(acc, mo);
+                            const bg = s === "uploaded" ? "bg-green-500" : s === "carried" ? "bg-amber-400" : s === "gap" ? "bg-red-400" : "bg-gray-100 border border-gray-200";
+                            return (
+                              <td key={mo} className="px-2 py-2.5 text-center">
+                                <span className={`inline-block h-4 w-4 rounded-sm ${bg}`} />
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
 
