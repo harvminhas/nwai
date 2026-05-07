@@ -5,7 +5,7 @@ import type { ParsedStatementData } from "@/lib/types";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { merchantSlug } from "@/lib/applyRules";
 import { getFinancialProfile } from "@/lib/financialProfile";
-import { getNetWorth, getSavingsRate, getMonthlyIncome, getMonthlyExpenses, getLatestCompleteMonth, getMonthlyAllDebtPayments } from "@/lib/profileMetrics";
+import { getNetWorth, getSavingsRate, getMonthlyIncome, getMonthlyIncomeAllCredits, getMonthlyExpenses, getLatestCompleteMonth, getMonthlyAllDebtPayments } from "@/lib/profileMetrics";
 import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
 import { detectFrequency } from "@/lib/incomeEngine";
 import { projectNextDates, nextUpcoming, toDateStr } from "@/lib/projectionEngine";
@@ -1109,9 +1109,13 @@ export async function GET(req: NextRequest) {
       // This skips the current partial month (e.g. April with only cash income
       // but no expenses yet) and correctly surfaces March if March statements exist.
       const savingsMonth = getLatestCompleteMonth(profile);
+      const incomeCore = getMonthlyIncome(profile, savingsMonth);
+      const incomeAll  = getMonthlyIncomeAllCredits(profile, savingsMonth);
       return {
         rate:         getSavingsRate(profile, savingsMonth),
-        income:       getMonthlyIncome(profile, savingsMonth),
+        income:       incomeCore,
+        /** Wider income (Transfer In, Other, etc.) — same month as `income`. Omitted when identical to core. */
+        ...(Math.round(incomeAll) !== Math.round(incomeCore) ? { incomeAllCredits: incomeAll } : {}),
         expenses:     getMonthlyExpenses(profile, savingsMonth, { core: true }),
         debtPayments: getMonthlyAllDebtPayments(profile, savingsMonth),
         month:        savingsMonth,

@@ -315,7 +315,7 @@ export async function GET(request: NextRequest) {
     }
 
     // ── History + income source history + recurring expense history ──────────
-    const history: { yearMonth: string; netWorth: number; totalAssets: number; totalDebts: number; expensesTotal: number; coreExpensesTotal: number; incomeTotal: number; debtTotal: number; isEstimate?: boolean }[] = [];
+    const history: { yearMonth: string; netWorth: number; totalAssets: number; totalDebts: number; expensesTotal: number; coreExpensesTotal: number; incomeTotal: number; incomeTotalAllCredits?: number; debtTotal: number; isEstimate?: boolean }[] = [];
 
     // incomeSourceHistory: source description → per-month amounts + transaction dates
     const incomeSourceHistory: Record<string, {
@@ -339,13 +339,14 @@ export async function GET(request: NextRequest) {
         const txDateExpenses     = cached?.expensesTotal     ?? 0;
         const txDateCoreExpenses = cached?.coreExpensesTotal ?? 0;
         const txDateIncome       = cached?.incomeTotal       ?? c.income?.total ?? 0;
+        const txDateIncomeAll    = cached?.incomeTotalAllCredits ?? txDateIncome;
         const hAssets            = cached?.totalAssets       ?? 0;
         const hDebts             = cached?.totalDebts        ?? 0;
         // Always derive netWorth from totalAssets - totalDebts so the three values
         // are guaranteed consistent regardless of what the cache stores.
         const hNetWorth          = (hAssets > 0 || hDebts > 0) ? hAssets - hDebts : (cached?.netWorth ?? 0);
         if (ym === month) console.log(`[consolidated] ${ym} hAssets=${hAssets} hDebts=${hDebts} hNetWorth=${hNetWorth} cachedNW=${cached?.netWorth}`);
-        history.push({ yearMonth: ym, netWorth: hNetWorth, totalAssets: hAssets, totalDebts: hDebts, expensesTotal: txDateExpenses, coreExpensesTotal: txDateCoreExpenses, incomeTotal: txDateIncome, debtTotal: hDebts });
+        history.push({ yearMonth: ym, netWorth: hNetWorth, totalAssets: hAssets, totalDebts: hDebts, expensesTotal: txDateExpenses, coreExpensesTotal: txDateCoreExpenses, incomeTotal: txDateIncome, incomeTotalAllCredits: txDateIncomeAll, debtTotal: hDebts });
 
         // Build per-merchant expense history — only for months with real expense data
         const hasRealExpenses = allCompleted.some((doc) => {
@@ -531,6 +532,9 @@ export async function GET(request: NextRequest) {
             if (history[idx].incomeTotal === 0 && (cachedForYm?.incomeTotal ?? 0) > 0) {
               history[idx].incomeTotal = cachedForYm!.incomeTotal;
             }
+            if ((history[idx].incomeTotalAllCredits ?? 0) === 0 && (cachedForYm?.incomeTotalAllCredits ?? 0) > 0) {
+              history[idx].incomeTotalAllCredits = cachedForYm!.incomeTotalAllCredits;
+            }
           } else {
             const newIdx = history.length;
             history.push({
@@ -541,6 +545,7 @@ export async function GET(request: NextRequest) {
               expensesTotal: 0,
               coreExpensesTotal: 0,
               incomeTotal: cachedForYm?.incomeTotal ?? 0,
+              incomeTotalAllCredits: cachedForYm?.incomeTotalAllCredits ?? cachedForYm?.incomeTotal ?? 0,
               debtTotal: debtDelta,
               isEstimate: true,
             });
@@ -578,7 +583,7 @@ export async function GET(request: NextRequest) {
     {
       const historyYMs = new Set(history.map((h) => h.yearMonth));
       for (const cached of profile.monthlyHistory) {
-        if (!historyYMs.has(cached.yearMonth) && cached.incomeTotal > 0) {
+        if (!historyYMs.has(cached.yearMonth) && ((cached.incomeTotal ?? 0) > 0 || (cached.incomeTotalAllCredits ?? 0) > 0)) {
           history.push({
             yearMonth: cached.yearMonth,
             netWorth: 0,
@@ -587,6 +592,7 @@ export async function GET(request: NextRequest) {
             expensesTotal: 0,
             coreExpensesTotal: 0,
             incomeTotal: cached.incomeTotal,
+            incomeTotalAllCredits: cached.incomeTotalAllCredits ?? cached.incomeTotal,
             debtTotal: 0,
             isEstimate: true,
           });
@@ -743,6 +749,9 @@ export async function GET(request: NextRequest) {
 
     const txMonthlyExpenses = enrichedConsolidated.expenses?.total ?? 0;
     const txMonthlyIncome = enrichedConsolidated.income?.total ?? 0;
+    const txMonthlyIncomeAllCredits = !accountFilter
+      ? (profile.monthlyHistory.find((h) => h.yearMonth === month)?.incomeTotalAllCredits ?? txMonthlyIncome)
+      : txMonthlyIncome;
 
     // ── Income source suggestions (prefix-match dedup hints) ─────────────────
     // Only computed on the all-accounts view (not per-account detail pages) to
@@ -809,6 +818,7 @@ export async function GET(request: NextRequest) {
       history,
       needsRefresh: profile.cacheStale ?? false,
       txMonthlyIncome,
+      txMonthlyIncomeAllCredits,
       txMonthlyExpenses,
       /**
        * Median core monthly expenses across all historical months — excludes

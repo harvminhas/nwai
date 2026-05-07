@@ -127,6 +127,33 @@ function isGenericSourceName(description: string): boolean {
   return GENERIC_SOURCE_NAMES.some((g) => d === g);
 }
 
+/** Transfer / Transfer In / Other — excluded from headline income totals (see financialProfile). */
+function isNonCoreIncomeCategoryLabel(cat: string | undefined): boolean {
+  const c = (cat ?? "").trim().toLowerCase();
+  return c === "transfer" || c === "transfer in" || c === "other";
+}
+
+function resolvedIncomeTxnCategory(
+  rawSrc: string,
+  txn: IncomeTransaction | undefined,
+  rules: Record<string, string>,
+): string {
+  return rules[sourceSlug(rawSrc)] ?? txn?.category ?? "Other";
+}
+
+/** True when this source bucket is treated as non-core for UI (matches profile filtering). */
+function sourceIsNonCoreForUI(
+  description: string,
+  txns: IncomeTransaction[],
+  rules: Record<string, string>,
+): boolean {
+  const slug = sourceSlug(description);
+  const rule = rules[slug];
+  if (rule && isNonCoreIncomeCategoryLabel(rule)) return true;
+  if (txns.length === 0) return false;
+  return txns.every((t) => isNonCoreIncomeCategoryLabel(resolvedIncomeTxnCategory(description, t, rules)));
+}
+
 // ── amount clustering ─────────────────────────────────────────────────────────
 
 function clusterByAmount(
@@ -175,12 +202,19 @@ type TabId = typeof TABS[number]["id"];
 
 // ── local types ───────────────────────────────────────────────────────────────
 
-interface HistoryPoint { yearMonth: string; incomeTotal: number; expensesTotal: number; isEstimate?: boolean }
+interface HistoryPoint { yearMonth: string; incomeTotal: number; incomeTotalAllCredits?: number; expensesTotal: number; isEstimate?: boolean }
+
+function historyIncomePoint(h: HistoryPoint, showAllCredits: boolean): number {
+  if (showAllCredits && h.incomeTotalAllCredits != null) return h.incomeTotalAllCredits;
+  return h.incomeTotal;
+}
 interface ConsolidatedData {
   income: { total: number; sources: IncomeSource[]; transactions?: IncomeTransaction[] };
   expenses: { total: number };
   savingsRate: number;
   txIncome?: number;
+  /** Deposits incl. Transfer In / Other; still excludes inter-account xfer heuristics. */
+  txIncomeAllCredits?: number;
   txExpenses?: number;
 }
 
@@ -247,6 +281,8 @@ function IncomePageInner() {
   const tokenRef                          = useRef<string | null>(null);
   const [suggestionListExpanded, setSuggestionListExpanded] = useState(false);
   const [homeCurrency, setHomeCurrency]   = useState<string>("USD");
+  /** When true, chart/KPIs use all credits (excl. inter-account transfers only). Default: strict core income. */
+  const [incomeShowAllCredits, setIncomeShowAllCredits] = useState(false);
 
   // Income category rules: source slug → category (source-level default)
   const [incomeCategoryRules, setIncomeCategoryRules] = useState<Record<string, string>>({});
@@ -296,6 +332,7 @@ function IncomePageInner() {
             expenses: json.data.expenses ?? { total: 0 },
             savingsRate: json.data.savingsRate ?? 0,
             txIncome: json.txMonthlyIncome ?? json.data.income?.total ?? 0,
+            txIncomeAllCredits: json.txMonthlyIncomeAllCredits ?? json.txMonthlyIncome ?? json.data.income?.total ?? 0,
             txExpenses: json.txMonthlyExpenses ?? json.data.expenses?.total ?? 0,
           },
         }));
@@ -308,6 +345,7 @@ function IncomePageInner() {
             expenses: { total: 0 },
             savingsRate: 0,
             txIncome: cashTotal,
+            txIncomeAllCredits: cashTotal,
             txExpenses: 0,
           },
         }));
@@ -342,9 +380,16 @@ function IncomePageInner() {
         if (json.homeCurrency) setHomeCurrency(json.homeCurrency);
 
         const hist: HistoryPoint[] = (json.history ?? []).map(
-          (h: { yearMonth: string; incomeTotal?: number; expensesTotal?: number; isEstimate?: boolean }) => ({
+          (h: {
+            yearMonth: string;
+            incomeTotal?: number;
+            incomeTotalAllCredits?: number;
+            expensesTotal?: number;
+            isEstimate?: boolean;
+          }) => ({
             yearMonth: h.yearMonth,
             incomeTotal: h.incomeTotal ?? 0,
+            incomeTotalAllCredits: h.incomeTotalAllCredits,
             expensesTotal: h.expensesTotal ?? 0,
             isEstimate: h.isEstimate ?? false,
           })
@@ -379,6 +424,7 @@ function IncomePageInner() {
               expenses: json.data.expenses ?? { total: 0 },
               savingsRate: json.data.savingsRate ?? 0,
               txIncome: json.txMonthlyIncome ?? json.data.income?.total ?? 0,
+              txIncomeAllCredits: json.txMonthlyIncomeAllCredits ?? json.txMonthlyIncome ?? json.data.income?.total ?? 0,
               txExpenses: json.txMonthlyExpenses ?? json.data.expenses?.total ?? 0,
             },
           });
@@ -406,9 +452,16 @@ function IncomePageInner() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) return;
       const hist: HistoryPoint[] = (json.history ?? []).map(
-        (h: { yearMonth: string; incomeTotal?: number; expensesTotal?: number; isEstimate?: boolean }) => ({
+        (h: {
+          yearMonth: string;
+          incomeTotal?: number;
+          incomeTotalAllCredits?: number;
+          expensesTotal?: number;
+          isEstimate?: boolean;
+        }) => ({
           yearMonth: h.yearMonth,
           incomeTotal: h.incomeTotal ?? 0,
+          incomeTotalAllCredits: h.incomeTotalAllCredits,
           expensesTotal: h.expensesTotal ?? 0,
           isEstimate: h.isEstimate ?? false,
         })
@@ -432,6 +485,7 @@ function IncomePageInner() {
           expenses: json.data.expenses ?? { total: 0 },
           savingsRate: json.data.savingsRate ?? 0,
           txIncome: json.txMonthlyIncome ?? json.data.income?.total ?? 0,
+          txIncomeAllCredits: json.txMonthlyIncomeAllCredits ?? json.txMonthlyIncome ?? json.data.income?.total ?? 0,
           txExpenses: json.txMonthlyExpenses ?? json.data.expenses?.total ?? 0,
         };
       }
@@ -471,6 +525,7 @@ function IncomePageInner() {
             expenses: json.data.expenses ?? { total: 0 },
             savingsRate: json.data.savingsRate ?? 0,
             txIncome: json.txMonthlyIncome ?? json.data.income?.total ?? 0,
+            txIncomeAllCredits: json.txMonthlyIncomeAllCredits ?? json.txMonthlyIncome ?? json.data.income?.total ?? 0,
             txExpenses: json.txMonthlyExpenses ?? json.data.expenses?.total ?? 0,
           },
         }));
@@ -484,6 +539,7 @@ function IncomePageInner() {
             expenses: { total: 0 },
             savingsRate: 0,
             txIncome: cashTotal,
+            txIncomeAllCredits: cashTotal,
             txExpenses: 0,
           },
         }));
@@ -721,6 +777,10 @@ function IncomePageInner() {
   const sources         = income?.sources ?? [];
   const transactions    = income?.transactions ?? [];
   const expensesTotal   = current?.txExpenses ?? current?.expenses?.total ?? 0;
+  const effectiveTxIncome =
+    incomeShowAllCredits
+      ? (current?.txIncomeAllCredits ?? current?.txIncome ?? income?.total ?? 0)
+      : (current?.txIncome ?? income?.total ?? 0);
 
   const rawSourceMap = new Map<string, IncomeTransaction[]>();
   if (transactions.length > 0) {
@@ -752,15 +812,18 @@ function IncomePageInner() {
   const expandedTxnMap = new Map(expandedSources.map((s) => [s.description, s.txns]));
   const allMergedSources = expandedSources.map(({ description, amount }) => ({ description, amount })).sort((a, b) => b.amount - a.amount);
 
-  const mergedSources = allMergedSources.filter(
-    (s) => !isTransferSource(s.description, expandedTxnMap.get(s.description) ?? [])
-         && !excludedSources.has(s.description)
-         && !transferSources.has(s.description)
-         && incomeCategoryRules[sourceSlug(s.description)] !== "Transfer"
-  );
-  const autoFilteredSources = allMergedSources.filter(
-    (s) => isTransferSource(s.description, expandedTxnMap.get(s.description) ?? []) || transferSources.has(s.description) || incomeCategoryRules[sourceSlug(s.description)] === "Transfer"
-  );
+  const mergedSources = allMergedSources.filter((s) => {
+    const txns = expandedTxnMap.get(s.description) ?? [];
+    if (excludedSources.has(s.description) || transferSources.has(s.description)) return false;
+    if (isTransferSource(s.description, txns)) return false;
+    if (sourceIsNonCoreForUI(s.description, txns, incomeCategoryRules)) return false;
+    return true;
+  });
+  const autoFilteredSources = allMergedSources.filter((s) => {
+    if (excludedSources.has(s.description)) return false;
+    const txns = expandedTxnMap.get(s.description) ?? [];
+    return isTransferSource(s.description, txns) || transferSources.has(s.description) || sourceIsNonCoreForUI(s.description, txns, incomeCategoryRules);
+  });
   const manuallyExcludedSources = allMergedSources.filter((s) => excludedSources.has(s.description));
 
   const scoredSources = mergedSources.map((src, i) => {
@@ -772,7 +835,7 @@ function IncomePageInner() {
     const allDates   = hist.flatMap((h) => h.transactions.map((t) => t.date).filter(Boolean) as string[]);
     const freqResult = detectFrequency(allDates);
     const result = scoreSource(src.description, hist, totalMonths, freqResult);
-    const totalIncome = current?.txIncome ?? income?.total ?? 0;
+    const totalIncome = effectiveTxIncome;
     const pct = totalIncome > 0 ? Math.round((src.amount / totalIncome) * 100) : 0;
     return { ...src, color: SOURCE_COLORS[i % SOURCE_COLORS.length], pct, ...result, freqResult };
   });
@@ -792,7 +855,12 @@ function IncomePageInner() {
   // The last real month gets both values so the lines connect.
   const trimmedHistory = (() => {
     const arr = [...sortedHistory];
-    while (arr.length > 1 && arr[arr.length - 1].incomeTotal === 0) arr.pop();
+    while (
+      arr.length > 1 &&
+      historyIncomePoint(arr[arr.length - 1], incomeShowAllCredits) === 0
+    ) {
+      arr.pop();
+    }
     return arr;
   })();
 
@@ -806,25 +874,29 @@ function IncomePageInner() {
   const chartData = trimmedHistory.map((h, i) => {
     const isProjected = i > lastRealIdx;
     const isBoundary  = i === lastRealIdx;
+    const v = historyIncomePoint(h, incomeShowAllCredits);
     return {
       label:     shortMonth(h.yearMonth),
       ym:        h.yearMonth,
-      income:    isProjected ? null : h.incomeTotal,
-      projected: (isProjected || isBoundary) ? h.incomeTotal : null,
+      income:    isProjected ? null : v,
+      projected: (isProjected || isBoundary) ? v : null,
     };
   });
-  const regularHistoryPoints = trimmedHistory.filter((h) => h.incomeTotal > 0);
+  const regularHistoryPoints = trimmedHistory.filter(
+    (h) => historyIncomePoint(h, incomeShowAllCredits) > 0
+  );
   const avgIncome       = regularHistoryPoints.length > 0
-    ? Math.round(regularHistoryPoints.reduce((s, h) => s + h.incomeTotal, 0) / regularHistoryPoints.length)
+    ? Math.round(
+      regularHistoryPoints.reduce(
+        (s, h) => s + historyIncomePoint(h, incomeShowAllCredits),
+        0,
+      ) / regularHistoryPoints.length,
+    )
     : 0;
-  const currentIdx      = selectedMonth ? sortedHistory.findIndex((h) => h.yearMonth === selectedMonth) : -1;
-  const prevPoint       = currentIdx > 0 ? sortedHistory[currentIdx - 1] : null;
-  const incomeDelta     = prevPoint != null ? (current?.txIncome ?? income?.total ?? 0) - prevPoint.incomeTotal : null;
   const tabMonths       = sortedHistory.slice(-6).map((h) => h.yearMonth);
   const txCount         = transactions.length;
 
   // ── all-time derivations ──────────────────────────────────────────────────────
-  const allTimeIncome = sortedHistory.reduce((s, h) => s + h.incomeTotal, 0);
 
   // For By Source all-time view
   const srcScopeCutoff = (() => {
@@ -833,7 +905,10 @@ function IncomePageInner() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   })();
   const srcScopeHistory = srcTimeScope === "all" ? sortedHistory : sortedHistory.filter((h) => h.yearMonth >= srcScopeCutoff);
-  const srcScopeIncome  = srcScopeHistory.reduce((s, h) => s + h.incomeTotal, 0);
+  const srcScopeIncome  = srcScopeHistory.reduce(
+    (s, h) => s + historyIncomePoint(h, incomeShowAllCredits),
+    0,
+  );
 
   const allTimeScoredSources: {
     description: string; total: number; months: number; avgMonthly: number;
@@ -843,9 +918,10 @@ function IncomePageInner() {
     reliability: Reliability; score: number;
   }[] = Object.entries(sourceHistory)
     .map(([description, monthHistory], i) => {
-      const isTransferSrc = isTransferSource(description) || transferSources.has(description) || incomeCategoryRules[sourceSlug(description)] === "Transfer";
+      const isTransferSrc = isTransferSource(description) || transferSources.has(description);
+      const ruleCat = incomeCategoryRules[sourceSlug(description)];
       const isExcludedSrc = excludedSources.has(description);
-      if (isTransferSrc || isExcludedSrc) return null;
+      if (isTransferSrc || isExcludedSrc || (ruleCat && isNonCoreIncomeCategoryLabel(ruleCat))) return null;
       const filtered = srcTimeScope === "all" ? monthHistory : monthHistory.filter((h) => h.yearMonth >= srcScopeCutoff);
       if (filtered.length === 0) return null;
       const total = filtered.reduce((s, h) => s + h.amount, 0);
@@ -915,6 +991,7 @@ function IncomePageInner() {
     }
 
     for (const item of cashItems) {
+      if (isNonCoreIncomeCategoryLabel(item.category || "Other")) continue;
       const cashTotal = srcScopeHistory.reduce((s, h) => s + occurrencesInMonth(item, h.yearMonth) * item.amount, 0);
       if (cashTotal <= 0) continue;
       const cat = item.category || "Other";
@@ -1004,8 +1081,8 @@ function IncomePageInner() {
     const recent3 = sortedHistory.slice(-3).filter((h) => !h.isEstimate);
     const prev3   = sortedHistory.slice(-6, -3).filter((h) => !h.isEstimate);
     if (recent3.length >= 2 && prev3.length >= 2) {
-      const recentAvg = recent3.reduce((s, h) => s + h.incomeTotal, 0) / recent3.length;
-      const prevAvg   = prev3.reduce((s, h) => s + h.incomeTotal, 0) / prev3.length;
+      const recentAvg = recent3.reduce((s, h) => s + historyIncomePoint(h, incomeShowAllCredits), 0) / recent3.length;
+      const prevAvg   = prev3.reduce((s, h) => s + historyIncomePoint(h, incomeShowAllCredits), 0) / prev3.length;
       if (prevAvg > 0) {
         const pct = Math.round(((recentAvg - prevAvg) / prevAvg) * 100);
         if (Math.abs(pct) >= 5) {
@@ -1020,7 +1097,11 @@ function IncomePageInner() {
 
   // All-time source count (statement + cash)
   const allSourceCount = Object.keys(sourceHistory).filter(
-    (d) => !isTransferSource(d) && !excludedSources.has(d) && !transferSources.has(d) && incomeCategoryRules[sourceSlug(d)] !== "Transfer"
+    (d) =>
+      !isTransferSource(d) &&
+      !excludedSources.has(d) &&
+      !transferSources.has(d) &&
+      !isNonCoreIncomeCategoryLabel(incomeCategoryRules[sourceSlug(d)])
   ).length + cashItems.length;
 
   // ── render helpers ────────────────────────────────────────────────────────────
@@ -1057,11 +1138,32 @@ function IncomePageInner() {
     <div className="mx-auto max-w-2xl lg:max-w-5xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
       {/* Header */}
-      <div className="mb-1">
-        <h1 className="font-bold text-3xl text-gray-900">Income</h1>
-        <p className="mt-0.5 text-sm text-gray-400">
-          {avgIncome > 0 ? `${fmt(avgIncome, homeCurrency)}/mo avg` : ""}{regularHistoryPoints.length > 0 ? ` · ${regularHistoryPoints.length} months tracked` : ""}
-        </p>
+      <div className="mb-1 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-bold text-3xl text-gray-900">Income</h1>
+          <p className="mt-0.5 text-sm text-gray-400">
+            {avgIncome > 0 ? `${fmt(avgIncome, homeCurrency)}/mo avg` : ""}{regularHistoryPoints.length > 0 ? ` · ${regularHistoryPoints.length} months tracked` : ""}
+          </p>
+        </div>
+        <div className="mt-2 flex flex-col items-end gap-0.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => setIncomeShowAllCredits((v) => !v)}
+            className="flex items-center gap-1.5 text-[10px] text-gray-500 hover:text-gray-700 transition"
+            title={incomeShowAllCredits ? "Show core income only (excludes Transfer In, Other, etc.)" : "Include all credits (Transfer In, Other, still excludes inter-account transfers)"}
+            aria-pressed={incomeShowAllCredits}
+          >
+            <span className={`relative inline-flex h-3.5 w-6 shrink-0 rounded-full transition-colors ${incomeShowAllCredits ? "bg-indigo-500" : "bg-gray-200"}`}>
+              <span className={`inline-block h-2.5 w-2.5 mt-0.5 ml-0.5 rounded-full bg-white shadow transform transition-transform ${incomeShowAllCredits ? "translate-x-2.5" : "translate-x-0"}`} />
+            </span>
+            <span className="text-right leading-tight">
+              {incomeShowAllCredits ? "all credits" : "core income"}
+            </span>
+          </button>
+          <p className="text-[10px] text-gray-400 text-right max-w-[9rem]">
+            {incomeShowAllCredits ? "incl. Transfer In & Other" : <>excl. non-core<br />deposits</>}
+          </p>
+        </div>
       </div>
 
       {/* Section tabs */}
@@ -1184,10 +1286,14 @@ function IncomePageInner() {
               <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
                 <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Best month</p>
                 {(() => {
-                  const best = sortedHistory.reduce((a, b) => b.incomeTotal > a.incomeTotal ? b : a, sortedHistory[0]);
+                  const best = sortedHistory.reduce(
+                    (a, b) =>
+                      historyIncomePoint(b, incomeShowAllCredits) > historyIncomePoint(a, incomeShowAllCredits) ? b : a,
+                    sortedHistory[0],
+                  );
                   return best ? (
                     <>
-                      <p className="text-xl font-bold text-gray-900 tabular-nums">{fmtShort(best.incomeTotal, homeCurrency)}</p>
+                      <p className="text-xl font-bold text-gray-900 tabular-nums">{fmtShort(historyIncomePoint(best, incomeShowAllCredits), homeCurrency)}</p>
                       <p className="text-xs text-gray-400 mt-0.5">{longMonth(best.yearMonth)}</p>
                     </>
                   ) : <p className="text-xl font-bold text-gray-400">—</p>;
@@ -1198,7 +1304,21 @@ function IncomePageInner() {
             {/* Monthly income trend chart */}
             {chartData.length >= 2 && (
               <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-gray-400">Monthly income</p>
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Monthly income</p>
+                  <button
+                    type="button"
+                    onClick={() => setIncomeShowAllCredits((v) => !v)}
+                    className="flex items-center gap-1.5 text-[10px] text-gray-400 hover:text-gray-600 transition shrink-0"
+                    title={incomeShowAllCredits ? "Show core income only" : "Include all credits"}
+                    aria-pressed={incomeShowAllCredits}
+                  >
+                    <span className={`relative inline-flex h-3.5 w-6 shrink-0 rounded-full transition-colors ${incomeShowAllCredits ? "bg-indigo-500" : "bg-gray-200"}`}>
+                      <span className={`inline-block h-2.5 w-2.5 mt-0.5 ml-0.5 rounded-full bg-white shadow transform transition-transform ${incomeShowAllCredits ? "translate-x-2.5" : "translate-x-0"}`} />
+                    </span>
+                    {incomeShowAllCredits ? "all credits" : "core income"}
+                  </button>
+                </div>
                 {avgIncome > 0 && (
                   <p className="mb-3 text-xs text-gray-400">
                     {regularHistoryPoints.length}-month avg <span className="font-semibold text-gray-600">{fmt(avgIncome, homeCurrency)} / mo</span>
@@ -1357,17 +1477,22 @@ function IncomePageInner() {
                   <button onClick={() => setSelectedMonth(null)} className="text-xs text-gray-400 hover:text-gray-600 transition">✕ close</button>
                 </div>
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">{longMonth(selectedMonth)}</p>
-                <p className="text-3xl font-bold text-gray-900 mb-4">{fmt(current.txIncome ?? income?.total ?? 0, homeCurrency)}</p>
+                <p className="text-3xl font-bold text-gray-900 mb-4">{fmt(effectiveTxIncome, homeCurrency)}</p>
                 {(() => {
                   const monthTxns = current.income?.transactions ?? [];
                   const monthSources = current.income?.sources ?? [];
                   const cashForMonth = cashItems.filter((c) => occurrencesInMonth(c, selectedMonth) > 0);
-                  const isExcluded = (desc: string) =>
+                  const isExcludedDesc = (desc: string) =>
                     isTransferSource(desc) || transferSources.has(desc) || excludedSources.has(desc);
 
                   // Build per-source rows with individual transaction details
                   const txnRows = monthTxns
-                    .filter((t) => !isExcluded((t.source ?? "").trim()))
+                    .filter((t) => {
+                      const d = (t.source ?? "").trim();
+                      if (isExcludedDesc(d)) return false;
+                      const cat = resolvedIncomeTxnCategory(d, t, incomeCategoryRules);
+                      return !isNonCoreIncomeCategoryLabel(cat);
+                    })
                     .map((t) => ({
                       name: (t.source ?? "Other").trim(),
                       amount: t.amount,
@@ -1378,7 +1503,11 @@ function IncomePageInner() {
                     }));
 
                   const srcRows = monthSources
-                    .filter((s) => !isExcluded(s.description))
+                    .filter((s) => {
+                      if (isExcludedDesc(s.description)) return false;
+                      if (isNonCoreIncomeCategoryLabel(incomeCategoryRules[sourceSlug(s.description)])) return false;
+                      return true;
+                    })
                     .map((s) => ({
                       name: s.description,
                       amount: s.amount,
@@ -1482,11 +1611,12 @@ function IncomePageInner() {
                   const splitTotal = splits.reduce((s, x) => s + x.amount, 0);
                   const residual   = Math.max(0, txn.amount - splitTotal);
                   const isTransfer = isTransferSource(rawSrc) || transferSources.has(rawSrc) || srcCat === "Transfer";
+                  const isExcludedFromIncomeTotal = isTransfer || isNonCoreIncomeCategoryLabel(srcCat);
                   const isEditing  = editingSplitTxn === txKey;
                   const isSaving   = savingTxnKey === txKey;
 
                   return (
-                    <div key={i} className={`${isTransfer ? "opacity-50" : ""}`}>
+                    <div key={i} className={`${isExcludedFromIncomeTotal ? "opacity-50" : ""}`}>
                       {/* Main row */}
                       <div className="flex items-center gap-3 px-5 py-3">
                         <div className="flex-1 min-w-0">
@@ -1495,6 +1625,9 @@ function IncomePageInner() {
                             {txn.date && <span className="text-xs text-gray-400">{fmtDate(txn.date)}</span>}
                             {txn.accountLabel && <span className="text-xs text-gray-300">· {txn.accountLabel}</span>}
                             {isTransfer && <span className="text-[10px] font-semibold rounded-full bg-gray-100 px-1.5 py-0.5 text-gray-400">transfer</span>}
+                            {!isTransfer && isExcludedFromIncomeTotal && (
+                              <span className="text-[10px] font-semibold rounded-full bg-amber-50 border border-amber-100 px-1.5 py-0.5 text-amber-600">not in income total</span>
+                            )}
                             {/* Category summary pills */}
                             {!isTransfer && splits.length === 0 && srcCat && (
                               <span className="text-[10px] font-medium rounded-full px-1.5 py-0.5"
@@ -1533,7 +1666,7 @@ function IncomePageInner() {
                             {splits.length > 0 ? `${splits.length + 1} splits` : "Split"}
                           </button>
                         )}
-                        <span className={`shrink-0 font-semibold text-sm tabular-nums ${isTransfer ? "text-gray-400" : "text-green-600"}`}>
+                        <span className={`shrink-0 font-semibold text-sm tabular-nums ${isExcludedFromIncomeTotal ? "text-gray-400" : "text-green-600"}`}>
                           +{formatCurrency(txn.amount, homeCurrency, txn.currency, false)}
                         </span>
                       </div>
@@ -1827,7 +1960,12 @@ function IncomePageInner() {
             {/* Hidden / excluded sources */}
             {(() => {
               const hiddenTransfers = Object.entries(sourceHistory)
-                .filter(([d]) => isTransferSource(d) || transferSources.has(d) || incomeCategoryRules[sourceSlug(d)] === "Transfer")
+                .filter(([d]) => {
+                  if (excludedSources.has(d)) return false;
+                  if (isTransferSource(d) || transferSources.has(d)) return true;
+                  const rc = incomeCategoryRules[sourceSlug(d)];
+                  return !!rc && isNonCoreIncomeCategoryLabel(rc);
+                })
                 .map(([d, h]) => ({ description: d, total: h.reduce((s, m) => s + m.amount, 0) }));
               const hiddenExcluded = Object.entries(sourceHistory)
                 .filter(([d]) => excludedSources.has(d))
@@ -1837,17 +1975,22 @@ function IncomePageInner() {
                 <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Not counted as income</p>
                   <div className="space-y-1">
-                    {hiddenTransfers.map((s) => (
+                    {hiddenTransfers.map((s) => {
+                      const isXferList = isTransferSource(s.description) || transferSources.has(s.description);
+                      return (
                       <div key={s.description} className="flex items-center justify-between text-xs text-gray-400">
                         <span className="flex items-center gap-1.5">
-                          <span className="rounded-full bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium">transfer</span>
+                          <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${isXferList ? "bg-gray-200" : "bg-amber-100 text-amber-700"}`}>
+                            {isXferList ? "transfer" : "excluded"}
+                          </span>
                           {s.description}
                         </span>
                         {transferSources.has(s.description) && (
                           <button onClick={() => handleRestoreTransfer(s.description)} className="text-[10px] text-purple-400 hover:text-purple-600 hover:underline">restore</button>
                         )}
                       </div>
-                    ))}
+                    );
+                    })}
                     {hiddenExcluded.map((s) => (
                       <div key={s.description} className="flex items-center justify-between text-xs text-gray-400">
                         <span>{s.description}</span>

@@ -59,7 +59,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "47"; // canonical accountSlug on income/expense rows matches accountSnapshots
+const SCHEMA_VERSION = "49"; // incomeTotalAllCredits for income page toggle vs core incomeTotal
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -85,8 +85,13 @@ export interface MonthlyHistoryEntry {
   expensesTotal: number;
   /** Core expenses = expensesTotal minus categories matching CORE_EXCLUDE_RE */
   coreExpensesTotal: number;
-  /** Total income for this month */
+  /** Total income for this month — excludes transfers, Transfer In, Other (see isExcludedFromCoreIncomeTotal). */
   incomeTotal: number;
+  /**
+   * All statement/cash credits except inter-account transfer detection (isIncomeTransfer).
+   * Includes Transfer / Transfer In / Other categories. Used for income page "all credits" toggle.
+   */
+  incomeTotalAllCredits: number;
   /** Sum of all "Debt Payments" category transactions (min + extra) */
   debtPaymentsTotal: number;
   /** Minimum / scheduled debt payments only (excl. extra payments) */
@@ -332,6 +337,24 @@ export async function buildAndCacheFinancialProfile(
   }
   function sourceSlug(s: string): string {
     return s.toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 60);
+  }
+
+  /** Categories excluded from headline income totals (transfers + catch-all / misc). */
+  function isNonCoreIncomeCategoryLabel(cat: string): boolean {
+    const c = cat.trim().toLowerCase();
+    return c === "transfer" || c === "transfer in" || c === "other";
+  }
+
+  /** Effective income category for an extracted income row after user rules. */
+  function resolvedIncomeCategoryForTxn(txn: IncomeTxnRecord): string {
+    const src = (txn.source ?? txn.description ?? "").trim();
+    return incomeCatRulesMap.get(sourceSlug(src)) ?? txn.category ?? "Other";
+  }
+
+  /** Bank credits excluded from monthly incomeTotal (transfers + non-core categories). */
+  function isExcludedFromCoreIncomeTotal(txn: IncomeTxnRecord): boolean {
+    if (isIncomeTransfer(txn)) return true;
+    return isNonCoreIncomeCategoryLabel(resolvedIncomeCategoryForTxn(txn));
   }
 
   // User debt payment tag overrides — debtTxKey → "minimum" | "extra" | "scheduled"
@@ -634,11 +657,17 @@ export async function buildAndCacheFinancialProfile(
   const monthlyHistory: MonthlyHistoryEntry[] = allTxMonths.map((ym) => {
     const monthExp = allExpenseTxns.filter((t) => t.txMonth === ym);
     const monthInc = mergedIncomeTxns.filter((t) => t.txMonth === ym);
-    const monthIncFiltered = monthInc.filter((t) => !isIncomeTransfer(t));
-    const cashIncomeForMonth = cashIncomeEntries.reduce((sum, entry) => {
+    const monthIncFiltered = monthInc.filter((t) => !isExcludedFromCoreIncomeTotal(t));
+    const cashIncomeAllForMonth = cashIncomeEntries.reduce((sum, entry) => {
       const count = occurrencesInMonth(entry, ym);
       return sum + (count > 0 ? entry.amount * count : 0);
     }, 0);
+    const cashIncomeForMonth = cashIncomeEntries.reduce((sum, entry) => {
+      if (isNonCoreIncomeCategoryLabel(entry.category ?? "Other")) return sum;
+      const count = occurrencesInMonth(entry, ym);
+      return sum + (count > 0 ? entry.amount * count : 0);
+    }, 0);
+    const monthIncNoInterAccountXfer = monthInc.filter((t) => !isIncomeTransfer(t));
     const cashCommitmentsForMonth = cashCommitmentEntries.reduce((sum, entry) => {
       const count = commitmentOccurrencesInMonth(entry, ym);
       return sum + (count > 0 ? entry.amount * count : 0);
@@ -665,6 +694,7 @@ export async function buildAndCacheFinancialProfile(
       debtPaymentsTotal: debtTxns.reduce((s, t) => s + toHome(t.amount, t.currency), 0),
       minDebtPaymentsTotal,
       incomeTotal: monthIncFiltered.reduce((s, t) => s + toHome(t.amount, t.currency), 0) + cashIncomeForMonth,
+      incomeTotalAllCredits: monthIncNoInterAccountXfer.reduce((s, t) => s + toHome(t.amount, t.currency), 0) + cashIncomeAllForMonth,
       // NW fields are filled in the post-pass below once accountBalanceHistory is ready
       totalAssets: 0,
       totalDebts: 0,
@@ -685,7 +715,12 @@ export async function buildAndCacheFinancialProfile(
       const earliestYM = allManualEntries.reduce((min, s) => (s < min ? s : min), todayYM);
       let ym = earliestYM;
       while (ym <= todayYM) {
+        const cashIncomeAll = cashIncomeEntries.reduce((sum, entry) => {
+          const count = occurrencesInMonth(entry, ym);
+          return sum + (count > 0 ? entry.amount * count : 0);
+        }, 0);
         const cashIncome = cashIncomeEntries.reduce((sum, entry) => {
+          if (isNonCoreIncomeCategoryLabel(entry.category ?? "Other")) return sum;
           const count = occurrencesInMonth(entry, ym);
           return sum + (count > 0 ? entry.amount * count : 0);
         }, 0);
@@ -693,7 +728,7 @@ export async function buildAndCacheFinancialProfile(
           const count = commitmentOccurrencesInMonth(entry, ym);
           return sum + (count > 0 ? entry.amount * count : 0);
         }, 0);
-        if (!historySet.has(ym) && (cashIncome > 0 || cashExpenses > 0)) {
+        if (!historySet.has(ym) && (cashIncomeAll > 0 || cashExpenses > 0)) {
           monthlyHistory.push({
             yearMonth: ym,
             expensesTotal: cashExpenses,
@@ -701,6 +736,7 @@ export async function buildAndCacheFinancialProfile(
             debtPaymentsTotal: 0,
             minDebtPaymentsTotal: 0,
             incomeTotal: cashIncome,
+            incomeTotalAllCredits: cashIncomeAll,
             totalAssets: 0,
             totalDebts: 0,
             netWorth: 0,

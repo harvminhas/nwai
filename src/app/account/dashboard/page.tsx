@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
@@ -1215,7 +1215,14 @@ export default function TodayPage() {
   const [radar,       setRadar]       = useState<RadarItem[]>([]);
   const [freshness,   setFreshness]   = useState<FreshnessData | null>(null);
   const [netWorth,    setNetWorth]    = useState<NetWorthSnapshot | null>(null);
-  const [savingsRate, setSavingsRate] = useState<{ rate: number; income: number; expenses: number; debtPayments: number; month: string } | null>(null);
+  const [savingsRate, setSavingsRate] = useState<{
+    rate: number;
+    income: number;
+    incomeAllCredits?: number;
+    expenses: number;
+    debtPayments: number;
+    month: string;
+  } | null>(null);
   const [statusBanner,setStatusBanner]= useState<{ type: string; text: string; detail: string } | null>(null);
   const [needsRefresh, setNeedsRefresh] = useState(false);
   const [loading,     setLoading]     = useState(true);
@@ -1234,6 +1241,8 @@ export default function TodayPage() {
   const [showOnboarding,   setShowOnboarding]   = useState(false);
   const [showAllUpcoming,      setShowAllUpcoming]      = useState(false);
   const [includeDebtInExpenses, setIncludeDebtInExpenses] = useState(false);
+  /** Wider income (Transfer In, Other) for the same month as savings KPI — matches Income page toggle. */
+  const [incomeShowAllCredits, setIncomeShowAllCredits] = useState(false);
   const [activeEvents, setActiveEvents] = useState<import("@/lib/events/types").EventSummary[]>([]);
   const [monthCount,   setMonthCount]   = useState<number>(0);
   const [statementCount, setStatementCount] = useState<number>(0);
@@ -1916,11 +1925,43 @@ export default function TodayPage() {
     );
   }
 
+  const displaySavingsIncome =
+    savingsRate == null
+      ? 0
+      : incomeShowAllCredits && savingsRate.incomeAllCredits != null
+        ? savingsRate.incomeAllCredits
+        : savingsRate.income;
+
+  const showIncomeCreditsToggle = savingsRate != null && savingsRate.incomeAllCredits != null;
+
+  const savingsKpiHasNumbers = Boolean(
+    savingsRate &&
+      (savingsRate.expenses > 0 ||
+        savingsRate.income > 0 ||
+        (savingsRate.incomeAllCredits ?? 0) > 0),
+  );
+
+  /** Gap between all-credits and core income (same month); used for hero subtext under Income. */
+  const incomeCreditsDelta =
+    savingsRate?.incomeAllCredits != null
+      ? Math.max(0, Math.round(savingsRate.incomeAllCredits - savingsRate.income))
+      : 0;
+
+  function incomeHeroSubtext(): ReactNode {
+    if (!showIncomeCreditsToggle || !incomeShowAllCredits) return null;
+    if (incomeCreditsDelta > 0) {
+      return <>incl. {fmt(incomeCreditsDelta, homeCurrency)} Transfer In, Other</>;
+    }
+    return "incl. all credits";
+  }
+
   // ── SavingsRateCard ───────────────────────────────────────────────────────────
   function SavingsRateCard() {
     const [includeDebt, setIncludeDebt] = useState(false);
-    if (!savingsRate || savingsRate.income <= 0) return null;
-    const { income, expenses, debtPayments, month } = savingsRate;
+    if (!savingsRate) return null;
+    const { expenses, debtPayments, month } = savingsRate;
+    const income = displaySavingsIncome;
+    if (income <= 0 && savingsRate.expenses <= 0) return null;
     const cad = (n: number) => fmt(n, homeCurrency);
     const monthLabel = month
       ? new Date(month + "-01").toLocaleDateString("en-CA", { month: "short", year: "numeric" })
@@ -1971,6 +2012,30 @@ export default function TodayPage() {
             </span>
             <span className="text-xs font-semibold tabular-nums text-gray-800">{cad(effectiveExpenses)}</span>
           </div>
+          {showIncomeCreditsToggle && (
+            <div className="flex items-center justify-between px-4 py-2 bg-gray-50/60">
+              <span className="text-xs text-gray-500">
+                All credits income
+                <span className="ml-1 text-gray-400">(incl. Transfer In, Other)</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setIncomeShowAllCredits((v) => !v)}
+                className={`relative inline-flex h-4 w-8 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+                  incomeShowAllCredits ? "bg-indigo-500" : "bg-gray-200"
+                }`}
+                role="switch"
+                aria-checked={incomeShowAllCredits}
+                title={incomeShowAllCredits ? "Use core income only" : "Include Transfer In, Other deposits"}
+              >
+                <span
+                  className={`inline-block h-3 w-3 rounded-full bg-white shadow transform transition-transform ${
+                    incomeShowAllCredits ? "translate-x-4" : "translate-x-0"
+                  }`}
+                />
+              </button>
+            </div>
+          )}
           {/* Toggle — shown whenever min debt payment data exists (any month) */}
           {debtPayments > 0 && (
             <div className="flex items-center justify-between px-4 py-2 bg-gray-50/60">
@@ -2053,6 +2118,8 @@ export default function TodayPage() {
 
   // Freshness: count overdue accounts
   const overdueAccounts = freshness?.accounts.filter((a) => a.isOverdue) ?? [];
+
+  const todayIncomeHeroSubtext = incomeHeroSubtext();
 
   // Month label for income/expenses
 
@@ -2201,18 +2268,14 @@ export default function TodayPage() {
           statementCount={statementCount}
           monthCount={monthCount}
           savingsMonth={savingsRate?.month ?? ""}
-          savingsRateCard={savingsRate && (savingsRate.income > 0 || savingsRate.expenses > 0) ? <SavingsRateCard /> : null}
+          savingsRateCard={savingsRate && savingsKpiHasNumbers ? <SavingsRateCard /> : null}
           savingsRaw={savingsRate ? {
-            income:       savingsRate.income,
+            income:       displaySavingsIncome,
             expenses:     savingsRate.expenses,
             debtPayments: savingsRate.debtPayments,
-            rate:         (() => {
-              // rate from API is already integer % (e.g. 54). Re-derive to be safe.
-              const eff = savingsRate.income > 0
-                ? Math.round(((savingsRate.income - savingsRate.expenses) / savingsRate.income) * 100)
-                : 0;
-              return eff;
-            })(),
+            rate:         displaySavingsIncome > 0
+              ? Math.round(((displaySavingsIncome - savingsRate.expenses) / displaySavingsIncome) * 100)
+              : 0,
             month:        savingsRate.month,
           } : null}
           homeCurrency={homeCurrency}
@@ -2245,12 +2308,29 @@ export default function TodayPage() {
                       </p>
                     )}
                   </div>
-                  {savingsRate && (savingsRate.income > 0 || savingsRate.expenses > 0) && (
+                  {savingsRate && savingsKpiHasNumbers && (
                     <div className="hidden sm:flex gap-5 shrink-0 text-right">
-                      {savingsRate.income > 0 && (
+                      {(savingsRate.income > 0 || (savingsRate.incomeAllCredits ?? 0) > 0) && (
                         <div>
-                          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Income</p>
-                          <p className="mt-0.5 text-base font-bold text-green-600 tabular-nums">{fmt(savingsRate.income, homeCurrency)}</p>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Income</p>
+                            {showIncomeCreditsToggle && (
+                              <button
+                                type="button"
+                                onClick={() => setIncomeShowAllCredits((v) => !v)}
+                                title={incomeShowAllCredits ? "Core income only" : "All credits (incl. Transfer In, Other)"}
+                                className={`relative inline-flex h-3.5 w-7 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${incomeShowAllCredits ? "bg-indigo-500" : "bg-gray-200"}`}
+                                role="switch"
+                                aria-checked={incomeShowAllCredits}
+                              >
+                                <span className={`inline-block h-2.5 w-2.5 rounded-full bg-white shadow transform transition-transform ${incomeShowAllCredits ? "translate-x-3" : "translate-x-0"}`} />
+                              </button>
+                            )}
+                          </div>
+                          <p className="mt-0.5 text-base font-bold text-green-600 tabular-nums">{fmt(displaySavingsIncome, homeCurrency)}</p>
+                          {todayIncomeHeroSubtext ? (
+                            <p className="text-[10px] text-gray-400">{todayIncomeHeroSubtext}</p>
+                          ) : null}
                         </div>
                       )}
                       <div>
@@ -2278,12 +2358,29 @@ export default function TodayPage() {
                   )}
                 </div>
                 {/* Mobile: income/expenses as a row below the net worth number */}
-                {savingsRate && (savingsRate.income > 0 || savingsRate.expenses > 0) && (
+                {savingsRate && savingsKpiHasNumbers && (
                   <div className="sm:hidden mt-3 flex gap-5 border-t border-gray-100 pt-3">
-                    {savingsRate.income > 0 && (
+                    {(savingsRate.income > 0 || (savingsRate.incomeAllCredits ?? 0) > 0) && (
                       <div>
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Income</p>
-                        <p className="mt-0.5 text-sm font-bold text-green-600 tabular-nums">{fmt(savingsRate.income, homeCurrency)}</p>
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Income</p>
+                          {showIncomeCreditsToggle && (
+                            <button
+                              type="button"
+                              onClick={() => setIncomeShowAllCredits((v) => !v)}
+                              title={incomeShowAllCredits ? "Core income only" : "All credits (incl. Transfer In, Other)"}
+                              className={`relative inline-flex h-3.5 w-7 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${incomeShowAllCredits ? "bg-indigo-500" : "bg-gray-200"}`}
+                              role="switch"
+                              aria-checked={incomeShowAllCredits}
+                            >
+                              <span className={`inline-block h-2.5 w-2.5 rounded-full bg-white shadow transform transition-transform ${incomeShowAllCredits ? "translate-x-3" : "translate-x-0"}`} />
+                            </button>
+                          )}
+                        </div>
+                        <p className="mt-0.5 text-sm font-bold text-green-600 tabular-nums">{fmt(displaySavingsIncome, homeCurrency)}</p>
+                        {todayIncomeHeroSubtext ? (
+                          <p className="text-[10px] text-gray-400">{todayIncomeHeroSubtext}</p>
+                        ) : null}
                       </div>
                     )}
                     <div>
@@ -2727,7 +2824,7 @@ export default function TodayPage() {
           <div className="snap-start shrink-0 w-64">
             <MobileCardShell><NetWorthCard /></MobileCardShell>
           </div>
-          {savingsRate && savingsRate.income > 0 && (
+          {savingsRate && savingsKpiHasNumbers && (
             <div className="snap-start shrink-0 w-64">
               <MobileCardShell><SavingsRateCard /></MobileCardShell>
             </div>

@@ -256,6 +256,17 @@ export function getMonthlyIncome(profile: FinancialProfileCache, yearMonth?: str
   return entry?.incomeTotal ?? 0;
 }
 
+/**
+ * Income for a month including Transfer In / Other-category credits (still excludes
+ * inter-account transfer heuristics). Falls back to {@link getMonthlyIncome} when unset.
+ */
+export function getMonthlyIncomeAllCredits(profile: FinancialProfileCache, yearMonth?: string): number {
+  const ym    = yearMonth ?? profile.latestTxMonth ?? "";
+  const entry = profile.monthlyHistory.find((h) => h.yearMonth === ym);
+  if (entry?.incomeTotalAllCredits != null) return entry.incomeTotalAllCredits;
+  return entry?.incomeTotal ?? 0;
+}
+
 // ── getMonthlyExpenses ─────────────────────────────────────────────────────────
 
 /**
