@@ -176,7 +176,13 @@ export async function extractAllTransactions(
     };
   }
 
-  const allDocs = stmtSnap.docs;
+  // Exclude statements that are still awaiting account setup confirmation.
+  // They appear in Firestore as "completed" but should not influence the
+  // financial profile until the user finishes (or removes) the setup flow.
+  const allDocs = stmtSnap.docs.filter((doc) => {
+    const d = doc.data();
+    return !d.backfillPromptNeeded && !d.accountConfirmNeeded;
+  });
 
   // ── 1. Deduplicate: best doc per account-slug × statement-month ──────────────
   // If the same statement was re-uploaded, keep only the most recent parse.

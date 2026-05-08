@@ -188,12 +188,6 @@ function AccountCard({
     } catch { update({ saving: false, error: "Network error — try again." }); }
   };
 
-  const handleSkip = async () => {
-    await dismiss(account.statementIds);
-    update({ step: "skipped" });
-    onComplete(true);
-  };
-
   const dismiss = async (ids: string[]) => {
     try {
       await fetch("/api/user/setup-dismiss", {
@@ -202,6 +196,22 @@ function AccountCard({
         body: JSON.stringify({ statementIds: ids }),
       });
     } catch { /* best-effort */ }
+  };
+
+  const handleRemove = async () => {
+    update({ saving: true, error: null });
+    try {
+      await Promise.all(
+        account.statementIds.map((id) =>
+          fetch(`/api/user/statements/${id}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${idToken}` },
+          })
+        )
+      );
+    } catch { /* best-effort — even on network error, dismiss from UI */ }
+    update({ step: "skipped", saving: false });
+    onComplete(true);
   };
 
   if (form.step === "done" || form.step === "skipped") return null;
@@ -284,8 +294,8 @@ function AccountCard({
             </div>
             {form.error && <p className="text-xs text-red-600">{form.error}</p>}
             <div className="flex items-center justify-between pt-2">
-              <button onClick={handleSkip} className="text-sm text-gray-400 hover:text-gray-600 transition">
-                Skip — I&apos;ll set this up later
+              <button onClick={handleRemove} disabled={form.saving} className="text-sm text-red-400 hover:text-red-600 transition disabled:opacity-40">
+                Remove — I&apos;ll upload later
               </button>
               <button onClick={handleConfirm} disabled={form.saving || (form.confirmMode === "new" && !form.accountName.trim())}
                 className="rounded-xl bg-gray-900 px-6 py-2.5 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-40 transition">
@@ -369,8 +379,8 @@ function AccountCard({
             {form.error && <p className="text-xs text-red-600">{form.error}</p>}
 
             <div className="flex items-center justify-between pt-2 border-t border-gray-100">
-              <button onClick={handleSkip} className="text-sm text-gray-400 hover:text-gray-600 transition">
-                Skip — I&apos;ll set this up later
+              <button onClick={handleRemove} disabled={form.saving} className="text-sm text-red-400 hover:text-red-600 transition disabled:opacity-40">
+                Remove — I&apos;ll upload later
               </button>
               <button onClick={handleSave}
                 disabled={form.saving || (account.backfillPromptNeeded && !form.ageBucket)}

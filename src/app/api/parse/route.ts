@@ -260,6 +260,19 @@ export async function POST(request: NextRequest) {
             .filter(Boolean)
             .sort();
           backfillOldestMonth = allMonths[0] ?? null;
+        } else if (!alreadyConfirmed) {
+          // Not the first statement for this slug, but check if a sibling statement is
+          // currently pending setup (uploaded in the same batch). If so, tag this one
+          // too so they're grouped together — the user can remove the whole batch at once.
+          const hasPendingSibling = allUserStmts.docs.some((d) => {
+            const dd = d.data();
+            return dd.accountSlug === effectiveSlug &&
+              (dd.backfillPromptNeeded === true || dd.accountConfirmNeeded === true);
+          });
+          if (hasPendingSibling) {
+            backfillPromptNeeded = true;
+            // Don't set backfillOldestMonth — the primary (oldest) statement owns that.
+          }
         }
 
         // When there IS a real account ID but the slug is new (e.g. first upload had no
@@ -364,10 +377,15 @@ export async function POST(request: NextRequest) {
           updates.superseded = true;
           updates.supersededBy = statementId;
         }
-        // Clear stale setup flags from any sibling (already confirmed account)
-        if (d.backfillPromptNeeded || d.accountConfirmNeeded) {
-          updates.backfillPromptNeeded = false;
-          updates.accountConfirmNeeded = false;
+        // Clear stale setup flags from siblings only when THIS statement also needs no
+        // setup — meaning the account was already confirmed in a prior session.
+        // If backfillPromptNeeded/accountConfirmNeeded is true on the current statement
+        // the account is still new; clearing sibling flags would suppress the setup screen.
+        if (!backfillPromptNeeded && !accountConfirmNeeded) {
+          if (d.backfillPromptNeeded || d.accountConfirmNeeded) {
+            updates.backfillPromptNeeded = false;
+            updates.accountConfirmNeeded = false;
+          }
         }
         if (Object.keys(updates).length > 0) {
           batch.update(doc.ref, updates);

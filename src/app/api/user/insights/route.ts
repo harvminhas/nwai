@@ -179,6 +179,7 @@ export async function GET(req: NextRequest) {
   const cashItems = cashSnap.docs.map((d) => d.data() as {
     id: string; name: string; amount: number; frequency: string;
     category: string; notes?: string; nextDate?: string;
+    sourceVisitId?: string; sourceEventId?: string;
   });
   const cashIncomeItems = cashIncomeSnap.docs.map((d) => d.data() as import("@/lib/cashIncome").CashIncomeEntry);
 
@@ -397,10 +398,18 @@ export async function GET(req: NextRequest) {
   const seenMerchants = new Set<string>();
 
   // ── A. Cash commitments with nextDate ─────────────────────────────────────
+  // Skip commitments auto-created from service-tracker visit logging
+  // (sourceVisitId/sourceEventId present) — those are already tracked in the
+  // Events page and should not generate redundant "Did these happen?" prompts.
+  // Also deduplicate by normalized name so manually-added duplicates collapse to one.
   for (const c of cashItems) {
+    if (c.sourceVisitId || c.sourceEventId) continue;
     if (!c.nextDate) continue;
     const diff = daysBetween(today, c.nextDate);
     if (diff > LOOK_AHEAD) continue;
+    const key = normKey(c.name);
+    if (seenMerchants.has(key)) continue;
+    seenMerchants.add(key);
     upcoming.push({
       id: `cash-${c.id}`,
       date: c.nextDate,
@@ -413,7 +422,6 @@ export async function GET(req: NextRequest) {
       isOverdue: diff < 0,
       isThisMonth: false,
     });
-    seenMerchants.add(c.name.toLowerCase());
   }
 
   // Per-cadence horizon: how many days ahead to show each subscription type.
@@ -432,7 +440,8 @@ export async function GET(req: NextRequest) {
     const effAmt = effectiveSubscriptionAmount(rec);
     const effFreq = effectiveSubscriptionFrequency(rec);
     if (effAmt == null || !effFreq) continue;
-    const key = rec.name.toLowerCase();
+    // Use normKey so minor name variants ("Nature's helper" vs "Natures helper") don't slip past dedup
+    const key = normKey(rec.name);
     if (seenMerchants.has(key)) continue;
 
     const anchor = (rec.lastSeenAt ?? rec.firstSeenAt ?? today).slice(0, 10);
@@ -472,7 +481,7 @@ export async function GET(req: NextRequest) {
   for (const sub of aiSubsFromStatements) {
     const slug = merchantSlug(sub.name);
     if (slug && subscriptionSlugs.has(slug)) continue;
-    const key = sub.name.toLowerCase();
+    const key = normKey(sub.name);
     if (seenMerchants.has(key)) continue;
     seenMerchants.add(key);
     const occ = nextOccurrence(sub.name);
@@ -498,7 +507,7 @@ export async function GET(req: NextRequest) {
   for (const rule of recurringRules) {
     if (rule.frequency === "never") continue;
     if (firestoreUpcomingSlugs.has(rule.slug)) continue;
-    const key = rule.merchant.toLowerCase();
+    const key = normKey(rule.merchant);
     if (seenMerchants.has(key)) continue;
     seenMerchants.add(key);
     const occ = nextOccurrence(rule.merchant);

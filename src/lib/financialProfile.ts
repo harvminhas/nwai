@@ -495,10 +495,17 @@ export async function buildAndCacheFinancialProfile(
     );
   }
 
+  // Exclude statements pending account setup — they must not appear in the
+  // financial profile until the user completes (or removes) the setup flow.
+  const confirmedDocs = completedSnap.docs.filter((doc) => {
+    const d = doc.data();
+    return !d.backfillPromptNeeded && !d.accountConfirmNeeded;
+  });
+
   const now = new Date();
   const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   const typicalMonthly = computeTypicalSpend(allExpenseTxns, thisMonth);
-  const sourceVersion  = computeSourceVersion(completedSnap.docs);
+  const sourceVersion  = computeSourceVersion(confirmedDocs);
 
   // Expenses: keep last 12 months (large volume — stay within Firestore 1 MB limit)
   const cutoff12    = allTxMonths.slice(-12)[0] ?? thisMonth;
@@ -509,7 +516,7 @@ export async function buildAndCacheFinancialProfile(
 
   // Collect holdings from the most recent investment statement per account slug
   const latestHoldingsBySlug = new Map<string, PortfolioAccountHoldings>();
-  for (const doc of completedSnap.docs) {
+  for (const doc of confirmedDocs) {
     const d = doc.data();
     const parsed = d.parsedData as ParsedStatementData | undefined;
     if (!parsed || parsed.accountType !== "investment") continue;
@@ -554,7 +561,7 @@ export async function buildAndCacheFinancialProfile(
   const slugByLabelKey = new Map<string, string>();
 
   const balanceHistoryMap = new Map<string, { label: string; accountType: string; entries: Map<string, number> }>();
-  for (const doc of completedSnap.docs) {
+  for (const doc of confirmedDocs) {
     const d = doc.data();
     const parsed = d.parsedData as ParsedStatementData | undefined;
     if (!parsed || parsed.netWorth == null) continue;
@@ -921,7 +928,10 @@ export async function getFinancialProfile(
           .where("userId", "==", uid)
           .where("status", "==", "completed")
           .get();
-        const currentVersion = computeSourceVersion(completedSnap.docs);
+        const confirmedVersionDocs = completedSnap.docs.filter(
+          (d) => !d.data().backfillPromptNeeded && !d.data().accountConfirmNeeded
+        );
+        const currentVersion = computeSourceVersion(confirmedVersionDocs);
         full = currentVersion === cached.sourceVersion
           ? cached
           : await buildAndCacheFinancialProfile(uid, db);

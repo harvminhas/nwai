@@ -1131,6 +1131,50 @@ function EventsWidget({ events, homeCurrency = "USD" }: { events: EventSummary[]
   );
 }
 
+// ── Service tracker reminder widget ──────────────────────────────────────────
+function TrackersWidget({ trackers }: { trackers: EventSummary[] }) {
+  if (trackers.length === 0) return null;
+  function relativeDate(iso: string | undefined): string {
+    if (!iso) return "No activity yet";
+    const days = Math.round((Date.now() - new Date(iso + "T00:00:00").getTime()) / 86400000);
+    if (days === 0) return "Active today";
+    if (days === 1) return "Active yesterday";
+    if (days < 7)  return `Active ${days}d ago`;
+    if (days < 30) return `Active ${Math.round(days / 7)}w ago`;
+    return `Active ${Math.round(days / 30)}mo ago`;
+  }
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between px-4 pt-4 pb-2 border-b border-gray-100">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Trackers</p>
+        <Link href="/account/events" className="text-[11px] font-semibold text-purple-600 hover:underline">
+          View all →
+        </Link>
+      </div>
+      <div className="divide-y divide-gray-50">
+        {trackers.map((ev) => (
+          <Link key={ev.id} href="/account/events" className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition">
+            <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-50 text-sm">🔧</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-gray-800 truncate">{ev.name}</p>
+              <p className="text-[11px] text-gray-400 mt-0.5">{relativeDate(ev.lastVisitDate)}</p>
+            </div>
+            <svg className="h-3.5 w-3.5 shrink-0 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+          </Link>
+        ))}
+      </div>
+      <Link
+        href="/account/events"
+        className="flex items-center justify-center gap-1 border-t border-gray-100 px-4 py-2.5 text-[11px] font-semibold text-gray-400 hover:text-purple-600 hover:bg-gray-50 transition"
+      >
+        Log progress or add a visit
+      </Link>
+    </div>
+  );
+}
+
 // ── Currency confirmation modal for pre-existing accounts ────────────────────
 
 const SUPPORTED_CURRENCIES = [
@@ -1243,7 +1287,8 @@ export default function TodayPage() {
   const [includeDebtInExpenses, setIncludeDebtInExpenses] = useState(false);
   /** Wider income (Transfer In, Other) for the same month as savings KPI — matches Income page toggle. */
   const [incomeShowAllCredits, setIncomeShowAllCredits] = useState(false);
-  const [activeEvents, setActiveEvents] = useState<import("@/lib/events/types").EventSummary[]>([]);
+  const [activeEvents,    setActiveEvents]    = useState<import("@/lib/events/types").EventSummary[]>([]);
+  const [serviceTrackers, setServiceTrackers] = useState<import("@/lib/events/types").EventSummary[]>([]);
   const [monthCount,   setMonthCount]   = useState<number>(0);
   const [statementCount, setStatementCount] = useState<number>(0);
   const [topSpending,  setTopSpending]  = useState<{ category: string; amount: number }[]>([]);
@@ -1403,13 +1448,23 @@ export default function TodayPage() {
       .then((j) => {
         const now = new Date().toISOString().slice(0, 10);
         const in30 = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-        // Surface events that are upcoming (date within 30 days) or have budget >75% used
-        const surface = (j.events ?? []).filter((ev: import("@/lib/events/types").EventSummary) => {
-          if (ev.date && ev.date >= now && ev.date <= in30) return true;
-          if (ev.budget && ev.totalSpent / ev.budget >= 0.75) return true;
-          if (!ev.date && !ev.budget) return true; // always show events with no date/budget
-          return false;
-        }).slice(0, 5);
+        const allEvents: import("@/lib/events/types").EventSummary[] = j.events ?? [];
+        // Service trackers — shown as soft reminders (max 3, sorted by most recently active)
+        const trackers = allEvents
+          .filter((ev) => ev.kind === "service")
+          .sort((a, b) => (b.lastVisitDate ?? b.createdAt).localeCompare(a.lastVisitDate ?? a.createdAt))
+          .slice(0, 3);
+        setServiceTrackers(trackers);
+        // Project / budget events — shown in the Plans widget
+        const surface = allEvents
+          .filter((ev) => ev.kind !== "service")
+          .filter((ev) => {
+            if (ev.date && ev.date >= now && ev.date <= in30) return true;
+            if (ev.budget && ev.totalSpent / ev.budget >= 0.75) return true;
+            if (!ev.date && !ev.budget) return true;
+            return false;
+          })
+          .slice(0, 5);
         setActiveEvents(surface);
       })
       .catch(() => {});
@@ -2807,6 +2862,9 @@ export default function TodayPage() {
             {/* Savings rate mini-card */}
             <SavingsRateCard />
 
+            {/* ── Service trackers (soft reminder) ──────────────────────────── */}
+            <TrackersWidget trackers={serviceTrackers} />
+
             {/* ── Plans ─────────────────────────────────────────────────────── */}
             <EventsWidget events={activeEvents} homeCurrency={homeCurrency} />
 
@@ -2834,6 +2892,11 @@ export default function TodayPage() {
               <MobileCardShell><SidebarSignalCard card={card} /></MobileCardShell>
             </div>
           ))}
+          {serviceTrackers.length > 0 && (
+            <div className="snap-start shrink-0 w-64">
+              <MobileCardShell><TrackersWidget trackers={serviceTrackers} /></MobileCardShell>
+            </div>
+          )}
           {activeEvents.length > 0 && (
             <div className="snap-start shrink-0 w-64">
               <MobileCardShell><EventsWidget events={activeEvents} homeCurrency={homeCurrency} /></MobileCardShell>

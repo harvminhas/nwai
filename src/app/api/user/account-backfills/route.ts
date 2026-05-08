@@ -80,10 +80,35 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    // No backfill needed (user said account is brand new) — just clear the prompt flag
+    // No backfill needed (user said account is brand new) — clear the flag and save name/type
     if (backfillMonths === 0) {
+      const zeroUpdates: Record<string, unknown> = { backfillPromptNeeded: false };
+      if (accountName) zeroUpdates["parsedData.accountName"] = accountName;
+      if (accountType) zeroUpdates["parsedData.accountType"] = accountType;
       if (statementId) {
-        await db.collection("statements").doc(statementId).update({ backfillPromptNeeded: false });
+        try {
+          await db.collection("statements").doc(statementId).update(zeroUpdates);
+        } catch { /* statement may be gone */ }
+      }
+      // Also update sibling statements for the same slug
+      if ((accountName || accountType) && accountSlug) {
+        try {
+          const siblingsSnap = await db
+            .collection("statements")
+            .where("userId", "==", uid)
+            .where("accountSlug", "==", accountSlug)
+            .where("status", "==", "completed")
+            .get();
+          const nb = db.batch();
+          for (const doc of siblingsSnap.docs) {
+            if (doc.id === statementId) continue;
+            const u: Record<string, unknown> = {};
+            if (accountName) u["parsedData.accountName"] = accountName;
+            if (accountType) u["parsedData.accountType"] = accountType;
+            nb.update(doc.ref, u);
+          }
+          await nb.commit();
+        } catch { /* best-effort */ }
       }
       return NextResponse.json({ ok: true, count: 0 });
     }
@@ -114,6 +139,30 @@ export async function POST(req: NextRequest) {
     // Commit backfill docs first — this must not fail due to statement issues
     await batch.commit();
     console.log(`[account-backfills POST] wrote ${backfillMonths} monthly docs for slug=${accountSlug}`);
+
+    // Persist the user-confirmed account name and type on every completed statement
+    // for this slug. parsedData.accountName is the source of truth for the display name
+    // throughout the financial profile, so all sibling statements need the same value.
+    if (accountName || accountType) {
+      try {
+        const siblingsSnap = await db
+          .collection("statements")
+          .where("userId", "==", uid)
+          .where("accountSlug", "==", accountSlug)
+          .where("status", "==", "completed")
+          .get();
+        const nameBatch = db.batch();
+        for (const doc of siblingsSnap.docs) {
+          const updates: Record<string, unknown> = {};
+          if (accountName) updates["parsedData.accountName"] = accountName;
+          if (accountType) updates["parsedData.accountType"] = accountType;
+          nameBatch.update(doc.ref, updates);
+        }
+        await nameBatch.commit();
+      } catch (e) {
+        console.warn("[account-backfills POST] could not update statement names:", e);
+      }
+    }
 
     // Clear the prompt flag separately so a missing/deleted statement doesn't roll back the batch
     if (statementId) {
