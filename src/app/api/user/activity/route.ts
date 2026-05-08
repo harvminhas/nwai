@@ -18,6 +18,7 @@ function authToken(req: NextRequest): string | null {
 
 export type ActivityEventType =
   | "statement_upload"
+  | "statement_delete"
   | "category_rule"
   | "recurring_rule"
   | "rate_change";
@@ -73,6 +74,9 @@ export async function GET(req: NextRequest) {
           accountType: acctType,
           superseded: d.superseded ?? false,
           fileName: d.fileName ?? null,
+          // Audit: present only when a partner uploaded on the owner's behalf
+          ...(d.uploadedBy  ? { uploadedBy: d.uploadedBy }              : {}),
+          ...(d.uploadedByEmail ? { uploadedByEmail: d.uploadedByEmail } : {}),
         },
       });
     }
@@ -143,6 +147,33 @@ export async function GET(req: NextRequest) {
         }
       })
     );
+
+    // ── 5. Statement deletions (audit log) ───────────────────────────────────
+    const auditSnap = await db
+      .collection(`users/${uid}/activityLog`)
+      .orderBy("timestamp", "desc")
+      .limit(40)
+      .get();
+
+    for (const doc of auditSnap.docs) {
+      const d = doc.data();
+      if (d.type !== "statement_delete") continue;
+      const bankName: string  = d.bankName ?? d.accountName ?? d.fileName ?? "Statement";
+      const byLabel: string   = d.actorEmail ? ` · by ${d.actorEmail}` : "";
+      events.push({
+        id: `del_${doc.id}`,
+        type: "statement_delete",
+        timestamp: d.timestamp?.toDate?.()?.toISOString?.() ?? new Date().toISOString(),
+        title: `Deleted: ${bankName}`,
+        subtitle: d.yearMonth ? `${d.yearMonth}${byLabel}` : byLabel.trimStart() || null,
+        meta: {
+          actorUid:    d.actorUid ?? null,
+          actorEmail:  d.actorEmail ?? null,
+          accountSlug: d.accountSlug ?? null,
+          fileName:    d.fileName ?? null,
+        },
+      });
+    }
 
     // ── Sort descending by timestamp ─────────────────────────────────────────
     events.sort((a, b) => b.timestamp.localeCompare(a.timestamp));

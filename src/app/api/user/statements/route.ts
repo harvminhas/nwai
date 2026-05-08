@@ -52,6 +52,8 @@ export async function GET(request: NextRequest) {
         subAccounts: Array.isArray(d.parsedData?.subAccounts) && d.parsedData.subAccounts.length > 0
           ? d.parsedData.subAccounts
           : undefined,
+        ...(d.uploadedBy      ? { uploadedBy: d.uploadedBy }           : {}),
+        ...(d.uploadedByEmail ? { uploadedByEmail: d.uploadedByEmail } : {}),
       };
     });
 

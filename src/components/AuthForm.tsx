@@ -205,72 +205,8 @@ export default function AuthForm({ mode }: { mode: Mode }) {
         {loading ? "Please wait…" : "Continue with Google"}
       </button>
 
-      {/* Divider */}
-      <div className="my-5 flex items-center gap-3">
-        <div className="flex-1 border-t border-gray-200" />
-        <span className="text-xs text-gray-400">or</span>
-        <div className="flex-1 border-t border-gray-200" />
-      </div>
-
-      {/* Email / password form */}
-      <form onSubmit={handleEmailSubmit} className="space-y-3">
-        {isSignup && (
-          <input
-            type="text"
-            placeholder="Your name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-300"
-          />
-        )}
-        <input
-          type="email"
-          placeholder="Email address"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-          autoComplete="email"
-          className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-300"
-        />
-        <input
-          type="password"
-          placeholder={isSignup ? "Create a password (6+ characters)" : "Password"}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-          autoComplete={isSignup ? "new-password" : "current-password"}
-          className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-300"
-        />
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full rounded-xl bg-purple-600 py-3 font-semibold text-white transition hover:bg-purple-700 disabled:opacity-50"
-        >
-          {loading ? "Please wait…" : isSignup ? "Create account" : "Sign in"}
-        </button>
-      </form>
-
-      {/* Forgot password */}
-      {!isSignup && (
-        <div className="mt-3 text-center">
-          {showReset ? (
-            <button
-              onClick={handlePasswordReset}
-              disabled={loading}
-              className="text-xs text-purple-600 hover:underline disabled:opacity-50"
-            >
-              Send reset link to {email || "your email"}
-            </button>
-          ) : (
-            <button
-              onClick={() => setShowReset(true)}
-              className="text-xs text-gray-400 hover:text-gray-600"
-            >
-              Forgot password?
-            </button>
-          )}
-        </div>
-      )}
+      {/* Email/password form hidden — Google-only sign-in active.
+          To restore: uncomment the divider, form, forgot-password, and switch-mode blocks below. */}
 
       {/* Switch mode */}
       <p className="mt-6 text-center text-sm text-gray-500">

@@ -17,6 +17,7 @@ import { createContext, useContext, useEffect, useState, useCallback } from "rea
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { PLANS, PLAN_ORDER, type PlanId, type PlanDefinition, type PlanFeatures } from "@/lib/plans";
+import { useActiveProfile } from "@/contexts/ActiveProfileContext";
 
 const TEST_PLAN_KEY = "nwai_test_plan";
 
@@ -45,6 +46,7 @@ const PlanContext = createContext<PlanContextValue>({
 export function PlanProvider({ children }: { children: React.ReactNode }) {
   const [planId, setPlanIdState] = useState<PlanId>("free");
   const [loading, setLoading]   = useState(true);
+  const { isOwn } = useActiveProfile();
 
   useEffect(() => {
     // Load from localStorage immediately for instant render
@@ -68,6 +70,27 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
     });
     return () => unsubscribe();
   }, []);
+
+  // Re-fetch the plan whenever the user switches between own and partner profile.
+  // Pass ?sharedView=1 only when viewing the partner's data so the backend
+  // applies the Pro inheritance — the user's own profile stays at their real tier.
+  useEffect(() => {
+    const { auth } = getFirebaseClient();
+    const user = auth.currentUser;
+    if (!user) return;
+    const url = isOwn ? "/api/user/plan" : "/api/user/plan?sharedView=1";
+    user.getIdToken().then((token) => {
+      fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => r.json())
+        .then((json) => {
+          if (json.plan && PLAN_ORDER.includes(json.plan as PlanId)) {
+            setPlanIdState(json.plan as PlanId);
+            localStorage.setItem(TEST_PLAN_KEY, json.plan);
+          }
+        })
+        .catch(() => {});
+    });
+  }, [isOwn]);
 
   const setTestPlan = useCallback((id: PlanId) => {
     if (process.env.NODE_ENV !== "development") return; // no-op in production

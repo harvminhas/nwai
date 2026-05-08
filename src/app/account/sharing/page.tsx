@@ -235,15 +235,18 @@ export default function SharingPage() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Their email address</label>
-                  <input
-                    type="email"
-                    placeholder="their@email.com"
-                    value={inviteEmail}
-                    onChange={(e) => setInviteEmail(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && mutualConsent && sendInvite()}
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-300"
-                  />
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Their Gmail username</label>
+                  <div className="flex items-center rounded-lg border border-gray-200 focus-within:border-purple-400 focus-within:ring-1 focus-within:ring-purple-300 overflow-hidden">
+                    <input
+                      type="text"
+                      placeholder="username"
+                      value={inviteEmail.replace(/@gmail\.com$/, "")}
+                      onChange={(e) => setInviteEmail(e.target.value.replace(/@.*$/, "") + "@gmail.com")}
+                      onKeyDown={(e) => e.key === "Enter" && mutualConsent && sendInvite()}
+                      className="flex-1 min-w-0 px-3 py-2 text-sm outline-none bg-white"
+                    />
+                    <span className="shrink-0 px-3 py-2 text-sm text-gray-400 bg-gray-50 border-l border-gray-200 select-none">@gmail.com</span>
+                  </div>
                   <p className="mt-1 text-[11px] text-gray-400">Used to identify them when they log in — the link is what you share.</p>
                 </div>
 
@@ -261,7 +264,7 @@ export default function SharingPage() {
 
                 <button
                   onClick={sendInvite}
-                  disabled={sending || !inviteEmail.trim() || !mutualConsent}
+                  disabled={sending || !inviteEmail.replace(/@gmail\.com$/, "").trim() || !mutualConsent}
                   className="w-full rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition disabled:opacity-50"
                 >
                   {sending ? "Generating…" : "Generate invite link"}

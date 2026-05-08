@@ -17,6 +17,24 @@ async function getUid(request: NextRequest): Promise<string | null> {
   }
 }
 
+async function getActorAndTarget(request: NextRequest): Promise<{ actorUid: string; targetUid: string; actorEmail: string | null } | null> {
+  const token = request.headers.get("authorization")?.replace("Bearer ", "");
+  if (!token) return null;
+  try {
+    const { auth, db } = getFirebaseAdmin();
+    const decoded = await auth.verifyIdToken(token);
+    const { resolveAccess } = await import("@/lib/access/resolveAccess");
+    const access = await resolveAccess(request, db);
+    return {
+      actorUid: decoded.uid,
+      targetUid: access?.targetUid ?? decoded.uid,
+      actorEmail: decoded.email ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * GET /api/user/statements/[id]
  * Returns full statement data (including partialParsedData and parseError)
@@ -160,8 +178,9 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const uid = await getUid(request);
-  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const actor = await getActorAndTarget(request);
+  if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { actorUid, targetUid: uid, actorEmail } = actor;
 
   const { id } = await params;
   const { db, storage } = getFirebaseAdmin();
@@ -189,11 +208,29 @@ export async function DELETE(
     }
   }
 
-  // ── 2. Delete the Firestore document ─────────────────────────────────────
+  // ── 2. Write audit record before deletion (so we preserve key metadata) ──
   const accountSlug: string | undefined = data.accountSlug;
+  {
+    const auditRef = db.collection(`users/${uid}/activityLog`).doc();
+    const auditEntry: Record<string, unknown> = {
+      id:          auditRef.id,
+      type:        "statement_delete",
+      timestamp:   new Date(),
+      actorUid,
+      fileName:    data.fileName ?? null,
+      accountSlug: accountSlug ?? null,
+      accountName: (data.parsedData as Record<string, unknown> | undefined)?.accountName ?? null,
+      bankName:    (data.parsedData as Record<string, unknown> | undefined)?.bankName ?? null,
+      yearMonth:   data.yearMonth ?? null,
+    };
+    if (actorUid !== uid) auditEntry.actorEmail = actorEmail;
+    await auditRef.set(auditEntry);
+  }
+
+  // ── 3. Delete the Firestore document ─────────────────────────────────────
   await statementRef.delete();
 
-  // ── 3. If this was the last statement for the account, delete its backfills
+  // ── 4. If this was the last statement for the account, delete its backfills
   //       and the accountSlugOverrides entry so re-uploading starts fresh ─────
   const bankTypeKey: string | undefined = data.bankTypeKey;
   if (accountSlug) {

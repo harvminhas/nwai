@@ -48,15 +48,23 @@ const ALLOWED_TYPES = [
 
 export async function POST(request: NextRequest) {
   try {
-    let userId: string | null = null;
+    let userId: string | null = null;       // owner of the account (targetUid)
+    let actorUid: string | null = null;     // who is actually uploading (may differ when shared)
+    let actorEmail: string | null = null;
     let decoded: { uid: string; email?: string; name?: string } | null = null;
     const authHeader = request.headers.get("authorization");
     const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
     if (token) {
       try {
-        const { auth } = getFirebaseAdmin();
+        const { auth, db } = getFirebaseAdmin();
         decoded = await auth.verifyIdToken(token);
-        userId = decoded.uid;
+        actorUid   = decoded.uid;
+        actorEmail = decoded.email ?? null;
+
+        // If viewing a shared profile, statements belong to the profile owner
+        const { resolveAccess } = await import("@/lib/access/resolveAccess");
+        const access = await resolveAccess(request, db);
+        userId = access?.targetUid ?? actorUid;
       } catch (_) {
         // proceed as unauthenticated
       }
@@ -241,6 +249,10 @@ export async function POST(request: NextRequest) {
       contentType: file.type,
       status: "processing",
       fileHash,
+      // Audit: who physically uploaded this file (may differ from userId when shared access)
+      ...(actorUid && actorUid !== userId
+        ? { uploadedBy: actorUid, uploadedByEmail: actorEmail }
+        : {}),
     });
 
     // Parse is triggered by the client after this response, not here,

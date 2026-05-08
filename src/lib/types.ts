@@ -285,4 +285,6 @@ export interface UserStatementSummary {
   txCount?: number;
   interestRate?: number | null;
   subAccounts?: SubAccount[];
+  uploadedBy?: string;      // actorUid — present only when a partner uploaded on owner's behalf
+  uploadedByEmail?: string; // display-friendly version of uploadedBy
 }

@@ -53,7 +53,7 @@ export function resolvePlan(data: Record<string, unknown> | undefined): PlanId |
  * Full plan resolution (Firestore + Stripe fallback + linked-partner inheritance).
  * Shared with debug tooling and other server routes that need the authoritative plan.
  */
-export async function getResolvedPlanId(uid: string, db: Firestore): Promise<PlanId> {
+export async function getResolvedPlanId(uid: string, db: Firestore, applySharedInheritance = false): Promise<PlanId> {
   const doc  = await db.collection("users").doc(uid).get();
   const data = doc.data() as Record<string, unknown> | undefined;
 
@@ -81,8 +81,8 @@ export async function getResolvedPlanId(uid: string, db: Firestore): Promise<Pla
     }
   }
 
-  // If this user can VIEW a Pro partner's data, they inherit Pro access
-  if (plan === "free") {
+  // Only inherit Pro from a linked partner when explicitly viewing the shared profile.
+  if (plan === "free" && applySharedInheritance) {
     const canViewSnap = await db.doc(`users/${uid}/linkedPartner/data`).get();
     if (canViewSnap.exists) {
       const canView = canViewSnap.data() as LinkedPartner;
@@ -123,7 +123,11 @@ export async function GET(req: NextRequest) {
   try {
     const { auth, db } = getFirebaseAdmin();
     const { uid } = await auth.verifyIdToken(token);
-    const plan = await getResolvedPlanId(uid, db);
+
+    // Only inherit the partner's Pro plan when explicitly viewing the shared profile.
+    // Without this flag the user's own-profile plan is returned as-is.
+    const sharedView = req.nextUrl.searchParams.get("sharedView") === "1";
+    const plan = await getResolvedPlanId(uid, db, sharedView);
 
     return NextResponse.json({ plan });
   } catch (err) {

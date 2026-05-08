@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import { ProfileRefreshProvider } from "@/contexts/ProfileRefreshContext";
 import { ActiveProfileProvider, useActiveProfile } from "@/contexts/ActiveProfileContext";
-import { usePlan } from "@/contexts/PlanContext";
+import { PlanProvider, usePlan } from "@/contexts/PlanContext";
 
 function ChatBubble() {
   const { can } = usePlan();
@@ -143,16 +143,18 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
 
   return (
     <ActiveProfileProvider>
-      <ProfileRefreshProvider>
-        <div className="min-h-screen bg-gray-50">
-          <Sidebar collapsed={collapsed} onToggle={toggle} />
-            <PendingInviteModal />
-          <div className={`transition-all duration-200 ${collapsed ? "lg:pl-14" : "lg:pl-56"}`}>
-            {children}
+      <PlanProvider>
+        <ProfileRefreshProvider>
+          <div className="min-h-screen bg-gray-50">
+            <Sidebar collapsed={collapsed} onToggle={toggle} />
+              <PendingInviteModal />
+            <div className={`transition-all duration-200 ${collapsed ? "lg:pl-14" : "lg:pl-56"}`}>
+              {children}
+            </div>
+            <ChatBubble />
           </div>
-          <ChatBubble />
-        </div>
-      </ProfileRefreshProvider>
+        </ProfileRefreshProvider>
+      </PlanProvider>
     </ActiveProfileProvider>
   );
 }
