@@ -193,9 +193,9 @@ export async function DELETE(
   const accountSlug: string | undefined = data.accountSlug;
   await statementRef.delete();
 
-  // ── 3. If this was the last statement for the account, delete its backfills ─
-  // Backfill records are only meaningful while real statements exist. Keeping them
-  // after all statements are deleted causes ghost entries in history/balance views.
+  // ── 3. If this was the last statement for the account, delete its backfills
+  //       and the accountSlugOverrides entry so re-uploading starts fresh ─────
+  const bankTypeKey: string | undefined = data.bankTypeKey;
   if (accountSlug) {
     const remaining = await db
       .collection("statements")
@@ -206,13 +206,22 @@ export async function DELETE(
       .get();
 
     if (remaining.empty) {
+      const batch = db.batch();
+
+      // Delete synthetic backfill docs
       const backfillSnap = await db
         .collection(`users/${uid}/accountBackfills`)
         .where("accountSlug", "==", accountSlug)
         .get();
-      const batch = db.batch();
       backfillSnap.docs.forEach((d) => batch.delete(d.ref));
-      if (!backfillSnap.empty) await batch.commit();
+
+      // Delete the accountSlugOverrides entry for this bank+type so a fresh
+      // re-upload is treated as a genuinely new account, not a ghost re-upload.
+      if (bankTypeKey) {
+        batch.delete(db.doc(`users/${uid}/accountSlugOverrides/${bankTypeKey}`));
+      }
+
+      await batch.commit();
     }
   }
 

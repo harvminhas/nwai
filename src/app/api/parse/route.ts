@@ -205,6 +205,10 @@ export async function POST(request: NextRequest) {
             const dd = d.data();
             const s  = dd.accountSlug as string | undefined;
             if (!s) continue;
+            // Exclude pending-setup statements (not yet confirmed) and the same slug
+            // as the current statement — merging with yourself is meaningless.
+            if (dd.backfillPromptNeeded || dd.accountConfirmNeeded) continue;
+            if (s === slug) continue;
             const p = dd.parsedData as Record<string, unknown> | undefined;
             const label =
               (p?.accountName as string | undefined) ||
@@ -286,6 +290,9 @@ export async function POST(request: NextRequest) {
             const dd = d.data();
             const s  = dd.accountSlug as string | undefined;
             if (!s) continue;
+            // Skip pending-setup and same-slug (would be a self-merge)
+            if (dd.backfillPromptNeeded || dd.accountConfirmNeeded) continue;
+            if (s === effectiveSlug) continue;
             const p = dd.parsedData as Record<string, unknown> | undefined;
             const label =
               (p?.accountName as string | undefined) ||
