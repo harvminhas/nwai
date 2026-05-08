@@ -10,7 +10,6 @@ interface ChatMessage {
   content: string;
 }
 
-const DEFAULT_MONTHS = 3;
 const MAX_MONTHS = 24;
 
 // ── system prompt ──────────────────────────────────────────────────────────────
@@ -59,32 +58,6 @@ USER'S FINANCIAL DATA:
 ${brief}`;
 }
 
-// ── pre-call: determine how many months this query needs ──────────────────────
-
-/**
- * Ask the model how many months of history are needed to answer the query.
- * Returns a number between 1 and MAX_MONTHS. Falls back to DEFAULT_MONTHS on any error.
- */
-async function resolveMonthsNeeded(
-  apiKey: string,
-  message: string,
-  availableMonths: number,
-): Promise<number> {
-  try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const scout = genAI.getGenerativeModel({ model: "gemini-2.0-flash-lite" });
-    const prompt =
-      `The user is asking their personal finance assistant: "${message}"\n` +
-      `The user has ${availableMonths} months of transaction history available.\n` +
-      `How many months of data are needed to answer this question accurately?\n` +
-      `Reply with ONLY a single integer between 1 and ${Math.min(availableMonths, MAX_MONTHS)}. No other text.`;
-    const res = await scout.generateContent(prompt);
-    const raw = res.response.text().trim();
-    const n   = parseInt(raw, 10);
-    if (!isNaN(n) && n >= 1) return Math.min(n, availableMonths, MAX_MONTHS);
-  } catch { /* fall through to default */ }
-  return Math.min(DEFAULT_MONTHS, availableMonths);
-}
 
 // ── route handler ──────────────────────────────────────────────────────────────
 
@@ -126,15 +99,14 @@ export async function POST(req: NextRequest) {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) return NextResponse.json({ error: "AI not configured" }, { status: 500 });
 
-  // Determine how many months this query actually needs.
-  // Read just the profile header to know how many months of history exist,
-  // then run a cheap scout call in parallel with nothing else.
+  // Build the brief with the full available history (up to MAX_MONTHS).
+  // The brief's own TOKEN_BUDGET (1200 transactions) guards context-window size.
+  // Using a scout pre-call to pick fewer months was saving tokens but silently
+  // dropping older transactions, causing incomplete answers for merchant-history
+  // questions like "how often do I go to the barber?"
   const fullProfile = await getFinancialProfile(uid, db);
-  const availableMonths = fullProfile.allTxMonths.length;
-  const monthsNeeded = await resolveMonthsNeeded(apiKey, message, availableMonths);
-
-  // Build the brief sliced to exactly the months needed — all from the profile cache.
-  const brief = await buildFinancialBrief(uid, "chat", monthsNeeded);
+  const availableMonths = Math.min(fullProfile.allTxMonths.length, MAX_MONTHS);
+  const brief = await buildFinancialBrief(uid, "chat", availableMonths);
 
   // Set up Gemini streaming
   const genAI  = new GoogleGenerativeAI(apiKey);
