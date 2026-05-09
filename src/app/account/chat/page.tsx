@@ -511,24 +511,11 @@ export default function ChatPage() {
             </div>
           </div>
         ) : (
-          <div className="mx-auto max-w-2xl space-y-5 px-4 py-6 sm:px-6">
+          <div className="mx-auto max-w-2xl space-y-4 px-4 py-6 sm:px-6">
             {messages.map((msg) => (
-              <div key={msg.id} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
-                {/* Avatar */}
-                <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                  msg.role === "user"
-                    ? "bg-purple-600 text-white"
-                    : "bg-gray-100 text-gray-500"
-                }`}>
-                  {msg.role === "user" ? "Y" : (
-                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                    </svg>
-                  )}
-                </div>
-
-                {/* Bubble */}
-                <div className={`max-w-[82%] rounded-2xl px-4 py-3 ${
+              <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                {/* Bubble — no avatar icons, alignment conveys sender */}
+                <div className={`max-w-[88%] rounded-2xl px-4 py-3 ${
                   msg.role === "user"
                     ? "bg-purple-600 text-white rounded-tr-sm"
                     : "bg-white border border-gray-100 text-gray-700 shadow-sm rounded-tl-sm"
@@ -594,7 +581,7 @@ export default function ChatPage() {
               placeholder={streaming ? "Waiting for response…" : "Ask about your finances…"}
               disabled={streaming || !token}
               aria-label={streaming ? "Waiting for AI response" : "Ask about your finances"}
-              className="flex-1 resize-none bg-transparent text-sm text-gray-800 outline-none placeholder:text-gray-500 disabled:cursor-not-allowed"
+              className="min-w-0 flex-1 resize-none bg-transparent text-base text-gray-800 outline-none placeholder:text-gray-500 disabled:cursor-not-allowed sm:text-sm"
               style={{ minHeight: "24px", maxHeight: "160px" }}
             />
             <button
