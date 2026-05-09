@@ -208,18 +208,19 @@ export default function AuthForm({ mode }: { mode: Mode }) {
       {/* Email/password form hidden — Google-only sign-in active.
           To restore: uncomment the divider, form, forgot-password, and switch-mode blocks below. */}
 
-      {/* Switch mode */}
-      <p className="mt-6 text-center text-sm text-gray-500">
-        {isSignup ? (
-          <>Already have an account?{" "}
-            <a href="/login" className="font-medium text-purple-600 hover:underline">Sign in</a>
-          </>
-        ) : (
-          <>Don&apos;t have an account?{" "}
-            <a href="/signup" className="font-medium text-purple-600 hover:underline">Create one free</a>
-          </>
-        )}
-      </p>
+      {/* Signup page only: link to login. Login is Google-only — no separate “create account” link
+         (Google creates your account on first sign-in). */}
+      {isSignup && (
+        <p className="mt-6 text-center text-sm text-gray-500">
+          Already have an account?{" "}
+          <a href="/login" className="font-medium text-purple-600 hover:underline">Sign in</a>
+        </p>
+      )}
+      {!isSignup && (
+        <p className="mt-6 text-center text-sm text-gray-500">
+          First time? Continue with Google — your free account is created automatically.
+        </p>
+      )}
 
       <p className="mt-4 text-center text-xs text-gray-400">
         By continuing, you agree to our{" "}
