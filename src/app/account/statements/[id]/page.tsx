@@ -47,6 +47,8 @@ interface StatementDetail {
   parseError: string | null;
   accountSlug: string | null;
   yearMonth: string | null;
+  /** True when parsed but dashboard excludes this until /account/setup is done */
+  needsAccountSetup?: boolean;
 }
 
 interface ReviewForm {
@@ -657,16 +659,45 @@ export default function StatementDetailPage() {
           {/* Completed — read-only summary */}
           {!loading && isCompleted && statement && (
             <div className="space-y-5">
+              {statement.needsAccountSetup && (
+                <div className="flex flex-col gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <svg className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 15.75h.007v.008H12v-.008z" />
+                    </svg>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-amber-900">This account needs a quick setup step</p>
+                      <p className="mt-0.5 text-xs text-amber-800">
+                        Until you finish, this statement won&apos;t appear in Assets, net worth, or spending totals — even though it parsed successfully.
+                      </p>
+                    </div>
+                  </div>
+                  <Link
+                    href={`/account/setup?ids=${encodeURIComponent(statement.id)}`}
+                    className="shrink-0 rounded-lg bg-amber-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-amber-700 transition"
+                  >
+                    Finish account setup →
+                  </Link>
+                </div>
+              )}
               {/* Header */}
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h1 className="text-xl font-bold text-gray-900">Statement details</h1>
                   <p className="mt-1 text-sm text-gray-500 font-mono truncate">{statement.fileName}</p>
                 </div>
-                <span className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-green-50 border border-green-200 px-2.5 py-0.5 text-xs font-medium text-green-700">
-                  <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
-                  Ingested
-                </span>
+                {statement.needsAccountSetup ? (
+                  <span className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-amber-50 border border-amber-200 px-2.5 py-0.5 text-xs font-medium text-amber-800">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                    Setup required
+                  </span>
+                ) : (
+                  <span className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-green-50 border border-green-200 px-2.5 py-0.5 text-xs font-medium text-green-700">
+                    <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                    Ingested
+                  </span>
+                )}
               </div>
 
               {/* Key metrics */}

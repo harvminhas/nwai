@@ -98,6 +98,11 @@ export default function ParseStatusBanner({
   const startWatching = useCallback((id: string, name?: string) => {
     if (watchedRef.current.has(id)) return;
     watchedRef.current.add(id);
+    // Each new queued parse must be allowed to fire onRefresh / onAllComplete again.
+    // Otherwise the first completion sets refreshedRef=true forever and later uploads
+    // (e.g. second bank account) never trigger setup redirect or list refresh.
+    refreshedRef.current = false;
+    setShowDone(false);
 
     setItems((prev) => {
       if (prev.find((p) => p.id === id)) return prev;

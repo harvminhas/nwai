@@ -1401,6 +1401,24 @@ export default function TodayPage() {
     finally { if (!silent) setLoading(false); }
   }, [buildHeaders]);
 
+  const handleAllParsesComplete = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await fetch("/api/user/pending-setup", { headers: buildHeaders(token) });
+      const json = await res.json();
+      if ((json.pendingCount ?? 0) > 0) {
+        try {
+          const raw = localStorage.getItem("nwai_setup_session");
+          const ids: string[] = raw ? JSON.parse(raw) : [];
+          const idParam = ids.length > 0 ? `?ids=${ids.join(",")}` : "";
+          router.push(`/account/setup${idParam}`);
+        } catch {
+          router.push("/account/setup");
+        }
+      }
+    } catch { /* ignore */ }
+  }, [token, buildHeaders, router]);
+
   const handleRefresh = useCallback(async () => {
     if (!token) return;
     setRefreshing(true);
@@ -2212,6 +2230,7 @@ export default function TodayPage() {
       {token && (
         <ParseStatusBanner
           onRefresh={() => load(token, { silent: true })}
+          onAllComplete={handleAllParsesComplete}
         />
       )}
 

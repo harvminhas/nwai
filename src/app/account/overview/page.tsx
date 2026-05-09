@@ -28,6 +28,24 @@ export default function OverviewPage() {
     finally { setLoading(false); }
   }, []);
 
+  const handleAllParsesComplete = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await fetch("/api/user/pending-setup", { headers: { Authorization: `Bearer ${token}` } });
+      const json = await res.json();
+      if ((json.pendingCount ?? 0) > 0) {
+        try {
+          const raw = localStorage.getItem("nwai_setup_session");
+          const ids: string[] = raw ? JSON.parse(raw) : [];
+          const idParam = ids.length > 0 ? `?ids=${ids.join(",")}` : "";
+          router.push(`/account/setup${idParam}`);
+        } catch {
+          router.push("/account/setup");
+        }
+      }
+    } catch { /* ignore */ }
+  }, [token, router]);
+
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
@@ -45,7 +63,9 @@ export default function OverviewPage() {
       {/* ── Financial snapshot ────────────────────────────────────────── */}
       <div className="mx-auto max-w-4xl px-4 pt-5 pb-6 sm:px-6">
 
-        {token && <ParseStatusBanner onRefresh={() => load(token)} />}
+        {token && (
+          <ParseStatusBanner onRefresh={() => load(token)} onAllComplete={handleAllParsesComplete} />
+        )}
 
         <div className="mb-5">
           <h1 className="text-2xl font-bold text-gray-900">Financial Health</h1>

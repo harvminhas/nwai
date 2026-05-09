@@ -55,6 +55,10 @@ export async function GET(
   const data = doc.data()!;
   if (data.userId !== uid) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
+  const needsAccountSetup =
+    data.status === "completed" &&
+    (data.backfillPromptNeeded === true || data.accountConfirmNeeded === true);
+
   return NextResponse.json({
     id,
     status: data.status,
@@ -65,6 +69,7 @@ export async function GET(
     parseError: data.parseError ?? data.errorMessage ?? null,
     accountSlug: data.accountSlug ?? null,
     yearMonth: data.yearMonth ?? null,
+    needsAccountSetup,
   });
 }
 

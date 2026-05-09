@@ -27,8 +27,9 @@ function fmtShort(v: number, ccy: string) {
 function fmtNW(v: number, ccy: string) {
   const sym = getCurrencySymbol(ccy);
   const abs = Math.abs(v);
-  if (abs >= 1_000_000) return `${sym}${(abs / 1_000_000).toFixed(2)}M`;
-  if (abs >= 1_000)     return `${sym}${Math.round(abs / 1_000)}k`;
+  const neg = v < 0 ? "-" : "";
+  if (abs >= 1_000_000) return `${neg}${sym}${(abs / 1_000_000).toFixed(2)}M`;
+  if (abs >= 1_000)     return `${neg}${sym}${Math.round(abs / 1_000)}k`;
   return fmt(v, ccy);
 }
 function monthLabel(ym: string) {

@@ -48,6 +48,9 @@ export async function GET(request: NextRequest) {
           (d.parsedData?.expenses?.transactions?.length ?? 0) +
           (d.parsedData?.income?.transactions?.length ?? 0)
         ) || undefined,
+        needsAccountSetup:
+          d.status === "completed" &&
+          (d.backfillPromptNeeded === true || d.accountConfirmNeeded === true),
         interestRate: typeof d.parsedData?.interestRate === "number" ? d.parsedData.interestRate : null,
         subAccounts: Array.isArray(d.parsedData?.subAccounts) && d.parsedData.subAccounts.length > 0
           ? d.parsedData.subAccounts

@@ -614,6 +614,22 @@ export function AssetsPage() {
           {/* ── Overview tab ──────────────────────────────────────────────── */}
           {activeTab === "overview" && (
             <div className="space-y-5">
+              {!(totalAssets > 0 || assetHistory.length >= 2 || keyInsight) && (
+                <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center">
+                  {allAccounts.length === 0 ? (
+                    <p className="text-sm text-gray-500">No accounts yet. Upload a statement to get started.</p>
+                  ) : (
+                    <>
+                      <p className="text-sm font-medium text-gray-700">Nothing on Overview yet</p>
+                      <p className="mt-2 text-xs text-gray-500 max-w-md mx-auto">
+                        Totals and trends will appear once statements include balances or you add tracked assets with values.
+                        You can switch to <span className="font-medium text-gray-600">Accounts</span> or{" "}
+                        <span className="font-medium text-gray-600">Tracked Assets</span> to add or review data.
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
               {/* Total assets header */}
               {totalAssets > 0 && (
                 <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">

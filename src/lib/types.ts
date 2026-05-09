@@ -283,6 +283,8 @@ export interface UserStatementSummary {
   source?: "pdf" | "csv";
   csvDateRange?: { from: string; to: string };
   txCount?: number;
+  /** Parsed OK but excluded from dashboard until /account/setup is completed */
+  needsAccountSetup?: boolean;
   interestRate?: number | null;
   subAccounts?: SubAccount[];
   uploadedBy?: string;      // actorUid — present only when a partner uploaded on owner's behalf

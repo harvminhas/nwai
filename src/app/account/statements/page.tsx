@@ -96,7 +96,8 @@ function acctDotColor(t?: string) {
   }
 }
 
-function statusDotClass(status: string) {
+function statusDotClass(status: string, needsAccountSetup?: boolean) {
+  if (needsAccountSetup) return "bg-amber-400";
   if (status === "processing") return "bg-amber-400 animate-pulse";
   if (status === "error") return "bg-red-400";
   if (status === "needs_review") return "bg-orange-400";
@@ -458,6 +459,12 @@ export default function StatementsPage() {
                     ? "Parse error — click retry"
                     : s.status === "needs_review"
                     ? "Couldn't detect details — click to complete"
+                    : s.needsAccountSetup
+                    ? [
+                        s.txCount ? `${s.txCount} transactions` : null,
+                        s.uploadedAt ? `uploaded ${timeAgo(s.uploadedAt)}` : null,
+                        "Finish account setup to use this in Assets & spending",
+                      ].filter(Boolean).join(" · ") + uploadedByBadge
                     : [s.txCount ? `${s.txCount} transactions` : null, s.uploadedAt ? `uploaded ${timeAgo(s.uploadedAt)}` : null].filter(Boolean).join(" · ") + uploadedByBadge;
 
                   return (
@@ -470,12 +477,12 @@ export default function StatementsPage() {
                       className="flex items-center gap-3 px-4 py-3 group cursor-pointer hover:bg-gray-50/80 transition"
                     >
                       {/* Status dot */}
-                      <span className={`shrink-0 h-2 w-2 rounded-full ${statusDotClass(s.status ?? "")}`} />
+                      <span className={`shrink-0 h-2 w-2 rounded-full ${statusDotClass(s.status ?? "", s.needsAccountSetup)}`} />
 
                       {/* Main info */}
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-mono text-gray-800">{s.fileName || monthStr}</p>
-                        <p className={`text-xs mt-0.5 ${s.status === "processing" ? "text-amber-500" : s.status === "error" ? "text-red-500" : s.status === "needs_review" ? "text-orange-500" : "text-gray-400"}`}>
+                        <p className={`text-xs mt-0.5 ${s.status === "processing" ? "text-amber-500" : s.status === "error" ? "text-red-500" : s.status === "needs_review" ? "text-orange-500" : s.needsAccountSetup ? "text-amber-700" : "text-gray-400"}`}>
                           {subtitle}
                         </p>
                       </div>
@@ -492,7 +499,7 @@ export default function StatementsPage() {
                       </div>
 
                       {/* Actions — visible on hover + always for confirm/error/needs_review */}
-                      <div className={`shrink-0 flex items-center gap-1 ${isConfirm || s.status === "needs_review" ? "" : "opacity-0 group-hover:opacity-100 transition-opacity"}`}>
+                      <div className={`shrink-0 flex items-center gap-1 ${isConfirm || s.status === "needs_review" || s.needsAccountSetup ? "" : "opacity-0 group-hover:opacity-100 transition-opacity"}`}>
                         {s.status === "error" && (
                           <button
                             onClick={() => handleReparse(s.id)}
