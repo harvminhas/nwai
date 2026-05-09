@@ -393,7 +393,14 @@ export default function ChatPage() {
   const isEmpty = messages.length === 0;
 
   return (
-    <div className="flex h-dvh max-h-dvh min-h-0 flex-col overflow-hidden lg:h-screen lg:max-h-screen">
+    <div
+      className={
+        // Below lg: AccountLayout stacks us under the mobile top bar (h-14). Full dvh here
+        // overflows the viewport and hides the composer — subtract that bar height.
+        "flex min-h-0 h-[calc(100dvh-3.5rem)] max-h-[calc(100dvh-3.5rem)] flex-col overflow-hidden " +
+        "lg:h-screen lg:max-h-screen"
+      }
+    >
       {/* Header */}
       <div className="flex shrink-0 items-center justify-between border-b border-gray-100 bg-white px-4 py-3 sm:px-6">
         <div className="flex items-center gap-2.5">
@@ -471,21 +478,33 @@ export default function ChatPage() {
               </div>
             )}
 
-            {/* Suggested prompts */}
-            <div>
-              <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+            {/* Suggested prompts — horizontal scroll on small screens to save vertical space */}
+            <div className="-mx-4 lg:mx-0">
+              <p className="mb-2 px-4 text-[11px] font-semibold uppercase tracking-wider text-gray-400 lg:px-0">
                 {recentSessions.length > 0 ? "Or try a prompt" : "Try asking"}
               </p>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div
+                className={
+                  "flex snap-x snap-mandatory gap-2 overflow-x-auto px-4 pb-2 lg:px-0 " +
+                  "[scrollbar-color:rgba(0,0,0,0.2)_transparent] [scrollbar-width:thin] " +
+                  "lg:flex-wrap lg:overflow-x-visible lg:pb-0 lg:snap-none"
+                }
+              >
                 {SUGGESTED.map((s) => (
                   <button
                     key={s.text}
+                    type="button"
                     onClick={() => sendMessage(s.text)}
                     disabled={!token}
-                    className="flex items-start gap-2.5 rounded-xl border border-gray-100 bg-white px-4 py-3 text-left text-sm text-gray-600 shadow-sm hover:border-purple-200 hover:bg-purple-50/40 hover:text-purple-800 transition disabled:opacity-50"
+                    className={
+                      "snap-start shrink-0 rounded-full border border-gray-200 bg-white px-3.5 py-2 text-left " +
+                      "text-xs font-medium text-gray-800 shadow-sm transition " +
+                      "hover:border-purple-200 hover:bg-purple-50/50 hover:text-purple-800 " +
+                      "disabled:opacity-50 sm:rounded-xl sm:px-4 sm:py-2.5 sm:text-sm"
+                    }
                   >
-                    <span className="text-base leading-none mt-0.5">{s.icon}</span>
-                    <span>{s.text}</span>
+                    <span className="mr-1 hidden sm:inline">{s.icon}</span>
+                    <span className="whitespace-nowrap">{s.text}</span>
                   </button>
                 ))}
               </div>
@@ -546,12 +565,26 @@ export default function ChatPage() {
         )}
       </div>
 
-      {/* Input bar — shrink-0 + safe area so it stays visible above the home indicator */}
-      <div className="shrink-0 border-t border-gray-100 bg-white px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
+      {/* Composer — high contrast so it doesn’t get lost above a busy page */}
+      <div
+        className={
+          "relative z-10 shrink-0 border-t-2 border-purple-100 " +
+          "bg-gradient-to-b from-white via-purple-50/50 to-purple-50 " +
+          "shadow-[0_-10px_44px_-8px_rgba(88,28,135,0.14)] " +
+          "px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6"
+        }
+      >
         <div className="mx-auto max-w-2xl">
-          <div className={`flex items-end gap-2 rounded-2xl border bg-white px-3 py-2 transition ${
-            streaming ? "border-purple-200 bg-purple-50/30" : "border-gray-200 focus-within:border-purple-300 focus-within:ring-2 focus-within:ring-purple-100"
-          }`}>
+          <div
+            className={`rounded-2xl border-2 bg-white p-1 shadow-md transition sm:p-1.5 ${
+              streaming
+                ? "border-purple-400 shadow-purple-500/25 ring-2 ring-purple-200/80"
+                : "border-purple-300 shadow-purple-900/10 " +
+                  "focus-within:border-purple-500 focus-within:shadow-lg focus-within:shadow-purple-500/20 " +
+                  "focus-within:ring-2 focus-within:ring-purple-200/90"
+            }`}
+          >
+            <div className={`flex items-end gap-2 rounded-xl px-2 py-1.5 sm:px-3 sm:py-2 ${streaming ? "bg-purple-50/50" : "bg-white"}`}>
             <textarea
               ref={inputRef}
               rows={1}
@@ -560,32 +593,40 @@ export default function ChatPage() {
               onKeyDown={handleKeyDown}
               placeholder={streaming ? "Waiting for response…" : "Ask about your finances…"}
               disabled={streaming || !token}
-              className="flex-1 resize-none bg-transparent text-sm text-gray-800 outline-none placeholder:text-gray-400 disabled:cursor-not-allowed"
+              aria-label={streaming ? "Waiting for AI response" : "Ask about your finances"}
+              className="flex-1 resize-none bg-transparent text-sm text-gray-800 outline-none placeholder:text-gray-500 disabled:cursor-not-allowed"
               style={{ minHeight: "24px", maxHeight: "160px" }}
             />
             <button
+              type="button"
               onClick={() => streaming ? abortRef.current?.abort() : sendMessage(input)}
               disabled={!token || (!streaming && !input.trim())}
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition disabled:opacity-40 ${
+              className={`flex shrink-0 items-center justify-center rounded-xl text-sm transition ${
                 streaming
-                  ? "bg-red-100 text-red-500 hover:bg-red-200"
-                  : "bg-purple-600 text-white hover:bg-purple-700 disabled:bg-gray-100 disabled:text-gray-400"
+                  ? "h-8 w-8 bg-red-100 text-red-600 shadow-sm hover:bg-red-200"
+                  : [
+                      "h-8 w-8 font-semibold text-white",
+                      "bg-gradient-to-b from-purple-500 to-purple-700 shadow-md shadow-purple-600/50",
+                      "ring-2 ring-purple-400/60 ring-offset-0 hover:from-purple-600 hover:to-purple-800 hover:shadow-lg hover:shadow-purple-600/55",
+                      "active:scale-[0.97] disabled:cursor-not-allowed disabled:from-gray-200 disabled:to-gray-300 disabled:text-gray-500",
+                      "disabled:shadow-none disabled:ring-0 disabled:hover:from-gray-200 disabled:hover:to-gray-300",
+                    ].join(" ")
               }`}
+              aria-label={streaming ? "Stop" : "Send"}
             >
               {streaming ? (
-                /* Stop icon */
-                <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+                <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
                   <rect x="4" y="4" width="16" height="16" rx="2" />
                 </svg>
               ) : (
-                /* Send icon */
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.269 20.876L5.999 12zm0 0h7.5" />
                 </svg>
               )}
             </button>
+            </div>
           </div>
-          <p className="mt-1.5 text-center text-[10px] text-gray-300">
+          <p className="mt-2 text-center text-[10px] text-purple-900/40">
             Analysis only — not regulated financial advice · Shift+Enter for new line
           </p>
         </div>
