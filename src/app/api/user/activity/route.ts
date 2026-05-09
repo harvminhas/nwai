@@ -100,9 +100,10 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // ── 3. Recurring rules ────────────────────────────────────────────────────
+    // ── 3. User-confirmed subscriptions (recurring rules) ─────────────────────
     const recSnap = await db
-      .collection(`users/${uid}/recurringRules`)
+      .collection(`users/${uid}/subscriptions`)
+      .where("status", "==", "user_confirmed")
       .orderBy("updatedAt", "desc")
       .limit(40)
       .get();
@@ -112,10 +113,10 @@ export async function GET(req: NextRequest) {
       events.push({
         id: `rec_${doc.id}`,
         type: "recurring_rule",
-        timestamp: d.updatedAt?.toDate?.()?.toISOString?.() ?? new Date().toISOString(),
-        title: `Recurring: "${d.merchant}"`,
+        timestamp: d.updatedAt ?? new Date().toISOString(),
+        title: `Recurring: "${d.name}"`,
         subtitle: d.frequency ? `${d.frequency} · ${d.category ?? ""}`.replace(/ · $/, "") : null,
-        meta: { merchant: d.merchant, frequency: d.frequency, category: d.category ?? null },
+        meta: { merchant: d.name, frequency: d.frequency, category: d.category ?? null },
       });
     }
 

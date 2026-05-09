@@ -27,7 +27,7 @@ import type { CashIncomeEntry } from "./cashIncome";
 import { occurrencesInMonth } from "./cashIncome";
 import type { CashCommitment } from "@/app/api/user/cash-commitments/route";
 import { commitmentOccurrencesInMonth } from "@/app/api/user/cash-commitments/route";
-import { merchantSlug, isIncomeCategory } from "./applyRules";
+import { merchantSlug, isIncomeCategory, txnKey } from "./applyRules";
 import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
 import { txFingerprint } from "./txFingerprint";
 import type { TypicalSpend } from "./spendingMetrics";
@@ -266,10 +266,11 @@ export async function buildAndCacheFinancialProfile(
   db: Firestore.Firestore,
 ): Promise<FinancialProfileCache> {
   // Fetch all data sources in parallel — same collections the assets page uses.
-  const [txData, rulesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap, backfillsSnap, cashCommitmentsSnap, manualLiabSnap, accountRatesSnap, goalsSnap, confirmedSubsSnap, userDocSnap] =
+  const [txData, rulesSnap, txnOverridesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap, backfillsSnap, cashCommitmentsSnap, manualLiabSnap, accountRatesSnap, goalsSnap, allSubsSnap, userDocSnap] =
     await Promise.all([
       extractAllTransactions(uid, db),
       db.collection(`users/${uid}/categoryRules`).get(),
+      db.collection(`users/${uid}/txnCategoryOverrides`).get(),
       db.collection("statements").where("userId", "==", uid).where("status", "==", "completed").get(),
       db.collection(`users/${uid}/manualAssets`).orderBy("updatedAt", "desc").get(),
       db.collection(`users/${uid}/balanceSnapshots`).orderBy("yearMonth", "desc").get(),
@@ -283,10 +284,16 @@ export async function buildAndCacheFinancialProfile(
       db.collection(`users/${uid}/manualLiabilities`).get(),
       db.collection(`users/${uid}/accountRates`).get(),
       db.collection(`users/${uid}/goals`).get(),
-      db.collection(`users/${uid}/subscriptions`)
-        .where("status", "in", ["confirmed", "user_confirmed"]).get(),
+      db.collection(`users/${uid}/subscriptions`).get(),
       db.collection("users").doc(uid).get(),
     ]);
+  // Split all subscriptions into confirmed (for Upcoming/profile) vs all (for category mapping).
+  const confirmedSubsSnap = {
+    docs: allSubsSnap.docs.filter((d) => {
+      const s = d.data().status as string | undefined;
+      return s === "confirmed" || s === "user_confirmed";
+    }),
+  };
 
   // Home currency: user-confirmed country takes precedence over auto-detection.
   // When no country is saved, detect from bank names — default to "USD" (not "CAD")
@@ -362,16 +369,52 @@ export async function buildAndCacheFinancialProfile(
     ? (debtTagsSnap.data()?.tags ?? {})
     : {};
 
-  // Apply user category rules to expense transactions
+  // Per-transaction overrides (merchant detail page category picker) — same as consolidated API.
+  const txnOverridesMap = new Map<string, string>();
+  for (const doc of txnOverridesSnap.docs) {
+    const d = doc.data() as { category?: string };
+    if (d.category) txnOverridesMap.set(doc.id, d.category);
+  }
+
+  // Apply user category rules to expense transactions.
+  // Priority (highest → lowest): txnCategoryOverrides > categoryRules > subscription.category > parsed.
+
+  // subscription doc slug = Firestore doc ID; use prefix matching to handle truncated bank names.
+  // e.g. subscription slug "king-s-chair-ba" matches txn slug "king-s-chair-barbershop".
+  // Use ALL subscription docs (any status) for category mapping — the user may have set a
+  // category on a "suggested" doc without confirming it as a recurring subscription.
+  const subscriptionCategoryEntries: [string, string][] = [];
+  for (const doc of allSubsSnap.docs) {
+    const s = doc.data();
+    if (doc.id && s.category) subscriptionCategoryEntries.push([doc.id, s.category as string]);
+  }
+  function getSubscriptionCategory(txnSlug: string): string | undefined {
+    for (const [subSlug, subCat] of subscriptionCategoryEntries) {
+      if (txnSlug === subSlug || txnSlug.startsWith(subSlug) || subSlug.startsWith(txnSlug)) return subCat;
+    }
+    return undefined;
+  }
+
+  // Explicit categoryRules map — exact slug match, highest priority
   const rulesMap = new Map<string, string>();
   for (const doc of rulesSnap.docs) {
     const r = doc.data();
     if (r.merchant && r.category) rulesMap.set(merchantSlug(r.merchant as string), r.category as string);
   }
-  const categorizedExpenseTxns: ExpenseTxnRecord[] = txData.expenseTxns.map((t) => ({
-    ...t,
-    category: rulesMap.get(merchantSlug(t.merchant)) ?? t.category,
-  }));
+
+  const categorizedExpenseTxns: ExpenseTxnRecord[] = txData.expenseTxns.map((t) => {
+    const slug = merchantSlug(t.merchant);
+    const overrideKey =
+      t.accountSlug
+        ? txnKey(t.accountSlug, { date: t.date, amount: t.amount, merchant: t.merchant })
+        : null;
+    const category =
+      (overrideKey ? txnOverridesMap.get(overrideKey) : undefined) ??
+      rulesMap.get(slug) ??
+      getSubscriptionCategory(slug) ??
+      t.category;
+    return { ...t, category };
+  });
 
   // After applying rules, any expense whose category is now an income category
   // (e.g. "Income - Other", "Income - Salary") was explicitly reclassified by the

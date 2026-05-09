@@ -54,8 +54,13 @@ export function statementAccountSlug(parsed: ParsedStatementData): string {
 
 // ── main builder ──────────────────────────────────────────────────────────────
 
-/** Max expense transactions to include before truncating (token budget). */
-const TOKEN_BUDGET = 1200;
+/**
+ * Max merchants to include in the expense section (token budget).
+ * We group ALL transactions first, then cap the number of merchant groups shown.
+ * This ensures every visit to any given merchant is visible — even infrequent ones
+ * like a barber shop that appears once per month but across many months.
+ */
+const MAX_MERCHANT_GROUPS = 200;
 
 /**
  * "chat"     → full individual transactions per merchant (best for Q&A — "when did I last pay X?")
@@ -179,11 +184,10 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
     )
     .join("\n");
 
-  // Expense transactions grouped by merchant — convert to home currency at insert time so
-  // all per-merchant amounts, totals, and sort order are consistent with what the UI shows.
-  const allExpenseTxns = expenseTxns.slice(0, TOKEN_BUDGET);
+  // Expense transactions grouped by merchant — group ALL transactions first so no
+  // individual merchant loses its older visits. Convert to home currency at insert time.
   const expenseByMerchant = new Map<string, { displayName: string; txns: { date: string; amount: number; category: string }[] }>();
-  for (const t of allExpenseTxns) {
+  for (const t of expenseTxns) {
     const key        = t.merchant.toLowerCase().trim();
     const homeAmount = toHome(t.amount, t.currency);
     const entry      = expenseByMerchant.get(key);
@@ -194,31 +198,34 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
     }
   }
 
+  // Sort merchants by total spend descending, then cap at MAX_MERCHANT_GROUPS
   const sortedMerchants = Array.from(expenseByMerchant.values())
-    .sort((a, b) => b.txns.reduce((s, t) => s + t.amount, 0) - a.txns.reduce((s, t) => s + t.amount, 0));
+    .sort((a, b) => b.txns.reduce((s, t) => s + t.amount, 0) - a.txns.reduce((s, t) => s + t.amount, 0))
+    .slice(0, MAX_MERCHANT_GROUPS);
 
   const expenseSection = sortedMerchants
     .map(({ displayName, txns }) => {
       const total    = txns.reduce((s, t) => s + t.amount, 0);
       const category = txns[0]?.category ?? "Other";
+      // Sort each merchant's transactions newest-first
+      const sortedTxns = txns.slice().sort((a, b) => b.date.localeCompare(a.date));
       if (mode === "insights") {
         // Compact: one line per merchant with per-occurrence amounts so price changes are visible
-        const months = [...new Set(txns.map((t) => t.date.slice(0, 7)))].sort();
-        const sortedTxns = txns.slice().sort((a, b) => a.date.localeCompare(b.date));
+        const months = [...new Set(sortedTxns.map((t) => t.date.slice(0, 7)))].sort();
         const allSame = sortedTxns.every((t) => Math.abs(t.amount - sortedTxns[0].amount) < 0.01);
         const amountStr = allSame
           ? `${fmt(sortedTxns[0].amount)}/txn`
           : `amounts: ${sortedTxns.map((t) => `${t.date.slice(0, 7)}:${fmt(t.amount)}`).join(", ")}`;
         return `  ${displayName} [${category}]: ${txns.length} txn${txns.length !== 1 ? "s" : ""}, ${amountStr}, total ${fmt(total)} (${months.join(", ")})`;
       }
-      // Chat mode: full per-date lines
-      const lines = txns.map((t) => `    ${t.date}: ${fmt(t.amount)} [${t.category}]`).join("\n");
+      // Chat mode: full per-date lines (all dates, newest first)
+      const lines = sortedTxns.map((t) => `    ${t.date}: ${fmt(t.amount)} [${t.category}]`).join("\n");
       return `  ${displayName} (${txns.length} txn${txns.length !== 1 ? "s" : ""}, total ${fmt(total)}):\n${lines}`;
     })
     .join("\n");
 
-  const truncationNote = expenseTxns.length > TOKEN_BUDGET
-    ? `  (showing most recent ${TOKEN_BUDGET} of ${expenseTxns.length} total expense transactions)`
+  const truncationNote = expenseByMerchant.size > MAX_MERCHANT_GROUPS
+    ? `  (showing top ${MAX_MERCHANT_GROUPS} of ${expenseByMerchant.size} distinct merchants by total spend)`
     : "";
 
   // Subscriptions — already filtered to confirmed/user_confirmed in the profile cache

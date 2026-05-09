@@ -47,13 +47,70 @@ const SUGGESTED = [
 ];
 
 // ── markdown-ish renderer ──────────────────────────────────────────────────────
-// Converts **bold**, bullet lines, and line breaks without a full MD lib
+// Converts **bold**, bullet lines, pipe tables, and line breaks without a full MD lib
+
+function parsePipeTableRow(line: string): string[] | null {
+  const t = line.trim();
+  if (!t.startsWith("|") || !t.endsWith("|")) return null;
+  return t.slice(1, -1).split("|").map((c) => c.trim());
+}
+
+function isTableSeparatorRow(cells: string[]): boolean {
+  return cells.length > 0 && cells.every((c) => /^:?-{2,}:?$/.test(c.replace(/\s/g, "")));
+}
+
+function TableView({ rows }: { rows: string[][] }) {
+  if (rows.length === 0) return null;
+  const header = rows[0]!;
+  let dataStart = 1;
+  if (rows.length > 1 && isTableSeparatorRow(rows[1]!)) dataStart = 2;
+  const body = rows.slice(dataStart);
+  return (
+    <div className="my-2 -mx-1 max-w-full overflow-x-auto rounded-lg border border-gray-100 bg-gray-50/80">
+      <table className="w-full min-w-[320px] border-collapse text-left text-xs text-gray-800">
+        <thead>
+          <tr className="border-b border-gray-200 bg-gray-100/90">
+            {header.map((h, i) => (
+              <th key={i} className="whitespace-nowrap px-2 py-1.5 font-semibold text-gray-700">
+                <span dangerouslySetInnerHTML={{ __html: boldifyStatic(h) }} />
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {body.map((cells, ri) => (
+            <tr key={ri} className="border-b border-gray-100 last:border-0 hover:bg-white/80">
+              {cells.map((cell, ci) => (
+                <td key={ci} className="max-w-[200px] px-2 py-1.5 align-top text-gray-700 sm:max-w-[280px]">
+                  <span className="break-words" dangerouslySetInnerHTML={{ __html: boldifyStatic(cell) }} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function boldifyStatic(s: string) {
+  return s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+}
 
 function renderContent(text: string) {
   const lines = text.split("\n");
   const elements: React.ReactNode[] = [];
   let inList = false;
   let listItems: string[] = [];
+  /** Accumulated pipe-table rows (including header); separator row kept for TableView to strip */
+  let tableRows: string[][] | null = null;
+
+  function flushTable() {
+    if (tableRows && tableRows.length > 0) {
+      elements.push(<TableView key={`tbl-${elements.length}`} rows={tableRows} />);
+      tableRows = null;
+    }
+  }
 
   function flushList() {
     if (listItems.length > 0) {
@@ -62,7 +119,7 @@ function renderContent(text: string) {
           {listItems.map((item, i) => (
             <li key={i} className="flex items-start gap-1.5 text-sm">
               <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-current opacity-40" />
-              <span dangerouslySetInnerHTML={{ __html: boldify(item) }} />
+              <span dangerouslySetInnerHTML={{ __html: boldifyStatic(item) }} />
             </li>
           ))}
         </ul>
@@ -72,12 +129,19 @@ function renderContent(text: string) {
     }
   }
 
-  function boldify(s: string) {
-    return s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  }
-
   for (const line of lines) {
     const trimmed = line.trim();
+    const pipeRow = parsePipeTableRow(line);
+
+    if (pipeRow && pipeRow.length > 0) {
+      flushList();
+      if (tableRows === null) tableRows = [];
+      tableRows.push(pipeRow);
+      continue;
+    }
+
+    flushTable();
+
     if (trimmed.startsWith("- ") || trimmed.startsWith("• ")) {
       inList = true;
       listItems.push(trimmed.slice(2));
@@ -90,18 +154,19 @@ function renderContent(text: string) {
         elements.push(<div key={elements.length} className="h-2" />);
       } else if (trimmed.startsWith("## ")) {
         elements.push(
-          <p key={elements.length} className="mt-2 font-semibold text-sm text-gray-800"
-            dangerouslySetInnerHTML={{ __html: boldify(trimmed.slice(3)) }} />
+          <p key={elements.length} className="mt-3 first:mt-0 font-semibold text-[13px] uppercase tracking-wide text-gray-800"
+            dangerouslySetInnerHTML={{ __html: boldifyStatic(trimmed.slice(3)) }} />
         );
       } else {
         elements.push(
           <p key={elements.length} className="text-sm leading-relaxed"
-            dangerouslySetInnerHTML={{ __html: boldify(trimmed) }} />
+            dangerouslySetInnerHTML={{ __html: boldifyStatic(trimmed) }} />
         );
       }
     }
   }
   flushList();
+  flushTable();
   return elements;
 }
 
@@ -328,7 +393,7 @@ export default function ChatPage() {
   const isEmpty = messages.length === 0;
 
   return (
-    <div className="flex h-[calc(100vh-0px)] flex-col lg:h-screen">
+    <div className="flex h-dvh max-h-dvh min-h-0 flex-col overflow-hidden lg:h-screen lg:max-h-screen">
       {/* Header */}
       <div className="flex shrink-0 items-center justify-between border-b border-gray-100 bg-white px-4 py-3 sm:px-6">
         <div className="flex items-center gap-2.5">
@@ -364,8 +429,8 @@ export default function ChatPage() {
         </div>
       </div>
 
-      {/* Messages area */}
-      <div className="flex-1 overflow-y-auto">
+      {/* Scrolls internally so the composer stays on-screen on mobile (flex-1 needs min-h-0) */}
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain">
         {isEmpty ? (
           /* Empty state — history + suggested prompts */
           <div className="mx-auto w-full max-w-xl px-4 py-10">
@@ -481,8 +546,8 @@ export default function ChatPage() {
         )}
       </div>
 
-      {/* Input bar */}
-      <div className="shrink-0 border-t border-gray-100 bg-white px-4 py-3 sm:px-6">
+      {/* Input bar — shrink-0 + safe area so it stays visible above the home indicator */}
+      <div className="shrink-0 border-t border-gray-100 bg-white px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
         <div className="mx-auto max-w-2xl">
           <div className={`flex items-end gap-2 rounded-2xl border bg-white px-3 py-2 transition ${
             streaming ? "border-purple-200 bg-purple-50/30" : "border-gray-200 focus-within:border-purple-300 focus-within:ring-2 focus-within:ring-purple-100"

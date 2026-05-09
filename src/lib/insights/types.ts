@@ -130,4 +130,6 @@ export interface SubscriptionRecord {
   confirmedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** User-assigned spending category (e.g. "Barber", "Subscriptions"). */
+  category?: string | null;
 }

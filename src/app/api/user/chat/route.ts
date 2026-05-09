@@ -1,149 +1,196 @@
+/**
+ * POST /api/user/chat
+ *
+ * AI chat with Gemini function calling.
+ *
+ * Flow:
+ *   1. Load financial profile from cache (single Firestore read).
+ *   2. Build compact system context (balances, monthly totals — no transaction list).
+ *   3. Non-streaming round: send message to Gemini with tool declarations.
+ *   4. If model returns function call(s): execute them in-memory (no extra DB reads),
+ *      send results back, repeat up to MAX_TOOL_ROUNDS.
+ *   5. Stream the final text response back to the client.
+ *
+ * Adding a new tool: add its FunctionDeclaration in src/lib/chat/tools.ts
+ * and its execute* function in src/lib/chat/executor.ts.
+ */
+
 import { NextRequest, NextResponse } from "next/server";
-import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { buildFinancialBrief } from "@/lib/financialBrief";
+import type { Part } from "@google/generative-ai";
+import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { resolvePlan } from "@/app/api/user/plan/route";
+import { resolveAccess } from "@/lib/access/resolveAccess";
+import { CHAT_TOOLS } from "@/lib/chat/tools";
+import { executeTool } from "@/lib/chat/executor";
+import type { ToolParams } from "@/lib/chat/executor";
+import { buildChatContext } from "@/lib/chat/context";
 
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
 }
 
-const MAX_MONTHS = 24;
+/** Max tool-call rounds per request (prevents runaway loops). */
+const MAX_TOOL_ROUNDS = 4;
 
-// ── system prompt ──────────────────────────────────────────────────────────────
-
-function buildSystemPrompt(brief: string): string {
-  return `You are a knowledgeable, friendly personal finance assistant. You have access to the user's real financial data shown below.
-
-CRITICAL RULES:
-- Always ground your answers in the actual numbers from the data. Cite specific figures.
-- Never invent numbers not present in the data.
-- If asked something the data doesn't cover, say so clearly.
-- Keep responses concise and actionable. Use bullet points for lists.
-- Use plain language — no jargon unless the user uses it first.
-- When you spot something worth flagging (low emergency fund, high debt cost, etc.), mention it once briefly.
-- Always note which time period the data is from (e.g., "Based on your March 2025 data...").
-- This is financial analysis only, not regulated financial advice.
-
-FORMATTING RULES:
-- When your answer contains a key metric (savings rate, income, expenses, net worth, savings amount, debt total, etc.), lead with it on its own bolded line: e.g. **Savings Rate: -9.8%**
-- Follow immediately with 1-2 supporting figures on the next line (e.g. Income: $7,276 | Expenses: $7,991)
-- Then your explanation paragraph(s).
-- For lists of items (e.g. top spending categories), use bullet points with bold merchant/category names.
-
-HOW THIS APP CALCULATES METRICS (apply these definitions when answering):
-- "Core expenses" = all spending EXCEPT Transfers (inter-account moves). Includes debt payments, investments, fees.
-- "Transfers" category = inter-account or e-transfers — always excluded from expense totals.
-- "Debt Payments" category = CC/loan/mortgage payments made FROM a checking account (not interest charges).
-  They are split into two sub-types:
-    • minimum/scheduled — the required payment (CC minimum, fixed loan instalment, mortgage payment)
-    • extra above minimum — paying more than required (e.g. full CC balance payoff, lump-sum extra)
-- "Savings rate (default/incl. debt)" = (income − core expenses) / income × 100
-  Debt payments count as spending — useful to see true cash outflow vs income.
-- "Savings rate (excl. min. debt)" = (income − (core expenses − min debt payments)) / income × 100
-  Minimum payments are treated as obligatory saving/debt-reduction, not discretionary spending.
-  This is what the savings rate card shows when the user turns ON the "exclude debt payments" toggle.
-- "Investments & Savings" category = RRSP/TFSA/mutual fund contributions — counted as expenses (money leaving the account).
-- "Fees" category = bank fees, NSF charges, annual card fees — counted as expenses.
-- "Net" for a month = income − core expenses (negative means spent more than earned that month).
-- "Emergency fund" target = 6 months of core expenses. Coverage = liquid assets / target × 100%.
-
-EXPENSE CATEGORIES (canonical list):
-Dining, Groceries, Shopping, Transportation, Entertainment, Subscriptions, Healthcare,
-Fees, Debt Payments, Investments & Savings, Transfers (excluded), Cash & ATM, Other, Income.
-
-USER'S FINANCIAL DATA:
-${brief}`;
-}
-
+const STREAM_HEADERS = {
+  "Content-Type": "text/plain; charset=utf-8",
+  "X-Content-Type-Options": "nosniff",
+  "Cache-Control": "no-cache",
+};
 
 // ── route handler ──────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  // Auth
+  // ── 1. Auth ────────────────────────────────────────────────────────────────
   const authHeader = req.headers.get("Authorization") ?? "";
-  const idToken = authHeader.replace("Bearer ", "").trim();
+  const idToken    = authHeader.replace("Bearer ", "").trim();
   if (!idToken) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  let uid: string;
+  const { auth, db } = getFirebaseAdmin();
+  let actorUid: string;
   try {
-    const { auth } = getFirebaseAdmin();
     const decoded = await auth.verifyIdToken(idToken);
-    uid = decoded.uid;
+    actorUid      = decoded.uid;
   } catch {
     return NextResponse.json({ error: "Invalid token" }, { status: 401 });
   }
 
-  // Parse body
+  // ── 2. Resolve active profile (own vs. shared partner) ────────────────────
+  const access    = await resolveAccess(req, db);
+  const targetUid = access?.targetUid ?? actorUid;
+
+  // ── 3. Plan gate (actor must be Pro) ──────────────────────────────────────
+  const actorDoc  = await db.collection("users").doc(actorUid).get();
+  const actorPlan = resolvePlan(
+    actorDoc.exists ? (actorDoc.data() as Record<string, unknown>) : undefined,
+  ) ?? "free";
+  if (actorPlan === "free") {
+    return NextResponse.json(
+      { error: "AI Chat is a Pro feature. Upgrade to access." },
+      { status: 403 },
+    );
+  }
+
+  // ── 4. Parse body ─────────────────────────────────────────────────────────
   let message: string;
   let history: ChatMessage[];
   try {
     const body = await req.json();
-    message = (body.message ?? "").trim();
-    history = Array.isArray(body.history) ? body.history : [];
+    message    = (body.message ?? "").trim();
+    history    = Array.isArray(body.history) ? body.history : [];
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
-  if (!message) return NextResponse.json({ error: "Message is required" }, { status: 400 });
-
-  // Check plan — use resolvePlan which honours manualPro and subscription.status
-  const { db } = getFirebaseAdmin();
-  const userDoc = await db.collection("users").doc(uid).get();
-  const plan = resolvePlan(userDoc.exists ? (userDoc.data() as Record<string, unknown>) : undefined) ?? "free";
-  if (plan === "free") {
-    return NextResponse.json({ error: "AI Chat is a Pro feature. Upgrade to access." }, { status: 403 });
+  if (!message) {
+    return NextResponse.json({ error: "Message is required" }, { status: 400 });
   }
 
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) return NextResponse.json({ error: "AI not configured" }, { status: 500 });
 
-  // Build the brief with the full available history (up to MAX_MONTHS).
-  // The brief's own TOKEN_BUDGET (1200 transactions) guards context-window size.
-  // Using a scout pre-call to pick fewer months was saving tokens but silently
-  // dropping older transactions, causing incomplete answers for merchant-history
-  // questions like "how often do I go to the barber?"
-  const fullProfile = await getFinancialProfile(uid, db);
-  const availableMonths = Math.min(fullProfile.allTxMonths.length, MAX_MONTHS);
-  const brief = await buildFinancialBrief(uid, "chat", availableMonths);
+  // ── 5. Load financial profile (uses cache — no per-request rebuild) ────────
+  console.log(`[chat] POST uid=${targetUid} message="${message.slice(0, 60)}"`);
+  const profile = await getFinancialProfile(targetUid, db);
+  console.log(`[chat] profile loaded — expTxns=${profile.expenseTxns.length} months=${profile.allTxMonths.length} stale=${profile.cacheStale ?? false}`);
 
-  // Set up Gemini streaming
-  const genAI  = new GoogleGenerativeAI(apiKey);
-  const model  = genAI.getGenerativeModel({
+  // ── 6. Build compact system context ───────────────────────────────────────
+  const systemContext = buildChatContext(profile);
+
+  // ── 7. Set up Gemini model with tools ─────────────────────────────────────
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
-    systemInstruction: buildSystemPrompt(brief),
+    systemInstruction: systemContext,
+    tools: CHAT_TOOLS,
   });
 
-  // Convert history to Gemini format (max last 20 turns to save tokens)
-  const recentHistory = history.slice(-20);
-  const geminiHistory = recentHistory.map((m) => ({
-    role: m.role === "assistant" ? "model" : "user",
+  // Convert history to Gemini format (max last 20 turns).
+  // Gemini requires history to start with a 'user' turn — drop any leading model messages.
+  const rawHistory = history.slice(-20).map((m) => ({
+    role:  m.role === "assistant" ? "model" : "user",
     parts: [{ text: m.content }],
   }));
+  const firstUserIdx  = rawHistory.findIndex((m) => m.role === "user");
+  const geminiHistory = firstUserIdx > 0 ? rawHistory.slice(firstUserIdx) : rawHistory;
 
-  const chat   = model.startChat({ history: geminiHistory });
-  const result = await chat.sendMessageStream(message);
+  const chat = model.startChat({ history: geminiHistory });
 
-  // Stream response back
-  const stream = new ReadableStream({
-    async start(controller) {
-      try {
-        for await (const chunk of result.stream) {
-          const text = chunk.text();
-          if (text) controller.enqueue(new TextEncoder().encode(text));
+  // ── 8. Tool call loop (non-streaming) ─────────────────────────────────────
+  // We use non-streaming for rounds that may produce tool calls, then switch
+  // to streaming for the final text response.
+
+  let pendingParts: string | Part[] = message;
+  let finalText: string | null      = null;
+
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    const result   = await chat.sendMessage(pendingParts);
+    const response = result.response;
+
+    // Check for function calls in this round
+    const functionCalls = response.functionCalls();
+
+    if (!functionCalls || functionCalls.length === 0) {
+      // No tools requested — this IS the final answer
+      finalText = response.text();
+      break;
+    }
+
+    // Execute all tool calls (in-memory, parallel)
+    console.log(`[chat] round=${round + 1} tools=${functionCalls.map((f) => `${f.name}(${JSON.stringify(f.args)})`).join(", ")}`);
+    const functionResponseParts: Part[] = await Promise.all(
+      functionCalls.map(async (fc) => {
+        const toolResult = executeTool(fc.name, fc.args as ToolParams, profile);
+        const rows = toolResult.data?.rows;
+        console.log(`[chat] tool=${fc.name} rows=${Array.isArray(rows) ? rows.length : "n/a"}`);
+        if (Array.isArray(rows)) {
+          rows.forEach((r: Record<string, unknown>, i: number) =>
+            console.log(`[chat]   row[${i}] ${r.date} | ${r.merchant} | ${r.amount} | cat=${r.category}`),
+          );
         }
-      } finally {
-        controller.close();
+        return {
+          functionResponse: {
+            name:     fc.name,
+            response: toolResult.ok
+              ? toolResult.data
+              : { error: toolResult.error ?? "Tool execution failed" },
+          },
+        } as Part;
+      }),
+    );
+
+    pendingParts = functionResponseParts;
+
+    // If this was the last allowed round, force a text response on the next iteration.
+    // The loop will call sendMessage once more with the function responses,
+    // and since we've hit MAX_TOOL_ROUNDS the model must answer in text.
+  }
+
+  // ── 9. If we used all rounds without a final text answer, do one last call ─
+  if (finalText === null) {
+    const lastResult = await chat.sendMessage(pendingParts);
+    finalText        = lastResult.response.text();
+  }
+
+  // ── 10. Stream the final answer back ──────────────────────────────────────
+  // We have the full text from the non-streaming calls above.
+  // Write it to a ReadableStream so the client-side streaming reader works
+  // identically to the previous implementation.
+  const encoder    = new TextEncoder();
+  const textToSend = finalText ?? "";
+
+  const stream = new ReadableStream({
+    start(controller) {
+      // Emit in ~80-char chunks to give a streaming feel
+      const CHUNK = 80;
+      for (let i = 0; i < textToSend.length; i += CHUNK) {
+        controller.enqueue(encoder.encode(textToSend.slice(i, i + CHUNK)));
       }
+      controller.close();
     },
   });
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/plain; charset=utf-8",
-      "X-Content-Type-Options": "nosniff",
-      "Cache-Control": "no-cache",
-    },
-  });
+  return new Response(stream, { headers: STREAM_HEADERS });
 }

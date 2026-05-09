@@ -218,6 +218,7 @@ export async function applyRecurringRuleToSubscriptionDoc(
     confirmedAt: now,
     updatedAt: now,
     upcomingSuppressed: false,
+    ...(rule.category != null ? { category: rule.category } : {}),
   };
 
   if (!snap.exists) {

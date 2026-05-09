@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { fireInsightEvent } from "@/lib/insights/index";
 import type { InsightEventType } from "@/lib/insights/index";
+import { buildAndCacheFinancialProfile } from "@/lib/financialProfile";
 
 export const maxDuration = 120;
 
@@ -32,6 +33,10 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json().catch(() => ({})) as { event?: InsightEventType; meta?: Record<string, unknown> };
     const eventType: InsightEventType = body.event ?? "full.refresh";
+
+    // Always rebuild the financial profile first so insights and chat see fresh categories,
+    // recurring rule assignments, and any other user preference changes.
+    await buildAndCacheFinancialProfile(uid, db);
 
     await fireInsightEvent({ type: eventType, meta: body.meta }, uid, db);
 

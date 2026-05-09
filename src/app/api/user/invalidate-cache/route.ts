@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
-import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
+import { buildAndCacheFinancialProfile } from "@/lib/financialProfile";
 
 async function getUid(req: NextRequest): Promise<string | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
@@ -22,6 +22,6 @@ export async function POST(req: NextRequest) {
   if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { db } = getFirebaseAdmin();
-  await invalidateFinancialProfileCache(uid, db);
+  await buildAndCacheFinancialProfile(uid, db);
   return NextResponse.json({ ok: true });
 }

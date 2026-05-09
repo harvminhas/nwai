@@ -162,10 +162,9 @@ export async function GET(req: NextRequest) {
   }
 
   // ── 2. Cash commitments ────────────────────────────────────────────────────
-  const [cashSnap, recurringSnap, ratesSnap, sourceMappingsSnap, cashIncomeSnap, subscriptionsSnap] =
+  const [cashSnap, ratesSnap, sourceMappingsSnap, cashIncomeSnap, subscriptionsSnap] =
     await Promise.all([
     db.collection(`users/${uid}/cashCommitments`).get(),
-    db.collection(`users/${uid}/recurringRules`).get(),
     db.collection(`users/${uid}/accountRates`).get(),
     db.collection(`users/${uid}/sourceMappings`).get(),
     db.collection(`users/${uid}/cashIncome`).get(),
@@ -182,11 +181,6 @@ export async function GET(req: NextRequest) {
     sourceVisitId?: string; sourceEventId?: string;
   });
   const cashIncomeItems = cashIncomeSnap.docs.map((d) => d.data() as import("@/lib/cashIncome").CashIncomeEntry);
-
-  // ── 3. User-marked recurring rules ─────────────────────────────────────────
-  const recurringRules = recurringSnap.docs.map((d) => d.data() as {
-    merchant: string; amount: number; frequency: string; category?: string; slug: string;
-  });
 
   // ── 4. Account rates (CC APR alert + minimum payment estimate) ─────────────
   const ratesByAccount: Record<string, number> = {};
@@ -503,31 +497,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // ── D. Recurring rules when Firestore did not already emit that slug from (B) ───
-  for (const rule of recurringRules) {
-    if (rule.frequency === "never") continue;
-    if (firestoreUpcomingSlugs.has(rule.slug)) continue;
-    const key = normKey(rule.merchant);
-    if (seenMerchants.has(key)) continue;
-    seenMerchants.add(key);
-    const occ = nextOccurrence(rule.merchant);
-    const hasExactDate = occ && occ.daysFromNow >= 0 && occ.daysFromNow <= LOOK_AHEAD + 14;
-    const subtitleParts: string[] = [`Recurring · ${rule.category ?? rule.frequency ?? "monthly"}`];
-    if (occ?.account) subtitleParts.push(occ.account);
-    upcoming.push({
-      id: `rule-${rule.slug}`,
-      date: hasExactDate ? occ!.date : thisMonth,
-      daysFromNow: hasExactDate ? occ!.daysFromNow : 9999,
-      title: rule.merchant,
-      subtitle: subtitleParts.join(" · "),
-      amount: rule.amount,
-      type: "subscription",
-      href: `/account/spending/merchant/${rule.slug}`,
-      isOverdue: false,
-      isThisMonth: !hasExactDate,
-      predictedDate: !hasExactDate && occ ? occ.date : undefined,
-    });
-  }
+  // Section D removed: user_confirmed subscriptions are fully handled by section B above.
 
   // ── E. CC minimum payment estimate ────────────────────────────────────────
   if (consolidated) {

@@ -10,6 +10,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import type { AgentActionTool } from "@/lib/agentTypes";
+import { applyRecurringRuleToSubscriptionDoc } from "@/lib/subscriptionRegistry";
+import { merchantSlug } from "@/lib/applyRules";
 
 function authToken(req: NextRequest): string | null {
   const h = req.headers.get("authorization");
@@ -56,21 +58,18 @@ export async function POST(req: NextRequest) {
     }
 
     else if (tool === "mark_subscription_cancelled") {
-      const { merchantSlug, merchantName } = params as {
+      const { merchantSlug: mSlug, merchantName } = params as {
         merchantSlug?: string; merchantName?: string;
       };
-      if (!merchantSlug) return NextResponse.json({ error: "merchantSlug required" }, { status: 400 });
-      // Store a cancellation note in the recurring rules collection
-      await userRef.collection("recurringRules").doc(merchantSlug).set({
-        merchant: merchantName ?? merchantSlug,
-        slug: merchantSlug,
+      if (!mSlug) return NextResponse.json({ error: "merchantSlug required" }, { status: 400 });
+      await applyRecurringRuleToSubscriptionDoc(uid, db, {
+        merchant: merchantName ?? mSlug,
+        slug: mSlug ?? merchantSlug(merchantName ?? mSlug),
         frequency: "never",
         category: "Cancelled",
-        cancelledAt: now,
-        cancelledBy: "agent",
         amount: 0,
-      }, { merge: true });
-      resultMessage = `${merchantName ?? merchantSlug} marked as cancelled.`;
+      });
+      resultMessage = `${merchantName ?? mSlug} marked as cancelled.`;
     }
 
     else if (tool === "set_budget_limit") {

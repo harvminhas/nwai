@@ -7,6 +7,7 @@ import {
   releaseSubscriptionUserLock,
 } from "@/lib/subscriptionRegistry";
 import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
+import type { SubscriptionRecord } from "@/lib/insights/types";
 
 async function getUid(req: NextRequest): Promise<string | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
@@ -24,13 +25,25 @@ export interface RecurringRule {
   slug: string;
 }
 
-/** GET — list all user-marked recurring rules */
+/** GET — list all user-confirmed subscriptions (single source of truth) */
 export async function GET(req: NextRequest) {
   const uid = await getUid(req);
   if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { db } = getFirebaseAdmin();
-  const snap = await db.collection(`users/${uid}/recurringRules`).get();
-  const rules: RecurringRule[] = snap.docs.map((d) => d.data() as RecurringRule);
+  const snap = await db
+    .collection(`users/${uid}/subscriptions`)
+    .where("status", "==", "user_confirmed")
+    .get();
+  const rules: RecurringRule[] = snap.docs.map((d) => {
+    const s = d.data() as SubscriptionRecord;
+    return {
+      merchant: s.name,
+      amount:   s.amount ?? s.suggestedAmount ?? 0,
+      frequency: s.frequency ?? s.suggestedFrequency ?? "monthly",
+      category: s.category ?? undefined,
+      slug:     s.merchantSlug,
+    };
+  });
   return NextResponse.json({ rules });
 }
 
@@ -48,11 +61,6 @@ export async function PUT(req: NextRequest) {
   const { db } = getFirebaseAdmin();
   const slug = merchantSlug(merchant);
   const freq = frequency ?? "monthly";
-  await db.doc(`users/${uid}/recurringRules/${slug}`).set({
-    merchant, amount, frequency: freq,
-    category: category ?? null, slug,
-    updatedAt: new Date(),
-  });
   await applyRecurringRuleToSubscriptionDoc(uid, db, {
     merchant,
     amount,
@@ -72,7 +80,6 @@ export async function DELETE(req: NextRequest) {
   const slug = searchParams.get("slug");
   if (!slug) return NextResponse.json({ error: "slug required" }, { status: 400 });
   const { db } = getFirebaseAdmin();
-  await db.doc(`users/${uid}/recurringRules/${slug}`).delete();
   await releaseSubscriptionUserLock(uid, db, slug);
   await invalidateFinancialProfileCache(uid, db);
   return NextResponse.json({ ok: true });
