@@ -284,37 +284,68 @@ export function getMonthlyExpenses(
   return options?.core ? entry.coreExpensesTotal : entry.expensesTotal;
 }
 
-// ── getLatestCompleteMonth ─────────────────────────────────────────────────────
+// ── Month pickers (Today hero, insights) ─────────────────────────────────────
+// Statement periods are usually full calendar months; include the current month
+// so a freshly uploaded May statement surfaces May even when "today" is still in May.
 
-/**
- * Return the most recent YYYY-MM to use for the savings-rate / income-expenses display.
- *
- * Strategy:
- *  1. Start from `profile.latestTxMonth` — this is the last month with ANY transaction.
- *  2. If that month is the current calendar month (always partial), step back to the
- *     previous month.
- *  3. If no history entry is found at all, fall back to latestTxMonth.
- *
- * We intentionally do NOT require both income and expenses — a credit-card-only
- * statement produces expenses without income, which is still a valid complete month.
- */
-export function getLatestCompleteMonth(profile: FinancialProfileCache): string {
-  const now       = new Date();
-  const currentYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-
-  // All history months sorted descending, excluding the current partial month
-  const pastMonths = [...profile.monthlyHistory]
-    .map((h) => h.yearMonth)
-    .filter((ym) => ym < currentYM)
-    .sort((a, b) => b.localeCompare(a));
-
-  if (pastMonths.length > 0) return pastMonths[0];
-
-  // The only data is from the current month — return it as-is
-  return profile.latestTxMonth ?? currentYM;
+function todayYearMonth(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
+/** Latest month row with core income, or null. */
+export function getLatestMonthWithIncome(profile: FinancialProfileCache): string | null {
+  const hit = [...profile.monthlyHistory]
+    .filter((h) => h.incomeTotal > 0)
+    .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth))[0];
+  return hit?.yearMonth ?? null;
+}
 
+/** Latest month row with core (non-transfer) spend, or null. */
+export function getLatestMonthWithCoreExpenses(profile: FinancialProfileCache): string | null {
+  const hit = [...profile.monthlyHistory]
+    .filter((h) => h.coreExpensesTotal > 0)
+    .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth))[0];
+  return hit?.yearMonth ?? null;
+}
+
+/**
+ * Latest month with both payroll-style income and core spend — ideal single month for savings rate.
+ * Uploads are typically full statement months, so this is the common case.
+ */
+export function getLatestMonthWithIncomeAndCoreExpenses(profile: FinancialProfileCache): string | null {
+  const hit = [...profile.monthlyHistory]
+    .filter((h) => h.incomeTotal > 0 && h.coreExpensesTotal > 0)
+    .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth))[0];
+  return hit?.yearMonth ?? null;
+}
+
+/**
+ * Month to use for “top spending” categories: prefer core spend; else any expense volume.
+ */
+export function getLatestMonthForTopSpending(profile: FinancialProfileCache): string {
+  const core = getLatestMonthWithCoreExpenses(profile);
+  if (core) return core;
+  const any = [...profile.monthlyHistory]
+    .filter((h) => h.expensesTotal > 0)
+    .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth))[0];
+  if (any) return any.yearMonth;
+  return getLatestCompleteMonth(profile);
+}
+
+/**
+ * One YYYY-MM for callers that cannot split income vs expense months.
+ * Prefers a full “statement month” with both income and core spend, else income month, else spend month.
+ */
+export function getLatestCompleteMonth(profile: FinancialProfileCache): string {
+  const both = getLatestMonthWithIncomeAndCoreExpenses(profile);
+  if (both) return both;
+  const inc = getLatestMonthWithIncome(profile);
+  if (inc) return inc;
+  const exp = getLatestMonthWithCoreExpenses(profile);
+  if (exp) return exp;
+  return profile.latestTxMonth ?? todayYearMonth();
+}
 
 /**
  * Typical (median) monthly core spend from the profile cache.
@@ -382,12 +413,4 @@ export function getMonthlyAllDebtPayments(profile: FinancialProfileCache, yearMo
   const ym    = yearMonth ?? profile.latestTxMonth ?? "";
   const entry = profile.monthlyHistory.find((h) => h.yearMonth === ym);
   return entry?.debtPaymentsTotal ?? 0;
-}
-
-
-// ── Internal helper ───────────────────────────────────────────────────────────
-
-function todayYearMonth(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }

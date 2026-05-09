@@ -5,7 +5,18 @@ import type { ParsedStatementData } from "@/lib/types";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { merchantSlug } from "@/lib/applyRules";
 import { getFinancialProfile } from "@/lib/financialProfile";
-import { getNetWorth, getSavingsRate, getMonthlyIncome, getMonthlyIncomeAllCredits, getMonthlyExpenses, getLatestCompleteMonth, getMonthlyAllDebtPayments } from "@/lib/profileMetrics";
+import {
+  getNetWorth,
+  getMonthlyIncome,
+  getMonthlyIncomeAllCredits,
+  getMonthlyExpenses,
+  getLatestCompleteMonth,
+  getLatestMonthWithIncomeAndCoreExpenses,
+  getLatestMonthWithIncome,
+  getLatestMonthWithCoreExpenses,
+  getLatestMonthForTopSpending,
+  getMonthlyAllDebtPayments,
+} from "@/lib/profileMetrics";
 import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
 import { detectFrequency } from "@/lib/incomeEngine";
 import { projectNextDates, nextUpcoming, toDateStr } from "@/lib/projectionEngine";
@@ -1053,7 +1064,7 @@ export async function GET(req: NextRequest) {
   }
 
   // ── Top spending by category (for first-time user sidebar) ───────────────
-  const savingsMonthForTop = getLatestCompleteMonth(profile);
+  const savingsMonthForTop = getLatestMonthForTopSpending(profile);
   const topSpending = (() => {
     const totals = new Map<string, number>();
     for (const tx of expenseTxns) {
@@ -1084,20 +1095,42 @@ export async function GET(req: NextRequest) {
     statementCount: stmtSnap.size,
     topSpending,
     savingsRate: (() => {
-      // Use the latest month that has both income AND expenses (a complete month).
-      // This skips the current partial month (e.g. April with only cash income
-      // but no expenses yet) and correctly surfaces March if March statements exist.
-      const savingsMonth = getLatestCompleteMonth(profile);
-      const incomeCore = getMonthlyIncome(profile, savingsMonth);
-      const incomeAll  = getMonthlyIncomeAllCredits(profile, savingsMonth);
+      // Prefer one full statement month (income + core spend). If pay and card are in
+      // different months, split so Today never shows $0 income while Income page has pay.
+      const unifiedYm = getLatestMonthWithIncomeAndCoreExpenses(profile);
+      const incYm     = getLatestMonthWithIncome(profile);
+      const expYm     = getLatestMonthWithCoreExpenses(profile);
+      const fallback  = getLatestCompleteMonth(profile);
+
+      const incomeYm  = unifiedYm ?? incYm ?? expYm ?? fallback;
+      const expenseYm = unifiedYm ?? expYm ?? incYm ?? fallback;
+
+      const splitMonths = unifiedYm === null
+        && incYm != null
+        && expYm != null
+        && incYm !== expYm;
+
+      const incomeCore = getMonthlyIncome(profile, incomeYm);
+      const incomeAll  = getMonthlyIncomeAllCredits(profile, incomeYm);
+      const expenses   = getMonthlyExpenses(profile, expenseYm, { core: true });
+      const debtPayments = getMonthlyAllDebtPayments(profile, expenseYm);
+
+      const rate = incomeCore > 0
+        ? Math.max(-100, Math.min(100, Math.round(((incomeCore - expenses) / incomeCore) * 100)))
+        : 0;
+
       return {
-        rate:         getSavingsRate(profile, savingsMonth),
+        rate,
         income:       incomeCore,
-        /** Wider income (Transfer In, Other, etc.) — same month as `income`. Omitted when identical to core. */
+        /** Wider income (Transfer In, Other, etc.) — for `incomeYm`. Omitted when identical to core. */
         ...(Math.round(incomeAll) !== Math.round(incomeCore) ? { incomeAllCredits: incomeAll } : {}),
-        expenses:     getMonthlyExpenses(profile, savingsMonth, { core: true }),
-        debtPayments: getMonthlyAllDebtPayments(profile, savingsMonth),
-        month:        savingsMonth,
+        expenses,
+        debtPayments,
+        /** Primary month label: unified month, else income month */
+        month:        unifiedYm ?? incomeYm,
+        incomeMonth:  incomeYm,
+        expenseMonth: expenseYm,
+        splitMonths,
       };
     })(),
     statusBanner: statusText

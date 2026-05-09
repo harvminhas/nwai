@@ -854,14 +854,24 @@ function shortMonth(ym: string) {
   return date.toLocaleDateString("en-CA", { month: "short", year: "numeric" });
 }
 
-function savingsSummary(income: number, expenses: number, debtPayments: number, rate: number, month: string, homeCurrency = "USD"): string {
+function savingsSummary(
+  income: number,
+  expenses: number,
+  debtPayments: number,
+  rate: number,
+  month: string,
+  homeCurrency = "USD",
+  options?: { splitMonths?: boolean; expenseMonth?: string },
+): string {
   // rate is already an integer percentage (e.g. 54 for 54%)
   // Use core expenses (no debt) for the "saved" figure to match SavingsRateCard default
   const saved = income - expenses;
   if (saved <= 0 || income <= 0) return "";
   const aboveAvg = rate >= 20;
-  const mo = shortMonth(month);
-  return `You saved ${fmt(saved, homeCurrency)} in ${mo} — putting away ${rate}% of your income.${aboveAvg ? " That's above average." : ""}`;
+  const mo = options?.splitMonths && options?.expenseMonth && options.expenseMonth !== month
+    ? `${shortMonth(month)} income, ${shortMonth(options.expenseMonth)} spend`
+    : shortMonth(month);
+  return `You saved ${fmt(saved, homeCurrency)} (${mo}) — putting away ${rate}% of your income.${aboveAvg ? " That's above average." : ""}`;
 }
 
 interface FirstTimeProps {
@@ -874,14 +884,30 @@ interface FirstTimeProps {
   /** The SavingsRateCard component rendered by TodayPage — guarantees identical logic */
   savingsRateCard: React.ReactNode;
   /** Raw numbers for the summary sentence */
-  savingsRaw: { income: number; expenses: number; debtPayments: number; rate: number; month: string } | null;
+  savingsRaw: {
+    income: number;
+    expenses: number;
+    debtPayments: number;
+    rate: number;
+    month: string;
+    splitMonths?: boolean;
+    expenseMonth?: string;
+  } | null;
   homeCurrency: string;
 }
 
 function FirstTimeLayout({ agentCards, netWorth, topSpending, statementCount, monthCount, savingsMonth, savingsRateCard, savingsRaw, homeCurrency }: FirstTimeProps) {
   const month = savingsMonth;
   const summary = savingsRaw
-    ? savingsSummary(savingsRaw.income, savingsRaw.expenses, savingsRaw.debtPayments, savingsRaw.rate, savingsRaw.month, homeCurrency)
+    ? savingsSummary(
+        savingsRaw.income,
+        savingsRaw.expenses,
+        savingsRaw.debtPayments,
+        savingsRaw.rate,
+        savingsRaw.month,
+        homeCurrency,
+        savingsRaw.splitMonths ? { splitMonths: true, expenseMonth: savingsRaw.expenseMonth } : undefined,
+      )
     : "";
 
   // Feature unlock tiers
@@ -1266,6 +1292,9 @@ export default function TodayPage() {
     expenses: number;
     debtPayments: number;
     month: string;
+    incomeMonth?: string;
+    expenseMonth?: string;
+    splitMonths?: boolean;
   } | null>(null);
   const [statusBanner,setStatusBanner]= useState<{ type: string; text: string; detail: string } | null>(null);
   const [needsRefresh, setNeedsRefresh] = useState(false);
@@ -2039,6 +2068,10 @@ export default function TodayPage() {
     const monthLabel = month
       ? new Date(month + "-01").toLocaleDateString("en-CA", { month: "short", year: "numeric" })
       : "";
+    const splitMonths = Boolean(savingsRate.splitMonths && savingsRate.incomeMonth && savingsRate.expenseMonth && savingsRate.incomeMonth !== savingsRate.expenseMonth);
+    const periodLabel = splitMonths
+      ? `${shortMonth(savingsRate.incomeMonth!)} income · ${shortMonth(savingsRate.expenseMonth!)} spend`
+      : monthLabel;
 
     // Recompute rate client-side so the toggle is instant (no round-trip)
     const effectiveExpenses = includeDebt ? expenses + debtPayments : expenses;
@@ -2059,7 +2092,7 @@ export default function TodayPage() {
         <div className="px-4 pt-4 pb-3">
           <div className="flex items-start justify-between">
             <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Savings Rate</p>
-            {monthLabel && <span className="text-[10px] text-gray-400">{monthLabel}</span>}
+            {periodLabel && <span className="text-[10px] text-gray-400">{periodLabel}</span>}
           </div>
           <div className="mt-1 flex items-end gap-2">
             <p className={`text-2xl font-bold tabular-nums ${textColor}`}>
@@ -2350,7 +2383,9 @@ export default function TodayPage() {
             rate:         displaySavingsIncome > 0
               ? Math.round(((displaySavingsIncome - savingsRate.expenses) / displaySavingsIncome) * 100)
               : 0,
-            month:        savingsRate.month,
+            month:        savingsRate.incomeMonth ?? savingsRate.month,
+            splitMonths:  savingsRate.splitMonths,
+            expenseMonth: savingsRate.expenseMonth,
           } : null}
           homeCurrency={homeCurrency}
         />
