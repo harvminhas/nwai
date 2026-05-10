@@ -595,12 +595,10 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#f8f7f4]">
-        <div className="mx-auto max-w-4xl px-4 py-8 space-y-4">
-          <div className="h-8 w-48 bg-gray-100 rounded-lg animate-pulse" />
-          <div className="h-32 bg-gray-100 rounded-2xl animate-pulse" />
-          <div className="h-64 bg-gray-100 rounded-2xl animate-pulse" />
-        </div>
+      <div className="mx-auto max-w-4xl px-4 pt-4 pb-8 sm:py-8 sm:px-6 space-y-4">
+        <div className="h-8 w-48 bg-gray-100 rounded-lg animate-pulse" />
+        <div className="h-32 bg-gray-100 rounded-2xl animate-pulse" />
+        <div className="h-64 bg-gray-100 rounded-2xl animate-pulse" />
       </div>
     );
   }
@@ -610,8 +608,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
   const isService = event.kind === "service";
 
   return (
-    <div className="min-h-screen bg-[#f8f7f4]">
-      <div className="mx-auto max-w-4xl px-4 py-8">
+    <div className="mx-auto max-w-4xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
         {/* Back nav */}
         <button onClick={() => router.push("/account/events")}
@@ -697,7 +694,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                     className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
                       logModalOpen
                         ? "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                        : "bg-indigo-600 text-white hover:bg-indigo-700"
+                        : "bg-purple-600 text-white hover:bg-purple-700"
                     }`}>
                     {logModalOpen ? "Close" : "+ Log"}
                   </button>
@@ -755,7 +752,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                           <button key={tab} onClick={() => setActivityTab(tab)}
                             className={`py-3.5 px-3 text-xs font-semibold border-b-2 transition ${
                               activityTab === tab
-                                ? "border-indigo-600 text-gray-900"
+                                ? "border-purple-600 text-gray-900"
                                 : "border-transparent text-gray-400 hover:text-gray-600"
                             }`}>
                             {tab === "all" ? "All" : tab === "visits" ? "Visits" : "Payments"}
@@ -799,7 +796,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                           const isCash = item.kind === "cash";
                           const isStmt = item.kind === "statement";
 
-                          const dotClass = isStmt ? "bg-indigo-500" : isCash ? "bg-emerald-500" : "bg-amber-400";
+                          const dotClass = isStmt ? "bg-purple-500" : isCash ? "bg-emerald-500" : "bg-amber-400";
                           const amountStr = "amount" in item && item.amount != null
                             ? fmt(item.amount, hc)
                             : null;
@@ -807,7 +804,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                           return (
                             <div key={item.kind === "statement" ? `s-${item.fingerprint}` : `p-${item.id}`}
                               className="flex items-start gap-3 px-5 py-3.5">
-                              <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${isStmt ? "bg-indigo-50" : isCash ? "bg-emerald-50" : "bg-amber-50"}`}>
+                              <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${isStmt ? "bg-purple-50" : isCash ? "bg-emerald-50" : "bg-amber-50"}`}>
                                 <div className={`w-2.5 h-2.5 rounded-full ${dotClass}`} />
                               </div>
                               <div className="min-w-0 flex-1">
@@ -859,12 +856,12 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Settings</p>
                   <button onClick={() => setShowEdit(true)}
-                    className="text-xs text-indigo-600 hover:underline font-medium">Edit</button>
+                    className="text-xs text-purple-600 hover:underline font-medium">Edit</button>
                 </div>
                 <div className="space-y-3">
                   <div>
                     <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400 mb-0.5">Cadence</p>
-                    <p className="text-sm font-semibold text-indigo-600">
+                    <p className="text-sm font-semibold text-purple-600">
                       {{ weekly: "Weekly", biweekly: "Biweekly", monthly: "Monthly", quarterly: "Quarterly" }[event.cadence ?? "monthly"]}
                     </p>
                   </div>
@@ -896,7 +893,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                       <p className="text-sm font-medium text-gray-700">{event.vendor}</p>
                     ) : (
                       <button onClick={() => setShowEdit(true)}
-                        className="text-xs text-gray-300 hover:text-indigo-500 transition">Add vendor name</button>
+                        className="text-xs text-gray-300 hover:text-purple-500 transition">Add vendor name</button>
                     )}
                   </div>
                 </div>
@@ -935,7 +932,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                             <span className="text-xs font-semibold text-gray-800">{fmt(data.spent, hc)}</span>
                           </div>
                           <div className="h-1.5 w-full rounded-full bg-gray-100">
-                            <div className="h-1.5 rounded-full bg-indigo-400 transition-all" style={{ width: `${barW}%` }} />
+                            <div className="h-1.5 rounded-full bg-purple-400 transition-all" style={{ width: `${barW}%` }} />
                           </div>
                         </div>
                       );
@@ -1128,8 +1125,8 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                         {visiblePayItems.map((item) => {
                           const isPending = item.kind === "pending";
                           const isCash    = isPending && item.entryType === "cash";
-                          const dotBg     = isPending ? (isCash ? "bg-emerald-500" : "bg-amber-400") : "bg-indigo-500";
-                          const dotRing   = isPending ? (isCash ? "bg-emerald-50" : "bg-amber-50") : "bg-indigo-50";
+                          const dotBg     = isPending ? (isCash ? "bg-emerald-500" : "bg-amber-400") : "bg-purple-500";
+                          const dotRing   = isPending ? (isCash ? "bg-emerald-50" : "bg-amber-50") : "bg-purple-50";
                           const statusLine = isPending
                             ? isCash ? "Cash · manual entry" : "Pending · awaiting statement match"
                             : "Verified · from statement";
@@ -1304,7 +1301,6 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
             </div>
           );
         })()}
-      </div>
 
       {/* ── Modals ─────────────────────────────────────────────────────────── */}
 

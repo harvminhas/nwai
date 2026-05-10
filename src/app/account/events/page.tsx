@@ -94,38 +94,118 @@ interface CreateModalProps {
 function PlanKindPicker({ onPick, onClose }: { onPick: (k: "project" | "service") => void; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl p-6">
-        <h2 className="text-base font-semibold text-gray-900 mb-1">What kind of tracker?</h2>
-        <p className="text-xs text-gray-500 mb-5">One-off trips and budgets, or ongoing services on a schedule.</p>
-        <div className="grid grid-cols-2 gap-3 mb-5">
+      <div className="w-full max-w-2xl rounded-2xl bg-white shadow-xl overflow-hidden">
+
+        {/* Header */}
+        <div className="px-7 pt-6 pb-5 border-b border-gray-100">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-bold text-gray-900 mb-0.5">New tracker</h2>
+              <p className="text-sm text-gray-500">Pick how it lives on your timeline.</p>
+            </div>
+            <button type="button" onClick={onClose} className="mt-0.5 text-gray-400 hover:text-gray-600 text-xl leading-none shrink-0">×</button>
+          </div>
+        </div>
+
+        {/* Cards */}
+        <div className="grid grid-cols-2 gap-4 p-6">
+
+          {/* One-time */}
           <button
             type="button"
             onClick={() => onPick("project")}
-            className="rounded-xl border-2 border-gray-100 p-4 text-left hover:border-purple-300 hover:bg-purple-50/40 transition-all group"
+            className="rounded-2xl border-2 border-gray-100 p-5 text-left hover:border-purple-300 hover:bg-purple-50/30 transition-all group"
           >
-            <p className="text-sm font-semibold text-gray-900 mb-1.5 group-hover:text-purple-700">One-time</p>
-            <p className="text-xs text-gray-500 leading-relaxed mb-3">
-              Bounded dates and optional budget — tag transactions and ledger off-card spend.
+            {/* Card header */}
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-purple-100 text-purple-600 text-sm">🚩</span>
+                <p className="text-base font-bold text-gray-900 group-hover:text-purple-700 transition-colors">One-time</p>
+              </div>
+              <span className="text-[11px] font-medium text-gray-400">Has an end</span>
+            </div>
+
+            {/* Timeline diagram */}
+            <div className="mb-4 px-1">
+              <div className="relative flex items-center">
+                <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-px border-t-2 border-dashed border-gray-200" />
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[60%] h-0.5 bg-purple-500 rounded-full" />
+                <div className="relative z-10 h-3 w-3 rounded-full bg-purple-600 ring-2 ring-white shrink-0" />
+                <div className="flex-1" />
+                <div className="relative z-10 h-3 w-3 rounded-full bg-purple-400 ring-2 ring-white shrink-0" />
+              </div>
+              <div className="flex justify-between mt-1.5">
+                <span className="text-[10px] text-gray-400">start</span>
+                <span className="text-[10px] text-purple-400">done</span>
+              </div>
+            </div>
+
+            {/* Description */}
+            <p className="text-sm text-gray-600 leading-relaxed mb-4">
+              Bounded dates, optional budget. Tag transactions across the run.
             </p>
-            <p className="text-[11px] text-purple-400 font-medium">Trip · renovation</p>
+
+            {/* Examples */}
+            <div className="flex flex-wrap gap-1.5">
+              {["Kitchen reno", "Italy trip", "Wedding"].map((ex) => (
+                <span key={ex} className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-500">{ex}</span>
+              ))}
+            </div>
           </button>
+
+          {/* Recurring */}
           <button
             type="button"
             onClick={() => onPick("service")}
-            className="rounded-xl border-2 border-gray-100 p-4 text-left hover:border-blue-300 hover:bg-blue-50/40 transition-all group"
+            className="rounded-2xl border-2 border-gray-100 p-5 text-left hover:border-blue-300 hover:bg-blue-50/30 transition-all group"
           >
-            <p className="text-sm font-semibold text-gray-900 mb-1.5 group-hover:text-blue-700">Recurring</p>
-            <p className="text-xs text-gray-500 leading-relaxed mb-3">
-              Visit cadence — log visits and payments across the season.
+            {/* Card header */}
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-blue-100 text-blue-600 text-sm">🔁</span>
+                <p className="text-base font-bold text-gray-900 group-hover:text-blue-700 transition-colors">Recurring</p>
+              </div>
+              <span className="text-[11px] font-medium text-gray-400">On a cadence</span>
+            </div>
+
+            {/* Timeline diagram */}
+            <div className="mb-4 px-1">
+              <div className="relative flex items-center gap-0">
+                <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-px border-t-2 border-dashed border-gray-200" />
+                {[0, 1, 2, 3, 4].map((i) => (
+                  <div key={i} className="relative z-10 flex-1 flex justify-center">
+                    <div className={`h-3 w-3 rounded-full ring-2 ring-white ${
+                      i === 4 ? "bg-blue-200" : "bg-blue-600"
+                    }`} />
+                  </div>
+                ))}
+              </div>
+              <div className="relative mt-1.5">
+                <span className="absolute left-1/2 -translate-x-1/2 text-[10px] text-blue-400">every visit</span>
+              </div>
+              <div className="mt-4" />
+            </div>
+
+            {/* Description */}
+            <p className="text-sm text-gray-600 leading-relaxed mb-4">
+              Visit cadence and per-occurrence costs across the season.
             </p>
-            <p className="text-[11px] text-blue-400 font-medium">Lawn · cleaning</p>
+
+            {/* Examples */}
+            <div className="flex flex-wrap gap-1.5">
+              {["Lawn care", "Cleaning", "Tutoring"].map((ex) => (
+                <span key={ex} className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-500">{ex}</span>
+              ))}
+            </div>
           </button>
         </div>
-        <div className="flex justify-end">
+
+        {/* Footer */}
+        <div className="px-6 pb-5 flex justify-end">
           <button
             type="button"
             onClick={onClose}
-            className="text-sm text-gray-500 hover:text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-100 transition"
+            className="text-sm text-gray-500 hover:text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-100 transition"
           >
             Cancel
           </button>
@@ -566,13 +646,13 @@ export default function EventsPage() {
   const addExpenseEvent = listAddExpenseEventId ? events.find((e) => e.id === listAddExpenseEventId) : undefined;
 
   return (
-    <div className="min-h-screen bg-[#f8f7f4]">
-      <div className="mx-auto max-w-3xl px-4 py-10">
+    <div>
+      <div className="mx-auto max-w-3xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
         {/* Page header */}
-        <div className="mb-10 flex items-start justify-between gap-4">
+        <div className="mb-8 flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <h1 className="text-2xl font-semibold tracking-tight text-gray-900">Trackers</h1>
+            <h1 className="text-2xl font-bold text-gray-900">Trackers</h1>
             <p className="mt-1.5 text-sm leading-relaxed text-gray-500">
               Budgets for one-time events and visits for recurring services.
             </p>
@@ -580,7 +660,7 @@ export default function EventsPage() {
           <button
             type="button"
             onClick={() => setCreateStep("pick")}
-            className="shrink-0 rounded-lg bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-gray-800"
+            className="shrink-0 rounded-lg bg-purple-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-purple-700"
           >
             + New tracker
           </button>
@@ -603,7 +683,7 @@ export default function EventsPage() {
             <button
               type="button"
               onClick={() => setCreateStep("pick")}
-              className="rounded-lg bg-gray-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-gray-800"
+              className="rounded-lg bg-purple-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-purple-700 transition"
             >
               Create your first tracker
             </button>
