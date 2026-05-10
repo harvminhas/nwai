@@ -20,6 +20,13 @@ function authToken(req: NextRequest): string | null {
   return req.headers.get("authorization")?.replace("Bearer ", "").trim() ?? null;
 }
 
+function resolveAppUrl(req: NextRequest): string {
+  if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL;
+  // Derive from the incoming request (works on any host, never returns localhost in production)
+  const { origin } = new URL(req.url);
+  return origin;
+}
+
 export async function GET(req: NextRequest) {
   const token = authToken(req);
   if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -36,7 +43,7 @@ export async function GET(req: NextRequest) {
       db.collection("users").doc(uid).get(),
     ]);
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    const appUrl = resolveAppUrl(req);
     const lastViewedAccount = (userDoc.data()?.lastViewedAccount as "self" | "partner" | undefined) ?? "self";
 
     return NextResponse.json({
@@ -97,7 +104,7 @@ export async function POST(req: NextRequest) {
       db,
     );
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    const appUrl = resolveAppUrl(req);
     const inviteUrl = `${appUrl}/invite?token=${invite.token}`;
 
     // Send invite email — fire-and-forget, never blocks the response
