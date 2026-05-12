@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { usePlan } from "@/contexts/PlanContext";
+import { useActiveProfile } from "@/contexts/ActiveProfileContext";
 import UpgradePrompt from "@/components/UpgradePrompt";
 import Link from "next/link";
 import {
@@ -387,11 +388,267 @@ function ForecastTooltip({ active, payload, label, sym }: {
   );
 }
 
+// ── Near-term forecast (90-day cash flow) ─────────────────────────────────────
+
+type NearTermKind = "pattern" | "set_payment" | "event" | "income" | "cash";
+
+interface NearTermItemDTO {
+  id: string;
+  kind: NearTermKind;
+  title: string;
+  subtitle: string;
+  date: string;
+  dateEnd?: string;
+  daysFromNow: number;
+  amount: number;
+  isIncome: boolean;
+  amountLabel: string;
+  href?: string;
+}
+
+interface NearTermBucketDTO {
+  label: string;
+  rangeLabel: string;
+  netDisplay: number;
+  items: NearTermItemDTO[];
+}
+
+interface NearTermApiResponse {
+  today: string;
+  horizonDays: number;
+  homeCurrency: string;
+  summary: {
+    totalOutflow: number;
+    totalIncome: number;
+    net: number;
+    outflowCount: number;
+    incomeCount: number;
+  };
+  alert: string | null;
+  timeline: NearTermItemDTO[];
+  buckets: NearTermBucketDTO[];
+}
+
+function NearTermForecastPanel({
+  idToken,
+  homeCurrency,
+  buildHeaders,
+}: {
+  idToken: string | null;
+  homeCurrency: string;
+  buildHeaders: (token: string) => Record<string, string>;
+}) {
+  const [data, setData] = useState<NearTermApiResponse | null>(null);
+  const [nearLoading, setNearLoading] = useState(true);
+  const [nearErr, setNearErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!idToken) return;
+    let cancelled = false;
+    setNearLoading(true);
+    setNearErr(null);
+    (async () => {
+      try {
+        const res = await fetch("/api/user/forecast/near-term", {
+          headers: buildHeaders(idToken),
+        });
+        const json = (await res.json().catch(() => ({}))) as NearTermApiResponse & { error?: string };
+        if (!res.ok) throw new Error(json.error ?? "Failed to load");
+        if (!cancelled) setData(json);
+      } catch (e) {
+        if (!cancelled) setNearErr((e as Error).message);
+      } finally {
+        if (!cancelled) setNearLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [idToken, buildHeaders]);
+
+  const hc = data?.homeCurrency ?? homeCurrency;
+
+  function kindDotClass(kind: NearTermKind): string {
+    switch (kind) {
+      case "pattern":
+        return "bg-orange-500";
+      case "set_payment":
+        return "bg-amber-400";
+      case "event":
+        return "bg-purple-500";
+      case "income":
+        return "bg-emerald-500";
+      default:
+        return "bg-slate-400";
+    }
+  }
+
+  function fmtNear(v: number, signed = false) {
+    const prefix = signed && v > 0 ? "+" : signed && v < 0 ? "−" : "";
+    const abs = Math.abs(v);
+    return `${prefix}${fmt(abs, hc)}`;
+  }
+
+  if (!idToken || nearLoading) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <div className="h-10 w-10 animate-spin rounded-full border-4 border-purple-600 border-t-transparent" />
+      </div>
+    );
+  }
+
+  if (nearErr) {
+    return (
+      <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+        {nearErr}
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  const { summary, alert, timeline, buckets } = data;
+
+  return (
+    <div className="space-y-5">
+      <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+        <div className="flex flex-wrap items-start justify-between gap-4 border-b border-gray-100 px-5 py-4">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Next {data.horizonDays} days</p>
+            <p className="mt-1 text-xl font-bold text-gray-900 tabular-nums">
+              −{fmt(summary.totalOutflow, hc)}{" "}
+              <span className="text-sm font-semibold text-gray-400">across {summary.outflowCount} outflows</span>
+            </p>
+            <p className="mt-1 text-sm font-medium text-emerald-700">
+              +{fmt(summary.totalIncome, hc)} income · net {summary.net >= 0 ? "+" : ""}{fmt(summary.net, hc)}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-gray-500">
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-orange-500" /> Detected pattern</span>
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-amber-400" /> Set Payment</span>
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-purple-500" /> Event</span>
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" /> Income</span>
+          </div>
+        </div>
+
+        <div className="px-5 py-5">
+          <div className="relative h-14">
+            <div className="absolute left-0 right-0 top-1/2 h-px -translate-y-1/2 bg-gray-200" />
+            {timeline.map((item) => {
+              const pct = Math.min(100, Math.max(0, (item.daysFromNow / data.horizonDays) * 100));
+              return (
+                <div
+                  key={item.id}
+                  className="absolute top-1/2 z-10 -translate-x-1/2 -translate-y-1/2"
+                  style={{ left: `${pct}%` }}
+                  title={`${item.title} · ${fmt(item.amount, hc)}`}
+                >
+                  <span className={`block h-2.5 w-2.5 rounded-full ring-2 ring-white ${kindDotClass(item.kind)}`} />
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-2 flex justify-between text-[10px] font-medium text-gray-400">
+            <span>Today</span>
+            <span>+30d</span>
+            <span>+60d</span>
+            <span>+90d</span>
+          </div>
+        </div>
+      </div>
+
+      {alert && (
+        <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <span className="text-lg leading-none">⚠️</span>
+          <p className="text-sm text-amber-900 leading-relaxed">{alert}</p>
+        </div>
+      )}
+
+      {buckets.map((bucket) => (
+        <div key={bucket.label} className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-5 py-3">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{bucket.label}</p>
+              <p className="text-xs text-gray-500">{bucket.rangeLabel}</p>
+            </div>
+            <p className={`text-sm font-semibold tabular-nums ${bucket.netDisplay >= 0 ? "text-emerald-700" : "text-gray-900"}`}>
+              {fmtNear(bucket.netDisplay, true)} net
+            </p>
+          </div>
+          {bucket.items.length === 0 ? (
+            <p className="px-5 py-6 text-sm text-gray-400">Nothing scheduled in this window.</p>
+          ) : (
+            <ul className="divide-y divide-gray-100">
+              {bucket.items.map((item) => (
+                <li key={item.id} className={`flex gap-3 px-5 py-4 ${item.kind === "event" ? "bg-purple-50/40" : ""}`}>
+                  <div className="flex shrink-0 flex-col items-center gap-1 pt-0.5">
+                    <span className={`h-2.5 w-2.5 rounded-full ${kindDotClass(item.kind)}`} />
+                    <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-gray-100 text-xs">
+                      {item.kind === "income" ? "↓" : item.kind === "event" ? "🎯" : item.kind === "set_payment" ? "📅" : "↻"}
+                    </span>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-semibold text-gray-900">{item.title}</p>
+                      {item.kind === "set_payment" && (
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800">
+                          Set payment
+                        </span>
+                      )}
+                      {item.kind === "event" && (
+                        <span className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-purple-800">
+                          Event
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-0.5 text-xs text-gray-500 line-clamp-2">{item.subtitle}</p>
+                    <p className="mt-1 text-xs text-gray-400">
+                      {new Date(item.date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                      {item.dateEnd
+                        ? ` – ${new Date(item.dateEnd + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+                        : ""}
+                      {item.daysFromNow >= 0 ? ` · in ${item.daysFromNow} days` : ""}
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className={`text-sm font-bold tabular-nums ${item.isIncome ? "text-emerald-700" : "text-gray-900"}`}>
+                      {item.isIncome ? "+" : ""}{fmt(item.amount, hc)}
+                    </p>
+                    <p className="text-[10px] font-medium capitalize text-gray-400">{item.amountLabel}</p>
+                    {item.href && (
+                      <a href={item.href} className="mt-1 inline-block text-[10px] font-semibold text-purple-600 hover:text-purple-800">
+                        View
+                      </a>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ))}
+
+      <p className="text-[11px] text-gray-400 leading-relaxed px-1">
+        Near-term blends subscriptions and recurring patterns from your statements, projected income, scheduled cash items,
+        and{" "}
+        <a href="/account/events" className="font-medium text-purple-600 hover:text-purple-800">
+          Trackers
+        </a>
+        {" "}(Events &amp; Set Payments). Timing is estimated from history — not a guarantee.
+      </p>
+    </div>
+  );
+}
+
 // ── page ──────────────────────────────────────────────────────────────────────
 
 export default function ForecastPage() {
   const router = useRouter();
   const { can, loading: planLoading } = usePlan();
+  const { buildHeaders } = useActiveProfile();
+
+  const [forecastTab, setForecastTab] = useState<"near" | "long">("near");
+  const [idToken, setIdToken] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -432,8 +689,9 @@ export default function ForecastPage() {
       setLoading(true); setError(null);
       try {
         const token = await user.getIdToken();
+        setIdToken(token);
         const res = await fetch("/api/user/statements/consolidated", {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: buildHeaders(token),
         });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) { setError(json.error ?? "Failed to load"); return; }
@@ -459,7 +717,7 @@ export default function ForecastPage() {
         setLoading(false);
       }
     });
-  }, [router]);
+  }, [router, buildHeaders]);
 
   // ── derived ──────────────────────────────────────────────────────────────────
 
@@ -575,10 +833,36 @@ export default function ForecastPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Forecast</h1>
         <p className="mt-0.5 text-sm text-gray-500">
-          Where you&apos;re headed if patterns hold — and what that means for the people who depend on you.
+          {forecastTab === "near"
+            ? "Upcoming income and outflows we expect in the next few months — from recurring patterns and your trackers."
+            : "Where you're headed if patterns hold — and what that means for the people who depend on you."}
         </p>
       </div>
 
+      <div className="flex gap-6 border-b border-gray-200">
+        {(["near", "long"] as const).map((tab) => (
+          <button
+            key={tab}
+            type="button"
+            onClick={() => setForecastTab(tab)}
+            className={`relative pb-2.5 text-sm font-semibold transition-colors ${
+              forecastTab === tab ? "text-gray-900" : "text-gray-400 hover:text-gray-600"
+            }`}
+          >
+            {tab === "near" ? "Near-term" : "Long-term"}
+            {forecastTab === tab && (
+              <span className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-gray-900" />
+            )}
+          </button>
+        ))}
+      </div>
+
+      {forecastTab === "near" && (
+        <NearTermForecastPanel idToken={idToken} homeCurrency={hc} buildHeaders={buildHeaders} />
+      )}
+
+      {forecastTab === "long" && (
+      <>
       {/* Stale patterns warning */}
       {daysSinceVerified !== null && daysSinceVerified > 7 && (
         <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5">
@@ -1099,6 +1383,9 @@ export default function ForecastPage() {
             </button>
           </div>
         </div>
+      )}
+
+      </>
       )}
 
     </div>
