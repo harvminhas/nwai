@@ -1,8 +1,8 @@
 /**
  * GET /api/user/forecast/near-term
  *
- * 90-day cash-flow style projection: recurring/subscription charges, expected income,
- * manual cash commitments, and Tracker-backed Events / Set Payments.
+ * 90-day cash-flow style projection: same core rules as Today → "What we expect",
+ * plus Tracker-backed Events / Set Payments.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -11,21 +11,13 @@ import { resolveAccess } from "@/lib/access/resolveAccess";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { consolidateStatements, getYearMonth } from "@/lib/consolidate";
 import { buildAccountSlug } from "@/lib/accountSlug";
-import { merchantSlug } from "@/lib/applyRules";
 import type { ParsedStatementData } from "@/lib/types";
 import type { SubscriptionRecord } from "@/lib/insights/types";
-import type { SubscriptionFrequency } from "@/lib/insights/types";
 import type { UserEvent, TxTag } from "@/lib/events/types";
-import {
-  effectiveSubscriptionAmount,
-  effectiveSubscriptionFrequency,
-  nextSubscriptionOccurrence,
-} from "@/lib/subscriptionRegistry";
-import { detectFrequency } from "@/lib/incomeEngine";
-import { projectNextDates, toDateStr } from "@/lib/projectionEngine";
-import { INCOME_TRANSFER_RE } from "@/lib/spendingMetrics";
-import { resolveCanonical } from "@/lib/sourceMappings";
+import type { CashIncomeEntry } from "@/lib/cashIncome";
 import type { SourceMapping } from "@/lib/sourceMappings";
+import { buildExpectedUpcomingItems, type UpcomingItem } from "@/lib/expectedUpcoming";
+import { toDateStr } from "@/lib/projectionEngine";
 import { txFingerprint } from "@/lib/txFingerprint";
 
 const HORIZON_DAYS = 90;
@@ -57,9 +49,46 @@ export interface NearTermBucketDTO {
   items: NearTermItemDTO[];
 }
 
-function subscriptionEligibleForUpcoming(rec: SubscriptionRecord): boolean {
-  if (rec.upcomingSuppressed) return false;
-  return rec.status === "confirmed" || rec.status === "user_confirmed";
+/** Map shared upcoming row → Forecast DTO (drops CC-minimum debt placeholders). */
+function upcomingToNearTermDTO(item: UpcomingItem, todayYmd: string): NearTermItemDTO | null {
+  if (item.type === "debt") return null;
+
+  const isIncome = item.type === "cash-in";
+  let kind: NearTermKind = "pattern";
+  if (item.type === "cash-out") kind = "cash";
+
+  let date = item.date;
+  if (date.length === 7) date = `${date}-01`;
+
+  let daysFromNow = item.daysFromNow;
+  if (daysFromNow >= 9000) daysFromNow = 0;
+
+  let subtitle = item.subtitle ?? "";
+  if (item.type === "subscription" && subtitle.startsWith("Recurring ·")) {
+    subtitle = subtitle.replace(/^Recurring ·/, "Detected ·");
+  }
+
+  let amountLabel = "estimate";
+  if (isIncome) {
+    const basedOn = subtitle.match(/Based on (\d+) deposits/);
+    const n = basedOn ? parseInt(basedOn[1], 10) : 0;
+    if (subtitle.includes("Predicted from") || n >= 6) amountLabel = "high confidence";
+  } else if (item.type === "cash-out") {
+    amountLabel = "scheduled";
+  }
+
+  return {
+    id: item.id,
+    kind,
+    title: item.title,
+    subtitle: subtitle.trim() || item.title,
+    date: date.length >= 10 ? date : todayYmd,
+    daysFromNow,
+    amount: Math.round(item.amount),
+    isIncome,
+    amountLabel,
+    href: item.href,
+  };
 }
 
 function todayISO(): string {
@@ -69,34 +98,6 @@ function todayISO(): string {
 function daysBetween(a: string, b: string): number {
   const ms = new Date(b + "T12:00:00Z").getTime() - new Date(a + "T12:00:00Z").getTime();
   return Math.round(ms / 86_400_000);
-}
-
-function normKey(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 30);
-}
-
-function enumerateSubscriptionCharges(
-  anchorYmd: string,
-  freq: SubscriptionFrequency,
-  todayYmd: string,
-  horizonDays: number,
-  maxOccurrences = 24,
-): { dateStr: string; daysFromNow: number }[] {
-  const results: { dateStr: string; daysFromNow: number }[] = [];
-  let anchor = anchorYmd;
-  const seen = new Set<string>();
-  for (let i = 0; i < maxOccurrences; i++) {
-    const { dateStr, daysFromNow } = nextSubscriptionOccurrence(anchor, freq, todayYmd);
-    if (daysFromNow > horizonDays) break;
-    if (daysFromNow >= -3 && !seen.has(dateStr)) {
-      seen.add(dateStr);
-      results.push({ dateStr, daysFromNow });
-    }
-    const next = new Date(dateStr.slice(0, 10) + "T12:00:00Z");
-    next.setUTCDate(next.getUTCDate() + 1);
-    anchor = toDateStr(next);
-  }
-  return results;
 }
 
 function detectHeavyWeekAlert(items: NearTermItemDTO[], homeCurrency: string): string | null {
@@ -200,6 +201,7 @@ export async function GET(req: NextRequest) {
       tagsSnap,
       cashSnap,
       sourceMappingsSnap,
+      cashIncomeSnap,
     ] = await Promise.all([
       getFinancialProfile(uid, db),
       db.collection(`users/${uid}/subscriptions`).get(),
@@ -207,11 +209,13 @@ export async function GET(req: NextRequest) {
       db.collection(`users/${uid}/txTags`).get(),
       db.collection(`users/${uid}/cashCommitments`).get(),
       db.collection(`users/${uid}/sourceMappings`).get(),
+      db.collection(`users/${uid}/cashIncome`).get(),
     ]);
 
     const subscriptionRecords = subscriptionsSnap.docs.map((d) => d.data() as SubscriptionRecord);
     const subscriptionSlugs = new Set(subscriptionRecords.map((r) => r.merchantSlug));
     const sourceMappings = sourceMappingsSnap.docs.map((d) => d.data() as SourceMapping);
+    const cashIncomeItems = cashIncomeSnap.docs.map((d) => d.data() as CashIncomeEntry);
 
     const expenseTxns = profile.expenseTxns ?? [];
     const incomeTxns = profile.incomeTxns ?? [];
@@ -239,197 +243,44 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const items: NearTermItemDTO[] = [];
-    const seenMerchants = new Set<string>();
-
-    const SUB_HORIZON: Partial<Record<SubscriptionFrequency, number>> = {
-      weekly: HORIZON_DAYS,
-      biweekly: HORIZON_DAYS,
-      monthly: HORIZON_DAYS,
-      quarterly: HORIZON_DAYS,
-      annual: HORIZON_DAYS,
-    };
-
-    // ── Subscriptions (confirmed registry) ───────────────────────────────────
-    for (const rec of subscriptionRecords) {
-      if (!subscriptionEligibleForUpcoming(rec)) continue;
-      const effAmt = effectiveSubscriptionAmount(rec);
-      const effFreq = effectiveSubscriptionFrequency(rec);
-      if (effAmt == null || !effFreq) continue;
-      const nk = normKey(rec.name);
-      if (seenMerchants.has(`sub-${nk}`)) continue;
-
-      const anchor = (rec.lastSeenAt ?? rec.firstSeenAt ?? today).slice(0, 10);
-      const horizonCap = SUB_HORIZON[effFreq] ?? HORIZON_DAYS;
-      const occurrences = enumerateSubscriptionCharges(anchor, effFreq, today, Math.min(horizonCap, HORIZON_DAYS));
-      if (occurrences.length === 0) continue;
-
-      seenMerchants.add(`sub-${nk}`);
-      let idx = 0;
-      for (const occ of occurrences) {
-        const amt = effAmt;
-        const confLabel =
-          rec.lockedFields?.includes("amount") || rec.status === "user_confirmed"
-            ? "fixed"
-            : "estimate";
-        items.push({
-          id: `sub-${rec.merchantSlug}-${occ.dateStr}-${idx++}`,
-          kind: "pattern",
-          title: rec.name,
-          subtitle: `Detected · ${effFreq}${rec.occurrenceCount ? ` · ${rec.occurrenceCount} charges seen` : ""}`,
-          date: occ.dateStr,
-          daysFromNow: occ.daysFromNow,
-          amount: Math.round(amt),
-          isIncome: false,
-          amountLabel: confLabel === "fixed" ? "fixed" : "estimate",
-          href: `/account/spending/merchant/${rec.merchantSlug}`,
-        });
-      }
+    const parsedStatements: ParsedStatementData[] = [];
+    for (const d of stmtSnap.docs) {
+      const p = d.data().parsedData as ParsedStatementData | undefined;
+      if (p) parsedStatements.push(p);
     }
 
-    // ── AI subscriptions from consolidated (deduped) ───────────────────────
-    const aiSubs = consolidated?.subscriptions ?? [];
-    for (const sub of aiSubs) {
-      const slug = merchantSlug(sub.name);
-      if (slug && subscriptionSlugs.has(slug)) continue;
-      const nk = normKey(sub.name);
-      if (seenMerchants.has(`aisub-${nk}`)) continue;
-      seenMerchants.add(`aisub-${nk}`);
-      const freqRaw = (sub.frequency ?? "monthly").toLowerCase();
-      let freq: SubscriptionFrequency = "monthly";
-      if (freqRaw.includes("week") && !freqRaw.includes("bi")) freq = "weekly";
-      else if (freqRaw.includes("bi") || freqRaw.includes("2 week")) freq = "biweekly";
-      else if (freqRaw.includes("quarter")) freq = "quarterly";
-      else if (freqRaw.includes("year") || freqRaw.includes("annual")) freq = "annual";
-
-      const anchor = consolidated?.statementDate?.slice(0, 10) ?? `${thisMonth}-15`;
-      const amount = sub.amount ?? 0;
-      if (amount <= 0) continue;
-
-      const occurrences = enumerateSubscriptionCharges(anchor, freq, today, HORIZON_DAYS);
-      let j = 0;
-      for (const occ of occurrences) {
-        items.push({
-          id: `aisub-${slug}-${occ.dateStr}-${j++}`,
-          kind: "pattern",
-          title: sub.name,
-          subtitle: `Detected · ${freq}`,
-          date: occ.dateStr,
-          daysFromNow: occ.daysFromNow,
-          amount: Math.round(amount),
-          isIncome: false,
-          amountLabel: "estimate",
-          href: `/account/spending/merchant/${slug}`,
-        });
-      }
-    }
-
-    // ── Cash commitments (exclude tracker-sourced duplicates) ──────────────
-    const cashItems = cashSnap.docs.map((d) => d.data() as {
+    const cashItemsForBuilder = cashSnap.docs.map((d) => d.data() as {
       id: string;
       name: string;
       amount: number;
       frequency: string;
-      category?: string;
+      category: string;
+      notes?: string;
       nextDate?: string;
       sourceVisitId?: string;
       sourceEventId?: string;
     });
-    for (const c of cashItems) {
-      if (c.sourceVisitId || c.sourceEventId) continue;
-      if (!c.nextDate) continue;
-      const diff = daysBetween(today, c.nextDate);
-      if (diff > HORIZON_DAYS || diff < -3) continue;
-      const nk = normKey(c.name);
-      if (seenMerchants.has(`cash-${nk}`)) continue;
-      seenMerchants.add(`cash-${nk}`);
-      items.push({
-        id: `cash-${c.id}`,
-        kind: "cash",
-        title: c.name,
-        subtitle: c.frequency === "once" ? `Cash · ${c.category ?? "One-off"}` : `${c.frequency} · ${c.category ?? ""}`,
-        date: c.nextDate,
-        daysFromNow: diff,
-        amount: Math.round(c.amount),
-        isIncome: false,
-        amountLabel: "scheduled",
-        href: "/account/spending?tab=cash",
-      });
-    }
 
-    // ── Expected income (frequency-aware) ───────────────────────────────────
-    const incomeBySource = new Map<string, typeof incomeTxns>();
-    for (const txn of incomeTxns) {
-      const src = txn.source || txn.description || "income";
-      if (INCOME_TRANSFER_RE.test(src)) continue;
-      const canonical = resolveCanonical(src, sourceMappings);
-      const key = normKey(canonical);
-      const arr = incomeBySource.get(key) ?? [];
-      arr.push(txn);
-      incomeBySource.set(key, arr);
-    }
+    const sharedUpcoming = buildExpectedUpcomingItems({
+      horizonDays: HORIZON_DAYS,
+      today,
+      now,
+      thisMonth,
+      consolidated,
+      subscriptionRecords,
+      subscriptionSlugs,
+      cashItems: cashItemsForBuilder,
+      cashIncomeItems,
+      incomeTxns,
+      sourceMappings,
+      parsedStatements,
+      includeCcMinimumEstimates: false,
+    });
 
-    for (const [, txns] of incomeBySource) {
-      if (txns.length < 2) continue;
-      const sortedByDate = [...txns].sort((a, b) => b.date.localeCompare(a.date));
-      const lastDate = sortedByDate[0].date;
-      const allDates = txns.map((t) => t.date).filter(Boolean).sort();
-      const freq = detectFrequency(allDates);
-      const latestAmt = sortedByDate.find((t) => t.amount > 0)?.amount ?? 0;
-      if (latestAmt <= 0) continue;
-
-      const sourceName = resolveCanonical(
-        txns[0].source || txns[0].description || "Income",
-        sourceMappings,
-      );
-
-      if (freq.frequency !== "irregular" && freq.medianGap && freq.medianGap >= 5) {
-        const projections = projectNextDates(lastDate, freq.medianGap, 24, true);
-        let pi = 0;
-        for (const p of projections) {
-          if (p.daysFromToday > HORIZON_DAYS) break;
-          if (p.daysFromToday < -3) continue;
-          const cvHint =
-            txns.length >= 6 ? "consistent pattern" : `${txns.length} deposits`;
-          items.push({
-            id: `income-${normKey(sourceName)}-${p.dateStr}-${pi++}`,
-            kind: "income",
-            title: sourceName,
-            subtitle:
-              p.daysFromToday < 0
-                ? `May have landed · ${freq.medianGap}-day cadence · ${cvHint}`
-                : `Detected · ${freq.frequency === "bi-weekly" ? "bi-weekly" : freq.frequency} · ${cvHint}`,
-            date: p.dateStr,
-            daysFromNow: p.daysFromToday,
-            amount: Math.round(latestAmt),
-            isIncome: true,
-            amountLabel: txns.length >= 6 ? "high confidence" : "estimate",
-            href: "/account/income",
-          });
-        }
-      } else {
-        const days = allDates.map((d) => parseInt(d.slice(8, 10)));
-        const medianDay = [...days].sort((a, b) => a - b)[Math.floor(days.length / 2)];
-        const daysInMo = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-        const targetDay = Math.min(medianDay, daysInMo);
-        const mm = String(now.getMonth() + 1).padStart(2, "0");
-        const expectedDate = `${now.getFullYear()}-${mm}-${String(targetDay).padStart(2, "0")}`;
-        const diff = daysBetween(today, expectedDate);
-        if (diff <= HORIZON_DAYS && diff >= -3) {
-          items.push({
-            id: `income-dom-${normKey(sourceName)}`,
-            kind: "income",
-            title: sourceName,
-            subtitle: `Detected · monthly · ${txns.length} deposits`,
-            date: expectedDate,
-            daysFromNow: diff,
-            amount: Math.round(latestAmt),
-            isIncome: true,
-            amountLabel: txns.length >= 6 ? "high confidence" : "estimate",
-            href: "/account/income",
-          });
-        }
-      }
+    const items: NearTermItemDTO[] = [];
+    for (const row of sharedUpcoming) {
+      const dto = upcomingToNearTermDTO(row, today);
+      if (dto) items.push(dto);
     }
 
     // ── Trackers: Set Payments ───────────────────────────────────────────────

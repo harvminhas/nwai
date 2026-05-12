@@ -279,6 +279,18 @@ export function MerchantDrawer({
   );
 }
 
+/** Slug from `/account/spending/merchant/:slug` — shared by Today (What we expect) and Forecast near-term drawers. */
+export function merchantSlugFromSpendingMerchantHref(href: string | undefined): string | null {
+  if (!href?.includes("/account/spending/merchant/")) return null;
+  const raw = href.split("/").pop();
+  if (!raw) return null;
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 // ─── hook ─────────────────────────────────────────────────────────────────────
 
 export function useMerchantDrawer() {

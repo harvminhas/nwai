@@ -14,6 +14,9 @@ import {
 } from "recharts";
 import { fmt, getCurrencySymbol, HOME_CURRENCY } from "@/lib/currencyUtils";
 import type { AccountSnapshot } from "@/lib/extractTransactions";
+import { MerchantDrawer, merchantSlugFromSpendingMerchantHref, useMerchantDrawer } from "@/app/account/spending/MerchantDrawer";
+import { IncomeDrawer, useIncomeDrawer } from "@/app/account/dashboard/IncomeDrawer";
+import { EventDrawer, eventIdFromEventsDetailHref, useEventDrawer } from "@/app/account/dashboard/EventDrawer";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -442,6 +445,13 @@ function NearTermForecastPanel({
   const [nearLoading, setNearLoading] = useState(true);
   const [nearErr, setNearErr] = useState<string | null>(null);
 
+  const { drawerSlug, drawerOpen: merchantDrawerOpen, openDrawer: openMerchantDrawer, closeDrawer: closeMerchantDrawer } =
+    useMerchantDrawer();
+  const { drawerSource, drawerOpen: incomeDrawerOpen, openDrawer: openIncomeDrawer, closeDrawer: closeIncomeDrawer } =
+    useIncomeDrawer();
+  const { drawerEventId, drawerOpen: eventDrawerOpen, openDrawer: openEventDrawer, closeDrawer: closeEventDrawer } =
+    useEventDrawer();
+
   useEffect(() => {
     if (!idToken) return;
     let cancelled = false;
@@ -510,7 +520,29 @@ function NearTermForecastPanel({
   const { summary, alert, timeline, buckets } = data;
 
   return (
-    <div className="space-y-5">
+    <>
+      <MerchantDrawer
+        slug={drawerSlug}
+        token={idToken}
+        homeCurrency={hc}
+        isOpen={merchantDrawerOpen}
+        onClose={closeMerchantDrawer}
+      />
+      <IncomeDrawer
+        sourceName={drawerSource}
+        token={idToken}
+        homeCurrency={hc}
+        isOpen={incomeDrawerOpen}
+        onClose={closeIncomeDrawer}
+      />
+      <EventDrawer
+        eventId={drawerEventId}
+        token={idToken}
+        homeCurrency={hc}
+        isOpen={eventDrawerOpen}
+        onClose={closeEventDrawer}
+      />
+      <div className="space-y-5">
       <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
         <div className="flex flex-wrap items-start justify-between gap-4 border-b border-gray-100 px-5 py-4">
           <div>
@@ -579,50 +611,102 @@ function NearTermForecastPanel({
             <p className="px-5 py-6 text-sm text-gray-400">Nothing scheduled in this window.</p>
           ) : (
             <ul className="divide-y divide-gray-100">
-              {bucket.items.map((item) => (
-                <li key={item.id} className={`flex gap-3 px-5 py-4 ${item.kind === "event" ? "bg-purple-50/40" : ""}`}>
-                  <div className="flex shrink-0 flex-col items-center gap-1 pt-0.5">
-                    <span className={`h-2.5 w-2.5 rounded-full ${kindDotClass(item.kind)}`} />
-                    <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-gray-100 text-xs">
-                      {item.kind === "income" ? "↓" : item.kind === "event" ? "🎯" : item.kind === "set_payment" ? "📅" : "↻"}
-                    </span>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-semibold text-gray-900">{item.title}</p>
-                      {item.kind === "set_payment" && (
-                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800">
-                          Set payment
-                        </span>
-                      )}
-                      {item.kind === "event" && (
-                        <span className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-purple-800">
-                          Event
-                        </span>
-                      )}
+              {bucket.items.map((item) => {
+                const merchantSlug = merchantSlugFromSpendingMerchantHref(item.href);
+                const eventsDetailId = eventIdFromEventsDetailHref(item.href);
+                const incomeDrawerTarget = item.isIncome;
+                const rowInteractClass =
+                  "flex w-full items-start gap-3 px-5 py-4 text-left transition hover:bg-gray-50/80";
+                const eventBg = item.kind === "event" ? "bg-purple-50/40" : "";
+                const showChevron = Boolean(merchantSlug || incomeDrawerTarget || eventsDetailId || item.href);
+
+                const rowInner = (
+                  <>
+                    <div className="flex shrink-0 flex-col items-center gap-1 pt-0.5">
+                      <span className={`h-2.5 w-2.5 rounded-full ${kindDotClass(item.kind)}`} />
+                      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-gray-100 text-xs">
+                        {item.kind === "income" ? "↓" : item.kind === "event" ? "🎯" : item.kind === "set_payment" ? "📅" : "↻"}
+                      </span>
                     </div>
-                    <p className="mt-0.5 text-xs text-gray-500 line-clamp-2">{item.subtitle}</p>
-                    <p className="mt-1 text-xs text-gray-400">
-                      {new Date(item.date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                      {item.dateEnd
-                        ? ` – ${new Date(item.dateEnd + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
-                        : ""}
-                      {item.daysFromNow >= 0 ? ` · in ${item.daysFromNow} days` : ""}
-                    </p>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <p className={`text-sm font-bold tabular-nums ${item.isIncome ? "text-emerald-700" : "text-gray-900"}`}>
-                      {item.isIncome ? "+" : ""}{fmt(item.amount, hc)}
-                    </p>
-                    <p className="text-[10px] font-medium capitalize text-gray-400">{item.amountLabel}</p>
-                    {item.href && (
-                      <a href={item.href} className="mt-1 inline-block text-[10px] font-semibold text-purple-600 hover:text-purple-800">
-                        View
-                      </a>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-semibold text-gray-900">{item.title}</p>
+                        {item.kind === "set_payment" && (
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800">
+                            Set payment
+                          </span>
+                        )}
+                        {item.kind === "event" && (
+                          <span className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-purple-800">
+                            Event
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-xs text-gray-500 line-clamp-2">{item.subtitle}</p>
+                      <p className="mt-1 text-xs text-gray-400">
+                        {new Date(item.date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                        {item.dateEnd
+                          ? ` – ${new Date(item.dateEnd + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+                          : ""}
+                        {item.daysFromNow >= 0 ? ` · in ${item.daysFromNow} days` : ""}
+                      </p>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p className={`text-sm font-bold tabular-nums ${item.isIncome ? "text-emerald-700" : "text-gray-900"}`}>
+                        {item.isIncome ? "+" : ""}{fmt(item.amount, hc)}
+                      </p>
+                      <p className="text-[10px] font-medium capitalize text-gray-400">{item.amountLabel}</p>
+                    </div>
+                    {showChevron && (
+                      <svg className="mt-1 h-4 w-4 shrink-0 self-center text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                      </svg>
                     )}
-                  </div>
-                </li>
-              ))}
+                  </>
+                );
+
+                if (incomeDrawerTarget) {
+                  return (
+                    <li key={item.id} className={eventBg}>
+                      <button type="button" className={rowInteractClass} onClick={() => openIncomeDrawer(item.title)}>
+                        {rowInner}
+                      </button>
+                    </li>
+                  );
+                }
+                if (merchantSlug) {
+                  return (
+                    <li key={item.id} className={eventBg}>
+                      <button type="button" className={rowInteractClass} onClick={() => openMerchantDrawer(merchantSlug)}>
+                        {rowInner}
+                      </button>
+                    </li>
+                  );
+                }
+                if (eventsDetailId) {
+                  return (
+                    <li key={item.id} className={eventBg}>
+                      <button type="button" className={rowInteractClass} onClick={() => openEventDrawer(eventsDetailId)}>
+                        {rowInner}
+                      </button>
+                    </li>
+                  );
+                }
+                if (item.href) {
+                  return (
+                    <li key={item.id} className={eventBg}>
+                      <Link href={item.href} className={rowInteractClass}>
+                        {rowInner}
+                      </Link>
+                    </li>
+                  );
+                }
+                return (
+                  <li key={item.id} className={`flex items-start gap-3 px-5 py-4 ${eventBg}`}>
+                    {rowInner}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
@@ -636,7 +720,8 @@ function NearTermForecastPanel({
         </a>
         {" "}(Events &amp; Set Payments). Timing is estimated from history — not a guarantee.
       </p>
-    </div>
+      </div>
+    </>
   );
 }
 
