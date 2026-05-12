@@ -17,6 +17,7 @@ import type { AccountSnapshot } from "@/lib/extractTransactions";
 import { MerchantDrawer, merchantSlugFromSpendingMerchantHref, useMerchantDrawer } from "@/app/account/spending/MerchantDrawer";
 import { IncomeDrawer, useIncomeDrawer } from "@/app/account/dashboard/IncomeDrawer";
 import { EventDrawer, eventIdFromEventsDetailHref, useEventDrawer } from "@/app/account/dashboard/EventDrawer";
+import type { NearTermBucketDiscretionaryDTO } from "@/lib/forecastNearTermDiscretionary";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -414,6 +415,7 @@ interface NearTermBucketDTO {
   rangeLabel: string;
   netDisplay: number;
   items: NearTermItemDTO[];
+  discretionary?: NearTermBucketDiscretionaryDTO;
 }
 
 interface NearTermApiResponse {
@@ -421,7 +423,12 @@ interface NearTermApiResponse {
   horizonDays: number;
   homeCurrency: string;
   summary: {
+    /** Dated / projected line items only (before discretionary envelope). */
+    scheduledOutflow: number;
+    /** Full horizon cash-out estimate = scheduled + discretionary envelope (non–double-counted). */
     totalOutflow: number;
+    /** Sum of residual discretionary envelopes across the three windows. */
+    discretionaryEnvelopeTotal: number;
     totalIncome: number;
     net: number;
     outflowCount: number;
@@ -518,6 +525,7 @@ function NearTermForecastPanel({
   if (!data) return null;
 
   const { summary, alert, timeline, buckets } = data;
+  const hz = data.horizonDays;
 
   return (
     <>
@@ -549,9 +557,21 @@ function NearTermForecastPanel({
             <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Next {data.horizonDays} days</p>
             <p className="mt-1 text-xl font-bold text-gray-900 tabular-nums">
               −{fmt(summary.totalOutflow, hc)}{" "}
-              <span className="text-sm font-semibold text-gray-400">across {summary.outflowCount} outflows</span>
+              <span className="text-sm font-semibold text-gray-400">estimated cash going out</span>
             </p>
-            <p className="mt-1 text-sm font-medium text-emerald-700">
+            <p className="mt-1 text-xs text-gray-600 leading-relaxed space-y-1">
+              <span className="block">
+                <span className="font-semibold tabular-nums text-gray-800">{fmt(summary.scheduledOutflow, hc)}</span>
+                {" — "}payments we could tie to dates ({summary.outflowCount}{" "}
+                {summary.outflowCount === 1 ? "item" : "items"}, e.g. subscriptions &amp; trackers).
+              </span>
+              <span className="block">
+                <span className="font-semibold tabular-nums text-gray-800">{fmt(summary.discretionaryEnvelopeTotal, hc)}</span>
+                {" — "}everything else we assume from how you&apos;ve been spending lately, spread across these three months
+                (groceries, dining, etc.—without counting subs &amp; fixed cash twice).
+              </span>
+            </p>
+            <p className="mt-2 text-sm font-medium text-emerald-700">
               +{fmt(summary.totalIncome, hc)} income · net {summary.net >= 0 ? "+" : ""}{fmt(summary.net, hc)}
             </p>
           </div>
@@ -564,10 +584,11 @@ function NearTermForecastPanel({
         </div>
 
         <div className="px-5 py-5">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Scheduled &amp; projected cash flows</p>
           <div className="relative h-14">
-            <div className="absolute left-0 right-0 top-1/2 h-px -translate-y-1/2 bg-gray-200" />
+            <div className="absolute left-0 right-0 top-1/2 z-[1] h-px -translate-y-1/2 bg-gray-200" />
             {timeline.map((item) => {
-              const pct = Math.min(100, Math.max(0, (item.daysFromNow / data.horizonDays) * 100));
+              const pct = Math.min(100, Math.max(0, (item.daysFromNow / hz) * 100));
               return (
                 <div
                   key={item.id}
@@ -604,14 +625,19 @@ function NearTermForecastPanel({
               <p className="text-xs text-gray-500">{bucket.rangeLabel}</p>
             </div>
             <p className={`text-sm font-semibold tabular-nums ${bucket.netDisplay >= 0 ? "text-emerald-700" : "text-gray-900"}`}>
-              {fmtNear(bucket.netDisplay, true)} net
+              {fmtNear(bucket.netDisplay, true)} forecast net
             </p>
           </div>
-          {bucket.items.length === 0 ? (
-            <p className="px-5 py-6 text-sm text-gray-400">Nothing scheduled in this window.</p>
-          ) : (
-            <ul className="divide-y divide-gray-100">
-              {bucket.items.map((item) => {
+          {(() => {
+            const discCats =
+              bucket.discretionary?.categories.filter((c) => c.residualAmount > 0) ?? [];
+            const hasAnyRows = bucket.items.length > 0 || discCats.length > 0;
+            if (!hasAnyRows) {
+              return <p className="px-5 py-6 text-sm text-gray-400">Nothing in this window.</p>;
+            }
+            return (
+              <ul className="divide-y divide-gray-100">
+                {bucket.items.map((item) => {
                 const merchantSlug = merchantSlugFromSpendingMerchantHref(item.href);
                 const eventsDetailId = eventIdFromEventsDetailHref(item.href);
                 const incomeDrawerTarget = item.isIncome;
@@ -707,18 +733,43 @@ function NearTermForecastPanel({
                   </li>
                 );
               })}
-            </ul>
-          )}
+                {discCats.map((c) => (
+                  <li key={`disc-${bucket.label}-${c.parentCategory}`} className="flex items-start gap-3 px-5 py-4">
+                    <div className="flex shrink-0 flex-col items-center gap-1 pt-0.5">
+                      <span className={`h-2.5 w-2.5 rounded-full ${kindDotClass("pattern")}`} />
+                      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-gray-100 text-xs">↻</span>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-gray-900">{c.parentCategory}</p>
+                      <p className="mt-0.5 text-xs text-gray-500">
+                        {fmt(c.medianMonthly, hc)}/mo typical · {fmt(c.minMonthly, hc)}–{fmt(c.maxMonthly, hc)} ({c.windowLabel})
+                        {c.volatile ? (
+                          <span className="ml-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800">
+                            Uneven
+                          </span>
+                        ) : null}
+                      </p>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p className="text-sm font-bold tabular-nums text-gray-900">{fmt(c.residualAmount, hc)}</p>
+                      <p className="text-[10px] font-medium capitalize text-gray-400">estimate</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            );
+          })()}
         </div>
       ))}
 
       <p className="text-[11px] text-gray-400 leading-relaxed px-1">
         Near-term blends subscriptions and recurring patterns from your statements, projected income, scheduled cash items,
         and{" "}
-        <a href="/account/events" className="font-medium text-purple-600 hover:text-purple-800">
+        <Link href="/account/events" className="font-medium text-purple-600 hover:text-purple-800">
           Trackers
-        </a>
-        {" "}(Events &amp; Set Payments). Timing is estimated from history — not a guarantee.
+        </Link>
+        {" "}(Events &amp; Set Payments). Timing is an estimate—not a guarantee. Confirmed Services show on the timeline above;
+        they&apos;re omitted from bucket rows here to avoid duplicate lines but still count in the headline totals.
       </p>
       </div>
     </>

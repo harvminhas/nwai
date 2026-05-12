@@ -3,6 +3,10 @@
  *
  * 90-day cash-flow style projection: same core rules as Today → "What we expect",
  * plus Tracker-backed Events / Set Payments.
+ *
+ * Summary `totalOutflow` is a **full horizon estimate**: sum over each window of
+ * (scheduled/project outflows in that window + discretionary residual envelope for that window).
+ * `scheduledOutflow` is dated/project lines only; `discretionaryEnvelopeTotal` is the envelope portion only.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -19,8 +23,26 @@ import type { SourceMapping } from "@/lib/sourceMappings";
 import { buildExpectedUpcomingItems, type UpcomingItem } from "@/lib/expectedUpcoming";
 import { toDateStr } from "@/lib/projectionEngine";
 import { txFingerprint } from "@/lib/txFingerprint";
+import {
+  buildBucketDiscretionaryPayload,
+  computeDiscretionaryCategoryTrailing,
+  fmtTrailingMonthRange,
+  pickTrailingMonths,
+  scheduledOverlapByBucket,
+  type NearTermBucketDiscretionaryDTO,
+  type NearTermLineForOverlap,
+} from "@/lib/forecastNearTermDiscretionary";
 
 const HORIZON_DAYS = 90;
+/** Calendar days in bucket 0 (days 0–30 inclusive). */
+const FIRST_BUCKET_DAY_COUNT = 31;
+
+/** Inclusive day ranges — must match `bucket()` slices and discretionary bucket indices. */
+const NEAR_TERM_BUCKET_DAY_RANGES: readonly [readonly [number, number], readonly [number, number], readonly [number, number]] = [
+  [0, 30],
+  [31, 60],
+  [61, HORIZON_DAYS],
+];
 
 export type NearTermKind = "pattern" | "set_payment" | "event" | "income" | "cash";
 
@@ -45,8 +67,10 @@ export interface NearTermItemDTO {
 export interface NearTermBucketDTO {
   label: string;
   rangeLabel: string;
+  /** Income − scheduled outflows (incl. confirmed Services) − discretionary envelope for this window — same components as headline net. */
   netDisplay: number;
   items: NearTermItemDTO[];
+  discretionary: NearTermBucketDiscretionaryDTO;
 }
 
 /** Map shared upcoming row → Forecast DTO (drops CC-minimum debt placeholders). */
@@ -90,6 +114,11 @@ function upcomingToNearTermDTO(item: UpcomingItem, todayYmd: string): NearTermIt
     amountLabel,
     href: item.href,
   };
+}
+
+/** Confirmed Firestore subscriptions (`sub-*`) — omitted from bucket lists only; still on timeline, summaries, overlap. */
+function isConfirmedFirestoreSubscriptionRow(item: NearTermItemDTO): boolean {
+  return item.id.startsWith("sub-");
 }
 
 function todayISO(): string {
@@ -370,31 +399,85 @@ export async function GET(req: NextRequest) {
       return a.date.localeCompare(b.date);
     });
 
+    /** Full projection including confirmed subs — overlap + summary totals. */
+    const itemsUi = items.filter((i) => !isConfirmedFirestoreSubscriptionRow(i));
+
     const outflows = items.filter((i) => !i.isIncome && i.daysFromNow >= 0 && i.daysFromNow <= HORIZON_DAYS);
     const inflows = items.filter((i) => i.isIncome && i.daysFromNow >= 0 && i.daysFromNow <= HORIZON_DAYS);
 
-    const totalOutflow = outflows.reduce((s, i) => s + i.amount, 0);
-    const totalIncome = inflows.reduce((s, i) => s + i.amount, 0);
+    /** Sum of discrete projected expense rows only (subs, cash items, trackers, patterns …). */
+    const scheduledOutflow = outflows.reduce((s, i) => s + i.amount, 0);
+    const totalIncomeRounded = Math.round(inflows.reduce((s, i) => s + i.amount, 0));
 
     const alert = detectHeavyWeekAlert(items.filter((i) => i.daysFromNow >= -3), homeCurrency);
 
-    function bucket(startDay: number, endDay: number): NearTermBucketDTO {
-      const slice = items.filter((i) => i.daysFromNow >= startDay && i.daysFromNow <= endDay);
-      const net =
-        slice.filter((i) => i.isIncome).reduce((s, i) => s + i.amount, 0) -
-        slice.filter((i) => !i.isIncome).reduce((s, i) => s + i.amount, 0);
+    const trailingYm = pickTrailingMonths(profile.allTxMonths ?? [], thisMonth, 3);
+    const windowLabel = fmtTrailingMonthRange(trailingYm);
+    const categoryStats = computeDiscretionaryCategoryTrailing(expenseTxns, trailingYm);
+    const overlapLines: NearTermLineForOverlap[] = items.map((i) => ({
+      id: i.id,
+      kind: i.kind,
+      daysFromNow: i.daysFromNow,
+      amount: i.amount,
+      isIncome: i.isIncome,
+      href: i.href,
+    }));
+    const overlapTriple = scheduledOverlapByBucket(overlapLines, subscriptionRecords, cashItemsForBuilder);
+    const discretionaryBuckets = buildBucketDiscretionaryPayload({
+      categoryStats,
+      overlap: overlapTriple,
+      windowLabel,
+      firstBucketDayCount: FIRST_BUCKET_DAY_COUNT,
+    });
+
+    let forecastTotalOutflow = 0;
+    for (let bi = 0; bi < 3; bi++) {
+      const [lo, hi] = NEAR_TERM_BUCKET_DAY_RANGES[bi];
+      const schedWindow = items
+        .filter((i) => !i.isIncome && i.daysFromNow >= lo && i.daysFromNow <= hi)
+        .reduce((s, i) => s + i.amount, 0);
+      forecastTotalOutflow += schedWindow + discretionaryBuckets[bi].residualTotal;
+    }
+    forecastTotalOutflow = Math.round(forecastTotalOutflow);
+
+    const discretionaryEnvelopeTotal = Math.round(
+      discretionaryBuckets.reduce((s, b) => s + b.residualTotal, 0),
+    );
+
+    function bucket(startDay: number, endDay: number, discIdx: 0 | 1 | 2): NearTermBucketDTO {
+      const slice = itemsUi.filter((i) => i.daysFromNow >= startDay && i.daysFromNow <= endDay);
+      const sliceFull = items.filter((i) => i.daysFromNow >= startDay && i.daysFromNow <= endDay);
+      const incomeInWindow = sliceFull.filter((i) => i.isIncome).reduce((s, i) => s + i.amount, 0);
+      const scheduledOutInWindow = sliceFull.filter((i) => !i.isIncome).reduce((s, i) => s + i.amount, 0);
+      const envelope = discretionaryBuckets[discIdx].residualTotal;
+      /** Matches headline math for this window: income − all scheduled outflows (incl. Services) − discretionary envelope. */
+      const netDisplay = Math.round(incomeInWindow - scheduledOutInWindow - envelope);
       const d0 = new Date(today + "T12:00:00Z");
       d0.setUTCDate(d0.getUTCDate() + startDay);
       const d1 = new Date(today + "T12:00:00Z");
       d1.setUTCDate(d1.getUTCDate() + endDay);
       const rangeLabel = `${d0.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${d1.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+      const discRows = discretionaryBuckets[discIdx].categories.filter((c) => c.residualAmount > 0).length;
       const label =
-        startDay === 0 ? `NEXT 30 DAYS · ${slice.length} ITEMS` : `${startDay}–${endDay} DAYS · ${slice.length} ITEMS`;
-      return { label, rangeLabel, netDisplay: net, items: slice };
+        startDay === 0
+          ? `NEXT 30 DAYS · ${slice.length + discRows} ITEMS`
+          : `${startDay}–${endDay} DAYS · ${slice.length + discRows} ITEMS`;
+      return {
+        label,
+        rangeLabel,
+        netDisplay,
+        items: slice,
+        discretionary: discretionaryBuckets[discIdx],
+      };
     }
 
-    const buckets: NearTermBucketDTO[] = [bucket(0, 30), bucket(31, 60), bucket(61, HORIZON_DAYS)];
+    const buckets: NearTermBucketDTO[] = [
+      bucket(0, 30, 0),
+      bucket(31, 60, 1),
+      bucket(61, HORIZON_DAYS, 2),
+    ];
 
+    /** Timeline shows all projected flows including confirmed Services (orange); buckets stay uncluttered. */
     const timeline = buildNearTermTimeline(items, HORIZON_DAYS, 40);
 
     return NextResponse.json({
@@ -402,16 +485,19 @@ export async function GET(req: NextRequest) {
       horizonDays: HORIZON_DAYS,
       homeCurrency,
       summary: {
-        totalOutflow,
-        totalIncome,
-        net: totalIncome - totalOutflow,
+        /** Scheduled/project rows summed across the horizon (narrow definition). */
+        scheduledOutflow: Math.round(scheduledOutflow),
+        /** Estimated total cash leaving accounts: per-window scheduled amounts + discretionary residual envelope. */
+        totalOutflow: forecastTotalOutflow,
+        discretionaryEnvelopeTotal,
+        totalIncome: totalIncomeRounded,
+        net: totalIncomeRounded - forecastTotalOutflow,
         outflowCount: outflows.length,
         incomeCount: inflows.length,
       },
       alert,
       timeline,
       buckets,
-      typicalMonthlyExpenses: profile.typicalMonthly?.median ?? 0,
     });
   } catch (err) {
     console.error("[forecast/near-term] GET error", err);
