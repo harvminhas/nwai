@@ -192,6 +192,15 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   useEffect(() => { setDrawerOpen(false); setSwitcherOpen(false); setUserMenuOpen(false); }, [pathname]);
 
   useEffect(() => {
+    if (!drawerOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setDrawerOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drawerOpen]);
+
+  useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       const t = e.target as Node;
       const insideDesktop = desktopSwitcherRef.current?.contains(t);
@@ -204,6 +213,7 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   }, []);
 
   async function handleSignOut() {
+    setDrawerOpen(false);
     const { auth } = getFirebaseClient();
     await signOut(auth);
     router.push("/");
@@ -212,22 +222,25 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
   // ── nav renderer ──────────────────────────────────────────────────────────
 
   function NavItem({
-    href, label, icon, disabled, proFeature, onClick,
+    href, label, icon, disabled, proFeature, onClick, compact: compactProp,
   }: {
     href: string; label: string; icon: React.ReactNode;
     disabled?: boolean; proFeature?: keyof PlanFeatures; onClick?: () => void;
+    /** When true (desktop collapsed rail), icon-only rows. */
+    compact?: boolean;
   }) {
+    const rail = compactProp ?? collapsed;
     const active  = !disabled && (pathname === href || (href !== "/upload" && pathname.startsWith(href + "/")));
     const locked  = proFeature ? !PLANS[planId].features[proFeature] : false;
 
     if (disabled) {
       return (
         <div
-          title={collapsed ? label : undefined}
-          className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-gray-300 cursor-not-allowed select-none ${collapsed ? "justify-center px-2" : ""}`}
+          title={rail ? label : undefined}
+          className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-gray-300 cursor-not-allowed select-none ${rail ? "justify-center px-2" : ""}`}
         >
           <span className="text-gray-300">{icon}</span>
-          {!collapsed && (
+          {!rail && (
             <span className="flex flex-1 items-center justify-between truncate">
               {label}
               <span className="ml-2 rounded-full bg-gray-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-gray-400">soon</span>
@@ -241,13 +254,13 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
       <Link
         href={href}
         onClick={onClick}
-        title={collapsed ? label : undefined}
+        title={rail ? label : undefined}
         className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
           active ? "bg-purple-50 text-purple-700" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-        } ${collapsed ? "justify-center px-2" : ""}`}
+        } ${rail ? "justify-center px-2" : ""}`}
       >
         <span className={active ? "text-purple-600" : locked ? "text-gray-300" : "text-gray-400"}>{icon}</span>
-        {!collapsed && (
+        {!rail && (
           <span className="flex flex-1 items-center justify-between truncate">
             <span className={locked ? "text-gray-400" : ""}>{label}</span>
             {locked && (
@@ -261,13 +274,21 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
     );
   }
 
-  function NavGroups({ onItemClick }: { onItemClick?: () => void }) {
+  function NavGroups({
+    onItemClick,
+    /** Desktop sidebar rail — icon-only when collapsed. Mobile drawer always passes false. */
+    compact,
+  }: {
+    onItemClick?: () => void;
+    compact?: boolean;
+  }) {
+    const rail = compact ?? collapsed;
     return (
-      <div className={`space-y-4 ${collapsed ? "px-1" : "px-3"}`}>
+      <div className={`space-y-4 ${rail ? "px-1" : "px-3"}`}>
         {NAV_GROUPS.map(({ section, items }) => (
           <div key={section}>
             {/* Section label — hidden when collapsed */}
-            {!collapsed && (
+            {!rail && (
               <p className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-gray-300">
                 {section}
               </p>
@@ -279,6 +300,7 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
                   disabled={disabled}
                   proFeature={proFeature as keyof PlanFeatures | undefined}
                   onClick={onItemClick}
+                  compact={rail}
                 />
               ))}
             </div>
@@ -570,9 +592,12 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
           )}
         </div>
         <button
+          type="button"
           onClick={() => setDrawerOpen(true)}
           className="rounded-md p-2 text-gray-600 hover:bg-gray-100"
           aria-label="Open menu"
+          aria-expanded={drawerOpen}
+          aria-controls="mobile-nav-drawer"
         >
           <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
@@ -580,11 +605,19 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
         </button>
       </div>
 
-      {/* ── Mobile drawer ────────────────────────────────────────────────────── */}
-      {drawerOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setDrawerOpen(false)} />
-          <aside className="absolute inset-y-0 left-0 flex w-64 flex-col bg-white shadow-xl">
+      {/* ── Mobile drawer (always mounted below lg; closed = off-screen + no pointer capture) ── */}
+      <div
+        id="mobile-nav-drawer"
+        className={`fixed inset-0 z-50 overflow-hidden lg:hidden ${drawerOpen ? "" : "pointer-events-none"}`}
+        aria-hidden={!drawerOpen}
+      >
+        <div
+          className={`absolute inset-0 bg-black/40 transition-opacity duration-200 ${drawerOpen ? "opacity-100" : "pointer-events-none opacity-0"}`}
+          onClick={() => setDrawerOpen(false)}
+        />
+        <aside
+          className={`absolute inset-y-0 left-0 flex min-h-0 w-64 max-w-[85vw] flex-col bg-white shadow-xl transition-transform duration-200 ease-out motion-reduce:transition-none ${drawerOpen ? "translate-x-0" : "-translate-x-full"}`}
+        >
             <div className="flex h-14 shrink-0 items-center justify-between border-b border-gray-100 px-5">
               <Link href="/account/dashboard" className="font-bold text-purple-600 text-lg tracking-tight">
                 networth<span className="text-gray-400">.online</span>
@@ -608,90 +641,101 @@ export default function Sidebar({ collapsed = false, onToggle }: SidebarProps) {
                 Upload statement
               </Link>
             </div>
-            <div className="flex flex-1 flex-col overflow-y-auto py-4">
-              <nav className="flex-1">
-                <NavGroups onItemClick={() => setDrawerOpen(false)} />
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain py-4">
+              <nav className="flex min-h-0 flex-1 flex-col">
+                <NavGroups compact={false} onItemClick={() => setDrawerOpen(false)} />
               </nav>
             </div>
-            <div className="shrink-0 border-t border-gray-100 p-3 space-y-1">
-              {/* User info */}
-              <div className="flex items-center gap-2.5 px-2 py-1.5">
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-purple-100 text-xs font-bold text-purple-700">
+            {/* Collapsed by default — avoids a tall "bottom sheet" stealing the drawer on small screens */}
+            <details className="group shrink-0 border-t border-gray-100 bg-white">
+              <summary className="flex cursor-pointer list-none items-center gap-2.5 px-4 py-3 [&::-webkit-details-marker]:hidden">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-purple-100 text-xs font-bold text-purple-700">
                   {(selfDisplayName || userEmail || "?")[0]?.toUpperCase()}
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="truncate text-xs font-semibold text-gray-700">{selfDisplayName || userEmail}</p>
-                  {planId === "pro" && <p className="text-[10px] text-purple-500 font-medium">Pro</p>}
+                <div className="min-w-0 flex-1 text-left">
+                  <p className="truncate text-xs font-semibold text-gray-900">{selfDisplayName || userEmail || "Account"}</p>
+                  {planId === "pro" && <p className="text-[10px] font-medium text-purple-600">Pro</p>}
+                  <p className="text-[10px] text-gray-400">Activity, billing &amp; sign out</p>
                 </div>
-              </div>
-
-              <Link href="/account/activity" onClick={() => setDrawerOpen(false)}
-                className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${pathname === "/account/activity" ? "bg-purple-50 text-purple-700" : "text-gray-500 hover:bg-gray-100"}`}>
-                <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                <svg
+                  className="h-4 w-4 shrink-0 rotate-180 text-gray-400 transition-transform group-open:rotate-0"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  aria-hidden
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
                 </svg>
-                Activity &amp; Coverage
-              </Link>
-
-              <Link href="/account/statements" onClick={() => setDrawerOpen(false)}
-                className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${pathname === "/account/statements" ? "bg-purple-50 text-purple-700" : "text-gray-500 hover:bg-gray-100"}`}>
-                <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
-                </svg>
-                Manage uploads
-              </Link>
-
-              <Link href="/account/sharing" onClick={() => setDrawerOpen(false)}
-                className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${pathname === "/account/sharing" ? "bg-purple-50 text-purple-700" : "text-gray-500 hover:bg-gray-100"}`}>
-                <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-                Sharing
-              </Link>
-
-              {planId === "free" ? (
-                <Link href="/account/billing" onClick={() => setDrawerOpen(false)}
-                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-purple-600 hover:bg-purple-50 transition">
+              </summary>
+              <div className="space-y-1 border-t border-gray-50 px-3 pb-3 pt-2">
+                <Link href="/account/activity" onClick={() => setDrawerOpen(false)}
+                  className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${pathname === "/account/activity" ? "bg-purple-50 text-purple-700" : "text-gray-500 hover:bg-gray-100"}`}>
                   <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  Upgrade to Pro
+                  Activity &amp; Coverage
                 </Link>
-              ) : (
-                <Link href="/account/billing" onClick={() => setDrawerOpen(false)}
-                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-purple-600 hover:bg-purple-50 transition">
-                  <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
-                  </svg>
-                  Pro · Manage
-                </Link>
-              )}
 
-              {process.env.NODE_ENV === "development" && (
-                <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
-                  <p className="text-[9px] font-bold uppercase tracking-widest text-amber-500 mb-1.5">🧪 Test plan</p>
-                  <div className="flex gap-1">
-                    {PLAN_ORDER.map((id) => (
-                      <button key={id} onClick={() => setTestPlan(id as PlanId)}
-                        className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition ${planId === id ? "bg-amber-500 text-white" : "bg-white text-amber-600 border border-amber-200 hover:bg-amber-100"}`}>
-                        {PLANS[id as PlanId].name}
-                      </button>
-                    ))}
+                <Link href="/account/statements" onClick={() => setDrawerOpen(false)}
+                  className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${pathname === "/account/statements" ? "bg-purple-50 text-purple-700" : "text-gray-500 hover:bg-gray-100"}`}>
+                  <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+                  </svg>
+                  Manage uploads
+                </Link>
+
+                <Link href="/account/sharing" onClick={() => setDrawerOpen(false)}
+                  className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${pathname === "/account/sharing" ? "bg-purple-50 text-purple-700" : "text-gray-500 hover:bg-gray-100"}`}>
+                  <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  Sharing
+                </Link>
+
+                {planId === "free" ? (
+                  <Link href="/account/billing" onClick={() => setDrawerOpen(false)}
+                    className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-purple-600 hover:bg-purple-50 transition">
+                    <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                    </svg>
+                    Upgrade to Pro
+                  </Link>
+                ) : (
+                  <Link href="/account/billing" onClick={() => setDrawerOpen(false)}
+                    className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-purple-600 hover:bg-purple-50 transition">
+                    <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+                    </svg>
+                    Pro · Manage
+                  </Link>
+                )}
+
+                {process.env.NODE_ENV === "development" && (
+                  <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2">
+                    <p className="mb-1.5 text-[9px] font-bold uppercase tracking-widest text-amber-500">🧪 Test plan</p>
+                    <div className="flex gap-1">
+                      {PLAN_ORDER.map((id) => (
+                        <button key={id} onClick={() => setTestPlan(id as PlanId)}
+                          className={`flex-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition ${planId === id ? "bg-amber-500 text-white" : "border border-amber-200 bg-white text-amber-600 hover:bg-amber-100"}`}>
+                          {PLANS[id as PlanId].name}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              <button onClick={handleSignOut}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 transition">
-                <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                </svg>
-                Sign out
-              </button>
-            </div>
+                <button type="button" onClick={handleSignOut}
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 transition">
+                  <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                  </svg>
+                  Sign out
+                </button>
+              </div>
+            </details>
           </aside>
-        </div>
-      )}
+      </div>
     </>
   );
 }

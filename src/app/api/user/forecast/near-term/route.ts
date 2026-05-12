@@ -56,6 +56,7 @@ function upcomingToNearTermDTO(item: UpcomingItem, todayYmd: string): NearTermIt
   const isIncome = item.type === "cash-in";
   let kind: NearTermKind = "pattern";
   if (item.type === "cash-out") kind = "cash";
+  else if (isIncome) kind = "income";
 
   let date = item.date;
   if (date.length === 7) date = `${date}-01`;
@@ -135,6 +136,20 @@ function detectHeavyWeekAlert(items: NearTermItemDTO[], homeCurrency: string): s
   const top = [...best.win].sort((a, b) => b.amount - a.amount).slice(0, 4);
   const parts = top.map((x) => `${x.title} (${fmt(x.amount)})`);
   return `Heavy week ahead: ${parts.join(", ")} stack within about 7 days (~${fmt(best.sum)} total).`;
+}
+
+/** Timeline dots: income must stay visible — a plain slice(0, 40) on date-sorted rows often drops every inflow. */
+function buildNearTermTimeline(items: NearTermItemDTO[], horizonDays: number, maxDots = 40): NearTermItemDTO[] {
+  const pool = items.filter((i) => i.daysFromNow >= 0 && i.daysFromNow <= horizonDays);
+  const cmp = (a: NearTermItemDTO, b: NearTermItemDTO) =>
+    a.daysFromNow !== b.daysFromNow ? a.daysFromNow - b.daysFromNow : a.date.localeCompare(b.date);
+  const incomes = pool.filter((i) => i.isIncome).sort(cmp);
+  const expenses = pool.filter((i) => !i.isIncome).sort(cmp);
+  const incomesShown = incomes.slice(0, maxDots);
+  const expenseSlots = Math.max(0, maxDots - incomesShown.length);
+  const timeline = [...incomesShown, ...expenses.slice(0, expenseSlots)];
+  timeline.sort(cmp);
+  return timeline;
 }
 
 export async function GET(req: NextRequest) {
@@ -380,9 +395,7 @@ export async function GET(req: NextRequest) {
 
     const buckets: NearTermBucketDTO[] = [bucket(0, 30), bucket(31, 60), bucket(61, HORIZON_DAYS)];
 
-    const timeline = items
-      .filter((i) => i.daysFromNow >= 0 && i.daysFromNow <= HORIZON_DAYS)
-      .slice(0, 40);
+    const timeline = buildNearTermTimeline(items, HORIZON_DAYS, 40);
 
     return NextResponse.json({
       today,
