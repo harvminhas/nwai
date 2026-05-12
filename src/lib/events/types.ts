@@ -43,14 +43,30 @@ export interface VisitLog {
   paymentMethod?: "cash" | "card" | "statement";
   /** Payment amount (set for cash and card manual entries) */
   amount?: number;
+  /**
+   * Scheduled-payment trackers only — the slot date (YYYY-MM-DD) this log
+   * is recording a payment against.
+   */
+  scheduledDate?: string;
   createdAt: string;
+}
+
+/** One date + amount entry in a scheduled-payment tracker */
+export interface ScheduledPaymentSlot {
+  /** YYYY-MM-DD — when the payment is due */
+  date: string;
+  /** Estimated payment amount */
+  estimatedAmount: number;
 }
 
 export interface UserEvent {
   id: string;
   name: string;
-  /** UI kind — defaults to "project" for legacy events without this field */
-  kind?: "project" | "service";
+  /**
+   * UI kind — defaults to "project" for legacy events without this field.
+   * "scheduled_payment" = fixed set of dates with known amounts.
+   */
+  kind?: "project" | "service" | "scheduled_payment";
   budget?: number;
   /** Project: start date (ISO). Legacy single-date stored as startDate or date. */
   startDate?: string;
@@ -65,6 +81,14 @@ export interface UserEvent {
   createdAt: string;
   /** Soft-delete — archived events are hidden but tag history is preserved */
   archivedAt?: string;
+
+  // ── Scheduled payment fields ──────────────────────────────────────────────
+  /** Fixed payment schedule (scheduled_payment kind only) */
+  scheduledPayments?: ScheduledPaymentSlot[];
+  /** Sum of payments logged against scheduled slots */
+  scheduledPaidTotal?: number;
+  /** Number of slots that have at least one logged payment */
+  scheduledPaidCount?: number;
 
   // ── Service-specific ──────────────────────────────────────────────────────
   cadence?: ServiceCadence;
@@ -194,6 +218,15 @@ export type ProjectRecentExpense =
       category?: string;
       entryType: "cash" | "manual";
     };
+
+/** Per-slot status for scheduled-payment list cards */
+export interface ScheduledPaymentSlotStatus extends ScheduledPaymentSlot {
+  /** visit log id if a payment has been recorded for this slot */
+  visitId?: string;
+  paymentMethod?: "cash" | "card" | "statement";
+  actualAmount?: number;
+  paid: boolean;
+}
 
 /** Summary returned alongside event data on the list endpoint */
 export interface EventSummary extends UserEvent {

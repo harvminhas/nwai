@@ -16,6 +16,8 @@ export interface ServiceLogModalProps {
   homeCurrency: string;
   /** Run after a successful log save or statement tag / untag */
   onAfterChange?: () => void | Promise<void>;
+  /** Pre-fill the date field (used by scheduled-payment trackers) */
+  defaultDate?: string;
 }
 
 export default function ServiceLogModal({
@@ -25,9 +27,10 @@ export default function ServiceLogModal({
   headers,
   homeCurrency,
   onAfterChange,
+  defaultDate,
 }: ServiceLogModalProps) {
   const [logModalStep, setLogModalStep] = useState<"pick" | "statement" | "manual">("pick");
-  const [logDate, setLogDate] = useState(() => new Date().toISOString().substring(0, 10));
+  const [logDate, setLogDate] = useState(() => defaultDate ?? new Date().toISOString().substring(0, 10));
   const [logNote, setLogNote] = useState("");
   const [showPaymentInForm, setShowPaymentInForm] = useState(false);
   const [logPayMethod, setLogPayMethod] = useState<"cash" | "card">("cash");
@@ -59,17 +62,17 @@ export default function ServiceLogModal({
     setShowPaymentInForm(false);
     setLogPayAmount("");
     setLogNote("");
-    setLogDate(new Date().toISOString().substring(0, 10));
-  }, [open]);
+    setLogDate(defaultDate ?? new Date().toISOString().substring(0, 10));
+  }, [open, defaultDate]);
 
   const closeLogModal = useCallback(() => {
     setLogModalStep("pick");
     setShowPaymentInForm(false);
     setLogPayAmount("");
     setLogNote("");
-    setLogDate(new Date().toISOString().substring(0, 10));
+    setLogDate(defaultDate ?? new Date().toISOString().substring(0, 10));
     onClose();
-  }, [onClose]);
+  }, [onClose, defaultDate]);
 
   const handleServiceStatementTag = useCallback(
     async (_evId: string, amountDelta: number, _date?: string, tx?: RawTx) => {

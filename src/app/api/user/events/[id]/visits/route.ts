@@ -46,9 +46,9 @@ export async function POST(
     if (!eventSnap.exists) return NextResponse.json({ error: "Event not found" }, { status: 404 });
 
     const evKind = (eventSnap.data()!.kind as string | undefined) ?? "project";
-    if (evKind !== "service") {
+    if (evKind !== "service" && evKind !== "scheduled_payment") {
       return NextResponse.json(
-        { error: "Visit logs are only for recurring services. Use project ledger for off-statement spend on projects." },
+        { error: "Visit logs are only for recurring services and scheduled-payment trackers. Use project ledger for off-statement spend on projects." },
         { status: 400 },
       );
     }
@@ -57,12 +57,18 @@ export async function POST(
     const visitId = randomUUID();
     const ym      = date.substring(0, 7); // YYYY-MM
 
+    const rawScheduledDate = (body.scheduledDate as string | undefined)?.substring(0, 10);
+    const scheduledDate = rawScheduledDate && /^\d{4}-\d{2}-\d{2}$/.test(rawScheduledDate)
+      ? rawScheduledDate
+      : undefined;
+
     const visit: VisitLog = {
       id: visitId,
       date,
       ...(body.note ? { note: String(body.note).trim() } : {}),
       ...(paymentMethod ? { paymentMethod } : {}),
       ...(amount !== undefined ? { amount } : {}),
+      ...(scheduledDate ? { scheduledDate } : {}),
       createdAt: now,
     };
 
@@ -80,10 +86,19 @@ export async function POST(
       updates.cashVisitCount = FieldValue.increment(1);
       if (amount) updates.cashTotal = FieldValue.increment(amount);
       updates[`paymentsByMonth.${ym}`] = FieldValue.increment(1);
+      if (amount) updates.scheduledPaidTotal = FieldValue.increment(amount);
     }
     if (paymentMethod === "card") {
       updates.cardVisitCount = FieldValue.increment(1);
       updates[`paymentsByMonth.${ym}`] = FieldValue.increment(1);
+    }
+    if (paymentMethod === "statement") {
+      updates[`paymentsByMonth.${ym}`] = FieldValue.increment(1);
+    }
+    // For scheduled_payment kind, track how many slots have been paid
+    if (evKind === "scheduled_payment" && scheduledDate && paymentMethod) {
+      updates.scheduledPaidCount = FieldValue.increment(1);
+      if (amount) updates.scheduledPaidTotal = FieldValue.increment(amount);
     }
     await eventRef.update(updates);
 

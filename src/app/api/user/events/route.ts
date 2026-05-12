@@ -332,7 +332,7 @@ export async function POST(req: NextRequest) {
       name: body.name.trim(),
       kind,
       type: kind === "service" ? "annual" : (body.type ?? "one-off"),
-      color: body.color ?? (kind === "service" ? "blue" : "purple"),
+      color: body.color ?? (kind === "service" ? "blue" : kind === "scheduled_payment" ? "amber" : "purple"),
       createdAt: now,
       // Budget + timeframe (all events)
       ...(body.budget   != null  && !Number.isNaN(Number(body.budget)) && { budget: Number(body.budget) }),
@@ -345,6 +345,8 @@ export async function POST(req: NextRequest) {
       ...(kind === "service" && body.seasonEnd      && { seasonEnd:     body.seasonEnd     }),
       ...(kind === "service" && body.billingMethod  && { billingMethod: body.billingMethod }),
       ...(kind === "service" && body.avgPerVisit != null && { avgPerVisit: Number(body.avgPerVisit) }),
+      // Scheduled payment fields
+      ...(kind === "scheduled_payment" && body.scheduledPayments && { scheduledPayments: body.scheduledPayments }),
     };
 
     await db.doc(`users/${actorUid}/events/${id}`).set(event);

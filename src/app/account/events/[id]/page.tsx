@@ -605,7 +605,8 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
 
   if (!event) return null;
 
-  const isService = event.kind === "service";
+  const isService          = event.kind === "service";
+  const isScheduledPayment = event.kind === "scheduled_payment";
 
   return (
     <div className="mx-auto max-w-4xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
@@ -621,7 +622,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-center gap-3 min-w-0">
               <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${cfg.bg} text-xl`}>
-                {isService ? "🔧" : "🗓"}
+                {isService ? "🔧" : isScheduledPayment ? "📅" : "🗓"}
               </span>
               <div className="min-w-0">
                 <h1 className="text-xl font-bold text-gray-900">
@@ -630,11 +631,19 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                 </h1>
                 <div className="flex items-center gap-2 mt-1 flex-wrap">
                   <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${cfg.bg} ${cfg.text}`}>
-                    {isService ? "Service" : event.type === "annual" ? "Annual" : "Project"}
+                    {isService ? "Service" : isScheduledPayment ? "Set Payments" : event.type === "annual" ? "Annual" : "Event"}
                   </span>
                   {isService ? (
                     <>
                       <span className="text-xs text-gray-400">{cadenceLabelShort(event.cadence ?? "monthly", event.seasonStart, event.seasonEnd, event.billingMethod)}</span>
+                    </>
+                  ) : isScheduledPayment ? (
+                    <>
+                      {event.scheduledPayments && event.scheduledPayments.length > 0 && (
+                        <span className="text-xs text-gray-400">
+                          {(event.scheduledPaidCount ?? 0)} of {event.scheduledPayments.length} paid
+                        </span>
+                      )}
                     </>
                   ) : (
                     <>
@@ -652,6 +661,14 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                 <p className="text-xs text-gray-400 mt-0.5">
                   {avgCostPerVisit > 0 && <span>spent · {fmt(avgCostPerVisit, hc)} avg / visit</span>}
                 </p>
+              ) : isScheduledPayment ? (
+                <>
+                  {event.scheduledPayments && event.scheduledPayments.length > 0 && (
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      of {fmt(event.scheduledPayments.reduce((s, p) => s + p.estimatedAmount, 0), hc)} total
+                    </p>
+                  )}
+                </>
               ) : (
                 event.budget && <p className="text-sm text-gray-400">of {fmt(event.budget, hc)} budget</p>
               )}
@@ -663,13 +680,133 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
             </div>
           </div>
 
-          {/* Budget bar (non-service) */}
-          {!isService && pct != null && (
+          {/* Budget bar (non-service, non-scheduled) */}
+          {!isService && !isScheduledPayment && pct != null && (
             <div className="mt-4 h-2 w-full rounded-full bg-gray-100">
               <div className={`h-2 rounded-full transition-all ${pct >= 100 ? "bg-red-400" : cfg.bg}`} style={{ width: `${pct}%` }} />
             </div>
           )}
+
+          {/* Scheduled payment progress bar */}
+          {isScheduledPayment && event.scheduledPayments && event.scheduledPayments.length > 0 && (() => {
+            const totalEst = event.scheduledPayments.reduce((s, p) => s + p.estimatedAmount, 0);
+            const spentPct = totalEst > 0 ? Math.min(100, Math.round((totalSpent / totalEst) * 100)) : null;
+            return spentPct !== null ? (
+              <div className="mt-4 h-2 w-full rounded-full bg-gray-100">
+                <div className="h-2 rounded-full bg-amber-400 transition-all" style={{ width: `${spentPct}%` }} />
+              </div>
+            ) : null;
+          })()}
         </div>
+
+        {/* ── Scheduled payment tracker layout ───────────────────────────── */}
+        {isScheduledPayment && (
+          <div className="space-y-4">
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Payment Schedule</p>
+                <button
+                  type="button"
+                  onClick={() => setLogModalOpen((v) => !v)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                    logModalOpen
+                      ? "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                      : "bg-amber-500 text-white hover:bg-amber-600"
+                  }`}
+                >
+                  {logModalOpen ? "Close" : "+ Log payment"}
+                </button>
+              </div>
+
+              {(event.scheduledPayments ?? []).length === 0 ? (
+                <p className="text-sm text-gray-400">No payment dates set.</p>
+              ) : (
+                <div className="space-y-2">
+                  {[...(event.scheduledPayments ?? [])]
+                    .sort((a, b) => a.date.localeCompare(b.date))
+                    .map((slot, i) => {
+                      const today2 = new Date().toISOString().substring(0, 10);
+                      const isPast  = slot.date < today2;
+                      const isToday = slot.date === today2;
+                      const isFuture = slot.date > today2;
+                      return (
+                        <div
+                          key={i}
+                          className={`flex items-center justify-between rounded-xl px-4 py-3 ${
+                            isPast ? "bg-amber-50 border border-amber-100" :
+                            isToday ? "bg-amber-100 border border-amber-300" :
+                            "bg-gray-50 border border-gray-100"
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className={`h-2.5 w-2.5 rounded-full shrink-0 ${
+                              isPast ? "bg-amber-500" : isToday ? "bg-amber-400 ring-2 ring-amber-200" : "bg-gray-300"
+                            }`} />
+                            <div>
+                              <p className="text-sm font-medium text-gray-900">
+                                {new Date(slot.date + "T00:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })}
+                              </p>
+                              <p className={`text-xs ${isToday ? "text-amber-700 font-medium" : "text-gray-500"}`}>
+                                {fmt(slot.estimatedAmount, hc)} estimated
+                              </p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            {isPast ? (
+                              <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700">Due</span>
+                            ) : isToday ? (
+                              <span className="inline-flex items-center rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-medium text-amber-800">Today</span>
+                            ) : (
+                              <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                                {Math.ceil((new Date(slot.date + "T00:00:00").getTime() - new Date().getTime()) / 86_400_000)}d away
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+
+            {/* Tagged transactions / cash payments */}
+            {allPayments.length > 0 && (
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-3">Payments Logged</p>
+                <div className="space-y-2">
+                  {allPayments.slice(0, 10).map((p, idx) => {
+                    const isVisit = "paymentMethod" in p;
+                    const rowKey = isVisit ? (p as VisitLog).id : ((p as TaggedTransaction).fingerprint ?? String(idx));
+                    const dateStr = new Date(p.date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+                    const label = isVisit
+                      ? ((p as VisitLog).note?.trim() || (((p as VisitLog).paymentMethod ?? "") ? `${(p as VisitLog).paymentMethod} payment` : "Payment"))
+                      : (p as TaggedTransaction).description;
+                    const payMethod = isVisit ? (p as VisitLog).paymentMethod : undefined;
+                    return (
+                      <div key={rowKey} className="flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-xs text-gray-400 shrink-0">{dateStr}</span>
+                          <span className="truncate text-gray-700">{label}</span>
+                          {payMethod && (
+                            <span className="shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 capitalize">
+                              {payMethod}
+                            </span>
+                          )}
+                          {!isVisit && (
+                            <span className="shrink-0 rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600">Statement</span>
+                          )}
+                        </div>
+                        {p.amount != null && (
+                          <span className="text-sm font-medium text-gray-900 tabular-nums shrink-0 ml-3">{fmt(p.amount, hc)}</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── Service tracker layout ─────────────────────────────────────── */}
         {isService && (
@@ -1304,7 +1441,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
 
       {/* ── Modals ─────────────────────────────────────────────────────────── */}
 
-      {isService && (
+      {(isService || isScheduledPayment) && (
         <ServiceLogModal
           open={logModalOpen}
           onClose={() => setLogModalOpen(false)}
@@ -1315,7 +1452,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
         />
       )}
 
-      {!isService && event && (
+      {!isService && !isScheduledPayment && event && (
         <AddExpenseModal
           open={addExpenseOpen}
           onClose={() => setAddExpenseOpen(false)}
