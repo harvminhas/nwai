@@ -12,7 +12,7 @@
  *           windfall next → neutral
  */
 
-import { detectFrequency } from "@/lib/incomeEngine";
+import { detectFrequency, GENERIC_SOURCE_NAMES } from "@/lib/incomeEngine";
 import {
   projectNextDates,
   datesInMonth,
@@ -46,6 +46,62 @@ function monthKeyOffset(offset: number): string {
   d.setDate(1);
   d.setMonth(d.getMonth() + offset);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/** Bank stubs like "direct deposit" — prefer the companion field when grouping payroll. */
+const GENERIC_INCOME_SLUGS = new Set(
+  GENERIC_SOURCE_NAMES.map((g) =>
+    g.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, ""),
+  ),
+);
+
+function slugifyIncomeLabel(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 60);
+}
+
+/**
+ * Single bucket per logical income stream. Matches financial-profile style slugs and
+ * avoids splitting one paycheck into two groups when the bank alternates generic vs employer text.
+ */
+function incomeTxnGroupKey(txn: IncomeTxnRecord): string {
+  const src = (txn.source ?? "").trim();
+  const desc = (txn.description ?? "").trim();
+  const slugSrc = src ? slugifyIncomeLabel(src) : "";
+  const slugDesc = desc ? slugifyIncomeLabel(desc) : "";
+
+  let pickSlug = slugSrc || slugDesc || slugifyIncomeLabel("income");
+  if (slugSrc && GENERIC_INCOME_SLUGS.has(slugSrc) && slugDesc && !GENERIC_INCOME_SLUGS.has(slugDesc)) {
+    pickSlug = slugDesc;
+  } else if (slugDesc && GENERIC_INCOME_SLUGS.has(slugDesc) && slugSrc && !GENERIC_INCOME_SLUGS.has(slugSrc)) {
+    pickSlug = slugSrc;
+  } else if (
+    slugSrc &&
+    slugDesc &&
+    !GENERIC_INCOME_SLUGS.has(slugSrc) &&
+    !GENERIC_INCOME_SLUGS.has(slugDesc) &&
+    slugSrc !== slugDesc
+  ) {
+    pickSlug = slugSrc.length >= slugDesc.length ? slugSrc : slugDesc;
+  }
+
+  return pickSlug;
+}
+
+/** Prefer a human-readable employer/payroll label over generic bank stubs for card copy. */
+function displayIncomeLabel(txns: IncomeTxnRecord[], groupKey: string): string {
+  const sorted = [...txns].sort((a, b) => b.date.localeCompare(a.date));
+  const latest = sorted[0];
+  const src = latest.source?.trim() ?? "";
+  const desc = latest.description?.trim() ?? "";
+  const srcSlug = src ? slugifyIncomeLabel(src) : "";
+  const descSlug = desc ? slugifyIncomeLabel(desc) : "";
+  if (src && !GENERIC_INCOME_SLUGS.has(srcSlug)) return src;
+  if (desc && !GENERIC_INCOME_SLUGS.has(descSlug)) return desc;
+  return src || desc || groupKey.replace(/_/g, " ");
 }
 
 // ── A. Three-occurrence month ─────────────────────────────────────────────────
@@ -130,6 +186,21 @@ function detectExtraOccurrenceMonth(
       },
     },
   };
+}
+
+/**
+ * Same eligibility gates as the income branch of {@link detectExtraOccurrenceMonth}, but returns
+ * a stable signature so duplicate payroll buckets (split labels / amounts) collapse to one card.
+ */
+function extraPaydayWindfallSignature(pattern: RecurringPattern, monthKey: string): string | null {
+  if (!pattern.isIncome) return null;
+  if (pattern.occurrenceCount < 6) return null;
+  const typicalPerMonth = Math.round(30 / pattern.medianGapDays);
+  if (typicalPerMonth < 1) return null;
+  const projections = projectNextDates(pattern.lastDateStr, pattern.medianGapDays, 16, true);
+  const hitsInMonth = datesInMonth(projections, monthKey);
+  if (hitsInMonth.length <= typicalPerMonth) return null;
+  return `${monthKey}:${hitsInMonth.map((h) => h.dateStr).sort().join(",")}`;
 }
 
 // ── B. Bill timing collision ──────────────────────────────────────────────────
@@ -384,10 +455,9 @@ export function computeRadarItems(input: RadarInput): RadarItem[] {
   // ── A. Three-occurrence months ─────────────────────────────────────────────
 
   // ─ Income sources ─
-  // Group incomeTxns by source
   const incomeBySource = new Map<string, IncomeTxnRecord[]>();
   for (const txn of input.incomeTxns) {
-    const key = (txn.source || txn.description || "income").toLowerCase().trim().slice(0, 40);
+    const key = incomeTxnGroupKey(txn);
     const arr = incomeBySource.get(key) ?? [];
     arr.push(txn);
     incomeBySource.set(key, arr);
@@ -395,21 +465,24 @@ export function computeRadarItems(input: RadarInput): RadarItem[] {
 
   const incomePatterns: RecurringPattern[] = [];
 
+  type IncomeCandidate = { pattern: RecurringPattern; txns: IncomeTxnRecord[] };
+  const incomeCandidates: IncomeCandidate[] = [];
+
   for (const [key, txns] of incomeBySource) {
     if (txns.length < 3) continue;
-    const dates  = txns.map((t) => t.date).filter(Boolean).sort();
-    const freq   = detectFrequency(dates);
+    const dates = txns.map((t) => t.date).filter(Boolean).sort();
+    const freq = detectFrequency(dates);
     if (freq.frequency !== "bi-weekly" && freq.frequency !== "weekly") continue;
     if (!freq.medianGap || freq.medianGap < 5) continue;
 
-    const sorted  = [...txns].sort((a, b) => b.date.localeCompare(a.date));
+    const sorted = [...txns].sort((a, b) => b.date.localeCompare(a.date));
     const lastDate = sorted[0].date;
-    const amounts  = txns.map((t) => t.amount).filter((a) => a > 0);
-    const median   = amounts.sort((a, b) => a - b)[Math.floor(amounts.length / 2)];
+    const amounts = txns.map((t) => t.amount).filter((a) => a > 0);
+    const median = amounts.sort((a, b) => a - b)[Math.floor(amounts.length / 2)];
 
     const pattern: RecurringPattern = {
       id: key,
-      label: sorted[0].source || sorted[0].description || key,
+      label: displayIncomeLabel(txns, key),
       isIncome: true,
       lastDateStr: lastDate,
       medianGapDays: freq.medianGap,
@@ -419,8 +492,36 @@ export function computeRadarItems(input: RadarInput): RadarItem[] {
       href: "/account/income",
     };
 
-    incomePatterns.push(pattern);
-    const item = detectExtraOccurrenceMonth(pattern, currentMonthKey);
+    incomeCandidates.push({ pattern, txns });
+  }
+
+  const bestWindfallBySig = new Map<string, IncomeCandidate>();
+  for (const cand of incomeCandidates) {
+    const sig = extraPaydayWindfallSignature(cand.pattern, currentMonthKey);
+    if (!sig) continue;
+    const prev = bestWindfallBySig.get(sig);
+    if (
+      !prev ||
+      cand.pattern.occurrenceCount > prev.pattern.occurrenceCount ||
+      (cand.pattern.occurrenceCount === prev.pattern.occurrenceCount &&
+        cand.pattern.lastDateStr > prev.pattern.lastDateStr)
+    ) {
+      bestWindfallBySig.set(sig, cand);
+    }
+  }
+
+  const suppressedIncomePatternIds = new Set<string>();
+  for (const cand of incomeCandidates) {
+    const sig = extraPaydayWindfallSignature(cand.pattern, currentMonthKey);
+    if (!sig) continue;
+    const best = bestWindfallBySig.get(sig);
+    if (best && cand.pattern.id !== best.pattern.id) suppressedIncomePatternIds.add(cand.pattern.id);
+  }
+
+  for (const cand of incomeCandidates) {
+    if (suppressedIncomePatternIds.has(cand.pattern.id)) continue;
+    incomePatterns.push(cand.pattern);
+    const item = detectExtraOccurrenceMonth(cand.pattern, currentMonthKey);
     if (item) items.push(item);
   }
 
