@@ -125,7 +125,7 @@ export interface NetWorthAccount {
 
 export interface NetWorthSnapshot {
   total: number;
-  /** "Updated today" | "Last calculated Mar 23" */
+  /** e.g. "Updated today" | "Balances through April · refreshed May 12" */
   calculatedLabel: string;
   isStale: boolean;
   /** Asset accounts + manual assets, sorted for display */

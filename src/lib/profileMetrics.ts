@@ -70,6 +70,30 @@ function accountLabel(snap: Snap): string {
   return snap.bankName || "Account";
 }
 
+/** Statement period (YYYY-MM) shown as a month name — not a specific calendar day. */
+function statementCoverageMonthLabel(yearMonth: string): string {
+  if (!/^\d{4}-\d{2}$/.test(yearMonth)) return yearMonth.trim() || "latest statements";
+  const y = parseInt(yearMonth.slice(0, 4), 10);
+  const m = parseInt(yearMonth.slice(5, 7), 10) - 1;
+  const d = new Date(y, m, 1);
+  const currentYear = new Date().getFullYear();
+  return d.toLocaleDateString("en-CA", currentYear === y ? { month: "long" } : { month: "short", year: "numeric" });
+}
+
+/** When the cached profile was last rebuilt (after upload / refresh). */
+function profileRefreshedLabel(iso: string | undefined): string {
+  if (!iso) return "";
+  const refreshed = new Date(iso);
+  if (Number.isNaN(refreshed.getTime())) return "";
+  const now = new Date();
+  const sameCalendarDay =
+    refreshed.getFullYear() === now.getFullYear() &&
+    refreshed.getMonth() === now.getMonth() &&
+    refreshed.getDate() === now.getDate();
+  if (sameCalendarDay) return "today";
+  return refreshed.toLocaleDateString("en-CA", { month: "short", day: "numeric" });
+}
+
 function debtLabel(snap: Snap): string {
   const type = (snap.accountType ?? "").toLowerCase();
   const name = (snap.accountName ?? snap.bankName ?? "").toLowerCase();
@@ -203,11 +227,17 @@ export function getNetWorth(
   const latestMonth = profile.accountSnapshots
     .filter((s) => ASSET_TYPES.has((s.accountType ?? "").toLowerCase()) && s.balance > 0)
     .map((s) => s.statementMonth)
+    .filter((m): m is string => typeof m === "string" && /^\d{4}-\d{2}$/.test(m))
     .sort()
     .pop() ?? "";
-  const isStale = latestMonth < refMonth;
+  // Without coverage, avoid "" < refMonth (always "stale") and bogus labels.
+  const isStale = Boolean(latestMonth) && latestMonth < refMonth;
+  const coverageLabel = statementCoverageMonthLabel(latestMonth);
+  const refreshedPart = profileRefreshedLabel(profile.updatedAt);
   const calculatedLabel = isStale
-    ? `Last calculated ${new Date(latestMonth + "-01").toLocaleDateString("en-CA", { month: "short", day: "numeric" })}`
+    ? refreshedPart
+      ? `Balances through ${coverageLabel} · refreshed ${refreshedPart}`
+      : `Balances through ${coverageLabel}`
     : "Updated today";
 
   return { total, totalAssets, totalDebts, accounts, debtAccounts, calculatedLabel, isStale, homeCurrency: home, fxRatesApplied };
