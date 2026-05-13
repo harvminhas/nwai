@@ -15,7 +15,7 @@ import {
   getLatestMonthWithIncome,
   getLatestMonthWithCoreExpenses,
   getLatestMonthForTopSpending,
-  getMonthlyAllDebtPayments,
+  getMonthlyCardServicingPayments,
 } from "@/lib/profileMetrics";
 import { isCoreExcluded } from "@/lib/spendingMetrics";
 import type { SubscriptionRecord } from "@/lib/insights/types";
@@ -710,7 +710,7 @@ export async function GET(req: NextRequest) {
       const incomeCore = getMonthlyIncome(profile, incomeYm);
       const incomeAll  = getMonthlyIncomeAllCredits(profile, incomeYm);
       const expenses   = getMonthlyExpenses(profile, expenseYm, { core: true });
-      const debtPayments = getMonthlyAllDebtPayments(profile, expenseYm);
+      const cardServicingPayments = getMonthlyCardServicingPayments(profile, expenseYm);
 
       const rate = incomeCore > 0
         ? Math.max(-100, Math.min(100, Math.round(((incomeCore - expenses) / incomeCore) * 100)))
@@ -722,7 +722,8 @@ export async function GET(req: NextRequest) {
         /** Wider income (Transfer In, Other, etc.) — for `incomeYm`. Omitted when identical to core. */
         ...(Math.round(incomeAll) !== Math.round(incomeCore) ? { incomeAllCredits: incomeAll } : {}),
         expenses,
-        debtPayments,
+        /** Revolving / LOC payments excluded from core — installment already in `expenses` */
+        cardServicingPayments,
         /** Primary month label: unified month, else income month */
         month:        unifiedYm ?? incomeYm,
         incomeMonth:  incomeYm,

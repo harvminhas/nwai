@@ -435,12 +435,22 @@ export function getMonthlyDebtPayments(profile: FinancialProfileCache, yearMonth
 }
 
 /**
- * Total actual debt payments made in a given month (all transactions, not just minimum).
- * Use this for "total spending including debt" KPI figures where you want the real
- * amount paid, not the obligated minimum.
+ * Total actual debt payments made in a given month (installment + card servicing).
+ * For savings KPI "add what's excluded from core", use {@link getMonthlyCardServicingPayments}
+ * — installment is already included in core expenses.
  */
 export function getMonthlyAllDebtPayments(profile: FinancialProfileCache, yearMonth?: string): number {
   const ym    = yearMonth ?? profile.latestTxMonth ?? "";
   const entry = profile.monthlyHistory.find((h) => h.yearMonth === ym);
   return entry?.debtPaymentsTotal ?? 0;
+}
+
+/**
+ * Card / line-of-credit servicing payments for a month — excluded from core totals.
+ * Safe to add to {@link getMonthlyExpenses}(..., { core: true }) without double-counting installment.
+ */
+export function getMonthlyCardServicingPayments(profile: FinancialProfileCache, yearMonth?: string): number {
+  const ym = yearMonth ?? profile.latestTxMonth ?? "";
+  const entry = profile.monthlyHistory.find((h) => h.yearMonth === ym);
+  return entry?.cardServicingPaymentsTotal ?? 0;
 }

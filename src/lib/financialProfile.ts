@@ -21,7 +21,7 @@
 
 import type * as Firestore from "firebase-admin/firestore";
 import { extractAllTransactions } from "./extractTransactions";
-import { isDebtServicingExpense } from "./debtServicing";
+import { isDebtServicingExpense, resolveDebtServicingKind } from "./debtServicing";
 import { computeTypicalSpend, INCOME_TRANSFER_RE, isCoreExcluded } from "./spendingMetrics";
 import type { CashIncomeEntry } from "./cashIncome";
 import { occurrencesInMonth } from "./cashIncome";
@@ -59,7 +59,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "50"; // debt servicing: installment in core, card servicing excluded
+const SCHEMA_VERSION = "51"; // monthlyHistory.cardServicingPaymentsTotal for KPI toggle (no installment double-count)
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -94,6 +94,8 @@ export interface MonthlyHistoryEntry {
   incomeTotalAllCredits: number;
   /** Sum of all debt-servicing transactions — installment + card (min + extra) */
   debtPaymentsTotal: number;
+  /** Card / LOC servicing only — excluded from {@link coreExpensesTotal}; installment is in core */
+  cardServicingPaymentsTotal: number;
   /** Minimum / scheduled debt payments only (excl. extra payments) */
   minDebtPaymentsTotal: number;
   /**
@@ -725,6 +727,10 @@ export async function buildAndCacheFinancialProfile(
     const debtTxns = monthExp.filter((t) =>
       isDebtServicingExpense(t.category ?? "", { debtType: t.debtType, merchant: t.merchant }),
     );
+    const cardServicingTxns = debtTxns.filter(
+      (t) =>
+        resolveDebtServicingKind(t.category ?? "", t.debtType, t.merchant, false) === "card",
+    );
     // Classify using native amounts (classification is currency-agnostic), then scale to home
     // currency using the same ratio as the full converted debt total.
     const debtTxnsTyped = debtTxns as (import("./types").ExpenseTransaction & { debtType?: string })[];
@@ -746,6 +752,7 @@ export async function buildAndCacheFinancialProfile(
         )
         .reduce((s, t) => s + toHome(t.amount, t.currency), 0) + cashCommitmentsForMonth,
       debtPaymentsTotal: debtTxns.reduce((s, t) => s + toHome(t.amount, t.currency), 0),
+      cardServicingPaymentsTotal: cardServicingTxns.reduce((s, t) => s + toHome(t.amount, t.currency), 0),
       minDebtPaymentsTotal,
       incomeTotal: monthIncFiltered.reduce((s, t) => s + toHome(t.amount, t.currency), 0) + cashIncomeForMonth,
       incomeTotalAllCredits: monthIncNoInterAccountXfer.reduce((s, t) => s + toHome(t.amount, t.currency), 0) + cashIncomeAllForMonth,
@@ -788,6 +795,7 @@ export async function buildAndCacheFinancialProfile(
             expensesTotal: cashExpenses,
             coreExpensesTotal: cashExpenses,
             debtPaymentsTotal: 0,
+            cardServicingPaymentsTotal: 0,
             minDebtPaymentsTotal: 0,
             incomeTotal: cashIncome,
             incomeTotalAllCredits: cashIncomeAll,

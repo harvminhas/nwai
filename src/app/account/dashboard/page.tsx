@@ -857,7 +857,6 @@ function shortMonth(ym: string) {
 function savingsSummary(
   income: number,
   expenses: number,
-  debtPayments: number,
   rate: number,
   month: string,
   homeCurrency = "USD",
@@ -887,7 +886,6 @@ interface FirstTimeProps {
   savingsRaw: {
     income: number;
     expenses: number;
-    debtPayments: number;
     rate: number;
     month: string;
     splitMonths?: boolean;
@@ -902,7 +900,6 @@ function FirstTimeLayout({ agentCards, netWorth, topSpending, statementCount, mo
     ? savingsSummary(
         savingsRaw.income,
         savingsRaw.expenses,
-        savingsRaw.debtPayments,
         savingsRaw.rate,
         savingsRaw.month,
         homeCurrency,
@@ -1290,7 +1287,7 @@ export default function TodayPage() {
     income: number;
     incomeAllCredits?: number;
     expenses: number;
-    debtPayments: number;
+    cardServicingPayments: number;
     month: string;
     incomeMonth?: string;
     expenseMonth?: string;
@@ -1394,7 +1391,15 @@ export default function TodayPage() {
       }
       setFreshness(insJson.freshness ?? null);
       setNetWorth(insJson.netWorth ?? null);
-      setSavingsRate(insJson.savingsRate ? { debtPayments: 0, ...insJson.savingsRate } : null);
+      setSavingsRate(
+        insJson.savingsRate
+          ? {
+              ...insJson.savingsRate,
+              cardServicingPayments:
+                (insJson.savingsRate as { cardServicingPayments?: number }).cardServicingPayments ?? 0,
+            }
+          : null,
+      );
       setStatusBanner(insJson.statusBanner ?? null);
       setNeedsRefresh(insJson.needsRefresh ?? false);
       const sorted = (cardJson.cards ?? [] as AgentCard[]).sort((a: AgentCard, b: AgentCard) => {
@@ -2061,7 +2066,7 @@ export default function TodayPage() {
   function SavingsRateCard() {
     const [includeDebt, setIncludeDebt] = useState(false);
     if (!savingsRate) return null;
-    const { expenses, debtPayments, month } = savingsRate;
+    const { expenses, cardServicingPayments, month } = savingsRate;
     const income = displaySavingsIncome;
     if (income <= 0 && savingsRate.expenses <= 0) return null;
     const cad = (n: number) => fmt(n, homeCurrency);
@@ -2074,7 +2079,7 @@ export default function TodayPage() {
       : monthLabel;
 
     // Recompute rate client-side so the toggle is instant (no round-trip)
-    const effectiveExpenses = includeDebt ? expenses + debtPayments : expenses;
+    const effectiveExpenses = includeDebt ? expenses + cardServicingPayments : expenses;
     const rate      = income > 0 ? Math.round(((income - effectiveExpenses) / income) * 100) : 0;
     const clampedRate = Math.max(-100, Math.min(100, rate));
     const barPct      = Math.max(0, Math.min(100, clampedRate));
@@ -2112,7 +2117,7 @@ export default function TodayPage() {
           </div>
           <div className="flex items-center justify-between px-4 py-2">
             <span className="text-xs text-gray-500">
-              Expenses{includeDebt && debtPayments > 0 && (
+              Expenses{includeDebt && cardServicingPayments > 0 && (
                 <span className="ml-1 text-gray-400">(+servicing)</span>
               )}
             </span>
@@ -2143,11 +2148,11 @@ export default function TodayPage() {
             </div>
           )}
           {/* Toggle — shown whenever debt servicing totals exist (installment + card) */}
-          {debtPayments > 0 && (
+          {cardServicingPayments > 0 && (
             <div className="flex items-center justify-between px-4 py-2 bg-gray-50/60">
               <span className="text-xs text-gray-500">
-                Include debt servicing
-                <span className="ml-1 text-gray-400">({cad(debtPayments)}/mo)</span>
+                Include card servicing
+                <span className="ml-1 text-gray-400">({cad(cardServicingPayments)}/mo)</span>
               </span>
               <button
                 onClick={() => setIncludeDebt((v) => !v)}
@@ -2379,7 +2384,6 @@ export default function TodayPage() {
           savingsRaw={savingsRate ? {
             income:       displaySavingsIncome,
             expenses:     savingsRate.expenses,
-            debtPayments: savingsRate.debtPayments,
             rate:         displaySavingsIncome > 0
               ? Math.round(((displaySavingsIncome - savingsRate.expenses) / displaySavingsIncome) * 100)
               : 0,
@@ -2445,13 +2449,13 @@ export default function TodayPage() {
                       <div>
                         <div className="flex items-center justify-end gap-1.5">
                           <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Expenses</p>
-                          {savingsRate.debtPayments > 0 && (
+                          {savingsRate.cardServicingPayments > 0 && (
                             <button
                               onClick={() => setIncludeDebtInExpenses((v) => !v)}
                               title={
                                 includeDebtInExpenses
-                                  ? "Expense total without debt servicing add-on"
-                                  : "Add installment & card servicing payments to expense total"
+                                  ? "Expense total excludes card / LOC servicing (installments stay included)"
+                                  : "Include credit card & LOC payments excluded from core spend"
                               }
                               className={`relative inline-flex h-3.5 w-7 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${includeDebtInExpenses ? "bg-indigo-500" : "bg-gray-200"}`}
                               role="switch" aria-checked={includeDebtInExpenses}
@@ -2461,11 +2465,11 @@ export default function TodayPage() {
                           )}
                         </div>
                         <p className="mt-0.5 text-base font-bold text-red-500 tabular-nums">
-                          {fmt(savingsRate.expenses + (includeDebtInExpenses ? savingsRate.debtPayments : 0), homeCurrency)}
+                          {fmt(savingsRate.expenses + (includeDebtInExpenses ? savingsRate.cardServicingPayments : 0), homeCurrency)}
                         </p>
-                        {includeDebtInExpenses && savingsRate.debtPayments > 0 && (
+                        {includeDebtInExpenses && savingsRate.cardServicingPayments > 0 && (
                           <p className="text-[10px] text-gray-400">
-                            incl. {fmt(savingsRate.debtPayments, homeCurrency)} installment & card servicing
+                            incl. {fmt(savingsRate.cardServicingPayments, homeCurrency)} card servicing
                           </p>
                         )}
                       </div>
@@ -2501,10 +2505,14 @@ export default function TodayPage() {
                     <div>
                       <div className="flex items-center gap-1.5">
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Expenses</p>
-                        {savingsRate.debtPayments > 0 && (
+                        {savingsRate.cardServicingPayments > 0 && (
                           <button
                             onClick={() => setIncludeDebtInExpenses((v) => !v)}
-                            title={includeDebtInExpenses ? "Excluding debt payments" : "Include debt payments"}
+                            title={
+                              includeDebtInExpenses
+                                ? "Expense total excludes card / LOC servicing (installments stay included)"
+                                : "Include credit card & LOC payments excluded from core spend"
+                            }
                             className={`relative inline-flex h-3.5 w-7 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${includeDebtInExpenses ? "bg-indigo-500" : "bg-gray-200"}`}
                             role="switch" aria-checked={includeDebtInExpenses}
                           >
@@ -2513,11 +2521,11 @@ export default function TodayPage() {
                         )}
                       </div>
                       <p className="mt-0.5 text-sm font-bold text-red-500 tabular-nums">
-                        {fmt(savingsRate.expenses + (includeDebtInExpenses ? savingsRate.debtPayments : 0), homeCurrency)}
+                        {fmt(savingsRate.expenses + (includeDebtInExpenses ? savingsRate.cardServicingPayments : 0), homeCurrency)}
                       </p>
-                      {includeDebtInExpenses && savingsRate.debtPayments > 0 && (
+                      {includeDebtInExpenses && savingsRate.cardServicingPayments > 0 && (
                         <p className="text-[10px] text-gray-400">
-                          incl. {fmt(savingsRate.debtPayments, homeCurrency)} installment & card servicing
+                          incl. {fmt(savingsRate.cardServicingPayments, homeCurrency)} card servicing
                         </p>
                       )}
                     </div>
