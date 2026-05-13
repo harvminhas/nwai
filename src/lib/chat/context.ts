@@ -161,9 +161,9 @@ If there are zero rows, skip the table and briefly say nothing matched.
 Do not mix the narrative and the table on the same line — narrative first, then ## Transactions, then the table, then ## Total.
 
 DEFINITIONS:
-- Core expenses = all spending EXCEPT Transfers (inter-account moves). Includes debt payments and investments.
-- Transfers = inter-account or e-transfers — excluded from all expense totals.
-- Debt Payments = CC/loan/mortgage payments from a checking account (not interest charges).
+- Core expenses = spending excluding Transfers, Interest, and Card Servicing (CC/LOC payments from checking). Installment Servicing (mortgage, auto, student, installment loans) counts in core.
+- Transfers = inter-account or e-transfers — excluded from core expense totals.
+- Debt: Installment Servicing vs Card Servicing — see category taxonomy (Debt parent).
 - Savings rate = (income − core expenses) / income × 100
 - Emergency fund target = 6 months of core expenses.
 

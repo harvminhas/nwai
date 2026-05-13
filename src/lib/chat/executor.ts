@@ -11,7 +11,7 @@
  */
 
 import type { FinancialProfileCache } from "@/lib/financialProfile";
-import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
+import { isCoreExcluded } from "@/lib/spendingMetrics";
 import { getParentCategory } from "@/lib/categoryTaxonomy";
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -263,7 +263,14 @@ export function executeGetMonthlyBreakdown(
       const catTotals: Record<string, number> = {};
       for (const t of profile.expenseTxns) {
         if (t.txMonth !== h.yearMonth) continue;
-        if (CORE_EXCLUDE_RE.test((t.category ?? "").trim())) continue; // skip Transfers
+        if (
+          isCoreExcluded(t.category ?? "", {
+            debtType: (t as { debtType?: string }).debtType,
+            merchant: t.merchant,
+          })
+        ) {
+          continue;
+        } // skip transfers + revolving settlement + interest
         const homeAmt = toHome(t.amount, t.currency, home, fxRates);
         catTotals[t.category] = (catTotals[t.category] ?? 0) + homeAmt;
       }

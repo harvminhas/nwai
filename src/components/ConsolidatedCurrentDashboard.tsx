@@ -11,7 +11,7 @@ import AgentInsightCards from "@/components/AgentInsightCards";
 import type { ParsedStatementData } from "@/lib/types";
 import type { AgentCard } from "@/lib/agentTypes";
 import { isBalanceMarker } from "@/lib/balanceMarkers";
-import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
+import { isCoreExcluded } from "@/lib/spendingMetrics";
 import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -574,14 +574,20 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
     return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
   })();
 
-  // Current-month discretionary expenses — core only (CORE_EXCLUDE_RE applied)
+  // Current-month discretionary expenses — core only (isCoreExcluded)
   const allExpenseTxns = data?.expenses?.transactions ?? [];
   const calendarMonthTxns = allExpenseTxns.filter(
     (t) => (!t.date || t.date.startsWith(yearMonth)) && !isBalanceMarker(t.merchant ?? "")
   );
   const expenses = calendarMonthTxns.length > 0
     ? calendarMonthTxns
-        .filter((t) => !CORE_EXCLUDE_RE.test((t.category ?? "").trim()))
+        .filter(
+          (t) =>
+            !isCoreExcluded(t.category ?? "", {
+              debtType: (t as { debtType?: string }).debtType,
+              merchant: t.merchant,
+            }),
+        )
         .reduce((s, t) => s + t.amount, 0)
     : (data?.expenses?.total ?? 0);
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { buildAndCacheFinancialProfile } from "@/lib/financialProfile";
-import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
+import { isCoreExcluded } from "@/lib/spendingMetrics";
 import { canUseDebugTools } from "@/lib/debugPlanGate";
 
 /**
@@ -48,20 +48,24 @@ export async function GET(request: NextRequest) {
 
     // ── Current month transactions detail ─────────────────────────────────────
     const currentTxns = profile.expenseTxns.filter((t) => t.txMonth === thisMonth);
-    const isExcluded = (cat: string) => CORE_EXCLUDE_RE.test((cat ?? "").trim());
+    const isExcluded = (t: (typeof currentTxns)[number]) =>
+      isCoreExcluded(t.category ?? "", {
+        debtType: t.debtType,
+        merchant: t.merchant,
+      });
 
     const txDetail = currentTxns.map((t) => ({
       date: t.date,
       merchant: t.merchant,
       category: t.category,
       amount: t.amount,
-      excluded: isExcluded(t.category),
+      excluded: isExcluded(t),
       accountLabel: t.accountLabel,
     }));
 
     const currentAll  = currentTxns.reduce((s, t) => s + t.amount, 0);
     const currentCore = currentTxns
-      .filter((t) => !isExcluded(t.category))
+      .filter((t) => !isExcluded(t))
       .reduce((s, t) => s + t.amount, 0);
 
     // ── Negative-amount transactions in cache (should be empty after fix) ──────
@@ -76,7 +80,7 @@ export async function GET(request: NextRequest) {
     // ── Excluded categories breakdown for current month ────────────────────────
     const excludedCats = new Map<string, number>();
     for (const t of currentTxns) {
-      if (isExcluded(t.category)) {
+      if (isExcluded(t)) {
         excludedCats.set(t.category, (excludedCats.get(t.category) ?? 0) + t.amount);
       }
     }

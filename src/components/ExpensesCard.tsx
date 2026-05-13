@@ -14,7 +14,7 @@ const CATEGORIES = [
   "Subscriptions",
   "Healthcare",
   "Fees",
-  "Debt Payments",
+  "Debt",
   "Investments & Savings",
   "Transfers",
   "Transfers & Payments", // legacy
@@ -32,6 +32,9 @@ const CATEGORY_COLORS: Record<string, string> = {
   subscriptions: "bg-indigo-500",
   healthcare: "bg-teal-500",
   fees: "bg-orange-400",
+  debt: "bg-red-400",
+  "installment servicing": "bg-red-300",
+  "card servicing": "bg-red-600",
   "debt payments": "bg-red-400",
   "investments & savings": "bg-emerald-500",
   "transfers": "bg-cyan-500",

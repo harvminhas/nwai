@@ -90,7 +90,7 @@ export default function SnapshotView({
   const [includeDebt, setIncludeDebt] = useState(false);
 
   const savingsRate = includeDebt ? snap.savingsRateWithDebt : snap.savingsRateCore;
-  const rateLabel   = includeDebt ? "incl. min debt payments" : "excl. transfers & debt";
+  const rateLabel   = includeDebt ? "incl. installment & card servicing" : "excl. transfers & debt servicing";
 
   return (
     <div className="space-y-5">

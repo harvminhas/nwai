@@ -13,7 +13,8 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getYearMonth } from "@/lib/consolidate";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { getFinancialProfile } from "@/lib/financialProfile";
-import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
+import { isCoreExcluded } from "@/lib/spendingMetrics";
+import { isDebtServicingExpense } from "@/lib/debtServicing";
 import { detectCountry } from "@/lib/external/registry";
 import {
   incomeTotalForMonth,
@@ -116,13 +117,38 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
   // commitments are included and the numbers match exactly what the UI cards show.
   const monthHistory    = profile.monthlyHistory.find((h) => h.yearMonth === month);
   const monthlyIncome   = monthHistory?.incomeTotal        ?? incomeTotalForMonth(incomeTxns, month);
-  const monthlyExp      = monthHistory?.coreExpensesTotal  ?? expenseTxns
-    .filter((t) => t.txMonth === month && !CORE_EXCLUDE_RE.test((t.category ?? "").trim()))
-    .reduce((s, t) => s + t.amount, 0);
+  const monthlyExp =
+    monthHistory?.coreExpensesTotal ??
+    expenseTxns
+      .filter((t) => t.txMonth === month)
+      .filter(
+        (t) =>
+          !isCoreExcluded(t.category ?? "", {
+            debtType: t.debtType,
+            merchant: t.merchant,
+          }),
+      )
+      .reduce((s, t) => s + toHome(t.amount, t.currency), 0);
   const monthlyDebt        = monthHistory?.debtPaymentsTotal    ?? 0;
   const monthlyMinDebt     = monthHistory?.minDebtPaymentsTotal ?? 0;  // minimum/scheduled only
   const monthlyExtraDebt   = Math.max(0, monthlyDebt - monthlyMinDebt); // extra above minimum
-  const monthlyDiscr       = monthlyExp - monthlyDebt;           // discretionary (excl. all debt payments)
+  const monthlyDiscr = expenseTxns
+    .filter((t) => t.txMonth === month)
+    .filter(
+      (t) =>
+        !isDebtServicingExpense(t.category ?? "", {
+          debtType: t.debtType,
+          merchant: t.merchant,
+        }),
+    )
+    .filter(
+      (t) =>
+        !isCoreExcluded(t.category ?? "", {
+          debtType: t.debtType,
+          merchant: t.merchant,
+        }),
+    )
+    .reduce((s, t) => s + toHome(t.amount, t.currency), 0); // lifestyle-ish: no debt servicing, no transfers/interest
   const monthlySav         = monthlyIncome - monthlyExp;
   const savingsRate        = monthlyIncome > 0 ? (monthlySav / monthlyIncome) * 100 : 0;
   // Savings rate excl. min debt payments — "what did I save after obligatory payments?"
@@ -297,7 +323,12 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
   // monthlyMinDebt / monthlyExtraDebt totals via the profile cache — this
   // section uses defaults only for labelling individual transactions.
   const debtTxnsThisMonth = expenseTxns.filter(
-    (t) => t.txMonth === month && (t.category ?? "").toLowerCase() === "debt payments",
+    (t) =>
+      t.txMonth === month &&
+      isDebtServicingExpense(t.category ?? "", {
+        debtType: t.debtType,
+        merchant: t.merchant,
+      }),
   );
   const debtBreakdownLines = debtTxnsThisMonth.map((t) => {
     const isScheduled = SCHEDULED_DEBT_TYPES.has((t as { debtType?: string }).debtType ?? "");

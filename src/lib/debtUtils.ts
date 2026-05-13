@@ -17,6 +17,7 @@ export const SCHEDULED_DEBT_TYPES = new Set([
   "mortgage",
   "auto_loan",
   "personal_loan",
+  "student_loan",
 ]);
 
 // ── Key & tag helpers ─────────────────────────────────────────────────────────
@@ -55,11 +56,12 @@ export interface DebtSplit {
 }
 
 /**
- * Split a list of "Debt Payments" transactions into minimum vs extra using:
+ * Split debt-servicing transactions (Installment Servicing, Card Servicing, legacy
+ * "Debt Payments") into minimum vs extra using:
  *  1. `userTags` — explicit overrides saved by the user (from Firestore prefs)
  *  2. `defaultDebtTag` — AI-inferred fallback based on debtType
  *
- * @param debtTxns  Transactions already filtered to category "Debt Payments"
+ * @param debtTxns  Transactions already filtered to debt servicing (see `isDebtServicingExpense`)
  * @param userTags  Map of `debtTxKey → tag` from `users/{uid}/prefs/debtPaymentTags`
  * @param yearMonth YYYY-MM fallback when tx.date is absent
  */

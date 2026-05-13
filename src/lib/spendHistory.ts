@@ -12,16 +12,14 @@ import type { ParsedStatementData } from "./types";
 import { consolidateStatements, getYearMonth } from "./consolidate";
 import { buildAccountSlug } from "./accountSlug";
 import { isBalanceMarker } from "./balanceMarkers";
-import { CORE_EXCLUDE_RE } from "./spendingMetrics";
+import { isCoreExcluded } from "./spendingMetrics";
 
 export interface MonthSpend {
   yearMonth: string;
   /** All expenses (balance-markers removed, transaction-date filtered). */
   expensesTotal: number;
   /**
-   * Core expenses — same as expensesTotal but also strips transfers, debt
-   * payments, and investment transfers. This is what the Spending page shows
-   * as "Typical Month" when the "excl. transfers" toggle is ON.
+   * Core expenses — transfers, interest, and Card Servicing excluded (Installment Servicing included).
    */
   coreExpensesTotal: number;
 }
@@ -164,7 +162,13 @@ export async function buildMonthlySpendHistory(
 
     const expensesTotal = monthTxns.reduce((s, t) => s + t.amount, 0);
     const coreExpensesTotal = monthTxns
-      .filter((t) => !CORE_EXCLUDE_RE.test((t.category ?? "").trim()))
+      .filter(
+        (t) =>
+          !isCoreExcluded(t.category ?? "", {
+            debtType: (t as { debtType?: string }).debtType,
+            merchant: t.merchant,
+          }),
+      )
       .reduce((s, t) => s + t.amount, 0);
 
     history.push({ yearMonth: ym, expensesTotal, coreExpensesTotal });

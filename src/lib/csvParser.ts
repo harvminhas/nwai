@@ -67,7 +67,7 @@ Use the most specific category or subtype. Parent categories and their subtypes:
      subtypes: "Pharmacy" | "Dental" | "Vision" | "Fitness" | "Health Insurance"
 - "Fees"                  -- bank fees, NSF/OD fees, annual card fees, service charges
      subtypes: "Bank Fees" | "NSF/OD Fees" | "Annual Card Fee"
-- "Debt Payments"         -- credit card payments, loan payments, mortgage payments. No subtypes.
+- "Debt" -- subtype REQUIRED on outbound payments: "Installment Servicing" | "Card Servicing". Installment = mortgage/auto/student/personal loan debit from this account. Card Servicing = credit card or LOC payment settling revolving balances.
 - "Investments & Savings" -- RRSP/TFSA, investment transfers, mutual funds, GICs, life insurance. No subtypes.
 - "Transfers"             -- inter-account transfers, e-transfers to individuals. No subtypes.
 - "Other"                 -- anything else. No subtypes.

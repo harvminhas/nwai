@@ -17,6 +17,7 @@ import { getYearMonth } from "./consolidate";
 import { txFingerprint } from "./txFingerprint";
 import { isBalanceMarker } from "./balanceMarkers";
 import { isIncomeCategory } from "./applyRules";
+import { normalizeDebtExpenseCategory } from "./debtServicing";
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -25,7 +26,10 @@ export interface ExpenseTxnRecord {
   txMonth: string;    // YYYY-MM derived from date
   amount: number;
   merchant: string;
-  debtType?: string;  // sub-type for Debt Payments transactions (AI-detected)
+  debtType?: string;  // sub-type for Debt → Installment vs Card Servicing (AI-detected)
+  /** Installment breakdown when the parser supplies it (optional). */
+  installmentInterestAmount?: number;
+  installmentPrincipalAmount?: number;
   category: string;
   accountSlug: string;
   accountLabel: string; // e.g. "TD ••••7780" — for display in transaction lists
@@ -279,12 +283,22 @@ export async function extractAllTransactions(
             txMonth,
             amount: absAmount,
             merchant: txn.merchant ?? "Unknown",
-            category: txn.category ?? "Other",
+            category: normalizeDebtExpenseCategory({
+              category: txn.category ?? "Other",
+              debtType: txn.debtType,
+              merchant: txn.merchant,
+            }),
             accountSlug: slug,
             accountLabel: label,
             currency: inferCurrencyFromBankName(parsed.bankName, parsed.currency),
             recurring: txn.recurring,
             ...(txn.debtType ? { debtType: txn.debtType } : {}),
+            ...(txn.installmentInterestAmount != null
+              ? { installmentInterestAmount: txn.installmentInterestAmount }
+              : {}),
+            ...(txn.installmentPrincipalAmount != null
+              ? { installmentPrincipalAmount: txn.installmentPrincipalAmount }
+              : {}),
           });
         }
       } // end !isInvestmentAccount

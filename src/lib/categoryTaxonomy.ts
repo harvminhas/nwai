@@ -5,7 +5,7 @@
  * TO ADD A NEW PARENT:   add a key to CATEGORY_TAXONOMY (empty array = no subtypes)
  *                        and add it to PARENT_CATEGORIES.
  * Changes here automatically propagate to: CategoryPicker, AI prompt,
- * CSV parser, spending page rollup, and CORE_EXCLUDE_RE descendants.
+ * CSV parser, spending page rollup, and {@link isCoreExcluded} routing.
  */
 
 // ── Parent categories (canonical, displayed in picker and charts) ─────────────
@@ -24,7 +24,7 @@ export const PARENT_CATEGORIES = [
   "Fees",
   "Travel",
   "Taxes",
-  "Debt Payments",
+  "Debt",
   "Insurance",
   "Investments & Savings",
   "Transfers",
@@ -55,7 +55,7 @@ export const CATEGORY_TAXONOMY: Record<ParentCategory, readonly string[]> = {
   Fees:                   ["Bank Fees", "NSF/OD Fees", "Annual Card Fee"],
   Travel:                 ["Accommodation", "Flights", "Car Rental", "Train & Bus", "Cruise", "Travel Insurance", "Vacation Packages"],
   Taxes:                  ["Property Tax", "Income Tax", "HST / GST", "Sales Tax", "Business Tax", "Capital Gains Tax"],
-  "Debt Payments":        ["Credit Card Payment", "Loan Payment", "Mortgage Payment", "Line of Credit", "Student Loan"],
+  Debt:                   ["Installment Servicing", "Card Servicing"],
   Insurance:              ["Life Insurance", "Disability Insurance", "Critical Illness", "Tenant Insurance", "Pet Insurance"],
   "Investments & Savings":[
     // Canada registered accounts
@@ -102,8 +102,12 @@ export const CATEGORY_COLORS: Record<string, string> = {
   taxes:                    "#dc2626",
   insurance:                "#8b5cf6",
 
+  debt:                     "#ef4444",
+  "installment servicing":  "#f87171",
+  "card servicing":         "#dc2626",
+  /* legacy bucket + old subtypes */
   "debt payments":          "#ef4444",
-  "credit card payment":    "#ef4444",
+  "credit card payment":    "#dc2626",
   "loan payment":           "#f87171",
   "mortgage payment":       "#fca5a5",
   "line of credit":         "#dc2626",
@@ -315,14 +319,18 @@ const CATEGORY_ALIASES: Record<string, ParentCategory> = {
   "travel":                 "Travel",
   "hotel, entertainment and recreation": "Travel",
 
-  // Debt Payments
-  "credit card":            "Debt Payments",
-  "loan":                   "Debt Payments",
-  "debt":                   "Debt Payments",
-  "debt payment":           "Debt Payments",
-  "line of credit":         "Debt Payments",
-  "heloc":                  "Debt Payments",
-  "student loan":           "Debt Payments",
+  // Debt — aliases map to parent; txn classifier picks Installment vs Card Servicing
+  "credit card":            "Debt",
+  "loan":                   "Debt",
+  "debt":                   "Debt",
+  "debt payment":           "Debt",
+  "line of credit":         "Debt",
+  "heloc":                  "Debt",
+  "student loan":           "Debt",
+  "debt payments":          "Debt",
+  "credit card payment":    "Debt",
+  "loan payment":           "Debt",
+  "mortgage payment":       "Debt",
 
   // Insurance
   "life insurance":         "Insurance",

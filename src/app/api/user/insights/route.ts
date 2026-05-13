@@ -17,7 +17,7 @@ import {
   getLatestMonthForTopSpending,
   getMonthlyAllDebtPayments,
 } from "@/lib/profileMetrics";
-import { CORE_EXCLUDE_RE } from "@/lib/spendingMetrics";
+import { isCoreExcluded } from "@/lib/spendingMetrics";
 import type { SubscriptionRecord } from "@/lib/insights/types";
 import {
   effectiveSubscriptionAmount,
@@ -208,7 +208,14 @@ export async function GET(req: NextRequest) {
 
   const income   = incomeTxns.filter((t) => t.txMonth === thisMonth).reduce((s, t) => s + t.amount, 0);
   const expenses = expenseTxns
-    .filter((t) => t.txMonth === thisMonth && !CORE_EXCLUDE_RE.test((t.category ?? "").trim()))
+    .filter(
+      (t) =>
+        t.txMonth === thisMonth &&
+        !isCoreExcluded(t.category ?? "", {
+          debtType: (t as { debtType?: string }).debtType,
+          merchant: t.merchant,
+        }),
+    )
     .reduce((s, t) => s + t.amount, 0);
   const debts = txSnapshots.reduce((s, a) => s + Math.max(0, -a.balance), 0);
 

@@ -1517,6 +1517,7 @@ export default function AccountDetailPage() {
           shopping: "bg-purple-500", transportation: "bg-yellow-500",
           entertainment: "bg-pink-500", subscriptions: "bg-indigo-500",
           healthcare: "bg-teal-500", fees: "bg-orange-400",
+          debt: "bg-red-400", "installment servicing": "bg-red-300", "card servicing": "bg-red-600",
           "debt payments": "bg-red-400", "investments & savings": "bg-emerald-500",
           transfers: "bg-cyan-500", "transfers & payments": "bg-cyan-500",
           "cash & atm": "bg-red-400", other: "bg-gray-400",

@@ -200,7 +200,7 @@ export function computeDiscretionaryCategoryTrailing(
   const parentsInPlay = new Set<string>();
   for (const t of expenseTxns) {
     if (!trailingMonths.includes(t.txMonth)) continue;
-    if (isCoreExcluded(t.category ?? "")) continue;
+    if (isCoreExcluded(t.category ?? "", { debtType: t.debtType, merchant: t.merchant })) continue;
     const p = getParentCategory(t.category ?? "Other");
     if (!FORECAST_DISCRETIONARY_PARENTS.has(p)) continue;
     parentsInPlay.add(p);
@@ -209,7 +209,12 @@ export function computeDiscretionaryCategoryTrailing(
   for (const parent of parentsInPlay) {
     const monthTotals = trailingMonths.map((ym) =>
       expenseTxns
-        .filter((t) => t.txMonth === ym && getParentCategory(t.category ?? "Other") === parent && !isCoreExcluded(t.category ?? ""))
+        .filter(
+          (t) =>
+            t.txMonth === ym &&
+            getParentCategory(t.category ?? "Other") === parent &&
+            !isCoreExcluded(t.category ?? "", { debtType: t.debtType, merchant: t.merchant }),
+        )
         .reduce((s, t) => s + t.amount, 0),
     );
     const medianMonthly = medianOf(monthTotals);

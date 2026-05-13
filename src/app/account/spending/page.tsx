@@ -8,7 +8,8 @@ import { doc, getDoc, setDoc } from "firebase/firestore";
 import { getFirebaseClient } from "@/lib/firebase";
 import type { ParsedStatementData, ExpenseTransaction, Subscription, DebtType } from "@/lib/types";
 import { isBalanceMarker, txIgnoreKey } from "@/lib/balanceMarkers";
-import { CORE_EXCLUDE_RE, isCoreExcluded } from "@/lib/spendingMetrics";
+import { isCoreExcluded } from "@/lib/spendingMetrics";
+import { merchantSubtypeGroupLabel, resolveDebtServicingKind } from "@/lib/debtServicing";
 import { merchantSlug } from "@/lib/applyRules";
 import { detectFrequency, FREQUENCY_CONFIG, type Frequency } from "@/lib/incomeEngine";
 import { SCHEDULED_DEBT_TYPES, debtTxKey, defaultDebtTag, splitDebtPayments } from "@/lib/debtUtils";
@@ -268,6 +269,9 @@ function fmtDate(iso: string) {
   return new Date(iso + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+function txnDebtTypeHint(m: { transactions?: Array<{ debtType?: string }> }): string | undefined {
+  return m.transactions?.find((t) => t.debtType)?.debtType;
+}
 
 const DEBT_TYPE_LABELS: Record<string, string> = {
   mortgage: "Mortgage",
@@ -368,7 +372,6 @@ function SpendingPageInner() {
   const [toast, setToast]         = useState<string | null>(null);
   const [catExpanded, setCatExpanded] = useState(false);
   const [expandedCatRows, setExpandedCatRows] = useState<Set<string>>(new Set());
-  const [catIncludeAll, setCatIncludeAll] = useState(false);
   const [homeCurrency, setHomeCurrency] = useState<string>("USD");
   const [fxRates, setFxRates]           = useState<Record<string, number>>({});
 
@@ -991,11 +994,20 @@ function SpendingPageInner() {
       && !ignoredTxKeys.has(txIgnoreKey(t.date, t.amount, t.merchant))
   );
 
-  // Core transactions: excludes transfers and debt payments (checks parent category too,
-  // so subtypes like "Credit Card Payment" are correctly excluded).
-  const coreTxns = monthTxns.filter((t) => !isCoreExcluded(t.category ?? ""));
-  // Excluded transactions: transfers + debt payments — shown in a separate section
-  const excludedTxns = monthTxns.filter((t) => isCoreExcluded(t.category ?? ""));
+  // Core transactions: excludes transfers, interest, and Card Servicing (Installment Servicing stays in core).
+  const coreTxns = monthTxns.filter(
+    (t) =>
+      !isCoreExcluded(t.category ?? "", {
+        debtType: (t as ExpenseTransaction).debtType,
+        merchant: t.merchant,
+      }),
+  );
+  const excludedTxns = monthTxns.filter((t) =>
+    isCoreExcluded(t.category ?? "", {
+      debtType: (t as ExpenseTransaction).debtType,
+      merchant: t.merchant,
+    }),
+  );
 
   // Cash commitment amount for a specific yearMonth — defined here so it's available
   // for both the total and the categories breakdown below.
@@ -1024,20 +1036,32 @@ function SpendingPageInner() {
 
   const excludedTotal = excludedTxns.reduce((s, t) => s + toHomeTxn(t.amount, t), 0);
 
-  // Split excluded transactions into debt payments / interest / transfers.
-  // Uses getParentCategory so subtypes (e.g. "Credit Card Payment") roll up correctly.
-  const debtTxns     = excludedTxns.filter((t) => getParentCategory(t.category ?? "") === "Debt Payments");
+  // Split excluded transactions into card servicing / interest / transfers.
+  const debtTxns = excludedTxns.filter(
+    (t) =>
+      resolveDebtServicingKind(
+        t.category ?? "",
+        (t as ExpenseTransaction).debtType,
+        t.merchant,
+        false,
+      ) === "card",
+  );
   const interestTxns = excludedTxns.filter((t) => /^interest$/i.test((t.category ?? "").trim()));
   const transferTxns = excludedTxns.filter((t) =>
-    getParentCategory(t.category ?? "") !== "Debt Payments" && !/^interest$/i.test((t.category ?? "").trim())
+    resolveDebtServicingKind(
+      t.category ?? "",
+      (t as ExpenseTransaction).debtType,
+      t.merchant,
+      false,
+    ) !== "card" &&
+    !/^interest$/i.test((t.category ?? "").trim()),
   );
   const debtTotal     = debtTxns.reduce((s, t) => s + toHomeTxn(t.amount, t), 0);
   const interestTotal = interestTxns.reduce((s, t) => s + toHomeTxn(t.amount, t), 0);
   const transferTotal = transferTxns.reduce((s, t) => s + toHomeTxn(t.amount, t), 0);
 
-  // "all in" = core expenses + debt payments — same concept as the Today page toggle.
-  // Transfers (inter-account moves) are intentionally excluded to avoid inflating the figure.
-  const displayTotal = catIncludeAll ? total + debtTotal : total;
+  // Core discretionary only — transfers + credit card servicing excluded (see Card servicing block).
+  const displayTotal = total;
 
   // Convert transaction amount to home currency for aggregation (used by category builders)
   function toHomeCat(amount: number, currency?: string | null): number {
@@ -1100,7 +1124,7 @@ function SpendingPageInner() {
     // Fall back to AI-computed categories (assumed home currency)
     const parentMap = new Map<string, number>();
     for (const c of (data?.expenses?.categories ?? [])) {
-      if (CORE_EXCLUDE_RE.test((c.name ?? "").trim())) continue;
+      if (isCoreExcluded(c.name ?? "", { forAggregateLabel: true })) continue;
       const parent = getParentCategory(c.name ?? "Other");
       parentMap.set(parent, (parentMap.get(parent) ?? 0) + c.amount);
     }
@@ -1113,17 +1137,18 @@ function SpendingPageInner() {
       }));
   })();
 
-  // categoriesAll: includes transfers & debt payments
-  const allTxnsTotal = monthTxns.reduce((s, t) => s + toHomeTxn(t.amount, t as ExpenseTransaction), 0) + cashCommitmentsForMonth;
-  const categoriesAll = buildCategories(monthTxns, allTxnsTotal);
-
   // overviewCatRows: merchant-level category data for the selected month used by the
   // Overview "By Category" expansion panel — same rich subtype+merchant view as the
-  // By Category tab but scoped to a single month.
+  // By Category tab but scoped to a single month. Merchants excluded from core
+  // spending (transfers, card servicing, etc.) are omitted so expanded subtotals
+  // match the parent row.
   const overviewCatRows = (() => {
     if (!allTimeMerchants) return new Map<string, { total: number; topMerchants: (NonNullable<typeof allTimeMerchants>[number] & { total: number; count: number; avgAmount: number })[] }>();
     const byCategory = new Map<string, NonNullable<typeof allTimeMerchants>>();
     for (const m of allTimeMerchants) {
+      if (isCoreExcluded(m.category || "", { forAggregateLabel: true })) {
+        continue;
+      }
       const key = getParentCategory(m.category || "Other");
       if (!byCategory.has(key)) byCategory.set(key, []);
       byCategory.get(key)!.push(m);
@@ -1142,20 +1167,24 @@ function SpendingPageInner() {
     return result;
   })();
 
-  // Always use coreExpensesTotal (transfers + debt payments excluded)
+  // Always use coreExpensesTotal (transfers + Card Servicing excluded; installment included)
   const effectiveExp = (h: HistoryPoint) =>
     h.coreExpensesTotal !== undefined ? h.coreExpensesTotal : (h.expensesTotal ?? 0);
 
   // Typical month = median/avg of HISTORICAL months only — exclude the selected
   // month so the current period never contaminates its own baseline.
   const historicalHistory = history.filter((h) => h.yearMonth < filterMonth);
-  const monthsTracked = historicalHistory.length;
-  const avgExpenses = monthsTracked > 0
-    ? Math.round(historicalHistory.reduce((s, h) => s + effectiveExp(h), 0) / monthsTracked)
+  /** Months before selected month with core spend > 0 — matches computeTypicalSpend median logic. */
+  const historicalCorePositive = historicalHistory
+    .map((h) => effectiveExp(h))
+    .filter((v) => v > 0);
+  const typicalMonthsCount = historicalCorePositive.length;
+  const avgExpenses = typicalMonthsCount > 0
+    ? Math.round(historicalCorePositive.reduce((s, v) => s + v, 0) / typicalMonthsCount)
     : null;
   const medianExpenses = (() => {
-    if (monthsTracked === 0) return null;
-    const sorted = [...historicalHistory].map(effectiveExp).sort((a, b) => a - b);
+    if (typicalMonthsCount === 0) return null;
+    const sorted = [...historicalCorePositive].sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
     return sorted.length % 2 !== 0
       ? sorted[mid]
@@ -1646,8 +1675,8 @@ function SpendingPageInner() {
             </p>
           )}
         </div>
-        <p className="mt-3 text-[10px] text-gray-400 text-right shrink-0">
-          {catIncludeAll ? "incl. all" : <>excl. transfers<br />&amp; debt pmts</>}
+        <p className="mt-3 max-w-[11rem] text-[10px] text-gray-400 text-right leading-snug shrink-0">
+          Excludes transfers and credit card servicing (Card servicing below).
         </p>
       </div>
 
@@ -1877,18 +1906,11 @@ function SpendingPageInner() {
                       const trendColor = trend === "up" ? "#ef4444" : trend === "down" ? "#22c55e" : "#9ca3af";
                       return (
                         <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                          <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-start justify-between gap-2">
                             <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">This Month</p>
-                            <button
-                              onClick={() => setCatIncludeAll((v) => !v)}
-                              className="flex items-center gap-1.5 text-[10px] text-gray-400 hover:text-gray-600 transition shrink-0"
-                              title={catIncludeAll ? "Excluding debt payments" : "Including debt payments"}
-                            >
-                              <span className={`relative inline-flex h-3.5 w-6 shrink-0 rounded-full transition-colors ${catIncludeAll ? "bg-indigo-500" : "bg-gray-200"}`}>
-                                <span className={`inline-block h-2.5 w-2.5 mt-0.5 ml-0.5 rounded-full bg-white shadow transform transition-transform ${catIncludeAll ? "translate-x-2.5" : "translate-x-0"}`} />
-                              </span>
-                              {catIncludeAll ? "all in" : "excl. debt pymts & transfers"}
-                            </button>
+                            <p className="text-[10px] text-gray-400 text-right leading-snug max-w-[9.5rem]">
+                              Excludes transfers & card servicing.
+                            </p>
                           </div>
                           <p className="mt-2 font-bold text-2xl text-gray-900">{displayTotal > 0 ? formatCurrency(displayTotal, homeCurrency, undefined, true) : "—"}</p>
                           {expDelta !== null && total > 0 && (
@@ -1948,8 +1970,8 @@ function SpendingPageInner() {
                           <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Typical Month</p>
                           <p className="mt-2 font-bold text-2xl text-gray-900">{medianExpenses !== null ? formatCurrency(medianExpenses, homeCurrency, undefined, true) : "—"}</p>
                           <p className="mt-1 text-xs text-gray-400">
-                            {monthsTracked > 0
-                              ? <>median · {monthsTracked} month{monthsTracked !== 1 ? "s" : ""}</>
+                            {typicalMonthsCount > 0
+                              ? <>median · {typicalMonthsCount} month{typicalMonthsCount !== 1 ? "s" : ""} with spending</>
                               : "No history yet"}
                           </p>
                           {/* Sparkline + trend */}
@@ -1984,7 +2006,7 @@ function SpendingPageInner() {
                     })()}
                   </div>
 
-                  {/* ── Debt Payments card (prominent) ───────────────────────── */}
+                  {/* ── Card servicing (revolving settlement) ───────────────── */}
                   {(debtTotal > 0 || interestTotal > 0) && (() => {
                     const sortedDebt = debtTxns.slice().sort((a, b) => b.amount - a.amount);
                     const { minPaymentsTotal: committedTotal, extraPaymentsTotal: extraTotal } =
@@ -2007,7 +2029,7 @@ function SpendingPageInner() {
                               </svg>
                             </div>
                             <div className="text-left">
-                              <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Debt Payments</p>
+                              <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Card servicing</p>
                               <p className="text-xl font-bold text-gray-900 tabular-nums leading-tight">{formatCurrency(debtTotal, homeCurrency, undefined, true)}</p>
                             </div>
                           </div>
@@ -2179,27 +2201,16 @@ function SpendingPageInner() {
 
               {categories.length > 0 && (() => {
                 const COLLAPSE_CAT = 5;
-                const activeCats  = catIncludeAll ? categoriesAll : categories;
+                const activeCats  = categories;
                 const visibleCats = catExpanded ? activeCats : activeCats.slice(0, COLLAPSE_CAT);
                 const hiddenCount = Math.max(0, activeCats.length - COLLAPSE_CAT);
                 return (
                   <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-                    {/* Card header with toggle */}
-                    <div className="px-5 pt-4 pb-3 flex items-center justify-between gap-3">
+                    <div className="px-5 pt-4 pb-3 flex items-start justify-between gap-3">
                       <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">By Category</p>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[11px] text-gray-400">incl. debt pmts</span>
-                        <button
-                          onClick={() => setCatIncludeAll((v) => !v)}
-                          className={`relative inline-flex h-4 w-8 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${
-                            catIncludeAll ? "bg-indigo-500" : "bg-gray-200"
-                          }`}
-                          role="switch"
-                          aria-checked={catIncludeAll}
-                        >
-                          <span className={`inline-block h-3 w-3 rounded-full bg-white shadow transform transition-transform ${catIncludeAll ? "translate-x-4" : "translate-x-0"}`} />
-                        </button>
-                      </div>
+                      <p className="text-[10px] text-gray-400 text-right leading-snug max-w-[11rem]">
+                        Excludes transfers & card servicing.
+                      </p>
                     </div>
 
                     {/* Category rows */}
@@ -2272,7 +2283,10 @@ function SpendingPageInner() {
                                     // Group merchants by their subtype category
                                     const subtypeMap = new Map<string, typeof catData.topMerchants>();
                                     for (const m of catData.topMerchants) {
-                                      const sub = isSubtype(m.category || "") ? m.category : cat.name;
+                                      const sub = merchantSubtypeGroupLabel(cat.name, m.category, {
+                                        debtType: txnDebtTypeHint(m),
+                                        merchant: m.name,
+                                      });
                                       if (!subtypeMap.has(sub)) subtypeMap.set(sub, []);
                                       subtypeMap.get(sub)!.push(m);
                                     }
@@ -3255,7 +3269,10 @@ function SpendingPageInner() {
                               {(() => {
                                 const subtypeMap = new Map<string, typeof cat.topMerchants>();
                                 for (const m of cat.topMerchants) {
-                                  const sub = isSubtype(m.category || "") ? m.category : cat.name;
+                                  const sub = merchantSubtypeGroupLabel(cat.name, m.category, {
+                                    debtType: txnDebtTypeHint(m),
+                                    merchant: m.name,
+                                  });
                                   if (!subtypeMap.has(sub)) subtypeMap.set(sub, []);
                                   subtypeMap.get(sub)!.push(m);
                                 }

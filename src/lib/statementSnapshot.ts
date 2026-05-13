@@ -7,8 +7,9 @@
  */
 
 import type { ParsedStatementData, ExpenseCategory } from "./types";
-import { CORE_EXCLUDE_RE } from "./spendingMetrics";
+import { isCoreExcluded } from "./spendingMetrics";
 import { SCHEDULED_DEBT_TYPES } from "./debtUtils";
+import { isDebtServicingExpense } from "./debtServicing";
 
 // ── Account classification ────────────────────────────────────────────────────
 
@@ -42,7 +43,10 @@ export function balanceLabelFor(type: string): string {
 // ── Spending buckets ──────────────────────────────────────────────────────────
 
 /** Category names that belong in the "Committed obligations" bucket. */
-const COMMITTED_RE  = /^(debt payments|housing|mortgage payment)$/i;
+const COMMITTED_RE =
+  /^(installment servicing|housing|mortgage payment|loan payment|student loan)$/i;
+/** Revolving settlement — not discretionary lifestyle spend (mirrors core exclusion). */
+const CARD_SETTLEMENT_RE = /^(card servicing|credit card payment|line of credit)$/i;
 /** Categories that are transfers or savings moves — not discretionary. */
 const TRANSFERS_RE  = /^(transfers|transfers & payments|investments & savings|transfer in)$/i;
 /** Interest charges — excluded from discretionary (same as CORE_EXCLUDE_RE). */
@@ -59,9 +63,11 @@ export interface SpendingBucket {
 
 function bucketFor(categoryName: string): SpendingBucket["key"] {
   const n = categoryName.trim();
-  if (COMMITTED_RE.test(n))         return "committed";
-  if (TRANSFERS_RE.test(n))         return "transfers_savings";
-  if (INTEREST_RE.test(n))          return "transfers_savings"; // interest excluded like a transfer
+  if (COMMITTED_RE.test(n))          return "committed";
+  if (CARD_SETTLEMENT_RE.test(n))    return "transfers_savings";
+  if (/^debt payments$/i.test(n))    return "transfers_savings"; // legacy ambiguous bucket
+  if (TRANSFERS_RE.test(n))          return "transfers_savings";
+  if (INTEREST_RE.test(n))           return "transfers_savings"; // interest excluded like a transfer
   return "discretionary";
 }
 
@@ -83,7 +89,7 @@ function buildBuckets(
     {
       key:         "committed",
       label:       "Committed Obligations",
-      description: "Debt payments, mortgage, housing",
+      description: "Installment debt, mortgage, housing",
       amount:      sums.committed,
       pct:         Math.round((sums.committed / safe) * 100),
     },
@@ -116,14 +122,18 @@ function estimateMinDebtPayments(categories: ExpenseCategory[], data: ParsedStat
   // If there are typed expense transactions available, use them for accuracy
   const txns = data.expenses?.transactions ?? [];
   if (txns.length > 0) {
-    const debtTxns = txns.filter((t) => /^debt payments$/i.test(t.category ?? ""));
+    const debtTxns = txns.filter((t) =>
+      isDebtServicingExpense(t.category ?? "", { debtType: t.debtType, merchant: t.merchant }),
+    );
     // Use scheduled types as "min" proxy; credit/loc default to "minimum" too (all are min here)
     // In the anonymous view all debt payments are treated as minimum obligations
     return debtTxns.reduce((sum, tx) => sum + tx.amount, 0);
   }
 
   // Fallback: use the Debt Payments category total as a proxy
-  const debtCat = categories.find((c) => /^debt payments$/i.test(c.name));
+  const debtCat = categories.find((c) =>
+    /^(debt payments|installment servicing|card servicing)$/i.test(c.name),
+  );
   return debtCat?.amount ?? 0;
 }
 
@@ -239,8 +249,7 @@ export interface StatementSnapshot {
   // Top-line numbers
   incomeTotal:          number;
   expenseTotal:         number;
-  /** Expenses excluding CORE_EXCLUDE_RE (transfers, debt payments, interest).
-   *  Matches the financial profile's coreExpensesTotal — use this for savings rate. */
+  /** Expenses excluding transfers, Card Servicing, and interest (matches coreExpensesTotal). */
   coreExpenses:         number;
   /** Discretionary bucket only (excl. transfers, debt, investments, housing).
    *  Used for the "Where your money went" visualisation only. */
@@ -255,7 +264,7 @@ export interface StatementSnapshot {
   savingsUnavailableReason:  string | null;
 
   // Savings rate variants (null = cannot compute)
-  /** Core savings rate: excl. transfers AND debt payments */
+  /** Core savings rate: excl. transfers, revolving settlement (Card Servicing), interest */
   savingsRateCore:     number | null;
   /** Including min debt payments as an expense */
   savingsRateWithDebt: number | null;
@@ -291,10 +300,9 @@ export function computeStatementSnapshot(data: ParsedStatementData): StatementSn
   const discretionaryTotal = buckets.find((b) => b.key === "discretionary")?.amount ?? 0;
 
   // ── Core expenses — matches financial profile's coreExpensesTotal exactly ─
-  // Uses CORE_EXCLUDE_RE (single source of truth) instead of bucket heuristics.
-  // This is what produces the same savings rate as the logged-in dashboard.
+  // Uses isCoreExcluded (single source of truth) — category rows only (aggregate-safe).
   const coreExpenses = categories
-    .filter((c) => !CORE_EXCLUDE_RE.test(c.name.trim()))
+    .filter((c) => !isCoreExcluded(c.name.trim(), { forAggregateLabel: true }))
     .reduce((sum, c) => sum + c.amount, 0);
 
   // ── Min debt payments ────────────────────────────────────────────────────

@@ -21,8 +21,8 @@
 
 import type * as Firestore from "firebase-admin/firestore";
 import { extractAllTransactions } from "./extractTransactions";
-import { computeTypicalSpend, CORE_EXCLUDE_RE, INCOME_TRANSFER_RE, isCoreExcluded } from "./spendingMetrics";
-import { getParentCategory } from "./categoryTaxonomy";
+import { isDebtServicingExpense } from "./debtServicing";
+import { computeTypicalSpend, INCOME_TRANSFER_RE, isCoreExcluded } from "./spendingMetrics";
 import type { CashIncomeEntry } from "./cashIncome";
 import { occurrencesInMonth } from "./cashIncome";
 import type { CashCommitment } from "@/app/api/user/cash-commitments/route";
@@ -59,7 +59,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "49"; // incomeTotalAllCredits for income page toggle vs core incomeTotal
+const SCHEMA_VERSION = "50"; // debt servicing: installment in core, card servicing excluded
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -83,7 +83,7 @@ export interface MonthlyHistoryEntry {
   yearMonth: string;
   /** Raw total of all expense transactions (no transfers filter) */
   expensesTotal: number;
-  /** Core expenses = expensesTotal minus categories matching CORE_EXCLUDE_RE */
+  /** Core expenses = expensesTotal minus transfers, interest, and Card Servicing (see isCoreExcluded) */
   coreExpensesTotal: number;
   /** Total income for this month — excludes transfers, Transfer In, Other (see isExcludedFromCoreIncomeTotal). */
   incomeTotal: number;
@@ -92,7 +92,7 @@ export interface MonthlyHistoryEntry {
    * Includes Transfer / Transfer In / Other categories. Used for income page "all credits" toggle.
    */
   incomeTotalAllCredits: number;
-  /** Sum of all "Debt Payments" category transactions (min + extra) */
+  /** Sum of all debt-servicing transactions — installment + card (min + extra) */
   debtPaymentsTotal: number;
   /** Minimum / scheduled debt payments only (excl. extra payments) */
   minDebtPaymentsTotal: number;
@@ -722,11 +722,9 @@ export async function buildAndCacheFinancialProfile(
       const count = commitmentOccurrencesInMonth(entry, ym);
       return sum + (count > 0 ? entry.amount * count : 0);
     }, 0);
-    // Match both "Debt Payments" parent AND any subtype (e.g. "Credit Card Payment", "Loan Payment")
-    const debtTxns = monthExp.filter((t) => {
-      const cat = (t.category ?? "").trim();
-      return /^debt payments$/i.test(cat) || getParentCategory(cat) === "Debt Payments";
-    });
+    const debtTxns = monthExp.filter((t) =>
+      isDebtServicingExpense(t.category ?? "", { debtType: t.debtType, merchant: t.merchant }),
+    );
     // Classify using native amounts (classification is currency-agnostic), then scale to home
     // currency using the same ratio as the full converted debt total.
     const debtTxnsTyped = debtTxns as (import("./types").ExpenseTransaction & { debtType?: string })[];
@@ -739,7 +737,13 @@ export async function buildAndCacheFinancialProfile(
       yearMonth: ym,
       expensesTotal: monthExp.reduce((s, t) => s + toHome(t.amount, t.currency), 0) + cashCommitmentsForMonth,
       coreExpensesTotal: monthExp
-        .filter((t) => !isCoreExcluded(t.category ?? ""))
+        .filter(
+          (t) =>
+            !isCoreExcluded(t.category ?? "", {
+              debtType: t.debtType,
+              merchant: t.merchant,
+            }),
+        )
         .reduce((s, t) => s + toHome(t.amount, t.currency), 0) + cashCommitmentsForMonth,
       debtPaymentsTotal: debtTxns.reduce((s, t) => s + toHome(t.amount, t.currency), 0),
       minDebtPaymentsTotal,

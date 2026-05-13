@@ -301,7 +301,7 @@ export function getMonthlyIncomeAllCredits(profile: FinancialProfileCache, yearM
 
 /**
  * Total expenses for a given month.
- * Pass `core: true` to exclude transfers and debt payments (same as CORE_EXCLUDE_RE).
+ * Pass `core: true` to exclude transfers, interest, and Card Servicing (same routing as {@link isCoreExcluded}).
  */
 export function getMonthlyExpenses(
   profile: FinancialProfileCache,

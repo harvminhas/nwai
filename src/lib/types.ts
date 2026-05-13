@@ -67,15 +67,28 @@ export interface ExpenseCategory {
   percentage: number;
 }
 
-export type DebtType = "mortgage" | "auto_loan" | "personal_loan" | "credit_card" | "line_of_credit" | "other_debt";
+export type DebtType =
+  | "mortgage"
+  | "auto_loan"
+  | "personal_loan"
+  | "student_loan"
+  | "credit_card"
+  | "line_of_credit"
+  | "other_debt";
 
 export interface ExpenseTransaction {
   merchant: string;
   amount: number;
   category: string;
   date?: string; // ISO date YYYY-MM-DD
-  /** Sub-type for Debt Payments category — detected by AI from merchant name */
+  /** Sub-type for Debt → Installment Servicing / Card Servicing — detected by AI from merchant name */
   debtType?: DebtType;
+  /**
+   * When the statement breaks out installment payment (optional). Interest is true expense;
+   * principal is balance-sheet neutral (cash ↓, liability ↓). Omitted when unknown.
+   */
+  installmentInterestAmount?: number;
+  installmentPrincipalAmount?: number;
   /**
    * AI-detected recurrence frequency for this specific transaction.
    * One of: "weekly" | "biweekly" | "monthly" | "quarterly" | "annual"

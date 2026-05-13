@@ -1,6 +1,7 @@
 import type { ParsedStatementData } from "./types";
 import { sendVisionRequest, sendPdfRequest, sendTextRequest } from "./ai";
 import { isIncomeCategory, toIncomeCategoryLabel } from "./applyRules";
+import { normalizeDebtExpenseCategory } from "./debtServicing";
 
 const LEGACY_SYSTEM_PROMPT = `ROLE: You are a deterministic financial data extraction engine. Your goal is to convert a bank statement into a structured JSON ledger with 100% accuracy.
 
@@ -150,7 +151,7 @@ PASS 2 — Category: Apply the category rules below. Category assignment only ha
     Rent, hydro/gas/water utilities, internet, home phone, home insurance, condo/strata fees.
     Examples: "ROGERS COMM" → "Internet & Phone", "HYDRO ONE" → "Utilities", "ENBRIDGE GAS" → "Utilities",
               "RENT E-TFR" → "Rent", "BELL CANADA" → "Internet & Phone"
-    Never include: mortgage principal payments, loan payments, credit card payments (those are Debt Payments)
+    Never include: mortgage or installment payments sent from this account (those are Debt → Installment Servicing or Card Servicing)
 
   Dining (subtypes: Restaurants | Coffee & Drinks | Fast Food | Food Delivery):
     Examples: "TIM HORTONS" → "Coffee & Drinks", "MCDONALD'S" → "Fast Food",
@@ -172,9 +173,8 @@ PASS 2 — Category: Apply the category rules below. Category assignment only ha
     Examples: "ESSO" → "Gas", "PETRO-CAN" → "Gas", "SHELL" → "Gas",
               "UBER TRIP" → "Rideshare", "LYFT" → "Rideshare",
               "TTC" → "Transit", "GO TRANSIT" → "Transit", "PRESTO" → "Transit",
-              "IMPARK" → "Parking", "GREEN P" → "Parking",
-              "HONDA FINANCIAL" → "Transportation" (car loan — use parent unless clearly auto insurance/service)
-    Car loan payments to a dealer or lender are Transportation, NOT Debt Payments.
+              "IMPARK" → "Parking", "GREEN P" → "Parking"
+    Car loan, mortgage, student-loan, or personal-loan payments debited FROM this checking/savings account → "Installment Servicing" with the matching debtType — NOT Transportation.
 
   Entertainment (subtypes: Streaming | Movies & Events | Sports | Hobbies):
     Examples: "NETFLIX" → "Streaming", "DISNEY PLUS" → "Streaming", "SPOTIFY" → "Streaming",
@@ -210,16 +210,16 @@ PASS 2 — Category: Apply the category rules below. Category assignment only ha
     Examples: "INTEREST", "INTEREST CHARGED", "INTEREST - HELOC", "MORTGAGE INTEREST", "LOC INTEREST", "PURCHASE INTEREST CHARGED"
     Note: these are NOT a cash spending expense — the cash cost is captured by the debt payment from the chequing account.
 
-  Debt Payments: Payments sent FROM this account TO a credit card, loan, mortgage, or line of credit.
-    Examples: "VISA PAYMENT", "MASTERCARD PMT", "CIBC MC", "TD CREDIT CARD PMT", "LOAN PAYMENT", "MORTGAGE PMT"
+  Debt (pick exactly ONE subtype per payment — both roll up to parent "Debt"):
+    Installment Servicing — fixed instalment payments FROM this account (mortgage, auto loan, student loan, personal term loan). Underlying asset purchase is NOT otherwise in monthly spend here.
+      Examples: "MORTGAGE PMT", "TD MORTGAGE", "CAR LOAN", "NSLSC", "OSAP", "PERSONAL LOAN"
+      When the statement prints an interest vs principal split for this payment, add optional fields:
+        installmentInterestAmount, installmentPrincipalAmount (positive numbers; omit both when not stated).
+    Card Servicing — payments FROM this account that settle revolving balances (credit cards, lines of credit). Paired with purchases already counted on the card statement.
+      Examples: "VISA PAYMENT", "MASTERCARD PMT", "CIBC MC", "TD CREDIT CARD PMT", "LOC PMT", "HELOC PMT"
     CRITICAL: Do NOT include these in income even if they show as a credit on the receiving statement.
-    For every Debt Payments transaction, also add a "debtType" field:
-      "mortgage"       — home mortgage payment ("MORTGAGE PMT", "TD MORTGAGE", "RBC MORTGAGE")
-      "auto_loan"      — vehicle/car loan ("CAR LOAN", "AUTO PMT", "VEHICLE LOAN")
-      "personal_loan"  — personal or student loan ("PERSONAL LOAN", "STUDENT LOAN", "NSLSC")
-      "credit_card"    — credit card payment ("VISA PMT", "MASTERCARD", "MC PMT", "CIBC VISA", "TD CC")
-      "line_of_credit" — LOC or HELOC payment ("LOC PMT", "LINE OF CREDIT", "HELOC")
-      "other_debt"     — any other debt payment not matching the above
+    For EVERY Installment Servicing or Card Servicing transaction, also add "debtType":
+      "mortgage" | "auto_loan" | "personal_loan" | "student_loan" | "credit_card" | "line_of_credit" | "other_debt"
 
   Investments & Savings: RRSP/TFSA contributions, transfers to investment accounts, mutual fund/ETF purchases, GIC purchases, life insurance premiums.
     Examples: "WS INVESTMENTS", "WEALTHSIMPLE", "QUESTRADE", "SUNLIFE INS PMT", "RRSP CONTRIBUTION"
@@ -256,6 +256,7 @@ List every individual money-OUT transaction. Rules:
   - date: full YYYY-MM-DD. Derive the 4-digit year from the statement period header — never guess or use today's date.
   - category: the most specific category or subtype name from Step 3 (e.g. "Gas" not "Transportation" when the merchant is clearly a gas station).
   - recurring: include ONLY when confident the charge repeats on a fixed schedule. Use exactly: "weekly", "biweekly", "monthly", "quarterly", "annual". Omit entirely for one-off charges.
+  - Installment Servicing only: when Step 3 applies, you may include installmentInterestAmount and installmentPrincipalAmount (numbers). Omit both when the statement does not split them.
   - For mortgage/loan/investment: return [].
 
 ---
@@ -318,7 +319,7 @@ For a HELOC / Home Equity Line of Credit (revolving advances are expenses; payme
   "expenses": {
     "transactions": [
       { "merchant": "Brampton Taxes", "amount": 1722.73, "date": "2025-12-10", "category": "Other" },
-      { "merchant": "CIBC MC", "amount": 3000.00, "date": "2025-12-29", "category": "Debt Payments", "debtType": "credit_card" },
+      { "merchant": "CIBC MC", "amount": 3000.00, "date": "2025-12-29", "category": "Card Servicing", "debtType": "credit_card" },
       { "merchant": "Interest", "amount": 79.41, "date": "2025-12-31", "category": "Fees", "recurring": "monthly" }
     ]
   },
@@ -446,7 +447,7 @@ Income transactions:
 - Other: any other incoming row
 
 Expense transactions:
-- Use one of: Housing, Dining, Groceries, Shopping, Transportation, Entertainment, Subscriptions, Healthcare, Education, Fees, Interest, Debt Payments, Investments & Savings, Transfers, Cash & ATM, Other
+- Use one of: Housing, Dining, Groceries, Shopping, Transportation, Entertainment, Subscriptions, Healthcare, Education, Fees, Interest, Debt (subtype: Installment Servicing | Card Servicing), Investments & Savings, Transfers, Cash & ATM, Other
 - Use a specific category label when clearly identifiable
 
 Important:
@@ -663,7 +664,15 @@ function normalizeData(data: ParsedStatementData): ParsedStatementData {
   const expenseTxns = rawExpenseTxns
     .filter((t) => !isIncomeCategory(t.category ?? ""))
     .filter((t) => Math.abs(t.amount ?? 0) > 0)
-    .map((t) => ({ ...t, amount: Math.abs(t.amount ?? 0) }));
+    .map((t) => ({
+      ...t,
+      amount: Math.abs(t.amount ?? 0),
+      category: normalizeDebtExpenseCategory({
+        category: t.category,
+        debtType: t.debtType,
+        merchant: t.merchant,
+      }),
+    }));
 
   // Derive totals from individual transactions — never trust AI-computed sums.
   const incomeTotal   = incomeTxns.reduce((s, t) => s + (t.amount ?? 0), 0);

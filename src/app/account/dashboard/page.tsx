@@ -2113,7 +2113,7 @@ export default function TodayPage() {
           <div className="flex items-center justify-between px-4 py-2">
             <span className="text-xs text-gray-500">
               Expenses{includeDebt && debtPayments > 0 && (
-                <span className="ml-1 text-gray-400">(+debt pmts)</span>
+                <span className="ml-1 text-gray-400">(+servicing)</span>
               )}
             </span>
             <span className="text-xs font-semibold tabular-nums text-gray-800">{cad(effectiveExpenses)}</span>
@@ -2142,11 +2142,11 @@ export default function TodayPage() {
               </button>
             </div>
           )}
-          {/* Toggle — shown whenever min debt payment data exists (any month) */}
+          {/* Toggle — shown whenever debt servicing totals exist (installment + card) */}
           {debtPayments > 0 && (
             <div className="flex items-center justify-between px-4 py-2 bg-gray-50/60">
               <span className="text-xs text-gray-500">
-                Include min debt payments
+                Include debt servicing
                 <span className="ml-1 text-gray-400">({cad(debtPayments)}/mo)</span>
               </span>
               <button
@@ -2448,7 +2448,11 @@ export default function TodayPage() {
                           {savingsRate.debtPayments > 0 && (
                             <button
                               onClick={() => setIncludeDebtInExpenses((v) => !v)}
-                              title={includeDebtInExpenses ? "Excluding debt payments" : "Include debt payments"}
+                              title={
+                                includeDebtInExpenses
+                                  ? "Expense total without debt servicing add-on"
+                                  : "Add installment & card servicing payments to expense total"
+                              }
                               className={`relative inline-flex h-3.5 w-7 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${includeDebtInExpenses ? "bg-indigo-500" : "bg-gray-200"}`}
                               role="switch" aria-checked={includeDebtInExpenses}
                             >
@@ -2460,7 +2464,9 @@ export default function TodayPage() {
                           {fmt(savingsRate.expenses + (includeDebtInExpenses ? savingsRate.debtPayments : 0), homeCurrency)}
                         </p>
                         {includeDebtInExpenses && savingsRate.debtPayments > 0 && (
-                          <p className="text-[10px] text-gray-400">incl. {fmt(savingsRate.debtPayments, homeCurrency)} debt pymts</p>
+                          <p className="text-[10px] text-gray-400">
+                            incl. {fmt(savingsRate.debtPayments, homeCurrency)} installment & card servicing
+                          </p>
                         )}
                       </div>
                     </div>
@@ -2510,7 +2516,9 @@ export default function TodayPage() {
                         {fmt(savingsRate.expenses + (includeDebtInExpenses ? savingsRate.debtPayments : 0), homeCurrency)}
                       </p>
                       {includeDebtInExpenses && savingsRate.debtPayments > 0 && (
-                        <p className="text-[10px] text-gray-400">incl. {fmt(savingsRate.debtPayments, homeCurrency)} debt pymts</p>
+                        <p className="text-[10px] text-gray-400">
+                          incl. {fmt(savingsRate.debtPayments, homeCurrency)} installment & card servicing
+                        </p>
                       )}
                     </div>
                   </div>
