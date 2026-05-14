@@ -76,6 +76,8 @@ function computeSignals(
   liquidAssets: number,
   hasDebts: boolean,
   ccy: string = "USD",
+  /** Median monthly core from profile cache (`typicalMonthlyExpenses`) — must match Overview EF card. */
+  typicalMonthlyCoreFromProfile = 0,
 ): Signal[] {
   const sorted = [...history].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
   const idx    = sorted.findIndex((h) => h.yearMonth === currentYm);
@@ -146,9 +148,16 @@ function computeSignals(
   // ── 6. Emergency fund buffer (5%) ─────────────────────────────────────────
   const efSignal: Signal = (() => {
     const base = { id: "emergency_fund", name: "Emergency fund buffer", shortName: "Emergency fund", description: "Liquid savings ≥ 1 month of expenses", weight: 5 };
-    if (!cur || cur.expensesTotal <= 0) return { ...base, status: "skip", detail: "No expense data to set benchmark",      fillPct: 0 };
+    /** Same denominator as FinancialFutureModules / emergencyFund (median core), not single-month spend. */
+    const expenseBurn =
+      typicalMonthlyCoreFromProfile > 0
+        ? typicalMonthlyCoreFromProfile
+        : cur != null && (cur.coreExpensesTotal ?? 0) > 0
+          ? cur.coreExpensesTotal!
+          : cur?.expensesTotal ?? 0;
+    if (!cur || expenseBurn <= 0) return { ...base, status: "skip", detail: "No expense data to set benchmark",      fillPct: 0 };
     if (liquidAssets <= 0)              return { ...base, status: "skip", detail: "No linked savings/chequing account",    fillPct: 0 };
-    const months  = liquidAssets / cur.expensesTotal;
+    const months  = liquidAssets / expenseBurn;
     // fillPct: 0 mo = 0%, 1 mo = 33%, 3 mo = 100% (capped)
     const fillPct = Math.round(Math.min(100, Math.max(0, months / 3 * 100)));
     if (months >= 1)   return { ...base, status: "pass",    detail: `${months.toFixed(1)} months of expenses in liquid savings`, fillPct };
@@ -438,6 +447,8 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   const [assetLabels, setAssetLabels] = useState<string[]>([]);
   const [debtLabels, setDebtLabels]   = useState<string[]>([]);
   const [liquidAssets, setLiquidAssets] = useState(0);
+  /** Matches consolidated `typicalMonthlyExpenses` / emergency-fund baseline (median core). */
+  const [typicalMonthlyCoreExpenses, setTypicalMonthlyCoreExpenses] = useState(0);
   const [homeCurrency, setHomeCurrency] = useState("USD");
   const [modalOpen, setModalOpen]     = useState(false);
   const [agentCards, setAgentCards]   = useState<AgentCard[]>([]);
@@ -466,6 +477,9 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
         setAssetLabels(json.assetLabels ?? []);
         setDebtLabels(json.debtLabels ?? []);
         setLiquidAssets(json.liquidAssets ?? 0);
+        setTypicalMonthlyCoreExpenses(
+          typeof json.typicalMonthlyExpenses === "number" ? json.typicalMonthlyExpenses : 0,
+        );
         if (json.homeCurrency) setHomeCurrency(json.homeCurrency);
         const incomplete: string[] = json.incompleteMonths ?? [];
         setIncompleteMonths(incomplete);
@@ -595,14 +609,14 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   const saved = income - expenses;
 
   // ── scoring ────────────────────────────────────────────────────────────────
-  const signals   = computeSignals(yearMonth, history, liquidAssets, hasDebts, homeCurrency);
+  const signals   = computeSignals(yearMonth, history, liquidAssets, hasDebts, homeCurrency, typicalMonthlyCoreExpenses);
   const score     = computeScore(signals);
 
   // Compute previous month's status for hysteresis
   const sorted    = [...history].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
   const prevIdx   = sorted.findIndex((h) => h.yearMonth === yearMonth) - 1;
   const prevYm    = prevIdx >= 0 ? sorted[prevIdx].yearMonth : null;
-  const prevSigs  = prevYm ? computeSignals(prevYm, history, liquidAssets, hasDebts, homeCurrency) : null;
+  const prevSigs  = prevYm ? computeSignals(prevYm, history, liquidAssets, hasDebts, homeCurrency, typicalMonthlyCoreExpenses) : null;
   const prevScore = prevSigs ? computeScore(prevSigs) : null;
   const curRaw    = rawStatus(score, signals);
   const prevRaw   = prevSigs && prevScore != null ? rawStatus(prevScore, prevSigs) : null;

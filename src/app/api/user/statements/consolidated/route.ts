@@ -6,7 +6,14 @@ import { applyRulesAndRecalculate, merchantSlug } from "@/lib/applyRules";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { docYearMonth, carryForwardStatements } from "@/lib/spendHistory";
 import { getFinancialProfile } from "@/lib/financialProfile";
-import { getNetWorth, getTypicalMonthlySpend, getTypicalMonthlyIncome, getTypicalMonthlyDebtPayments } from "@/lib/profileMetrics";
+import {
+  getNetWorth,
+  getTypicalMonthlySpend,
+  getTypicalMonthlyIncome,
+  getTypicalMonthlyDebtPayments,
+  getEmergencyFundMetrics,
+  getLiquidAssetsHome,
+} from "@/lib/profileMetrics";
 import type { ParsedStatementData, ManualAsset, AssetCategory } from "@/lib/types";
 import type { BalanceSnapshot } from "@/app/api/user/balance-snapshots/route";
 import type { AccountBackfillEntry } from "@/app/api/user/account-backfills/route";
@@ -641,14 +648,8 @@ export async function GET(request: NextRequest) {
       if (hasCarryForward) incompleteMonths.push(ym);
     }
 
-    // ── Liquid assets (checking + savings account balances only) ────────────
-    let liquidAssets = 0;
-    for (const stmt of currentStatements) {
-      const t = (stmt.accountType ?? "").toLowerCase();
-      if (t === "checking" || t === "savings") {
-        liquidAssets += Math.max(0, stmt.netWorth ?? stmt.assets ?? 0);
-      }
-    }
+    // ── Liquid assets — profile snapshots + FX (matches financialBrief / Recommendations)
+    const liquidAssets = getLiquidAssetsHome(profile, accountFilter);
 
     // ── Asset / debt sub-labels for dashboard KPI cards ─────────────────────
     const assetLabelSet = new Set<string>();
@@ -837,6 +838,11 @@ export async function GET(request: NextRequest) {
        * "include debt payments" toggle for a more conservative FI target.
        */
       typicalMonthlyDebtPayments: getTypicalMonthlyDebtPayments(profile),
+      /**
+       * Emergency fund target — median monthly core spend × 6 (stable income)
+       * or × 9 when income CV exceeds threshold. Same object Goals / Overview / Brief should use.
+       */
+      emergencyFund: getEmergencyFundMetrics(profile),
       manualAssets: relevantManualAssets,
       incompleteMonths,
       accountStatementHistory: Object.fromEntries(accountStatementHistory),

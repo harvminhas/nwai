@@ -8,8 +8,7 @@ import type { AccountRateEntry } from "@/app/api/user/account-rates/route";
 import { usePlan } from "@/contexts/PlanContext";
 import { fmt, getCurrencySymbol, HOME_CURRENCY } from "@/lib/currencyUtils";
 import type { AccountSnapshot } from "@/lib/extractTransactions";
-
-const GOALS_NW_VISIT_KEY = "nw_goals_visit_snapshot";
+import type { EmergencyFundMetrics } from "@/lib/profileMetrics";
 
 type GoalType = "savings" | "debt_payoff" | "emergency_fund" | "net_worth";
 
@@ -130,7 +129,6 @@ const GOAL_TYPE_LABEL: Record<GoalType, string> = {
 const FI_MULTIPLIER    = 25;
 const DEFAULT_INVEST_RETURN = 0.07;
 const DEFAULT_SAVINGS_RETURN = 0.04;
-const EF_MONTHS_TARGET = 6;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -346,6 +344,7 @@ export default function GoalsPage() {
   const [typicalDebtPayments, setTypicalDebtPayments] = useState(0);
   const [monthsTracked, setMonthsTracked]             = useState(0);
   const [history, setHistory]                         = useState<{ debtTotal: number }[]>([]);
+  const [emergencyFund, setEmergencyFund]           = useState<EmergencyFundMetrics | null>(null);
   const [rates, setRates]                     = useState<AccountRateEntry[]>([]);
   const [loading, setLoading]                 = useState(true);
   const [error, setError]                     = useState<string | null>(null);
@@ -396,6 +395,7 @@ export default function GoalsPage() {
           setTypicalDebtPayments(consolidated.typicalMonthlyDebtPayments ?? 0);
           setMonthsTracked(consolidated.totalMonthsTracked ?? 0);
           setHistory(Array.isArray(consolidated.history) ? consolidated.history : []);
+          setEmergencyFund(consolidated.emergencyFund ?? null);
           setHomeCurrency(
             typeof consolidated.homeCurrency === "string" && consolidated.homeCurrency
               ? consolidated.homeCurrency : HOME_CURRENCY,
@@ -456,7 +456,13 @@ export default function GoalsPage() {
 
   const hc               = homeCurrency;
   const monthlySavings   = monthlyIncome - monthlyExpenses;
-  const efTarget         = monthlyExpenses * EF_MONTHS_TARGET;
+  const efMonthsTarget   = emergencyFund?.targetMonths ?? 6;
+  const efTarget         = emergencyFund?.targetAmount ?? monthlyExpenses * efMonthsTarget;
+  /** Same baseline as Overview emergency fund card — never use tx-single-month fallback here. */
+  const efRunwayBaseline =
+    emergencyFund != null && emergencyFund.baselineMonthlyCoreExpenses > 0
+      ? emergencyFund.baselineMonthlyCoreExpenses
+      : monthlyExpenses;
   const efProgress       = efTarget > 0 ? Math.min(1, liquidAssets / efTarget) : 0;
   const efMonths         = efTarget > 0 && liquidAssets < efTarget
     ? projectMonths(liquidAssets, efTarget, Math.max(0, monthlySavings), savingsReturnRate)
@@ -707,7 +713,7 @@ export default function GoalsPage() {
       goalType: "emergency_fund" as GoalType,
       emoji: "🛡️",
       title: "Emergency fund",
-      subtitle: `${EF_MONTHS_TARGET}-month expense runway`,
+      subtitle: `${efMonthsTarget}-month expense runway`,
       currentAmount: liquidAssets,
       targetAmount: efTarget,
       progressPct: Math.round(efProgress * 100),
@@ -830,9 +836,9 @@ export default function GoalsPage() {
     suggestedTemplates.push({
       goalType: "savings", emoji: "🛡️",
       label: "Build emergency fund",
-      description: `${EF_MONTHS_TARGET}-month runway: ${fmtShort(efTarget, hc)}`,
+      description: `${efMonthsTarget}-month runway: ${fmtShort(efTarget, hc)}`,
       suggested: true,
-      prefill: { title: "Build 6-month emergency fund", targetAmount: efTarget, emoji: "🛡️" },
+      prefill: { title: `Build ${efMonthsTarget}-month emergency fund`, targetAmount: efTarget, emoji: "🛡️" },
     });
   }
 
@@ -1129,7 +1135,7 @@ export default function GoalsPage() {
                           {GOAL_TYPE_LABEL.emergency_fund}
                         </span>
                         <h2 className="mt-2 text-2xl font-bold text-gray-900">Emergency fund</h2>
-                        <p className="text-sm text-gray-500 mt-0.5">{EF_MONTHS_TARGET}-month expense runway</p>
+                        <p className="text-sm text-gray-500 mt-0.5">{efMonthsTarget}-month expense runway</p>
                       </div>
                       {efProgress >= 1 ? (
                         <span className="inline-flex rounded-full bg-emerald-100 border border-emerald-200 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-800 shrink-0">
@@ -1164,12 +1170,12 @@ export default function GoalsPage() {
                     <div className="px-5 py-4">
                       <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Months covered</p>
                       <p className="text-xl font-bold text-gray-900 mt-1 tabular-nums">
-                        {monthlyExpenses > 0 ? (liquidAssets / monthlyExpenses).toFixed(1) : "—"}
+                        {efRunwayBaseline > 0 ? (liquidAssets / efRunwayBaseline).toFixed(1) : "—"}
                       </p>
                     </div>
                     <div className="px-5 py-4">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Monthly expenses</p>
-                      <p className="text-xl font-bold text-gray-900 mt-1 tabular-nums">{fmt(monthlyExpenses, hc)}</p>
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Median core / mo</p>
+                      <p className="text-xl font-bold text-gray-900 mt-1 tabular-nums">{fmt(efRunwayBaseline, hc)}</p>
                     </div>
                     <div className="px-5 py-4">
                       <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Monthly savings</p>

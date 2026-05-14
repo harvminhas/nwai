@@ -266,12 +266,41 @@ export function getSavingsRate(profile: FinancialProfileCache, yearMonth?: strin
 /**
  * Total liquid balance: sum of positive checking + savings account balances.
  * Excludes investments, loans, and credit accounts.
+ * Native currency amounts — prefer {@link getLiquidAssetsHome} for UI that must match net worth / brief.
  */
 export function getLiquidAssets(profile: FinancialProfileCache): number {
   const LIQUID = new Set(["checking", "savings"]);
   return profile.accountSnapshots
     .filter((s) => LIQUID.has((s.accountType ?? "").toLowerCase()) && s.balance > 0)
     .reduce((sum, s) => sum + s.balance, 0);
+}
+
+/**
+ * Liquid cash for emergency-fund and runway — checking, savings, and cash accounts;
+ * positive balances only; converted to {@link FinancialProfileCache.homeCurrency}.
+ * Same definition as `financialBrief` and consolidated API `liquidAssets`.
+ *
+ * @param accountSlugFilter When set (lowercase account slug), only that account counts — matches consolidated `account=` query.
+ */
+export function getLiquidAssetsHome(
+  profile: FinancialProfileCache,
+  accountSlugFilter?: string | null,
+): number {
+  const home = (profile.homeCurrency ?? "USD").toUpperCase();
+  const fx = profile.fxRates ?? {};
+  function toHome(amount: number, currency?: string | null): number {
+    const cur = (currency ?? home).toUpperCase();
+    if (cur === home) return amount;
+    const rate = fx[cur];
+    return rate != null ? amount * rate : amount;
+  }
+  const af = accountSlugFilter?.trim().toLowerCase() ?? "";
+  const snaps = af
+    ? profile.accountSnapshots.filter((a) => (a.slug ?? "").toLowerCase() === af)
+    : profile.accountSnapshots;
+  return snaps
+    .filter((a) => /checking|savings|cash/i.test(a.accountType ?? ""))
+    .reduce((sum, a) => sum + toHome(Math.max(0, a.balance), a.currency), 0);
 }
 
 // ── getMonthlyIncome ───────────────────────────────────────────────────────────
@@ -453,4 +482,104 @@ export function getMonthlyCardServicingPayments(profile: FinancialProfileCache, 
   const ym = yearMonth ?? profile.latestTxMonth ?? "";
   const entry = profile.monthlyHistory.find((h) => h.yearMonth === ym);
   return entry?.cardServicingPaymentsTotal ?? 0;
+}
+
+// ── Emergency fund (single definition for Goals, Overview, Brief, What-if, Chat) ──
+
+/** Aligns with {@link FinancialFutureModules} — coefficient of variation above this ⇒ longer runway. */
+export const EMERGENCY_FUND_INCOME_CV_THRESHOLD = 0.25;
+
+/** Months of median core expenses to hold when income is relatively stable. */
+export const EMERGENCY_FUND_TARGET_MONTHS_STABLE = 6;
+
+/** Months to target when income is volatile (CV above threshold). */
+export const EMERGENCY_FUND_TARGET_MONTHS_VARIABLE = 9;
+
+/**
+ * Coefficient of variation of positive monthly income totals (same basis as Income page).
+ * Requires at least 3 months with income &gt; 0; otherwise returns 0 (treated as stable).
+ */
+export function monthlyIncomeCoefficientOfVariation(
+  monthlyHistory: { incomeTotal: number }[],
+): number {
+  const vals = monthlyHistory.map((h) => h.incomeTotal).filter((v) => v > 0);
+  if (vals.length < 3) return 0;
+  const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+  if (mean === 0) return 0;
+  const variance = vals.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / vals.length;
+  return Math.sqrt(variance) / mean;
+}
+
+/** Canonical emergency-fund inputs derived only from FinancialProfileCache. */
+export interface EmergencyFundMetrics {
+  /**
+   * Median monthly core expenses — identical to {@link getTypicalMonthlySpend}
+   * (transfers, interest, card/LOC servicing excluded; installment included).
+   */
+  baselineMonthlyCoreExpenses: number;
+  incomeCoefficientOfVariation: number;
+  /** True when CV &gt; {@link EMERGENCY_FUND_INCOME_CV_THRESHOLD}. */
+  isVariableIncome: boolean;
+  /** 6 or 9 months depending on income stability. */
+  targetMonths: number;
+  /** baselineMonthlyCoreExpenses × targetMonths */
+  targetAmount: number;
+  /** Latest month core spend when available (sanity / “this month” comparisons). */
+  latestMonthCoreExpenses: number | null;
+  latestTxMonth: string | null;
+}
+
+/**
+ * Single source of truth for emergency fund dollar target and runway baseline.
+ * Callers pass liquid cash separately for gaps and “months covered”.
+ */
+export function getEmergencyFundMetrics(profile: FinancialProfileCache): EmergencyFundMetrics | null {
+  const baseline = getTypicalMonthlySpend(profile);
+  if (baseline <= 0) return null;
+
+  const cv      = monthlyIncomeCoefficientOfVariation(profile.monthlyHistory);
+  const variable = cv > EMERGENCY_FUND_INCOME_CV_THRESHOLD;
+  const targetMonths = variable
+    ? EMERGENCY_FUND_TARGET_MONTHS_VARIABLE
+    : EMERGENCY_FUND_TARGET_MONTHS_STABLE;
+
+  const lm          = profile.latestTxMonth;
+  const latestEntry = lm ? profile.monthlyHistory.find((h) => h.yearMonth === lm) : undefined;
+
+  return {
+    baselineMonthlyCoreExpenses: baseline,
+    incomeCoefficientOfVariation: cv,
+    isVariableIncome: variable,
+    targetMonths,
+    targetAmount: baseline * targetMonths,
+    latestMonthCoreExpenses: latestEntry != null ? latestEntry.coreExpensesTotal : null,
+    latestTxMonth: lm,
+  };
+}
+
+export interface EmergencyFundLiquidMetrics {
+  gap: number;
+  /** liquidAssets / baselineMonthlyCoreExpenses */
+  monthsOfCoreCovered: number;
+  /** 0–1 funded fraction vs targetAmount */
+  pctFunded: number;
+}
+
+export function getEmergencyFundLiquidMetrics(
+  liquidAssets: number,
+  metrics: EmergencyFundMetrics,
+): EmergencyFundLiquidMetrics {
+  const gap = Math.max(0, metrics.targetAmount - liquidAssets);
+  const monthsOfCoreCovered =
+    metrics.baselineMonthlyCoreExpenses > 0
+      ? liquidAssets / metrics.baselineMonthlyCoreExpenses
+      : 0;
+  const pctFunded =
+    metrics.targetAmount > 0 ? Math.min(1, liquidAssets / metrics.targetAmount) : 0;
+  return { gap, monthsOfCoreCovered, pctFunded };
+}
+
+/** Dollar target only — use {@link getEmergencyFundMetrics} when you need months/baseline/CV. */
+export function getEmergencyFundTargetAmount(profile: FinancialProfileCache): number | null {
+  return getEmergencyFundMetrics(profile)?.targetAmount ?? null;
 }

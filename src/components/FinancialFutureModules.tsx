@@ -2,10 +2,14 @@
 
 /** Job loss runway + emergency fund + locked life-stage tiles — shared by Overview (Financial Health). */
 
+import {
+  EMERGENCY_FUND_INCOME_CV_THRESHOLD,
+  EMERGENCY_FUND_TARGET_MONTHS_STABLE,
+  EMERGENCY_FUND_TARGET_MONTHS_VARIABLE,
+  type EmergencyFundMetrics,
+} from "@/lib/profileMetrics";
+
 const DISCRETIONARY_FACTOR = 0.65;
-const INCOME_CV_THRESHOLD = 0.25;
-const EF_MONTHS_STABLE = 6;
-const EF_MONTHS_VARIABLE = 9;
 
 export interface FinancialFutureHistoryRow {
   incomeTotal: number;
@@ -33,6 +37,8 @@ export interface FinancialFutureModulesProps {
   liquidAssets: number;
   history: FinancialFutureHistoryRow[];
   currencySymbol: string;
+  /** From consolidated API — when set, runway + EF card match Goals / Brief exactly */
+  emergencyFund?: EmergencyFundMetrics | null;
   onRetirementOpen: () => void;
   onInsuranceOpen: () => void;
 }
@@ -42,21 +48,31 @@ export function FinancialFutureModules({
   liquidAssets,
   history,
   currencySymbol,
+  emergencyFund,
   onRetirementOpen,
   onInsuranceOpen,
 }: FinancialFutureModulesProps) {
-  const essential = monthlyExpenses;
-  const essentialCut = monthlyExpenses * DISCRETIONARY_FACTOR;
+  const cvLocal = incomeCV(history);
+  const baseline =
+    emergencyFund?.baselineMonthlyCoreExpenses ?? monthlyExpenses;
+  const efMonthsTarget =
+    emergencyFund?.targetMonths ??
+    (cvLocal > EMERGENCY_FUND_INCOME_CV_THRESHOLD
+      ? EMERGENCY_FUND_TARGET_MONTHS_VARIABLE
+      : EMERGENCY_FUND_TARGET_MONTHS_STABLE);
+  const isVariable =
+    emergencyFund?.isVariableIncome ??
+    cvLocal > EMERGENCY_FUND_INCOME_CV_THRESHOLD;
+
+  const essential = baseline;
+  const essentialCut = baseline * DISCRETIONARY_FACTOR;
   const runway = essential > 0 ? liquidAssets / essential : 0;
   const runwayCut = essentialCut > 0 ? liquidAssets / essentialCut : 0;
   const runwayStatus =
     runway >= 6 ? "healthy" : runway >= 3 ? "watch" : "below";
 
-  const cv = incomeCV(history);
-  const isVariable = cv > INCOME_CV_THRESHOLD;
-  const efMonthsTarget = isVariable ? EF_MONTHS_VARIABLE : EF_MONTHS_STABLE;
-  const efTarget = efMonthsTarget * monthlyExpenses;
-  const currentEfMonths = monthlyExpenses > 0 ? liquidAssets / monthlyExpenses : 0;
+  const efTarget = efMonthsTarget * baseline;
+  const currentEfMonths = baseline > 0 ? liquidAssets / baseline : 0;
   const efShort = Math.max(0, efTarget - liquidAssets);
   const efPct = efTarget > 0 ? liquidAssets / efTarget : 0;
   const efStatus =
@@ -73,7 +89,7 @@ export function FinancialFutureModules({
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {(() => {
-          const hasData = monthlyExpenses > 0;
+          const hasData = baseline > 0;
           const badge =
             !hasData ? (
               <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-400">
@@ -125,7 +141,7 @@ export function FinancialFutureModules({
         })()}
 
         {(() => {
-          const hasData = monthlyExpenses > 0;
+          const hasData = baseline > 0;
           const badge = !hasData ? (
             <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-400">
               Needs more data
@@ -159,7 +175,7 @@ export function FinancialFutureModules({
                       <p className="text-[22px] font-bold text-gray-900 tabular-nums leading-tight">{fmtShort(efShort, sym)} short</p>
                     )}
                     <p className="mt-2 text-xs text-gray-500 leading-relaxed">
-                      Based on your monthly expenses ({fmtShort(monthlyExpenses, sym)}) and{" "}
+                      Based on your median monthly core expenses ({fmtShort(baseline, sym)}) and{" "}
                       <strong className="text-gray-700">{isVariable ? "variable" : "stable salaried"}</strong> income, target is{" "}
                       {efMonthsTarget} months. You currently hold{" "}
                       <strong className="text-gray-700">{currentEfMonths.toFixed(1)} months</strong> in liquid savings.

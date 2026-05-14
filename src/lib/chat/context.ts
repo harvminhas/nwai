@@ -8,7 +8,7 @@
  */
 
 import type { FinancialProfileCache } from "@/lib/financialProfile";
-import { getNetWorth } from "@/lib/profileMetrics";
+import { getNetWorth, getEmergencyFundMetrics } from "@/lib/profileMetrics";
 import { buildCategoryPromptLines } from "@/lib/categoryTaxonomy";
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -112,6 +112,11 @@ export function buildChatContext(profile: FinancialProfileCache): string {
     return `  ${c.name} (${c.frequency}): ${fmt(c.amount)} = ${mthStr}`;
   });
 
+  const efMeta = getEmergencyFundMetrics(profile);
+  const efDefinitionLine = efMeta
+    ? `Emergency fund target = ${fmt(efMeta.targetAmount)} (${efMeta.targetMonths} × median monthly core spend ${fmt(efMeta.baselineMonthlyCoreExpenses)}${efMeta.isVariableIncome ? "; volatile income uses longer runway" : ""}).`
+    : "Emergency fund target = not yet defined (need median core expense history).";
+
   // ── assemble ──────────────────────────────────────────────────────────────
   return `You are a knowledgeable, friendly personal finance assistant.
 You have access to the user's real financial data shown below AND two tools to look up transaction details.
@@ -165,7 +170,7 @@ DEFINITIONS:
 - Transfers = inter-account or e-transfers — excluded from core expense totals.
 - Debt: Installment Servicing vs Card Servicing — see category taxonomy (Debt parent).
 - Savings rate = (income − core expenses) / income × 100
-- Emergency fund target = 6 months of core expenses.
+- ${efDefinitionLine}
 
 EXPENSE CATEGORY TAXONOMY (parent categories and their subtypes):
 ${buildCategoryPromptLines()}

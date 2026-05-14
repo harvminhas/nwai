@@ -11,6 +11,7 @@ import { FinancialFutureModules } from "@/components/FinancialFutureModules";
 import type { DashboardAlert } from "@/app/api/user/insights/route";
 import ParseStatusBanner from "@/components/ParseStatusBanner";
 import { getCurrencySymbol, HOME_CURRENCY } from "@/lib/currencyUtils";
+import type { EmergencyFundMetrics } from "@/lib/profileMetrics";
 
 // ── page ──────────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,7 @@ export default function OverviewPage() {
 
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
   const [liquidAssets, setLiquidAssets] = useState(0);
+  const [emergencyFund, setEmergencyFund] = useState<EmergencyFundMetrics | null>(null);
   const [incomeHistory, setIncomeHistory] = useState<{ incomeTotal: number }[]>([]);
   const [healthHc, setHealthHc] = useState(HOME_CURRENCY);
   const [healthReady, setHealthReady] = useState(false);
@@ -81,6 +83,7 @@ export default function OverviewPage() {
         if (!cancelled && res.ok) {
           setMonthlyExpenses(json.typicalMonthlyExpenses ?? 0);
           setLiquidAssets(json.liquidAssets ?? 0);
+          setEmergencyFund(json.emergencyFund ?? null);
           setIncomeHistory(Array.isArray(json.history) ? json.history : []);
           setHealthHc(json.homeCurrency ?? HOME_CURRENCY);
         }
@@ -121,6 +124,7 @@ export default function OverviewPage() {
               liquidAssets={liquidAssets}
               history={incomeHistory}
               currencySymbol={healthSym}
+              emergencyFund={emergencyFund}
               onRetirementOpen={() => setRetirementOpen(true)}
               onInsuranceOpen={() => setInsuranceOpen(true)}
             />

@@ -1134,10 +1134,15 @@ function WhatIfWorkspace() {
           const monthlySavings  = monthlyIncome - monthlyExpenses;
           const savingsRate     = monthlyIncome > 0 ? (monthlySavings / monthlyIncome) * 100 : 0;
           const liquidAssets    = json.liquidAssets ?? assets * 0.3;
+          const efFromApi       = json.emergencyFund?.targetAmount;
+          const emergencyFundTarget =
+            typeof efFromApi === "number" && efFromApi > 0
+              ? efFromApi
+              : monthlyExpenses * 6;
           setSnap({
             netWorth: assets - debts, monthlyIncome, monthlyExpenses, monthlySavings,
             savingsRate, totalDebt: debts,
-            liquidAssets, emergencyFundTarget: monthlyExpenses * 6,
+            liquidAssets, emergencyFundTarget,
           });
         } else {
           setSnap({ netWorth: 47210, monthlyIncome: 5800, monthlyExpenses: 4700,

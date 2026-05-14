@@ -25,7 +25,12 @@ import {
   expenseTotalForMonth,
 } from "@/lib/extractTransactions";
 import { SCHEDULED_DEBT_TYPES } from "@/lib/debtUtils";
-import { getNetWorth } from "@/lib/profileMetrics";
+import {
+  getNetWorth,
+  getEmergencyFundMetrics,
+  getEmergencyFundLiquidMetrics,
+  getLiquidAssetsHome,
+} from "@/lib/profileMetrics";
 import type { ParsedStatementData } from "@/lib/types";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -112,10 +117,8 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
   const assets    = nwResult.totalAssets;
   const debts     = nwResult.totalDebts;
 
-  // Liquid assets with FX conversion (matches dashboard logic)
-  const liquidAssets = accountSnapshots
-    .filter((a) => /checking|savings|cash/i.test(a.accountType))
-    .reduce((s, a) => s + toHome(Math.max(0, a.balance), a.currency), 0);
+  // Liquid assets with FX conversion (single definition — see getLiquidAssetsHome)
+  const liquidAssets = getLiquidAssetsHome(profile);
 
   // Monthly figures — use the pre-computed monthlyHistory so cash income and cash
   // commitments are included and the numbers match exactly what the UI cards show.
@@ -180,7 +183,16 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
   const savingsRateExclMinDebt = monthlyIncome > 0
     ? ((monthlyIncome - (monthlyExp - monthlyMinDebt)) / monthlyIncome) * 100
     : 0;
-  const efTarget        = monthlyExp * 6;
+  const efMetrics = getEmergencyFundMetrics(profile);
+  const efBaselineForTarget = efMetrics?.baselineMonthlyCoreExpenses ?? monthlyExp;
+  const efTargetMonths      = efMetrics?.targetMonths ?? 6;
+  const efTarget =
+    efMetrics?.targetAmount ?? efBaselineForTarget * efTargetMonths;
+  const efLiquid =
+    efMetrics != null ? getEmergencyFundLiquidMetrics(liquidAssets, efMetrics) : null;
+  const efMonthsCovered =
+    efLiquid?.monthsOfCoreCovered ??
+    (efBaselineForTarget > 0 ? liquidAssets / efBaselineForTarget : 0);
 
   // Account lines with real APRs — show native currency per-account, with home-currency
   // equivalent in parentheses when the account is in a foreign currency.
@@ -395,12 +407,11 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
     );
   }
 
-  // 3. Emergency fund status
+  // 3. Emergency fund status (same definition as consolidated API emergencyFund)
   const efGap          = Math.max(0, efTarget - liquidAssets);
-  const efCoveredMo    = efTarget > 0 ? (liquidAssets / efTarget) * 6 : 0;
   const efGrounded     = efGap > 0
-    ? `${fmt(efGap)} short of 6-month target (have ${efCoveredMo.toFixed(1)} months covered)`
-    : `fully funded (${((liquidAssets / Math.max(efTarget, 1)) * 100).toFixed(0)}% of 6-month target)`;
+    ? `${fmt(efGap)} short of ${efTargetMonths}-month target (have ${efMonthsCovered.toFixed(1)} months of median core expenses in liquid savings)`
+    : `fully funded (${((liquidAssets / Math.max(efTarget, 1)) * 100).toFixed(0)}% of ${efTargetMonths}-month target)`;
 
   const groundedLines = [
     confirmedSubs.length > 0
@@ -425,7 +436,7 @@ Net worth:         ${fmt(netWorth)}
 Total assets:      ${fmt(assets)}
 Total debt:        ${fmt(debts)}
 Liquid assets:     ${fmt(liquidAssets)}
-Emergency fund:    ${fmt(efTarget)} target — ${efTarget > 0 ? ((liquidAssets / efTarget) * 100).toFixed(0) : 0}% funded
+Emergency fund:    ${fmt(efTarget)} target (${efTargetMonths} mo × median core ${fmt(efBaselineForTarget)}) — ${efTarget > 0 ? ((liquidAssets / efTarget) * 100).toFixed(0) : 0}% funded
 Months of data:    ${allTxMonths.length}
 
 == THIS MONTH: ${month} ==
