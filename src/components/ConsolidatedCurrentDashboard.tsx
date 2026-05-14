@@ -13,6 +13,12 @@ import type { AgentCard } from "@/lib/agentTypes";
 import { isBalanceMarker } from "@/lib/balanceMarkers";
 import { isCoreExcluded } from "@/lib/spendingMetrics";
 import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
+import {
+  getEmergencyFundLiquidMetrics,
+  monthlyHistoryCoreExpenses,
+  profileMedianCoreVersusIncome,
+  type EmergencyFundMetrics,
+} from "@/lib/profileMetrics";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -37,6 +43,34 @@ function monthLabel(ym: string) {
   if (!m) return ym;
   return new Date(parseInt(y), parseInt(m) - 1, 1)
     .toLocaleDateString("en-US", { month: "long", year: "numeric" });
+}
+
+/** Median of positive values — used with consolidated `history` series only (same cache as charts). */
+function medianPositive(vals: number[]): number {
+  const v = vals.filter((x) => x > 0).sort((a, b) => a - b);
+  if (v.length === 0) return 0;
+  const mid = Math.floor(v.length / 2);
+  return v.length % 2 !== 0 ? v[mid] : (v[mid - 1] + v[mid]) / 2;
+}
+
+/**
+ * Latest history month suitable for Financial Health scoring — excludes partial months (`incompleteMonths`)
+ * and prefers rows not marked estimated. Falls back if every row is flagged.
+ */
+function lastCompleteYearMonth(history: HistoryPoint[], incompleteMonths: string[]): string | null {
+  const inc = new Set(incompleteMonths);
+  const sortedDesc = [...history].sort((a, b) => b.yearMonth.localeCompare(a.yearMonth));
+
+  const pick = (requireNonEstimate: boolean): string | null => {
+    for (const h of sortedDesc) {
+      if (inc.has(h.yearMonth)) continue;
+      if (requireNonEstimate && h.isEstimate) continue;
+      return h.yearMonth;
+    }
+    return null;
+  };
+
+  return pick(true) ?? pick(false);
 }
 
 
@@ -76,7 +110,11 @@ function computeSignals(
   liquidAssets: number,
   hasDebts: boolean,
   ccy: string = "USD",
-  /** Median monthly core from profile cache (`typicalMonthlyExpenses`) — must match Overview EF card. */
+  /** Same object as Goals / Overview (`json.emergencyFund`) — 6- or 9-month target from profile cache. */
+  emergencyFundMetrics: EmergencyFundMetrics | null = null,
+  /** Median monthly income (`json.typicalMonthlyIncome`) — paired with median core when this month has no deposits. */
+  typicalMonthlyIncomeFromProfile = 0,
+  /** Median monthly core spend (`json.typicalMonthlyExpenses`) — paired with median income for savings when needed. */
   typicalMonthlyCoreFromProfile = 0,
 ): Signal[] {
   const sorted = [...history].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
@@ -85,9 +123,25 @@ function computeSignals(
   const prev   = idx > 0  ? sorted[idx - 1] : null;
   const prev3  = idx >= 3 ? sorted.slice(idx - 3, idx) : sorted.slice(0, idx);
 
-  /** Monthly core burn from consolidated history — same field as Spending KPI / `typicalMonthlyExpenses` baseline (profile cache). */
-  const monthCoreBurn = (h: HistoryPoint) =>
-    h.coreExpensesTotal !== undefined ? h.coreExpensesTotal : h.expensesTotal;
+  /** One structural check for typical income vs typical core (consolidated `typicalMonthly*` === profile cache). */
+  const profileStructural = profileMedianCoreVersusIncome(
+    typicalMonthlyIncomeFromProfile,
+    typicalMonthlyCoreFromProfile,
+  );
+  const profileStructuralCaption =
+    profileStructural.structuralDeficit
+      ? `Typical core ${fmt(typicalMonthlyCoreFromProfile, ccy)} vs typical income ${fmt(typicalMonthlyIncomeFromProfile, ccy)} — ${fmt(profileStructural.coreOverIncome, ccy)} over (profile medians; excludes card/LOC servicing)`
+      : null;
+
+  /** Core for the scored month when `coreExpensesTotal` is missing/zero — shared by Savings + Spending. */
+  function coreBurnForSignalMonthRow(row: HistoryPoint): { burn: number; imputed: boolean } {
+    const direct = monthlyHistoryCoreExpenses(row);
+    if (direct > 0) return { burn: direct, imputed: false };
+    if (typicalMonthlyCoreFromProfile > 0) return { burn: typicalMonthlyCoreFromProfile, imputed: true };
+    const medCore = medianPositive(history.map(monthlyHistoryCoreExpenses));
+    if (medCore > 0) return { burn: medCore, imputed: true };
+    return { burn: 0, imputed: false };
+  }
 
   // ── 1. Net worth trend (30%) ──────────────────────────────────────────────
   const nwSignal: Signal = (() => {
@@ -102,58 +156,227 @@ function computeSignals(
     return              { ...base, status: "fail",    detail: `Down ${fmtShort(Math.abs(delta), ccy)} vs last month`, fillPct };
   })();
 
-  // ── 2. Savings rate (25%) — income vs core expenses (same basis as Spending page / EF) ──
+  // ── 2. Savings rate (25%) — never mix median income with a single month's spend (that inflated bogus rates). ──
   const srSignal: Signal = (() => {
     const base = {
       id: "savings_rate",
       name: "Savings rate",
       shortName: "Savings rate",
-      description: "≥ 10% of income left after core expenses (excl. transfers & card servicing)",
+      description: "Income minus core expenses — same month, or both medians from the financial profile",
       weight: 25,
     };
-    if (!cur || cur.incomeTotal <= 0) return { ...base, status: "skip", detail: "No income data this month", fillPct: 0 };
-    const coreBurn = monthCoreBurn(cur);
-    const rate = (cur.incomeTotal - coreBurn) / cur.incomeTotal;
+    if (!cur) return { ...base, status: "skip", detail: "No data for this month", fillPct: 0 };
+
+    let incomeBasis = cur.incomeTotal > 0 ? cur.incomeTotal : 0;
+    let coreBurn = 0;
+    let basisNote = "";
+    let usingProfileMedians = false;
+
+    if (incomeBasis > 0) {
+      const resolved = coreBurnForSignalMonthRow(cur);
+      coreBurn = resolved.burn;
+      if (resolved.imputed) {
+        basisNote = " — core imputed (signal month had no expense totals)";
+      }
+      if (coreBurn <= 0) {
+        return {
+          ...base,
+          status: "skip",
+          detail: "No core expense baseline for this month — need statements or profile median core",
+          fillPct: 0,
+        };
+      }
+    } else if (typicalMonthlyIncomeFromProfile > 0 && typicalMonthlyCoreFromProfile > 0) {
+      incomeBasis = typicalMonthlyIncomeFromProfile;
+      coreBurn = typicalMonthlyCoreFromProfile;
+      usingProfileMedians = true;
+    } else {
+      return {
+        ...base,
+        status: "skip",
+        detail: "No income this month — upload statements or wait for median income/core from profile",
+        fillPct: 0,
+      };
+    }
+
+    const rate = (incomeBasis - coreBurn) / incomeBasis;
     // fillPct: map [-50%, +50%] → [0, 100]; 10% target ≈ 75% fill
     const fillPct = Math.round(Math.min(100, Math.max(0, (rate + 0.5) / 0.8 * 100)));
-    if (rate >= 0.10) return { ...base, status: "pass",    detail: `Saving ${Math.round(rate * 100)}% of income after core expenses`,                        fillPct };
-    if (rate >= 0)   return { ...base, status: "warning", detail: `Saving ${Math.round(rate * 100)}% after core expenses — target is 10%`,                   fillPct };
-    return            { ...base, status: "fail",    detail: `Core expenses ${fmt(coreBurn - cur.incomeTotal, ccy)} higher than income`, fillPct };
+    if (rate >= 0.10) return { ...base, status: "pass",    detail: `Saving ${Math.round(rate * 100)}% of income after core expenses${basisNote}`, fillPct };
+    if (rate >= 0)   return { ...base, status: "warning", detail: `Saving ${Math.round(rate * 100)}% after core expenses — target is 10%${basisNote}`, fillPct };
+    if (rate < 0 && usingProfileMedians && profileStructuralCaption) {
+      return { ...base, status: "fail", detail: profileStructuralCaption, fillPct };
+    }
+    return            { ...base, status: "fail",    detail: `Core expenses ${fmt(coreBurn - incomeBasis, ccy)} higher than income${basisNote}`, fillPct };
   })();
 
   // ── 3. Debt plan adherence (20%) ──────────────────────────────────────────
+  /** Gross debt / gross assets — momentum alone doesn’t Pass if the load is still structurally high. */
+  const DEBT_TO_ASSETS_PASS_MAX = 0.52;
+  const DEBT_TO_ASSETS_FAIL_MIN = 0.68;
+
   const debtSignal: Signal = (() => {
-    const base = { id: "debt_plan", name: "Debt plan adherence", shortName: "Debt", description: "Debt balance decreasing month-over-month", weight: 20 };
+    const base = {
+      id: "debt_plan",
+      name: "Debt plan adherence",
+      shortName: "Debt",
+      description: "Debt trending down and not disproportionate to assets",
+      weight: 20,
+    };
     if (!hasDebts || !cur || cur.debtTotal <= 0) return { ...base, status: "skip", detail: "No active debts — signal skipped", fillPct: 0 };
-    if (!prev)                                    return { ...base, status: "skip", detail: "Not enough history yet",           fillPct: 0 };
-    const delta   = cur.debtTotal - prev.debtTotal;
-    // fillPct: paid-down ratio vs total debt; clamp [-10%, +10%] change → [0, 100]
+    if (!prev) return { ...base, status: "skip", detail: "Not enough history yet", fillPct: 0 };
+    const delta = cur.debtTotal - prev.debtTotal;
+    const assetsGross = cur.totalAssets ?? 0;
+    const ratio = assetsGross > 0 ? cur.debtTotal / assetsGross : 1;
+    const pctLoad = Math.round(ratio * 100);
     const changePct = cur.debtTotal > 0 ? delta / cur.debtTotal : 0;
     const fillPct = Math.round(Math.min(100, Math.max(0, (-changePct * 500 + 1) * 50)));
-    if (delta < -10) return { ...base, status: "pass",    detail: `Paid down ${fmt(Math.abs(delta), ccy)} this month`,  fillPct };
-    if (delta <= 50) return { ...base, status: "warning", detail: "Debt unchanged this month",                     fillPct: 50 };
-    return            { ...base, status: "fail",    detail: `Debt increased by ${fmt(delta, ccy)} this month`,   fillPct };
+
+    if (delta > 50) {
+      return { ...base, status: "fail", detail: `Debt increased by ${fmt(delta, ccy)} this month`, fillPct };
+    }
+
+    if (delta < -10) {
+      if (ratio >= DEBT_TO_ASSETS_FAIL_MIN) {
+        return {
+          ...base,
+          status: "fail",
+          detail: `Paid down ${fmt(Math.abs(delta), ccy)} — debt still ${pctLoad}% of assets`,
+          fillPct,
+        };
+      }
+      if (ratio > DEBT_TO_ASSETS_PASS_MAX) {
+        return {
+          ...base,
+          status: "warning",
+          detail: `Paid down ${fmt(Math.abs(delta), ccy)} — debt still ${pctLoad}% of assets`,
+          fillPct,
+        };
+      }
+      return { ...base, status: "pass", detail: `Paid down ${fmt(Math.abs(delta), ccy)} this month`, fillPct };
+    }
+
+    // Flat or small move (includes tiny paydown)
+    if (ratio >= DEBT_TO_ASSETS_FAIL_MIN) {
+      return {
+        ...base,
+        status: "fail",
+        detail: `Debt flat — still ${pctLoad}% of assets`,
+        fillPct: Math.min(fillPct, 35),
+      };
+    }
+    if (ratio > DEBT_TO_ASSETS_PASS_MAX) {
+      return {
+        ...base,
+        status: "warning",
+        detail: `Debt unchanged — ${pctLoad}% of assets`,
+        fillPct: 50,
+      };
+    }
+    return { ...base, status: "warning", detail: "Debt unchanged this month", fillPct: 50 };
   })();
 
-  // ── 4. Core spending vs recent trend (15%) — same series as Typical spending / KPI strip ──
+  // ── 4. Spending (15%) — headline cash flow + core vs trend (short history uses prior mo or profile median) ──
   const spendSignal: Signal = (() => {
     const base = {
       id: "spending_vs_budget",
-      name: "Core spending vs trend",
+      name: "Spending vs income & trend",
       shortName: "Spending",
-      description: "Core spend within 110% of your trailing 3-month average",
+      description: "Total expenses vs income; core spend vs trailing average or median baseline",
       weight: 15,
     };
-    if (!cur || prev3.length < 2) return { ...base, status: "skip", detail: "Not enough history to set a baseline", fillPct: 0 };
-    const curCore = monthCoreBurn(cur);
-    if (curCore <= 0) return { ...base, status: "skip", detail: "Not enough history to set a baseline", fillPct: 0 };
-    const avg   = prev3.reduce((s, h) => s + monthCoreBurn(h), 0) / prev3.length;
-    const ratio = avg > 0 ? curCore / avg : 1;
-    // fillPct: ratio ≤ 1 = full; each 10% over cuts 20pts; clamped 0–100
-    const fillPct = Math.round(Math.min(100, Math.max(0, 100 - Math.max(0, ratio - 1) * 200)));
-    if (ratio <= 1.0)  return { ...base, status: "pass",    detail: `Core spend at ${Math.round(ratio * 100)}% of 3-mo avg — on target`,         fillPct };
-    if (ratio <= 1.10) return { ...base, status: "warning", detail: `Core spend at ${Math.round(ratio * 100)}% of 3-mo avg — slightly elevated`, fillPct };
-    return              { ...base, status: "fail",    detail: `Core spend at ${Math.round(ratio * 100)}% of avg — ${fmt(curCore - avg, ccy)} over`, fillPct };
+    if (!cur) return { ...base, status: "skip", detail: "No data for this month", fillPct: 0 };
+
+    const { burn: curBurn, imputed: curBurnImputed } = coreBurnForSignalMonthRow(cur);
+    const spendImputedNote = curBurnImputed
+      ? " Core imputed — signal month had no expense totals in consolidated history."
+      : "";
+
+    if (curBurn <= 0) {
+      return { ...base, status: "skip", detail: "No expense data for this month", fillPct: 0 };
+    }
+
+    const totalExp = cur.expensesTotal ?? 0;
+
+    let avgCore = 0;
+    let baselineLabel = "";
+    if (prev3.length >= 2) {
+      avgCore = prev3.reduce((s, h) => s + monthlyHistoryCoreExpenses(h), 0) / prev3.length;
+      baselineLabel = `${prev3.length}-mo avg`;
+    } else if (prev3.length === 1) {
+      avgCore = monthlyHistoryCoreExpenses(prev3[0]);
+      baselineLabel = "prior month";
+    } else if (typicalMonthlyCoreFromProfile > 0) {
+      avgCore = typicalMonthlyCoreFromProfile;
+      baselineLabel = "median core (profile)";
+    }
+
+    if (avgCore <= 0 && typicalMonthlyCoreFromProfile > 0) {
+      avgCore = typicalMonthlyCoreFromProfile;
+      baselineLabel = "median core (profile)";
+    }
+
+    let incomeBasis = cur.incomeTotal > 0 ? cur.incomeTotal : 0;
+
+    const buildTrend = (): Pick<Signal, "status" | "detail" | "fillPct"> => {
+      const tail = spendImputedNote;
+      if (avgCore <= 0 || curBurn <= 0) {
+        return {
+          status: "warning",
+          detail:
+            (avgCore <= 0
+              ? "Spend vs trend — need another prior statement month or median core from profile"
+              : "Core spend this month is minimal vs baseline") + tail,
+          fillPct: 45,
+        };
+      }
+      const ratioTrend = curBurn / avgCore;
+      const trendFillPct = Math.round(Math.min(100, Math.max(0, 100 - Math.max(0, ratioTrend - 1) * 200)));
+      if (ratioTrend <= 1.0) {
+        return {
+          status: "pass",
+          detail: `Core spend at ${Math.round(ratioTrend * 100)}% of ${baselineLabel} — on target${tail}`,
+          fillPct: trendFillPct,
+        };
+      }
+      if (ratioTrend <= 1.10) {
+        return {
+          status: "warning",
+          detail: `Core spend at ${Math.round(ratioTrend * 100)}% of ${baselineLabel} — slightly elevated${tail}`,
+          fillPct: trendFillPct,
+        };
+      }
+      return {
+        status: "fail",
+        detail: `Core spend at ${Math.round(ratioTrend * 100)}% of ${baselineLabel} — ${fmt(curBurn - avgCore, ccy)} over${tail}`,
+        fillPct: trendFillPct,
+      };
+    };
+
+    const trend = buildTrend();
+
+    /* Same-period: this month's gross outflows vs this month's income (history row). */
+    if (incomeBasis > 0 && totalExp > incomeBasis) {
+      const overAmt = totalExp - incomeBasis;
+      const cashFill = Math.round(Math.min(100, Math.max(0, (incomeBasis / totalExp) * 100)));
+      return {
+        ...base,
+        status: "fail",
+        detail: `Expenses ${fmt(totalExp, ccy)} exceed income ${fmt(incomeBasis, ccy)} — ${fmt(overAmt, ccy)} over. Also: ${trend.detail}`,
+        fillPct: Math.min(cashFill, trend.fillPct),
+      };
+    }
+
+    if (incomeBasis <= 0 && profileStructural.structuralDeficit && profileStructuralCaption) {
+      return {
+        ...base,
+        status: "fail",
+        detail: `${profileStructuralCaption}. Also: ${trend.detail}`,
+        fillPct: Math.min(profileStructural.cashFillPct, trend.fillPct),
+      };
+    }
+
+    return { ...base, ...trend };
   })();
 
   // ── 5. Goal trajectory (5%) ───────────────────────────────────────────────
@@ -164,24 +387,47 @@ function computeSignals(
     detail: "Goals not set up yet", fillPct: 0,
   };
 
-  // ── 6. Emergency fund buffer (5%) ─────────────────────────────────────────
+  // ── 6. Emergency fund vs profile goal (5%) — same target as Goals / Overview (`getEmergencyFundMetrics`) ──
   const efSignal: Signal = (() => {
-    const base = { id: "emergency_fund", name: "Emergency fund buffer", shortName: "Emergency fund", description: "Liquid savings ≥ 1 month of core expenses", weight: 5 };
-    /** Same denominator as FinancialFutureModules / emergencyFund (median core), not single-month spend. */
-    const expenseBurn =
-      typicalMonthlyCoreFromProfile > 0
-        ? typicalMonthlyCoreFromProfile
-        : cur != null && (cur.coreExpensesTotal ?? 0) > 0
-          ? cur.coreExpensesTotal!
-          : cur?.expensesTotal ?? 0;
-    if (!cur || expenseBurn <= 0) return { ...base, status: "skip", detail: "No expense data to set benchmark",      fillPct: 0 };
-    if (liquidAssets <= 0)              return { ...base, status: "skip", detail: "No linked savings/chequing account",    fillPct: 0 };
-    const months  = liquidAssets / expenseBurn;
-    // fillPct: 0 mo = 0%, 1 mo = 33%, 3 mo = 100% (capped)
-    const fillPct = Math.round(Math.min(100, Math.max(0, months / 3 * 100)));
-    if (months >= 1)   return { ...base, status: "pass",    detail: `${months.toFixed(1)} months of core expenses covered by liquid savings`, fillPct };
-    if (months >= 0.5) return { ...base, status: "warning", detail: `${months.toFixed(1)} months of core expenses covered — target is 1 month`,  fillPct };
-    return              { ...base, status: "fail",    detail: `Only ${months.toFixed(1)} months of core expenses covered`, fillPct };
+    const base = {
+      id: "emergency_fund",
+      name: "Emergency fund buffer",
+      shortName: "Emergency fund",
+      description: "Liquid savings vs your emergency fund goal (6–9 mo core expenses)",
+      weight: 5,
+    };
+    if (!emergencyFundMetrics) {
+      return { ...base, status: "skip", detail: "Need expense history to set emergency fund goal", fillPct: 0 };
+    }
+    if (liquidAssets <= 0) {
+      return { ...base, status: "skip", detail: "No linked savings/chequing balance", fillPct: 0 };
+    }
+    const { gap, monthsOfCoreCovered, pctFunded } = getEmergencyFundLiquidMetrics(liquidAssets, emergencyFundMetrics);
+    const targetMo = emergencyFundMetrics.targetMonths;
+    const fillPct = Math.round(Math.min(100, Math.max(0, pctFunded * 100)));
+
+    if (pctFunded >= 1) {
+      return {
+        ...base,
+        status: "pass",
+        detail: `Goal met — ${monthsOfCoreCovered.toFixed(1)} mo liquid vs ${targetMo}-mo target`,
+        fillPct: 100,
+      };
+    }
+    if (pctFunded >= 0.5) {
+      return {
+        ...base,
+        status: "warning",
+        detail: `${fmtShort(gap, ccy)} below ${targetMo}-mo target (${monthsOfCoreCovered.toFixed(1)} mo covered)`,
+        fillPct,
+      };
+    }
+    return {
+      ...base,
+      status: "fail",
+      detail: `${fmtShort(gap, ccy)} below ${targetMo}-mo target (${monthsOfCoreCovered.toFixed(1)} mo covered)`,
+      fillPct,
+    };
   })();
 
   return [nwSignal, srSignal, debtSignal, spendSignal, goalSignal, efSignal];
@@ -208,16 +454,27 @@ function rawStatus(score: number, signals: Signal[]): TrackStatus | null {
   return "on-track";
 }
 
-/** Apply hysteresis: status must hold for 2 consecutive months before changing. */
+/** Lower = healthier — used to compare tiers for hysteresis. */
+const TRACK_SEVERITY: Record<TrackStatus, number> = {
+  "on-track": 0,
+  watch: 1,
+  "off-track": 2,
+};
+
+/**
+ * Downgrades wait one month before the badge moves worse (noisy month tolerance).
+ * Upgrades apply immediately so we never show “Off track” with a perfect score / all Pass.
+ */
 function applyHysteresis(
   currentStatus: TrackStatus | null,
   prevStatus: TrackStatus | null,
 ): TrackStatus | null {
   if (currentStatus === null) return null;
-  if (prevStatus === null) return currentStatus; // first month with data
-  // If same as last month → confirmed
+  if (prevStatus === null) return currentStatus;
   if (currentStatus === prevStatus) return currentStatus;
-  // Different → hold the previous status (needs 2 in a row to flip)
+
+  if (TRACK_SEVERITY[currentStatus] < TRACK_SEVERITY[prevStatus]) return currentStatus;
+
   return prevStatus;
 }
 
@@ -265,10 +522,20 @@ const STRIP_LABEL: Record<SignalStatus, { text: string; cls: string }> = {
   skip:    { text: "N/A",     cls: "text-gray-300"  },
 };
 
-function SignalStrip({ signals, score, status, onOpenModal }: {
+function gridColsClassForSignalCount(n: number): string {
+  if (n <= 1) return "grid-cols-1";
+  if (n === 2) return "grid-cols-2";
+  if (n === 3) return "grid-cols-2 sm:grid-cols-3";
+  if (n === 4) return "grid-cols-2 sm:grid-cols-4";
+  return "grid-cols-2 sm:grid-cols-3 lg:grid-cols-5";
+}
+
+function SignalStrip({ signals, score, status, periodLabel, onOpenModal }: {
   signals: Signal[];
   score: number;
   status: TrackStatus | null;
+  /** Explains which statement month the scores use (last complete month). */
+  periodLabel?: string | null;
   onOpenModal: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -283,7 +550,12 @@ function SignalStrip({ signals, score, status, onOpenModal }: {
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
       {/* Header row — always visible */}
       <div className="flex items-center gap-3 px-4 py-3">
-        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mr-auto">Financial health</p>
+        <div className="mr-auto min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Financial health</p>
+          {periodLabel ? (
+            <p className="text-[10px] text-gray-400 mt-0.5 leading-snug max-w-[17rem]">{periodLabel}</p>
+          ) : null}
+        </div>
 
         {/* Status badge */}
         {trackCfg && (
@@ -316,7 +588,9 @@ function SignalStrip({ signals, score, status, onOpenModal }: {
       {/* Signal grid — only when expanded */}
       {expanded && (
         <>
-          <div className="grid grid-cols-2 gap-px bg-gray-100 border-t border-gray-100 sm:grid-cols-4">
+          <div
+            className={`grid gap-px bg-gray-100 border-t border-gray-100 ${gridColsClassForSignalCount(active.length)}`}
+          >
             {active.map((sig) => {
               const lb = STRIP_LABEL[sig.status];
               return (
@@ -355,11 +629,12 @@ function SignalStrip({ signals, score, status, onOpenModal }: {
 // ── signal breakdown modal ────────────────────────────────────────────────────
 
 function SignalModal({
-  signals, score, status, onClose,
+  signals, score, status, signalPeriodLabel, onClose,
 }: {
   signals: Signal[];
   score: number;
   status: TrackStatus | null;
+  signalPeriodLabel?: string | null;
   onClose: () => void;
 }) {
   const trackCfg = status ? TRACK_CONFIG[status] : null;
@@ -371,10 +646,16 @@ function SignalModal({
         <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
           <div>
             <h2 className="font-bold text-gray-900">Health check</h2>
-            <p className="mt-0.5 text-xs text-gray-400">
-              Each signal has a weight. The overall score determines the badge. Savings and Spending use{" "}
-              <strong className="text-gray-500">core expenses</strong> from your consolidated monthly rollup (same as Typical spending /
-              Goals — transfers and card servicing excluded).
+            {signalPeriodLabel ? (
+              <p className="mt-1 text-[11px] font-medium text-gray-500">{signalPeriodLabel}</p>
+            ) : null}
+            <p className="mt-2 text-xs text-gray-400">
+              Signals use your <strong className="text-gray-500">last complete statement month</strong> (not the live month until every account has a statement).
+              Each signal has a weight; the overall score sets the badge. When that month has pay deposits, savings compares its income to its core spend;
+              otherwise it uses{" "}
+              <strong className="text-gray-500">median income and median core spend</strong> from your financial profile (never median income + a different month&apos;s spend).
+              Spending fails if total expenses exceed income for that month, or if median expenses exceed median income across your statement history.
+              Emergency fund matches Goals / Overview. Debt uses balance change and debt vs gross assets.
             </p>
           </div>
           <button onClick={onClose} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition">
@@ -444,7 +725,8 @@ function SignalModal({
 
         <div className="border-t border-gray-100 px-5 py-3">
           <p className="text-[10px] text-gray-400">
-            Status requires 2 consecutive months to change. Skipped signals are redistributed to active ones.
+            Improvements update the badge immediately. Downgrades wait until the lower tier also appeared last month, so one noisy month
+            doesn&apos;t flip you red. Skipped signals are omitted from the weighted score.
           </p>
         </div>
       </div>
@@ -471,6 +753,10 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   const [liquidAssets, setLiquidAssets] = useState(0);
   /** Matches consolidated `typicalMonthlyExpenses` / emergency-fund baseline (median core). */
   const [typicalMonthlyCoreExpenses, setTypicalMonthlyCoreExpenses] = useState(0);
+  /** From consolidated API — median monthly income for savings signal when current month has no deposits. */
+  const [typicalMonthlyIncome, setTypicalMonthlyIncome] = useState(0);
+  /** Same payload as Goals / Overview emergency fund card (`getEmergencyFundMetrics`). */
+  const [emergencyFundMetrics, setEmergencyFundMetrics] = useState<EmergencyFundMetrics | null>(null);
   const [homeCurrency, setHomeCurrency] = useState("USD");
   const [modalOpen, setModalOpen]     = useState(false);
   const [agentCards, setAgentCards]   = useState<AgentCard[]>([]);
@@ -502,6 +788,8 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
         setTypicalMonthlyCoreExpenses(
           typeof json.typicalMonthlyExpenses === "number" ? json.typicalMonthlyExpenses : 0,
         );
+        setTypicalMonthlyIncome(typeof json.typicalMonthlyIncome === "number" ? json.typicalMonthlyIncome : 0);
+        setEmergencyFundMetrics((json.emergencyFund ?? null) as EmergencyFundMetrics | null);
         if (json.homeCurrency) setHomeCurrency(json.homeCurrency);
         const incomplete: string[] = json.incompleteMonths ?? [];
         setIncompleteMonths(incomplete);
@@ -599,13 +887,11 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
     ? incomeMonths.reduce((s, h) => s + h.incomeTotal, 0) / incomeMonths.length
     : 0;
 
-  // Always use coreExpensesTotal (transfers + debt payments excluded everywhere)
-  const coreExp = (h: HistoryPoint) =>
-    h.coreExpensesTotal !== undefined ? h.coreExpensesTotal : h.expensesTotal;
-  const effectiveExpenseMonths = history.filter((h) => coreExp(h) > 0);
+  // Median core spend from consolidated history rows (`coreExpensesTotal` only — matches profile cache).
+  const effectiveExpenseMonths = history.filter((h) => monthlyHistoryCoreExpenses(h) > 0);
   const medianExpenses = (() => {
     if (effectiveExpenseMonths.length === 0) return 0;
-    const sorted = [...effectiveExpenseMonths].map(coreExp).sort((a, b) => a - b);
+    const sorted = [...effectiveExpenseMonths].map(monthlyHistoryCoreExpenses).sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
     return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
   })();
@@ -630,19 +916,47 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   // saved uses the same filtered expense figure so the hero card stays consistent
   const saved = income - expenses;
 
-  // ── scoring ────────────────────────────────────────────────────────────────
-  const signals   = computeSignals(yearMonth, history, liquidAssets, hasDebts, homeCurrency, typicalMonthlyCoreExpenses);
-  const score     = computeScore(signals);
+  // ── scoring — always last complete statement month (partial current month excluded) ──
+  const sortedHistAsc = [...history].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
+  const signalYm =
+    lastCompleteYearMonth(history, incompleteMonths) ??
+    (sortedHistAsc.length > 0 ? sortedHistAsc[sortedHistAsc.length - 1].yearMonth : null);
 
-  // Compute previous month's status for hysteresis
-  const sorted    = [...history].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
-  const prevIdx   = sorted.findIndex((h) => h.yearMonth === yearMonth) - 1;
-  const prevYm    = prevIdx >= 0 ? sorted[prevIdx].yearMonth : null;
-  const prevSigs  = prevYm ? computeSignals(prevYm, history, liquidAssets, hasDebts, homeCurrency, typicalMonthlyCoreExpenses) : null;
+  const signals = signalYm
+    ? computeSignals(
+        signalYm,
+        history,
+        liquidAssets,
+        hasDebts,
+        homeCurrency,
+        emergencyFundMetrics,
+        typicalMonthlyIncome,
+        typicalMonthlyCoreExpenses,
+      )
+    : [];
+  const score = computeScore(signals);
+
+  const sigIdx = signalYm ? sortedHistAsc.findIndex((h) => h.yearMonth === signalYm) : -1;
+  const prevYm = sigIdx > 0 ? sortedHistAsc[sigIdx - 1].yearMonth : null;
+  const prevSigs = prevYm
+    ? computeSignals(
+        prevYm,
+        history,
+        liquidAssets,
+        hasDebts,
+        homeCurrency,
+        emergencyFundMetrics,
+        typicalMonthlyIncome,
+        typicalMonthlyCoreExpenses,
+      )
+    : null;
   const prevScore = prevSigs ? computeScore(prevSigs) : null;
   const curRaw    = rawStatus(score, signals);
   const prevRaw   = prevSigs && prevScore != null ? rawStatus(prevScore, prevSigs) : null;
   const trackStatus = applyHysteresis(curRaw, prevRaw);
+
+  const signalPeriodStripLabel = signalYm ? `Last complete month: ${monthLabel(signalYm)}` : null;
+  const signalPeriodModalLabel = signalYm ? `Statement month: ${monthLabel(signalYm)}` : null;
 
   const chartHistory  = history.map((h) => ({
     yearMonth:   h.yearMonth,
@@ -746,8 +1060,14 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
         </div>
 
         {/* ── Health signals strip ──────────────────────────────────────────── */}
-        {statementCount >= 2 && (
-          <SignalStrip signals={signals} score={score} status={trackStatus} onOpenModal={() => setModalOpen(true)} />
+        {statementCount >= 2 && signalYm && (
+          <SignalStrip
+            signals={signals}
+            score={score}
+            status={trackStatus}
+            periodLabel={signalPeriodStripLabel}
+            onOpenModal={() => setModalOpen(true)}
+          />
         )}
 
         {/* ── 4 KPI cards ───────────────────────────────────────────────────── */}
@@ -827,6 +1147,7 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
           signals={signals}
           score={score}
           status={trackStatus}
+          signalPeriodLabel={signalPeriodModalLabel}
           onClose={() => setModalOpen(false)}
         />
       )}

@@ -429,6 +429,45 @@ export function getTypicalMonthlyIncome(profile: FinancialProfileCache): number 
 }
 
 /**
+ * Core expenses from one `monthlyHistory` row or consolidated API `history[]` point.
+ * Uses {@link FinancialProfileCache.monthlyHistory} `coreExpensesTotal` only — never gross
+ * `expensesTotal` (that includes card/LOC servicing excluded from core).
+ */
+export function monthlyHistoryCoreExpenses(row: {
+  coreExpensesTotal?: number;
+  expensesTotal?: number;
+}): number {
+  return typeof row.coreExpensesTotal === "number" ? Math.max(0, row.coreExpensesTotal) : 0;
+}
+
+/**
+ * Structural overspend using the **same** typical income + typical core figures as
+ * {@link getTypicalMonthlyIncome} / {@link getTypicalMonthlySpend} on the profile cache
+ * (surfaced on the client as consolidated `typicalMonthlyIncome` + `typicalMonthlyExpenses`).
+ * Use this for Spending vs Savings copy consistency — do not re-median `history[]` client-side.
+ */
+export function profileMedianCoreVersusIncome(
+  typicalIncome: number,
+  typicalCore: number,
+): {
+  structuralDeficit: boolean;
+  coreOverIncome: number;
+  cashFillPct: number;
+} {
+  if (typicalIncome <= 0 || typicalCore <= 0) {
+    return { structuralDeficit: false, coreOverIncome: 0, cashFillPct: 50 };
+  }
+  if (typicalCore <= typicalIncome) {
+    return { structuralDeficit: false, coreOverIncome: 0, cashFillPct: 50 };
+  }
+  return {
+    structuralDeficit: true,
+    coreOverIncome: typicalCore - typicalIncome,
+    cashFillPct: Math.round(Math.min(100, Math.max(0, (typicalIncome / typicalCore) * 100))),
+  };
+}
+
+/**
  * Typical (median) monthly minimum debt payments across all historical months.
  * Falls back to the most recent month with debt payments if history is thin.
  */
