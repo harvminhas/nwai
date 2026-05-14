@@ -85,6 +85,10 @@ function computeSignals(
   const prev   = idx > 0  ? sorted[idx - 1] : null;
   const prev3  = idx >= 3 ? sorted.slice(idx - 3, idx) : sorted.slice(0, idx);
 
+  /** Monthly core burn from consolidated history — same field as Spending KPI / `typicalMonthlyExpenses` baseline (profile cache). */
+  const monthCoreBurn = (h: HistoryPoint) =>
+    h.coreExpensesTotal !== undefined ? h.coreExpensesTotal : h.expensesTotal;
+
   // ── 1. Net worth trend (30%) ──────────────────────────────────────────────
   const nwSignal: Signal = (() => {
     const base = { id: "nw_trend", name: "Net worth trend", shortName: "Net worth", description: "Growing month-over-month", weight: 30 };
@@ -98,16 +102,23 @@ function computeSignals(
     return              { ...base, status: "fail",    detail: `Down ${fmtShort(Math.abs(delta), ccy)} vs last month`, fillPct };
   })();
 
-  // ── 2. Savings rate (25%) ─────────────────────────────────────────────────
+  // ── 2. Savings rate (25%) — income vs core expenses (same basis as Spending page / EF) ──
   const srSignal: Signal = (() => {
-    const base = { id: "savings_rate", name: "Savings rate", shortName: "Savings rate", description: "Saving ≥ 10% of take-home income this month", weight: 25 };
+    const base = {
+      id: "savings_rate",
+      name: "Savings rate",
+      shortName: "Savings rate",
+      description: "≥ 10% of income left after core expenses (excl. transfers & card servicing)",
+      weight: 25,
+    };
     if (!cur || cur.incomeTotal <= 0) return { ...base, status: "skip", detail: "No income data this month", fillPct: 0 };
-    const rate = (cur.incomeTotal - cur.expensesTotal) / cur.incomeTotal;
+    const coreBurn = monthCoreBurn(cur);
+    const rate = (cur.incomeTotal - coreBurn) / cur.incomeTotal;
     // fillPct: map [-50%, +50%] → [0, 100]; 10% target ≈ 75% fill
     const fillPct = Math.round(Math.min(100, Math.max(0, (rate + 0.5) / 0.8 * 100)));
-    if (rate >= 0.10) return { ...base, status: "pass",    detail: `Saving ${Math.round(rate * 100)}% of income`,                        fillPct };
-    if (rate >= 0)   return { ...base, status: "warning", detail: `Saving ${Math.round(rate * 100)}% — target is 10%`,                   fillPct };
-    return            { ...base, status: "fail",    detail: `Spending ${fmt(cur.expensesTotal - cur.incomeTotal, ccy)} more than earned`, fillPct };
+    if (rate >= 0.10) return { ...base, status: "pass",    detail: `Saving ${Math.round(rate * 100)}% of income after core expenses`,                        fillPct };
+    if (rate >= 0)   return { ...base, status: "warning", detail: `Saving ${Math.round(rate * 100)}% after core expenses — target is 10%`,                   fillPct };
+    return            { ...base, status: "fail",    detail: `Core expenses ${fmt(coreBurn - cur.incomeTotal, ccy)} higher than income`, fillPct };
   })();
 
   // ── 3. Debt plan adherence (20%) ──────────────────────────────────────────
@@ -124,17 +135,25 @@ function computeSignals(
     return            { ...base, status: "fail",    detail: `Debt increased by ${fmt(delta, ccy)} this month`,   fillPct };
   })();
 
-  // ── 4. Spending vs budget (15%) ───────────────────────────────────────────
+  // ── 4. Core spending vs recent trend (15%) — same series as Typical spending / KPI strip ──
   const spendSignal: Signal = (() => {
-    const base = { id: "spending_vs_budget", name: "Spending vs budget", shortName: "Spending", description: "Total spend within 110% of 3-month average", weight: 15 };
-    if (!cur || cur.expensesTotal <= 0 || prev3.length < 2) return { ...base, status: "skip", detail: "Not enough history to set a baseline", fillPct: 0 };
-    const avg   = prev3.reduce((s, h) => s + h.expensesTotal, 0) / prev3.length;
-    const ratio = avg > 0 ? cur.expensesTotal / avg : 1;
+    const base = {
+      id: "spending_vs_budget",
+      name: "Core spending vs trend",
+      shortName: "Spending",
+      description: "Core spend within 110% of your trailing 3-month average",
+      weight: 15,
+    };
+    if (!cur || prev3.length < 2) return { ...base, status: "skip", detail: "Not enough history to set a baseline", fillPct: 0 };
+    const curCore = monthCoreBurn(cur);
+    if (curCore <= 0) return { ...base, status: "skip", detail: "Not enough history to set a baseline", fillPct: 0 };
+    const avg   = prev3.reduce((s, h) => s + monthCoreBurn(h), 0) / prev3.length;
+    const ratio = avg > 0 ? curCore / avg : 1;
     // fillPct: ratio ≤ 1 = full; each 10% over cuts 20pts; clamped 0–100
     const fillPct = Math.round(Math.min(100, Math.max(0, 100 - Math.max(0, ratio - 1) * 200)));
-    if (ratio <= 1.0)  return { ...base, status: "pass",    detail: `Spending at ${Math.round(ratio * 100)}% of avg — on target`,         fillPct };
-    if (ratio <= 1.10) return { ...base, status: "warning", detail: `Spending at ${Math.round(ratio * 100)}% of avg — slightly elevated`, fillPct };
-    return              { ...base, status: "fail",    detail: `Spending at ${Math.round(ratio * 100)}% of avg — ${fmt(cur.expensesTotal - avg, ccy)} over`, fillPct };
+    if (ratio <= 1.0)  return { ...base, status: "pass",    detail: `Core spend at ${Math.round(ratio * 100)}% of 3-mo avg — on target`,         fillPct };
+    if (ratio <= 1.10) return { ...base, status: "warning", detail: `Core spend at ${Math.round(ratio * 100)}% of 3-mo avg — slightly elevated`, fillPct };
+    return              { ...base, status: "fail",    detail: `Core spend at ${Math.round(ratio * 100)}% of avg — ${fmt(curCore - avg, ccy)} over`, fillPct };
   })();
 
   // ── 5. Goal trajectory (5%) ───────────────────────────────────────────────
@@ -147,7 +166,7 @@ function computeSignals(
 
   // ── 6. Emergency fund buffer (5%) ─────────────────────────────────────────
   const efSignal: Signal = (() => {
-    const base = { id: "emergency_fund", name: "Emergency fund buffer", shortName: "Emergency fund", description: "Liquid savings ≥ 1 month of expenses", weight: 5 };
+    const base = { id: "emergency_fund", name: "Emergency fund buffer", shortName: "Emergency fund", description: "Liquid savings ≥ 1 month of core expenses", weight: 5 };
     /** Same denominator as FinancialFutureModules / emergencyFund (median core), not single-month spend. */
     const expenseBurn =
       typicalMonthlyCoreFromProfile > 0
@@ -160,9 +179,9 @@ function computeSignals(
     const months  = liquidAssets / expenseBurn;
     // fillPct: 0 mo = 0%, 1 mo = 33%, 3 mo = 100% (capped)
     const fillPct = Math.round(Math.min(100, Math.max(0, months / 3 * 100)));
-    if (months >= 1)   return { ...base, status: "pass",    detail: `${months.toFixed(1)} months of expenses in liquid savings`, fillPct };
-    if (months >= 0.5) return { ...base, status: "warning", detail: `${months.toFixed(1)} months covered — target is 1 month`,  fillPct };
-    return              { ...base, status: "fail",    detail: `Only ${months.toFixed(1)} months covered — needs attention`, fillPct };
+    if (months >= 1)   return { ...base, status: "pass",    detail: `${months.toFixed(1)} months of core expenses covered by liquid savings`, fillPct };
+    if (months >= 0.5) return { ...base, status: "warning", detail: `${months.toFixed(1)} months of core expenses covered — target is 1 month`,  fillPct };
+    return              { ...base, status: "fail",    detail: `Only ${months.toFixed(1)} months of core expenses covered`, fillPct };
   })();
 
   return [nwSignal, srSignal, debtSignal, spendSignal, goalSignal, efSignal];
@@ -208,7 +227,8 @@ const TRACK_CONFIG: Record<TrackStatus, {
   label: string; badge: string; dot: string;
 }> = {
   "on-track":  { label: "On track",       badge: "bg-green-100 text-green-700 border-green-200",  dot: "bg-green-500" },
-  "watch":     { label: "Watch spending", badge: "bg-amber-100 text-amber-700 border-amber-200",  dot: "bg-amber-500" },
+  /** Aggregate amber tier — any active warning or score &lt; 75 (see rawStatus). Not necessarily "Spending". */
+  "watch":     { label: "Needs attention", badge: "bg-amber-100 text-amber-700 border-amber-200",  dot: "bg-amber-500" },
   "off-track": { label: "Off track",      badge: "bg-red-100 text-red-600 border-red-200",        dot: "bg-red-500" },
 };
 
@@ -352,7 +372,9 @@ function SignalModal({
           <div>
             <h2 className="font-bold text-gray-900">Health check</h2>
             <p className="mt-0.5 text-xs text-gray-400">
-              Each signal has a weight. The overall score determines the badge.
+              Each signal has a weight. The overall score determines the badge. Savings and Spending use{" "}
+              <strong className="text-gray-500">core expenses</strong> from your consolidated monthly rollup (same as Typical spending /
+              Goals — transfers and card servicing excluded).
             </p>
           </div>
           <button onClick={onClose} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition">
