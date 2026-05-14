@@ -124,6 +124,7 @@ export default function OverviewPage() {
               liquidAssets={liquidAssets}
               history={incomeHistory}
               currencySymbol={healthSym}
+              homeCurrency={healthHc}
               emergencyFund={emergencyFund}
               onRetirementOpen={() => setRetirementOpen(true)}
               onInsuranceOpen={() => setInsuranceOpen(true)}
