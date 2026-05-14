@@ -18,6 +18,7 @@ import type * as Firestore from "firebase-admin/firestore";
 import { getYearMonth } from "@/lib/consolidate";
 import { inferFinancialDNA } from "@/lib/financialDNA";
 import { generateAgentInsights } from "@/lib/agentInsights";
+import { buildCashflowInsightCard } from "@/lib/cashflowInsightCard";
 import { buildFinancialBrief, type BriefMode } from "@/lib/financialBrief";
 import { buildAndCacheFinancialProfile } from "@/lib/financialProfile";
 import type { ParsedStatementData } from "@/lib/types";
@@ -106,11 +107,43 @@ export async function runInsightsPipeline(
   // ── 4. Build the same financial brief used by AI Chat ─────────────────────
   // This ensures recommendations are grounded in individual transaction data,
   // real APRs, and cash commitments — not just aggregated category totals.
-  const brief = await buildFinancialBrief(uid, "insights" as BriefMode);
+  const briefBase = await buildFinancialBrief(uid, "insights" as BriefMode);
+
+  /** Nudge the model toward a cashflow card when the latest month is tight (matches user expectation). */
+  const mhLatest = profile.monthlyHistory.find((h) => h.yearMonth === latestTxMonth);
+  const incomeLatest = mhLatest?.incomeTotal ?? 0;
+  const coreLatest = mhLatest?.coreExpensesTotal ?? 0;
+  const netLatest = incomeLatest - coreLatest;
+  const cushionRatio = incomeLatest > 0 ? netLatest / incomeLatest : 0;
+  const prioritizeCashflowInsight =
+    netLatest <= 0 || (incomeLatest > 0 && cushionRatio >= 0 && cushionRatio < 0.05);
+
+  const brief =
+    briefBase +
+    (prioritizeCashflowInsight
+      ? `
+
+== CASHFLOW PRIORITY ==
+Latest month (${latestTxMonth}): income minus core expenses ("Net" in THIS MONTH) is ${netLatest <= 0 ? "zero or negative" : "positive but under ~5% of income — a thin cushion"}. Strongly consider including at least one insight with category "cashflow" (high priority if negative). Ground dollarImpact in the THIS MONTH figures.
+`
+      : "");
 
   // ── 5. Generate and persist AI insight cards ───────────────────────────────
-  const cards = await generateAgentInsights(brief, null);
-  if (cards.length === 0) return;
+  const generated = await generateAgentInsights(brief, null);
+  if (generated.length === 0) return;
+
+  /** Model often skips cashflow when debt/subscription cards rank higher — inject one when tight. */
+  let cards = [...generated];
+  if (prioritizeCashflowInsight && !cards.some((c) => c.category === "cashflow")) {
+    const cfCard = buildCashflowInsightCard({
+      latestMonth: latestTxMonth,
+      homeCurrency: profile.homeCurrency ?? "USD",
+      incomeTotal: incomeLatest,
+      coreExpensesTotal: coreLatest,
+      cardServicingTotal: mhLatest?.cardServicingPaymentsTotal ?? 0,
+    });
+    cards = [cfCard, ...cards].slice(0, 5);
+  }
 
   const userRef = db.collection("users").doc(uid);
   const existingSnap = await userRef

@@ -26,13 +26,18 @@ Rules for generating insights:
 7. DON'T FABRICATE: If there's no strong signal for an insight, skip it. Fewer good insights beat more mediocre ones.
 8. USE GROUNDED VALUES: The snapshot ends with a "GROUNDED IMPACT VALUES" section containing code-computed figures that exactly match what the spending, liabilities, and goals pages show. You MUST use those exact numbers for dollarImpact — copy them verbatim. Do not re-derive, re-calculate, or estimate when a grounded value is available.
 
+Debt servicing semantics (THIS MONTH block — do not contradict):
+- **Core expenses** INCLUDE installment servicing (mortgage, auto, student, installment loans, and matching cash commitments).
+- **Card / LOC servicing** payments from checking are EXCLUDED from core — they settle revolving balances already reflected in card spend.
+- Use the labeled lines **Spend excl. installment servicing** vs **Installment servicing** vs **Card / LOC servicing** verbatim when discussing cash flow; never call card payments "discretionary" or fold them into core.
+
 The financial snapshot includes a "Country:" field — use it to tailor every insight to the right jurisdiction:
 - Canada (CA): reference RRSP, TFSA, FHSA, RESP, CRA, BoC, CPP/OAS; use Canadian spelling
 - United States (US): reference 401k, IRA, HSA, 529, IRS, Fed, Social Security; use US terminology
 
 Categories and when to use them:
 - "debt": High-interest debt, debt payoff strategy, balance transfers
-- "cashflow": Income vs expenses imbalance, upcoming cash shortfalls, spending spikes
+- "cashflow": Income vs core-expenses imbalance, thin cushion (Net near zero), upcoming shortfalls — **prioritize** when the snapshot includes a "CASHFLOW PRIORITY" block or THIS MONTH Net (income − core) is negative / under ~5% of income
 - "subscriptions": Subscription audit, duplicate services, price increases
 - "savings": Emergency fund gaps, tax-advantaged savings room (RRSP/TFSA for CA; 401k/IRA for US), savings rate improvement
 - "goals": Goal progress, timeline acceleration

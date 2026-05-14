@@ -14,7 +14,11 @@ import { getYearMonth } from "@/lib/consolidate";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { isCoreExcluded } from "@/lib/spendingMetrics";
-import { isDebtServicingExpense } from "@/lib/debtServicing";
+import {
+  isDebtServicingExpense,
+  resolveDebtServicingKind,
+} from "@/lib/debtServicing";
+import { commitmentOccurrencesInMonth } from "@/app/api/user/cash-commitments/route";
 import { detectCountry } from "@/lib/external/registry";
 import {
   incomeTotalForMonth,
@@ -132,32 +136,49 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
   const monthlyDebt        = monthHistory?.debtPaymentsTotal    ?? 0;
   const monthlyMinDebt     = monthHistory?.minDebtPaymentsTotal ?? 0;  // minimum/scheduled only
   const monthlyExtraDebt   = Math.max(0, monthlyDebt - monthlyMinDebt); // extra above minimum
-  const monthlyDiscr = expenseTxns
+
+  const monthlyInstallmentTxnSum = expenseTxns
     .filter((t) => t.txMonth === month)
     .filter(
       (t) =>
-        !isDebtServicingExpense(t.category ?? "", {
-          debtType: t.debtType,
-          merchant: t.merchant,
-        }),
+        resolveDebtServicingKind(t.category ?? "", t.debtType, t.merchant, false) === "installment",
     )
-    .filter(
-      (t) =>
-        !isCoreExcluded(t.category ?? "", {
-          debtType: t.debtType,
-          merchant: t.merchant,
-        }),
-    )
-    .reduce((s, t) => s + toHome(t.amount, t.currency), 0); // lifestyle-ish: no debt servicing, no transfers/interest
+    .reduce((s, t) => s + toHome(t.amount, t.currency), 0);
+
+  const monthlyInstallmentCommitmentSum = cashCommitmentEntries.reduce((sum, entry) => {
+    if (
+      resolveDebtServicingKind(entry.category ?? "", undefined, undefined, false) !== "installment"
+    ) {
+      return sum;
+    }
+    const count = commitmentOccurrencesInMonth(entry, month);
+    return sum + (count > 0 ? entry.amount * count : 0);
+  }, 0);
+
+  /** Installment servicing counted inside coreExpensesTotal (txns + recurring commitments). */
+  const monthlyInstallmentInCore = monthlyInstallmentTxnSum + monthlyInstallmentCommitmentSum;
+
+  const monthlyCardServicing =
+    monthHistory?.cardServicingPaymentsTotal ??
+    expenseTxns
+      .filter((t) => t.txMonth === month)
+      .filter(
+        (t) =>
+          resolveDebtServicingKind(t.category ?? "", t.debtType, t.merchant, false) === "card",
+      )
+      .reduce((s, t) => s + toHome(t.amount, t.currency), 0);
+
+  /**
+   * Core minus installment servicing — matches UI "everything in core except mortgage/installment cash".
+   * Uses monthlyExp (same as coreExpensesTotal) so cash commitments stay included.
+   */
+  const monthlyDiscr = Math.max(0, monthlyExp - monthlyInstallmentInCore);
+
   const monthlySav         = monthlyIncome - monthlyExp;
   const savingsRate        = monthlyIncome > 0 ? (monthlySav / monthlyIncome) * 100 : 0;
   // Savings rate excl. min debt payments — "what did I save after obligatory payments?"
   const savingsRateExclMinDebt = monthlyIncome > 0
     ? ((monthlyIncome - (monthlyExp - monthlyMinDebt)) / monthlyIncome) * 100
-    : 0;
-  // Savings rate excl. all debt payments — used by savings rate card toggle
-  const savingsRateExclDebt = monthlyIncome > 0
-    ? ((monthlyIncome - monthlyDiscr) / monthlyIncome) * 100
     : 0;
   const efTarget        = monthlyExp * 6;
 
@@ -332,8 +353,15 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
   );
   const debtBreakdownLines = debtTxnsThisMonth.map((t) => {
     const isScheduled = SCHEDULED_DEBT_TYPES.has((t as { debtType?: string }).debtType ?? "");
-    const tag = isScheduled ? "scheduled/required" : "minimum (CC/LOC — default)";
-    return `  ${t.date}  ${t.merchant}  ${fmt(toHome(t.amount, t.currency))}  [${tag}]`;
+    const minTag      = isScheduled ? "scheduled/required" : "minimum (CC/LOC — default)";
+    const kind        = resolveDebtServicingKind(t.category ?? "", t.debtType, t.merchant, false);
+    const coreTag =
+      kind === "installment"
+        ? "in core"
+        : kind === "card"
+          ? "not in core"
+          : "servicing";
+    return `  ${t.date}  ${t.merchant}  ${fmt(toHome(t.amount, t.currency))}  [${minTag}; ${coreTag}]`;
   });
   const debtBreakdownSection = debtBreakdownLines.length > 0
     ? debtBreakdownLines.join("\n")
@@ -403,11 +431,13 @@ Months of data:    ${allTxMonths.length}
 == THIS MONTH: ${month} ==
 Income:                       ${fmt(monthlyIncome)}
 Core expenses:                ${fmt(monthlyExp)}
-  Debt payments (total):      ${fmt(monthlyDebt)}
+  Card / LOC servicing (NOT in core — pays revolving balances already on-card): ${fmt(monthlyCardServicing)}
+  Installment servicing (included inside core above): ${fmt(monthlyInstallmentInCore)}
+  Spend excl. installment servicing (lifestyle + rent/utilities/subscriptions, etc.): ${fmt(monthlyDiscr)}
+  Debt payments — transactions only (installment + card): ${fmt(monthlyDebt)}
     minimum/scheduled:        ${fmt(monthlyMinDebt)}
     extra above minimum:      ${fmt(monthlyExtraDebt)}
-  Discretionary (excl. debt): ${fmt(monthlyDiscr)}
-Net:                          ${fmt(monthlySav)}
+Net (income − core):          ${fmt(monthlySav)}
 Savings rate:                 ${savingsRate.toFixed(1)}%
 Savings rate excl. min debt:  ${savingsRateExclMinDebt.toFixed(1)}%
 

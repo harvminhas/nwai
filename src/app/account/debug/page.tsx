@@ -73,6 +73,26 @@ interface NewPromoForm {
   description: string;
 }
 
+type AdminUserOverviewRow = {
+  uid: string;
+  email: string;
+  createdAt: string;
+  lastSignInAt: string | null;
+  statementTotal: number;
+  statementCompleted: number;
+  accountNames: string[];
+};
+
+function formatRelativeSignIn(iso: string | null): string {
+  if (!iso) return "Never";
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return "—";
+  const days = Math.floor((Date.now() - t) / 86400000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "1 day ago";
+  return `${days} days ago`;
+}
+
 export default function DebugParsePage() {
   const router = useRouter();
   const [idToken, setIdToken]         = useState<string | null>(null);
@@ -102,6 +122,11 @@ export default function DebugParsePage() {
   const [subCleanLoading, setSubCleanLoading]   = useState(false);
   const [subCleanResult, setSubCleanResult]     = useState<{ deleted: number; kept: number } | null>(null);
   const [subCleanError, setSubCleanError]       = useState<string | null>(null);
+
+  const [userOvLoading, setUserOvLoading]       = useState(false);
+  const [userOvError, setUserOvError]           = useState<string | null>(null);
+  const [userOvRows, setUserOvRows]             = useState<AdminUserOverviewRow[] | null>(null);
+  const [userOvMeta, setUserOvMeta]             = useState<{ statementDocsScanned: number; generatedAt: string } | null>(null);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -222,6 +247,26 @@ export default function DebugParsePage() {
     }
   }
 
+  async function loadUserOverview() {
+    if (!idToken) return;
+    setUserOvLoading(true);
+    setUserOvError(null);
+    try {
+      const res  = await fetch("/api/admin/users-overview", { headers: { Authorization: `Bearer ${idToken}` } });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) { setUserOvError(json.error || "Failed to load directory"); return; }
+      setUserOvRows(json.users ?? []);
+      setUserOvMeta({
+        statementDocsScanned: json.statementDocsScanned ?? 0,
+        generatedAt:          json.generatedAt ?? "",
+      });
+    } catch (e) {
+      setUserOvError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setUserOvLoading(false);
+    }
+  }
+
   async function loadPromoCampaigns() {
     if (!idToken) return;
     setPromoLoading(true); setPromoError(null);
@@ -309,6 +354,90 @@ export default function DebugParsePage() {
           {!isSuperAdmin && <span className="block mt-1 text-amber-700/90">Pro debug access — operator-only sections are hidden.</span>}
         </p>
       </div>
+
+      {isSuperAdmin && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50/50 shadow-sm overflow-hidden">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-4 border-b border-amber-200/80 bg-amber-100/30">
+            <div>
+              <h2 className="font-semibold text-gray-900">User directory</h2>
+              <p className="text-xs text-amber-900/70 mt-0.5">
+                Firebase Auth users, statement counts, last sign-in (access proxy), and distinct account labels from statements.
+                Full scan — use sparingly.
+              </p>
+              {userOvMeta && (
+                <p className="text-[10px] text-amber-800/60 mt-1 font-mono">
+                  {userOvRows?.length ?? 0} users · {userOvMeta.statementDocsScanned} statement docs · generated{" "}
+                  {userOvMeta.generatedAt ? new Date(userOvMeta.generatedAt).toLocaleString() : "—"}
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={loadUserOverview}
+              disabled={userOvLoading}
+              className="shrink-0 rounded-lg border border-amber-400 bg-white px-4 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-50 disabled:opacity-50 transition"
+            >
+              {userOvLoading ? "Loading…" : userOvRows ? "Refresh directory" : "Load directory"}
+            </button>
+          </div>
+          <div className="p-5">
+            {userOvError && (
+              <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 mb-3">{userOvError}</p>
+            )}
+            {userOvRows && userOvRows.length > 0 && (
+              <div className="overflow-x-auto max-h-[min(70vh,560px)] overflow-y-auto rounded-lg border border-amber-100">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-amber-100/90 backdrop-blur-sm border-b border-amber-200 z-10">
+                    <tr>
+                      <th className="text-left px-3 py-2 font-semibold text-amber-950">Email</th>
+                      <th className="text-left px-3 py-2 font-semibold text-amber-950 whitespace-nowrap">Last sign-in</th>
+                      <th className="text-left px-3 py-2 font-semibold text-amber-950 whitespace-nowrap">Joined</th>
+                      <th className="text-right px-3 py-2 font-semibold text-amber-950 whitespace-nowrap">Statements</th>
+                      <th className="text-left px-3 py-2 font-semibold text-amber-950 min-w-[200px]">Accounts</th>
+                      <th className="text-left px-3 py-2 font-semibold text-amber-950 font-mono text-[10px]">UID</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {userOvRows.map((u) => (
+                      <tr key={u.uid} className="border-b border-amber-100/80 hover:bg-white/60 align-top">
+                        <td className="px-3 py-2 font-medium text-gray-900 whitespace-nowrap">{u.email || "—"}</td>
+                        <td className="px-3 py-2 text-gray-700 whitespace-nowrap">
+                          <span title={u.lastSignInAt ?? ""}>{formatRelativeSignIn(u.lastSignInAt)}</span>
+                        </td>
+                        <td className="px-3 py-2 text-gray-600 whitespace-nowrap">
+                          {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-gray-800 whitespace-nowrap">
+                          <span className="font-semibold">{u.statementCompleted}</span>
+                          <span className="text-gray-400"> / </span>
+                          <span>{u.statementTotal}</span>
+                        </td>
+                        <td className="px-3 py-2 text-gray-700 leading-snug max-w-xs">
+                          {u.accountNames.length === 0 ? (
+                            <span className="text-gray-400">—</span>
+                          ) : (
+                            <ul className="list-disc list-inside space-y-0.5">
+                              {u.accountNames.map((name) => (
+                                <li key={name} className="break-words">{name}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-[10px] text-gray-500 font-mono break-all max-w-[120px]" title={u.uid}>
+                          {u.uid.slice(0, 8)}…
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {userOvRows && userOvRows.length === 0 && !userOvLoading && (
+              <p className="text-sm text-gray-500 text-center py-4">No Firebase Auth users returned.</p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Statement picker */}
       <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">

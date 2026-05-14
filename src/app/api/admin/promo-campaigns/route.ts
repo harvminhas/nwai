@@ -1,6 +1,6 @@
 /**
  * Admin-only API for managing promo campaigns.
- * Only accessible to users whose email is in ADMIN_EMAILS.
+ * Only accessible to users whose email is in {@link ADMIN_EMAILS} (see adminConstants).
  *
  * GET    — list all campaigns
  * POST   — create a new campaign
@@ -10,30 +10,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { Timestamp } from "firebase-admin/firestore";
-
-const ADMIN_EMAILS = ["harvminhas@gmail.com"];
-
-function authToken(req: NextRequest): string | null {
-  const h = req.headers.get("authorization");
-  return h?.startsWith("Bearer ") ? h.slice(7) : null;
-}
-
-async function requireAdmin(token: string | null) {
-  if (!token) return null;
-  const { auth } = getFirebaseAdmin();
-  try {
-    const decoded = await auth.verifyIdToken(token);
-    if (!ADMIN_EMAILS.includes(decoded.email ?? "")) return null;
-    return decoded;
-  } catch {
-    return null;
-  }
-}
+import { authBearerToken, requireAdminDecoded } from "@/lib/adminAuth";
 
 // ── GET — list all campaigns ──────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
-  const admin = await requireAdmin(authToken(req));
+  const admin = await requireAdminDecoded(authBearerToken(req));
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { db } = getFirebaseAdmin();
@@ -58,7 +40,7 @@ export async function GET(req: NextRequest) {
 // ── POST — create a new campaign ──────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  const admin = await requireAdmin(authToken(req));
+  const admin = await requireAdminDecoded(authBearerToken(req));
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json().catch(() => ({}));
@@ -98,7 +80,7 @@ export async function POST(req: NextRequest) {
 // ── PATCH — toggle active / update fields ────────────────────────────────────
 
 export async function PATCH(req: NextRequest) {
-  const admin = await requireAdmin(authToken(req));
+  const admin = await requireAdminDecoded(authBearerToken(req));
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json().catch(() => ({}));
