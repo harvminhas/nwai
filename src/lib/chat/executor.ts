@@ -1,18 +1,19 @@
 /**
- * Tool executor — pure in-memory functions run against the financial profile cache.
+ * Tool executor — orchestration only: each handler delegates to shared `src/lib/**`
+ * rules (same filters as UI/API). No duplicate business logic here.
  *
- * Every function here reads from the already-loaded FinancialProfileCache,
- * so there are zero extra Firestore reads per tool call.
- *
- * To add a new tool:
- *   1. Add its FunctionDeclaration in tools.ts
- *   2. Add its execute* function here
- *   3. Add a case to executeTool()
+ * Adding a tool:
+ *   1. `FunctionDeclaration` in tools.ts (+ `TOOL_NAMES` entry — drives Gemini schema)
+ *   2. Execute function here that calls shared modules only
+ *   3. Register in `TOOL_HANDLERS` — TypeScript requires every `ToolName` have a handler
  */
 
 import type { FinancialProfileCache } from "@/lib/financialProfile";
+import { FREQ_MONTHLY } from "@/app/api/user/cash-commitments/route";
 import { isCoreExcluded } from "@/lib/spendingMetrics";
 import { getParentCategory } from "@/lib/categoryTaxonomy";
+import type { ToolName } from "@/lib/chat/tools";
+import { TOOL_NAMES } from "@/lib/chat/tools";
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -285,19 +286,262 @@ export function executeGetMonthlyBreakdown(
   return { ok: true, data: { months, currency: home } };
 }
 
-// ── dispatcher ───────────────────────────────────────────────────────────────
+// ── rollup_categories ────────────────────────────────────────────────────────
+
+export function executeRollupCategories(
+  profile: FinancialProfileCache,
+  params: ToolParams,
+): ToolResult {
+  const home = (profile.homeCurrency ?? "USD").toUpperCase();
+  const fxRates = profile.fxRates ?? {};
+  const fmt = makeFmt(home);
+
+  let fromMonth =
+    (params.from_month as string | undefined) ?? profile.allTxMonths[0] ?? "";
+  let toMonth =
+    (params.to_month as string | undefined) ?? profile.latestTxMonth ?? "";
+  if (fromMonth && toMonth && fromMonth > toMonth) {
+    const t = fromMonth;
+    fromMonth = toMonth;
+    toMonth = t;
+  }
+  const parentOnly = params.parent_category_only === true;
+
+  if (!fromMonth || !toMonth) {
+    return {
+      ok: true,
+      data: {
+        categories: [],
+        currency: home,
+        message: "No transaction months available.",
+      },
+    };
+  }
+
+  const catTotals = new Map<string, { total: number; count: number }>();
+
+  for (const t of profile.expenseTxns) {
+    const ym = t.txMonth;
+    if (ym < fromMonth || ym > toMonth) continue;
+    if (
+      isCoreExcluded(t.category ?? "", {
+        debtType: (t as { debtType?: string }).debtType,
+        merchant: t.merchant,
+      })
+    ) {
+      continue;
+    }
+    const label = parentOnly
+      ? getParentCategory(t.category ?? "Other").trim() || "Other"
+      : (t.category ?? "Uncategorized").trim() || "Uncategorized";
+    const homeAmt = toHome(t.amount, t.currency, home, fxRates);
+    const prev = catTotals.get(label) ?? { total: 0, count: 0 };
+    catTotals.set(label, { total: prev.total + homeAmt, count: prev.count + 1 });
+  }
+
+  const categories = [...catTotals.entries()]
+    .sort(([, a], [, b]) => b.total - a.total)
+    .map(([category, { total, count }]) => ({
+      category,
+      total: fmt(total),
+      transaction_count: count,
+    }));
+
+  return {
+    ok: true,
+    data: {
+      from_month: fromMonth,
+      to_month: toMonth,
+      parent_category_only: parentOnly,
+      currency: home,
+      categories,
+      note:
+        "Totals are core spending only (excludes transfers, interest, card/LOC servicing). Installment servicing stays included.",
+    },
+  };
+}
+
+// ── rollup_merchants ─────────────────────────────────────────────────────────
+
+export function executeRollupMerchants(
+  profile: FinancialProfileCache,
+  params: ToolParams,
+): ToolResult {
+  const home = (profile.homeCurrency ?? "USD").toUpperCase();
+  const fxRates = profile.fxRates ?? {};
+  const fmt = makeFmt(home);
+
+  let fromMonth =
+    (params.from_month as string | undefined) ?? profile.allTxMonths[0] ?? "";
+  let toMonth =
+    (params.to_month as string | undefined) ?? profile.latestTxMonth ?? "";
+  if (fromMonth && toMonth && fromMonth > toMonth) {
+    const t = fromMonth;
+    fromMonth = toMonth;
+    toMonth = t;
+  }
+  const limit = Math.min((params.limit as number | undefined) ?? 25, 50);
+
+  if (!fromMonth || !toMonth) {
+    return {
+      ok: true,
+      data: { merchants: [], currency: home, message: "No transaction months available." },
+    };
+  }
+
+  const merchantTotals = new Map<string, { total: number; count: number }>();
+
+  for (const t of profile.expenseTxns) {
+    const ym = t.txMonth;
+    if (ym < fromMonth || ym > toMonth) continue;
+    if (
+      isCoreExcluded(t.category ?? "", {
+        debtType: (t as { debtType?: string }).debtType,
+        merchant: t.merchant,
+      })
+    ) {
+      continue;
+    }
+    const name = (t.merchant ?? "Unknown").trim() || "Unknown";
+    const homeAmt = toHome(t.amount, t.currency, home, fxRates);
+    const prev = merchantTotals.get(name) ?? { total: 0, count: 0 };
+    merchantTotals.set(name, { total: prev.total + homeAmt, count: prev.count + 1 });
+  }
+
+  const merchants = [...merchantTotals.entries()]
+    .sort(([, a], [, b]) => b.total - a.total)
+    .slice(0, limit)
+    .map(([merchant, { total, count }]) => ({
+      merchant,
+      total: fmt(total),
+      transaction_count: count,
+    }));
+
+  return {
+    ok: true,
+    data: {
+      from_month: fromMonth,
+      to_month: toMonth,
+      currency: home,
+      merchants,
+      note:
+        "Core spending only (excludes transfers, interest, card/LOC servicing). For line-item detail call search_transactions.",
+    },
+  };
+}
+
+// ── list_recurring_charges ────────────────────────────────────────────────────
+
+export function executeListRecurringCharges(profile: FinancialProfileCache): ToolResult {
+  const home = (profile.homeCurrency ?? "USD").toUpperCase();
+  const fxRates = profile.fxRates ?? {};
+  const fmt = makeFmt(home);
+
+  const subscriptions = profile.confirmedSubscriptions.map((s) => {
+    const raw =
+      s.amount ?? s.suggestedAmount ?? 0;
+    const ccy = (s.currency ?? home).toUpperCase();
+    const amtHome = toHome(raw, ccy, home, fxRates);
+    const freq = s.frequency ?? s.suggestedFrequency ?? "monthly";
+    return {
+      name: s.name,
+      status: s.status,
+      amount: fmt(amtHome),
+      frequency: freq,
+      currency: home,
+      merchant_slug: s.merchantSlug,
+      last_seen: s.lastSeenAt,
+    };
+  });
+
+  const cash_commitments = profile.cashCommitmentEntries.map((c) => {
+    const monthlyEquiv =
+      c.frequency === "once" ? null : c.amount * FREQ_MONTHLY[c.frequency];
+    return {
+      name: c.name,
+      frequency: c.frequency,
+      amount: fmt(c.amount),
+      approximate_monthly: monthlyEquiv != null ? fmt(monthlyEquiv) : null,
+    };
+  });
+
+  return {
+    ok: true,
+    data: {
+      currency: home,
+      subscriptions,
+      cash_commitments,
+      counts: {
+        subscriptions: subscriptions.length,
+        cash_commitments: cash_commitments.length,
+      },
+    },
+  };
+}
+
+// ── get_debt_payment_trend ───────────────────────────────────────────────────
+
+export function executeGetDebtPaymentTrend(
+  profile: FinancialProfileCache,
+  params: ToolParams,
+): ToolResult {
+  const home = (profile.homeCurrency ?? "USD").toUpperCase();
+  const fmt = makeFmt(home);
+  const cap = Math.min(Math.max((params.months as number | undefined) ?? 12, 1), 36);
+
+  const sortedDesc = [...profile.monthlyHistory].sort((a, b) =>
+    b.yearMonth.localeCompare(a.yearMonth),
+  );
+  const slice = sortedDesc.slice(0, cap).reverse();
+
+  const months = slice.map((h) => {
+    const debt = h.debtPaymentsTotal ?? 0;
+    const card = h.cardServicingPaymentsTotal ?? 0;
+    const installmentStyle = Math.max(0, debt - card);
+    return {
+      month: h.yearMonth,
+      all_debt_payments: fmt(debt),
+      card_loc_servicing: fmt(card),
+      installment_and_similar: fmt(installmentStyle),
+      min_scheduled_payments: fmt(h.minDebtPaymentsTotal ?? 0),
+    };
+  });
+
+  return {
+    ok: true,
+    data: {
+      currency: home,
+      months,
+      note:
+        "card_loc_servicing pays revolving balances already reflected in card spending; installment_and_similar is an approximation (all debt payments minus card servicing).",
+    },
+  };
+}
+
+// ── dispatcher (handlers keyed by ToolName — compile-time sync with tools.ts) ─
+
+type ToolHandler = (profile: FinancialProfileCache, params: ToolParams) => ToolResult;
+
+const TOOL_HANDLERS = {
+  search_transactions:    executeSearchTransactions,
+  get_monthly_breakdown:  executeGetMonthlyBreakdown,
+  rollup_categories:      executeRollupCategories,
+  rollup_merchants:       executeRollupMerchants,
+  list_recurring_charges: (profile, _params) => executeListRecurringCharges(profile),
+  get_debt_payment_trend: executeGetDebtPaymentTrend,
+} satisfies Record<ToolName, ToolHandler>;
+
+function isToolName(name: string): name is ToolName {
+  return (TOOL_NAMES as readonly string[]).includes(name);
+}
 
 export function executeTool(
   name: string,
   params: ToolParams,
   profile: FinancialProfileCache,
 ): ToolResult {
-  switch (name) {
-    case "search_transactions":
-      return executeSearchTransactions(profile, params);
-    case "get_monthly_breakdown":
-      return executeGetMonthlyBreakdown(profile, params);
-    default:
-      return { ok: false, error: `Unknown tool: ${name}` };
+  if (!isToolName(name)) {
+    return { ok: false, error: `Unknown tool: ${name}` };
   }
+  return TOOL_HANDLERS[name](profile, params);
 }

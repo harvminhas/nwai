@@ -27,9 +27,7 @@ import {
 import { SCHEDULED_DEBT_TYPES } from "@/lib/debtUtils";
 import {
   getNetWorth,
-  getEmergencyFundMetrics,
-  getEmergencyFundLiquidMetrics,
-  getLiquidAssetsHome,
+  buildEmergencyFundSnapshot,
 } from "@/lib/profileMetrics";
 import type { ParsedStatementData } from "@/lib/types";
 
@@ -117,8 +115,9 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
   const assets    = nwResult.totalAssets;
   const debts     = nwResult.totalDebts;
 
-  // Liquid assets with FX conversion (single definition — see getLiquidAssetsHome)
-  const liquidAssets = getLiquidAssetsHome(profile);
+  // Liquid + EF runway — same snapshot as consolidated JSON / chat context (profileMetrics.buildEmergencyFundSnapshot)
+  const efSnap       = buildEmergencyFundSnapshot(profile);
+  const liquidAssets = efSnap.liquidAssetsHome;
 
   // Monthly figures — use the pre-computed monthlyHistory so cash income and cash
   // commitments are included and the numbers match exactly what the UI cards show.
@@ -183,13 +182,12 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
   const savingsRateExclMinDebt = monthlyIncome > 0
     ? ((monthlyIncome - (monthlyExp - monthlyMinDebt)) / monthlyIncome) * 100
     : 0;
-  const efMetrics = getEmergencyFundMetrics(profile);
+  const efMetrics = efSnap.metrics;
+  const efLiquid  = efSnap.liquidMetrics;
   const efBaselineForTarget = efMetrics?.baselineMonthlyCoreExpenses ?? monthlyExp;
   const efTargetMonths      = efMetrics?.targetMonths ?? 6;
   const efTarget =
     efMetrics?.targetAmount ?? efBaselineForTarget * efTargetMonths;
-  const efLiquid =
-    efMetrics != null ? getEmergencyFundLiquidMetrics(liquidAssets, efMetrics) : null;
   const efMonthsCovered =
     efLiquid?.monthsOfCoreCovered ??
     (efBaselineForTarget > 0 ? liquidAssets / efBaselineForTarget : 0);
@@ -407,7 +405,7 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
     );
   }
 
-  // 3. Emergency fund status (same definition as consolidated API emergencyFund)
+  // 3. Emergency fund status (buildEmergencyFundSnapshot — same as consolidated emergencyFund + liquidAssets)
   const efGap          = Math.max(0, efTarget - liquidAssets);
   const efGrounded     = efGap > 0
     ? `${fmt(efGap)} short of ${efTargetMonths}-month target (have ${efMonthsCovered.toFixed(1)} months of median core expenses in liquid savings)`

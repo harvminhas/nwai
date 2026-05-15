@@ -1,0 +1,38 @@
+---
+description: AI chat & API — thin adapters, shared logic, staying in sync
+globs:
+  - src/lib/chat/**
+  - src/app/api/user/chat/**
+  - src/app/api/user/**/route.ts
+alwaysApply: false
+---
+
+# Chat & API — thin adapters (no duplicate business logic)
+
+## Thin route pattern
+
+- **`src/app/api/user/*/route.ts`** should be a **thin adapter**: auth → resolve uid → load data → call **`src/lib/**`** → return JSON.
+- **Goals, EF, forecast, events, what-if**, etc.: put rules and builders in **`src/lib`** (or reuse existing modules such as `profileMetrics.ts`, `financialProfile.ts`, `whatIf/templates.ts`). Routes and chat both call the same functions.
+
+## AI chat executor
+
+- **`src/lib/chat/executor.ts`** is **orchestration + formatting only**. Handlers must delegate to shared libs (`isCoreExcluded`, `buildEmergencyFundSnapshot`, future `buildNearTermForecast`, etc.).
+- **Do not** re-implement filters, medians, or taxonomies inline in the executor — that risks drifting from consolidated / Goals / Forecast UI.
+
+## Compile-time sync (tool names ↔ handlers)
+
+- **`TOOL_NAMES`** in `src/lib/chat/tools.ts` is the canonical list of tool ids.
+- **`TOOL_HANDLERS`** in `executor.ts` uses `satisfies Record<ToolName, ToolHandler>` — adding/removing a `ToolName` without a matching handler **breaks `tsc`**.
+- Every `functionDeclarations[].name` in `CHAT_TOOLS` must appear in **`TOOL_NAMES`** (still a manual check; Gemini schema cannot import TS enums).
+
+## Staying in sync over time
+
+When touching domain logic used by chat:
+
+1. Run **`npm run typecheck`** (or `npx tsc --noEmit`) — catches orphan `ToolName` / handler mismatches.
+2. If you rename or split a **shared** helper used by both an API route and chat, update **call sites in the same PR** (grep `executor.ts` and the relevant route).
+3. Prefer **one exported builder** per feature (e.g. `buildEmergencyFundSnapshot`) over copying formulas into chat.
+
+## Future: goals / trackers / scenarios in chat
+
+- Load or compute via **the same module** the Goals or Events API will call after refactor — not a second implementation inside `executor.ts`.

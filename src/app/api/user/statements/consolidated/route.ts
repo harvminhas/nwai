@@ -7,12 +7,11 @@ import { buildAccountSlug } from "@/lib/accountSlug";
 import { docYearMonth, carryForwardStatements } from "@/lib/spendHistory";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import {
+  buildEmergencyFundSnapshot,
   getNetWorth,
   getTypicalMonthlySpend,
   getTypicalMonthlyIncome,
   getTypicalMonthlyDebtPayments,
-  getEmergencyFundMetrics,
-  getLiquidAssetsHome,
 } from "@/lib/profileMetrics";
 import type { ParsedStatementData, ManualAsset, AssetCategory } from "@/lib/types";
 import type { BalanceSnapshot } from "@/app/api/user/balance-snapshots/route";
@@ -648,8 +647,9 @@ export async function GET(request: NextRequest) {
       if (hasCarryForward) incompleteMonths.push(ym);
     }
 
-    // ── Liquid assets — profile snapshots + FX (matches financialBrief / Recommendations)
-    const liquidAssets = getLiquidAssetsHome(profile, accountFilter);
+    // ── Liquid assets + EF metrics — same snapshot as chat context / financialBrief (profileMetrics)
+    const efSnapshot   = buildEmergencyFundSnapshot(profile, accountFilter);
+    const liquidAssets = efSnapshot.liquidAssetsHome;
 
     // ── Asset / debt sub-labels for dashboard KPI cards ─────────────────────
     const assetLabelSet = new Set<string>();
@@ -842,7 +842,7 @@ export async function GET(request: NextRequest) {
        * Emergency fund target — median monthly core spend × 6 (stable income)
        * or × 9 when income CV exceeds threshold. Same object Goals / Overview / Brief should use.
        */
-      emergencyFund: getEmergencyFundMetrics(profile),
+      emergencyFund: efSnapshot.metrics,
       manualAssets: relevantManualAssets,
       incompleteMonths,
       accountStatementHistory: Object.fromEntries(accountStatementHistory),

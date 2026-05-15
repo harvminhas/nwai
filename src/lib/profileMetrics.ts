@@ -618,6 +618,29 @@ export function getEmergencyFundLiquidMetrics(
   return { gap, monthsOfCoreCovered, pctFunded };
 }
 
+/**
+ * Single snapshot for emergency fund — same inputs as consolidated JSON `emergencyFund` + `liquidAssets`
+ * (median-core runway target + liquid cash in home currency + gap/funded).
+ *
+ * Pass `accountSlugFilter` when consolidating a single account view (matches `?account=` on consolidated API).
+ */
+export interface EmergencyFundSnapshot {
+  metrics: EmergencyFundMetrics | null;
+  liquidAssetsHome: number;
+  liquidMetrics: EmergencyFundLiquidMetrics | null;
+}
+
+export function buildEmergencyFundSnapshot(
+  profile: FinancialProfileCache,
+  accountSlugFilter?: string | null,
+): EmergencyFundSnapshot {
+  const metrics = getEmergencyFundMetrics(profile);
+  const liquidAssetsHome = getLiquidAssetsHome(profile, accountSlugFilter);
+  const liquidMetrics =
+    metrics != null ? getEmergencyFundLiquidMetrics(liquidAssetsHome, metrics) : null;
+  return { metrics, liquidAssetsHome, liquidMetrics };
+}
+
 /** Dollar target only — use {@link getEmergencyFundMetrics} when you need months/baseline/CV. */
 export function getEmergencyFundTargetAmount(profile: FinancialProfileCache): number | null {
   return getEmergencyFundMetrics(profile)?.targetAmount ?? null;

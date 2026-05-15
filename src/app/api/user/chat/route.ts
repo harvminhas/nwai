@@ -12,7 +12,7 @@
  *   5. Stream the final text response back to the client.
  *
  * Adding a new tool: add its FunctionDeclaration in src/lib/chat/tools.ts
- * and its execute* function in src/lib/chat/executor.ts.
+ * and its execute* function + executeTool switch in src/lib/chat/executor.ts.
  */
 
 import { NextRequest, NextResponse } from "next/server";

@@ -1,14 +1,15 @@
 /**
  * Compact system context for AI chat.
  *
- * Provides just enough grounding (balances, monthly totals, subscriptions,
- * goals, data range) for the model to answer summary questions directly.
+ * Provides enough grounding (balances, monthly totals, subscriptions,
+ * goals, application emergency-fund metric vs user Goals, data range) for the model.
  * Transaction-level detail is intentionally omitted — the model requests
- * it on demand via the search_transactions / get_monthly_breakdown tools.
+ * it on demand via tools. Emergency fund numbers use {@link buildEmergencyFundSnapshot}
+ * (same as consolidated `emergencyFund` + `liquidAssets`).
  */
 
 import type { FinancialProfileCache } from "@/lib/financialProfile";
-import { getNetWorth, getEmergencyFundMetrics } from "@/lib/profileMetrics";
+import { getNetWorth, buildEmergencyFundSnapshot } from "@/lib/profileMetrics";
 import { buildCategoryPromptLines } from "@/lib/categoryTaxonomy";
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -112,22 +113,41 @@ export function buildChatContext(profile: FinancialProfileCache): string {
     return `  ${c.name} (${c.frequency}): ${fmt(c.amount)} = ${mthStr}`;
   });
 
-  const efMeta = getEmergencyFundMetrics(profile);
-  const efDefinitionLine = efMeta
-    ? `Emergency fund target = ${fmt(efMeta.targetAmount)} (${efMeta.targetMonths} × median monthly core spend ${fmt(efMeta.baselineMonthlyCoreExpenses)}${efMeta.isVariableIncome ? "; volatile income uses longer runway" : ""}).`
-    : "Emergency fund target = not yet defined (need median core expense history).";
+  const efSnap = buildEmergencyFundSnapshot(profile);
+  let efSection = "";
+  if (efSnap.metrics && efSnap.liquidMetrics) {
+    const efMeta = efSnap.metrics;
+    const liq = efSnap.liquidMetrics;
+    const liquidCashHome = efSnap.liquidAssetsHome;
+    const cvPct = (efMeta.incomeCoefficientOfVariation * 100).toFixed(0);
+    efSection = `== EMERGENCY FUND — APPLICATION METRIC (same logic as consolidated JSON: emergencyFund + liquidAssets; canonical for “what target does the app recommend?”) ==
+Liquid cash counted here: ${fmt(liquidCashHome)} (${home}) — checking, savings, and cash-type accounts only (positive balances); excludes investments, property, and credit cards.
+
+Recommended savings target: ${fmt(efMeta.targetAmount)} = ${efMeta.targetMonths} months × median monthly core spend ${fmt(efMeta.baselineMonthlyCoreExpenses)}.
+Runway rule: ${efMeta.isVariableIncome ? `income treated as volatile (CV ${cvPct}% ≥ 25% threshold → ${efMeta.targetMonths}-month target)` : `income treated as stable (${efMeta.targetMonths}-month target)`}.
+
+Vs that recommendation: ${Math.round(liq.pctFunded * 100)}% funded; ~${liq.monthsOfCoreCovered.toFixed(1)} months of median core spend held in liquid cash; gap ${fmt(liq.gap)}.
+
+When the user asks for their emergency fund target, lead with THIS block’s recommended target and liquid progress — do not substitute dollar figures from == GOALS == unless they explicitly ask about a named goal.`;
+  } else {
+    efSection = `== EMERGENCY FUND — APPLICATION METRIC ==
+Not available yet (need enough history to compute median monthly core spending).`;
+  }
 
   // ── assemble ──────────────────────────────────────────────────────────────
   return `You are a knowledgeable, friendly personal finance assistant.
-You have access to the user's real financial data shown below AND two tools to look up transaction details.
+You have access to the user's real financial data shown below AND tools to look up details.
 
 CRITICAL RULES:
 - Always ground answers in actual numbers from the data or tool results. Cite specific figures and dates.
-- NEVER fabricate transaction lists — always call search_transactions first.
+- NEVER fabricate transaction lists — for individual charges call search_transactions. Aggregate tools (rollup_*, list_recurring_charges, get_debt_payment_trend) return summaries, not line items.
 - If asked about a specific merchant, category, account, or time period: use the tools.
 - When reporting tool results: list EVERY individual transaction row returned. Never skip, consolidate, or omit any row — even if two rows share the same merchant name.
 - If a merchant appears multiple times in the results, list each occurrence separately with its own date and amount.
 - Note which time period data is from.
+- Emergency fund: use == EMERGENCY FUND — APPLICATION METRIC == for the app’s recommended target and liquid progress; == GOALS == are separate user-named savings targets (even if titled “emergency fund”).
+- “What am I tracking?” / “What do I have set up?”: Answer from THIS PROMPT first — list CONFIRMED SUBSCRIPTIONS, CASH COMMITMENTS, and GOALS when those sections appear below (with amounts/names from the lines given). If those sections are absent, say none are in context and offer list_recurring_charges for subscription-style recurring charges. Only after that, explain Trackers (Events) per == TRACKERS (EVENTS) — NOT LOADED IN THIS CHAT ==. Do not reply with only a Trackers disclaimer; the user expects an inventory of what you can actually see.
+- Trackers (Events): Project/service trackers, per-tracker budgets, spend-to-tracker, visits, and ledger lines live only under Account → Trackers — not in this prompt. Do not pretend Goals or subscription lists are Tracker rows; see == TRACKERS (EVENTS) — NOT LOADED IN THIS CHAT ==.
 - This is financial analysis only, not regulated financial advice.
 
 SEARCH STRATEGY:
@@ -170,7 +190,17 @@ DEFINITIONS:
 - Transfers = inter-account or e-transfers — excluded from core expense totals.
 - Debt: Installment Servicing vs Card Servicing — see category taxonomy (Debt parent).
 - Savings rate = (income − core expenses) / income × 100
-- ${efDefinitionLine}
+- Emergency fund (app recommendation): see the dedicated block below — median core × 6 or 9 months. User Goals are separate named targets (titles may overlap); do not merge them into one answer unless the user asks to compare.
+- Trackers (same as the Events feature in the app) are distinct from Goals and from Subscriptions.
+
+${efSection}
+
+== TRACKERS (EVENTS) — NOT LOADED IN THIS CHAT ==
+Trackers are the same feature as Events in the app (Account → Trackers). They are separate from Goals (savings targets) and from Confirmed Subscriptions / Cash Commitments (recurring merchants or manual recurring payments listed below).
+
+This chat has no per-tracker budgets, no spend attributed to individual trackers, and no visit or ledger lines for Trackers. When the user asks specifically about Trackers, say that clearly and point them to Account → Trackers in the app.
+
+Do not use Goals or subscription/cash-commitment data as if it were Tracker detail. There is no tracker-specific tool yet.
 
 EXPENSE CATEGORY TAXONOMY (parent categories and their subtypes):
 ${buildCategoryPromptLines()}
@@ -188,9 +218,14 @@ Income: ${fmt(income)} | Expenses: ${fmt(expenses)} | Net: ${fmt(net)} | Savings
 ${trendLines.join("\n") || "  No history yet"}
 ${subLines.length > 0 ? `\n== CONFIRMED SUBSCRIPTIONS ==\n${subLines.join("\n")}` : ""}
 ${cashLines.length > 0 ? `\n== CASH COMMITMENTS ==\n${cashLines.join("\n")}` : ""}
-${goalLines.length > 0 ? `\n== GOALS ==\n${goalLines.join("\n")}` : ""}
+${goalLines.length > 0 ? `\n== GOALS (USER-NAMED TARGETS — INDEPENDENT OF APP EF LINE ABOVE) ==\n${goalLines.join("\n")}` : ""}
 == TOOL GUIDANCE ==
-- For any question about specific merchants, categories, or accounts → call search_transactions
-- For trend/comparison questions → call get_monthly_breakdown (optionally with by_category: true)
-- For high-level summaries (savings rate, net worth) → answer directly from the data above`;
+- Specific merchants, categories, accounts, or dated transaction lines → search_transactions
+- Month-by-month income / core expenses / savings → get_monthly_breakdown (by_category: true splits each month)
+- Category spending totals over a range (rankings, quarter/year) → rollup_categories (parent_category_only collapses subtypes into parents)
+- Top merchants by spend over a range → rollup_merchants
+- Subscriptions + manual recurring cash commitments → list_recurring_charges
+- Monthly debt cashflows (totals, card servicing vs installment-style, minimums) → get_debt_payment_trend
+- Trackers / Events → no chat tool; see == TRACKERS (EVENTS) — NOT LOADED IN THIS CHAT ==. For “what am I tracking?” still list subscriptions/commitments/goals from context first.
+- Brief net worth / savings already in context → answer without tools when enough`;
 }
