@@ -47,12 +47,16 @@ const SUGGESTED = [
 ];
 
 // ── markdown-ish renderer ──────────────────────────────────────────────────────
-// Converts **bold**, bullet lines, pipe tables, and line breaks without a full MD lib
+// Converts **bold**, bullet lines, pipe tables (leading | required; trailing | optional), and line breaks without a full MD lib
 
+/** Split a GFM-style pipe row. Trailing `|` is optional (models often omit it; strict require broke prod rendering). */
 function parsePipeTableRow(line: string): string[] | null {
   const t = line.trim();
-  if (!t.startsWith("|") || !t.endsWith("|")) return null;
-  return t.slice(1, -1).split("|").map((c) => c.trim());
+  if (!t.startsWith("|")) return null;
+  const inner = t.endsWith("|") ? t.slice(1, -1) : t.slice(1);
+  const cells = inner.split("|").map((c) => c.trim());
+  if (cells.length === 0 || cells.every((c) => c === "")) return null;
+  return cells;
 }
 
 function isTableSeparatorRow(cells: string[]): boolean {
