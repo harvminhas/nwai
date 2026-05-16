@@ -31,6 +31,8 @@ export default function OverviewPage() {
   const [healthReady, setHealthReady] = useState(false);
   const [retirementOpen, setRetirementOpen] = useState(false);
   const [insuranceOpen, setInsuranceOpen] = useState(false);
+  const [estimatedMsg, setEstimatedMsg] = useState<string | null>(null);
+  const [estimatedOpen, setEstimatedOpen] = useState(false);
 
   const load = useCallback(async (tok: string) => {
     setLoading(true);
@@ -111,11 +113,38 @@ export default function OverviewPage() {
         )}
 
         <div className="mb-5">
-          <h1 className="text-2xl font-bold text-gray-900">Financial Health</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-gray-900">Financial Health</h1>
+            {estimatedMsg && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setEstimatedOpen((v) => !v)}
+                  className="flex items-center justify-center rounded-full p-0.5 text-amber-500 hover:bg-amber-50 transition"
+                  aria-label="Balance estimate warning"
+                >
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                  </svg>
+                </button>
+                {estimatedOpen && (
+                  <>
+                    <div className="fixed inset-0 z-30" onClick={() => setEstimatedOpen(false)} />
+                    <div className="absolute left-0 top-full mt-2 z-40 w-72 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 shadow-lg">
+                      <p className="text-sm font-medium text-amber-800">Balance is estimated</p>
+                      <p className="mt-0.5 text-xs text-amber-700">{estimatedMsg}{" "}
+                        <a href="/account/accounts" className="font-medium underline hover:text-amber-900">Review accounts →</a>
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
           <p className="mt-0.5 text-sm text-gray-400">Your net worth, balances, and readiness snapshot</p>
         </div>
 
-        <ConsolidatedCurrentDashboard />
+        <ConsolidatedCurrentDashboard onEstimatedWarning={(msg) => { setEstimatedMsg(msg); if (!msg) setEstimatedOpen(false); }} />
 
         {healthReady && (
           <div className="mt-10 pt-8 border-t border-gray-100">

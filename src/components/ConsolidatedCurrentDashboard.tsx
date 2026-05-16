@@ -674,13 +674,13 @@ const TRACK_CONFIG: Record<TrackStatus, {
   /** Aggregate amber tier — any active warning or score &lt; 75 (see rawStatus). Not necessarily "Spending". */
   "watch":     { label: "Needs attention", badge: "bg-amber-100 text-amber-700 border-amber-200",  dot: "bg-amber-500" },
   /** Softer than “Off track” — headline tier still reads urgent via color. */
-  "off-track": { label: "Focus areas",   badge: "bg-red-100 text-red-600 border-red-200",        dot: "bg-red-500" },
+  "off-track": { label: "Focus areas",   badge: "bg-orange-100 text-orange-700 border-orange-200", dot: "bg-orange-500" },
 };
 
 const SIGNAL_STATUS_CONFIG: Record<SignalStatus, { label: string; color: string; bg: string }> = {
   pass:    { label: "Pass",    color: "text-green-700",  bg: "bg-green-100 border-green-200" },
   warning: { label: "Warning", color: "text-amber-700",  bg: "bg-amber-100 border-amber-200" },
-  fail:    { label: "Focus",   color: "text-red-600",    bg: "bg-red-100 border-red-200" },
+  fail:    { label: "Focus",   color: "text-orange-700",  bg: "bg-orange-50 border-orange-200" },
   skip:    { label: "N/A",     color: "text-gray-400",   bg: "bg-gray-100 border-gray-200" },
 };
 
@@ -700,13 +700,13 @@ const DEBT_TYPE_LABEL: Record<string, string> = {
 const STRIP_BAR: Record<SignalStatus, string> = {
   pass:    "bg-green-500",
   warning: "bg-amber-400",
-  fail:    "bg-red-500",
+  fail:    "bg-orange-400",
   skip:    "bg-gray-200",
 };
 const STRIP_LABEL: Record<SignalStatus, { text: string; cls: string }> = {
   pass:    { text: "Pass",    cls: "text-green-600" },
   warning: { text: "Watch",   cls: "text-amber-500" },
-  fail:    { text: "Focus",   cls: "text-red-500"   },
+  fail:    { text: "Focus",   cls: "text-orange-500" },
   skip:    { text: "N/A",     cls: "text-gray-300"  },
 };
 
@@ -809,8 +809,8 @@ function SignalStrip({ signals, score, status, periodLabel, roadmapCtx, onOpenMo
   const active = signals.filter((s) => s.status !== "skip");
   if (active.length < 2) return null;
 
-  const scoreColor = score >= 75 ? "text-green-600" : score >= 50 ? "text-amber-500" : "text-red-500";
-  const scoreBar   = score >= 75 ? "bg-green-500"   : score >= 50 ? "bg-amber-400"   : "bg-red-500";
+  const scoreColor = score >= 75 ? "text-green-600" : score >= 50 ? "text-amber-500" : "text-orange-500";
+  const scoreBar   = score >= 75 ? "bg-green-500"   : score >= 50 ? "bg-amber-400"   : "bg-orange-400";
   const trackCfg   = status ? TRACK_CONFIG[status] : null;
 
   return (
@@ -956,7 +956,7 @@ function SignalModal({
             <div className="flex h-2 w-full overflow-hidden rounded-full bg-gray-100">
               <div
                 className={`h-full rounded-full transition-all ${
-                  score >= 75 ? "bg-green-500" : score >= 50 ? "bg-amber-500" : "bg-red-500"
+                  score >= 75 ? "bg-green-500" : score >= 50 ? "bg-amber-500" : "bg-orange-400"
                 }`}
                 style={{ width: `${score}%` }}
               />
@@ -1025,7 +1025,7 @@ function SignalModal({
                   <div className="mt-2 h-0.5 w-full overflow-hidden rounded-full bg-gray-100">
                     <div
                       className={`h-full rounded-full ${
-                        sig.status === "pass" ? "bg-green-400" : sig.status === "warning" ? "bg-amber-400" : "bg-red-400"
+                        sig.status === "pass" ? "bg-green-400" : sig.status === "warning" ? "bg-amber-400" : "bg-orange-400"
                       }`}
                       style={{ width: `${activeWeight * 3}%` }}
                     />
@@ -1051,7 +1051,14 @@ function SignalModal({
 
 // ── component ─────────────────────────────────────────────────────────────────
 
-export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKey?: number }) {
+export default function ConsolidatedCurrentDashboard({
+  refreshKey,
+  onEstimatedWarning,
+}: {
+  refreshKey?: number;
+  /** Called (once) with the warning message when estimated-balance conditions are met; null when cleared. */
+  onEstimatedWarning?: (msg: string | null) => void;
+}) {
   const router = useRouter();
   const [data, setData]               = useState<ParsedStatementData | null>(null);
   const [previousMonth, setPreviousMonth] = useState<{ netWorth: number; assets: number; debts: number; expenses: number } | null>(null);
@@ -1126,6 +1133,23 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
     });
     return () => unsub();
   }, [router, refreshKey]);
+
+  // Propagate estimated-balance warning to parent (for inline icon next to page title).
+  useEffect(() => {
+    if (!onEstimatedWarning) return;
+    const currentIncomplete = yearMonth ? incompleteMonths.includes(yearMonth) : false;
+    const totalMonths = history.length;
+    const manyIncomplete = totalMonths > 0 && incompleteMonths.length / totalMonths > 0.4;
+    if (currentIncomplete) {
+      onEstimatedWarning("Upload a statement for all accounts this month for an accurate net worth.");
+    } else if (manyIncomplete) {
+      onEstimatedWarning(
+        `${incompleteMonths.length} month${incompleteMonths.length !== 1 ? "s" : ""} are missing a statement for at least one account.`,
+      );
+    } else {
+      onEstimatedWarning(null);
+    }
+  }, [yearMonth, incompleteMonths, history, onEstimatedWarning]);
 
   // Real-time listener for agent insight cards — fires immediately with cached
   // data and again whenever the pipeline writes new cards after an upload.
@@ -1296,35 +1320,6 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
     <>
       <div className="space-y-4">
 
-        {/* ── Incomplete months banner — only shown when current month is estimated
-             or the majority of history is estimated (suppressed for isolated
-             historical gaps which are normal with multi-account setups) ───── */}
-        {(() => {
-          const currentIncomplete = yearMonth ? incompleteMonths.includes(yearMonth) : false;
-          const totalMonths       = history.length;
-          // Show only if current month is estimated, or >40% of history is estimated
-          const manyIncomplete    = totalMonths > 0 && incompleteMonths.length / totalMonths > 0.4;
-          if (!currentIncomplete && !manyIncomplete) return null;
-
-          return (
-            <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-              <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-              </svg>
-              <div className="text-sm">
-                <p className="font-medium text-amber-800">
-                  {currentIncomplete ? "Current balance is estimated" : "Some months use estimated balances"}
-                </p>
-                <p className="mt-0.5 text-amber-700 text-xs">
-                  {currentIncomplete
-                    ? "Upload a statement for all accounts this month for an accurate net worth."
-                    : `${incompleteMonths.length} month${incompleteMonths.length !== 1 ? "s" : ""} are missing a statement for at least one account.`}{" "}
-                  <Link href="/account/accounts" className="font-medium underline hover:text-amber-900">Review accounts →</Link>
-                </p>
-              </div>
-            </div>
-          );
-        })()}
 
 
         {/* ── NET WORTH hero ────────────────────────────────────────────────── */}
