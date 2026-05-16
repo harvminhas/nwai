@@ -90,6 +90,8 @@ interface Signal {
   status: SignalStatus;
   detail: string;    // one-line explanation of result
   fillPct: number;   // 0–100 meter fill, pre-computed
+  /** Dollar-/percent-specific “what helps” line for dashboard strip + modal (computed with scoring). */
+  actionHelp?: string;
 }
 
 interface HistoryPoint {
@@ -117,6 +119,8 @@ function computeSignals(
   /** Median monthly core spend (`json.typicalMonthlyExpenses`) — paired with median income for savings when needed. */
   typicalMonthlyCoreFromProfile = 0,
 ): Signal[] {
+  /** Savings-rate Pass threshold — keep in sync with scoring branches below. */
+  const SR_PASS_MIN = 0.1;
   const sorted = [...history].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
   const idx    = sorted.findIndex((h) => h.yearMonth === currentYm);
   const cur    = idx >= 0 ? sorted[idx] : null;
@@ -130,7 +134,7 @@ function computeSignals(
   );
   const profileStructuralCaption =
     profileStructural.structuralDeficit
-      ? `Typical core ${fmt(typicalMonthlyCoreFromProfile, ccy)} vs typical income ${fmt(typicalMonthlyIncomeFromProfile, ccy)} — ${fmt(profileStructural.coreOverIncome, ccy)} over (profile medians; excludes card/LOC servicing)`
+      ? `On a typical month you bring in ${fmt(typicalMonthlyIncomeFromProfile, ccy)}, but everyday bills run about ${fmt(typicalMonthlyCoreFromProfile, ccy)} — ${fmt(profileStructural.coreOverIncome, ccy)} short. Credit‑card payoff transfers aren’t counted in those bills.`
       : null;
 
   /** Core for the scored month when `coreExpensesTotal` is missing/zero — shared by Savings + Spending. */
@@ -145,15 +149,39 @@ function computeSignals(
 
   // ── 1. Net worth trend (30%) ──────────────────────────────────────────────
   const nwSignal: Signal = (() => {
-    const base = { id: "nw_trend", name: "Net worth trend", shortName: "Net worth", description: "Growing month-over-month", weight: 30 };
+    const base = { id: "nw_trend", name: "Net worth trend", shortName: "Net worth", description: "Whether net worth moved up from last month", weight: 30 };
     if (!cur || !prev) return { ...base, status: "skip", detail: "Not enough history yet", fillPct: 0 };
     const delta = (cur.netWorth ?? 0) - (prev.netWorth ?? 0);
     const pct   = (prev.netWorth ?? 0) !== 0 ? delta / Math.abs(prev.netWorth ?? 0) : 0;
     // fillPct: map [-10%, +10%] → [0, 100]; 0% = 50, +5% = 75, -5% = 25
     const fillPct = Math.round(Math.min(100, Math.max(0, (pct * 500 + 1) * 50)));
-    if (pct > 0.005) return { ...base, status: "pass",    detail: `Up ${fmtShort(delta, ccy)} vs last month`,          fillPct };
-    if (pct >= -0.005) return { ...base, status: "warning", detail: "Flat this month (within 0.5%)",               fillPct: 50 };
-    return              { ...base, status: "fail",    detail: `Down ${fmtShort(Math.abs(delta), ccy)} vs last month`, fillPct };
+    const prevNw = prev.netWorth ?? 0;
+    if (pct > 0.005) {
+      return {
+        ...base,
+        status: "pass",
+        detail: `Up ${fmtShort(delta, ccy)} vs last month`,
+        fillPct,
+        actionHelp: `You rose ${fmtShort(delta, ccy)} vs last month — try to finish higher than ${fmt(cur.netWorth ?? 0, ccy)} again next month.`,
+      };
+    }
+    if (pct >= -0.005) {
+      const bump = Math.max(25, Math.round(Math.abs(prevNw) * 0.005));
+      return {
+        ...base,
+        status: "warning",
+        detail: "About flat versus last month (within half a percent).",
+        fillPct: 50,
+        actionHelp: `Target about ${fmtShort(bump, ccy)} higher net worth than ${fmt(prevNw, ccy)} next month (≈0.5%).`,
+      };
+    }
+    return {
+      ...base,
+      status: "fail",
+      detail: `Down ${fmtShort(Math.abs(delta), ccy)} vs last month`,
+      fillPct,
+      actionHelp: `Earn back about ${fmtShort(Math.abs(delta), ccy)} vs last month — aim above ${fmt(prevNw, ccy)} next month.`,
+    };
   })();
 
   // ── 2. Savings rate (25%) — never mix median income with a single month's spend (that inflated bogus rates). ──
@@ -162,7 +190,7 @@ function computeSignals(
       id: "savings_rate",
       name: "Savings rate",
       shortName: "Savings rate",
-      description: "Income minus core expenses — same month, or both medians from the financial profile",
+      description: "How much of your income is left after everyday bills (same month, or your usual averages)",
       weight: 25,
     };
     if (!cur) return { ...base, status: "skip", detail: "No data for this month", fillPct: 0 };
@@ -176,13 +204,13 @@ function computeSignals(
       const resolved = coreBurnForSignalMonthRow(cur);
       coreBurn = resolved.burn;
       if (resolved.imputed) {
-        basisNote = " — core imputed (signal month had no expense totals)";
+        basisNote = " — we estimated bills because this statement month didn’t include full expense totals.";
       }
       if (coreBurn <= 0) {
         return {
           ...base,
           status: "skip",
-          detail: "No core expense baseline for this month — need statements or profile median core",
+          detail: "We couldn’t measure everyday bills for this month — add statements or wait until your usual averages are filled in.",
           fillPct: 0,
         };
       }
@@ -194,20 +222,57 @@ function computeSignals(
       return {
         ...base,
         status: "skip",
-        detail: "No income this month — upload statements or wait for median income/core from profile",
+        detail: "No income showed up this month — upload statements or wait until typical income and spending are available.",
         fillPct: 0,
       };
     }
 
     const rate = (incomeBasis - coreBurn) / incomeBasis;
+    const saveAmt = incomeBasis - coreBurn;
+    const targetSave = Math.round(incomeBasis * SR_PASS_MIN);
     // fillPct: map [-50%, +50%] → [0, 100]; 10% target ≈ 75% fill
     const fillPct = Math.round(Math.min(100, Math.max(0, (rate + 0.5) / 0.8 * 100)));
-    if (rate >= 0.10) return { ...base, status: "pass",    detail: `Saving ${Math.round(rate * 100)}% of income after core expenses${basisNote}`, fillPct };
-    if (rate >= 0)   return { ...base, status: "warning", detail: `Saving ${Math.round(rate * 100)}% after core expenses — target is 10%${basisNote}`, fillPct };
-    if (rate < 0 && usingProfileMedians && profileStructuralCaption) {
-      return { ...base, status: "fail", detail: profileStructuralCaption, fillPct };
+    if (rate >= SR_PASS_MIN) {
+      return {
+        ...base,
+        status: "pass",
+        detail: `You’re saving ${Math.round(rate * 100)}% of income after everyday bills${basisNote}`,
+        fillPct,
+        actionHelp: `Keep at least ${fmt(targetSave, ccy)} left after bills each month (${SR_PASS_MIN * 100}% of ${fmt(incomeBasis, ccy)} income).`,
+      };
     }
-    return            { ...base, status: "fail",    detail: `Core expenses ${fmt(coreBurn - incomeBasis, ccy)} higher than income${basisNote}`, fillPct };
+    if (rate >= 0) {
+      const needExtra = Math.max(0, targetSave - saveAmt);
+      return {
+        ...base,
+        status: "warning",
+        detail: `You’re saving ${Math.round(rate * 100)}% after bills — aim for at least 10%${basisNote}`,
+        fillPct,
+        actionHelp: `Free about ${fmt(needExtra, ccy)} more per month after bills to hit ${SR_PASS_MIN * 100}% (${fmt(targetSave, ccy)} on ${fmt(incomeBasis, ccy)} income).`,
+      };
+    }
+    if (rate < 0 && usingProfileMedians && profileStructural.structuralDeficit && profileStructuralCaption) {
+      const cushion = Math.round(typicalMonthlyIncomeFromProfile * SR_PASS_MIN);
+      const totalShift = profileStructural.coreOverIncome + cushion;
+      return {
+        ...base,
+        status: "fail",
+        detail: profileStructuralCaption,
+        fillPct,
+        actionHelp: `Raise income or cut everyday bills by about ${fmt(totalShift, ccy)} total — ${fmt(profileStructural.coreOverIncome, ccy)} to balance the typical month plus ${fmt(cushion, ccy)} for ${SR_PASS_MIN * 100}% savings.`,
+      };
+    }
+    {
+      const deficit = coreBurn - incomeBasis;
+      const cushion = Math.round(incomeBasis * SR_PASS_MIN);
+      return {
+        ...base,
+        status: "fail",
+        detail: `Everyday bills run ${fmt(deficit, ccy)} higher than income${basisNote}`,
+        fillPct,
+        actionHelp: `Trim bills or lift income by about ${fmt(deficit + cushion, ccy)} — ${fmt(deficit, ccy)} to match this month’s income plus ${fmt(cushion, ccy)} for ${SR_PASS_MIN * 100}% savings.`,
+      };
+    }
   })();
 
   // ── 3. Debt plan adherence (20%) ──────────────────────────────────────────
@@ -220,10 +285,10 @@ function computeSignals(
       id: "debt_plan",
       name: "Debt plan adherence",
       shortName: "Debt",
-      description: "Debt trending down and not disproportionate to assets",
+      description: "Debt going down over time and not overwhelming compared with what you own",
       weight: 20,
     };
-    if (!hasDebts || !cur || cur.debtTotal <= 0) return { ...base, status: "skip", detail: "No active debts — signal skipped", fillPct: 0 };
+    if (!hasDebts || !cur || cur.debtTotal <= 0) return { ...base, status: "skip", detail: "No debt tracked — this item isn’t scored.", fillPct: 0 };
     if (!prev) return { ...base, status: "skip", detail: "Not enough history yet", fillPct: 0 };
     const delta = cur.debtTotal - prev.debtTotal;
     const assetsGross = cur.totalAssets ?? 0;
@@ -231,9 +296,19 @@ function computeSignals(
     const pctLoad = Math.round(ratio * 100);
     const changePct = cur.debtTotal > 0 ? delta / cur.debtTotal : 0;
     const fillPct = Math.round(Math.min(100, Math.max(0, (-changePct * 500 + 1) * 50)));
+    const debtSoftCap = Math.round(assetsGross * DEBT_TO_ASSETS_PASS_MAX);
+    const excessDebt = Math.max(0, cur.debtTotal - debtSoftCap);
+    const pctPass = Math.round(DEBT_TO_ASSETS_PASS_MAX * 100);
+    const pctFail = Math.round(DEBT_TO_ASSETS_FAIL_MIN * 100);
 
     if (delta > 50) {
-      return { ...base, status: "fail", detail: `Debt increased by ${fmt(delta, ccy)} this month`, fillPct };
+      return {
+        ...base,
+        status: "fail",
+        detail: `Debt grew by ${fmt(delta, ccy)} this month`,
+        fillPct,
+        actionHelp: `Pay down at least ${fmt(delta, ccy)} next month (erase this month’s increase) and pause balance growth.`,
+      };
     }
 
     if (delta < -10) {
@@ -241,19 +316,33 @@ function computeSignals(
         return {
           ...base,
           status: "fail",
-          detail: `Paid down ${fmt(Math.abs(delta), ccy)} — debt still ${pctLoad}% of assets`,
+          detail: `You paid down ${fmt(Math.abs(delta), ccy)}, but debt is still ${pctLoad}% of what you own`,
           fillPct,
+          actionHelp:
+            excessDebt > 0
+              ? `Keep paying — chip away about ${fmt(excessDebt, ccy)} more to reach ~${fmt(debtSoftCap, ccy)} total owed (${pctPass}% of ${fmt(assetsGross, ccy)} assets).`
+              : `Keep paying — aim for debt clearly below ${pctFail}% of assets (now ${pctLoad}%).`,
         };
       }
       if (ratio > DEBT_TO_ASSETS_PASS_MAX) {
         return {
           ...base,
           status: "warning",
-          detail: `Paid down ${fmt(Math.abs(delta), ccy)} — debt still ${pctLoad}% of assets`,
+          detail: `You paid down ${fmt(Math.abs(delta), ccy)}, but debt is still ${pctLoad}% of what you own`,
           fillPct,
+          actionHelp:
+            excessDebt > 0
+              ? `Stay on paydown until total debt is near ${fmt(debtSoftCap, ccy)} (~${pctPass}% of ${fmt(assetsGross, ccy)} assets); about ${fmt(excessDebt, ccy)} left vs that cap.`
+              : `Keep shaving balances until debt is comfortably under half of what you own.`,
         };
       }
-      return { ...base, status: "pass", detail: `Paid down ${fmt(Math.abs(delta), ccy)} this month`, fillPct };
+      return {
+        ...base,
+        status: "pass",
+        detail: `You paid down ${fmt(Math.abs(delta), ccy)} this month`,
+        fillPct,
+        actionHelp: `Keep paying down about ${fmt(Math.abs(delta), ccy)}+/month if you can — same pace as this month.`,
+      };
     }
 
     // Flat or small move (includes tiny paydown)
@@ -261,39 +350,54 @@ function computeSignals(
       return {
         ...base,
         status: "fail",
-        detail: `Debt flat — still ${pctLoad}% of assets`,
+        detail: `Debt didn’t really move — still ${pctLoad}% of what you own`,
         fillPct: Math.min(fillPct, 35),
+        actionHelp:
+          excessDebt > 0
+            ? `Target roughly ${fmt(Math.max(100, Math.round(excessDebt / 12)), ccy)}+/month paydown until debt is near ${fmt(debtSoftCap, ccy)} (${pctPass}% of ${fmt(assetsGross, ccy)} assets).`
+            : `Lower total debt each month until it’s well under ${pctFail}% of assets.`,
       };
     }
     if (ratio > DEBT_TO_ASSETS_PASS_MAX) {
       return {
         ...base,
         status: "warning",
-        detail: `Debt unchanged — ${pctLoad}% of assets`,
+        detail: `Debt stayed flat — ${pctLoad}% of what you own`,
         fillPct: 50,
+        actionHelp:
+          excessDebt > 0
+            ? `Pay down about ${fmt(Math.max(50, Math.round(excessDebt / 18)), ccy)}+/month toward ${fmt(debtSoftCap, ccy)} owed (${pctPass}% cap on ${fmt(assetsGross, ccy)} assets).`
+            : `Make steady paydowns until debt is below ~half of assets.`,
       };
     }
-    return { ...base, status: "warning", detail: "Debt unchanged this month", fillPct: 50 };
+    const nudge = Math.max(75, Math.round(cur.debtTotal * 0.012));
+    return {
+      ...base,
+      status: "warning",
+      detail: "Debt balance barely moved this month",
+      fillPct: 50,
+      actionHelp: `Aim for about ${fmt(nudge, ccy)}+ net paydown next month so the balance trends down.`,
+    };
   })();
 
   // ── 4. Spending (15%) — headline cash flow + core vs trend (short history uses prior mo or profile median) ──
   const spendSignal: Signal = (() => {
     const base = {
       id: "spending_vs_budget",
-      name: "Spending vs income & trend",
+      name: "Spending & habits",
       shortName: "Spending",
-      description: "Total expenses vs income; core spend vs trailing average or median baseline",
+      description: "Whether total spending stayed under income and matches your usual pace",
       weight: 15,
     };
     if (!cur) return { ...base, status: "skip", detail: "No data for this month", fillPct: 0 };
 
     const { burn: curBurn, imputed: curBurnImputed } = coreBurnForSignalMonthRow(cur);
     const spendImputedNote = curBurnImputed
-      ? " Core imputed — signal month had no expense totals in consolidated history."
+      ? " Note: we used your usual monthly spending because this statement didn’t show a full expense total."
       : "";
 
     if (curBurn <= 0) {
-      return { ...base, status: "skip", detail: "No expense data for this month", fillPct: 0 };
+      return { ...base, status: "skip", detail: "No spending data for this month", fillPct: 0 };
     }
 
     const totalExp = cur.expensesTotal ?? 0;
@@ -302,54 +406,64 @@ function computeSignals(
     let baselineLabel = "";
     if (prev3.length >= 2) {
       avgCore = prev3.reduce((s, h) => s + monthlyHistoryCoreExpenses(h), 0) / prev3.length;
-      baselineLabel = `${prev3.length}-mo avg`;
+      baselineLabel = "your recent monthly average";
     } else if (prev3.length === 1) {
       avgCore = monthlyHistoryCoreExpenses(prev3[0]);
-      baselineLabel = "prior month";
+      baselineLabel = "last month";
     } else if (typicalMonthlyCoreFromProfile > 0) {
       avgCore = typicalMonthlyCoreFromProfile;
-      baselineLabel = "median core (profile)";
+      baselineLabel = "your usual monthly spending";
     }
 
     if (avgCore <= 0 && typicalMonthlyCoreFromProfile > 0) {
       avgCore = typicalMonthlyCoreFromProfile;
-      baselineLabel = "median core (profile)";
+      baselineLabel = "your usual monthly spending";
     }
 
     let incomeBasis = cur.incomeTotal > 0 ? cur.incomeTotal : 0;
 
-    const buildTrend = (): Pick<Signal, "status" | "detail" | "fillPct"> => {
+    const buildTrend = (): Pick<Signal, "status" | "detail" | "fillPct" | "actionHelp"> => {
       const tail = spendImputedNote;
       if (avgCore <= 0 || curBurn <= 0) {
         return {
           status: "warning",
           detail:
             (avgCore <= 0
-              ? "Spend vs trend — need another prior statement month or median core from profile"
-              : "Core spend this month is minimal vs baseline") + tail,
+              ? "We need another month of statements to learn your usual spending pace."
+              : "Everyday spending looks very low compared with what we’d expect.") + tail,
           fillPct: 45,
+          actionHelp:
+            avgCore <= 0
+              ? "Upload another full statement month so we can pin a dollar target for everyday spending."
+              : "Double-check categories or missing accounts — everyday totals look unusually low.",
         };
       }
+      const baselineAmt = Math.round(avgCore);
       const ratioTrend = curBurn / avgCore;
       const trendFillPct = Math.round(Math.min(100, Math.max(0, 100 - Math.max(0, ratioTrend - 1) * 200)));
       if (ratioTrend <= 1.0) {
         return {
           status: "pass",
-          detail: `Core spend at ${Math.round(ratioTrend * 100)}% of ${baselineLabel} — on target${tail}`,
+          detail: `Everyday spending is about ${Math.round(ratioTrend * 100)}% of ${baselineLabel} — on track.${tail}`,
           fillPct: trendFillPct,
+          actionHelp: `Stay at or below about ${fmt(baselineAmt, ccy)}/month everyday (${baselineLabel}).`,
         };
       }
       if (ratioTrend <= 1.10) {
+        const trim = Math.round(curBurn - avgCore);
         return {
           status: "warning",
-          detail: `Core spend at ${Math.round(ratioTrend * 100)}% of ${baselineLabel} — slightly elevated${tail}`,
+          detail: `Everyday spending is a bit above ${baselineLabel} (${Math.round(ratioTrend * 100)}%).${tail}`,
           fillPct: trendFillPct,
+          actionHelp: `Trim everyday spending by about ${fmt(trim, ccy)} vs ${baselineLabel} (≈${fmt(baselineAmt, ccy)}/mo typical).`,
         };
       }
+      const trim = Math.round(curBurn - avgCore);
       return {
         status: "fail",
-        detail: `Core spend at ${Math.round(ratioTrend * 100)}% of ${baselineLabel} — ${fmt(curBurn - avgCore, ccy)} over${tail}`,
+        detail: `Everyday spending is ${Math.round(ratioTrend * 100)}% of ${baselineLabel} — about ${fmt(curBurn - avgCore, ccy)} higher than typical.${tail}`,
         fillPct: trendFillPct,
+        actionHelp: `Cut everyday spending by about ${fmt(trim, ccy)} vs ${baselineLabel} (near ${fmt(baselineAmt, ccy)}/mo).`,
       };
     };
 
@@ -362,8 +476,9 @@ function computeSignals(
       return {
         ...base,
         status: "fail",
-        detail: `Expenses ${fmt(totalExp, ccy)} exceed income ${fmt(incomeBasis, ccy)} — ${fmt(overAmt, ccy)} over. Also: ${trend.detail}`,
+        detail: `Total spending (${fmt(totalExp, ccy)}) was higher than income (${fmt(incomeBasis, ccy)}) by ${fmt(overAmt, ccy)}. Versus your usual pace: ${trend.detail}`,
         fillPct: Math.min(cashFill, trend.fillPct),
+        actionHelp: `Hold total month spending under ${fmt(incomeBasis, ccy)} next month — you were ${fmt(overAmt, ccy)} over; everyday aim stays ~${fmt(Math.round(avgCore), ccy)}.`,
       };
     }
 
@@ -371,8 +486,12 @@ function computeSignals(
       return {
         ...base,
         status: "fail",
-        detail: `${profileStructuralCaption}. Also: ${trend.detail}`,
+        detail: `${trend.detail} The bigger “typical month” income gap is explained under Savings rate.`,
         fillPct: Math.min(profileStructural.cashFillPct, trend.fillPct),
+        actionHelp:
+          typicalMonthlyIncomeFromProfile > 0 && typicalMonthlyCoreFromProfile > 0
+            ? `Keep everyday spend near ${fmt(Math.round(avgCore), ccy)}/month; raise income or cut bills by ~${fmt(profileStructural.coreOverIncome, ccy)} to fix the typical-month deficit (see Savings rate).`
+            : trend.actionHelp,
       };
     }
 
@@ -382,9 +501,9 @@ function computeSignals(
   // ── 5. Goal trajectory (5%) ───────────────────────────────────────────────
   const goalSignal: Signal = {
     id: "goal_trajectory", name: "Goal trajectory", shortName: "Goals",
-    description: "FI date within 12 months of original plan",
+    description: "Financial independence timeline stays within about a year of your original plan",
     weight: 5, status: "skip",
-    detail: "Goals not set up yet", fillPct: 0,
+    detail: "Add savings goals in the app to track progress.", fillPct: 0,
   };
 
   // ── 6. Emergency fund vs profile goal (5%) — same target as Goals / Overview (`getEmergencyFundMetrics`) ──
@@ -393,40 +512,44 @@ function computeSignals(
       id: "emergency_fund",
       name: "Emergency fund buffer",
       shortName: "Emergency fund",
-      description: "Liquid savings vs your emergency fund goal (6–9 mo core expenses)",
+      description: "Cash on hand for emergencies compared with your months-of-expenses goal",
       weight: 5,
     };
     if (!emergencyFundMetrics) {
-      return { ...base, status: "skip", detail: "Need expense history to set emergency fund goal", fillPct: 0 };
+      return { ...base, status: "skip", detail: "We need more spending history to suggest an emergency fund target.", fillPct: 0 };
     }
     if (liquidAssets <= 0) {
-      return { ...base, status: "skip", detail: "No linked savings/chequing balance", fillPct: 0 };
+      return { ...base, status: "skip", detail: "No checking or savings balance linked yet.", fillPct: 0 };
     }
     const { gap, monthsOfCoreCovered, pctFunded } = getEmergencyFundLiquidMetrics(liquidAssets, emergencyFundMetrics);
     const targetMo = emergencyFundMetrics.targetMonths;
+    const baselineMo = emergencyFundMetrics.baselineMonthlyCoreExpenses;
     const fillPct = Math.round(Math.min(100, Math.max(0, pctFunded * 100)));
 
     if (pctFunded >= 1) {
       return {
         ...base,
         status: "pass",
-        detail: `Goal met — ${monthsOfCoreCovered.toFixed(1)} mo liquid vs ${targetMo}-mo target`,
+        detail: `You’re on track — about ${monthsOfCoreCovered.toFixed(1)} months of bills saved (goal was ${targetMo} months).`,
         fillPct: 100,
+        actionHelp: `Hold at least ${fmt(emergencyFundMetrics.targetAmount, ccy)} accessible cash (${targetMo} × ~${fmt(baselineMo, ccy)}/mo typical bills).`,
       };
     }
     if (pctFunded >= 0.5) {
       return {
         ...base,
         status: "warning",
-        detail: `${fmtShort(gap, ccy)} below ${targetMo}-mo target (${monthsOfCoreCovered.toFixed(1)} mo covered)`,
+        detail: `About ${fmtShort(gap, ccy)} shy of your ${targetMo}-month safety cushion (${monthsOfCoreCovered.toFixed(1)} months covered).`,
         fillPct,
+        actionHelp: `Add about ${fmt(gap, ccy)} to checking or savings (${monthsOfCoreCovered.toFixed(1)} → ${targetMo} mo at ~${fmt(baselineMo, ccy)}/mo bills).`,
       };
     }
     return {
       ...base,
       status: "fail",
-      detail: `${fmtShort(gap, ccy)} below ${targetMo}-mo target (${monthsOfCoreCovered.toFixed(1)} mo covered)`,
+      detail: `About ${fmtShort(gap, ccy)} shy of your ${targetMo}-month safety cushion (${monthsOfCoreCovered.toFixed(1)} months covered).`,
       fillPct,
+      actionHelp: `Add about ${fmt(gap, ccy)} to checking or savings (${monthsOfCoreCovered.toFixed(1)} → ${targetMo} mo at ~${fmt(baselineMo, ccy)}/mo bills).`,
     };
   })();
 
@@ -442,6 +565,70 @@ function computeScore(signals: Signal[]): number {
     return s + sig.weight * pts;
   }, 0);
   return Math.round((earned / totalWeight) * 100);
+}
+
+/** Points gained if this pillar alone moved to Pass (others unchanged). */
+function marginalPointsToPass(signals: Signal[], signalId: string): number {
+  const sig = signals.find((s) => s.id === signalId);
+  if (!sig || sig.status === "skip" || sig.status === "pass") return 0;
+  const base = computeScore(signals);
+  const upgraded = signals.map((x) =>
+    x.id === signalId && x.status !== "skip"
+      ? { ...x, status: "pass" as SignalStatus, fillPct: 100 }
+      : x,
+  );
+  return computeScore(upgraded) - base;
+}
+
+/** Plain-language tips for reaching Pass (pairs with {@link marginalPointsToPass}). */
+function buildPassRoadmapHint(
+  sig: Signal,
+  ctx: { ccy: string; efGap?: number; efTargetMonths?: number },
+): string {
+  const mo = ctx.efTargetMonths ?? 6;
+  switch (sig.id) {
+    case "nw_trend":
+      if (sig.status === "warning") {
+        return "Next month, try to finish with a slightly higher net worth than the month before (even a small bump helps).";
+      }
+      return "Next month, aim for net worth to go up — earn more, spend less, or pay down debt.";
+    case "savings_rate":
+      return "Raise income or cut regular bills until you keep at least 10% of your income after everyday expenses. Credit‑card payoff transfers aren’t counted as regular bills here.";
+    case "debt_plan":
+      return "Keep paying balances down each month and work toward owing clearly less than about half of what you own.";
+    case "spending_vs_budget": {
+      const d = sig.detail.toLowerCase();
+      if (d.includes("higher than income")) {
+        return "Spend less than you earn that month, then check whether day‑to‑day habits match your usual pace.";
+      }
+      if (d.includes("a bit above")) {
+        return "Ease everyday spending a little — small cuts across a few categories usually fix this.";
+      }
+      return "Keep everyday spending at or below your usual pace; trim categories where you’re spending more than normal.";
+    }
+    case "emergency_fund":
+      if (ctx.efGap != null && ctx.efGap > 0) {
+        return `Add about ${fmt(ctx.efGap, ctx.ccy)} to checking or savings to reach your ${mo}-month cushion.`;
+      }
+      return `Grow cash savings until they cover about ${mo} months of regular bills (same goal as on Goals / Overview).`;
+    case "goal_trajectory":
+      return "Set savings goals in the app and add money on schedule so targets stay realistic.";
+    default:
+      return "Upload fresh statements each month so this score stays up to date.";
+  }
+}
+
+function passRoadmapHelpLine(sig: Signal, roadmapCtx: PassRoadmapCtx): string {
+  const efGap =
+    sig.id === "emergency_fund" && roadmapCtx.efGap != null && roadmapCtx.efGap > 0 ? roadmapCtx.efGap : undefined;
+  return (
+    sig.actionHelp ??
+    buildPassRoadmapHint(sig, {
+      ccy: roadmapCtx.ccy,
+      efGap,
+      efTargetMonths: roadmapCtx.efTargetMonths ?? undefined,
+    })
+  );
 }
 
 function rawStatus(score: number, signals: Signal[]): TrackStatus | null {
@@ -463,7 +650,7 @@ const TRACK_SEVERITY: Record<TrackStatus, number> = {
 
 /**
  * Downgrades wait one month before the badge moves worse (noisy month tolerance).
- * Upgrades apply immediately so we never show “Off track” with a perfect score / all Pass.
+ * Upgrades apply immediately so we never show “Focus areas” with a perfect score / all Pass.
  */
 function applyHysteresis(
   currentStatus: TrackStatus | null,
@@ -486,13 +673,14 @@ const TRACK_CONFIG: Record<TrackStatus, {
   "on-track":  { label: "On track",       badge: "bg-green-100 text-green-700 border-green-200",  dot: "bg-green-500" },
   /** Aggregate amber tier — any active warning or score &lt; 75 (see rawStatus). Not necessarily "Spending". */
   "watch":     { label: "Needs attention", badge: "bg-amber-100 text-amber-700 border-amber-200",  dot: "bg-amber-500" },
-  "off-track": { label: "Off track",      badge: "bg-red-100 text-red-600 border-red-200",        dot: "bg-red-500" },
+  /** Softer than “Off track” — headline tier still reads urgent via color. */
+  "off-track": { label: "Focus areas",   badge: "bg-red-100 text-red-600 border-red-200",        dot: "bg-red-500" },
 };
 
 const SIGNAL_STATUS_CONFIG: Record<SignalStatus, { label: string; color: string; bg: string }> = {
   pass:    { label: "Pass",    color: "text-green-700",  bg: "bg-green-100 border-green-200" },
   warning: { label: "Warning", color: "text-amber-700",  bg: "bg-amber-100 border-amber-200" },
-  fail:    { label: "Fail",    color: "text-red-600",    bg: "bg-red-100 border-red-200" },
+  fail:    { label: "Focus",   color: "text-red-600",    bg: "bg-red-100 border-red-200" },
   skip:    { label: "N/A",     color: "text-gray-400",   bg: "bg-gray-100 border-gray-200" },
 };
 
@@ -518,7 +706,7 @@ const STRIP_BAR: Record<SignalStatus, string> = {
 const STRIP_LABEL: Record<SignalStatus, { text: string; cls: string }> = {
   pass:    { text: "Pass",    cls: "text-green-600" },
   warning: { text: "Watch",   cls: "text-amber-500" },
-  fail:    { text: "Fail",    cls: "text-red-500"   },
+  fail:    { text: "Focus",   cls: "text-red-500"   },
   skip:    { text: "N/A",     cls: "text-gray-300"  },
 };
 
@@ -530,12 +718,91 @@ function gridColsClassForSignalCount(n: number): string {
   return "grid-cols-2 sm:grid-cols-3 lg:grid-cols-5";
 }
 
-function SignalStrip({ signals, score, status, periodLabel, onOpenModal }: {
+type PassRoadmapCtx = { ccy: string; efGap: number | null; efTargetMonths: number | null };
+
+/** Skip / Pass-only lines — fail & warning use {@link CollapsiblePassRoadmap}. */
+function SignalPassRoadmap({ sig, compact }: { sig: Signal; compact?: boolean }) {
+  if (sig.status === "skip") {
+    return (
+      <p className={`mt-2 ${compact ? "text-[10px]" : "text-[11px]"} text-gray-400 italic leading-snug`}>
+        Not included in your weighted score right now.
+      </p>
+    );
+  }
+  if (sig.status === "pass") {
+    return (
+      <p className={`mt-2 ${compact ? "text-[10px]" : "text-[11px]"} font-medium text-green-700 leading-snug`}>
+        Full credit — holding Pass.
+      </p>
+    );
+  }
+  return null;
+}
+
+/** Collapsed by default: shows +pts row; expands to Pass roadmap “what helps” (numbers — narrative lives in full breakdown). */
+function CollapsiblePassRoadmap({
+  signals,
+  sig,
+  roadmapCtx,
+  compact,
+}: {
+  signals: Signal[];
+  sig: Signal;
+  roadmapCtx: PassRoadmapCtx;
+  compact?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const help = passRoadmapHelpLine(sig, roadmapCtx);
+  const delta = marginalPointsToPass(signals, sig.id);
+
+  const btnSz = compact ? "text-[10px]" : "text-[11px]";
+  const bodySz = compact ? "text-[10px]" : "text-xs";
+  const labelSz = compact ? "text-[9px]" : "text-[10px]";
+  const btnLabel =
+    delta >= 1 ? `+${delta} pt${delta === 1 ? "" : "s"} to Pass` : "What helps";
+
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={
+          "flex w-full items-center justify-between gap-1.5 rounded-lg border border-purple-100 bg-purple-50/90 " +
+          "px-2 py-1.5 text-left hover:bg-purple-50 transition " +
+          (compact ? "" : "sm:px-3 sm:py-2")
+        }
+        aria-expanded={open}
+        aria-label={open ? "Hide what helps" : "Show what helps"}
+      >
+        <span className={`${btnSz} font-semibold text-purple-950 tabular-nums tracking-tight`}>{btnLabel}</span>
+        <svg
+          className={`h-3 w-3 shrink-0 text-purple-600 transition-transform ${open ? "rotate-180" : ""}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2.5}
+          aria-hidden
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && (
+        <div className={`mt-2 ${compact ? "" : "pl-0.5"}`}>
+          <p className={`${labelSz} font-semibold uppercase tracking-wide text-purple-700/80`}>What helps</p>
+          <p className={`${bodySz} mt-0.5 border-l-2 border-purple-200 pl-2 leading-snug text-purple-900/90`}>{help}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SignalStrip({ signals, score, status, periodLabel, roadmapCtx, onOpenModal }: {
   signals: Signal[];
   score: number;
   status: TrackStatus | null;
   /** Explains which statement month the scores use (last complete month). */
   periodLabel?: string | null;
+  roadmapCtx: PassRoadmapCtx;
   onOpenModal: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -589,23 +856,40 @@ function SignalStrip({ signals, score, status, periodLabel, onOpenModal }: {
       {expanded && (
         <>
           <div
-            className={`grid gap-px bg-gray-100 border-t border-gray-100 ${gridColsClassForSignalCount(active.length)}`}
+            className={`grid gap-px bg-gray-100 border-t border-gray-100 items-stretch ${gridColsClassForSignalCount(active.length)}`}
           >
             {active.map((sig) => {
               const lb = STRIP_LABEL[sig.status];
               return (
-                <div key={sig.id} className="bg-white px-3.5 py-3 space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <p className="text-[11px] font-semibold text-gray-500 leading-tight truncate pr-1">{sig.shortName}</p>
+                <div
+                  key={sig.id}
+                  className="bg-white px-3 py-3 sm:px-3.5 flex flex-col min-h-0 h-full"
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <p className="text-[11px] font-semibold text-gray-600 leading-tight min-w-0">{sig.shortName}</p>
                     <span className={`text-[10px] font-bold shrink-0 ${lb.cls}`}>{lb.text}</span>
                   </div>
-                  <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                  <div className="mt-1.5 h-1.5 rounded-full bg-gray-100 overflow-hidden shrink-0">
                     <div
                       className={`h-full rounded-full transition-all ${STRIP_BAR[sig.status]}`}
                       style={{ width: `${sig.fillPct}%` }}
                     />
                   </div>
-                  <p className="text-[11px] text-gray-400 leading-tight line-clamp-2">{sig.detail}</p>
+                  <div className="mt-auto pt-2">
+                    {sig.status === "pass" ? (
+                      <>
+                        <p className="text-[11px] text-gray-600 leading-snug">{sig.detail}</p>
+                        <SignalPassRoadmap sig={sig} compact />
+                      </>
+                    ) : (
+                      <CollapsiblePassRoadmap
+                        signals={signals}
+                        sig={sig}
+                        roadmapCtx={roadmapCtx}
+                        compact
+                      />
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -629,33 +913,34 @@ function SignalStrip({ signals, score, status, periodLabel, onOpenModal }: {
 // ── signal breakdown modal ────────────────────────────────────────────────────
 
 function SignalModal({
-  signals, score, status, signalPeriodLabel, onClose,
+  signals, score, status, signalPeriodLabel, roadmapCtx, onClose,
 }: {
   signals: Signal[];
   score: number;
   status: TrackStatus | null;
   signalPeriodLabel?: string | null;
+  roadmapCtx: PassRoadmapCtx;
   onClose: () => void;
 }) {
   const trackCfg = status ? TRACK_CONFIG[status] : null;
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative w-full max-w-md rounded-2xl bg-white shadow-2xl">
+      <div className="relative w-full max-w-lg rounded-2xl bg-white shadow-2xl max-h-[90dvh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
-          <div>
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-gray-100 px-5 py-4">
+          <div className="min-w-0 flex-1 pr-2">
             <h2 className="font-bold text-gray-900">Health check</h2>
             {signalPeriodLabel ? (
               <p className="mt-1 text-[11px] font-medium text-gray-500">{signalPeriodLabel}</p>
             ) : null}
-            <p className="mt-2 text-xs text-gray-400">
-              Signals use your <strong className="text-gray-500">last complete statement month</strong> (not the live month until every account has a statement).
-              Each signal has a weight; the overall score sets the badge. When that month has pay deposits, savings compares its income to its core spend;
-              otherwise it uses{" "}
-              <strong className="text-gray-500">median income and median core spend</strong> from your financial profile (never median income + a different month&apos;s spend).
-              Spending fails if total expenses exceed income for that month, or if median expenses exceed median income across your statement history.
-              Emergency fund matches Goals / Overview. Debt uses balance change and debt vs gross assets.
+            <p className="mt-2 text-xs text-gray-400 leading-relaxed">
+              Scores use your <strong className="text-gray-500">last full statement month</strong> (not the current calendar month until every account has a statement).
+              Each row counts toward the total using its weight. When that month shows paycheck deposits, savings compares that month&apos;s income to its everyday bills.
+              If there were no deposits, we pair your <strong className="text-gray-500">usual monthly income</strong> with your{" "}
+              <strong className="text-gray-500">usual monthly bills</strong> — never mixing income from one pattern with spending from another.
+              Spending checks total spending vs income and whether habits match your usual pace.
+              Emergency savings matches Goals / Overview. Debt looks at balance changes vs how much you own.
             </p>
           </div>
           <button onClick={onClose} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition">
@@ -666,7 +951,7 @@ function SignalModal({
         </div>
 
         {/* Score summary */}
-        <div className="flex items-center gap-4 border-b border-gray-100 px-5 py-3">
+        <div className="flex shrink-0 items-center gap-4 border-b border-gray-100 px-5 py-3">
           <div className="flex-1">
             <div className="flex h-2 w-full overflow-hidden rounded-full bg-gray-100">
               <div
@@ -686,10 +971,11 @@ function SignalModal({
         </div>
 
         {/* Signals */}
-        <div className="divide-y divide-gray-50 max-h-[60vh] overflow-y-auto">
+        <div className="divide-y divide-gray-50 flex-1 min-h-0 overflow-y-auto overscroll-contain">
           {signals.map((sig) => {
             const scfg = SIGNAL_STATUS_CONFIG[sig.status];
             const activeWeight = sig.status !== "skip" ? sig.weight : null;
+            const ptsToPass = marginalPointsToPass(signals, sig.id);
             return (
               <div key={sig.id} className={`px-5 py-4 ${sig.status === "skip" ? "opacity-50" : ""}`}>
                 <div className="flex items-start justify-between gap-3">
@@ -706,7 +992,34 @@ function SignalModal({
                     )}
                   </div>
                 </div>
-                <p className={`mt-1.5 text-xs ${scfg.color}`}>{sig.detail}</p>
+                {sig.status === "pass" || sig.status === "skip" ? (
+                  <>
+                    <p className={`mt-1.5 text-xs leading-relaxed ${scfg.color}`}>{sig.detail}</p>
+                    <SignalPassRoadmap sig={sig} />
+                  </>
+                ) : (
+                  <>
+                    <div className="mt-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                        What&apos;s going on
+                      </p>
+                      <p className={`mt-0.5 text-xs leading-relaxed ${scfg.color}`}>{sig.detail}</p>
+                    </div>
+                    {ptsToPass >= 1 ? (
+                      <p className="mt-2 text-[11px] font-semibold text-purple-950 tabular-nums">
+                        +{ptsToPass} pt{ptsToPass === 1 ? "" : "s"} to Pass
+                      </p>
+                    ) : null}
+                    <div className="mt-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-purple-700/80">
+                        What helps
+                      </p>
+                      <p className="mt-0.5 border-l-2 border-purple-200 pl-2 text-xs leading-snug text-purple-900/90">
+                        {passRoadmapHelpLine(sig, roadmapCtx)}
+                      </p>
+                    </div>
+                  </>
+                )}
                 {/* Weight bar */}
                 {activeWeight != null && (
                   <div className="mt-2 h-0.5 w-full overflow-hidden rounded-full bg-gray-100">
@@ -723,10 +1036,12 @@ function SignalModal({
           })}
         </div>
 
-        <div className="border-t border-gray-100 px-5 py-3">
+        <div className="border-t border-gray-100 px-5 py-3 shrink-0">
           <p className="text-[10px] text-gray-400">
             Improvements update the badge immediately. Downgrades wait until the lower tier also appeared last month, so one noisy month
             doesn&apos;t flip you red. Skipped signals are omitted from the weighted score.
+            {" "}
+            Point bumps assume everything else stays the same while that pillar alone reaches Pass; roadmap lines are guidance, not an exact flip guarantee.
           </p>
         </div>
       </div>
@@ -955,6 +1270,15 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
   const prevRaw   = prevSigs && prevScore != null ? rawStatus(prevScore, prevSigs) : null;
   const trackStatus = applyHysteresis(curRaw, prevRaw);
 
+  const passRoadmapCtx: PassRoadmapCtx = {
+    ccy: homeCurrency,
+    efGap:
+      emergencyFundMetrics != null
+        ? getEmergencyFundLiquidMetrics(liquidAssets, emergencyFundMetrics).gap
+        : null,
+    efTargetMonths: emergencyFundMetrics?.targetMonths ?? null,
+  };
+
   const signalPeriodStripLabel = signalYm ? `Last complete month: ${monthLabel(signalYm)}` : null;
   const signalPeriodModalLabel = signalYm ? `Statement month: ${monthLabel(signalYm)}` : null;
 
@@ -1066,6 +1390,7 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
             score={score}
             status={trackStatus}
             periodLabel={signalPeriodStripLabel}
+            roadmapCtx={passRoadmapCtx}
             onOpenModal={() => setModalOpen(true)}
           />
         )}
@@ -1148,6 +1473,7 @@ export default function ConsolidatedCurrentDashboard({ refreshKey }: { refreshKe
           score={score}
           status={trackStatus}
           signalPeriodLabel={signalPeriodModalLabel}
+          roadmapCtx={passRoadmapCtx}
           onClose={() => setModalOpen(false)}
         />
       )}
