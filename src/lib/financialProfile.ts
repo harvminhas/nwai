@@ -59,7 +59,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "51"; // monthlyHistory.cardServicingPaymentsTotal for KPI toggle (no installment double-count)
+const SCHEMA_VERSION = "52"; // accountSnapshots.paymentsMade + line_of_credit accountType support
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -820,7 +820,7 @@ export async function buildAndCacheFinancialProfile(
     const manualAssetsTotal = manualAssets.reduce((s, a) => s + a.value, 0);
 
     const ASSET_TYPES = new Set(["checking", "savings", "investment", "property", "other"]);
-    const DEBT_TYPES  = new Set(["credit", "mortgage", "loan"]);
+    const DEBT_TYPES  = new Set(["credit", "mortgage", "loan", "line_of_credit"]);
 
     // Pre-sort entries ascending; split into asset and debt buckets by account type —
     // matching assets/page.tsx (ASSET_TYPES) and liabilities/page.tsx (DEBT_TYPES or

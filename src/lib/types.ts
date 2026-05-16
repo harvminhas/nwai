@@ -137,6 +137,7 @@ export type AccountType =
   | "mortgage"
   | "investment"
   | "loan"
+  | "line_of_credit"
   | "other";
 
 /**

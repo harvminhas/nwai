@@ -80,6 +80,12 @@ export interface AccountSnapshot {
    * Defaults to "CAD" when not stated by the parser.
    */
   currency?: string;
+  /**
+   * Total payments received by this account in the statement period (from parsedData.paymentsMade).
+   * Used as the actual minimum payment in the payoff planner for LOC/mortgage accounts
+   * where the formula estimate is less accurate than the real payment made.
+   */
+  paymentsMade?: number;
 }
 
 export interface ExtractedFinancialData {
@@ -385,6 +391,7 @@ export async function extractAllTransactions(
       statementMonth: stmtYm,
       interestRate: typeof parsed.interestRate === "number" ? parsed.interestRate : null,
       currency: inferCurrencyFromBankName(parsed.bankName, parsed.currency),
+      paymentsMade: typeof parsed.paymentsMade === "number" && parsed.paymentsMade > 0 ? parsed.paymentsMade : undefined,
     })
   );
 

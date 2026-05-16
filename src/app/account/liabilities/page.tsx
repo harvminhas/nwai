@@ -38,7 +38,19 @@ const ACCT_TYPE_TO_CAT: Record<string, LiabilityCategory> = {
   mortgage: "mortgage",
   loan: "personal_loan",
   credit: "credit_card",
+  line_of_credit: "line_of_credit",
 };
+
+/**
+ * Names that indicate a home equity line of credit / revolving LOC regardless
+ * of what accountType the AI stored (retroactively fixes "loan"-typed HELOCs).
+ */
+const HELOC_NAME_RE = /flexline|flex[- ]line|heloc|home[\s-]?equity[\s-]?(line|loc)|equity[\s-]?line[\s-]?of[\s-]?credit|line[\s-]?of[\s-]?credit/i;
+
+function deriveCategoryFromSnapshot(accountType: string, accountName?: string): LiabilityCategory {
+  if (accountName && HELOC_NAME_RE.test(accountName)) return "line_of_credit";
+  return ACCT_TYPE_TO_CAT[accountType] ?? "other";
+}
 
 // ── tabs ──────────────────────────────────────────────────────────────────────
 
@@ -106,8 +118,13 @@ const DEFAULT_TERMS: Record<LiabilityCategory, number> = {
 };
 
 function estimateMinPayment(balance: number, apr: number | null, cat: LiabilityCategory): number {
-  if (cat === "credit_card")    return Math.max(Math.ceil(balance * 0.02), 25);
-  if (cat === "line_of_credit") return Math.max(Math.ceil(balance * 0.01), 50);
+  if (cat === "credit_card") return Math.max(Math.ceil(balance * 0.02), 25);
+  // HELOCs and revolving LOCs: minimum = interest-only (balance × monthly rate).
+  // Using a 7% default if APR unknown — real rate from statement is preferred.
+  if (cat === "line_of_credit") {
+    const monthlyRate = (apr ?? 7) / 100 / 12;
+    return Math.max(25, Math.round(balance * monthlyRate));
+  }
   const rate = apr ?? 5;
   return Math.round(calcAmortisedPayment(balance, rate, DEFAULT_TERMS[cat] ?? 60));
 }
@@ -131,20 +148,32 @@ function simulate(
     const alive = order.filter((id) => (state.get(id)?.remaining ?? 0) > 0.01);
     if (alive.length === 0) break;
 
-    for (const id of alive) {
-      const d = state.get(id)!;
-      const interest = d.remaining * (d.apr ?? 0) / 100 / 12;
-      d.interestPaid += interest;
-      d.remaining = Math.max(0, d.remaining + interest - d.minPayment);
+    // Determine which debt gets the extra this month (first unfinished in priority order)
+    let priorityId: string | null = null;
+    for (const id of order) {
+      if ((state.get(id)?.remaining ?? 0) > 0.01) { priorityId = id; break; }
     }
 
-    let extraLeft = extraMonthly;
-    for (const id of order) {
-      const d = state.get(id);
-      if (!d || d.remaining <= 0.01) continue;
-      d.remaining = Math.max(0, d.remaining - Math.min(d.remaining, extraLeft));
-      extraLeft = 0;
-      break;
+    for (const id of alive) {
+      const d = state.get(id)!;
+      const monthlyRate = (d.apr ?? 0) / 100 / 12;
+      const interest = d.remaining * monthlyRate;
+
+      // For credit cards the real minimum scales with the current balance (2 % of balance).
+      // This prevents artificially small fixed minimums from letting the balance grow
+      // explosively when APR > 2 %/month.
+      const dynamicMin = d.category === "credit_card"
+        ? Math.max(Math.ceil(d.remaining * 0.02), 25)
+        : d.minPayment;
+
+      const extra   = id === priorityId ? extraMonthly : 0;
+      const payment = Math.min(d.remaining + interest, dynamicMin + extra);
+
+      // Only count interest actually covered by the payment (avoids inflating totals
+      // when payment < interest, i.e. negative amortisation).
+      const interestCovered = Math.min(interest, payment);
+      d.interestPaid += interestCovered;
+      d.remaining = Math.max(0, d.remaining + interest - payment);
     }
 
     for (const id of alive) {
@@ -184,6 +213,8 @@ interface DisplayLiability {
   balance: number; currency?: string; interestRate?: number; statementDate?: string;
   source: "manual" | "statement"; accountSlug?: string;
   subAccounts?: SubAccount[];
+  /** Actual payments received from the latest statement — used as min payment when available. */
+  paymentsMade?: number;
 }
 
 // ── modal ─────────────────────────────────────────────────────────────────────
@@ -1081,14 +1112,90 @@ function AccountsTab({
 
 type Strategy = "avalanche" | "snowball" | "custom";
 
+// ── Gantt chart ───────────────────────────────────────────────────────────────
+
+function GanttChart({
+  debts,
+  simResults,
+  maxMonths,
+}: {
+  debts: PayoffDebt[];
+  simResults: Map<string, { payoffMonths: number; interestPaid: number }>;
+  maxMonths: number;
+}) {
+  const clampedMax = Math.min(Math.max(maxMonths, 12), 600);
+  const currentYear = new Date().getFullYear();
+  const totalYears  = Math.ceil(clampedMax / 12);
+
+  // Year tick positions (every 2 years, or every year if <=5 yrs)
+  const step = totalYears <= 5 ? 1 : totalYears <= 10 ? 2 : Math.ceil(totalYears / 6);
+  const yearTicks: number[] = [];
+  for (let y = 0; y <= totalYears; y += step) yearTicks.push(y);
+  if (yearTicks[yearTicks.length - 1] !== totalYears) yearTicks.push(totalYears);
+
+  return (
+    <div>
+      <div className="space-y-1.5">
+        {debts.map((d) => {
+          const result    = simResults.get(d.id);
+          const months    = result ? Math.min(result.payoffMonths, 600) : 600;
+          const widthPct  = Math.min((months / clampedMax) * 100, 100);
+          const isRevolving = d.category === "credit_card" || d.category === "line_of_credit";
+          const payoffLabel = result
+            ? result.payoffMonths >= 600
+              ? "50+ yrs"
+              : addMonths(result.payoffMonths)
+            : "—";
+          return (
+            <div key={d.id} className="flex items-center gap-2">
+              <p className="w-36 shrink-0 text-[11px] text-gray-500 truncate pr-1">{d.label}</p>
+              <div className="relative flex-1 h-5">
+                <div className="absolute inset-0 rounded bg-gray-100" />
+                <div
+                  className={`absolute inset-y-0 left-0 rounded transition-all ${isRevolving ? "bg-orange-400" : "bg-gray-700"}`}
+                  style={{ width: `${widthPct}%` }}
+                />
+              </div>
+              <p className="w-24 shrink-0 text-[10px] text-gray-400 tabular-nums">{payoffLabel}</p>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* X-axis year labels */}
+      <div className="flex mt-2 pl-[152px] pr-24">
+        <div className="relative flex-1 h-4">
+          {yearTicks.map((y) => (
+            <span
+              key={y}
+              className="absolute text-[10px] text-gray-300 -translate-x-1/2"
+              style={{ left: `${(y / totalYears) * 100}%` }}
+            >
+              {y === 0 ? "Today" : currentYear + y}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── PayoffTab ─────────────────────────────────────────────────────────────────
+
 function PayoffTab({ libs, accountRates, homeCurrency }: { libs: DisplayLiability[]; accountRates: AccountRateEntry[]; homeCurrency: string }) {
-  const [strategy, setStrategy]       = useState<Strategy>("avalanche");
+  const [strategy, setStrategy]        = useState<Strategy>("avalanche");
   const [extraPayment, setExtraPayment] = useState(200);
-  const [customOrder, setCustomOrder] = useState<string[]>([]);
+  const [customOrder, setCustomOrder]   = useState<string[]>([]);
 
   const payoffDebts: PayoffDebt[] = libs.filter((d) => d.balance > 0).map((d) => {
     const { apr, estimated } = resolveApr(d, accountRates);
-    return { id: d.id, label: d.label, bankName: d.subLabel, category: d.category, balance: d.balance, currency: d.currency, apr, aprEstimated: estimated, minPayment: estimateMinPayment(d.balance, apr, d.category) };
+    const formulaMin = estimateMinPayment(d.balance, apr, d.category);
+    const useActualPayment =
+      d.paymentsMade != null &&
+      d.paymentsMade > 0 &&
+      (d.category === "line_of_credit" || d.category === "mortgage");
+    const minPayment = useActualPayment ? d.paymentsMade! : formulaMin;
+    return { id: d.id, label: d.label, bankName: d.subLabel, category: d.category, balance: d.balance, currency: d.currency, apr, aprEstimated: estimated, minPayment };
   });
 
   function strategyOrder(s: Strategy, custom: string[]): string[] {
@@ -1097,8 +1204,6 @@ function PayoffTab({ libs, accountRates, homeCurrency }: { libs: DisplayLiabilit
     const ids = payoffDebts.map((d) => d.id);
     return custom.length === ids.length ? custom : ids;
   }
-
-  const order = strategyOrder(strategy, customOrder);
 
   function handleStrategyClick(s: Strategy) {
     if (s === "custom" && strategy !== "custom") setCustomOrder(strategyOrder("avalanche", []));
@@ -1110,114 +1215,363 @@ function PayoffTab({ libs, accountRates, homeCurrency }: { libs: DisplayLiabilit
       const arr = [...prev];
       const idx = arr.indexOf(id);
       if (idx < 0) return arr;
-      const swapIdx = idx + dir;
-      if (swapIdx < 0 || swapIdx >= arr.length) return arr;
-      [arr[idx], arr[swapIdx]] = [arr[swapIdx], arr[idx]];
+      const swap = idx + dir;
+      if (swap < 0 || swap >= arr.length) return arr;
+      [arr[idx], arr[swap]] = [arr[swap], arr[idx]];
       return arr;
     });
   }
 
-  const simWith    = simulate(payoffDebts, extraPayment, order);
-  const simWithout = simulate(payoffDebts, 0, order);
-  const interestSaved = Math.max(0, simWithout.totalInterestPaid - simWith.totalInterestPaid);
-  const monthsSooner  = Math.max(0, simWithout.totalMonths - simWith.totalMonths);
+  const [dragId, setDragId]       = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+
+  function handleDragStart(id: string) { setDragId(id); }
+  function handleDragOver(e: React.DragEvent, id: string) {
+    e.preventDefault();
+    if (id !== dragId) setDragOverId(id);
+  }
+  function handleDrop(targetId: string) {
+    if (!dragId || dragId === targetId) { setDragId(null); setDragOverId(null); return; }
+    setCustomOrder((prev) => {
+      const arr  = [...prev];
+      const from = arr.indexOf(dragId);
+      const to   = arr.indexOf(targetId);
+      if (from < 0 || to < 0) return prev;
+      arr.splice(from, 1);
+      arr.splice(to, 0, dragId);
+      return arr;
+    });
+    setDragId(null);
+    setDragOverId(null);
+  }
+  function handleDragEnd() { setDragId(null); setDragOverId(null); }
+
+  const order         = strategyOrder(strategy, customOrder);
   const orderedDebts  = order.map((id) => payoffDebts.find((d) => d.id === id)!).filter(Boolean);
-  const maxExtra      = Math.max(1000, Math.ceil(payoffDebts.reduce((s, d) => s + d.minPayment, 0) * 0.5 / 50) * 50);
+
+  const simWith       = simulate(payoffDebts, extraPayment, order);
+  const simWithout    = simulate(payoffDebts, 0,            order);
+  const simAvalanche  = simulate(payoffDebts, extraPayment, strategyOrder("avalanche", []));
+  const simSnowball   = simulate(payoffDebts, extraPayment, strategyOrder("snowball", []));
+
+  const totalMinPayments = payoffDebts.reduce((s, d) => s + d.minPayment, 0);
+  const totalMonthly     = totalMinPayments + extraPayment;
+  const interestSaved    = Math.max(0, simWithout.totalInterestPaid - simWith.totalInterestPaid);
+  const monthsSooner     = Math.max(0, simWithout.totalMonths - simWith.totalMonths);
+  const maxExtra         = Math.max(1000, Math.ceil(totalMinPayments * 0.5 / 50) * 50);
+
+  const savesMostStrategy: Strategy =
+    simAvalanche.totalInterestPaid <= simSnowball.totalInterestPaid ? "avalanche" : "snowball";
+
+  const interestByStrategy: Record<Strategy, number | null> = {
+    avalanche: simAvalanche.totalInterestPaid,
+    snowball:  simSnowball.totalInterestPaid,
+    custom:    strategy === "custom" ? simWith.totalInterestPaid : null,
+  };
+
+  const maxPayoffMonths = Math.max(1, ...payoffDebts.map(
+    (d) => simWith.debtResults.get(d.id)?.payoffMonths ?? 1
+  ));
+
+  const STRATEGY_DESC: Record<Strategy, string> = {
+    avalanche: "Highest APR first. Mathematically cheapest.",
+    snowball:  "Smallest balance first. Faster wins, more motivation.",
+    custom:    "Drag rows below into your own payoff order.",
+  };
 
   if (payoffDebts.length === 0) return <EmptyState />;
 
+  const debtFreeYrs = Math.floor(simWith.totalMonths / 12);
+  const debtFreeMos = simWith.totalMonths % 12;
+  const isViable    = simWith.totalMonths < 600;
+
   return (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-      {/* Strategy tabs */}
-      <div className="flex items-center gap-2 border-b border-gray-100 px-4 pt-4 pb-3">
-        {(["avalanche", "snowball", "custom"] as Strategy[]).map((s) => (
-          <button key={s} onClick={() => handleStrategyClick(s)}
-            className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
-              strategy === s ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 text-gray-600 hover:border-gray-400"
-            }`}>
-            {s.charAt(0).toUpperCase() + s.slice(1)}
-          </button>
-        ))}
+
+      {/* ── HERO ──────────────────────────────────────────────────────── */}
+      <div className="px-6 pt-6 pb-6 border-b border-gray-100">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Your payoff plan</p>
+        {isViable ? (
+          <>
+            <h2 className="text-3xl font-extrabold text-gray-900 leading-tight">
+              Debt-free by {addMonths(simWith.totalMonths)}
+            </h2>
+            <p className="mt-1 text-sm text-gray-400">
+              If you keep paying {fmt(totalMonthly, homeCurrency)}/mo across all debts
+            </p>
+          </>
+        ) : (
+          <>
+            <h2 className="text-2xl font-extrabold text-orange-600 leading-tight">
+              Payments too low to pay off all debts
+            </h2>
+            <p className="mt-1 text-sm text-gray-400">
+              One or more debts are growing faster than you're paying them down — increase your extra payment.
+            </p>
+          </>
+        )}
+        <div className="mt-5 grid grid-cols-2 gap-6">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Total interest</p>
+            {isViable ? (
+              <>
+                <p className="mt-1 text-2xl font-extrabold text-gray-900 tabular-nums">{fmt(simWith.totalInterestPaid, homeCurrency)}</p>
+                {interestSaved > 0 && (
+                  <p className="mt-0.5 text-xs font-medium text-green-600">↓ {fmt(interestSaved, homeCurrency)} saved</p>
+                )}
+              </>
+            ) : (
+              <p className="mt-1 text-2xl font-extrabold text-gray-400">—</p>
+            )}
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Time to payoff</p>
+            {isViable ? (
+              <>
+                <p className="mt-1 text-2xl font-extrabold text-gray-900">
+                  {debtFreeYrs} yr{debtFreeYrs !== 1 ? "s" : ""} {debtFreeMos > 0 ? `${debtFreeMos} mo` : ""}
+                </p>
+                {monthsSooner > 0 && (
+                  <p className="mt-0.5 text-xs font-medium text-green-600">↓ {monthsSooner} months sooner</p>
+                )}
+              </>
+            ) : (
+              <p className="mt-1 text-2xl font-extrabold text-orange-500">50+ years</p>
+            )}
+          </div>
+        </div>
       </div>
 
-      {/* Strategy hint */}
-      <p className="px-4 pt-2.5 pb-1 text-xs text-gray-400">
-        {strategy === "avalanche" && "Highest APR first — minimises total interest paid"}
-        {strategy === "snowball"  && "Smallest balance first — fastest early wins"}
-        {strategy === "custom"   && "Use ↑↓ to set your own payoff priority"}
-      </p>
-
-      {/* Debt rows */}
-      <div className="divide-y divide-gray-100">
-        {orderedDebts.map((d, i) => {
-          const result = simWith.debtResults.get(d.id);
-          return (
-            <div key={d.id} className="flex items-center gap-3 px-4 py-3.5">
-              <CategoryIcon cat={d.category} />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-gray-800 truncate">
-                  {d.label}
-                  {d.bankName && d.bankName !== d.label && <span className="font-normal text-gray-400"> — {d.bankName}</span>}
+      {/* ── STRATEGY CARDS ────────────────────────────────────────────── */}
+      <div className="px-6 py-5 border-b border-gray-100">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">Strategy</p>
+        <div className="grid grid-cols-3 gap-3">
+          {(["avalanche", "snowball", "custom"] as Strategy[]).map((s) => {
+            const isActive = strategy === s;
+            const isBest   = s === savesMostStrategy;
+            const interest = interestByStrategy[s];
+            return (
+              <button
+                key={s}
+                onClick={() => handleStrategyClick(s)}
+                className={`relative text-left rounded-xl border px-3 py-3 transition ${
+                  isActive
+                    ? "bg-gray-900 border-gray-900"
+                    : "border-gray-200 hover:border-gray-400 bg-white"
+                }`}
+              >
+                {isBest && (
+                  <span className={`absolute top-2 right-2 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${
+                    isActive ? "bg-white/20 text-white" : "bg-gray-100 text-gray-600"
+                  }`}>
+                    Saves most
+                  </span>
+                )}
+                <p className={`text-sm font-bold capitalize mb-1 ${isActive ? "text-white" : "text-gray-800"}`}>
+                  {s.charAt(0).toUpperCase() + s.slice(1)}
                 </p>
-                <p className="mt-0.5 text-xs text-gray-400">
-                  {d.apr != null ? <>{d.apr.toFixed(1)}% APR{d.aprEstimated && <span className="text-amber-500"> est.</span>} · </> : null}
-                  {fmt(d.minPayment, d.currency)}/mo min
+                <p className={`text-[11px] leading-relaxed ${isActive ? "text-white/60" : "text-gray-400"}`}>
+                  {STRATEGY_DESC[s]}
                 </p>
-              </div>
-              <div className="shrink-0 text-right">
-                <p className="text-sm font-semibold text-gray-900 tabular-nums">{formatCurrency(d.balance, homeCurrency, d.currency, false)}</p>
-                <p className="mt-0.5 text-xs text-green-600">
-                  {result ? (result.payoffMonths >= 600 ? "50+ yrs" : `Paid off ${addMonths(result.payoffMonths)}`) : "—"}
-                </p>
-              </div>
-              {strategy === "custom" && (
-                <div className="shrink-0 flex flex-col gap-0.5">
-                  <button onClick={() => moveDebt(d.id, -1)} disabled={i === 0}
-                    className="rounded p-0.5 text-gray-300 hover:text-gray-600 disabled:opacity-20">
-                    <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg>
-                  </button>
-                  <button onClick={() => moveDebt(d.id, 1)} disabled={i === orderedDebts.length - 1}
-                    className="rounded p-0.5 text-gray-300 hover:text-gray-600 disabled:opacity-20">
-                    <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
-                  </button>
+                <div className="mt-2.5">
+                  <p className={`text-[9px] font-bold uppercase tracking-wider ${isActive ? "text-white/40" : "text-gray-300"}`}>
+                    Interest
+                  </p>
+                  <p className={`text-sm font-bold tabular-nums ${isActive ? "text-white" : "text-gray-700"}`}>
+                    {interest != null ? fmt(interest, homeCurrency) : "—"}
+                  </p>
                 </div>
-              )}
-            </div>
-          );
-        })}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Extra payment slider */}
-      <div className="border-t border-gray-100 px-4 pt-4 pb-3">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-sm text-gray-600">Extra payment per month</p>
-          <span className="text-sm font-bold text-gray-900 tabular-nums">{fmt(extraPayment, homeCurrency)}</span>
+      {/* ── SLIDER ────────────────────────────────────────────────────── */}
+      <div className="px-6 py-5 border-b border-gray-100">
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-medium text-gray-600">Extra payment per month</p>
+          <p className="text-[11px] text-gray-400">Applied to your priority debt</p>
         </div>
-        <input type="range" min={0} max={maxExtra} step={25} value={extraPayment}
-          onChange={(e) => setExtraPayment(Number(e.target.value))}
-          className="w-full accent-gray-900 cursor-pointer" />
-        <div className="flex justify-between text-xs text-gray-300 mt-0.5"><span>$0</span><span>{fmt(maxExtra, homeCurrency)}</span></div>
+        <div className="mt-1 flex items-baseline gap-2.5">
+          <span className="text-2xl font-extrabold text-gray-900 tabular-nums">{fmt(extraPayment, homeCurrency)}</span>
+          {extraPayment > 0 && interestSaved > 0 && (
+            <span className="text-xs font-medium text-green-600">
+              Saves {fmt(interestSaved, homeCurrency)} · {monthsSooner} months sooner
+            </span>
+          )}
+        </div>
+        <div className="mt-3">
+          <input
+            type="range" min={0} max={maxExtra} step={25} value={extraPayment}
+            onChange={(e) => setExtraPayment(Number(e.target.value))}
+            className="w-full h-1.5 cursor-pointer appearance-none rounded-full"
+            style={{
+              background: `linear-gradient(to right, #16a34a ${(extraPayment / maxExtra) * 100}%, #e5e7eb ${(extraPayment / maxExtra) * 100}%)`,
+            }}
+          />
+        </div>
+        <div className="mt-1.5 flex justify-between text-[10px] text-gray-300">
+          {[0, 0.25, 0.5, 0.75, 1].map((f) => (
+            <span key={f}>{fmt(Math.round(maxExtra * f / 25) * 25, homeCurrency)}</span>
+          ))}
+        </div>
       </div>
 
-      {/* Savings banner */}
-      {extraPayment > 0 && (interestSaved > 0 || monthsSooner > 0) ? (
-        <div className="mx-4 mb-4 rounded-lg bg-green-50 border border-green-200 px-4 py-2.5">
-          <p className="text-sm font-medium text-green-800">
-            {interestSaved > 0 && <>Save <span className="font-bold">{fmt(interestSaved, homeCurrency)}</span> in interest</>}
-            {interestSaved > 0 && monthsSooner > 0 && <span className="text-green-500"> · </span>}
-            {monthsSooner > 0 && <>debt-free <span className="font-bold">{monthsSooner < 12 ? `${monthsSooner} month${monthsSooner !== 1 ? "s" : ""}` : `${(monthsSooner / 12).toFixed(1)} yrs`}</span> sooner</>}
-          </p>
+      {/* ── PAYOFF TIMELINE ───────────────────────────────────────────── */}
+      <div className="px-6 py-5 border-b border-gray-100">
+        <div className="flex items-center justify-between mb-4">
+          <p className="text-sm font-semibold text-gray-700">Payoff timeline</p>
+          <div className="flex items-center gap-3">
+            <span className="flex items-center gap-1 text-[10px] text-gray-400">
+              <span className="inline-block h-2 w-3 rounded-sm bg-orange-400" />Revolving
+            </span>
+            <span className="flex items-center gap-1 text-[10px] text-gray-400">
+              <span className="inline-block h-2 w-3 rounded-sm bg-gray-700" />Installment
+            </span>
+          </div>
         </div>
-      ) : extraPayment === 0 ? (
-        <p className="mx-4 mb-4 text-xs text-gray-400">Move the slider to see how extra payments accelerate payoff.</p>
-      ) : null}
+        <GanttChart
+          debts={orderedDebts}
+          simResults={simWith.debtResults}
+          maxMonths={maxPayoffMonths}
+        />
+      </div>
 
-      {/* CTA */}
-      <div className="border-t border-gray-100 px-4 py-3">
-        <Link href="/account/goals" className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
-          Build full payoff plan
-          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-        </Link>
+      {/* ── PAYMENT SEQUENCE ──────────────────────────────────────────── */}
+      <div className="px-6 pt-5 pb-6">
+        <div className="flex items-center justify-between mb-5">
+          <p className="text-sm font-semibold text-gray-700">Payment sequence</p>
+          <p className="text-[11px] text-gray-400">How your money flows each month</p>
+        </div>
+
+        <div className="space-y-5">
+          {orderedDebts.map((d, i) => {
+            const result          = simWith.debtResults.get(d.id);
+            const monthlyInterest = d.balance * (d.apr ?? 0) / 100 / 12;
+            const isPriority      = i === 0;
+            const allocated       = isPriority ? d.minPayment + extraPayment : d.minPayment;
+            // "Min below interest" warning: min payment alone doesn't cover interest,
+            // but only show if the *allocated* amount (which includes extra for the priority
+            // debt) also doesn't cover interest — prevents a false alarm when extra payment
+            // rescues the debt. Truly unpayable = simulation never finishes (≥600 months).
+            const minBelowInterest = d.apr != null && d.apr > 0 && d.minPayment < monthlyInterest;
+            const isUnpayable      = result ? result.payoffMonths >= 600 : minBelowInterest;
+            const allocPct        = totalMonthly > 0 ? Math.min(100, (allocated / totalMonthly) * 100) : 0;
+            const isRevolving     = d.category === "credit_card" || d.category === "line_of_credit";
+            const payoffLabel     = result
+              ? result.payoffMonths >= 600
+                ? "50+ yrs"
+                : isPriority
+                  ? `Paid off in ~${Math.max(1, Math.round(result.payoffMonths / 12))} yr${Math.round(result.payoffMonths / 12) !== 1 ? "s" : ""}`
+                  : `Paid off ${addMonths(result.payoffMonths)}`
+              : "—";
+
+            const isDragging  = strategy === "custom" && dragId === d.id;
+            const isDragTarget = strategy === "custom" && dragOverId === d.id;
+
+            return (
+              <div
+                key={d.id}
+                draggable={strategy === "custom"}
+                onDragStart={() => handleDragStart(d.id)}
+                onDragOver={(e) => handleDragOver(e, d.id)}
+                onDrop={() => handleDrop(d.id)}
+                onDragEnd={handleDragEnd}
+                className={`flex gap-4 transition-opacity rounded-lg ${
+                  isDragging ? "opacity-30" : "opacity-100"
+                } ${isDragTarget ? "ring-2 ring-purple-400 ring-offset-2 bg-purple-50/40" : ""} ${
+                  strategy === "custom" ? "cursor-grab active:cursor-grabbing" : ""
+                }`}
+              >
+                {/* Drag handle + step circle — side by side, top-aligned */}
+                <div className="flex shrink-0 items-center gap-1 mt-0.5">
+                  {strategy === "custom" && (
+                    <div className="flex flex-col gap-[4px] cursor-grab active:cursor-grabbing">
+                      {[0, 1, 2].map((r) => (
+                        <div key={r} className="flex gap-[4px]">
+                          <span className="h-[4px] w-[4px] rounded-full bg-gray-400" />
+                          <span className="h-[4px] w-[4px] rounded-full bg-gray-400" />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className={`h-7 w-7 rounded-full border-2 flex items-center justify-center text-[10px] font-extrabold tabular-nums ${
+                    isPriority ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 bg-white text-gray-400"
+                  }`}>
+                    {String(i + 1).padStart(2, "0")}
+                  </div>
+                </div>
+
+                <div className="flex-1 min-w-0">
+                  {/* Top row: icon + name + balance */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <CategoryIcon cat={d.category} />
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <p className="text-sm font-semibold text-gray-900 truncate">{d.label}</p>
+                          {isUnpayable && (
+                            <span className="shrink-0 rounded-full bg-orange-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-orange-700">
+                              Min won&apos;t pay off
+                            </span>
+                          )}
+                          {!isUnpayable && minBelowInterest && (
+                            <span className="shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 text-[9px] font-medium text-gray-400">
+                              Min &lt; interest
+                            </span>
+                          )}
+                        </div>
+                        {d.bankName && d.bankName !== d.label && (
+                          <p className="text-[11px] text-gray-400">{d.bankName}</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(d.balance, homeCurrency, d.currency, false)}</p>
+                      <p className="text-xs text-green-600">{payoffLabel}</p>
+                    </div>
+                  </div>
+
+                  {/* APR + min */}
+                  <p className="mt-1 text-[11px] text-gray-400">
+                    {d.apr != null && <>{d.apr.toFixed(1)}% APR{d.aprEstimated && <span className="text-amber-500"> est.</span>} · </>}
+                    Min {fmt(d.minPayment, d.currency)}/mo
+                  </p>
+
+                  {/* Allocation bar */}
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide text-gray-300">Allocation</span>
+                    <div className="flex-1 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${isRevolving ? "bg-orange-400" : "bg-gray-700"}`}
+                        style={{ width: `${allocPct}%` }}
+                      />
+                    </div>
+                    <span className={`shrink-0 text-xs tabular-nums font-semibold ${isPriority ? "text-gray-900" : "text-gray-400"}`}>
+                      {fmt(allocated, d.currency)}/mo
+                    </span>
+                  </div>
+
+                  {/* Touch-friendly arrow fallback for custom */}
+                  {strategy === "custom" && (
+                    <div className="mt-1.5 flex items-center gap-1">
+                      <span className="text-[10px] text-gray-300">or</span>
+                      <button onClick={() => moveDebt(d.id, -1)} disabled={i === 0}
+                        className="rounded p-0.5 text-gray-300 hover:text-gray-600 disabled:opacity-20">
+                        <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" /></svg>
+                      </button>
+                      <button onClick={() => moveDebt(d.id, 1)} disabled={i === orderedDebts.length - 1}
+                        className="rounded p-0.5 text-gray-300 hover:text-gray-600 disabled:opacity-20">
+                        <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -1311,7 +1665,7 @@ function LiabilitiesPageInner() {
       // Using this source (instead of cJson.history[].debtTotal) means backfill months
       // are included — accounts with synthetic history contribute their estimated balance
       // to historical months, preventing false "new debt" spikes.
-      const DEBT_TYPES_SET = new Set(["credit", "mortgage", "loan"]);
+      const DEBT_TYPES_SET = new Set(["credit", "mortgage", "loan", "line_of_credit"]);
       const debtBalHist = (cJson.accountBalanceHistory as AccountBalanceHistory[] ?? [])
         .filter((h) => DEBT_TYPES_SET.has(h.accountType) || h.entries.some((e) => e.balance < 0));
       const allDebtMonths = Array.from(
@@ -1364,7 +1718,7 @@ function LiabilitiesPageInner() {
           const sorted = h.entries; // already sorted ascending
           const cur = sorted.at(-1)?.balance ?? 0;
           const prev = sorted.length >= 2 ? sorted[sorted.length - 2].balance : null;
-          const cat: LiabilityCategory = ACCT_TYPE_TO_CAT[h.accountType] ?? "other";
+          const cat: LiabilityCategory = deriveCategoryFromSnapshot(h.accountType, h.label);
           return {
             slug: h.slug, label: h.label, accountId: undefined, category: cat,
             color: CATEGORY_CHART_COLOR[cat],
@@ -1380,17 +1734,18 @@ function LiabilitiesPageInner() {
       setAccountRates(rJson.rates ?? []);
 
       // Build display liabilities from the profile cache's accountSnapshots
-      const DEBT_TYPES = new Set(["credit", "mortgage", "loan"]);
+      const DEBT_TYPES = new Set(["credit", "mortgage", "loan", "line_of_credit"]);
       const snapshots: AccountSnapshot[] = cJson.accountSnapshots ?? [];
       const fromStatements: DisplayLiability[] = snapshots
         .filter((s) => DEBT_TYPES.has(s.accountType ?? "") || s.balance < 0)
         .map((s) => ({
           id: `stmt-${s.slug}`, label: s.accountName ?? s.bankName ?? "Account",
-          subLabel: s.bankName, category: ACCT_TYPE_TO_CAT[s.accountType ?? ""] ?? "other",
+          subLabel: s.bankName, category: deriveCategoryFromSnapshot(s.accountType ?? "", s.accountName),
           balance: Math.abs(s.balance), currency: s.currency ?? undefined,
           statementDate: s.statementMonth,
           interestRate: typeof s.interestRate === "number" ? s.interestRate : undefined,
           source: "statement" as const, accountSlug: s.slug,
+          paymentsMade: s.paymentsMade,
         }));
 
       const fromManual: DisplayLiability[] = manual.map((m) => ({
