@@ -1152,7 +1152,7 @@ function GanttChart({
               <div className="relative flex-1 h-5">
                 <div className="absolute inset-0 rounded bg-gray-100" />
                 <div
-                  className={`absolute inset-y-0 left-0 rounded transition-all ${isRevolving ? "bg-orange-400" : "bg-gray-700"}`}
+                  className={`absolute inset-y-0 left-0 rounded transition-all ${isRevolving ? "bg-orange-400" : "bg-purple-700"}`}
                   style={{ width: `${widthPct}%` }}
                 />
               </div>
@@ -1356,13 +1356,13 @@ function PayoffTab({ libs, accountRates, homeCurrency }: { libs: DisplayLiabilit
                 onClick={() => handleStrategyClick(s)}
                 className={`relative text-left rounded-xl border px-3 py-3 transition ${
                   isActive
-                    ? "bg-gray-900 border-gray-900"
-                    : "border-gray-200 hover:border-gray-400 bg-white"
+                    ? "bg-purple-700 border-purple-700"
+                    : "border-gray-200 hover:border-purple-300 bg-white"
                 }`}
               >
                 {isBest && (
                   <span className={`absolute top-2 right-2 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${
-                    isActive ? "bg-white/20 text-white" : "bg-gray-100 text-gray-600"
+                    isActive ? "bg-white/20 text-white" : "bg-purple-100 text-purple-700"
                   }`}>
                     Saves most
                   </span>
@@ -1370,11 +1370,11 @@ function PayoffTab({ libs, accountRates, homeCurrency }: { libs: DisplayLiabilit
                 <p className={`text-sm font-bold capitalize mb-1 ${isActive ? "text-white" : "text-gray-800"}`}>
                   {s.charAt(0).toUpperCase() + s.slice(1)}
                 </p>
-                <p className={`text-[11px] leading-relaxed ${isActive ? "text-white/60" : "text-gray-400"}`}>
+                <p className={`text-[11px] leading-relaxed ${isActive ? "text-purple-200" : "text-gray-400"}`}>
                   {STRATEGY_DESC[s]}
                 </p>
                 <div className="mt-2.5">
-                  <p className={`text-[9px] font-bold uppercase tracking-wider ${isActive ? "text-white/40" : "text-gray-300"}`}>
+                  <p className={`text-[9px] font-bold uppercase tracking-wider ${isActive ? "text-purple-300" : "text-gray-300"}`}>
                     Interest
                   </p>
                   <p className={`text-sm font-bold tabular-nums ${isActive ? "text-white" : "text-gray-700"}`}>
@@ -1397,7 +1397,7 @@ function PayoffTab({ libs, accountRates, homeCurrency }: { libs: DisplayLiabilit
           <span className="text-2xl font-extrabold text-gray-900 tabular-nums">{fmt(extraPayment, homeCurrency)}</span>
           {extraPayment > 0 && interestSaved > 0 && (
             <span className="text-xs font-medium text-green-600">
-              Saves {fmt(interestSaved, homeCurrency)} · {monthsSooner} months sooner
+              <span className="text-purple-600">Saves {fmt(interestSaved, homeCurrency)} · {monthsSooner} months sooner</span>
             </span>
           )}
         </div>
@@ -1407,7 +1407,7 @@ function PayoffTab({ libs, accountRates, homeCurrency }: { libs: DisplayLiabilit
             onChange={(e) => setExtraPayment(Number(e.target.value))}
             className="w-full h-1.5 cursor-pointer appearance-none rounded-full"
             style={{
-              background: `linear-gradient(to right, #16a34a ${(extraPayment / maxExtra) * 100}%, #e5e7eb ${(extraPayment / maxExtra) * 100}%)`,
+              background: `linear-gradient(to right, #7c3aed ${(extraPayment / maxExtra) * 100}%, #e5e7eb ${(extraPayment / maxExtra) * 100}%)`,
             }}
           />
         </div>
@@ -1427,7 +1427,7 @@ function PayoffTab({ libs, accountRates, homeCurrency }: { libs: DisplayLiabilit
               <span className="inline-block h-2 w-3 rounded-sm bg-orange-400" />Revolving
             </span>
             <span className="flex items-center gap-1 text-[10px] text-gray-400">
-              <span className="inline-block h-2 w-3 rounded-sm bg-gray-700" />Installment
+              <span className="inline-block h-2 w-3 rounded-sm bg-purple-700" />Installment
             </span>
           </div>
         </div>
@@ -1497,7 +1497,7 @@ function PayoffTab({ libs, accountRates, homeCurrency }: { libs: DisplayLiabilit
                     </div>
                   )}
                   <div className={`h-7 w-7 rounded-full border-2 flex items-center justify-center text-[10px] font-extrabold tabular-nums ${
-                    isPriority ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 bg-white text-gray-400"
+                    isPriority ? "border-purple-600 bg-purple-600 text-white" : "border-gray-200 bg-white text-gray-400"
                   }`}>
                     {String(i + 1).padStart(2, "0")}
                   </div>
@@ -1544,7 +1544,7 @@ function PayoffTab({ libs, accountRates, homeCurrency }: { libs: DisplayLiabilit
                     <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide text-gray-300">Allocation</span>
                     <div className="flex-1 h-1.5 rounded-full bg-gray-100 overflow-hidden">
                       <div
-                        className={`h-full rounded-full transition-all ${isRevolving ? "bg-orange-400" : "bg-gray-700"}`}
+                        className={`h-full rounded-full transition-all ${isRevolving ? "bg-orange-400" : "bg-purple-700"}`}
                         style={{ width: `${allocPct}%` }}
                       />
                     </div>
