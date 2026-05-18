@@ -37,6 +37,32 @@ export async function POST(req: NextRequest) {
     if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const uid = access.actorUid;
     const body = await req.json();
+    /** Auto-debt singleton: reuse existing Firestore doc if user already has one */
+    if (body.isAutoDebtGoal === true) {
+      const autoSnap = await db
+        .collection("users")
+        .doc(uid)
+        .collection("goals")
+        .where("isAutoDebtGoal", "==", true)
+        .limit(1)
+        .get();
+      if (!autoSnap.empty) {
+        const docRef = autoSnap.docs[0];
+        const cur = docRef.data();
+        const update: Record<string, unknown> = { updatedAt: new Date() };
+        if (
+          (cur.targetDate == null || cur.targetDate === "") &&
+          typeof body.targetDate === "string" &&
+          body.targetDate
+        ) {
+          update.targetDate = body.targetDate;
+        }
+        if (Object.keys(update).length > 1) await docRef.ref.update(update);
+        await invalidateFinancialProfileCache(uid, db);
+        const after = (await docRef.ref.get()).data();
+        return NextResponse.json({ id: docRef.id, ...after });
+      }
+    }
     const doc = {
       title: body.title ?? "Untitled goal",
       description: body.description ?? "",
@@ -47,6 +73,7 @@ export async function POST(req: NextRequest) {
       linkedAccountSlugs: body.linkedAccountSlugs ?? null,
       linkedLiabilitySlugs: body.linkedLiabilitySlugs ?? null,
       emoji: body.emoji ?? "🎯",
+      ...(body.isAutoDebtGoal === true ? { isAutoDebtGoal: true } : {}),
       createdAt: new Date(),
       updatedAt: new Date(),
     };

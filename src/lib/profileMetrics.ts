@@ -468,12 +468,14 @@ export function profileMedianCoreVersusIncome(
 }
 
 /**
- * Typical (median) monthly minimum debt payments across all historical months.
- * Falls back to the most recent month with debt payments if history is thin.
+ * Typical (median) monthly **cash** paid toward debt servicing (`debtPaymentsTotal`).
+ * Used by Goals payoff projections — matches actual outflows better than
+ * `minDebtPaymentsTotal`, which treats uncategorized card payments as “minimum”
+ * and can read artificially high.
  */
 export function getTypicalMonthlyDebtPayments(profile: FinancialProfileCache): number {
   const vals = profile.monthlyHistory
-    .map((h) => h.minDebtPaymentsTotal ?? 0)
+    .map((h) => h.debtPaymentsTotal ?? 0)
     .filter((v) => v > 0)
     .sort((a, b) => a - b);
   if (vals.length === 0) return 0;

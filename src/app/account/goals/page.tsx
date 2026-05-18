@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import type { AccountRateEntry } from "@/app/api/user/account-rates/route";
@@ -9,6 +10,8 @@ import { usePlan } from "@/contexts/PlanContext";
 import { fmt, getCurrencySymbol, HOME_CURRENCY } from "@/lib/currencyUtils";
 import type { AccountSnapshot } from "@/lib/extractTransactions";
 import type { EmergencyFundMetrics } from "@/lib/profileMetrics";
+import type { AccountBalanceHistory } from "@/lib/financialProfile";
+import { monthlyDebtTotalsFromBalanceHistory } from "@/lib/monthlyDebtFromBalanceHistory";
 
 type GoalType = "savings" | "debt_payoff" | "emergency_fund" | "net_worth";
 
@@ -88,6 +91,25 @@ function effectiveLinkedSlugs(goal: SavedGoalRecord, snaps: AccountSnapshot[]): 
   return [];
 }
 
+const ASSET_TYPES = new Set(["checking", "savings", "investment"]);
+/** Included in consolidated `history.debtTotal` and liabilities list. */
+const DEBT_TYPES  = new Set(["credit", "mortgage", "loan", "line_of_credit"]);
+
+function isConsolidatedLiabilitySnapshot(s: AccountSnapshot): boolean {
+  return DEBT_TYPES.has(s.accountType ?? "") || s.balance < 0;
+}
+
+/** Home-currency debt for a snapshot (matches consolidated net-worth debt math when FX applies). */
+function snapshotDebtInHome(s: AccountSnapshot, home: string, fxRates: Record<string, number>): number {
+  const raw = s.parsedDebts != null ? s.parsedDebts : Math.max(0, -s.balance);
+  if (raw <= 0) return 0;
+  const cur = (s.currency ?? home).toUpperCase();
+  const h = home.toUpperCase();
+  if (cur === h) return raw;
+  const rate = fxRates[cur];
+  return rate != null ? raw * rate : raw;
+}
+
 /** Debt accounts included in a user debt-payoff goal. Default = all liabilities. */
 function effectiveDebtLinkedSlugs(goal: SavedGoalRecord, liabilitySnaps: AccountSnapshot[]): string[] {
   if (toGoalType(goal.goalType) !== "debt_payoff") return [];
@@ -99,14 +121,16 @@ function effectiveDebtLinkedSlugs(goal: SavedGoalRecord, liabilitySnaps: Account
 function balanceWeightedDebtAprSubset(
   debtSnaps: AccountSnapshot[],
   rateEntries: AccountRateEntry[],
+  homeCurrency: string,
+  fxRates: Record<string, number>,
 ): number | null {
   const entries = rateEntries.filter((r) => DEBT_TYPES.has(r.accountType) && r.effectiveRate != null);
   if (entries.length === 0) return null;
   let matchedOwed = 0;
   let weighted = 0;
   for (const s of debtSnaps) {
-    if (s.balance >= 0) continue;
-    const owed = Math.abs(s.balance);
+    const owed = snapshotDebtInHome(s, homeCurrency, fxRates);
+    if (owed <= 0) continue;
     const entry = entries.find((r) => r.accountName === s.accountName || r.bankName === s.bankName);
     if (entry?.effectiveRate == null) continue;
     matchedOwed += owed;
@@ -183,38 +207,72 @@ function amortisedPayoffMonths(
   return null;
 }
 
-function debtPayoffEstimate(
-  currentDebt: number, history: { debtTotal: number }[], annualRate: number | null,
-): number | null {
-  if (currentDebt <= 0) return 0;
-  const withDebt = history.filter((h) => h.debtTotal > 0);
-  if (withDebt.length < 2) return null;
-  const recent = withDebt.slice(-3);
-  let totalReduction = 0, count = 0;
-  for (let i = 1; i < recent.length; i++) {
-    const r = recent[i - 1].debtTotal - recent[i].debtTotal;
-    if (r > 0) { totalReduction += r; count++; }
-  }
-  if (count === 0) return null;
-  const monthlyPayment = totalReduction / count;
-  if (annualRate != null && annualRate > 0) return amortisedPayoffMonths(currentDebt, annualRate, monthlyPayment);
-  return Math.ceil(currentDebt / monthlyPayment);
+function medianOfSorted(sorted: number[]): number | null {
+  if (sorted.length === 0) return null;
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-function estimatedMonthlyDebtPayment(
-  history: { debtTotal: number }[], currentDebt: number,
-): number | null {
-  if (currentDebt <= 0) return null;
+/**
+ * Median month-over-month debt balance drops. Uses IQR outlier filtering when
+ * enough samples exist so one-off lump paydowns / statement quirks don't dominate.
+ */
+function medianDebtReductionFromHistory(history: { debtTotal: number }[]): number | null {
   const withDebt = history.filter((h) => h.debtTotal > 0);
   if (withDebt.length < 2) return null;
-  const recent = withDebt.slice(-3);
-  let totalReduction = 0, count = 0;
-  for (let i = 1; i < recent.length; i++) {
-    const r = recent[i - 1].debtTotal - recent[i].debtTotal;
-    if (r > 0) { totalReduction += r; count++; }
+  const reductions: number[] = [];
+  for (let i = 1; i < withDebt.length; i++) {
+    const prev = withDebt[i - 1].debtTotal;
+    const cur = withDebt[i].debtTotal;
+    const r = prev - cur;
+    if (r > 0) reductions.push(r);
   }
-  if (count === 0) return null;
-  return totalReduction / count;
+  if (reductions.length === 0) return null;
+  if (reductions.length >= 4) {
+    const sorted = [...reductions].sort((a, b) => a - b);
+    const lo = Math.floor((sorted.length - 1) * 0.25);
+    const hi = Math.floor((sorted.length - 1) * 0.75);
+    const q1 = sorted[lo];
+    const q3 = sorted[hi];
+    const iqr = q3 - q1;
+    const low = q1 - 1.5 * iqr;
+    const high = q3 + 1.5 * iqr;
+    const filt = reductions.filter((x) => x >= low && x <= high);
+    if (filt.length > 0) {
+      filt.sort((a, b) => a - b);
+      return medianOfSorted(filt);
+    }
+  }
+  reductions.sort((a, b) => a - b);
+  return medianOfSorted(reductions);
+}
+
+/** Typical monthly dollars going to debt: reconcile balance-delta median vs txn-based median. */
+function typicalMonthlyDebtPaymentEstimate(
+  history: { debtTotal: number }[],
+  txnTypicalMedian: number,
+): number | null {
+  const fromBalances = medianDebtReductionFromHistory(history);
+  const parts = [
+    fromBalances != null && fromBalances > 0 ? fromBalances : null,
+    txnTypicalMedian > 0 ? txnTypicalMedian : null,
+  ].filter((x): x is number => x != null);
+  if (parts.length === 0) return null;
+  parts.sort((a, b) => a - b);
+  return medianOfSorted(parts);
+}
+
+function debtPayoffEstimate(
+  currentDebt: number,
+  history: { debtTotal: number }[],
+  annualRate: number | null,
+  txnTypicalMedian: number,
+): number | null {
+  if (currentDebt <= 0) return 0;
+  const monthlyPayment = typicalMonthlyDebtPaymentEstimate(history, txnTypicalMedian);
+  if (monthlyPayment == null || monthlyPayment <= 0) return null;
+  if (annualRate != null && annualRate > 0) return amortisedPayoffMonths(currentDebt, annualRate, monthlyPayment);
+  return Math.ceil(currentDebt / monthlyPayment);
 }
 
 // ── account type labels ───────────────────────────────────────────────────────
@@ -228,9 +286,6 @@ const TYPE_RATE_LABEL: Record<string, string> = {
   checking: "APY", savings: "APY", credit: "APR",
   mortgage: "Interest rate", loan: "Interest rate", investment: "Annual return", other: "Annual rate",
 };
-
-const ASSET_TYPES = new Set(["checking", "savings", "investment"]);
-const DEBT_TYPES  = new Set(["credit", "mortgage", "loan"]);
 
 // ── inline rate editor ────────────────────────────────────────────────────────
 
@@ -351,9 +406,11 @@ export default function GoalsPage() {
   const [authToken, setAuthToken]             = useState<string | null>(null);
   const [showRates, setShowRates]             = useState(false);
   const [homeCurrency, setHomeCurrency]       = useState(HOME_CURRENCY);
+  const [fxRatesState, setFxRatesState]       = useState<Record<string, number>>({});
   const [extraPayPerMonth, setExtraPayPerMonth] = useState(0);
   const [scenarioApr, setScenarioApr]         = useState<number | null>(null);
 
+  const [accountBalanceHistory, setAccountBalanceHistory] = useState<AccountBalanceHistory[]>([]);
   const [snapshots, setSnapshots]               = useState<AccountSnapshot[]>([]);
   const [savedGoals, setSavedGoals]             = useState<SavedGoalRecord[]>([]);
   const [showAddGoal, setShowAddGoal]           = useState(false);
@@ -368,6 +425,10 @@ export default function GoalsPage() {
   const [deleting, setDeleting]                 = useState(false);
   /** null = all debt accounts selected (default). Set to a subset when user deselects some. */
   const [selectedDebtSlugs, setSelectedDebtSlugs] = useState<string[] | null>(null);
+  /** Debt account slugs chosen in the new-goal modal. null = all (default). */
+  const [newGoalDebtSlugs, setNewGoalDebtSlugs] = useState<string[] | null>(null);
+  /** Asset account slugs chosen in the new-goal modal for savings goals. null = smart default (all positive savings+checking). */
+  const [newGoalAssetSlugs, setNewGoalAssetSlugs] = useState<string[] | null>(null);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -400,7 +461,17 @@ export default function GoalsPage() {
             typeof consolidated.homeCurrency === "string" && consolidated.homeCurrency
               ? consolidated.homeCurrency : HOME_CURRENCY,
           );
+          setFxRatesState(
+            consolidated.fxRates && typeof consolidated.fxRates === "object"
+              ? (consolidated.fxRates as Record<string, number>)
+              : {},
+          );
           setSnapshots(Array.isArray(consolidated.accountSnapshots) ? consolidated.accountSnapshots : []);
+          setAccountBalanceHistory(
+            Array.isArray(consolidated.accountBalanceHistory)
+              ? consolidated.accountBalanceHistory
+              : [],
+          );
         }
         if (ratesRes.ok) setRates(ratesJson.rates ?? []);
         if (goalsRes.ok) {
@@ -434,10 +505,10 @@ export default function GoalsPage() {
     const debtRateEntries = rates.filter((r) => DEBT_TYPES.has(r.accountType) && r.effectiveRate != null);
     if (debtRateEntries.length === 0) return null;
     // Balance-weighted average APR across liability accounts
-    const debtSnaps = snapshots.filter((s) => DEBT_TYPES.has(s.accountType) && s.balance < 0);
+    const debtSnaps = snapshots.filter(isConsolidatedLiabilitySnapshot);
     const { totalOwed, totalInterest } = debtSnaps.reduce(
       (acc, s) => {
-        const owed = Math.abs(s.balance);
+        const owed = snapshotDebtInHome(s, homeCurrency, fxRatesState);
         const entry = debtRateEntries.find(
           (r) => r.accountName === s.accountName || r.bankName === s.bankName,
         );
@@ -468,12 +539,22 @@ export default function GoalsPage() {
     ? projectMonths(liquidAssets, efTarget, Math.max(0, monthlySavings), savingsReturnRate)
     : liquidAssets >= efTarget ? 0 : null;
 
-  const monthlyDebtPayEstimate = estimatedMonthlyDebtPayment(history, debts);
-  const baseDebtPay            = monthlyDebtPayEstimate ?? (typicalDebtPayments > 0 ? typicalDebtPayments : null);
-  const maxDebtHistorical      = Math.max(0, debts, ...history.map((h) => h.debtTotal));
-  const paidTowardDebt         = Math.max(0, maxDebtHistorical - debts);
-  const debtProgressPct        = maxDebtHistorical > 0
-    ? Math.min(100, Math.round((paidTowardDebt / maxDebtHistorical) * 100)) : 0;
+  const baseDebtPay = typicalMonthlyDebtPaymentEstimate(history, typicalDebtPayments);
+  /** Same monthly totals as Debts › Debt Growth; first row = baseline balance for paid-down math. */
+  const debtRollupAll = monthlyDebtTotalsFromBalanceHistory(
+    accountBalanceHistory,
+    fxRatesState,
+    homeCurrency,
+    null,
+  );
+  const allDebtTimelineStart =
+    debtRollupAll.length > 0 ? debtRollupAll[0].debtTotal : debts;
+  /** Balance reduction = starting balance (first month on timeline) − today’s consolidated debt. */
+  const paidTowardDebt = Math.max(0, allDebtTimelineStart - debts);
+  const debtProgressPct =
+    allDebtTimelineStart > 0
+      ? Math.min(100, Math.round((paidTowardDebt / allDebtTimelineStart) * 100))
+      : 0;
 
   const redirectToEfMonthly = (baseDebtPay ?? 0) + Math.max(0, monthlySavings);
   const efMonthsIfRedirect  = efTarget > 0 && liquidAssets < efTarget && redirectToEfMonthly > 0
@@ -490,23 +571,37 @@ export default function GoalsPage() {
   const baselineDebtPayoffMonths =
     debts > 0 && baseDebtPay != null && baseDebtPay > 0
       ? amortisedPayoffMonths(debts, debtInterestRate ?? 8.5, baseDebtPay)
-      : debts > 0 ? debtPayoffEstimate(debts, history, debtInterestRate) : 0;
+      : debts > 0 ? debtPayoffEstimate(debts, history, debtInterestRate, typicalDebtPayments) : 0;
 
-  const liabilitySnaps = snapshots.filter((s) => DEBT_TYPES.has(s.accountType) && s.balance < 0);
+  const liabilitySnaps = snapshots.filter(isConsolidatedLiabilitySnapshot);
 
   // Debt accounts selected for tracking (null = all)
   const trackedDebtSnaps = selectedDebtSlugs === null
     ? liabilitySnaps
     : liabilitySnaps.filter((s) => selectedDebtSlugs.includes(s.slug));
-  const trackedDebt = trackedDebtSnaps.reduce((sum, s) => sum + Math.abs(s.balance), 0);
+  const trackedDebt = trackedDebtSnaps.reduce(
+    (sum, s) => sum + snapshotDebtInHome(s, hc, fxRatesState),
+    0,
+  );
   // Allocate monthly payment proportionally to tracked share
   const trackedDebtShare = debts > 0 ? trackedDebt / debts : 1;
   const trackedDebtPay   = baseDebtPay != null ? baseDebtPay * trackedDebtShare : null;
-  // Track historical max for tracked accounts only (approximation using global share)
-  const trackedMaxHistorical = maxDebtHistorical * trackedDebtShare;
-  const trackedPaidTowardDebt = Math.max(0, trackedMaxHistorical - trackedDebt);
-  const trackedProgressPct = trackedMaxHistorical > 0
-    ? Math.min(100, Math.round(trackedPaidTowardDebt / trackedMaxHistorical * 100)) : 0;
+  /** Per-account rollup for selected liabilities when history exists; avoids global-share distortion. */
+  const trackedDebtRollup = monthlyDebtTotalsFromBalanceHistory(
+    accountBalanceHistory,
+    fxRatesState,
+    homeCurrency,
+    trackedDebtSnaps.length > 0 && trackedDebtSnaps.length < liabilitySnaps.length
+      ? new Set(trackedDebtSnaps.map((s) => s.slug))
+      : null,
+  );
+  const trackedTimelineStart =
+    trackedDebtRollup.length > 0 ? trackedDebtRollup[0].debtTotal : trackedDebt;
+  const trackedPaidTowardDebt = Math.max(0, trackedTimelineStart - trackedDebt);
+  const trackedProgressPct =
+    trackedTimelineStart > 0
+      ? Math.min(100, Math.round((trackedPaidTowardDebt / trackedTimelineStart) * 100))
+      : 0;
 
   function toggleDebtSlug(slug: string) {
     setSelectedDebtSlugs((prev) => {
@@ -624,6 +719,8 @@ export default function GoalsPage() {
     setGoalPickerStep("pick");
     setSelectedTemplate(null);
     setNewGoalTitle(""); setNewGoalAmount(""); setNewGoalDate("");
+    setNewGoalDebtSlugs(null);
+    setNewGoalAssetSlugs(null);
   }
 
   async function createSavedGoal() {
@@ -634,13 +731,15 @@ export default function GoalsPage() {
       const amount = !isDebtPayoff && newGoalAmount.trim()
         ? parseFloat(newGoalAmount.replace(/[^0-9.]/g, ""))
         : null;
-      const payload = {
+      const payload: Omit<SavedGoalRecord, "id"> = {
         title: newGoalTitle.trim(),
         goalType: selectedTemplate?.goalType ?? "savings",
         emoji: selectedTemplate?.emoji ?? "🎯",
         targetAmount: isDebtPayoff || isNaN(amount ?? NaN) ? null : amount,
         targetDate: newGoalDate.trim() || null,
         description: selectedTemplate?.description ?? "",
+        ...(isDebtPayoff  && { linkedLiabilitySlugs: newGoalDebtSlugs ?? undefined }),
+        ...(!isDebtPayoff && newGoalAssetSlugs !== null && { linkedAccountSlugs: newGoalAssetSlugs }),
       };
       const res = await fetch("/api/user/goals", {
         method: "POST",
@@ -649,7 +748,7 @@ export default function GoalsPage() {
       });
       const j = (await res.json()) as SavedGoalRecord & { id?: string };
       if (res.ok && j.id) {
-        const newGoal = { id: j.id, ...payload };
+        const newGoal: SavedGoalRecord = { id: j.id, ...payload };
         setSavedGoals((prev) => [...prev, newGoal]);
         setSelectedGoalId(j.id);
         closeGoalModal();
@@ -696,7 +795,7 @@ export default function GoalsPage() {
         ? trackedDebtSnaps.map((s) => s.accountName ?? s.bankName).filter(Boolean).join(", ")
         : "No accounts selected",
       currentAmount: trackedPaidTowardDebt,
-      targetAmount: trackedMaxHistorical > 0 ? trackedMaxHistorical : trackedDebt,
+      targetAmount: trackedTimelineStart > 0 ? trackedTimelineStart : trackedDebt,
       progressPct: trackedProgressPct,
       projectedMonths: trackedDebt > 0 && trackedDebtPay != null && trackedDebtPay > 0
         ? (amortisedPayoffMonths(trackedDebt, debtInterestRate ?? 8.5, trackedDebtPay) ?? null)
@@ -743,14 +842,25 @@ export default function GoalsPage() {
       if (gt === "debt_payoff") {
         const debtSlugs = effectiveDebtLinkedSlugs(g, liabilitySnaps);
         const debtSnapsSubset = liabilitySnaps.filter((s) => debtSlugs.includes(s.slug));
-        const remaining = debtSnapsSubset.reduce((sum, s) => sum + Math.abs(Math.min(0, s.balance)), 0);
+        const remaining = debtSnapsSubset.reduce(
+          (sum, s) => sum + snapshotDebtInHome(s, hc, fxRatesState),
+          0,
+        );
         const share = debts > 0 ? remaining / debts : remaining > 0 ? 1 : 0;
-        const subsetPeakApprox = maxDebtHistorical * share;
-        const paidDown = Math.max(0, subsetPeakApprox - remaining);
-        const pct = subsetPeakApprox > 0
-          ? Math.min(100, Math.round((paidDown / subsetPeakApprox) * 100))
-          : remaining <= 0 ? 100 : 0;
-        const subsetApr = balanceWeightedDebtAprSubset(debtSnapsSubset, rates) ?? debtInterestRate ?? 8.5;
+        const subsetRollup = monthlyDebtTotalsFromBalanceHistory(
+          accountBalanceHistory,
+          fxRatesState,
+          homeCurrency,
+          new Set(debtSlugs),
+        );
+        const subsetTimelineStart =
+          subsetRollup.length > 0 ? subsetRollup[0].debtTotal : remaining;
+        const paidDown = Math.max(0, subsetTimelineStart - remaining);
+        const pct =
+          subsetTimelineStart > 0
+            ? Math.min(100, Math.round((paidDown / subsetTimelineStart) * 100))
+            : remaining <= 0 ? 100 : 0;
+        const subsetApr = balanceWeightedDebtAprSubset(debtSnapsSubset, rates, hc, fxRatesState) ?? debtInterestRate ?? 8.5;
         const subsetPay = baseDebtPay != null && debts > 0 ? baseDebtPay * share : baseDebtPay;
         const projMs = remaining > 0 && subsetPay != null && subsetPay > 0
           ? (amortisedPayoffMonths(remaining, subsetApr, subsetPay) ?? null)
@@ -766,7 +876,7 @@ export default function GoalsPage() {
           title: g.title ?? "Goal",
           subtitle: names.length > 0 ? names.join(", ") : g.description ?? "",
           currentAmount: remaining,
-          targetAmount: subsetPeakApprox > 0 ? subsetPeakApprox : null,
+          targetAmount: subsetTimelineStart > 0 ? subsetTimelineStart : null,
           progressPct: pct,
           projectedMonths: projMs,
           apr: subsetApr,
@@ -808,8 +918,6 @@ export default function GoalsPage() {
     ...allGoals.filter((g) => !g.isComplete),
     ...allGoals.filter((g) => g.isComplete),
   ];
-  const firstCompleteIdx = sortedGoals.findIndex((g) => g.isComplete);
-
   const activeId   = selectedGoalId ?? sortedGoals[0]?.id ?? null;
   const activeGoal = sortedGoals.find((g) => g.id === activeId) ?? null;
   const accent     = goalAccent(activeGoal?.goalType ?? "savings");
@@ -831,16 +939,6 @@ export default function GoalsPage() {
     : null;
 
   // Goal type picker modal templates (data-driven suggestions)
-  const suggestedTemplates: GoalTemplate[] = [];
-  if (efProgress < 1 && efTarget > 0) {
-    suggestedTemplates.push({
-      goalType: "savings", emoji: "🛡️",
-      label: "Build emergency fund",
-      description: `${efMonthsTarget}-month runway: ${fmtShort(efTarget, hc)}`,
-      suggested: true,
-      prefill: { title: `Build ${efMonthsTarget}-month emergency fund`, targetAmount: efTarget, emoji: "🛡️" },
-    });
-  }
 
   const catalogueTemplates: GoalTemplate[] = [
     {
@@ -859,23 +957,131 @@ export default function GoalsPage() {
     },
   ];
 
+  // ── Wireframe list helpers ─────────────────────────────────────────────────
+
+  type RowStatus = "attention" | "on_pace" | "not_started" | "complete";
+
+  function rowStatus(g: DisplayGoal): RowStatus {
+    if (g.isComplete) return "complete";
+    if (g.progressPct === 0 && g.projectedMonths === null) return "not_started";
+    if (g.goalType === "debt_payoff" && g.savedGoal?.targetDate && g.projectedMonths != null) {
+      try {
+        const tgt = new Date(g.savedGoal.targetDate + "-01");
+        const now = new Date();
+        const moToTarget = (tgt.getFullYear() - now.getFullYear()) * 12 + (tgt.getMonth() - now.getMonth());
+        if (g.projectedMonths > moToTarget + 1) return "attention";
+      } catch { /* ignore */ }
+    }
+    if (g.goalType !== "debt_payoff" && monthlySavings <= 0) return "attention";
+    return g.projectedMonths != null ? "on_pace" : "not_started";
+  }
+
+  function rowBadge(g: DisplayGoal): { text: string; classes: string; dotColor: string } | null {
+    const s = rowStatus(g);
+    if (s === "complete") return { text: "Complete", classes: "border-emerald-200 bg-emerald-50 text-emerald-800", dotColor: "bg-emerald-500" };
+    if (g.goalType === "debt_payoff" && g.savedGoal?.targetDate && g.projectedMonths != null) {
+      try {
+        const tgt = new Date(g.savedGoal.targetDate + "-01");
+        const now = new Date();
+        const moToTarget = (tgt.getFullYear() - now.getFullYear()) * 12 + (tgt.getMonth() - now.getMonth());
+        const diff = g.projectedMonths - moToTarget;
+        if (diff > 1) return { text: `${diff}mo behind`, classes: "border-amber-200 bg-amber-50 text-amber-800", dotColor: "bg-amber-500" };
+        if (diff < -1) return { text: `${Math.abs(diff)}mo early`, classes: "border-emerald-200 bg-emerald-50 text-emerald-800", dotColor: "bg-emerald-500" };
+        return { text: "On target", classes: "border-emerald-200 bg-emerald-50 text-emerald-800", dotColor: "bg-emerald-500" };
+      } catch { /* ignore */ }
+    }
+    if (s === "attention") return { text: "Saving paused", classes: "border-amber-200 bg-amber-50 text-amber-800", dotColor: "bg-amber-500" };
+    if (s === "on_pace")   return { text: "On pace",       classes: "border-emerald-200 bg-emerald-50 text-emerald-800", dotColor: "bg-emerald-500" };
+    return { text: "Awaiting pace", classes: "border-gray-200 bg-gray-50 text-gray-500", dotColor: "bg-gray-400" };
+  }
+
+  function rowSubtitle(g: DisplayGoal): string {
+    const dateStr = (() => {
+      if (g.savedGoal?.targetDate) {
+        try { return `Target ${new Date(g.savedGoal.targetDate + "-01").toLocaleDateString("en-US", { month: "short", year: "numeric" })}`; }
+        catch { return "No date set"; }
+      }
+      if (g.projectedMonths != null && g.projectedMonths > 0) return `Target ${addMonths(g.projectedMonths)}`;
+      return "No date set";
+    })();
+    if (g.goalType === "debt_payoff") {
+      const remaining = (g.targetAmount ?? 0) > 0 ? Math.max(0, g.targetAmount! - g.currentAmount) : g.currentAmount;
+      return `${fmtShort(remaining, hc)} owed · ${dateStr}`;
+    }
+    if (g.targetAmount != null && g.targetAmount > 0) {
+      return `${fmtShort(g.currentAmount, hc)} of ${fmtShort(g.targetAmount, hc)} · ${dateStr}`;
+    }
+    return g.subtitle || dateStr;
+  }
+
+  const allSections: Array<{ key: RowStatus; label: string; dotColor: string; goals: DisplayGoal[] }> = [
+    { key: "attention",   label: "Needs attention", dotColor: "bg-amber-500",   goals: sortedGoals.filter((g) => !g.isComplete && rowStatus(g) === "attention") },
+    { key: "on_pace",     label: "On pace",         dotColor: "bg-emerald-500", goals: sortedGoals.filter((g) => !g.isComplete && rowStatus(g) === "on_pace") },
+    { key: "not_started", label: "Not started yet", dotColor: "bg-gray-400",    goals: sortedGoals.filter((g) => !g.isComplete && rowStatus(g) === "not_started") },
+    { key: "complete",    label: "Completed",        dotColor: "bg-emerald-300", goals: sortedGoals.filter((g) => g.isComplete) },
+  ];
+  const sections = allSections.filter((s) => s.goals.length > 0);
+
+  const behindCount  = sections.find((s) => s.key === "attention")?.goals.length ?? 0;
+  const onPaceCount  = sections.find((s) => s.key === "on_pace")?.goals.length   ?? 0;
+
+  /** Compute projected payoff month as `YYYY-MM` for a set of liability slugs (null = all). */
+  function computeDebtPayoffYM(slugs: string[] | null): string {
+    const snaps = slugs === null ? liabilitySnaps : liabilitySnaps.filter((s) => slugs.includes(s.slug));
+    if (snaps.length === 0 || (baseDebtPay ?? 0) <= 0 || debts <= 0) return "";
+    const totalDebt = snaps.reduce((sum, s) => sum + snapshotDebtInHome(s, hc, fxRatesState), 0);
+    if (totalDebt <= 0) return "";
+    const share      = totalDebt / debts;
+    const monthlyPay = (baseDebtPay as number) * share;
+    if (monthlyPay <= 0) return "";
+    const apr    = balanceWeightedDebtAprSubset(snaps, rates, hc, fxRatesState) ?? 8.5;
+    const months = amortisedPayoffMonths(totalDebt, apr, monthlyPay);
+    if (months == null || months <= 0) return "";
+    const d = new Date();
+    d.setMonth(d.getMonth() + months);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  }
+
+  /** Friendly label for a `YYYY-MM` string, e.g. "Jun 2035". */
+  function ymLabel(ym: string): string {
+    if (!ym) return "";
+    try { return new Date(ym + "-01").toLocaleDateString("en-US", { month: "short", year: "numeric" }); }
+    catch { return ym; }
+  }
+
   return (
-    <div className="mx-auto max-w-2xl lg:max-w-5xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
+    <div className="mx-auto max-w-2xl lg:max-w-3xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
       {/* Header */}
-      <div className="mb-6 flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Goals</h1>
-          <p className="mt-0.5 text-sm text-gray-500">Track what you&apos;re working toward</p>
-        </div>
+      <div className="mb-4 flex items-center justify-between gap-4">
+        <h1 className="text-2xl font-bold text-gray-900">Goals</h1>
         <button
           type="button"
           onClick={() => { setShowAddGoal(true); setGoalPickerStep("pick"); }}
-          className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition shrink-0"
+          className="inline-flex items-center gap-1.5 rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 transition shrink-0"
         >
-          <span className="text-base leading-none">+</span> New goal
+          + New goal
         </button>
       </div>
+
+      {/* Status pills */}
+      {allGoals.length > 0 && (
+        <div className="mb-6 flex flex-wrap items-center gap-2">
+          {behindCount > 0 && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+              {behindCount} behind
+            </span>
+          )}
+          {onPaceCount > 0 && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              {onPaceCount} on pace
+            </span>
+          )}
+          <span className="text-sm text-gray-500">{allGoals.length} goals total</span>
+        </div>
+      )}
 
       {/* Empty state */}
       {allGoals.length === 0 && (
@@ -888,86 +1094,146 @@ export default function GoalsPage() {
           <button
             type="button"
             onClick={() => { setShowAddGoal(true); setGoalPickerStep("pick"); }}
-            className="mt-5 inline-flex items-center gap-2 rounded-xl bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
+            className="mt-5 inline-flex items-center gap-2 rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 transition"
           >
             + Add a goal
           </button>
         </div>
       )}
 
+      {/* ── Sectioned goal list ── */}
       {allGoals.length > 0 && (
-        <>
-          {/* ── Goal nav tabs (horizontal scroll) ── */}
-          <div className="flex gap-2.5 overflow-x-auto pb-3 -mx-4 px-4 sm:-mx-0 sm:px-0 scrollbar-none mb-5">
-            {sortedGoals.map((g, idx) => {
-              const a = goalAccent(g.goalType);
-              const isActive = g.id === activeId;
-              const showCompletedDivider = idx === firstCompleteIdx && firstCompleteIdx > 0;
-              return (
-                <div key={g.id} className="flex items-center gap-2.5 shrink-0">
-                  {showCompletedDivider && (
-                    <div className="flex flex-col items-center gap-1 self-stretch py-1 shrink-0">
-                      <div className="w-px flex-1 bg-gray-200" />
-                      <p className="text-[9px] font-bold uppercase tracking-widest text-gray-300 [writing-mode:vertical-rl] rotate-180">Done</p>
-                      <div className="w-px flex-1 bg-gray-200" />
-                    </div>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (g.id !== activeId) {
-                        setSelectedGoalId(g.id);
-                        setExtraPayPerMonth(0);
-                        setScenarioApr(null);
-                        setShowRates(false);
-                      }
-                    }}
-                    className={`flex flex-col gap-2 rounded-2xl border px-4 py-3 text-left transition w-[152px] ${
-                      g.isComplete
-                        ? isActive
-                          ? "border-emerald-300 bg-emerald-50 ring-1 ring-emerald-200"
-                          : "border-gray-100 bg-gray-50 opacity-70 hover:opacity-100 hover:border-gray-200"
-                        : isActive
-                        ? a.active
-                        : "border-gray-100 bg-white shadow-sm hover:border-gray-200 hover:bg-gray-50"
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 w-full">
-                      <span className="text-lg leading-none shrink-0">{g.emoji}</span>
-                      <p className="text-xs font-semibold text-gray-800 truncate leading-tight flex-1">{g.title}</p>
-                      {g.isComplete && (
-                        <span className="shrink-0 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-white text-[9px] font-bold">✓</span>
-                      )}
-                    </div>
-                    <div className="w-full">
-                      {g.isComplete ? (
-                        <div className="h-1.5 w-full rounded-full bg-emerald-100 overflow-hidden">
-                          <div className="h-full w-full rounded-full bg-emerald-400" />
-                        </div>
-                      ) : (
-                        <div className={`h-1.5 w-full rounded-full ${a.track} overflow-hidden`}>
-                          <div className={`h-full rounded-full ${a.bar} transition-all`} style={{ width: `${g.progressPct}%` }} />
-                        </div>
-                      )}
-                      <p className="text-[10px] mt-1 tabular-nums text-gray-400">
-                        {g.isComplete
-                          ? "Completed 🎉"
-                          : g.source === "user"
-                          ? (g.projectedMonths != null && g.projectedMonths > 0
-                              ? addMonths(g.projectedMonths)
-                              : g.savedGoal?.targetDate ?? "No date set")
-                          : `${g.progressPct}%${g.projectedMonths != null && g.progressPct < 100 ? ` · ${addMonths(g.projectedMonths)}` : ""}`}
-                      </p>
-                    </div>
-                  </button>
+        <div className="space-y-6">
+          {sections.map((section) => (
+            <div key={section.key}>
+              {/* Section header */}
+              <div className="mb-2 flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <span className={`h-1.5 w-1.5 rounded-full ${section.dotColor}`} />
+                  <p className="text-[11px] font-bold uppercase tracking-[0.15em] text-gray-400">{section.label}</p>
                 </div>
-              );
-            })}
-          </div>
+                <span className="text-xs text-gray-400">{section.goals.length}</span>
+              </div>
 
-          {/* ── Goal detail card ── */}
-          {activeGoal && (
-            <div className={`rounded-2xl border bg-white shadow-sm overflow-hidden ${activeGoal.isComplete ? "border-emerald-200" : "border-gray-200"}`}>
+              {/* Rows */}
+              <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden divide-y divide-gray-100">
+                {section.goals.map((g) => {
+                  const isDebt   = g.goalType === "debt_payoff";
+                  const isActive = g.id === activeId && !isDebt;
+                  const s        = rowStatus(g);
+                  const badge    = rowBadge(g);
+                  const leftBorderColor =
+                    s === "attention" ? "border-amber-400" :
+                    s === "on_pace"   ? "border-emerald-500" :
+                    g.isComplete      ? "border-emerald-300" : "border-gray-200";
+                  const barColor =
+                    s === "attention" ? "bg-amber-400" :
+                    s === "on_pace"   ? "bg-emerald-500" :
+                    g.isComplete      ? "bg-emerald-400" : "bg-gray-300";
+                  const iconBg =
+                    g.goalType === "debt_payoff"    ? "bg-orange-50"  :
+                    g.goalType === "emergency_fund" ? "bg-amber-50"   :
+                    g.goalType === "net_worth"      ? "bg-indigo-50"  : "bg-teal-50";
+
+                  const rowContent = (
+                    <div className={`flex items-center gap-4 px-4 py-4 border-l-4 ${leftBorderColor}`}>
+                      {/* Icon */}
+                      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xl ${iconBg}`}>
+                        {g.emoji}
+                      </div>
+                      {/* Title + subtitle */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-900 truncate">{g.title}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{rowSubtitle(g)}</p>
+                      </div>
+                      {/* Progress + badge */}
+                      <div className="shrink-0 flex flex-col items-end gap-1.5 min-w-[140px] sm:min-w-[160px]">
+                        <div className="flex items-center gap-2 w-full justify-end">
+                          <span className="text-[11px] text-gray-400">Progress</span>
+                          <span className="text-xs font-semibold text-gray-700 tabular-nums">{g.progressPct}%</span>
+                        </div>
+                        <div className="w-full h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                          <div className={`h-full rounded-full ${barColor} transition-all`} style={{ width: `${g.progressPct}%` }} />
+                        </div>
+                        {badge && (
+                          <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${badge.classes}`}>
+                            <span className={`h-1 w-1 rounded-full ${badge.dotColor}`} />
+                            {badge.text}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+
+                  const isUserGoal   = g.source === "user";
+                  const isConfirming = confirmDeleteId === g.id;
+
+                  return (
+                    <div key={g.id}>
+                      {/* Row — ALL goal types navigate to their detail page */}
+                      <Link
+                        href={`/account/goals/${g.id}`}
+                        className="block hover:bg-gray-50/40 transition"
+                      >
+                        {rowContent}
+                      </Link>
+
+                      {/* Bottom bar: navigate chevron + optional delete */}
+                      <div className="flex items-center justify-between px-4 pb-3">
+                        <Link
+                          href={`/account/goals/${g.id}`}
+                          className="text-xs text-gray-400 hover:text-gray-600 transition"
+                        >
+                          ›
+                        </Link>
+
+                        {/* Delete (user goals only) */}
+                        {isUserGoal && (
+                          isConfirming ? (
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-gray-500">Delete this goal?</span>
+                              <button
+                                type="button"
+                                disabled={deleting}
+                                onClick={() => deleteGoal(g.id)}
+                                className="rounded-lg bg-red-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50 transition"
+                              >
+                                {deleting ? "…" : "Yes, delete"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteId(null)}
+                                className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs text-gray-500 hover:bg-gray-50 transition"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteId(g.id)}
+                              className="rounded-lg p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 transition"
+                              title="Delete goal"
+                            >
+                              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Goal detail card (non-debt-payoff goals only — debt payoff has its own page) ── */}
+      {activeGoal && activeGoal.goalType !== "debt_payoff" && (
+        <div className={`mt-6 rounded-2xl border bg-white shadow-sm overflow-hidden ${activeGoal.isComplete ? "border-emerald-200" : "border-gray-200"}`}>
 
               {/* Completion banner */}
               {activeGoal.isComplete && (
@@ -988,12 +1254,21 @@ export default function GoalsPage() {
                         </span>
                         <h2 className="mt-2 text-2xl font-bold text-gray-900">{activeGoal.title}</h2>
                       </div>
-                      {activeDebtPayoffMs != null && (
-                        <div className="text-right shrink-0">
-                          <p className="text-base font-bold text-gray-900 tabular-nums">{addMonths(activeDebtPayoffMs)}</p>
-                          <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Projected</p>
-                        </div>
-                      )}
+                      <div className="flex flex-col items-end gap-2 shrink-0">
+                        {activeDebtPayoffMs != null && (
+                          <div className="text-right">
+                            <p className="text-base font-bold text-gray-900 tabular-nums">{addMonths(activeDebtPayoffMs)}</p>
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Projected</p>
+                          </div>
+                        )}
+                        <Link
+                          href={`/account/goals/${activeGoal.id}`}
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-purple-700 hover:text-purple-900 transition"
+                        >
+                          Full details
+                          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                        </Link>
+                      </div>
                     </div>
                     <div className="mt-5">
                       <p className="text-4xl font-bold tabular-nums text-gray-900">{fmt(trackedDebt, hc)}</p>
@@ -1005,8 +1280,8 @@ export default function GoalsPage() {
                       <div className="flex justify-between text-xs text-gray-500 mb-2">
                         <span>
                           {trackedPaidTowardDebt > 0
-                            ? `${fmt(trackedPaidTowardDebt, hc)} paid down from peak`
-                            : "No reduction from peak tracked yet"}
+                            ? `Down ${fmt(trackedPaidTowardDebt, hc)} since first month on the chart`
+                            : "No change yet vs. first month on the chart"}
                         </span>
                         <span className="font-medium tabular-nums">{trackedProgressPct}%</span>
                       </div>
@@ -1112,7 +1387,7 @@ export default function GoalsPage() {
                         <span className="font-semibold text-gray-900 tabular-nums">
                           {activeDebtPayoffMs != null
                             ? `${addMonths(activeDebtPayoffMs)} · ${activeDebtPayoffMs} months`
-                            : <span className="font-normal text-gray-400">Payment doesn&apos;t cover interest</span>}
+                            : <span className="font-normal text-gray-400">Too low to reach $0 in the model</span>}
                         </span>
                       </div>
                       {extraPayPerMonth > 0 && activeDebtBaseMs != null && activeDebtPayoffMs != null && activeDebtPayoffMs < activeDebtBaseMs && (
@@ -1305,6 +1580,15 @@ export default function GoalsPage() {
                           </span>
                           <h2 className="mt-1.5 text-2xl font-bold text-gray-900">{activeGoal.title}</h2>
                           {activeGoal.subtitle && <p className="text-sm text-gray-500 mt-0.5">{activeGoal.subtitle}</p>}
+                          {isDebtPayoffUser && (
+                            <Link
+                              href={`/account/goals/${sg.id}`}
+                              className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-purple-700 hover:text-purple-900 transition"
+                            >
+                              Full details
+                              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                            </Link>
+                          )}
                         </div>
                         {/* Delete button */}
                         {confirmDeleteId === sg.id ? (
@@ -1354,8 +1638,8 @@ export default function GoalsPage() {
                             <div className="flex justify-between text-xs text-gray-500 mb-2">
                               <span>
                                 {debtPaidDown > 0
-                                  ? `${fmt(debtPaidDown, hc)} paid down from peak`
-                                  : "No reduction from peak tracked yet"}
+                                  ? `Down ${fmt(debtPaidDown, hc)} since first month on the chart`
+                                  : "No change yet vs. first month on the chart"}
                               </span>
                               <span className="font-medium tabular-nums">{activeGoal.progressPct}%</span>
                             </div>
@@ -1589,10 +1873,10 @@ export default function GoalsPage() {
                   </>
                 );
               })()}
-            </div>
-          )}
+        </div>
+      )}
 
-          {/* ── Projection assumptions (scoped to active goal) ── */}
+      {/* ── Projection assumptions (scoped to active goal) ── */}
           {(() => {
             if (!activeGoal) return null;
 
@@ -1663,8 +1947,6 @@ export default function GoalsPage() {
               </div>
             );
           })()}
-        </>
-      )}
 
       {/* ── Add goal modal (two-step picker) ── */}
       {showAddGoal && (
@@ -1681,43 +1963,17 @@ export default function GoalsPage() {
                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                   </button>
                 </div>
-                <div className="px-5 py-4 max-h-[70vh] overflow-y-auto space-y-4">
-                  {suggestedTemplates.length > 0 && (
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-indigo-600 mb-2">Suggested for you</p>
-                      <div className="space-y-2">
-                        {suggestedTemplates.map((t) => (
-                          <button key={t.label} type="button"
-                            onClick={() => {
-                              setSelectedTemplate(t);
-                              setNewGoalTitle(t.prefill?.title ?? t.label);
-                              setNewGoalAmount(t.prefill?.targetAmount != null ? String(Math.round(t.prefill.targetAmount)) : "");
-                              setNewGoalDate("");
-                              setGoalPickerStep("form");
-                            }}
-                            className="w-full flex items-center gap-3 rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-3 text-left hover:border-indigo-200 hover:bg-indigo-50 transition"
-                          >
-                            <span className="text-xl shrink-0">{t.emoji}</span>
-                            <div className="min-w-0">
-                              <p className="text-sm font-semibold text-gray-900">{t.label}</p>
-                              <p className="text-xs text-gray-500 truncate">{t.description}</p>
-                            </div>
-                            <svg className="h-4 w-4 text-gray-400 shrink-0 ml-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  <div>
-                    {suggestedTemplates.length > 0 && <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-gray-400 mb-2">All goal types</p>}
-                    <div className="grid grid-cols-1 gap-2">
+                <div className="px-5 py-4 max-h-[70vh] overflow-y-auto">
+                  <div className="grid grid-cols-1 gap-2">
                       {catalogueTemplates.map((t) => (
                         <button key={t.label} type="button"
                           onClick={() => {
                             setSelectedTemplate(t);
                             setNewGoalTitle(t.prefill?.title ?? "");
                             setNewGoalAmount("");
-                            setNewGoalDate(t.goalType === "debt_payoff" ? defaultMonthFiveYearsFromNow() : "");
+                            setNewGoalDebtSlugs(null);
+                            setNewGoalAssetSlugs(null);
+                            setNewGoalDate(t.goalType === "debt_payoff" ? computeDebtPayoffYM(null) : "");
                             setGoalPickerStep("form");
                           }}
                           className="flex items-center gap-3 rounded-xl border border-gray-100 bg-white px-4 py-3 text-left hover:border-gray-200 hover:bg-gray-50 transition"
@@ -1730,7 +1986,6 @@ export default function GoalsPage() {
                           <svg className="h-4 w-4 text-gray-300 shrink-0 ml-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
                         </button>
                       ))}
-                    </div>
                   </div>
                 </div>
               </>
@@ -1789,17 +2044,199 @@ export default function GoalsPage() {
                       })()}
                     </div>
                   )}
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1.5">
-                      {selectedTemplate?.goalType === "debt_payoff" ? "Target payoff date" : "Target date"}{" "}
-                      <span className="text-gray-400">(optional)</span>
-                    </label>
-                    <input type="month" value={newGoalDate} onChange={(e) => setNewGoalDate(e.target.value)}
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
-                    {selectedTemplate?.goalType === "debt_payoff" && (
-                      <p className="mt-1.5 text-xs text-gray-500">Defaults to five years from today; adjust if you prefer.</p>
-                    )}
-                  </div>
+                  {selectedTemplate?.goalType === "debt_payoff" ? (
+                    /* ── Debt payoff: account selection + auto-projected date ── */
+                    <>
+                      {liabilitySnaps.length > 0 && (() => {
+                        const activeSlugs = newGoalDebtSlugs ?? liabilitySnaps.map((s) => s.slug);
+                        const projYM = computeDebtPayoffYM(newGoalDebtSlugs);
+                        return (
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <label className="text-xs font-semibold text-gray-700">Accounts to include</label>
+                              {newGoalDebtSlugs !== null && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setNewGoalDebtSlugs(null);
+                                    const ym = computeDebtPayoffYM(null);
+                                    if (ym) setNewGoalDate(ym);
+                                  }}
+                                  className="text-xs font-semibold text-purple-700 hover:text-purple-900"
+                                >
+                                  Select all
+                                </button>
+                              )}
+                            </div>
+                            <div className="space-y-1.5">
+                              {liabilitySnaps.map((s) => {
+                                const owed = snapshotDebtInHome(s, hc, fxRatesState);
+                                const rate = debtRates.find((r) => r.accountName === s.accountName || r.bankName === s.bankName);
+                                const apr  = rate?.effectiveRate;
+                                const isOn = activeSlugs.includes(s.slug);
+                                return (
+                                  <button
+                                    key={s.slug}
+                                    type="button"
+                                    onClick={() => {
+                                      const next = isOn
+                                        ? activeSlugs.filter((x) => x !== s.slug)
+                                        : [...activeSlugs, s.slug];
+                                      const finalSlugs = next.length === liabilitySnaps.length ? null : next.length === 0 ? activeSlugs : next;
+                                      setNewGoalDebtSlugs(finalSlugs);
+                                      const ym = computeDebtPayoffYM(finalSlugs);
+                                      if (ym) setNewGoalDate(ym);
+                                    }}
+                                    className={`w-full flex items-center justify-between rounded-xl border px-3 py-2.5 text-left transition ${
+                                      isOn ? "border-purple-200 bg-purple-50/60" : "border-gray-100 bg-white opacity-60 hover:opacity-100 hover:bg-gray-50"
+                                    }`}
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <p className="text-sm font-medium text-gray-800 truncate">{s.accountName ?? s.bankName}</p>
+                                      {apr != null && <p className="text-xs text-gray-400">{apr.toFixed(2)}% APR</p>}
+                                    </div>
+                                    <div className="flex items-center gap-2.5 shrink-0 ml-3">
+                                      <p className="text-sm font-semibold tabular-nums text-gray-700">{fmtShort(owed, hc)}</p>
+                                      <div className={`relative w-8 h-4 rounded-full transition-colors ${isOn ? "bg-purple-500" : "bg-gray-200"}`}>
+                                        <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-sm transition-transform ${isOn ? "translate-x-4" : "translate-x-0.5"}`} />
+                                      </div>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            {projYM && (
+                              <div className="mt-3 flex items-center justify-between rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
+                                <p className="text-xs text-gray-500">
+                                  Projected debt-free: <span className="font-semibold text-gray-800">{ymLabel(projYM)}</span>
+                                </p>
+                                {projYM !== newGoalDate && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setNewGoalDate(projYM)}
+                                    className="ml-3 text-xs font-semibold text-purple-700 hover:text-purple-900 shrink-0"
+                                  >
+                                    Use this →
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+                          Goal date <span className="text-gray-400">(optional)</span>
+                        </label>
+                        <input
+                          type="month"
+                          value={newGoalDate}
+                          onChange={(e) => setNewGoalDate(e.target.value)}
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                        />
+                        <p className="mt-1.5 text-xs text-gray-400">
+                          Auto-filled from your projected payoff. Edit any time.
+                        </p>
+                      </div>
+                    </>
+                  ) : (
+                    /* ── Savings / savings-type: account selection + target date ── */
+                    <>
+                      {(() => {
+                        const savingsAccounts = snapshots.filter(
+                          (s) => (s.accountType === "savings" || s.accountType === "checking") && s.balance >= 0,
+                        );
+                        if (savingsAccounts.length === 0) return null;
+                        const activeSlugs = newGoalAssetSlugs ?? savingsAccounts.map((s) => s.slug);
+                        const selectedBalance = savingsAccounts
+                          .filter((s) => activeSlugs.includes(s.slug))
+                          .reduce((sum, s) => sum + Math.max(0, s.balance), 0);
+                        const targetAmt = newGoalAmount.trim()
+                          ? parseFloat(newGoalAmount.replace(/[^0-9.]/g, ""))
+                          : NaN;
+                        return (
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <label className="text-xs font-semibold text-gray-700">Accounts counting toward this goal</label>
+                              {newGoalAssetSlugs !== null && (
+                                <button
+                                  type="button"
+                                  onClick={() => setNewGoalAssetSlugs(null)}
+                                  className="text-xs font-semibold text-purple-700 hover:text-purple-900"
+                                >
+                                  Select all
+                                </button>
+                              )}
+                            </div>
+                            <div className="space-y-1.5">
+                              {savingsAccounts.map((s) => {
+                                const isOn = activeSlugs.includes(s.slug);
+                                return (
+                                  <button
+                                    key={s.slug}
+                                    type="button"
+                                    onClick={() => {
+                                      const next = isOn
+                                        ? activeSlugs.filter((x) => x !== s.slug)
+                                        : [...activeSlugs, s.slug];
+                                      const finalSlugs = next.length === savingsAccounts.length
+                                        ? null : next.length === 0 ? activeSlugs : next;
+                                      setNewGoalAssetSlugs(finalSlugs);
+                                    }}
+                                    className={`w-full flex items-center justify-between rounded-xl border px-3 py-2.5 text-left transition ${
+                                      isOn ? "border-purple-200 bg-purple-50/60" : "border-gray-100 bg-white opacity-60 hover:opacity-100 hover:bg-gray-50"
+                                    }`}
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <p className="text-sm font-medium text-gray-800 truncate">{s.accountName ?? s.bankName}</p>
+                                      <p className="text-xs text-gray-400">{TYPE_LABEL[s.accountType] ?? s.accountType} · {s.bankName}</p>
+                                    </div>
+                                    <div className="flex items-center gap-2.5 shrink-0 ml-3">
+                                      <p className="text-sm font-semibold tabular-nums text-gray-700">{fmtShort(Math.max(0, s.balance), hc)}</p>
+                                      <div className={`relative w-8 h-4 rounded-full transition-colors ${isOn ? "bg-purple-500" : "bg-gray-200"}`}>
+                                        <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-sm transition-transform ${isOn ? "translate-x-4" : "translate-x-0.5"}`} />
+                                      </div>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <div className="mt-3 flex items-center justify-between rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
+                              <p className="text-xs text-gray-500">
+                                Selected balance: <span className="font-semibold text-gray-800">{fmtShort(selectedBalance, hc)}</span>
+                              </p>
+                              {!isNaN(targetAmt) && targetAmt > 0 && (
+                                <p className="text-xs text-gray-500 tabular-nums">
+                                  {Math.round(Math.min(100, (selectedBalance / targetAmt) * 100))}% of target
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+                          Target date <span className="text-gray-400">(optional)</span>
+                        </label>
+                        <input type="month" value={newGoalDate} onChange={(e) => setNewGoalDate(e.target.value)}
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
+                        {!isNaN(parseFloat(newGoalAmount.replace(/[^0-9.]/g, ""))) &&
+                         parseFloat(newGoalAmount.replace(/[^0-9.]/g, "")) > 0 &&
+                         monthlySavings > 0 && (() => {
+                          const selected = (newGoalAssetSlugs ?? snapshots.filter(s => s.accountType === "savings" || s.accountType === "checking"))
+                            .reduce((sum: number, sv: AccountSnapshot | string) => {
+                              const snap = typeof sv === "string" ? snapshots.find(s => s.slug === sv) : sv;
+                              return sum + (snap ? Math.max(0, snap.balance) : 0);
+                            }, 0);
+                          const remaining = parseFloat(newGoalAmount.replace(/[^0-9.]/g, "")) - selected;
+                          if (remaining > 0) {
+                            return <p className="mt-1.5 text-xs text-gray-500">{fmtShort(remaining, hc)} remaining · at {fmtShort(monthlySavings, hc)}/mo → ~{Math.ceil(remaining / monthlySavings)} months</p>;
+                          }
+                          return <p className="mt-1.5 text-xs text-emerald-600 font-medium">You&apos;ve already hit this target 🎉</p>;
+                        })()}
+                      </div>
+                    </>
+                  )}
                   <div className="flex gap-2 pt-1">
                     <button type="button" onClick={closeGoalModal} className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 transition">Cancel</button>
                     <button type="button" disabled={newGoalSaving || !newGoalTitle.trim()} onClick={createSavedGoal}
