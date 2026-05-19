@@ -1627,18 +1627,12 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                       ...(event.budget ? [{ label: "Budget", value: <span className="font-semibold text-gray-800">{fmt(event.budget, hc)}</span> }] : []),
                       ...(dateRange    ? [{ label: "Dates",  value: dateRange }] : []),
                       ...(lengthDays   ? [{ label: "Length", value: lengthDays }] : []),
-                      {
-                        label: "Category",
-                        value: event.category
-                          ? event.category
-                          : <button onClick={() => setShowEdit(true)} className="text-gray-400 hover:text-purple-500 transition">Add category</button>,
-                      },
                       ...(event.notes ? [{ label: "Notes", value: <span className="text-gray-600 leading-relaxed">{event.notes}</span> }] : []),
                     ];
 
                     return (
                       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-3">Trip Details</p>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-3">Event Details</p>
                         <div className="space-y-2.5">
                           {rows.map(({ label, value }) => (
                             <div key={label} className="flex items-baseline justify-between gap-4">
