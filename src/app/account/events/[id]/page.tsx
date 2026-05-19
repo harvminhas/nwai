@@ -1270,11 +1270,6 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                   <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
                     <div className="flex items-center justify-between mb-3">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Budget</p>
-                      <button type="button"
-                        onClick={() => setAddExpenseOpen(true)}
-                        className="rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 transition">
-                        + Add expense
-                      </button>
                     </div>
 
                     <div className="flex items-end justify-between mb-2">
@@ -1527,24 +1522,29 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
 
                   {/* Activity */}
                   <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                    <div className="flex items-center justify-between border-b border-gray-100 px-5">
-                      <div className="flex">
-                        {(["all", "visits", "payments"] as const).map((tab) => (
-                          <button key={tab} onClick={() => setProjTab(tab)}
-                            className={`py-3.5 px-3 text-xs font-semibold border-b-2 transition ${
-                              projTab === tab ? "border-purple-600 text-gray-900" : "border-transparent text-gray-400 hover:text-gray-600"
-                            }`}>
-                            {tab === "all" ? "All payments" : tab === "visits" ? "Pending" : "Verified"}
-                          </button>
-                        ))}
-                      </div>
-                      <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">Newest first</span>
+                    <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Payments Made</p>
+                      <button type="button"
+                        onClick={() => setAddExpenseOpen(true)}
+                        className="text-xs font-semibold text-purple-600 hover:text-purple-800 transition">
+                        + Add payment
+                      </button>
+                    </div>
+                    <div className="flex border-b border-gray-100 px-5">
+                      {(["all", "visits", "payments"] as const).map((tab) => (
+                        <button key={tab} onClick={() => setProjTab(tab)}
+                          className={`py-3 px-3 text-xs font-semibold border-b-2 transition ${
+                            projTab === tab ? "border-purple-600 text-gray-900" : "border-transparent text-gray-400 hover:text-gray-600"
+                          }`}>
+                          {tab === "all" ? "All" : tab === "visits" ? "Pending" : "Verified"}
+                        </button>
+                      ))}
                     </div>
 
                     {visiblePayItems.length === 0 ? (
                       <div className="px-5 py-10 text-center">
-                        <p className="text-sm text-gray-500">No payments yet.</p>
-                        <p className="text-xs text-gray-400 mt-1">Use &quot;+ Add expense&quot; to tag a statement transaction or enter spending manually.</p>
+                        <p className="text-sm text-gray-500">No payments recorded yet.</p>
+                        <p className="text-xs text-gray-400 mt-1">Use &quot;+ Add payment&quot; to tag a statement transaction or log a payment manually.</p>
                       </div>
                     ) : (
                       <div className="divide-y divide-gray-50">
