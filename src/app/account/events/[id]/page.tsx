@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { useActiveProfile } from "@/contexts/ActiveProfileContext";
-import type { UserEvent, TaggedTransaction, EventColor, VisitLog, ServiceCadence, BillingMethod, ProjectLedgerEntry } from "@/lib/events/types";
+import type { UserEvent, TaggedTransaction, EventColor, VisitLog, ServiceCadence, BillingMethod, ProjectLedgerEntry, ExpectedExpenseLine } from "@/lib/events/types";
 import { EVENT_COLORS } from "@/lib/events/types";
 import { fmt, HOME_CURRENCY, getCurrencySymbol } from "@/lib/currencyUtils";
 import ServiceLogModal from "@/components/events/ServiceLogModal";
@@ -121,49 +121,58 @@ interface EditModalProps {
 }
 
 function EditEventModal({ event, headers, homeCurrency, onSaved, onClose }: EditModalProps) {
-  const [name, setName]         = useState(event.name);
-  const [budget, setBudget]     = useState(event.budget ? String(event.budget) : "");
-  const [date, setDate]         = useState(event.date ?? "");
-  const [type, setType]         = useState<"one-off" | "annual">(event.type);
-  const [color, setColor]       = useState<EventColor>(event.color);
+  const isService = event.kind === "service";
+
+  const [name,      setName]      = useState(event.name);
+  const [startDate, setStartDate] = useState(event.startDate ?? event.date ?? "");
+  const [endDate,   setEndDate]   = useState(event.endDate ?? "");
+  const [budget,    setBudget]    = useState(event.budget ? String(event.budget) : "");
+  const [notes,     setNotes]     = useState(event.notes ?? "");
+  const [color,     setColor]     = useState<EventColor>(event.color);
+  // Service-only
   const [avgPerVisit, setAvg]   = useState(event.avgPerVisit ? String(event.avgPerVisit) : "");
-  const [vendor, setVendor]     = useState(event.vendor ?? "");
-  const [category, setCategory] = useState(event.category ?? "");
-  const [notes, setNotes]       = useState(event.notes ?? "");
-  const [saving, setSaving]     = useState(false);
-  const [err, setErr]           = useState<string | null>(null);
+  const [vendor,      setVendor] = useState(event.vendor ?? "");
+
+  const [saving, setSaving] = useState(false);
+  const [err,    setErr]    = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) { setErr("Name is required"); return; }
     setSaving(true); setErr(null);
     try {
+      const body: Record<string, unknown> = {
+        name: name.trim(),
+        type: "one-off",
+        color,
+        notes: notes.trim() || "",
+        budget: budget ? parseFloat(budget) : "",
+      };
+      if (isService) {
+        body.avgPerVisit = avgPerVisit ? parseFloat(avgPerVisit) : "";
+        body.vendor = vendor.trim() || "";
+      } else {
+        body.startDate = startDate || "";
+        body.endDate   = endDate   || "";
+        body.date      = "";       // clear legacy single-date field
+      }
       const res = await fetch(`/api/user/events/${event.id}`, {
         method: "PUT",
         headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name.trim(),
-          type,
-          color,
-          date: date || "",
-          budget: budget ? parseFloat(budget) : "",
-          avgPerVisit: avgPerVisit ? parseFloat(avgPerVisit) : "",
-          vendor: vendor.trim() || "",
-          category: category.trim() || "",
-          notes: notes.trim() || "",
-        }),
+        body: JSON.stringify(body),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Failed to save");
       onSaved({
         ...event,
-        name: name.trim(), type, color,
-        date: date || undefined,
-        budget: budget ? parseFloat(budget) : undefined,
-        avgPerVisit: avgPerVisit ? parseFloat(avgPerVisit) : undefined,
-        vendor: vendor.trim() || undefined,
-        category: category.trim() || undefined,
-        notes: notes.trim() || undefined,
+        name: name.trim(),
+        type: "one-off",
+        color,
+        notes:      notes.trim()      || undefined,
+        budget:     budget            ? parseFloat(budget)      : undefined,
+        ...(isService
+          ? { avgPerVisit: avgPerVisit ? parseFloat(avgPerVisit) : undefined, vendor: vendor.trim() || undefined }
+          : { startDate: startDate || undefined, endDate: endDate || undefined, date: undefined }),
       });
     } catch (e) {
       setErr((e as Error).message);
@@ -183,81 +192,68 @@ function EditEventModal({ event, headers, homeCurrency, onSaved, onClose }: Edit
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4 px-6 py-5">
+
+          {/* Name */}
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Name *</label>
             <input value={name} onChange={(e) => setName(e.target.value)}
               className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
           </div>
-          {event.kind !== "service" && (
+
+          {/* Event: start + end dates */}
+          {!isService && (
             <div className="flex gap-3">
               <div className="flex-1">
-                <label className="block text-xs font-medium text-gray-700 mb-1">Target date</label>
-                <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
+                <label className="block text-xs font-medium text-gray-700 mb-1">Start date</label>
+                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
               </div>
               <div className="flex-1">
-                <label className="block text-xs font-medium text-gray-700 mb-1">Budget ({curSym})</label>
-                <input type="number" min="0" step="0.01" value={budget} onChange={(e) => setBudget(e.target.value)}
-                  placeholder="Optional"
+                <label className="block text-xs font-medium text-gray-700 mb-1">End date</label>
+                <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)}
+                  min={startDate || undefined}
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
               </div>
             </div>
           )}
-          {event.kind === "service" && (
-            <>
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Expected per visit ({curSym})</label>
-                  <input type="number" min="0" step="0.01" value={avgPerVisit} onChange={(e) => setAvg(e.target.value)}
-                    placeholder="e.g. 85"
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
-                </div>
-                <div className="flex-1">
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Budget ({curSym})</label>
-                  <input type="number" min="0" step="0.01" value={budget} onChange={(e) => setBudget(e.target.value)}
-                    placeholder="Optional annual cap"
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Vendor / provider</label>
-                <input value={vendor} onChange={(e) => setVendor(e.target.value)}
-                  placeholder="e.g. John's Lawn Care"
+
+          {/* Budget row */}
+          <div className={isService ? "flex gap-3" : ""}>
+            {isService && (
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-gray-700 mb-1">Expected per visit ({curSym})</label>
+                <input type="number" min="0" step="0.01" value={avgPerVisit} onChange={(e) => setAvg(e.target.value)}
+                  placeholder="e.g. 85"
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
               </div>
-            </>
+            )}
+            <div className={isService ? "flex-1" : ""}>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Budget ({curSym})</label>
+              <input type="number" min="0" step="0.01" value={budget} onChange={(e) => setBudget(e.target.value)}
+                placeholder={isService ? "Optional annual cap" : "Optional"}
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
+            </div>
+          </div>
+
+          {/* Service: vendor */}
+          {isService && (
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Vendor / provider</label>
+              <input value={vendor} onChange={(e) => setVendor(e.target.value)}
+                placeholder="e.g. John's Lawn Care"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
+            </div>
           )}
-          {event.kind !== "service" && (
-            <>
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Type</label>
-                  <div className="flex gap-2">
-                    {(["one-off", "annual"] as const).map((t) => (
-                      <button key={t} type="button" onClick={() => setType(t)}
-                        className={`flex-1 rounded-lg border py-2 text-xs font-medium transition-colors ${
-                          type === t ? "border-purple-500 bg-purple-50 text-purple-700" : "border-gray-200 text-gray-600 hover:border-gray-300"
-                        }`}>
-                        {t === "one-off" ? "One-off" : "Annual (repeats)"}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex-1">
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Category</label>
-                  <input value={category} onChange={(e) => setCategory(e.target.value)}
-                    placeholder="e.g. Trip, Home, Medical"
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Notes</label>
-                <textarea value={notes} onChange={(e) => setNotes(e.target.value)}
-                  rows={2} placeholder="Add a description…"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none" />
-              </div>
-            </>
-          )}
+
+          {/* Notes */}
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Notes</label>
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)}
+              rows={2} placeholder="Add a description…"
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none" />
+          </div>
+
+          {/* Colour */}
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Colour</label>
             <div className="flex flex-wrap gap-2">
@@ -267,12 +263,13 @@ function EditEventModal({ event, headers, homeCurrency, onSaved, onClose }: Edit
               ))}
             </div>
           </div>
+
           {err && <p className="text-xs text-red-600">{err}</p>}
           <div className="flex gap-3 pt-1">
             <button type="button" onClick={onClose}
               className="flex-1 rounded-lg border border-gray-200 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50">Cancel</button>
             <button type="submit" disabled={saving}
-              className="flex-1 rounded-lg bg-purple-600 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50">
+              className="flex-1 rounded-lg bg-purple-600 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50">
               {saving ? "Saving…" : "Save changes"}
             </button>
           </div>
@@ -361,6 +358,20 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
   const [savingLedger, setSavingLedger]           = useState(false);
   const [removingLedger, setRemovingLedger]       = useState<string | null>(null);
 
+  // Expected expenses
+  const [expectedExpenses, setExpectedExpenses]   = useState<ExpectedExpenseLine[]>([]);
+  const [showEEForm, setShowEEForm]               = useState(false);
+  const [eeName, setEeName]                       = useState("");
+  const [eeEstimate, setEeEstimate]               = useState("");
+  const [eeNote, setEeNote]                       = useState("");
+  const [savingEE, setSavingEE]                   = useState(false);
+  const [eeMenuId, setEeMenuId]                   = useState<string | null>(null);
+  const [editingEEId, setEditingEEId]             = useState<string | null>(null);
+  const [editEEName, setEditEEName]               = useState("");
+  const [editEEEstimate, setEditEEEstimate]       = useState("");
+  const [editEENote, setEditEENote]               = useState("");
+  const [editEEActual, setEditEEActual]           = useState("");
+
   const [homeCurrency, setHomeCurrency] = useState(HOME_CURRENCY);
   const { buildHeaders, targetUid } = useActiveProfile();
 
@@ -394,6 +405,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
         setTagged(json.transactions ?? []);
         setVisitLogs(json.visitLogs ?? []);
         setLedgerEntries(json.ledgerEntries ?? []);
+        setExpectedExpenses(json.event.expectedExpenses ?? []);
         setTotalSpent(json.totalSpent ?? 0);
         setCurrentYear(json.currentYear ?? null);
       }
@@ -527,6 +539,72 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
 
   function handleNoteUpdate(fingerprint: string, note: string) {
     setTagged((prev) => prev.map((t) => t.fingerprint === fingerprint ? { ...t, note: note || undefined } : t));
+  }
+
+  // ── Expected expenses helpers ───────────────────────────────────────────────
+
+  async function saveEELines(lines: ExpectedExpenseLine[]) {
+    if (!token) return;
+    await fetch(`/api/user/events/${id}`, {
+      method: "PUT",
+      headers: { ...buildHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({ expectedExpenses: lines }),
+    });
+  }
+
+  async function handleAddEELine() {
+    const est = parseFloat(eeEstimate);
+    if (!eeName.trim() || isNaN(est) || est <= 0) return;
+    setSavingEE(true);
+    const newLine: ExpectedExpenseLine = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name: eeName.trim(),
+      estimatedAmount: est,
+      note: eeNote.trim() || undefined,
+      isMatched: false,
+      createdAt: new Date().toISOString(),
+    };
+    const updated = [...expectedExpenses, newLine];
+    setExpectedExpenses(updated);
+    await saveEELines(updated);
+    setSavingEE(false);
+    setShowEEForm(false);
+    setEeName(""); setEeEstimate(""); setEeNote("");
+  }
+
+  async function handleToggleMatch(lineId: string) {
+    const today = new Date().toISOString().substring(0, 10);
+    const updated = expectedExpenses.map((l) => {
+      if (l.id !== lineId) return l;
+      if (l.isMatched) return { ...l, isMatched: false, matchedDate: null, actualAmount: null };
+      return { ...l, isMatched: true, matchedDate: today, actualAmount: l.actualAmount ?? l.estimatedAmount };
+    });
+    setExpectedExpenses(updated);
+    await saveEELines(updated);
+  }
+
+  async function handleSaveEditEELine(lineId: string) {
+    const est = parseFloat(editEEEstimate);
+    if (!editEEName.trim() || isNaN(est) || est <= 0) return;
+    const actualParsed = parseFloat(editEEActual);
+    const updated = expectedExpenses.map((l) => {
+      if (l.id !== lineId) return l;
+      const newActual = l.isMatched
+        ? (editEEActual.trim() !== "" && !isNaN(actualParsed) && actualParsed > 0 ? actualParsed : (l.actualAmount ?? est))
+        : l.actualAmount;
+      return { ...l, name: editEEName.trim(), estimatedAmount: est, note: editEENote.trim() || undefined, actualAmount: newActual };
+    });
+    setExpectedExpenses(updated);
+    setEditingEEId(null);
+    setEditEEActual("");
+    await saveEELines(updated);
+  }
+
+  async function handleRemoveEELine(lineId: string) {
+    const updated = expectedExpenses.filter((l) => l.id !== lineId);
+    setExpectedExpenses(updated);
+    setEeMenuId(null);
+    await saveEELines(updated);
   }
 
   const headers    = token ? buildHeaders(token) : {};
@@ -1214,18 +1292,6 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                       </div>
                     )}
 
-                    {/* Pace banner */}
-                    {dailyBurn > 0 && projectedOver != null && (
-                      <div className={`rounded-lg px-4 py-2.5 mb-2 ${projectedOver > 0 ? "bg-red-50 border border-red-100" : "bg-emerald-50 border border-emerald-100"}`}>
-                        <p className={`text-xs font-medium ${projectedOver > 0 ? "text-red-700" : "text-emerald-700"}`}>
-                          Pace · {fmt(dailyBurn, hc)}/day on the trip ·{" "}
-                          {projectedOver > 0
-                            ? `projected ${fmt(projectedOver, hc)} over`
-                            : `projected ${fmt(Math.abs(projectedOver), hc)} under`}
-                        </p>
-                      </div>
-                    )}
-
                     {/* Trip day counter */}
                     {tripStatus && tripTotalDays != null && (
                       <p className="text-xs text-gray-400 text-center">
@@ -1233,6 +1299,229 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                         {tripStatus === "active" && daysElapsed != null && daysRemaining != null && `Day ${daysElapsed} of ${tripTotalDays} · trip ends in ${daysRemaining} day${daysRemaining !== 1 ? "s" : ""}`}
                         {tripStatus === "ended" && `Trip ended · ${tripTotalDays} days`}
                       </p>
+                    )}
+                  </div>
+
+                  {/* ── Expected Expenses ─────────────────────────────── */}
+                  <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                    {/* Header */}
+                    <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Expected Expenses</p>
+                      <button
+                        type="button"
+                        onClick={() => { setShowEEForm(true); setEeName(""); setEeEstimate(""); setEeNote(""); }}
+                        className="text-xs font-semibold text-purple-600 hover:text-purple-800 transition">
+                        + Add line
+                      </button>
+                    </div>
+
+                    {/* Add form */}
+                    {showEEForm && (
+                      <div className="px-5 py-4 border-b border-gray-100 bg-gray-50">
+                        <div className="space-y-2">
+                          <input
+                            type="text"
+                            value={eeName}
+                            onChange={(e) => setEeName(e.target.value)}
+                            placeholder="What are you expecting to spend on?"
+                            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+                            autoFocus
+                          />
+                          <div className="flex gap-2">
+                            <div className="flex flex-1 rounded-lg border border-gray-200 overflow-hidden focus-within:ring-2 focus-within:ring-purple-300">
+                              <span className="flex items-center px-2.5 bg-gray-50 border-r border-gray-100 text-xs text-gray-500 shrink-0 whitespace-nowrap">{curSym}</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={eeEstimate}
+                                onChange={(e) => setEeEstimate(e.target.value)}
+                                placeholder="0.00"
+                                className="flex-1 min-w-0 px-3 py-2 text-sm focus:outline-none bg-white"
+                              />
+                            </div>
+                            <input
+                              type="text"
+                              value={eeNote}
+                              onChange={(e) => setEeNote(e.target.value)}
+                              placeholder="Note (optional)"
+                              className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+                            />
+                          </div>
+                          <div className="flex justify-end gap-2">
+                            <button type="button" onClick={() => setShowEEForm(false)}
+                              className="rounded-lg px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100 border border-gray-200">
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleAddEELine}
+                              disabled={savingEE || !eeName.trim() || !eeEstimate}
+                              className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50">
+                              {savingEE ? "Saving…" : "Add"}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Lines */}
+                    {expectedExpenses.length === 0 && !showEEForm ? (
+                      <p className="px-5 py-8 text-center text-sm text-gray-400">
+                        Plan ahead — add items you expect to spend money on.
+                      </p>
+                    ) : (
+                      <div className="divide-y divide-gray-50">
+                        {expectedExpenses.map((line) => {
+                          const isEditing   = editingEEId === line.id;
+                          const menuOpen    = eeMenuId    === line.id;
+                          const displayAmt  = line.isMatched ? (line.actualAmount ?? line.estimatedAmount) : line.estimatedAmount;
+                          const showEstNote = line.isMatched && line.actualAmount != null && line.actualAmount !== line.estimatedAmount;
+
+                          const fmtMatchDate = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("en-CA", { month: "short", day: "numeric" });
+
+                          if (isEditing) return (
+                            <div key={line.id} className="px-5 py-3 bg-gray-50 space-y-2">
+                              <input
+                                type="text"
+                                value={editEEName}
+                                onChange={(e) => setEditEEName(e.target.value)}
+                                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+                                autoFocus
+                              />
+                              <div className="flex gap-2">
+                                <div className="flex flex-1 rounded-lg border border-gray-200 overflow-hidden focus-within:ring-2 focus-within:ring-purple-300">
+                                  <span className="flex items-center px-2.5 bg-gray-50 border-r border-gray-100 text-xs text-gray-500 shrink-0 whitespace-nowrap">{curSym}</span>
+                                  <input
+                                    type="number" min="0" step="0.01"
+                                    value={editEEEstimate}
+                                    onChange={(e) => setEditEEEstimate(e.target.value)}
+                                    placeholder="0.00"
+                                    className="flex-1 min-w-0 px-3 py-2 text-sm focus:outline-none bg-white"
+                                  />
+                                </div>
+                                <input
+                                  type="text"
+                                  value={editEENote}
+                                  onChange={(e) => setEditEENote(e.target.value)}
+                                  placeholder="Note"
+                                  className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+                                />
+                              </div>
+                              {line.isMatched && (
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-gray-500 shrink-0">Actual paid:</span>
+                                  <div className="flex flex-1 rounded-lg border border-gray-200 overflow-hidden focus-within:ring-2 focus-within:ring-purple-300">
+                                    <span className="flex items-center px-2.5 bg-gray-50 border-r border-gray-100 text-xs text-gray-500 shrink-0 whitespace-nowrap">{curSym}</span>
+                                    <input
+                                      type="number" min="0" step="0.01"
+                                      value={editEEActual}
+                                      onChange={(e) => setEditEEActual(e.target.value)}
+                                      placeholder={String(line.actualAmount ?? line.estimatedAmount)}
+                                      className="flex-1 min-w-0 px-3 py-2 text-sm focus:outline-none bg-white"
+                                    />
+                                  </div>
+                                </div>
+                              )}
+                              <div className="flex justify-end gap-2">
+                                <button type="button" onClick={() => setEditingEEId(null)}
+                                  className="rounded-lg px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100 border border-gray-200">Cancel</button>
+                                <button type="button"
+                                  onClick={() => handleSaveEditEELine(line.id)}
+                                  disabled={!editEEName.trim() || !editEEEstimate}
+                                  className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50">Save</button>
+                              </div>
+                            </div>
+                          );
+
+                          return (
+                            <div key={line.id} className="px-5 py-3 relative">
+                              <div className="flex items-start gap-3">
+                                {/* Checkbox */}
+                                <button
+                                  type="button"
+                                  onClick={() => void handleToggleMatch(line.id)}
+                                  className="mt-0.5 shrink-0 w-5 h-5 rounded border-2 flex items-center justify-center transition"
+                                  style={line.isMatched ? { backgroundColor: "#16a34a", borderColor: "#16a34a" } : { borderColor: "#d1d5db" }}>
+                                  {line.isMatched && (
+                                    <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 12 12">
+                                      <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                                    </svg>
+                                  )}
+                                </button>
+
+                                {/* Content */}
+                                <div className="flex-1 min-w-0">
+                                  <p className={`text-sm font-medium leading-tight ${line.isMatched ? "text-gray-500" : "text-gray-800"}`}>
+                                    {line.name}
+                                  </p>
+                                  <p className="text-xs text-gray-400 mt-0.5">
+                                    {line.isMatched && line.matchedDate
+                                      ? `Matched ${fmtMatchDate(line.matchedDate)}`
+                                      : (line.note || "estimate")}
+                                  </p>
+
+                                </div>
+
+                                {/* Amount + menu */}
+                                <div className="text-right shrink-0">
+                                  <p className={`text-sm font-bold ${line.isMatched ? "text-gray-600" : "text-gray-900"}`}>
+                                    {fmt(displayAmt, hc)}
+                                  </p>
+                                  {showEstNote ? (
+                                    <p className="text-xs text-gray-400">est. {fmt(line.estimatedAmount, hc)}</p>
+                                  ) : (
+                                    <p className="text-xs text-gray-400">{line.isMatched ? "actual" : "estimate"}</p>
+                                  )}
+                                </div>
+
+                                {/* Three-dot menu */}
+                                <div className="relative shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEeMenuId(menuOpen ? null : line.id)}
+                                    className="text-gray-400 hover:text-gray-700 transition p-1 rounded hover:bg-gray-100">
+                                    <svg viewBox="0 0 16 16" className="w-4 h-4" fill="currentColor">
+                                      <circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/>
+                                    </svg>
+                                  </button>
+                                  {menuOpen && (
+                                    <div className="absolute right-0 top-6 z-20 w-28 rounded-xl bg-white shadow-lg border border-gray-100 py-1 text-sm">
+                                      <button type="button"
+                                        onClick={() => {
+                                          setEditingEEId(line.id);
+                                          setEditEEName(line.name);
+                                          setEditEEEstimate(String(line.estimatedAmount));
+                                          setEditEENote(line.note ?? "");
+                                          setEditEEActual(line.actualAmount != null ? String(line.actualAmount) : "");
+                                          setEeMenuId(null);
+                                        }}
+                                        className="w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-50">
+                                        Edit
+                                      </button>
+                                      <button type="button"
+                                        onClick={() => handleRemoveEELine(line.id)}
+                                        className="w-full text-left px-4 py-2 text-red-500 hover:bg-red-50">
+                                        Delete
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Footer total */}
+                    {expectedExpenses.length > 0 && (
+                      <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 bg-gray-50">
+                        <p className="text-xs text-gray-500">Estimated total</p>
+                        <p className="text-sm font-bold text-gray-800">
+                          {fmt(expectedExpenses.reduce((s, l) => s + l.estimatedAmount, 0), hc)}
+                        </p>
+                      </div>
                     )}
                   </div>
 
@@ -1317,48 +1606,56 @@ export default function EventDetailPage({ params }: { params: Promise<{ id: stri
                 <div className="space-y-4">
 
                   {/* Settings */}
-                  <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Settings</p>
-                      <button onClick={() => setShowEdit(true)} className="text-xs text-purple-600 hover:underline font-medium">Edit</button>
-                    </div>
-                    <div className="space-y-3">
-                      {event.budget && (
-                        <div>
-                          <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400 mb-0.5">Budget</p>
-                          <p className="text-sm font-semibold text-gray-800">{fmt(event.budget, hc)}</p>
+                  {(() => {
+                    // Compact date range: "Jun 25–28" or "Jun 25 – Jul 3"
+                    function fmtDateRange(start?: string, end?: string) {
+                      if (!start && !end) return null;
+                      if (start && !end) return new Date(start + "T00:00:00").toLocaleDateString("en-CA", { month: "short", day: "numeric" });
+                      if (!start && end) return new Date(end + "T00:00:00").toLocaleDateString("en-CA", { month: "short", day: "numeric" });
+                      const s = new Date(start! + "T00:00:00");
+                      const e = new Date(end!   + "T00:00:00");
+                      const sMonth = s.toLocaleDateString("en-CA", { month: "short" });
+                      const eMonth = e.toLocaleDateString("en-CA", { month: "short" });
+                      if (sMonth === eMonth) return `${sMonth} ${s.getDate()}–${e.getDate()}`;
+                      return `${sMonth} ${s.getDate()} – ${eMonth} ${e.getDate()}`;
+                    }
+
+                    const dateRange  = fmtDateRange(tripStart, tripEnd ?? undefined);
+                    const lengthDays = tripTotalDays != null ? `${tripTotalDays} day${tripTotalDays !== 1 ? "s" : ""}` : null;
+
+                    const rows: { label: string; value: React.ReactNode }[] = [
+                      ...(event.budget ? [{ label: "Budget", value: <span className="font-semibold text-gray-800">{fmt(event.budget, hc)}</span> }] : []),
+                      ...(dateRange    ? [{ label: "Dates",  value: dateRange }] : []),
+                      ...(lengthDays   ? [{ label: "Length", value: lengthDays }] : []),
+                      {
+                        label: "Category",
+                        value: event.category
+                          ? event.category
+                          : <button onClick={() => setShowEdit(true)} className="text-gray-400 hover:text-purple-500 transition">Add category</button>,
+                      },
+                      ...(event.notes ? [{ label: "Notes", value: <span className="text-gray-600 leading-relaxed">{event.notes}</span> }] : []),
+                    ];
+
+                    return (
+                      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-3">Trip Details</p>
+                        <div className="space-y-2.5">
+                          {rows.map(({ label, value }) => (
+                            <div key={label} className="flex items-baseline justify-between gap-4">
+                              <p className="text-sm text-gray-500 shrink-0">{label}</p>
+                              <p className="text-sm text-gray-800 text-right">{value}</p>
+                            </div>
+                          ))}
                         </div>
-                      )}
-                      {tripStart && (
-                        <div>
-                          <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400 mb-0.5">Starts</p>
-                          <p className="text-sm font-medium text-gray-700">{fmtDate(tripStart)}</p>
+                        <div className="mt-4 pt-3 border-t border-gray-100">
+                          <button onClick={() => setShowEdit(true)}
+                            className="text-sm text-gray-400 hover:text-purple-600 underline underline-offset-2 transition">
+                            Edit details
+                          </button>
                         </div>
-                      )}
-                      {tripEnd && (
-                        <div>
-                          <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400 mb-0.5">Ends</p>
-                          <p className="text-sm font-medium text-gray-700">{fmtDate(tripEnd)}</p>
-                        </div>
-                      )}
-                      <div>
-                        <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400 mb-0.5">Category</p>
-                        {event.category ? (
-                          <p className="text-sm font-medium text-gray-700">{event.category}</p>
-                        ) : (
-                          <button onClick={() => setShowEdit(true)} className="text-xs text-gray-300 hover:text-purple-500 transition">Add category</button>
-                        )}
                       </div>
-                      <div>
-                        <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400 mb-0.5">Notes</p>
-                        {event.notes ? (
-                          <p className="text-xs text-gray-600 leading-relaxed">{event.notes}</p>
-                        ) : (
-                          <button onClick={() => setShowEdit(true)} className="text-xs text-gray-300 hover:text-purple-500 transition">Add a description…</button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
+                    );
+                  })()}
 
                   {/* Status */}
                   {event.budget && (

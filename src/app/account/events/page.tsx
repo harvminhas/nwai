@@ -256,6 +256,7 @@ function CreateEventModal({ headers, onCreated, onClose, planKind }: CreateModal
   const [budget, setBudget]           = useState("");
   const [startDate, setStartDate]     = useState("");
   const [endDate, setEndDate]         = useState("");
+  const [notes, setNotes]             = useState("");
   const repeats                       = planKind === "service";
   const [cadence, setCadence]         = useState<ServiceCadence>("monthly");
   const [color, setColor]             = useState<EventColor>("purple");
@@ -272,8 +273,9 @@ function CreateEventModal({ headers, onCreated, onClose, planKind }: CreateModal
         name: name.trim(),
         color,
         startDate: startDate || todayISO,
-        ...(endDate ? { endDate } : {}),
+        ...(endDate  ? { endDate }                   : {}),
         ...(budget.trim() ? { budget: parseFloat(budget) } : {}),
+        ...(notes.trim()  ? { notes: notes.trim() }  : {}),
       };
       const body = repeats
         ? {
@@ -341,6 +343,31 @@ function CreateEventModal({ headers, onCreated, onClose, planKind }: CreateModal
               className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
             />
           </div>
+
+          {!repeats && (
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-gray-700 mb-1">Start date</label>
+                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
+              </div>
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-gray-700 mb-1">End date</label>
+                <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)}
+                  min={startDate || undefined}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
+              </div>
+            </div>
+          )}
+
+          {!repeats && (
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Notes <span className="font-normal text-gray-400">(optional)</span></label>
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)}
+                rows={2} placeholder="Add a description…"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none" />
+            </div>
+          )}
 
           {repeats && (
             <>

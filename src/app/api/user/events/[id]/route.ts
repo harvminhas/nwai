@@ -131,6 +131,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if (body.vendor        !== undefined) updates.vendor        = body.vendor?.trim()    || FieldValue.delete();
     if (body.category      !== undefined) updates.category      = body.category?.trim()  || FieldValue.delete();
     if (body.notes         !== undefined) updates.notes         = body.notes?.trim()     || FieldValue.delete();
+    // Expected expenses planning list (full array replace)
+    if (Array.isArray(body.expectedExpenses)) updates.expectedExpenses = body.expectedExpenses;
 
     await ref.update(updates);
     return NextResponse.json({ ok: true });

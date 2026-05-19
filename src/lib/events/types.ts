@@ -51,6 +51,25 @@ export interface VisitLog {
   createdAt: string;
 }
 
+/**
+ * A single planned expense line for a tracker — created before the money is spent.
+ * The user marks it matched once the real transaction occurs (optional actual amount).
+ */
+export interface ExpectedExpenseLine {
+  id: string;
+  name: string;
+  /** User's up-front cost estimate */
+  estimatedAmount: number;
+  /** Actual amount recorded when the line is matched (may differ from estimate) */
+  actualAmount?: number | null;
+  /** Optional planning note, e.g. "Not booked yet", "During trip" */
+  note?: string;
+  /** YYYY-MM-DD — the date the user marked this line as matched */
+  matchedDate?: string | null;
+  isMatched: boolean;
+  createdAt: string;
+}
+
 /** One date + amount entry in a scheduled-payment tracker */
 export interface ScheduledPaymentSlot {
   /** YYYY-MM-DD — when the payment is due */
@@ -81,6 +100,10 @@ export interface UserEvent {
   createdAt: string;
   /** Soft-delete — archived events are hidden but tag history is preserved */
   archivedAt?: string;
+
+  // ── Expected expenses (planning) ─────────────────────────────────────────
+  /** Planned spending lines — available on all project/event trackers */
+  expectedExpenses?: ExpectedExpenseLine[];
 
   // ── Scheduled payment fields ──────────────────────────────────────────────
   /** Fixed payment schedule (scheduled_payment kind only) */
