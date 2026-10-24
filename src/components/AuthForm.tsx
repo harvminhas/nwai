@@ -111,7 +111,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
       const cred = await signInWithPopup(auth, new GoogleAuthProvider());
       const idToken = await cred.user.getIdToken();
       const ok = await afterSignIn(idToken, false);
-      if (ok) { router.push("/account/home"); router.refresh(); }
+      if (ok) { router.push("/account/dashboard"); router.refresh(); }
     } catch (err: unknown) {
       const code = (err as { code?: string }).code ?? "";
       setError(friendlyAuthError(code));
@@ -133,7 +133,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
         const idToken = await cred.user.getIdToken();
         await afterSignIn(idToken, false);
       }
-      router.push("/account/home"); router.refresh();
+      router.push("/account/dashboard"); router.refresh();
     } catch (err: unknown) {
       const code = (err as { code?: string }).code ?? "";
       if (code === "auth/email-already-in-use") setExistingUser(true);

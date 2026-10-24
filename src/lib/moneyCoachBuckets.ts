@@ -12,14 +12,14 @@
  * Healthcare, Fees, Debt Payments, Investments & Savings, Transfers, Cash & ATM, Other
  */
 
-export type MoneyCoachBucket = "fixed" | "essentials" | "discretionary" | "savings" | "uncategorized";
+export type MoneyCoachBucket = "fixed" | "essentials" | "flexible" | "savings" | "uncategorized";
 
 export interface BucketMetadata {
   id: MoneyCoachBucket;
   label: string;
   description: string;
   emoji: string;
-  /** Recommended % of take-home income (50/30/20 rule baseline) */
+  /** Recommended % of take-home income (Fixed 35% + Essentials 15% = Needs 50%, Flexible 30%, Savings 20%) */
   targetPct: number;
 }
 
@@ -39,15 +39,15 @@ export const CATEGORY_TO_BUCKET: Record<string, MoneyCoachBucket> = {
   "Healthcare": "essentials",
   "Childcare": "essentials",
   
-  // Discretionary (dining, shopping, entertainment, travel, cash)
-  "Dining": "discretionary",
-  "Shopping": "discretionary",
-  "Entertainment": "discretionary",
-  "Travel": "discretionary",
-  "Cash & ATM": "discretionary",
-  "Personal Care": "discretionary",
-  "Gifts & Donations": "discretionary",
-  "Hobbies": "discretionary",
+  // Flexible (dining, shopping, entertainment, travel, cash)
+  "Dining": "flexible",
+  "Shopping": "flexible",
+  "Entertainment": "flexible",
+  "Travel": "flexible",
+  "Cash & ATM": "flexible",
+  "Personal Care": "flexible",
+  "Gifts & Donations": "flexible",
+  "Hobbies": "flexible",
   
   // Savings & Debt (investments, savings, debt paydown beyond minimums)
   "Investments & Savings": "savings",
@@ -65,31 +65,31 @@ export const CATEGORY_TO_BUCKET: Record<string, MoneyCoachBucket> = {
 export const BUCKET_METADATA: Record<MoneyCoachBucket, BucketMetadata> = {
   fixed: {
     id: "fixed",
-    label: "Fixed Costs",
+    label: "Fixed costs",
     description: "Housing, insurance, utilities, subscriptions, minimum loan payments",
     emoji: "🏠",
-    targetPct: 50, // 50/30/20 rule: 50% on needs
+    targetPct: 35, // Fixed 35% + Essentials 15% = Needs 50%
   },
   essentials: {
     id: "essentials",
     label: "Essentials",
     description: "Groceries, transportation, healthcare, childcare",
     emoji: "🛒",
-    targetPct: 20, // Part of the 50% "needs" bucket, broken out for clarity
+    targetPct: 15, // Fixed 35% + Essentials 15% = Needs 50%
   },
-  discretionary: {
-    id: "discretionary",
-    label: "Discretionary",
+  flexible: {
+    id: "flexible",
+    label: "Flexible",
     description: "Dining, shopping, entertainment, travel, personal spending",
     emoji: "🎭",
-    targetPct: 30, // 30% on wants
+    targetPct: 30, // Flexible spending (wants)
   },
   savings: {
     id: "savings",
-    label: "Savings & Debt Paydown",
+    label: "Savings & debt",
     description: "Savings contributions, debt paydown beyond minimums",
     emoji: "💰",
-    targetPct: 20, // 20% on savings/debt paydown
+    targetPct: 20, // Savings and debt paydown
   },
   uncategorized: {
     id: "uncategorized",
@@ -136,9 +136,9 @@ export function getBucketAdvice(
     return `Essentials at ${actualPct}% are manageable. Keep an eye on grocery and transport costs.`;
   }
 
-  if (bucket === "discretionary") {
+  if (bucket === "flexible") {
     if (actualPct > 40) {
-      return `At ${actualPct}%, discretionary spending is high. Cut back on dining out or entertainment to free up savings.`;
+      return `At ${actualPct}%, flexible spending is high. Cut back on dining out or entertainment to free up savings.`;
     }
     if (actualPct > targetPct + 5) {
       return `At ${actualPct}%, you're over the 30% guideline. Small cuts to dining or shopping can make a big difference.`;
@@ -146,7 +146,7 @@ export function getBucketAdvice(
     if (actualPct < targetPct - 5) {
       return `At ${actualPct}%, you're living frugally. You could afford to enjoy yourself a bit more if you want.`;
     }
-    return `Discretionary spending at ${actualPct}% is within a healthy range.`;
+    return `Flexible spending at ${actualPct}% is within a healthy range.`;
   }
 
   if (bucket === "savings") {

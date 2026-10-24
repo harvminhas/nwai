@@ -73,7 +73,7 @@ export function computeMoneyCoachBreakdown(profile: FinancialProfileCache): Mone
     const buckets: Record<MoneyCoachBucket, number> = {
       fixed: 0,
       essentials: 0,
-      discretionary: 0,
+      flexible: 0,
       savings: 0,
       uncategorized: 0,
     };
@@ -97,7 +97,7 @@ export function computeMoneyCoachBreakdown(profile: FinancialProfileCache): Mone
   const bucketMedians: Record<MoneyCoachBucket, number> = {
     fixed: median([...bucketsByMonth.values()].map(b => b.fixed)),
     essentials: median([...bucketsByMonth.values()].map(b => b.essentials)),
-    discretionary: median([...bucketsByMonth.values()].map(b => b.discretionary)),
+    flexible: median([...bucketsByMonth.values()].map(b => b.flexible)),
     savings: median([...bucketsByMonth.values()].map(b => b.savings)),
     uncategorized: median([...bucketsByMonth.values()].map(b => b.uncategorized)),
   };
