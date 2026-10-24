@@ -99,7 +99,7 @@ export default function LoginPage() {
       const idToken = await cred.user.getIdToken();
       const isNew   = await ensureUserProfile(idToken);
       if (isNew) await claimPendingStatement(idToken);
-      router.push("/account/dashboard");
+      router.push("/account/home");
       router.refresh();
     } catch (err: unknown) {
       const code = (err as { code?: string }).code ?? "";

@@ -80,7 +80,7 @@ export default function ProcessingAnimation({
         if (compact) {
           onComplete?.();
         } else if (isLoggedInRef.current) {
-          router.push("/account/dashboard");
+          router.push("/account/home");
         } else {
           // Persist so AuthForm can claim this statement after signup/login
           try { localStorage.setItem("nwai_claim_statement", statementId); } catch { /* ignore */ }
