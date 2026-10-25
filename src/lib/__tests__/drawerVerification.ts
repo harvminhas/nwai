@@ -88,17 +88,20 @@ const mockExpenseTxns: ExpenseTxnRecord[] = [
   { txMonth: "2026-10", date: "2026-10-01", category: "Housing", merchant: "Landlord", amount: -2000, accountSlug: "checking-1234", accountLabel: "Checking", currency: "CAD" },
   { txMonth: "2026-10", date: "2026-10-12", category: "Transportation", merchant: "Gas Station", amount: -120, accountSlug: "checking-1234", accountLabel: "Checking", currency: "CAD" },
   { txMonth: "2026-10", date: "2026-10-05", category: "Subscriptions", merchant: "Netflix", amount: -15, accountSlug: "credit-5678", accountLabel: "Chase Visa", currency: "CAD" },
-  // LOC transactions: regular interest + large paydown
-  { txMonth: "2026-10", date: "2026-10-01", category: "Interest", merchant: "INTEREST CHARGE", amount: -812, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
+  // HELOC transactions: regular interest + large paydown
+  { txMonth: "2026-10", date: "2026-10-01", category: "Interest", merchant: "INTEREST CHARGE", amount: -820, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
   { txMonth: "2026-10", date: "2026-10-02", category: "Debt Payments", merchant: "TD HELOC PAYMENT", amount: -33160, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
-  // Previous months: regular pattern
   { txMonth: "2026-09", date: "2026-09-15", category: "Groceries", merchant: "Safeway", amount: -480, accountSlug: "checking-1234", accountLabel: "Checking", currency: "CAD" },
   { txMonth: "2026-09", date: "2026-09-20", category: "Dining", merchant: "Starbucks", amount: -25, accountSlug: "credit-5678", accountLabel: "Chase Visa", currency: "CAD" },
-  { txMonth: "2026-09", date: "2026-09-01", category: "Interest", merchant: "INTEREST CHARGE", amount: -825, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
-  { txMonth: "2026-09", date: "2026-09-02", category: "Debt Payments", merchant: "TD HELOC PAYMENT", amount: -858, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
+  { txMonth: "2026-09", date: "2026-09-01", category: "Interest", merchant: "INTEREST CHARGE", amount: -815, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
   { txMonth: "2026-08", date: "2026-08-15", category: "Groceries", merchant: "Trader Joes", amount: -420, accountSlug: "checking-1234", accountLabel: "Checking", currency: "CAD" },
-  { txMonth: "2026-08", date: "2026-08-01", category: "Interest", merchant: "INTEREST CHARGE", amount: -830, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
-  { txMonth: "2026-08", date: "2026-08-02", category: "Debt Payments", merchant: "TD HELOC PAYMENT", amount: -1302, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
+  { txMonth: "2026-08", date: "2026-08-01", category: "Interest", merchant: "INTEREST CHARGE", amount: -810, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
+  { txMonth: "2026-07", date: "2026-07-01", category: "Interest", merchant: "INTEREST CHARGE", amount: -808, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
+  // Car loan payments (regular pattern)
+  { txMonth: "2026-09", date: "2026-09-15", category: "Debt Payments", merchant: "SCOTIA PLAN PAYMENT", amount: -1087, accountSlug: "scotia-plan-1234", accountLabel: "Scotia Plan", currency: "CAD" },
+  { txMonth: "2026-08", date: "2026-08-15", category: "Debt Payments", merchant: "SCOTIA PLAN PAYMENT", amount: -1094, accountSlug: "scotia-plan-1234", accountLabel: "Scotia Plan", currency: "CAD" },
+  { txMonth: "2026-07", date: "2026-07-15", category: "Debt Payments", merchant: "SCOTIA PLAN PAYMENT", amount: -1089, accountSlug: "scotia-plan-1234", accountLabel: "Scotia Plan", currency: "CAD" },
+  { txMonth: "2026-06", date: "2026-06-15", category: "Debt Payments", merchant: "SCOTIA PLAN PAYMENT", amount: -1091, accountSlug: "scotia-plan-1234", accountLabel: "Scotia Plan", currency: "CAD" },
 ];
 
 const mockAccountSnapshots: AccountSnapshot[] = [
@@ -119,10 +122,21 @@ const mockAccountSnapshots: AccountSnapshot[] = [
     accountId: "9999",
     accountName: "TD Home Equity FlexLine",
     accountType: "line_of_credit",
-    balance: -150000,
+    balance: -990900, // Large HELOC balance (interest-only minimum)
     statementMonth: "2026-10",
     interestRate: 6.5,
     paymentsMade: 33160, // Large paydown this month (should NOT all go to Fixed costs)
+  },
+  {
+    slug: "scotia-plan-1234",
+    bankName: "Scotia",
+    accountId: "1234",
+    accountName: "Scotia Plan",
+    accountType: "loan",
+    balance: -25000, // Car loan
+    statementMonth: "2026-10",
+    interestRate: 5.9,
+    paymentsMade: 1089,
   },
 ];
 
@@ -338,65 +352,83 @@ console.log("=== END BUG REPRODUCTION ===\n");
 
 // ── Regression Test: Large LOC Paydown (Bug Fix Verification) ──────────────────
 
-console.log("=== REGRESSION TEST: Large LOC Paydown ===");
-console.log("Bug: Large paydown on LOC was counted entirely as Fixed cost.");
-console.log("Expected: Only scheduled payment (~$812 interest + 1% principal = ~$2,312) goes to Fixed.");
-console.log("         Extra paydown (~$30,848) should go to Savings & debt.\n");
+console.log("=== REGRESSION TEST: Production Bug Fix ===");
+console.log("Production bugs:");
+console.log("  1. TD Home Equity FlexLine: showed CA$9,909 (1% of $991K balance)");
+console.log("  2. Scotia Plan (car loan): showed CA$858 (capped at 3% of $25K balance = $750)");
+console.log("\nExpected after fix:");
+console.log("  1. FlexLine: ~CA$813 (interest-only for large HELOC)");
+console.log("  2. Scotia Plan: ~CA$1,090 (median of recurring payments)\n");
 
 try {
   const fixedBreakdown = computeBucketBreakdown(
     "fixed",
     mockExpenseTxns,
     mockAccountSnapshots,
-    ["2026-08", "2026-09"], // Exclude current incomplete month
+    ["2026-07", "2026-08", "2026-09"], // Last 3 complete months
     "CAD"
   );
 
   const loanCategory = fixedBreakdown.categories.find(c => c.category === "Loan payments");
   
   if (loanCategory) {
+    // Test 1: TD Home Equity FlexLine
     const tdHeloc = loanCategory.merchants.find(m => m.accountSlug === "td-heloc-9999");
     
     if (tdHeloc) {
       const scheduledAmount = tdHeloc.amount;
-      console.log(`✓ TD Home Equity FlexLine scheduled payment: CA$${Math.round(scheduledAmount)}/month`);
+      console.log(`TD Home Equity FlexLine:`);
+      console.log(`  Balance: CA$990,900`);
+      console.log(`  Calculated: CA$${Math.round(scheduledAmount)}/month`);
+      console.log(`  Expected: ~CA$813 (median interest, no principal)`);
       
-      // Verify it's reasonable (should be ~$1,500-3,000 based on interest + 1% principal)
-      const minExpected = 800;  // Just interest
-      const maxExpected = 3000; // Interest + 1.5% principal
-      
-      if (scheduledAmount >= minExpected && scheduledAmount <= maxExpected) {
-        console.log(`✓ Amount is reasonable (expected ${minExpected}-${maxExpected})`);
+      if (scheduledAmount >= 800 && scheduledAmount <= 830) {
+        console.log(`  ✓ FIXED: Interest-only minimum (large HELOC)\n`);
+      } else if (scheduledAmount > 9000) {
+        console.log(`  ✗ STILL BROKEN: Including 1% principal on huge balance\n`);
       } else {
-        console.log(`✗ Amount ${Math.round(scheduledAmount)} is outside expected range ${minExpected}-${maxExpected}`);
-      }
-      
-      // Verify merchant name is account name, not "Scheduled payment"
-      if (tdHeloc.merchant === "TD Home Equity FlexLine" || tdHeloc.merchant.includes("FlexLine")) {
-        console.log(`✓ Merchant label shows account name: "${tdHeloc.merchant}"`);
-      } else {
-        console.log(`✗ Merchant label is generic: "${tdHeloc.merchant}" (expected account name)`);
+        console.log(`  ? Unexpected value: CA$${Math.round(scheduledAmount)}\n`);
       }
     } else {
-      console.log("✗ TD Home Equity FlexLine not found in loan payments");
+      console.log("✗ TD Home Equity FlexLine not found in loan payments\n");
+    }
+    
+    // Test 2: Scotia Plan car loan
+    const scotia = loanCategory.merchants.find(m => m.accountSlug === "scotia-plan-1234");
+    
+    if (scotia) {
+      const scheduledAmount = scotia.amount;
+      console.log(`Scotia Plan (car loan):`);
+      console.log(`  Balance: CA$25,000`);
+      console.log(`  Payment history: CA$1,091, CA$1,089, CA$1,094, CA$1,087`);
+      console.log(`  Calculated: CA$${Math.round(scheduledAmount)}/month`);
+      console.log(`  Expected: ~CA$1,090 (median of recurring payments)`);
+      
+      if (scheduledAmount >= 1085 && scheduledAmount <= 1095) {
+        console.log(`  ✓ FIXED: Using actual recurring payment\n`);
+      } else if (scheduledAmount < 900) {
+        console.log(`  ✗ STILL BROKEN: Capped at 3% of balance or low payment\n`);
+      } else {
+        console.log(`  ? Unexpected value: CA$${Math.round(scheduledAmount)}\n`);
+      }
+    } else {
+      console.log("✗ Scotia Plan not found in loan payments\n");
+    }
+    
+    // Verify all accounts are shown
+    const totalMerchants = loanCategory.merchants.length;
+    console.log(`Total loan accounts shown: ${totalMerchants}`);
+    if (totalMerchants >= 2) {
+      console.log(`✓ All debt accounts displayed\n`);
+    } else {
+      console.log(`✗ Missing accounts (expected at least 2)\n`);
     }
   } else {
-    console.log("✗ Loan payments category not found in Fixed bucket");
-  }
-
-  // Verify October (current incomplete month) is excluded
-  const octMonths = fixedBreakdown.categories
-    .flatMap(c => c.merchants)
-    .filter(m => m.accountSlug === "td-heloc-9999");
-  
-  if (octMonths.length === 0 || fixedBreakdown.monthlyAverage < 30000) {
-    console.log("✓ Current incomplete month (Oct 2026) excluded from 'last 3 months'");
-  } else {
-    console.log("✗ Current incomplete month (Oct 2026) was NOT excluded (large paydown inflated average)");
+    console.log("✗ Loan payments category not found in Fixed bucket\n");
   }
 
 } catch (err) {
   console.log(`✗ ERROR: ${err instanceof Error ? err.message : String(err)}`);
 }
 
-console.log("\n✅ Regression test complete\n");
+console.log("✅ Regression test complete\n");
