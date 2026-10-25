@@ -3,6 +3,7 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { buildAndCacheFinancialProfile } from "@/lib/financialProfile";
 import { isCoreExcluded } from "@/lib/spendingMetrics";
 import { canUseDebugTools } from "@/lib/debugPlanGate";
+import { getHomeCurrency } from "@/lib/currencyUtils";
 
 /**
  * GET /api/debug/spending
@@ -104,7 +105,7 @@ export async function GET(request: NextRequest) {
         balance: s.balance,
         statementMonth: s.statementMonth,
       })),
-      homeCurrency: profile.homeCurrency ?? "USD",
+      homeCurrency: getHomeCurrency(profile),
       fxRates: profile.fxRates ?? {},
       currentMonth: {
         month: thisMonth,

@@ -14,6 +14,7 @@ import { getYearMonth } from "@/lib/consolidate";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { isCoreExcluded } from "@/lib/spendingMetrics";
+import { getHomeCurrency } from "@/lib/currencyUtils";
 import {
   isDebtServicingExpense,
   resolveDebtServicingKind,
@@ -92,7 +93,7 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
   if (!latestTxMonth) return "No financial data available yet.";
 
   const month = latestTxMonth;
-  const home  = (profile.homeCurrency ?? "USD").toUpperCase();
+  const home = getHomeCurrency(profile);
   const fmt   = makeFmt(home);
 
   const rateMap = new Map<string, number>();

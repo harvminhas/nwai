@@ -14,6 +14,8 @@
  * Future: replace with per-signal code writers so AI is only called for complex cards.
  */
 
+import { getHomeCurrency } from "@/lib/currencyUtils";
+
 import type * as Firestore from "firebase-admin/firestore";
 import { getYearMonth } from "@/lib/consolidate";
 import { inferFinancialDNA } from "@/lib/financialDNA";
@@ -137,7 +139,7 @@ Latest month (${latestTxMonth}): income minus core expenses ("Net" in THIS MONTH
   if (prioritizeCashflowInsight && !cards.some((c) => c.category === "cashflow")) {
     const cfCard = buildCashflowInsightCard({
       latestMonth: latestTxMonth,
-      homeCurrency: profile.homeCurrency ?? "USD",
+      homeCurrency: getHomeCurrency(profile),
       incomeTotal: incomeLatest,
       coreExpensesTotal: coreLatest,
       cardServicingTotal: mhLatest?.cardServicingPaymentsTotal ?? 0,

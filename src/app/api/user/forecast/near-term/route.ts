@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import { getFinancialProfile } from "@/lib/financialProfile";
+import { getHomeCurrency } from "@/lib/currencyUtils";
 import { consolidateStatements, getYearMonth } from "@/lib/consolidate";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import type { ParsedStatementData } from "@/lib/types";
@@ -263,7 +264,7 @@ export async function GET(req: NextRequest) {
 
     const expenseTxns = profile.expenseTxns ?? [];
     const incomeTxns = profile.incomeTxns ?? [];
-    const homeCurrency = profile.homeCurrency ?? "CAD";
+    const homeCurrency = getHomeCurrency(profile);
 
     const txByFingerprint = new Map<string, { amount: number; date: string; merchant: string }>();
     for (const tx of expenseTxns) {
