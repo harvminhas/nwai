@@ -23,7 +23,10 @@ export async function GET(req: NextRequest) {
     const profile = await getFinancialProfile(decoded.uid, db);
     const breakdown = computeMoneyCoachBreakdown(profile);
 
-    return Response.json(breakdown);
+    return Response.json({
+      ...breakdown,
+      homeCurrency: profile.homeCurrency,
+    });
   } catch (error) {
     console.error("Money coach error:", error);
     return Response.json(

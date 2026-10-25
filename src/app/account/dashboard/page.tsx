@@ -14,7 +14,7 @@ interface MoneyCoachBucket {
   bucket: string;
   label: string;
   emoji: string;
-  monthlyMedian: number;
+  monthlyAverage: number;
   pctOfIncome: number;
   targetPct: number;
   advice: string;
@@ -22,7 +22,8 @@ interface MoneyCoachBucket {
 }
 
 interface MoneyCoachBreakdown {
-  incomeMedian: number;
+  incomeAmount: number;
+  incomeBasisLabel: string;
   buckets: MoneyCoachBucket[];
   totalSpending: number;
   savingsRate: number;
@@ -32,6 +33,7 @@ interface MoneyCoachBreakdown {
     coveragePct: number;
     missingMonths: string[];
   };
+  homeCurrency?: string;
 }
 
 // ── Components ─────────────────────────────────────────────────────────────────
@@ -127,7 +129,7 @@ function AnswerCard({
 function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdown; currency: string }) {
   const [expanded, setExpanded] = useState(true);
 
-  const { coverage, incomeMedian, buckets } = breakdown;
+  const { coverage, incomeAmount, incomeBasisLabel, buckets } = breakdown;
   
   // Calculate bucket percentages
   const fixedBucket = buckets.find(b => b.bucket === "fixed");
@@ -157,7 +159,7 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
         <div className="min-w-0 flex-1">
           <h2 className="text-lg font-bold text-gray-900">Where your money goes</h2>
           <p className="mt-0.5 text-sm text-gray-500">
-            Monthly average · {fmt(incomeMedian, currency)} take-home
+            {incomeBasisLabel} · {fmt(incomeAmount, currency)} take-home
           </p>
         </div>
         
@@ -245,7 +247,7 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
                 <span className="flex items-center gap-2">
                   <span className="h-3 w-3 rounded" style={{ backgroundColor: bucketColors.fixed }} />
                   <span className="font-semibold">Fixed costs</span>
-                  <span className="text-gray-600">{fmt(fixedBucket.monthlyMedian, currency)}</span>
+                  <span className="text-gray-600">{fmt(fixedBucket.monthlyAverage, currency)}</span>
                   <span className="text-gray-400">({Math.round(fixedBucket.pctOfIncome)}%)</span>
                 </span>
               )}
@@ -253,7 +255,7 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
                 <span className="flex items-center gap-2">
                   <span className="h-3 w-3 rounded" style={{ backgroundColor: bucketColors.essentials }} />
                   <span className="font-semibold">Essentials</span>
-                  <span className="text-gray-600">{fmt(essentialsBucket.monthlyMedian, currency)}</span>
+                  <span className="text-gray-600">{fmt(essentialsBucket.monthlyAverage, currency)}</span>
                   <span className="text-gray-400">({Math.round(essentialsBucket.pctOfIncome)}%)</span>
                 </span>
               )}
@@ -261,7 +263,7 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
                 <span className="flex items-center gap-2">
                   <span className="h-3 w-3 rounded" style={{ backgroundColor: bucketColors.flexible }} />
                   <span className="font-semibold">Flexible</span>
-                  <span className="text-gray-600">{fmt(flexibleBucket.monthlyMedian, currency)}</span>
+                  <span className="text-gray-600">{fmt(flexibleBucket.monthlyAverage, currency)}</span>
                   <span className="text-gray-400">({Math.round(flexibleBucket.pctOfIncome)}%)</span>
                 </span>
               )}
@@ -269,7 +271,7 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
                 <span className="flex items-center gap-2">
                   <span className="h-3 w-3 rounded" style={{ backgroundColor: bucketColors.savings }} />
                   <span className="font-semibold">Savings & debt</span>
-                  <span className="text-gray-600">{fmt(savingsBucket.monthlyMedian, currency)}</span>
+                  <span className="text-gray-600">{fmt(savingsBucket.monthlyAverage, currency)}</span>
                   <span className="text-gray-400">({Math.round(savingsBucket.pctOfIncome)}%)</span>
                 </span>
               )}
@@ -290,7 +292,7 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
                 Income
               </div>
               <p className="text-2xl font-bold tracking-tight text-gray-900">
-                {fmt(incomeMedian, currency)}
+                {fmt(incomeAmount, currency)}
                 <span className="text-sm font-medium text-gray-400">/mo</span>
               </p>
               <p className="mt-1 text-xs text-gray-500">100% · take-home</p>
@@ -345,7 +347,7 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
                     )}
                   </div>
                   <p className="text-2xl font-bold tracking-tight text-gray-900">
-                    {fmt(bucket.monthlyMedian, currency)}
+                    {fmt(bucket.monthlyAverage, currency)}
                     <span className="text-sm font-medium text-gray-400">/mo</span>
                   </p>
                   <p className="mt-1 text-xs text-gray-500">
@@ -423,7 +425,7 @@ export default function DashboardPage() {
       if (coachRes.ok) {
         const data = await coachRes.json();
         setBreakdown(data);
-        setCurrency("USD");
+        setCurrency(data.homeCurrency || "USD");
       }
       
       if (suggestionsRes.ok) {

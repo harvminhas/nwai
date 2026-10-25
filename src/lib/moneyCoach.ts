@@ -1,13 +1,16 @@
 /**
  * Money Coach — compute budget breakdown from FinancialProfileCache.
  *
- * Returns monthly averages (median) grouped into buckets:
+ * Returns monthly averages grouped into buckets:
  * Fixed, Essentials, Discretionary, Savings/Debt, Income
  * 
  * Debt model:
  * - Fixed costs include scheduled loan payments and credit card minimum payments
  * - Card Servicing transactions are excluded from all buckets (purchases already counted)
  * - Extra debt paydown (payments above scheduled/minimum) goes to Savings & debt
+ * 
+ * Income and spending use the same calculation window (last 3 months when available,
+ * otherwise overall average) to ensure consistent percentages.
  */
 
 import type { FinancialProfileCache } from "./financialProfile";
@@ -16,13 +19,14 @@ import { getCategoryBucket, getBucketAdvice, BUCKET_METADATA, type MoneyCoachBuc
 import { isCoreExcluded } from "./spendingMetrics";
 import { computeScheduledDebtPayments, type ScheduledDebtPayment } from "./debtPayments";
 import { getParentCategory } from "./categoryTaxonomy";
+import { getMoneyCoachIncome } from "./incomeMetrics";
 
 export interface MoneyCoachBucketSummary {
   bucket: MoneyCoachBucket;
   label: string;
   emoji: string;
-  /** Median monthly $ amount */
-  monthlyMedian: number;
+  /** Average monthly $ amount */
+  monthlyAverage: number;
   /** % of take-home income */
   pctOfIncome: number;
   /** Target % from 50/30/20 rule */
@@ -34,11 +38,13 @@ export interface MoneyCoachBucketSummary {
 }
 
 export interface MoneyCoachBreakdown {
-  /** Income median */
-  incomeMedian: number;
+  /** Income amount (current run-rate or average) */
+  incomeAmount: number;
+  /** Income basis label: "last 3 months" or "10-month avg" */
+  incomeBasisLabel: string;
   /** Spending buckets */
   buckets: MoneyCoachBucketSummary[];
-  /** Total spending (sum of all bucket medians) */
+  /** Total spending (sum of all bucket averages) */
   totalSpending: number;
   /** Savings rate: (income - spending) / income */
   savingsRate: number;
@@ -52,41 +58,42 @@ export interface MoneyCoachBreakdown {
 }
 
 /**
- * Compute median of an array of numbers (returns 0 for empty array).
+ * Compute average of an array of numbers (returns 0 for empty array).
  */
-function median(values: number[]): number {
+function average(values: number[]): number {
   if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  return values.reduce((sum, v) => sum + v, 0) / values.length;
 }
 
 /**
  * Compute money coach breakdown from financial profile.
- * Uses median across all available months.
+ * Uses average (not median) across the same window as income calculation
+ * to ensure consistent percentages.
  */
 export function computeMoneyCoachBreakdown(profile: FinancialProfileCache): MoneyCoachBreakdown {
-  const { monthlyHistory, expenseTxns, incomeTxns, coverage, accountSnapshots } = profile;
+  const { monthlyHistory, expenseTxns, coverage, accountSnapshots } = profile;
 
-  // Compute income median from monthly history
-  const incomeValues = monthlyHistory
-    .map(h => h.incomeTotal)
-    .filter(v => v > 0);
-  const incomeMedian = median(incomeValues);
+  // Compute income using shared function (matches Income page logic)
+  const { amount: incomeAmount, basisLabel: incomeBasisLabel } = getMoneyCoachIncome(monthlyHistory);
+
+  // Determine which months to use for spending (same window as income)
+  const monthsWithIncome = monthlyHistory.filter(h => h.incomeTotal > 0);
+  const spendingMonths = monthsWithIncome.length >= 3 
+    ? monthsWithIncome.slice(-3).map(h => h.yearMonth)  // Use last 3 months
+    : monthsWithIncome.map(h => h.yearMonth);          // Use all available months
 
   // Compute scheduled debt payments (fixed costs)
   const scheduledPayments = computeScheduledDebtPayments(accountSnapshots);
   const scheduledByAccount = new Map(scheduledPayments.map(p => [p.accountSlug, p]));
   const hasEstimatedDebt = scheduledPayments.some(p => p.isEstimated);
 
-  // Total scheduled debt payments per month (median across accounts)
+  // Total scheduled debt payments per month
   const totalScheduledDebt = scheduledPayments.reduce((sum, p) => sum + p.amount, 0);
 
-  // Group expenses by bucket for each month, then compute medians
+  // Group expenses by bucket for each month in the spending window
   const bucketsByMonth = new Map<string, Record<MoneyCoachBucket, number>>();
 
-  for (const h of monthlyHistory) {
-    const ym = h.yearMonth;
+  for (const ym of spendingMonths) {
     const buckets: Record<MoneyCoachBucket, number> = {
       fixed: totalScheduledDebt, // Start with scheduled debt payments
       essentials: 0,
@@ -135,33 +142,33 @@ export function computeMoneyCoachBreakdown(profile: FinancialProfileCache): Mone
     bucketsByMonth.set(ym, buckets);
   }
 
-  // Compute median for each bucket
-  const bucketMedians: Record<MoneyCoachBucket, number> = {
-    fixed: median([...bucketsByMonth.values()].map(b => b.fixed)),
-    essentials: median([...bucketsByMonth.values()].map(b => b.essentials)),
-    flexible: median([...bucketsByMonth.values()].map(b => b.flexible)),
-    savings: median([...bucketsByMonth.values()].map(b => b.savings)),
-    uncategorized: median([...bucketsByMonth.values()].map(b => b.uncategorized)),
+  // Compute average for each bucket (same window as income)
+  const bucketAverages: Record<MoneyCoachBucket, number> = {
+    fixed: average([...bucketsByMonth.values()].map(b => b.fixed)),
+    essentials: average([...bucketsByMonth.values()].map(b => b.essentials)),
+    flexible: average([...bucketsByMonth.values()].map(b => b.flexible)),
+    savings: average([...bucketsByMonth.values()].map(b => b.savings)),
+    uncategorized: average([...bucketsByMonth.values()].map(b => b.uncategorized)),
   };
 
-  const totalSpending = Object.values(bucketMedians).reduce((sum, v) => sum + v, 0);
-  const savingsRate = incomeMedian > 0 ? (incomeMedian - totalSpending) / incomeMedian : 0;
+  const totalSpending = Object.values(bucketAverages).reduce((sum, v) => sum + v, 0);
+  const savingsRate = incomeAmount > 0 ? (incomeAmount - totalSpending) / incomeAmount : 0;
 
   // Build bucket summaries with advice
   const bucketSummaries: MoneyCoachBucketSummary[] = (
-    Object.keys(bucketMedians) as MoneyCoachBucket[]
+    Object.keys(bucketAverages) as MoneyCoachBucket[]
   )
     .filter(bucket => bucket !== "uncategorized") // Hide uncategorized unless it's significant
     .map(bucket => {
       const metadata = BUCKET_METADATA[bucket];
-      const monthlyMedian = bucketMedians[bucket];
-      const pctOfIncome = incomeMedian > 0 ? (monthlyMedian / incomeMedian) * 100 : 0;
+      const monthlyAverage = bucketAverages[bucket];
+      const pctOfIncome = incomeAmount > 0 ? (monthlyAverage / incomeAmount) * 100 : 0;
 
       return {
         bucket,
         label: metadata.label,
         emoji: metadata.emoji,
-        monthlyMedian,
+        monthlyAverage,
         pctOfIncome,
         targetPct: metadata.targetPct,
         advice: getBucketAdvice(bucket, pctOfIncome, metadata.targetPct),
@@ -170,21 +177,22 @@ export function computeMoneyCoachBreakdown(profile: FinancialProfileCache): Mone
     });
 
   // Add uncategorized if it's more than 5% of spending
-  const uncatMedian = bucketMedians.uncategorized;
-  if (uncatMedian > totalSpending * 0.05) {
+  const uncatAverage = bucketAverages.uncategorized;
+  if (uncatAverage > totalSpending * 0.05) {
     bucketSummaries.push({
       bucket: "uncategorized",
       label: "Uncategorized",
       emoji: "❓",
-      monthlyMedian: uncatMedian,
-      pctOfIncome: incomeMedian > 0 ? (uncatMedian / incomeMedian) * 100 : 0,
+      monthlyAverage: uncatAverage,
+      pctOfIncome: incomeAmount > 0 ? (uncatAverage / incomeAmount) * 100 : 0,
       targetPct: 0,
       advice: "Some transactions aren't categorized yet. Review your spending to assign them.",
     });
   }
 
   return {
-    incomeMedian,
+    incomeAmount,
+    incomeBasisLabel,
     buckets: bucketSummaries,
     totalSpending,
     savingsRate,
