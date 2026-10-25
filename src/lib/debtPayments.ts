@@ -4,6 +4,9 @@
  * All loans/mortgages: learn regular payment from recurring patterns.
  * Anomalies (1.5× or 0.5× regular) are flagged for review.
  * Credit cards: estimated minimum when carrying balance.
+ * 
+ * CURRENCY: All amounts are converted to home currency using fxRates.
+ * Balances, payments, and minimums must be in home currency before aggregation.
  */
 
 import type { AccountSnapshot, ExpenseTxnRecord } from "./extractTransactions";
@@ -51,11 +54,13 @@ const ANOMALY_LOW_THRESHOLD = 0.5;   // Payment < 0.5× median
 /**
  * Detect recurring payment amount and flag anomalies.
  * Returns median of regular payments (6-12 months history), plus list of anomalies.
+ * All amounts are converted to home currency.
  */
 function detectRecurringPayment(
   accountSlug: string,
   expenseTxns: ExpenseTxnRecord[],
-  userReviews: Map<string, DebtPaymentReview>
+  userReviews: Map<string, DebtPaymentReview>,
+  toHome: (amount: number, currency?: string) => number
 ): { 
   regularAmount: number | null; 
   anomalies: DebtAnomaly[];
@@ -74,9 +79,10 @@ function detectRecurringPayment(
       return {
         date: t.date,
         txMonth: t.txMonth,
-        amount: Math.abs(t.amount),
+        amount: toHome(Math.abs(t.amount), t.currency), // Convert to home currency
         description: t.merchant,
         fingerprint,
+        currency: t.currency,
       };
     })
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -236,13 +242,26 @@ function isPaidInFull(balance: number, paymentMade: number): boolean {
  * - Anomalies (>1.5× or <0.5× median) are flagged for review
  * - Credit cards: estimate minimum when carrying balance
  * 
+ * @param fxRates - Currency conversion rates (e.g. { "CAD": 0.72 } means 1 CAD = 0.72 USD)
+ * @param homeCurrency - The home currency to convert all amounts to (e.g. "USD" or "CAD")
  * @param userReviews - User classifications for anomalous transactions
  */
 export function computeScheduledDebtPayments(
   accountSnapshots: AccountSnapshot[],
   expenseTxns: ExpenseTxnRecord[] = [],
-  userReviews: DebtPaymentReview[] = []
+  userReviews: DebtPaymentReview[] = [],
+  fxRates: Record<string, number> = {},
+  homeCurrency: string = "CAD"
 ): ScheduledDebtPayment[] {
+  // Currency conversion helper
+  const home = homeCurrency.toUpperCase();
+  function toHome(amount: number, currency?: string): number {
+    const cur = (currency ?? home).toUpperCase();
+    if (cur === home) return amount;
+    const rate = fxRates[cur];
+    return rate ? amount * rate : amount;
+  }
+
   // Build a map of reviews by transaction fingerprint
   const reviewMap = new Map<string, DebtPaymentReview>();
   for (const review of userReviews) {
@@ -259,8 +278,8 @@ export function computeScheduledDebtPayments(
   const scheduledPayments: ScheduledDebtPayment[] = [];
 
   for (const account of debtAccounts) {
-    const balance = Math.abs(account.balance);
-    const paymentMade = account.paymentsMade ?? 0;
+    const balance = toHome(Math.abs(account.balance), account.currency);
+    const paymentMade = toHome(account.paymentsMade ?? 0, account.currency);
 
     if (account.accountType === "credit") {
       // Credit card: check if carrying balance
@@ -286,7 +305,8 @@ export function computeScheduledDebtPayments(
       const { regularAmount, anomalies, paymentCount, reviewedAnomalies } = detectRecurringPayment(
         account.slug,
         expenseTxns,
-        reviewMap
+        reviewMap,
+        toHome
       );
 
       if (regularAmount !== null && paymentCount >= 2) {
@@ -353,9 +373,11 @@ export function computeExtraDebtPaydown(
 export function getAllUnreviewedAnomalies(
   accountSnapshots: AccountSnapshot[],
   expenseTxns: ExpenseTxnRecord[],
-  userReviews: DebtPaymentReview[] = []
+  userReviews: DebtPaymentReview[] = [],
+  fxRates: Record<string, number> = {},
+  homeCurrency: string = "CAD"
 ): DebtAnomaly[] {
-  const payments = computeScheduledDebtPayments(accountSnapshots, expenseTxns, userReviews);
+  const payments = computeScheduledDebtPayments(accountSnapshots, expenseTxns, userReviews, fxRates, homeCurrency);
   const allAnomalies: DebtAnomaly[] = [];
 
   for (const payment of payments) {

@@ -116,7 +116,8 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       profile.accountSnapshots,
       months,
       profile.homeCurrency,
-      userReviews
+      userReviews,
+      profile.fxRates ?? {}
     );
 
     const trend = compute3MonthTrend(
@@ -124,7 +125,9 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       profile.expenseTxns,
       profile.accountSnapshots,
       profile.monthlyHistory,
-      userReviews
+      userReviews,
+      profile.fxRates ?? {},
+      profile.homeCurrency
     );
 
     const response: BucketDrawerData = {
