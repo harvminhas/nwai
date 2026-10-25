@@ -8,6 +8,8 @@
 
 import { computeDetailedIncomeMetrics } from "../incomeMetrics";
 import { computeBucketBreakdown, compute3MonthTrend } from "../bucketBreakdown";
+import { computeScheduledDebtPayments, getAllUnreviewedAnomalies } from "../debtPayments";
+import { txFingerprint } from "../txFingerprint";
 import type { MonthlyHistoryEntry } from "../financialProfile";
 import type { IncomeTxnRecord, ExpenseTxnRecord, AccountSnapshot } from "../extractTransactions";
 
@@ -204,14 +206,16 @@ for (const bucket of buckets) {
         mockExpenseTxns,
         mockAccountSnapshots,
         months,
-        "CAD"
+        "CAD",
+        [] // userReviews
       );
 
       const trend = compute3MonthTrend(
         bucket,
         mockExpenseTxns,
         mockAccountSnapshots,
-        mockMonthlyHistory
+        mockMonthlyHistory,
+        [] // userReviews
       );
 
       // Verify breakdown structure
@@ -268,7 +272,8 @@ for (const bucket of buckets) {
         mockExpenseTxns,
         mockAccountSnapshots,
         months,
-        "CAD"
+        "CAD",
+        [] // userReviews
       );
 
       const totalPct = breakdown.categories.reduce((sum, c) => sum + c.pctOfBucket, 0);
@@ -367,8 +372,6 @@ console.log("  Car loan Fixed: ~CA$1,090 (usual payment)\n");
 
 try {
   // Test debt payment detection directly
-  const { computeScheduledDebtPayments, getAllUnreviewedAnomalies } = require("../debtPayments");
-  
   const scheduledPayments = computeScheduledDebtPayments(mockAccountSnapshots, mockExpenseTxns);
   const anomalies = getAllUnreviewedAnomalies(mockAccountSnapshots, mockExpenseTxns);
   
@@ -385,7 +388,7 @@ try {
   }
   
   // Verify mortgage
-  const mortgage = scheduledPayments.find(p => p.accountSlug === "td-heloc-9999");
+  const mortgage = scheduledPayments.find((p: any) => p.accountSlug === "td-heloc-9999");
   if (mortgage) {
     if (mortgage.amount >= 2840 && mortgage.amount <= 2860) {
       console.log(`\n✓ Mortgage: CA$${Math.round(mortgage.amount)} (correct usual payment)`);
@@ -408,7 +411,7 @@ try {
   }
   
   // Verify car loan
-  const carLoan = scheduledPayments.find(p => p.accountSlug === "scotia-plan-1234");
+  const carLoan = scheduledPayments.find((p: any) => p.accountSlug === "scotia-plan-1234");
   if (carLoan) {
     if (carLoan.amount >= 1085 && carLoan.amount <= 1095) {
       console.log(`\n✓ Car loan: CA$${Math.round(carLoan.amount)} (correct usual payment)`);
@@ -430,3 +433,121 @@ try {
 }
 
 console.log("\n✅ Regression test complete\n");
+
+// ========================================================================
+// USER REVIEW WORKFLOW TEST: Reviewed prepayment
+// ========================================================================
+console.log("=== USER REVIEW WORKFLOW: Reviewed Prepayment ===\n");
+
+try {
+  // Create user review classifying the prepayment as "extra_prepayment"
+  const prepaymentFingerprint = txFingerprint(
+    "td-heloc-9999",
+    "2026-10-15",
+    -32000,
+    "TD MORTGAGE PREPAYMENT"
+  );
+  
+  const userReviews = [
+    {
+      txFingerprint: prepaymentFingerprint,
+      accountSlug: "td-heloc-9999",
+      classification: "extra_prepayment" as const,
+      date: "2026-10-15",
+      amount: 32000,
+      reviewedAt: new Date(),
+    },
+  ];
+  
+  const scheduledWithReview = computeScheduledDebtPayments(
+    mockAccountSnapshots,
+    mockExpenseTxns,
+    userReviews
+  );
+  
+  const mortgageWithReview = scheduledWithReview.find((p: any) => p.accountSlug === "td-heloc-9999");
+  
+  if (mortgageWithReview) {
+    console.log(`Mortgage regular payment: CA$${Math.round(mortgageWithReview.amount)}/mo`);
+    console.log(`Unreviewed anomalies: ${mortgageWithReview.unreviewedAnomalies?.length || 0}`);
+    
+    if (mortgageWithReview.unreviewedAnomalies?.length === 0) {
+      console.log(`✓ Prepayment reviewed: no longer in unreviewed list`);
+      console.log(`\nExpected behavior: CA$${Math.round(32000 - mortgageWithReview.amount)} excess goes to Savings & debt`);
+    } else {
+      console.log(`✗ Expected 0 unreviewed anomalies after review, found ${mortgageWithReview.unreviewedAnomalies?.length}`);
+    }
+  } else {
+    console.log("✗ Mortgage not found");
+  }
+  
+  console.log("\n✅ User review workflow test complete\n");
+} catch (err) {
+  console.log(`✗ ERROR: ${err instanceof Error ? err.message : String(err)}\n`);
+}
+
+// ========================================================================
+// CREDIT CARD TEST: Carried balance vs paid in full
+// ========================================================================
+console.log("=== CREDIT CARD: Carried Balance ===\n");
+
+try {
+  // Credit card with carried balance
+  const cardWithBalance: any = {
+    slug: "visa-carried-1234",
+    bankName: "Bank",
+    accountId: "1234",
+    accountName: "Visa",
+    accountType: "credit",
+    balance: -1200,
+    statementMonth: "2026-09",
+    paymentsMade: 500, // Only paid $500 on $1200 balance
+  };
+  
+  // Credit card paid in full
+  const cardPaidFull: any = {
+    slug: "visa-full-5678",
+    bankName: "Bank",
+    accountId: "5678",
+    accountName: "Visa Paid Full",
+    accountType: "credit",
+    balance: -800,
+    statementMonth: "2026-09",
+    paymentsMade: 820, // Paid more than balance (account for recent charges)
+  };
+  
+  const cardPayments = computeScheduledDebtPayments(
+    [cardWithBalance, cardPaidFull],
+    [],
+    []
+  );
+  
+  console.log(`Cards with scheduled payments: ${cardPayments.length}`);
+  
+  const carriedCard = cardPayments.find((p: any) => p.accountSlug === "visa-carried-1234");
+  const fullCard = cardPayments.find((p: any) => p.accountSlug === "visa-full-5678");
+  
+  if (carriedCard) {
+    const expectedMin = Math.max(10, 1200 * 0.03); // max($10, 3% of balance)
+    console.log(`Carried balance card: CA$${Math.round(carriedCard.amount)}/mo`);
+    console.log(`Expected: CA$${Math.round(expectedMin)} (max($10, 3% of $1200))`);
+    
+    if (Math.abs(carriedCard.amount - expectedMin) < 1) {
+      console.log(`✓ Correct: 3% of carried balance`);
+    } else {
+      console.log(`✗ Expected CA$${Math.round(expectedMin)}, got CA$${Math.round(carriedCard.amount)}`);
+    }
+  } else {
+    console.log("✗ Card with carried balance not found in scheduled payments");
+  }
+  
+  if (!fullCard) {
+    console.log(`✓ Card paid in full: correctly excluded from Fixed costs (no scheduled payment)`);
+  } else {
+    console.log(`✗ Card paid in full should not have a scheduled payment, but found: CA$${Math.round(fullCard.amount)}`);
+  }
+  
+  console.log("\n✅ Credit card test complete\n");
+} catch (err) {
+  console.log(`✗ ERROR: ${err instanceof Error ? err.message : String(err)}\n`);
+}

@@ -7,6 +7,8 @@
  */
 
 import type { AccountSnapshot, ExpenseTxnRecord } from "./extractTransactions";
+import type { DebtPaymentReview } from "./types";
+import { txFingerprint } from "./txFingerprint";
 
 export interface ScheduledDebtPayment {
   accountSlug: string;
@@ -32,6 +34,8 @@ export interface DebtAnomaly {
   reason: string;
   /** Account slug */
   accountSlug: string;
+  /** Transaction fingerprint for linking to reviews */
+  txFingerprint: string;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -50,11 +54,13 @@ const ANOMALY_LOW_THRESHOLD = 0.5;   // Payment < 0.5× median
  */
 function detectRecurringPayment(
   accountSlug: string,
-  expenseTxns: ExpenseTxnRecord[]
+  expenseTxns: ExpenseTxnRecord[],
+  userReviews: Map<string, DebtPaymentReview>
 ): { 
   regularAmount: number | null; 
   anomalies: DebtAnomaly[];
   paymentCount: number;
+  reviewedAnomalies: DebtAnomaly[];
 } {
   // Get all debt payment transactions for this account
   const payments = expenseTxns
@@ -63,16 +69,20 @@ function detectRecurringPayment(
       t.category === "Debt Payments" &&
       t.amount < 0
     )
-    .map(t => ({
-      date: t.date,
-      txMonth: t.txMonth,
-      amount: Math.abs(t.amount),
-      description: t.merchant,
-    }))
+    .map(t => {
+      const fingerprint = txFingerprint(t.accountSlug, t.date, t.amount, t.merchant);
+      return {
+        date: t.date,
+        txMonth: t.txMonth,
+        amount: Math.abs(t.amount),
+        description: t.merchant,
+        fingerprint,
+      };
+    })
     .sort((a, b) => a.date.localeCompare(b.date));
 
   if (payments.length === 0) {
-    return { regularAmount: null, anomalies: [], paymentCount: 0 };
+    return { regularAmount: null, anomalies: [], paymentCount: 0, reviewedAnomalies: [] };
   }
 
   if (payments.length === 1) {
@@ -80,7 +90,8 @@ function detectRecurringPayment(
     return { 
       regularAmount: payments[0].amount, 
       anomalies: [], 
-      paymentCount: 1 
+      paymentCount: 1,
+      reviewedAnomalies: []
     };
   }
 
@@ -92,7 +103,8 @@ function detectRecurringPayment(
     : amounts[medianIdx];
 
   // Separate regular payments from anomalies
-  const anomalies: DebtAnomaly[] = [];
+  const unreviewedAnomalies: DebtAnomaly[] = [];
+  const reviewedAnomalies: DebtAnomaly[] = [];
   const regularPayments: number[] = [];
 
   // Track payments by month to detect multiple payments
@@ -105,7 +117,21 @@ function detectRecurringPayment(
 
   for (const payment of payments) {
     const monthPayments = paymentsByMonth.get(payment.txMonth)!;
+    const review = userReviews.get(payment.fingerprint);
     
+    // Check if user has classified this as "ignore"
+    if (review?.classification === "ignore") {
+      // Excluded entirely (refinance/transfer) - don't count anywhere
+      continue;
+    }
+
+    // Check if user has classified this as "new_regular_payment"
+    if (review?.classification === "new_regular_payment") {
+      // Treat as a regular payment
+      regularPayments.push(payment.amount);
+      continue;
+    }
+
     // Check if this is an anomaly
     let isAnomaly = false;
     let reason = "";
@@ -118,24 +144,44 @@ function detectRecurringPayment(
       isAnomaly = true;
       reason = "much_lower";
     } 
-    // Anomaly type 2: Extra payment in same month (if this isn't the first/largest)
+    // Anomaly type 2: Extra payment in same month
+    // Only flag if there's another payment AND this one is within normal range
     else if (monthPayments.length > 1) {
-      const sortedByAmount = [...monthPayments].sort((a, b) => b.amount - a.amount);
-      if (sortedByAmount[0] !== payment) {
-        isAnomaly = true;
-        reason = "extra_in_month";
+      // Find which payment(s) in this month are in normal range
+      const normalPayments = monthPayments.filter(p => 
+        p.amount <= rawMedian * ANOMALY_HIGH_THRESHOLD && 
+        p.amount >= rawMedian * ANOMALY_LOW_THRESHOLD
+      );
+      
+      // If there's more than one normal payment, or this is normal and there's an abnormal one
+      if (normalPayments.length > 1 || (normalPayments.length === 1 && normalPayments[0] === payment && monthPayments.length > 1)) {
+        // Only flag the smaller extra payment(s), not the main recurring one
+        const sortedNormal = [...normalPayments].sort((a, b) => b.amount - a.amount);
+        if (sortedNormal.length > 1 && sortedNormal[0] !== payment) {
+          isAnomaly = true;
+          reason = "extra_in_month";
+        }
       }
     }
 
     if (isAnomaly) {
-      anomalies.push({
+      const anomaly: DebtAnomaly = {
         txMonth: payment.txMonth,
         date: payment.date,
         amount: payment.amount,
         description: payment.description,
         reason,
         accountSlug,
-      });
+        txFingerprint: payment.fingerprint,
+      };
+
+      if (review?.classification === "extra_prepayment") {
+        // Reviewed as prepayment - include in reviewed list
+        reviewedAnomalies.push(anomaly);
+      } else {
+        // Unreviewed - exclude from both Fixed and Savings
+        unreviewedAnomalies.push(anomaly);
+      }
     } else {
       regularPayments.push(payment.amount);
     }
@@ -145,8 +191,9 @@ function detectRecurringPayment(
     // All payments were anomalies - use raw median but flag concern
     return { 
       regularAmount: rawMedian, 
-      anomalies, 
-      paymentCount: payments.length 
+      anomalies: unreviewedAnomalies, 
+      paymentCount: payments.length,
+      reviewedAnomalies
     };
   }
 
@@ -157,7 +204,7 @@ function detectRecurringPayment(
     ? (sorted[midIdx - 1] + sorted[midIdx]) / 2
     : sorted[midIdx];
 
-  return { regularAmount, anomalies, paymentCount: payments.length };
+  return { regularAmount, anomalies: unreviewedAnomalies, paymentCount: payments.length, reviewedAnomalies };
 }
 
 /**
@@ -188,11 +235,19 @@ function isPaidInFull(balance: number, paymentMade: number): boolean {
  * - Installment loans (mortgage, LOC, car loan, personal): learn regular payment from history
  * - Anomalies (>1.5× or <0.5× median) are flagged for review
  * - Credit cards: estimate minimum when carrying balance
+ * 
+ * @param userReviews - User classifications for anomalous transactions
  */
 export function computeScheduledDebtPayments(
   accountSnapshots: AccountSnapshot[],
-  expenseTxns: ExpenseTxnRecord[] = []
+  expenseTxns: ExpenseTxnRecord[] = [],
+  userReviews: DebtPaymentReview[] = []
 ): ScheduledDebtPayment[] {
+  // Build a map of reviews by transaction fingerprint
+  const reviewMap = new Map<string, DebtPaymentReview>();
+  for (const review of userReviews) {
+    reviewMap.set(review.txFingerprint, review);
+  }
   const debtAccounts = accountSnapshots.filter(
     (a) =>
       a.accountType === "credit" ||
@@ -228,9 +283,10 @@ export function computeScheduledDebtPayments(
       });
     } else {
       // Installment loan/mortgage/LOC: detect recurring payment
-      const { regularAmount, anomalies, paymentCount } = detectRecurringPayment(
+      const { regularAmount, anomalies, paymentCount, reviewedAnomalies } = detectRecurringPayment(
         account.slug,
-        expenseTxns
+        expenseTxns,
+        reviewMap
       );
 
       if (regularAmount !== null && paymentCount >= 2) {
@@ -296,9 +352,10 @@ export function computeExtraDebtPaydown(
  */
 export function getAllUnreviewedAnomalies(
   accountSnapshots: AccountSnapshot[],
-  expenseTxns: ExpenseTxnRecord[]
+  expenseTxns: ExpenseTxnRecord[],
+  userReviews: DebtPaymentReview[] = []
 ): DebtAnomaly[] {
-  const payments = computeScheduledDebtPayments(accountSnapshots, expenseTxns);
+  const payments = computeScheduledDebtPayments(accountSnapshots, expenseTxns, userReviews);
   const allAnomalies: DebtAnomaly[] = [];
 
   for (const payment of payments) {
