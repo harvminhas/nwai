@@ -128,13 +128,14 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
 
   const { coverage, incomeMedian, buckets } = breakdown;
   
-  // Calculate Needs % (Fixed + Essentials)
+  // Calculate bucket percentages
   const fixedBucket = buckets.find(b => b.bucket === "fixed");
   const essentialsBucket = buckets.find(b => b.bucket === "essentials");
   const flexibleBucket = buckets.find(b => b.bucket === "flexible");
   const savingsBucket = buckets.find(b => b.bucket === "savings");
   
-  const needsPct = (fixedBucket?.pctOfIncome || 0) + (essentialsBucket?.pctOfIncome || 0);
+  const fixedPct = fixedBucket?.pctOfIncome || 0;
+  const essentialsPct = essentialsBucket?.pctOfIncome || 0;
   const flexPct = flexibleBucket?.pctOfIncome || 0;
   const savPct = savingsBucket?.pctOfIncome || 0;
 
@@ -161,13 +162,14 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
         
         {/* Mini bar */}
         <div className="flex h-2.5 min-w-20 flex-1 max-w-xs gap-0.5 overflow-hidden rounded-full">
-          <div style={{ flex: needsPct, background: bucketColors.fixed }} />
+          <div style={{ flex: fixedPct, background: bucketColors.fixed }} />
+          <div style={{ flex: essentialsPct, background: bucketColors.essentials }} />
           <div style={{ flex: flexPct, background: bucketColors.flexible }} />
           <div style={{ flex: savPct, background: bucketColors.savings }} />
         </div>
         
         <span className="whitespace-nowrap text-sm text-gray-700">
-          Needs {Math.round(needsPct)}% · Flexible {Math.round(flexPct)}% · Savings {Math.round(savPct)}%
+          Fixed {Math.round(fixedPct)}% · Essentials {Math.round(essentialsPct)}% · Flexible {Math.round(flexPct)}% · Savings {Math.round(savPct)}%
         </span>
         
         <svg 
@@ -198,19 +200,10 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
             </div>
           )}
 
-          {/* Stacked Bar Card */}
+          {/* Main Breakdown Bar with Legend */}
           <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="flex items-baseline justify-between gap-3 flex-wrap">
-              <h3 className="text-base font-bold text-gray-900">
-                {fmt(incomeMedian, currency)} take-home / month
-              </h3>
-              <p className="text-sm text-gray-500">
-                Needs {Math.round(needsPct)}% · Wants {Math.round(flexPct)}% · Savings {Math.round(savPct)}%
-              </p>
-            </div>
-            
-            {/* Main Bar */}
-            <div className="mt-4 flex h-5 gap-0.5 overflow-hidden rounded-lg">
+            {/* Stacked Bar */}
+            <div className="flex h-6 gap-0.5 overflow-hidden rounded-lg">
               {fixedBucket && (
                 <div 
                   style={{ flex: fixedBucket.pctOfIncome, backgroundColor: bucketColors.fixed }}
@@ -245,46 +238,45 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
               )}
             </div>
 
-            {/* Target Bar */}
-            <div className="mt-1.5 flex h-1.5 gap-0.5 overflow-hidden rounded opacity-35">
-              <div style={{ flex: 35, backgroundColor: bucketColors.fixed }} />
-              <div style={{ flex: 15, backgroundColor: bucketColors.essentials }} />
-              <div style={{ flex: 30, backgroundColor: bucketColors.flexible }} />
-              <div style={{ flex: 20, backgroundColor: bucketColors.savings }} />
-            </div>
-
-            <div className="mt-2 flex justify-between text-xs text-gray-500">
-              <span>Target: Needs 50% (Fixed 35 + Essentials 15)</span>
-              <span>Flexible 30% · Savings 20%</span>
-            </div>
-
-            {/* Legend */}
-            <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-sm text-gray-700">
+            {/* Legend with amounts */}
+            <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm">
               {fixedBucket && (
-                <span className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded" style={{ backgroundColor: bucketColors.fixed }} />
-                  Fixed {fmt(fixedBucket.monthlyMedian, currency)}
+                <span className="flex items-center gap-2">
+                  <span className="h-3 w-3 rounded" style={{ backgroundColor: bucketColors.fixed }} />
+                  <span className="font-semibold">Fixed costs</span>
+                  <span className="text-gray-600">{fmt(fixedBucket.monthlyMedian, currency)}</span>
+                  <span className="text-gray-400">({Math.round(fixedBucket.pctOfIncome)}%)</span>
                 </span>
               )}
               {essentialsBucket && (
-                <span className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded" style={{ backgroundColor: bucketColors.essentials }} />
-                  Essentials {fmt(essentialsBucket.monthlyMedian, currency)}
+                <span className="flex items-center gap-2">
+                  <span className="h-3 w-3 rounded" style={{ backgroundColor: bucketColors.essentials }} />
+                  <span className="font-semibold">Essentials</span>
+                  <span className="text-gray-600">{fmt(essentialsBucket.monthlyMedian, currency)}</span>
+                  <span className="text-gray-400">({Math.round(essentialsBucket.pctOfIncome)}%)</span>
                 </span>
               )}
               {flexibleBucket && (
-                <span className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded" style={{ backgroundColor: bucketColors.flexible }} />
-                  Flexible {fmt(flexibleBucket.monthlyMedian, currency)}
+                <span className="flex items-center gap-2">
+                  <span className="h-3 w-3 rounded" style={{ backgroundColor: bucketColors.flexible }} />
+                  <span className="font-semibold">Flexible</span>
+                  <span className="text-gray-600">{fmt(flexibleBucket.monthlyMedian, currency)}</span>
+                  <span className="text-gray-400">({Math.round(flexibleBucket.pctOfIncome)}%)</span>
                 </span>
               )}
               {savingsBucket && (
-                <span className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded" style={{ backgroundColor: bucketColors.savings }} />
-                  Savings & debt {fmt(savingsBucket.monthlyMedian, currency)}
+                <span className="flex items-center gap-2">
+                  <span className="h-3 w-3 rounded" style={{ backgroundColor: bucketColors.savings }} />
+                  <span className="font-semibold">Savings & debt</span>
+                  <span className="text-gray-600">{fmt(savingsBucket.monthlyMedian, currency)}</span>
+                  <span className="text-gray-400">({Math.round(savingsBucket.pctOfIncome)}%)</span>
                 </span>
               )}
-              <span className="text-gray-400">= {fmt(incomeMedian, currency)}</span>
+            </div>
+
+            {/* Target reference */}
+            <div className="mt-3 text-xs text-gray-500">
+              Target: Fixed costs 35% + Essentials 15% = 50% · Flexible 30% · Savings & debt 20%
             </div>
           </div>
 
