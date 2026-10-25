@@ -6,6 +6,7 @@ import { applyRulesAndRecalculate, merchantSlug } from "@/lib/applyRules";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { docYearMonth, carryForwardStatements } from "@/lib/spendHistory";
 import { getFinancialProfile } from "@/lib/financialProfile";
+import { computeScheduledDebtPayments } from "@/lib/debtPayments";
 import {
   buildEmergencyFundSnapshot,
   getNetWorth,

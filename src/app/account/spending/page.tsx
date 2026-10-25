@@ -500,6 +500,7 @@ function SpendingPageInner() {
         setNeedsRefresh(json.needsRefresh ?? false);
         if (json.homeCurrency) setHomeCurrency(json.homeCurrency);
         if (json.fxRates) setFxRates(json.fxRates);
+        if (json.scheduledDebtPayments) setScheduledDebtPayments(json.scheduledDebtPayments);
         const expSugg = json.expenseSuggestions ?? [];
         setExpenseSuggestions(expSugg);
         const defaultDecisions: Record<string, "confirmed" | "rejected"> = {};
@@ -1355,21 +1356,6 @@ function SpendingPageInner() {
     amount: number;
     debtType: "loan" | "credit";
   }> | null>(null);
-  
-  useEffect(() => {
-    if (!token || !consolidated) return;
-    // Fetch scheduled debt payments from consolidated endpoint
-    fetch("/api/user/statements/consolidated", {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(res => res.json())
-      .then(data => {
-        if (data.scheduledDebtPayments) {
-          setScheduledDebtPayments(data.scheduledDebtPayments);
-        }
-      })
-      .catch(console.error);
-  }, [token, consolidated]);
 
   const categoryRows = (() => {
     if (!allTimeMerchants) return [];

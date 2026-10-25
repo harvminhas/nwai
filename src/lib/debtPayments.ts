@@ -55,10 +55,14 @@ const ANOMALY_LOW_THRESHOLD = 0.5;   // Payment < 0.5× median
  * Detect recurring payment amount and flag anomalies.
  * Returns median of regular payments (6-12 months history), plus list of anomalies.
  * All amounts are converted to home currency.
+ * 
+ * For loan/mortgage accounts, payment history comes from paymentsMade field on statements.
+ * For checking accounts making payments, we'd look in expense transactions, but those
+ * are tracked separately (not used here).
  */
 function detectRecurringPayment(
   accountSlug: string,
-  expenseTxns: ExpenseTxnRecord[],
+  accountSnapshots: AccountSnapshot[],
   userReviews: Map<string, DebtPaymentReview>,
   toHome: (amount: number, currency?: string) => number
 ): { 
@@ -67,29 +71,33 @@ function detectRecurringPayment(
   paymentCount: number;
   reviewedAnomalies: DebtAnomaly[];
 } {
-  // Get all debt payment transactions for this account
-  const payments = expenseTxns
-    .filter(t => 
-      t.accountSlug === accountSlug && 
-      t.category === "Debt Payments" &&
-      t.amount < 0
+  // Get all statements for this account that have paymentsMade
+  const statementsWithPayments = accountSnapshots
+    .filter(snap => 
+      snap.slug === accountSlug && 
+      snap.paymentsMade && 
+      snap.paymentsMade > 0
     )
-    .map(t => {
-      const fingerprint = txFingerprint(t.accountSlug, t.date, t.amount, t.merchant);
+    .map(snap => {
+      const date = `${snap.statementMonth}-15`; // Use mid-month for statement date
+      const amount = toHome(snap.paymentsMade!, snap.currency);
+      const fingerprint = txFingerprint(snap.slug, date, amount, "Payment");
       return {
-        date: t.date,
-        txMonth: t.txMonth,
-        amount: toHome(Math.abs(t.amount), t.currency), // Convert to home currency
-        description: t.merchant,
+        date,
+        txMonth: snap.statementMonth,
+        amount,
+        description: `Payment to ${snap.accountName || snap.slug}`,
         fingerprint,
-        currency: t.currency,
+        currency: snap.currency,
       };
     })
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  if (payments.length === 0) {
+  if (statementsWithPayments.length === 0) {
     return { regularAmount: null, anomalies: [], paymentCount: 0, reviewedAnomalies: [] };
   }
+
+  const payments = statementsWithPayments;
 
   if (payments.length === 1) {
     // Single payment: can't detect pattern yet
@@ -301,10 +309,10 @@ export function computeScheduledDebtPayments(
         unreviewedAnomalies: [],
       });
     } else {
-      // Installment loan/mortgage/LOC: detect recurring payment
+      // Installment loan/mortgage/LOC: detect recurring payment from paymentsMade history
       const { regularAmount, anomalies, paymentCount, reviewedAnomalies } = detectRecurringPayment(
         account.slug,
-        expenseTxns,
+        accountSnapshots,
         reviewMap,
         toHome
       );
