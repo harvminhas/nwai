@@ -7,6 +7,8 @@ import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { useActiveProfile } from "@/contexts/ActiveProfileContext";
 import { fmt } from "@/lib/currencyUtils";
+import { Drawer, type DrawerType } from "@/components/Drawer";
+import { ChevronRight } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -286,10 +288,14 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
           {/* Five Bucket Cards */}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             {/* Income Card */}
-            <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-purple-50 to-white p-5 shadow-sm">
+            <button
+              onClick={() => openDrawer("income")}
+              className="rounded-2xl border border-gray-200 bg-gradient-to-br from-purple-50 to-white p-5 shadow-sm transition hover:shadow-md hover:border-purple-300 text-left"
+            >
               <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-gray-500">
                 <span className="h-2.5 w-2.5 rounded" style={{ backgroundColor: "#9333ea" }} />
                 Income
+                <ChevronRight className="ml-auto h-4 w-4 text-gray-400" />
               </div>
               <p className="text-2xl font-bold tracking-tight text-gray-900">
                 {fmt(incomeAmount, currency)}
@@ -311,7 +317,10 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
               <p className="mt-2 min-h-[2.5rem] text-xs leading-relaxed text-gray-700">
                 Consistent pay — a solid base to plan around.
               </p>
-            </div>
+              <p className="mt-2 text-xs text-purple-600 font-medium">
+                How is this calculated? →
+              </p>
+            </button>
 
             {/* Other Buckets */}
             {buckets.filter(b => b.bucket !== "uncategorized").map((bucket) => {
@@ -333,7 +342,11 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
               }
 
               return (
-                <div key={bucket.bucket} className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                <button
+                  key={bucket.bucket}
+                  onClick={() => openDrawer(bucket.bucket as DrawerType)}
+                  className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition hover:shadow-md hover:border-purple-300 text-left"
+                >
                   <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-gray-500">
                     <span 
                       className="h-2.5 w-2.5 rounded" 
@@ -345,6 +358,7 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
                         est.
                       </span>
                     )}
+                    <ChevronRight className="ml-auto h-4 w-4 text-gray-400" />
                   </div>
                   <p className="text-2xl font-bold tracking-tight text-gray-900">
                     {fmt(bucket.monthlyAverage, currency)}
@@ -379,7 +393,10 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
                   <p className="mt-2 min-h-[2.5rem] text-xs leading-relaxed text-gray-700">
                     {bucket.advice}
                   </p>
-                </div>
+                  <p className="mt-2 text-xs text-purple-600 font-medium">
+                    See breakdown →
+                  </p>
+                </button>
               );
             })}
           </div>
@@ -401,6 +418,31 @@ export default function DashboardPage() {
   const [breakdown, setBreakdown] = useState<MoneyCoachBreakdown | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [currency, setCurrency] = useState("USD");
+  const [activeDrawer, setActiveDrawer] = useState<DrawerType | null>(null);
+
+  // Handle URL hash for drawer state
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.slice(1); // Remove #
+      if (hash && ["income", "fixed", "essentials", "flexible", "savings"].includes(hash)) {
+        setActiveDrawer(hash as DrawerType);
+      } else {
+        setActiveDrawer(null);
+      }
+    };
+
+    handleHashChange(); // Initial load
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
+
+  const openDrawer = (type: DrawerType) => {
+    window.location.hash = type;
+  };
+
+  const closeDrawer = () => {
+    window.location.hash = "";
+  };
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -542,6 +584,15 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+
+      {/* Drawer */}
+      <Drawer
+        type={activeDrawer || "income"}
+        isOpen={activeDrawer !== null}
+        onClose={closeDrawer}
+        token={token}
+        currency={currency}
+      />
     </div>
   );
 }
