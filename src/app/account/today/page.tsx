@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
+import { isFeatureEnabled } from "@/lib/features";
 import type { DashboardAlert, UpcomingItem, TodayInsight } from "@/app/api/user/insights/route";
 import type { AgentCard } from "@/lib/agentTypes";
 import type { RadarItem, FreshnessData, NetWorthSnapshot } from "@/lib/today/types";
@@ -1273,6 +1274,14 @@ function HomeCurrencyModal({
 
 export default function TodayPage() {
   const router = useRouter();
+  
+  // Feature flag guard: redirect to dashboard if extended pages are disabled
+  useEffect(() => {
+    if (!isFeatureEnabled("showExtendedPages")) {
+      router.replace("/account/dashboard");
+    }
+  }, [router]);
+  
   const { planId } = usePlan();
   const { targetUid, buildHeaders } = useActiveProfile();
   const [alerts,      setAlerts]      = useState<DashboardAlert[]>([]);

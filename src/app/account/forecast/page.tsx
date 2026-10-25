@@ -6,6 +6,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { usePlan } from "@/contexts/PlanContext";
 import { useActiveProfile } from "@/contexts/ActiveProfileContext";
+import { isFeatureEnabled } from "@/lib/features";
 import UpgradePrompt from "@/components/UpgradePrompt";
 import Link from "next/link";
 import {
@@ -783,6 +784,14 @@ function NearTermForecastPanel({
 
 export default function ForecastPage() {
   const router = useRouter();
+  
+  // Feature flag guard
+  useEffect(() => {
+    if (!isFeatureEnabled("showExtendedPages")) {
+      router.replace("/account/dashboard");
+    }
+  }, [router]);
+  
   const { can, loading: planLoading } = usePlan();
   const { buildHeaders } = useActiveProfile();
 
