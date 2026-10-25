@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { DrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
 
 export type DrawerType = "income" | "fixed" | "essentials" | "flexible" | "savings";
 
@@ -22,23 +23,49 @@ const WINDOW_LABELS: Record<TimeWindow, string> = {
 
 export function Drawer({ type, isOpen, onClose, token, currency }: DrawerProps) {
   const [window, setWindow] = useState<TimeWindow>("last3");
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<DrawerData | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!isOpen || !token) return;
 
     setLoading(true);
+    setError(null);
+    
     fetch(`/api/user/dashboard-drawers?window=${window}&bucket=${type}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
-      .then((res) => res.json())
-      .then((d) => {
-        setData(d);
-        setLoading(false);
+      .then(async (res) => {
+        const json = await res.json();
+        
+        if (!res.ok) {
+          const errData = json as DrawerErrorResponse;
+          throw new Error(errData.error || `Request failed with status ${res.status}`);
+        }
+        
+        // Validate response structure
+        if (!json.type) {
+          throw new Error("Invalid response: missing type");
+        }
+        
+        if (json.type === "bucket" && !json.breakdown) {
+          throw new Error("Invalid response: missing breakdown");
+        }
+        
+        if (json.type === "income" && !json.metrics) {
+          throw new Error("Invalid response: missing metrics");
+        }
+        
+        setData(json as DrawerData);
+        setError(null);
       })
       .catch((err) => {
         console.error("Drawer load error:", err);
+        setError(err.message || "Failed to load data");
+        setData(null);
+      })
+      .finally(() => {
         setLoading(false);
       });
   }, [isOpen, type, window, token]);
@@ -81,11 +108,12 @@ export function Drawer({ type, isOpen, onClose, token, currency }: DrawerProps) 
               <button
                 key={w}
                 onClick={() => setWindow(w)}
+                disabled={loading}
                 className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
                   window === w
                     ? "bg-purple-600 text-white"
                     : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                }`}
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
               >
                 {WINDOW_LABELS[w]}
               </button>
@@ -101,11 +129,33 @@ export function Drawer({ type, isOpen, onClose, token, currency }: DrawerProps) 
             </div>
           )}
 
-          {!loading && data && type === "income" && (
+          {error && !loading && (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-6">
+              <p className="text-sm font-semibold text-red-900">Unable to load data</p>
+              <p className="mt-1 text-sm text-red-700">{error}</p>
+              <button
+                onClick={() => {
+                  setError(null);
+                  setWindow("last3");
+                }}
+                className="mt-4 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+              >
+                Try again
+              </button>
+            </div>
+          )}
+
+          {!loading && !error && !data && (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-6 text-center">
+              <p className="text-sm text-gray-600">No data available</p>
+            </div>
+          )}
+
+          {!loading && !error && data && data.type === "income" && (
             <IncomeDrawerContent data={data} currency={currency} />
           )}
 
-          {!loading && data && type !== "income" && (
+          {!loading && !error && data && data.type === "bucket" && (
             <BucketDrawerContent data={data} currency={currency} type={type} />
           )}
         </div>
@@ -114,7 +164,7 @@ export function Drawer({ type, isOpen, onClose, token, currency }: DrawerProps) 
   );
 }
 
-function IncomeDrawerContent({ data, currency }: { data: any; currency: string }) {
+function IncomeDrawerContent({ data, currency }: { data: import("@/lib/drawerTypes").IncomeDrawerData; currency: string }) {
   const fmt = (amount: number) =>
     new Intl.NumberFormat("en-US", {
       style: "currency",
@@ -123,7 +173,15 @@ function IncomeDrawerContent({ data, currency }: { data: any; currency: string }
       maximumFractionDigits: 0,
     }).format(amount);
 
-  const metrics = data.metrics;
+  const { metrics, chartData } = data;
+
+  if (!chartData || chartData.length === 0) {
+    return (
+      <div className="rounded-xl border border-gray-200 bg-gray-50 p-6 text-center">
+        <p className="text-sm text-gray-600">No income data available for this time period</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -144,7 +202,7 @@ function IncomeDrawerContent({ data, currency }: { data: any; currency: string }
           Last 12 months
         </h3>
         <div className="space-y-2">
-          {data.chartData.map((month: any) => {
+          {chartData.map((month) => {
             const monthLabel = new Date(month.month + "-15").toLocaleDateString("en-US", {
               month: "short",
               year: "2-digit",
@@ -169,7 +227,7 @@ function IncomeDrawerContent({ data, currency }: { data: any; currency: string }
                         : "bg-green-500"
                     }`}
                     style={{
-                      width: `${Math.min(100, (month.regularIncome / Math.max(...data.chartData.map((m: any) => m.regularIncome))) * 100)}%`,
+                      width: `${Math.min(100, (month.regularIncome / Math.max(...chartData.map((m) => m.regularIncome))) * 100)}%`,
                     }}
                   />
                   {isInWindow && (
@@ -186,33 +244,35 @@ function IncomeDrawerContent({ data, currency }: { data: any; currency: string }
       </div>
 
       {/* Income Sources */}
-      <div>
-        <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
-          Included sources
-        </h3>
-        <div className="space-y-2">
-          {metrics.regularSources.map((source: any, idx: number) => (
-            <div
-              key={idx}
-              className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3"
-            >
-              <span className="text-sm font-medium text-gray-900">{source.source}</span>
-              <span className="text-sm font-semibold text-gray-900">
-                {fmt(source.amount)}/mo
-              </span>
-            </div>
-          ))}
+      {metrics.regularSources && metrics.regularSources.length > 0 && (
+        <div>
+          <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
+            Included sources
+          </h3>
+          <div className="space-y-2">
+            {metrics.regularSources.map((source, idx) => (
+              <div
+                key={idx}
+                className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3"
+              >
+                <span className="text-sm font-medium text-gray-900">{source.source}</span>
+                <span className="text-sm font-semibold text-gray-900">
+                  {fmt(source.amount)}/mo
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* One-Off Sources */}
-      {metrics.oneOffSources.length > 0 && (
+      {metrics.oneOffSources && metrics.oneOffSources.length > 0 && (
         <div>
           <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
             Kept separate (one-off)
           </h3>
           <div className="space-y-2">
-            {metrics.oneOffSources.map((source: any, idx: number) => (
+            {metrics.oneOffSources.map((source, idx) => (
               <div
                 key={idx}
                 className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-3"
@@ -269,7 +329,7 @@ function BucketDrawerContent({
   currency,
   type,
 }: {
-  data: any;
+  data: import("@/lib/drawerTypes").BucketDrawerData;
   currency: string;
   type: DrawerType;
 }) {
@@ -283,7 +343,15 @@ function BucketDrawerContent({
       maximumFractionDigits: 0,
     }).format(amount);
 
-  const breakdown = data.breakdown;
+  const { breakdown, trend } = data;
+
+  if (!breakdown || !breakdown.categories) {
+    return (
+      <div className="rounded-xl border border-gray-200 bg-gray-50 p-6 text-center">
+        <p className="text-sm text-gray-600">No data available for this time period</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -297,120 +365,128 @@ function BucketDrawerContent({
       </div>
 
       {/* 3-Month Trend Sparkline */}
-      <div>
-        <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
-          Last 3 months
-        </h3>
-        <div className="flex items-end gap-2">
-          {data.trend.values.map((value: number, idx: number) => {
-            const maxValue = Math.max(...data.trend.values);
-            const heightPct = maxValue > 0 ? (value / maxValue) * 100 : 0;
+      {trend && trend.values && trend.values.length > 0 && (
+        <div>
+          <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
+            Last 3 months
+          </h3>
+          <div className="flex items-end gap-2">
+            {trend.values.map((value, idx) => {
+              const maxValue = Math.max(...trend.values);
+              const heightPct = maxValue > 0 ? (value / maxValue) * 100 : 0;
 
-            return (
-              <div key={idx} className="flex-1">
-                <div
-                  className="w-full rounded-t bg-purple-500"
-                  style={{ height: `${Math.max(4, heightPct)}px` }}
-                />
-                <p className="mt-1 text-center text-xs text-gray-500">
-                  {new Date(data.trend.months[idx] + "-15").toLocaleDateString("en-US", {
-                    month: "short",
-                  })}
-                </p>
-                <p className="text-center text-xs font-medium text-gray-900">{fmt(value)}</p>
-              </div>
-            );
-          })}
+              return (
+                <div key={idx} className="flex-1">
+                  <div
+                    className="w-full rounded-t bg-purple-500"
+                    style={{ height: `${Math.max(4, heightPct)}px` }}
+                  />
+                  <p className="mt-1 text-center text-xs text-gray-500">
+                    {trend.months[idx] ? new Date(trend.months[idx] + "-15").toLocaleDateString("en-US", {
+                      month: "short",
+                    }) : "—"}
+                  </p>
+                  <p className="text-center text-xs font-medium text-gray-900">{fmt(value)}</p>
+                </div>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Category Breakdown */}
       <div>
         <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
           Breakdown by category
         </h3>
-        <div className="space-y-2">
-          {breakdown.categories.map((category: any, idx: number) => {
-            const isExpanded = expandedCategory === category.category;
+        {breakdown.categories.length === 0 ? (
+          <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-center">
+            <p className="text-sm text-gray-600">No spending in this bucket for the selected period</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {breakdown.categories.map((category, idx) => {
+              const isExpanded = expandedCategory === category.category;
 
-            return (
-              <div key={idx} className="rounded-lg border border-gray-200 bg-white overflow-hidden">
-                <button
-                  onClick={() =>
-                    setExpandedCategory(isExpanded ? null : category.category)
-                  }
-                  className="w-full px-4 py-3 text-left hover:bg-gray-50"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-gray-900">
-                          {category.category}
-                        </span>
-                        {category.isScheduled && (
-                          <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-900">
-                            scheduled
+              return (
+                <div key={idx} className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+                  <button
+                    onClick={() =>
+                      setExpandedCategory(isExpanded ? null : category.category)
+                    }
+                    className="w-full px-4 py-3 text-left hover:bg-gray-50"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-gray-900">
+                            {category.category}
                           </span>
-                        )}
-                        {category.isEstimated && (
-                          <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-600">
-                            est.
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-1 h-1.5 w-full max-w-xs rounded-full bg-gray-100">
-                        <div
-                          className="h-full rounded-full bg-purple-500"
-                          style={{ width: `${category.pctOfBucket}%` }}
-                        />
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-semibold text-gray-900">
-                        {fmt(category.amount)}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        {Math.round(category.pctOfBucket)}%
-                      </p>
-                    </div>
-                  </div>
-                </button>
-
-                {/* Expanded Merchants */}
-                {isExpanded && category.merchants.length > 0 && (
-                  <div className="border-t border-gray-200 bg-gray-50 px-4 py-3">
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                      Top merchants
-                    </p>
-                    <div className="space-y-1">
-                      {category.merchants.map((merchant: any, mIdx: number) => (
-                        <div
-                          key={mIdx}
-                          className="flex items-center justify-between text-xs"
-                        >
-                          <span className="text-gray-700">{merchant.merchant}</span>
-                          <span className="font-medium text-gray-900">
-                            {fmt(merchant.amount)}
-                          </span>
+                          {category.isScheduled && (
+                            <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-900">
+                              scheduled
+                            </span>
+                          )}
+                          {category.isEstimated && (
+                            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-600">
+                              est.
+                            </span>
+                          )}
                         </div>
-                      ))}
+                        <div className="mt-1 h-1.5 w-full max-w-xs rounded-full bg-gray-100">
+                          <div
+                            className="h-full rounded-full bg-purple-500"
+                            style={{ width: `${Math.min(100, category.pctOfBucket)}%` }}
+                          />
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-semibold text-gray-900">
+                          {fmt(category.amount)}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {Math.round(category.pctOfBucket)}%
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                  </button>
+
+                  {/* Expanded Merchants */}
+                  {isExpanded && category.merchants && category.merchants.length > 0 && (
+                    <div className="border-t border-gray-200 bg-gray-50 px-4 py-3">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        Top merchants
+                      </p>
+                      <div className="space-y-1">
+                        {category.merchants.map((merchant, mIdx) => (
+                          <div
+                            key={mIdx}
+                            className="flex items-center justify-between text-xs"
+                          >
+                            <span className="text-gray-700">{merchant.merchant}</span>
+                            <span className="font-medium text-gray-900">
+                              {fmt(merchant.amount)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Not Counted Here */}
-      {breakdown.notCountedHere.length > 0 && (
+      {breakdown.notCountedHere && breakdown.notCountedHere.length > 0 && (
         <div>
           <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
             Not counted here
           </h3>
           <div className="space-y-2">
-            {breakdown.notCountedHere.map((item: any, idx: number) => (
+            {breakdown.notCountedHere.map((item, idx) => (
               <div
                 key={idx}
                 className="rounded-lg border border-gray-300 bg-gray-50 px-4 py-3"
