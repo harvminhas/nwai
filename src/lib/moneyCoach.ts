@@ -190,6 +190,22 @@ export function computeMoneyCoachBreakdown(profile: FinancialProfileCache): Mone
     });
   }
 
+  // Sanity check: percentages should not exceed 150% (warns of double-counting)
+  const totalPct = bucketSummaries.reduce((sum, b) => sum + b.pctOfIncome, 0);
+  if (totalPct > 150) {
+    console.warn(
+      `⚠️  Money Coach: Bucket percentages sum to ${Math.round(totalPct)}% (> 150%). Possible double-counting.`,
+      {
+        incomeAmount,
+        incomeBasisLabel,
+        spendingMonths,
+        totalSpending,
+        bucketAverages,
+        buckets: bucketSummaries.map(b => ({ bucket: b.bucket, pct: Math.round(b.pctOfIncome), amount: Math.round(b.monthlyAverage) })),
+      }
+    );
+  }
+
   return {
     incomeAmount,
     incomeBasisLabel,

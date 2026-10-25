@@ -136,8 +136,6 @@ function WhereMoneyGoes({
   currency: string;
   onOpenDrawer: (type: DrawerType) => void;
 }) {
-  const [expanded, setExpanded] = useState(true);
-
   const { coverage, incomeAmount, incomeBasisLabel, buckets } = breakdown;
   
   // Calculate bucket percentages
@@ -145,11 +143,6 @@ function WhereMoneyGoes({
   const essentialsBucket = buckets.find(b => b.bucket === "essentials");
   const flexibleBucket = buckets.find(b => b.bucket === "flexible");
   const savingsBucket = buckets.find(b => b.bucket === "savings");
-  
-  const fixedPct = fixedBucket?.pctOfIncome || 0;
-  const essentialsPct = essentialsBucket?.pctOfIncome || 0;
-  const flexPct = flexibleBucket?.pctOfIncome || 0;
-  const savPct = savingsBucket?.pctOfIncome || 0;
 
   const bucketColors: Record<string, string> = {
     fixed: "#7c3aed",
@@ -160,140 +153,24 @@ function WhereMoneyGoes({
 
   return (
     <section className="mt-10">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-5 rounded-2xl border border-gray-200 bg-white p-5 text-left shadow-sm transition-all hover:border-purple-200"
-        aria-expanded={expanded}
-      >
-        <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-bold text-gray-900">Where your money goes</h2>
-          <p className="mt-0.5 text-sm text-gray-500">
-            {incomeBasisLabel} · {fmt(incomeAmount, currency)} take-home
-          </p>
+      {/* Coverage Note */}
+      {coverage.coveragePct < 90 && (
+        <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900">
+          <span>⚠</span>
+          <span>
+            Based on {coverage.monthsCovered} of {coverage.monthsSpan} months
+            {coverage.missingMonths.length > 0 && `, missing ${coverage.missingMonths.slice(0, 2).join(", ")}`}
+            {coverage.missingMonths.length > 2 && `, +${coverage.missingMonths.length - 2} more`}
+          </span>
+          <span>·</span>
+          <Link href="/account/statements" className="font-semibold underline">
+            Upload missing months
+          </Link>
         </div>
-        
-        {/* Mini bar */}
-        <div className="flex h-2.5 min-w-20 flex-1 max-w-xs gap-0.5 overflow-hidden rounded-full">
-          <div style={{ flex: fixedPct, background: bucketColors.fixed }} />
-          <div style={{ flex: essentialsPct, background: bucketColors.essentials }} />
-          <div style={{ flex: flexPct, background: bucketColors.flexible }} />
-          <div style={{ flex: savPct, background: bucketColors.savings }} />
-        </div>
-        
-        <span className="whitespace-nowrap text-sm text-gray-700">
-          Fixed {Math.round(fixedPct)}% · Essentials {Math.round(essentialsPct)}% · Flexible {Math.round(flexPct)}% · Savings {Math.round(savPct)}%
-        </span>
-        
-        <svg 
-          className={`h-6 w-6 shrink-0 text-gray-500 transition-transform ${expanded ? "rotate-180" : ""}`}
-          fill="none" 
-          viewBox="0 0 24 24" 
-          stroke="currentColor"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
+      )}
 
-      {expanded && (
-        <div className="mt-4 space-y-4">
-          {/* Coverage Note */}
-          {coverage.coveragePct < 90 && (
-            <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900">
-              <span>⚠</span>
-              <span>
-                Based on {coverage.monthsCovered} of {coverage.monthsSpan} months
-                {coverage.missingMonths.length > 0 && `, missing ${coverage.missingMonths.slice(0, 2).join(", ")}`}
-                {coverage.missingMonths.length > 2 && `, +${coverage.missingMonths.length - 2} more`}
-              </span>
-              <span>·</span>
-              <Link href="/account/statements" className="font-semibold underline">
-                Upload missing months
-              </Link>
-            </div>
-          )}
-
-          {/* Main Breakdown Bar with Legend */}
-          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-            {/* Stacked Bar */}
-            <div className="flex h-6 gap-0.5 overflow-hidden rounded-lg">
-              {fixedBucket && (
-                <div 
-                  style={{ flex: fixedBucket.pctOfIncome, backgroundColor: bucketColors.fixed }}
-                  className="flex items-center justify-center text-[11px] font-bold text-white"
-                >
-                  {Math.round(fixedBucket.pctOfIncome)}%
-                </div>
-              )}
-              {essentialsBucket && (
-                <div 
-                  style={{ flex: essentialsBucket.pctOfIncome, backgroundColor: bucketColors.essentials }}
-                  className="flex items-center justify-center text-[11px] font-bold text-white"
-                >
-                  {Math.round(essentialsBucket.pctOfIncome)}%
-                </div>
-              )}
-              {flexibleBucket && (
-                <div 
-                  style={{ flex: flexibleBucket.pctOfIncome, backgroundColor: bucketColors.flexible }}
-                  className="flex items-center justify-center text-[11px] font-bold text-white"
-                >
-                  {Math.round(flexibleBucket.pctOfIncome)}%
-                </div>
-              )}
-              {savingsBucket && (
-                <div 
-                  style={{ flex: savingsBucket.pctOfIncome, backgroundColor: bucketColors.savings }}
-                  className="flex items-center justify-center text-[11px] font-bold text-white"
-                >
-                  {Math.round(savingsBucket.pctOfIncome)}%
-                </div>
-              )}
-            </div>
-
-            {/* Legend with amounts */}
-            <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm">
-              {fixedBucket && (
-                <span className="flex items-center gap-2">
-                  <span className="h-3 w-3 rounded" style={{ backgroundColor: bucketColors.fixed }} />
-                  <span className="font-semibold">Fixed costs</span>
-                  <span className="text-gray-600">{fmt(fixedBucket.monthlyAverage, currency)}</span>
-                  <span className="text-gray-400">({Math.round(fixedBucket.pctOfIncome)}%)</span>
-                </span>
-              )}
-              {essentialsBucket && (
-                <span className="flex items-center gap-2">
-                  <span className="h-3 w-3 rounded" style={{ backgroundColor: bucketColors.essentials }} />
-                  <span className="font-semibold">Essentials</span>
-                  <span className="text-gray-600">{fmt(essentialsBucket.monthlyAverage, currency)}</span>
-                  <span className="text-gray-400">({Math.round(essentialsBucket.pctOfIncome)}%)</span>
-                </span>
-              )}
-              {flexibleBucket && (
-                <span className="flex items-center gap-2">
-                  <span className="h-3 w-3 rounded" style={{ backgroundColor: bucketColors.flexible }} />
-                  <span className="font-semibold">Flexible</span>
-                  <span className="text-gray-600">{fmt(flexibleBucket.monthlyAverage, currency)}</span>
-                  <span className="text-gray-400">({Math.round(flexibleBucket.pctOfIncome)}%)</span>
-                </span>
-              )}
-              {savingsBucket && (
-                <span className="flex items-center gap-2">
-                  <span className="h-3 w-3 rounded" style={{ backgroundColor: bucketColors.savings }} />
-                  <span className="font-semibold">Savings & debt</span>
-                  <span className="text-gray-600">{fmt(savingsBucket.monthlyAverage, currency)}</span>
-                  <span className="text-gray-400">({Math.round(savingsBucket.pctOfIncome)}%)</span>
-                </span>
-              )}
-            </div>
-
-            {/* Target reference */}
-            <div className="mt-3 text-xs text-gray-500">
-              Target: Fixed costs 35% + Essentials 15% = 50% · Flexible 30% · Savings & debt 20%
-            </div>
-          </div>
-
-          {/* Five Bucket Cards */}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      {/* Five Bucket Cards */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             {/* Income Card */}
             <button
               onClick={() => onOpenDrawer("income")}
@@ -310,7 +187,7 @@ function WhereMoneyGoes({
                 {fmt(incomeAmount, currency)}
                 <span className="text-sm font-medium text-gray-400">/mo</span>
               </p>
-              <p className="mt-1 text-xs text-gray-500">100% · take-home</p>
+              <p className="mt-1 text-xs text-gray-500">{incomeBasisLabel} · take-home</p>
               
               <div className="mt-4 h-2 w-full rounded-full bg-gray-100">
                 <div className="h-full w-full rounded-full bg-purple-600" />
@@ -411,8 +288,6 @@ function WhereMoneyGoes({
               );
             })}
           </div>
-        </div>
-      )}
     </section>
   );
 }

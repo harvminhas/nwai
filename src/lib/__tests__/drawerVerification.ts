@@ -160,4 +160,34 @@ for (const bucket of buckets) {
   }
 }
 
-console.log("\n✅ Verification complete\n");
+console.log("\n✅ Verification complete");
+
+// Sanity check: Test that percentages don't exceed 150%
+console.log("\n=== SANITY CHECK: Percentage Sums ===");
+for (const bucket of buckets) {
+  for (const window of windows) {
+    try {
+      const months = mockMonthlyHistory
+        .slice(window === "last3" ? -3 : window === "ytd" ? 0 : -12)
+        .map(h => h.yearMonth);
+
+      const breakdown = computeBucketBreakdown(
+        bucket,
+        mockExpenseTxns,
+        mockAccountSnapshots,
+        months,
+        "CAD"
+      );
+
+      const totalPct = breakdown.categories.reduce((sum, c) => sum + c.pctOfBucket, 0);
+      
+      if (Math.abs(totalPct - 100) > 1) {
+        console.log(`  ⚠️  ${bucket}/${window}: Category percentages sum to ${Math.round(totalPct)}% (expected ~100%)`);
+      }
+    } catch (err) {
+      // Already logged above
+    }
+  }
+}
+
+console.log("\n✅ All checks complete\n");
