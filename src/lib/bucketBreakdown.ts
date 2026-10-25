@@ -7,6 +7,7 @@
 
 import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
 import type { MonthlyHistoryEntry } from "./financialProfile";
+import type { DebtPaymentReview } from "./types";
 import { getCategoryBucket, type MoneyCoachBucket } from "./moneyCoachBuckets";
 import { isCoreExcluded } from "./spendingMetrics";
 import { getParentCategory } from "./categoryTaxonomy";
@@ -92,7 +93,8 @@ export function computeBucketBreakdown(
   expenseTxns: ExpenseTxnRecord[],
   accountSnapshots: AccountSnapshot[],
   months: string[],
-  homeCurrency: string
+  homeCurrency: string,
+  userReviews: DebtPaymentReview[] = []
 ): BucketDetailedBreakdown {
   // Filter transactions to selected months
   const txnsInWindow = expenseTxns.filter(t => months.includes(t.txMonth));
@@ -121,7 +123,7 @@ export function computeBucketBreakdown(
   const scheduledDebtCategories: CategoryBreakdown[] = [];
   
   if (bucket === "fixed") {
-    const scheduledPayments = computeScheduledDebtPayments(accountSnapshots, expenseTxns);
+    const scheduledPayments = computeScheduledDebtPayments(accountSnapshots, expenseTxns, userReviews);
     const monthCount = months.length || 1;
     
     // Group by debt type
@@ -281,7 +283,8 @@ export function compute3MonthTrend(
   bucket: MoneyCoachBucket,
   expenseTxns: ExpenseTxnRecord[],
   accountSnapshots: AccountSnapshot[],
-  monthlyHistory: MonthlyHistoryEntry[]
+  monthlyHistory: MonthlyHistoryEntry[],
+  userReviews: DebtPaymentReview[] = []
 ): { months: string[]; values: number[] } {
   const now = new Date();
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -305,7 +308,8 @@ export function compute3MonthTrend(
       expenseTxns,
       accountSnapshots,
       [month],
-      "CAD"
+      "CAD",
+      userReviews
     );
     values.push(breakdown.monthlyAverage);
   }

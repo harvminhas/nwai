@@ -352,6 +352,7 @@ function BucketDrawerContent({
   type: DrawerType;
 }) {
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+  const [selectedDebtAccount, setSelectedDebtAccount] = useState<string | null>(null);
 
   const fmt = (amount: number) =>
     new Intl.NumberFormat("en-US", {
@@ -473,20 +474,45 @@ function BucketDrawerContent({
                   {isExpanded && category.merchants && category.merchants.length > 0 && (
                     <div className="border-t border-gray-200 bg-gray-50 px-4 py-3">
                       <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                        Top merchants
+                        {category.isScheduled ? "Debt accounts" : "Top merchants"}
                       </p>
                       <div className="space-y-1">
-                        {category.merchants.map((merchant, mIdx) => (
-                          <div
-                            key={mIdx}
-                            className="flex items-center justify-between text-xs"
-                          >
-                            <span className="text-gray-700">{merchant.merchant}</span>
-                            <span className="font-medium text-gray-900">
-                              {fmt(merchant.amount)}
-                            </span>
-                          </div>
-                        ))}
+                        {category.merchants.map((merchant, mIdx) => {
+                          const isDebtAccount = !!merchant.method;
+                          const Component = isDebtAccount ? "button" : "div";
+                          
+                          return (
+                            <Component
+                              key={mIdx}
+                              {...(isDebtAccount ? {
+                                onClick: () => setSelectedDebtAccount(merchant.accountSlug || null),
+                                className: "w-full flex items-center justify-between text-xs hover:bg-gray-100 rounded p-1 -mx-1 transition"
+                              } : {
+                                className: "flex items-center justify-between text-xs"
+                              })}
+                            >
+                              <div className="flex items-center gap-2 flex-1 min-w-0">
+                                <span className="text-gray-700 truncate">{merchant.merchant}</span>
+                                {merchant.method && (
+                                  <span 
+                                    className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-700 whitespace-nowrap"
+                                    style={{ fontFamily: "Inter, sans-serif" }}
+                                  >
+                                    {merchant.method}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="font-medium text-gray-900 ml-2">
+                                {fmt(merchant.amount)}
+                              </span>
+                              {isDebtAccount && (
+                                <svg className="ml-1 h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                </svg>
+                              )}
+                            </Component>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -536,6 +562,207 @@ function BucketDrawerContent({
           {type === "savings" && "This includes investments, extra debt payments beyond minimums, and savings contributions."}
         </p>
       </div>
+
+      {/* Debt Detail Drawer */}
+      {selectedDebtAccount && (
+        <DebtDetailDrawer
+          accountSlug={selectedDebtAccount}
+          window={data.window}
+          currency={currency}
+          onClose={() => setSelectedDebtAccount(null)}
+        />
+      )}
     </div>
+  );
+}
+
+function DebtDetailDrawer({
+  accountSlug,
+  window,
+  currency,
+  onClose,
+}: {
+  accountSlug: string;
+  window: string;
+  currency: string;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [details, setDetails] = useState<any>(null);
+
+  const fmt = (amount: number) =>
+    new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency || "USD",
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount);
+
+  useEffect(() => {
+    const loadDetails = async () => {
+      setLoading(true);
+      setError(null);
+
+      try {
+        // Get token from active profile context - simplified for now
+        const token = localStorage.getItem("firebaseToken");
+        if (!token) {
+          throw new Error("Not authenticated");
+        }
+
+        const res = await fetch(
+          `/api/user/debt-account-details?accountSlug=${encodeURIComponent(accountSlug)}&window=${window}`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+          }
+        );
+
+        if (!res.ok) {
+          throw new Error("Failed to load details");
+        }
+
+        const data = await res.json();
+        setDetails(data);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadDetails();
+  }, [accountSlug, window]);
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm"
+        onClick={onClose}
+      />
+
+      {/* Drawer */}
+      <div className="fixed right-0 top-0 z-50 h-full w-full max-w-xl overflow-y-auto bg-white shadow-2xl sm:w-[540px]">
+        {/* Header */}
+        <div className="sticky top-0 border-b border-gray-200 bg-white px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-bold text-gray-900" style={{ fontFamily: "Inter, sans-serif" }}>
+                {details?.accountName || accountSlug}
+              </h3>
+              {details?.method && (
+                <span 
+                  className="mt-1 inline-block rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-medium text-violet-700"
+                  style={{ fontFamily: "Inter, sans-serif" }}
+                >
+                  {details.method}
+                </span>
+              )}
+            </div>
+            <button
+              onClick={onClose}
+              className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+            >
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="px-6 py-6">
+          {loading && (
+            <div className="flex items-center justify-center py-12">
+              <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-violet-600" />
+            </div>
+          )}
+
+          {error && (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-6">
+              <p className="text-sm font-semibold text-red-900">Unable to load details</p>
+              <p className="mt-1 text-sm text-red-700">{error}</p>
+            </div>
+          )}
+
+          {!loading && !error && details && (
+            <div className="space-y-6">
+              {/* Scheduled Amount */}
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                <p className="text-sm font-medium text-gray-600">Regular payment</p>
+                <p className="mt-1 text-2xl font-bold text-gray-900">{fmt(details.scheduledAmount)}/mo</p>
+              </div>
+
+              {/* Counted as Fixed */}
+              <div>
+                <h4 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
+                  Counted as fixed ({fmt(details.countedAsFixed.total)})
+                </h4>
+                {details.countedAsFixed.transactions.length === 0 ? (
+                  <p className="text-sm text-gray-600">No transactions</p>
+                ) : (
+                  <div className="space-y-2">
+                    {details.countedAsFixed.transactions.map((tx: any, idx: number) => (
+                      <div
+                        key={idx}
+                        className="rounded-lg border border-gray-200 bg-white px-4 py-3"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-gray-900">{tx.description}</span>
+                              {tx.isReviewed && (
+                                <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-900">
+                                  reviewed
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-0.5 text-xs text-gray-500">{tx.date}</p>
+                          </div>
+                          <span className="text-sm font-semibold text-gray-900">{fmt(tx.amount)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Extra Paydown */}
+              {details.extraPaydown.total > 0 && (
+                <div>
+                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
+                    Extra paydown → Savings & debt ({fmt(details.extraPaydown.total)})
+                  </h4>
+                  <div className="space-y-2">
+                    {details.extraPaydown.transactions.map((tx: any, idx: number) => (
+                      <div
+                        key={idx}
+                        className="rounded-lg border border-green-200 bg-green-50 px-4 py-3"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-gray-900">{tx.description}</span>
+                              {tx.isReviewed && (
+                                <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-900">
+                                  reviewed
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-0.5 text-xs text-gray-500">{tx.date}</p>
+                          </div>
+                          <span className="text-sm font-semibold text-green-900">{fmt(tx.amount)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
   );
 }

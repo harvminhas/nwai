@@ -8,6 +8,7 @@ import { getFirebaseClient } from "@/lib/firebase";
 import { useActiveProfile } from "@/contexts/ActiveProfileContext";
 import { fmt } from "@/lib/currencyUtils";
 import { Drawer, type DrawerType } from "@/components/Drawer";
+import { DebtReviewList } from "@/components/DebtReviewList";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -130,11 +131,13 @@ function AnswerCard({
 function WhereMoneyGoes({ 
   breakdown, 
   currency, 
-  onOpenDrawer 
+  onOpenDrawer,
+  unreviewedCount
 }: { 
   breakdown: MoneyCoachBreakdown; 
   currency: string;
   onOpenDrawer: (type: DrawerType) => void;
+  unreviewedCount: number;
 }) {
   const { coverage, incomeAmount, incomeBasisLabel, buckets } = breakdown;
   
@@ -244,6 +247,11 @@ function WhereMoneyGoes({
                         est.
                       </span>
                     )}
+                    {bucket.bucket === "fixed" && unreviewedCount > 0 && (
+                      <span className="ml-1 rounded-full bg-violet-600 px-2 py-0.5 text-[10px] font-bold normal-case text-white" style={{ fontFamily: "Inter, sans-serif" }}>
+                        {unreviewedCount} to review
+                      </span>
+                    )}
                     <svg className="ml-auto h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>
@@ -305,6 +313,7 @@ export default function DashboardPage() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [currency, setCurrency] = useState("USD");
   const [activeDrawer, setActiveDrawer] = useState<DrawerType | null>(null);
+  const [unreviewedCount, setUnreviewedCount] = useState(0);
 
   // Handle URL hash for drawer state
   useEffect(() => {
@@ -345,9 +354,10 @@ export default function DashboardPage() {
   const loadData = useCallback(async (tok: string) => {
     setLoading(true);
     try {
-      const [coachRes, suggestionsRes] = await Promise.all([
+      const [coachRes, suggestionsRes, anomaliesRes] = await Promise.all([
         fetch("/api/user/money-coach", { headers: buildHeaders(tok) }),
         fetch("/api/user/ai-ask", { headers: buildHeaders(tok) }),
+        fetch("/api/user/debt-payment-anomalies", { headers: buildHeaders(tok) }),
       ]);
       
       if (coachRes.ok) {
@@ -359,6 +369,11 @@ export default function DashboardPage() {
       if (suggestionsRes.ok) {
         const data = await suggestionsRes.json();
         setSuggestions(data.suggestions || []);
+      }
+
+      if (anomaliesRes.ok) {
+        const data = await anomaliesRes.json();
+        setUnreviewedCount(data.anomalies?.length || 0);
       }
     } catch (error) {
       console.error("Failed to load dashboard data:", error);
@@ -450,9 +465,24 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {/* Debt Review List */}
+        {breakdown && breakdown.coverage.monthsCovered > 0 && unreviewedCount > 0 && (
+          <div className="mb-10">
+            <DebtReviewList 
+              token={token} 
+              onReviewComplete={() => {
+                // Reload data after review to update counts
+                if (token) {
+                  loadData(token);
+                }
+              }} 
+            />
+          </div>
+        )}
+
         {/* Where Money Goes */}
         {breakdown && breakdown.coverage.monthsCovered > 0 ? (
-          <WhereMoneyGoes breakdown={breakdown} currency={currency} onOpenDrawer={openDrawer} />
+          <WhereMoneyGoes breakdown={breakdown} currency={currency} onOpenDrawer={openDrawer} unreviewedCount={unreviewedCount} />
         ) : (
           <div className="mx-auto mt-16 max-w-2xl rounded-2xl border-2 border-dashed border-purple-200 bg-purple-50/30 p-12 text-center">
             <p className="mb-3 text-lg font-semibold text-gray-600">
