@@ -15,8 +15,8 @@ import {
 import { fmt, getCurrencySymbol, HOME_CURRENCY } from "@/lib/currencyUtils";
 import type { AccountSnapshot } from "@/lib/extractTransactions";
 import { MerchantDrawer, merchantSlugFromSpendingMerchantHref, useMerchantDrawer } from "@/app/account/spending/MerchantDrawer";
-import { IncomeDrawer, useIncomeDrawer } from "@/app/account/dashboard/IncomeDrawer";
-import { EventDrawer, eventIdFromEventsDetailHref, useEventDrawer } from "@/app/account/dashboard/EventDrawer";
+import { IncomeDrawer, useIncomeDrawer } from "@/app/account/today/IncomeDrawer";
+import { EventDrawer, eventIdFromEventsDetailHref, useEventDrawer } from "@/app/account/today/EventDrawer";
 import type { NearTermBucketDiscretionaryDTO } from "@/lib/forecastNearTermDiscretionary";
 
 // ── constants ─────────────────────────────────────────────────────────────────

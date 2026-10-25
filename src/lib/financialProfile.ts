@@ -59,7 +59,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "52"; // accountSnapshots.paymentsMade + line_of_credit accountType support
+const SCHEMA_VERSION = "53"; // added coverage metrics for AI home page
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -127,6 +127,13 @@ export interface FinancialProfileCache {
   monthlyHistory: MonthlyHistoryEntry[];
   /** Pre-computed typical monthly spend (median + avg) */
   typicalMonthly: TypicalSpend;
+  /** Data quality metrics — how complete is the user's statement coverage */
+  coverage: {
+    monthsCovered: number;
+    monthsSpan: number;
+    coveragePct: number;
+    missingMonths: string[];
+  };
   /**
    * Manually added assets (house, car, business, etc.) from users/{uid}/manualAssets.
    * Same data as /api/user/assets — included here so net worth is computed once.
@@ -255,6 +262,59 @@ export function computeSourceVersion(docs: Firestore.QueryDocumentSnapshot[]): s
     h = (Math.imul(31, h) + repr.charCodeAt(i)) | 0;
   }
   return h.toString(36);
+}
+
+// ── coverage computation ───────────────────────────────────────────────────────
+
+/**
+ * Compute data quality metrics — how complete is the user's history?
+ * Returns coverage percentage and list of missing months in the span.
+ */
+function computeCoverageMetrics(history: MonthlyHistoryEntry[]): {
+  monthsCovered: number;
+  monthsSpan: number;
+  coveragePct: number;
+  missingMonths: string[];
+} {
+  if (history.length === 0) {
+    return { monthsCovered: 0, monthsSpan: 0, coveragePct: 0, missingMonths: [] };
+  }
+
+  const sorted = [...history].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
+  const start = sorted[0].yearMonth;
+  const end = sorted[sorted.length - 1].yearMonth;
+
+  // Count total months between start and end
+  const [y1, m1] = start.split("-").map(Number);
+  const [y2, m2] = end.split("-").map(Number);
+  const span = (y2 - y1) * 12 + (m2 - m1) + 1;
+
+  // Find missing months
+  const present = new Set(history.map(h => h.yearMonth));
+  const missing: string[] = [];
+
+  let currentYear = y1;
+  let currentMonth = m1;
+
+  while (currentYear < y2 || (currentYear === y2 && currentMonth <= m2)) {
+    const ym = `${currentYear}-${String(currentMonth).padStart(2, "0")}`;
+    if (!present.has(ym)) {
+      missing.push(ym);
+    }
+
+    currentMonth++;
+    if (currentMonth > 12) {
+      currentMonth = 1;
+      currentYear++;
+    }
+  }
+
+  return {
+    monthsCovered: history.length,
+    monthsSpan: span,
+    coveragePct: span > 0 ? Math.round((history.length / span) * 100) : 0,
+    missingMonths: missing
+  };
 }
 
 // ── build ──────────────────────────────────────────────────────────────────────
@@ -904,6 +964,7 @@ export async function buildAndCacheFinancialProfile(
     schemaVersion: SCHEMA_VERSION,
     monthlyHistory,
     typicalMonthly,
+    coverage: computeCoverageMetrics(monthlyHistory),
     expenseTxns,
     incomeTxns,
     accountSnapshots: mergedSnapshots,
