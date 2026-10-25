@@ -18,6 +18,7 @@ import {
   type Reliability,
 } from "@/lib/incomeEngine";
 import type { SourceMonthData } from "@/lib/incomeEngine";
+import { computeIncomeMetrics } from "@/lib/incomeMetrics";
 import { fmt, getCurrencySymbol, formatCurrency } from "@/lib/currencyUtils";
 import { incomeTxnKey } from "@/lib/applyRules";
 import type { SourceSuggestion } from "@/lib/sourceMappings";
