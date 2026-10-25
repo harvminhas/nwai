@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
+import { isFeatureEnabled } from "@/lib/features";
 import type { UserStatementSummary } from "@/lib/types";
 import { buildAccountSlug } from "@/lib/accountSlug";
 
@@ -209,6 +210,14 @@ function buildCoverage(statements: UserStatementSummary[]): {
 
 function ActivityContent() {
   const router = useRouter();
+  
+  // Feature flag guard
+  useEffect(() => {
+    if (!isFeatureEnabled("showExtendedPages")) {
+      router.replace("/account/dashboard");
+    }
+  }, [router]);
+  
   const [statements, setStatements] = useState<UserStatementSummary[]>([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState<string | null>(null);

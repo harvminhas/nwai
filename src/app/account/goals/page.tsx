@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
+import { isFeatureEnabled } from "@/lib/features";
 import type { AccountRateEntry } from "@/app/api/user/account-rates/route";
 import { usePlan } from "@/contexts/PlanContext";
 import { fmt, getCurrencySymbol, HOME_CURRENCY } from "@/lib/currencyUtils";

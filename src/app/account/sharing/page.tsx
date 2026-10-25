@@ -4,10 +4,19 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
+import { isFeatureEnabled } from "@/lib/features";
 import type { LinkedPartner, PendingPartnerInvite } from "@/lib/access/types";
 
 export default function SharingPage() {
   const router = useRouter();
+  
+  // Feature flag guard
+  useEffect(() => {
+    if (!isFeatureEnabled("showExtendedPages")) {
+      router.replace("/account/dashboard");
+    }
+  }, [router]);
+  
   const [token, setToken] = useState<string | null>(null);
   const [canView, setCanView] = useState<LinkedPartner | null>(null);
   const [sharedWith, setSharedWith] = useState<LinkedPartner | null>(null);
