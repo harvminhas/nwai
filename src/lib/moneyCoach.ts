@@ -77,13 +77,19 @@ export function computeMoneyCoachBreakdown(profile: FinancialProfileCache): Mone
   const { amount: incomeAmount, basisLabel: incomeBasisLabel } = getMoneyCoachIncome(monthlyHistory);
 
   // Determine which months to use for spending (same window as income)
-  const monthsWithIncome = monthlyHistory.filter(h => h.incomeTotal > 0);
-  const spendingMonths = monthsWithIncome.length >= 3 
-    ? monthsWithIncome.slice(-3).map(h => h.yearMonth)  // Use last 3 months
-    : monthsWithIncome.map(h => h.yearMonth);          // Use all available months
+  // Exclude current incomplete month (matches incomeMetrics.ts and bucketBreakdown.ts logic)
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  
+  const completeMonthsWithIncome = monthlyHistory.filter(h => 
+    h.incomeTotal > 0 && h.yearMonth < currentMonth
+  );
+  const spendingMonths = completeMonthsWithIncome.length >= 3 
+    ? completeMonthsWithIncome.slice(-3).map(h => h.yearMonth)  // Use last 3 complete months
+    : completeMonthsWithIncome.map(h => h.yearMonth);          // Use all available complete months
 
   // Compute scheduled debt payments (fixed costs)
-  const scheduledPayments = computeScheduledDebtPayments(accountSnapshots);
+  const scheduledPayments = computeScheduledDebtPayments(accountSnapshots, expenseTxns);
   const scheduledByAccount = new Map(scheduledPayments.map(p => [p.accountSlug, p]));
   const hasEstimatedDebt = scheduledPayments.some(p => p.isEstimated);
 

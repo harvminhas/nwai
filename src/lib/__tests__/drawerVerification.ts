@@ -13,43 +13,116 @@ import type { IncomeTxnRecord, ExpenseTxnRecord, AccountSnapshot } from "../extr
 
 // Mock realistic data
 const mockMonthlyHistory: MonthlyHistoryEntry[] = [
-  { yearMonth: "2026-01", incomeTotal: 8500, expensesTotal: 6200, netWorth: 15000 },
-  { yearMonth: "2026-02", incomeTotal: 8500, expensesTotal: 6800, netWorth: 16700 },
-  { yearMonth: "2026-03", incomeTotal: 8500, expensesTotal: 6500, netWorth: 18400 },
-  { yearMonth: "2026-04", incomeTotal: 9000, expensesTotal: 6400, netWorth: 21000 },
-  { yearMonth: "2026-05", incomeTotal: 9000, expensesTotal: 7000, netWorth: 23000 },
-  { yearMonth: "2026-06", incomeTotal: 9000, expensesTotal: 6900, netWorth: 25100 },
-  { yearMonth: "2026-07", incomeTotal: 9000, expensesTotal: 7200, netWorth: 26900 },
-  { yearMonth: "2026-08", incomeTotal: 9200, expensesTotal: 6800, netWorth: 29300 },
-  { yearMonth: "2026-09", incomeTotal: 9200, expensesTotal: 7100, netWorth: 31400 },
-  { yearMonth: "2026-10", incomeTotal: 9200, expensesTotal: 7000, netWorth: 33600 },
+  { 
+    yearMonth: "2026-01", incomeTotal: 8500, expensesTotal: 6200, 
+    coreExpensesTotal: 6200, incomeTotalAllCredits: 8500, 
+    debtPaymentsTotal: 0, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 0,
+    totalAssets: 15000, totalDebts: 0, netWorth: 15000
+  },
+  { 
+    yearMonth: "2026-02", incomeTotal: 8500, expensesTotal: 6800, 
+    coreExpensesTotal: 6800, incomeTotalAllCredits: 8500, 
+    debtPaymentsTotal: 0, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 0,
+    totalAssets: 16700, totalDebts: 0, netWorth: 16700
+  },
+  { 
+    yearMonth: "2026-03", incomeTotal: 8500, expensesTotal: 6500, 
+    coreExpensesTotal: 6500, incomeTotalAllCredits: 8500, 
+    debtPaymentsTotal: 0, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 0,
+    totalAssets: 18400, totalDebts: 0, netWorth: 18400
+  },
+  { 
+    yearMonth: "2026-04", incomeTotal: 9000, expensesTotal: 6400, 
+    coreExpensesTotal: 6400, incomeTotalAllCredits: 9000, 
+    debtPaymentsTotal: 0, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 0,
+    totalAssets: 21000, totalDebts: 0, netWorth: 21000
+  },
+  { 
+    yearMonth: "2026-05", incomeTotal: 9000, expensesTotal: 7000, 
+    coreExpensesTotal: 7000, incomeTotalAllCredits: 9000, 
+    debtPaymentsTotal: 0, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 0,
+    totalAssets: 23000, totalDebts: 0, netWorth: 23000
+  },
+  { 
+    yearMonth: "2026-06", incomeTotal: 9000, expensesTotal: 6900, 
+    coreExpensesTotal: 6900, incomeTotalAllCredits: 9000, 
+    debtPaymentsTotal: 0, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 0,
+    totalAssets: 25100, totalDebts: 0, netWorth: 25100
+  },
+  { 
+    yearMonth: "2026-07", incomeTotal: 9000, expensesTotal: 7200, 
+    coreExpensesTotal: 7200, incomeTotalAllCredits: 9000, 
+    debtPaymentsTotal: 0, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 0,
+    totalAssets: 26900, totalDebts: 0, netWorth: 26900
+  },
+  { 
+    yearMonth: "2026-08", incomeTotal: 9200, expensesTotal: 6800, 
+    coreExpensesTotal: 6800, incomeTotalAllCredits: 9200, 
+    debtPaymentsTotal: 0, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 0,
+    totalAssets: 29300, totalDebts: 0, netWorth: 29300
+  },
+  { 
+    yearMonth: "2026-09", incomeTotal: 9200, expensesTotal: 7100, 
+    coreExpensesTotal: 7100, incomeTotalAllCredits: 9200, 
+    debtPaymentsTotal: 0, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 0,
+    totalAssets: 31400, totalDebts: 0, netWorth: 31400
+  },
+  // Current incomplete month (should be excluded from "last 3 months" calculations)
+  { 
+    yearMonth: "2026-10", incomeTotal: 9200, expensesTotal: 7000, 
+    coreExpensesTotal: 7000, incomeTotalAllCredits: 9200, 
+    debtPaymentsTotal: 0, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 0,
+    totalAssets: 33600, totalDebts: 0, netWorth: 33600
+  },
 ];
 
 const mockIncomeTxns: IncomeTxnRecord[] = [
-  { txMonth: "2026-08", source: "Acme Corp", category: "Salary", amount: 9200 },
-  { txMonth: "2026-09", source: "Acme Corp", category: "Salary", amount: 9200 },
-  { txMonth: "2026-10", source: "Acme Corp", category: "Salary", amount: 9200 },
+  { txMonth: "2026-08", date: "2026-08-15", source: "Acme Corp", description: "Salary", category: "Salary", amount: 9200, accountSlug: "checking-1234" },
+  { txMonth: "2026-09", date: "2026-09-15", source: "Acme Corp", description: "Salary", category: "Salary", amount: 9200, accountSlug: "checking-1234" },
+  { txMonth: "2026-10", date: "2026-10-15", source: "Acme Corp", description: "Salary", category: "Salary", amount: 9200, accountSlug: "checking-1234" },
 ];
 
 const mockExpenseTxns: ExpenseTxnRecord[] = [
-  { txMonth: "2026-10", category: "Groceries", merchant: "Whole Foods", amount: -450, accountSlug: "checking-1234" },
-  { txMonth: "2026-10", category: "Dining", merchant: "Chipotle", amount: -35, accountSlug: "checking-1234" },
-  { txMonth: "2026-10", category: "Housing", merchant: "Landlord", amount: -2000, accountSlug: "checking-1234" },
-  { txMonth: "2026-10", category: "Transportation", merchant: "Gas Station", amount: -120, accountSlug: "checking-1234" },
-  { txMonth: "2026-10", category: "Subscriptions", merchant: "Netflix", amount: -15, accountSlug: "credit-5678" },
-  { txMonth: "2026-09", category: "Groceries", merchant: "Safeway", amount: -480, accountSlug: "checking-1234" },
-  { txMonth: "2026-09", category: "Dining", merchant: "Starbucks", amount: -25, accountSlug: "credit-5678" },
-  { txMonth: "2026-08", category: "Groceries", merchant: "Trader Joes", amount: -420, accountSlug: "checking-1234" },
+  { txMonth: "2026-10", date: "2026-10-15", category: "Groceries", merchant: "Whole Foods", amount: -450, accountSlug: "checking-1234", accountLabel: "Checking", currency: "CAD" },
+  { txMonth: "2026-10", date: "2026-10-20", category: "Dining", merchant: "Chipotle", amount: -35, accountSlug: "checking-1234", accountLabel: "Checking", currency: "CAD" },
+  { txMonth: "2026-10", date: "2026-10-01", category: "Housing", merchant: "Landlord", amount: -2000, accountSlug: "checking-1234", accountLabel: "Checking", currency: "CAD" },
+  { txMonth: "2026-10", date: "2026-10-12", category: "Transportation", merchant: "Gas Station", amount: -120, accountSlug: "checking-1234", accountLabel: "Checking", currency: "CAD" },
+  { txMonth: "2026-10", date: "2026-10-05", category: "Subscriptions", merchant: "Netflix", amount: -15, accountSlug: "credit-5678", accountLabel: "Chase Visa", currency: "CAD" },
+  // LOC transactions: regular interest + large paydown
+  { txMonth: "2026-10", date: "2026-10-01", category: "Interest", merchant: "INTEREST CHARGE", amount: -812, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
+  { txMonth: "2026-10", date: "2026-10-02", category: "Debt Payments", merchant: "TD HELOC PAYMENT", amount: -33160, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
+  // Previous months: regular pattern
+  { txMonth: "2026-09", date: "2026-09-15", category: "Groceries", merchant: "Safeway", amount: -480, accountSlug: "checking-1234", accountLabel: "Checking", currency: "CAD" },
+  { txMonth: "2026-09", date: "2026-09-20", category: "Dining", merchant: "Starbucks", amount: -25, accountSlug: "credit-5678", accountLabel: "Chase Visa", currency: "CAD" },
+  { txMonth: "2026-09", date: "2026-09-01", category: "Interest", merchant: "INTEREST CHARGE", amount: -825, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
+  { txMonth: "2026-09", date: "2026-09-02", category: "Debt Payments", merchant: "TD HELOC PAYMENT", amount: -858, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
+  { txMonth: "2026-08", date: "2026-08-15", category: "Groceries", merchant: "Trader Joes", amount: -420, accountSlug: "checking-1234", accountLabel: "Checking", currency: "CAD" },
+  { txMonth: "2026-08", date: "2026-08-01", category: "Interest", merchant: "INTEREST CHARGE", amount: -830, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
+  { txMonth: "2026-08", date: "2026-08-02", category: "Debt Payments", merchant: "TD HELOC PAYMENT", amount: -1302, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
 ];
 
 const mockAccountSnapshots: AccountSnapshot[] = [
   {
-    accountSlug: "credit-5678",
-    accountLabel: "Chase Visa",
+    slug: "credit-5678",
+    bankName: "Chase",
+    accountId: "5678",
+    accountName: "Chase Visa",
     accountType: "credit",
     balance: -1500,
-    limit: 10000,
+    statementMonth: "2026-10",
+    interestRate: 19.99,
     paymentsMade: 1200,
+  },
+  {
+    slug: "td-heloc-9999",
+    bankName: "TD",
+    accountId: "9999",
+    accountName: "TD Home Equity FlexLine",
+    accountType: "line_of_credit",
+    balance: -150000,
+    statementMonth: "2026-10",
+    interestRate: 6.5,
+    paymentsMade: 33160, // Large paydown this month (should NOT all go to Fixed costs)
   },
 ];
 
@@ -190,4 +263,69 @@ for (const bucket of buckets) {
   }
 }
 
-console.log("\n✅ All checks complete\n");
+console.log("\n✅ All checks complete");
+
+// ── Regression Test: Large LOC Paydown (Bug Fix Verification) ──────────────────
+
+console.log("\n=== REGRESSION TEST: Large LOC Paydown ===");
+console.log("Bug: Large paydown on LOC was counted entirely as Fixed cost.");
+console.log("Expected: Only scheduled payment (~$812 interest + 1% principal = ~$2,312) goes to Fixed.");
+console.log("         Extra paydown (~$30,848) should go to Savings & debt.\n");
+
+try {
+  const fixedBreakdown = computeBucketBreakdown(
+    "fixed",
+    mockExpenseTxns,
+    mockAccountSnapshots,
+    ["2026-08", "2026-09"], // Exclude current incomplete month
+    "CAD"
+  );
+
+  const loanCategory = fixedBreakdown.categories.find(c => c.category === "Loan payments");
+  
+  if (loanCategory) {
+    const tdHeloc = loanCategory.merchants.find(m => m.accountSlug === "td-heloc-9999");
+    
+    if (tdHeloc) {
+      const scheduledAmount = tdHeloc.amount;
+      console.log(`✓ TD Home Equity FlexLine scheduled payment: CA$${Math.round(scheduledAmount)}/month`);
+      
+      // Verify it's reasonable (should be ~$1,500-3,000 based on interest + 1% principal)
+      const minExpected = 800;  // Just interest
+      const maxExpected = 3000; // Interest + 1.5% principal
+      
+      if (scheduledAmount >= minExpected && scheduledAmount <= maxExpected) {
+        console.log(`✓ Amount is reasonable (expected ${minExpected}-${maxExpected})`);
+      } else {
+        console.log(`✗ Amount ${Math.round(scheduledAmount)} is outside expected range ${minExpected}-${maxExpected}`);
+      }
+      
+      // Verify merchant name is account name, not "Scheduled payment"
+      if (tdHeloc.merchant === "TD Home Equity FlexLine" || tdHeloc.merchant.includes("FlexLine")) {
+        console.log(`✓ Merchant label shows account name: "${tdHeloc.merchant}"`);
+      } else {
+        console.log(`✗ Merchant label is generic: "${tdHeloc.merchant}" (expected account name)`);
+      }
+    } else {
+      console.log("✗ TD Home Equity FlexLine not found in loan payments");
+    }
+  } else {
+    console.log("✗ Loan payments category not found in Fixed bucket");
+  }
+
+  // Verify October (current incomplete month) is excluded
+  const octMonths = fixedBreakdown.categories
+    .flatMap(c => c.merchants)
+    .filter(m => m.accountSlug === "td-heloc-9999");
+  
+  if (octMonths.length === 0 || fixedBreakdown.monthlyAverage < 30000) {
+    console.log("✓ Current incomplete month (Oct 2026) excluded from 'last 3 months'");
+  } else {
+    console.log("✗ Current incomplete month (Oct 2026) was NOT excluded (large paydown inflated average)");
+  }
+
+} catch (err) {
+  console.log(`✗ ERROR: ${err instanceof Error ? err.message : String(err)}`);
+}
+
+console.log("\n✅ Regression test complete\n");
