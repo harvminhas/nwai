@@ -75,7 +75,7 @@ export function computeMoneyCoachBreakdown(
   profile: FinancialProfileCache,
   userReviews: DebtPaymentReview[] = []
 ): MoneyCoachBreakdown {
-  const { monthlyHistory, expenseTxns, coverage, accountSnapshots } = profile;
+  const { monthlyHistory, expenseTxns, coverage, accountSnapshots, fxRates, homeCurrency } = profile;
 
   // Compute income using shared function (matches Income page logic)
   const { amount: incomeAmount, basisLabel: incomeBasisLabel } = getMoneyCoachIncome(monthlyHistory);
@@ -93,7 +93,13 @@ export function computeMoneyCoachBreakdown(
     : completeMonthsWithIncome.map(h => h.yearMonth);          // Use all available complete months
 
   // Compute scheduled debt payments (fixed costs)
-  const scheduledPayments = computeScheduledDebtPayments(accountSnapshots, expenseTxns, userReviews);
+  const scheduledPayments = computeScheduledDebtPayments(
+    accountSnapshots, 
+    expenseTxns, 
+    userReviews,
+    fxRates ?? {},
+    homeCurrency ?? "CAD"
+  );
   const scheduledByAccount = new Map(scheduledPayments.map(p => [p.accountSlug, p]));
   const hasEstimatedDebt = scheduledPayments.some(p => p.isEstimated);
 

@@ -65,11 +65,23 @@ export async function GET(req: NextRequest) {
 
     const profile = await getFinancialProfile(decoded.uid, db);
     
+    // Currency conversion helper
+    const fxRates = profile.fxRates ?? {};
+    const home = (profile.homeCurrency ?? "CAD").toUpperCase();
+    function toHome(amount: number, currency?: string): number {
+      const cur = (currency ?? home).toUpperCase();
+      if (cur === home) return amount;
+      const rate = fxRates[cur];
+      return rate ? amount * rate : amount;
+    }
+    
     // Get scheduled payment info for this account
     const scheduledPayments = computeScheduledDebtPayments(
       profile.accountSnapshots,
       profile.expenseTxns,
-      userReviews
+      userReviews,
+      fxRates,
+      profile.homeCurrency
     );
     
     const accountPayment = scheduledPayments.find(p => p.accountSlug === accountSlug);
@@ -103,7 +115,7 @@ export async function GET(req: NextRequest) {
       const detail: DebtTransactionDetail = {
         date: txn.date,
         description: txn.merchant,
-        amount: Math.abs(txn.amount),
+        amount: toHome(Math.abs(txn.amount), txn.currency),
         isAnomaly,
         isReviewed,
       };

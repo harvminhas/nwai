@@ -35,7 +35,9 @@ export async function GET(req: NextRequest) {
     const anomalies = getAllUnreviewedAnomalies(
       profile.accountSnapshots,
       profile.expenseTxns,
-      userReviews
+      userReviews,
+      profile.fxRates ?? {},
+      profile.homeCurrency
     );
 
     return NextResponse.json({ anomalies });

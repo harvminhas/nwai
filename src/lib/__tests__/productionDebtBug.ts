@@ -36,7 +36,7 @@ const helocInterestTxns: ExpenseTxnRecord[] = [
   { txMonth: "2026-09", date: "2026-09-01", category: "Interest", merchant: "INTEREST CHARGE", amount: -820, accountSlug: "td-heloc-9999", accountLabel: "TD HELOC", currency: "CAD" },
 ];
 
-const scheduled1 = computeScheduledDebtPayments([helocWithHugeBalance], helocInterestTxns, []);
+const scheduled1 = computeScheduledDebtPayments([helocWithHugeBalance], helocInterestTxns, [], {}, "CAD");
 const helocPayment = scheduled1[0];
 
 console.log(`Account: ${helocPayment.accountName}`);
@@ -77,7 +77,7 @@ const scotiaPayments2Months: ExpenseTxnRecord[] = [
   { txMonth: "2026-09", date: "2026-09-15", category: "Debt Payments", merchant: "SCOTIA PLAN", amount: -1087, accountSlug: "scotia-plan-1234", accountLabel: "Scotia Plan", currency: "CAD" },
 ];
 
-const scheduled2a = computeScheduledDebtPayments([scotiaPlan], scotiaPayments2Months, []);
+const scheduled2a = computeScheduledDebtPayments([scotiaPlan], scotiaPayments2Months, [], {}, "CAD");
 const scotiaPayment2 = scheduled2a[0];
 
 console.log(`Scenario A: Only 2 payments in window (Aug + Sep)`);
@@ -95,7 +95,7 @@ const scotiaPayments1Month: ExpenseTxnRecord[] = [
   { txMonth: "2026-09", date: "2026-09-15", category: "Debt Payments", merchant: "SCOTIA PLAN", amount: -858, accountSlug: "scotia-plan-1234", accountLabel: "Scotia Plan", currency: "CAD" },
 ];
 
-const scheduled2b = computeScheduledDebtPayments([scotiaPlan], scotiaPayments1Month, []);
+const scheduled2b = computeScheduledDebtPayments([scotiaPlan], scotiaPayments1Month, [], {}, "CAD");
 const scotiaPayment1 = scheduled2b[0];
 
 console.log(`\nScenario C: Only 1 payment found (maybe a lower partial payment?)`);

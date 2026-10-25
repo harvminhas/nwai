@@ -371,9 +371,9 @@ console.log("  Mortgage Fixed: ~CA$2,850 (usual payment, CA$32K flagged as anoma
 console.log("  Car loan Fixed: ~CA$1,090 (usual payment)\n");
 
 try {
-  // Test debt payment detection directly
-  const scheduledPayments = computeScheduledDebtPayments(mockAccountSnapshots, mockExpenseTxns);
-  const anomalies = getAllUnreviewedAnomalies(mockAccountSnapshots, mockExpenseTxns);
+  // Test debt payment detection directly (no FX conversion needed for test data - all CAD)
+  const scheduledPayments = computeScheduledDebtPayments(mockAccountSnapshots, mockExpenseTxns, [], {}, "CAD");
+  const anomalies = getAllUnreviewedAnomalies(mockAccountSnapshots, mockExpenseTxns, [], {}, "CAD");
   
   console.log("Detected scheduled payments:");
   for (const payment of scheduledPayments) {
@@ -462,7 +462,9 @@ try {
   const scheduledWithReview = computeScheduledDebtPayments(
     mockAccountSnapshots,
     mockExpenseTxns,
-    userReviews
+    userReviews,
+    {},
+    "CAD"
   );
   
   const mortgageWithReview = scheduledWithReview.find((p: any) => p.accountSlug === "td-heloc-9999");
@@ -519,7 +521,9 @@ try {
   const cardPayments = computeScheduledDebtPayments(
     [cardWithBalance, cardPaidFull],
     [],
-    []
+    [],
+    {},
+    "CAD"
   );
   
   console.log(`Cards with scheduled payments: ${cardPayments.length}`);
