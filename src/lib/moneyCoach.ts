@@ -15,6 +15,7 @@
 
 import type { FinancialProfileCache } from "./financialProfile";
 import type { ExpenseTxnRecord } from "./extractTransactions";
+import type { DebtPaymentReview } from "./types";
 import { getCategoryBucket, getBucketAdvice, BUCKET_METADATA, type MoneyCoachBucket } from "./moneyCoachBuckets";
 import { isCoreExcluded } from "./spendingMetrics";
 import { computeScheduledDebtPayments, type ScheduledDebtPayment } from "./debtPayments";
@@ -70,8 +71,11 @@ function average(values: number[]): number {
  * Uses average (not median) across the same window as income calculation
  * to ensure consistent percentages.
  */
-export function computeMoneyCoachBreakdown(profile: FinancialProfileCache): MoneyCoachBreakdown {
-  const { monthlyHistory, expenseTxns, coverage, accountSnapshots } = profile;
+export function computeMoneyCoachBreakdown(
+  profile: FinancialProfileCache,
+  userReviews: DebtPaymentReview[] = []
+): MoneyCoachBreakdown {
+  const { monthlyHistory, expenseTxns, coverage, accountSnapshots, fxRates, homeCurrency } = profile;
 
   // Compute income using shared function (matches Income page logic)
   const { amount: incomeAmount, basisLabel: incomeBasisLabel } = getMoneyCoachIncome(monthlyHistory);
@@ -89,7 +93,13 @@ export function computeMoneyCoachBreakdown(profile: FinancialProfileCache): Mone
     : completeMonthsWithIncome.map(h => h.yearMonth);          // Use all available complete months
 
   // Compute scheduled debt payments (fixed costs)
-  const scheduledPayments = computeScheduledDebtPayments(accountSnapshots, expenseTxns);
+  const scheduledPayments = computeScheduledDebtPayments(
+    accountSnapshots, 
+    expenseTxns, 
+    userReviews,
+    fxRates ?? {},
+    homeCurrency ?? "CAD"
+  );
   const scheduledByAccount = new Map(scheduledPayments.map(p => [p.accountSlug, p]));
   const hasEstimatedDebt = scheduledPayments.some(p => p.isEstimated);
 

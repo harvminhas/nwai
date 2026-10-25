@@ -76,6 +76,28 @@ export type DebtType =
   | "line_of_credit"
   | "other_debt";
 
+/** User classification for a debt payment anomaly */
+export type DebtPaymentClassification = 
+  | "extra_prepayment"    // Only excess above regular payment goes to Savings & debt
+  | "new_regular_payment" // Update account's regular payment from this date
+  | "ignore";             // Excluded (refinance/transfer)
+
+/** User review record for a debt payment transaction */
+export interface DebtPaymentReview {
+  /** Transaction fingerprint (SHA-256 hash) */
+  txFingerprint: string;
+  /** Account slug this review applies to */
+  accountSlug: string;
+  /** User's classification */
+  classification: DebtPaymentClassification;
+  /** Date of the transaction (YYYY-MM-DD) */
+  date: string;
+  /** Amount of the transaction */
+  amount: number;
+  /** When the user made this classification */
+  reviewedAt: Date | { toDate(): Date };
+}
+
 export interface ExpenseTransaction {
   merchant: string;
   amount: number;

@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { computeMoneyCoachBreakdown } from "@/lib/moneyCoach";
+import type { DebtPaymentReview } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +22,19 @@ export async function GET(req: NextRequest) {
     const decoded = await auth.verifyIdToken(token);
 
     const profile = await getFinancialProfile(decoded.uid, db);
-    const breakdown = computeMoneyCoachBreakdown(profile);
+
+    // Load user debt payment reviews
+    const reviewsSnap = await db.collection(`users/${decoded.uid}/debtPaymentReviews`).get();
+    const userReviews: DebtPaymentReview[] = reviewsSnap.docs.map((doc) => ({
+      txFingerprint: doc.id,
+      accountSlug: doc.get("accountSlug"),
+      classification: doc.get("classification"),
+      date: doc.get("date"),
+      amount: doc.get("amount"),
+      reviewedAt: doc.get("reviewedAt"),
+    }));
+
+    const breakdown = computeMoneyCoachBreakdown(profile, userReviews);
 
     return Response.json({
       ...breakdown,

@@ -5,6 +5,7 @@ import { computeDetailedIncomeMetrics, getMonthsForWindow, type IncomeTimeWindow
 import { computeBucketBreakdown, compute3MonthTrend, getMonthsForWindow as getBucketMonths, type TimeWindow } from "@/lib/bucketBreakdown";
 import type { MoneyCoachBucket } from "@/lib/moneyCoachBuckets";
 import type { IncomeDrawerData, BucketDrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
+import type { DebtPaymentReview } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,17 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
 
     const profile = await getFinancialProfile(decoded.uid, db);
     const currentYear = new Date().getFullYear();
+
+    // Load user debt payment reviews
+    const reviewsSnap = await db.collection(`users/${decoded.uid}/debtPaymentReviews`).get();
+    const userReviews: DebtPaymentReview[] = reviewsSnap.docs.map((doc) => ({
+      txFingerprint: doc.id,
+      accountSlug: doc.get("accountSlug"),
+      classification: doc.get("classification"),
+      date: doc.get("date"),
+      amount: doc.get("amount"),
+      reviewedAt: doc.get("reviewedAt"),
+    }));
 
     // Income drawer data
     if (bucket === "income") {
@@ -104,7 +116,9 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       profile.accountSnapshots,
       months,
       profile.homeCurrency,
-      profile.merchantCadence, // Pass merchantCadence as primary source
+      userReviews,
+      profile.fxRates ?? {},
+      profile.merchantCadence,
       profile.confirmedSubscriptions
     );
 
@@ -113,7 +127,10 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       profile.expenseTxns,
       profile.accountSnapshots,
       profile.monthlyHistory,
-      profile.merchantCadence, // Pass merchantCadence here too
+      profile.homeCurrency,
+      userReviews,
+      profile.fxRates ?? {},
+      profile.merchantCadence,
       profile.confirmedSubscriptions
     );
 

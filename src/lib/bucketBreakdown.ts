@@ -7,6 +7,7 @@
 
 import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
 import type { MonthlyHistoryEntry } from "./financialProfile";
+import type { DebtPaymentReview } from "./types";
 import { getCategoryBucket, type MoneyCoachBucket } from "./moneyCoachBuckets";
 import { isCoreExcluded } from "./spendingMetrics";
 import { getParentCategory } from "./categoryTaxonomy";
@@ -91,6 +92,7 @@ export function getMonthsForWindow(
  * For subscriptions: uses merchantCadence (user's chosen billing cycle) as primary source,
  * falling back to subscription frequency from users/{uid}/subscriptions.
  * Annual cadence = last charge / 12, labelled 'yearly'.
+ * All amounts are converted to homeCurrency using fxRates.
  */
 export function computeBucketBreakdown(
   bucket: MoneyCoachBucket,
@@ -98,6 +100,8 @@ export function computeBucketBreakdown(
   accountSnapshots: AccountSnapshot[],
   months: string[],
   homeCurrency: string,
+  userReviews: DebtPaymentReview[] = [],
+  fxRates: Record<string, number> = {},
   merchantCadence?: Record<string, string>,
   subscriptions?: Array<{ merchantSlug: string; amount: number | null; frequency: string | null; status: string }>
 ): BucketDetailedBreakdown {
@@ -128,7 +132,7 @@ export function computeBucketBreakdown(
   const scheduledDebtCategories: CategoryBreakdown[] = [];
   
   if (bucket === "fixed") {
-    const scheduledPayments = computeScheduledDebtPayments(accountSnapshots, expenseTxns);
+    const scheduledPayments = computeScheduledDebtPayments(accountSnapshots, expenseTxns, userReviews, fxRates, homeCurrency);
     const monthCount = months.length || 1;
     
     // Group by debt type
@@ -343,6 +347,9 @@ export function compute3MonthTrend(
   expenseTxns: ExpenseTxnRecord[],
   accountSnapshots: AccountSnapshot[],
   monthlyHistory: MonthlyHistoryEntry[],
+  homeCurrency: string,
+  userReviews: DebtPaymentReview[] = [],
+  fxRates: Record<string, number> = {},
   merchantCadence?: Record<string, string>,
   subscriptions?: Array<{ merchantSlug: string; amount: number | null; frequency: string | null; status: string }>
 ): { months: string[]; values: number[] } {
@@ -368,8 +375,10 @@ export function compute3MonthTrend(
       expenseTxns,
       accountSnapshots,
       [month],
-      "CAD",
-      merchantCadence, // Pass merchantCadence for consistent calculation
+      homeCurrency,
+      userReviews,
+      fxRates,
+      merchantCadence,
       subscriptions
     );
     values.push(breakdown.monthlyAverage);
