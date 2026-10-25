@@ -1694,35 +1694,15 @@ function SpendingPageInner() {
       {hasData && (
         <>
           {/* Tab bar */}
-          <div className="mt-5 mb-6 flex overflow-x-auto border-b border-gray-200 scrollbar-none [-ms-overflow-style:none] [scrollbar-width:none]">
+          <div className="mt-6 flex gap-2">
             {TABS.map((tab) => (
               <button key={tab.id} onClick={() => switchTab(tab.id)}
-                className={`relative shrink-0 mr-6 pb-3 text-sm font-medium transition-colors ${
+                className={`rounded-full border px-4 py-2 text-[14px] font-medium transition-all ${
                   activeTab === tab.id
-                    ? "text-gray-900 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:rounded-full after:bg-gray-900 after:content-['']"
-                    : "text-gray-400 hover:text-gray-600"
+                    ? "border-gray-900 bg-gray-900 text-white shadow-sm"
+                    : "border-gray-200 bg-white text-gray-500 hover:border-gray-400 hover:text-gray-900"
                 }`}>
                 {tab.label}
-                {tab.id === "transactions" && txns.length > 0 && (
-                  <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
-                    {txns.length}
-                  </span>
-                )}
-                {tab.id === "subscriptions" && allSubscriptions.length > 0 && (
-                  <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
-                    {allSubscriptions.length}
-                  </span>
-                )}
-                {tab.id === "cash" && cashItems.length > 0 && (
-                  <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
-                    {cashItems.length}
-                  </span>
-                )}
-                {tab.id === "categories" && allTimeMerchants && allTimeMerchants.length > 0 && (
-                  <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
-                    {new Set(allTimeMerchants.map((m) => m.category || "Other")).size}
-                  </span>
-                )}
               </button>
             ))}
           </div>

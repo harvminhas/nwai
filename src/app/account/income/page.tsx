@@ -195,7 +195,6 @@ const TABS = [
   { id: "overview",     label: "Overview" },
   { id: "sources",      label: "By Source" },
   { id: "categories",   label: "By Category" },
-  { id: "cash",         label: "Cash" },
   { id: "transactions", label: "Transactions" },
 ] as const;
 type TabId = typeof TABS[number]["id"];
@@ -1185,35 +1184,30 @@ function IncomePageInner() {
       </div>
 
       {/* Section tabs */}
-      <div className="mt-3 overflow-x-auto">
-        <div className="flex border-b border-gray-200 min-w-max">
+      <div className="mt-6 flex gap-2">
           {TABS.map((tab) => (
             <button
               key={tab.id}
               onClick={() => switchTab(tab.id)}
-              className={`relative mr-4 pb-2.5 text-sm font-medium transition-colors shrink-0 ${
+              className={`rounded-full border px-4 py-2 text-[14px] font-medium transition-all ${
                 activeTab === tab.id
-                  ? "text-gray-900 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-600"
-                  : "text-gray-400 hover:text-gray-600"
+                  ? "border-gray-900 bg-gray-900 text-white shadow-sm"
+                  : "border-gray-200 bg-white text-gray-500 hover:border-gray-400 hover:text-gray-900"
               }`}
             >
               {tab.label}
               {tab.id === "transactions" && txCount > 0 && (
-                <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">{txCount}</span>
+                <span className="ml-1.5 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-semibold">{txCount}</span>
               )}
               {tab.id === "sources" && allSourceCount > 0 && (
-                <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">{allSourceCount}</span>
+                <span className="ml-1.5 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-semibold">{allSourceCount}</span>
               )}
               {tab.id === "categories" && incomeCategoryBreakdown.length > 0 && (
-                <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">{incomeCategoryBreakdown.length}</span>
-              )}
-              {tab.id === "cash" && cashItems.length > 0 && (
-                <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">{cashItems.length}</span>
+                <span className="ml-1.5 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-semibold">{incomeCategoryBreakdown.length}</span>
               )}
             </button>
           ))}
         </div>
-      </div>
 
       <div className="mt-5 space-y-4">
 
@@ -2028,109 +2022,6 @@ function IncomePageInner() {
           </>
         )}
 
-        {/* ══════════════════════════════════════════════════════════════════════ */}
-        {/* CASH TAB                                                              */}
-        {/* ══════════════════════════════════════════════════════════════════════ */}
-        {activeTab === "cash" && (
-          <>
-            {/* Header row */}
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-gray-800">Cash &amp; recurring income</p>
-                <p className="text-xs text-gray-400 mt-0.5">Off-statement income: rent, side work, cash payments. Rolls into your income total.</p>
-              </div>
-              <button onClick={() => { if (token) loadCashIncome(token); openAddCash(); }}
-                className="shrink-0 rounded-lg bg-purple-600 px-3 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition">
-                + Add
-              </button>
-            </div>
-
-            {/* Monthly summary banner */}
-            {cashItems.length > 0 && cashMonthlyTotal > 0 && (
-              <div className="rounded-xl border border-green-200 bg-green-50/60 px-4 py-3 flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-semibold text-green-800">Est. monthly cash income</p>
-                  <p className="text-xs text-green-600 mt-0.5">{cashItems.filter((c) => c.frequency !== "once").length} recurring source{cashItems.filter((c) => c.frequency !== "once").length !== 1 ? "s" : ""}</p>
-                </div>
-                <div className="text-right">
-                  <p className="font-bold text-lg text-green-700">{fmt(Math.round(cashMonthlyTotal), homeCurrency)}<span className="text-sm font-normal">/mo</span></p>
-                  <p className="text-xs text-green-500">{fmt(Math.round(cashMonthlyTotal * 12), homeCurrency)}/yr</p>
-                </div>
-              </div>
-            )}
-
-            {/* Items list */}
-            {cashLoading ? (
-              <div className="flex justify-center py-8">
-                <div className="h-6 w-6 animate-spin rounded-full border-2 border-purple-600 border-t-transparent" />
-              </div>
-            ) : cashItems.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center">
-                <p className="text-sm font-medium text-gray-500">No cash income entries yet</p>
-                <p className="mt-1 text-xs text-gray-400">Add rent payments, freelance income, or any cash you receive outside your bank statements.</p>
-                <button onClick={() => { if (token) loadCashIncome(token); openAddCash(); }}
-                  className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition">
-                  + Add income source
-                </button>
-              </div>
-            ) : (
-              <div className="rounded-xl border border-gray-200 bg-white shadow-sm divide-y divide-gray-100">
-                {cashItems.map((item) => {
-                  const monthly = toMonthly(item.amount, item.frequency);
-                  const color   = CATEGORY_COLORS[item.category] ?? "#9ca3af";
-                  const isOnce  = item.frequency === "once";
-                  return (
-                    <div key={item.id} className="flex items-center gap-3 px-4 py-3.5 group hover:bg-gray-50 transition">
-                      {/* Navigable area */}
-                      <Link
-                        href={`/account/income/${encodeURIComponent(item.name)}`}
-                        className="flex flex-1 items-center gap-3 min-w-0"
-                      >
-                        <div className="mt-0.5 h-8 w-8 shrink-0 rounded-full flex items-center justify-center text-white text-xs font-bold"
-                          style={{ backgroundColor: color }}>
-                          {item.category.slice(0, 1)}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-semibold text-gray-800 truncate group-hover:text-purple-600 transition-colors">{item.name}</p>
-                            {isOnce && <span className="shrink-0 rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">one-off</span>}
-                          </div>
-                          <p className="text-xs text-gray-400 mt-0.5">
-                            {item.category}
-                            {!isOnce && ` · ${CASH_INCOME_FREQ_OPTIONS.find((f) => f.value === item.frequency)?.label ?? item.frequency}`}
-                            {item.nextDate && ` · ${isOnce ? "On" : "Next"} ${fmtDateFull(item.nextDate)}`}
-                          </p>
-                          {item.notes && <p className="text-xs text-gray-400 mt-0.5 italic">{item.notes}</p>}
-                          {!isOnce && monthly > 0 && (
-                            <p className="text-[11px] text-gray-400 mt-0.5">≈ {fmt(Math.round(monthly), homeCurrency)}/mo · {fmt(Math.round(monthly * 12), homeCurrency)}/yr</p>
-                          )}
-                        </div>
-                        <div className="shrink-0 text-right">
-                          <p className="font-semibold text-sm text-green-600 tabular-nums">+{fmt(item.amount, homeCurrency)}</p>
-                          {!isOnce && <p className="text-[10px] text-gray-400 mt-0.5">{CASH_INCOME_FREQ_OPTIONS.find((f) => f.value === item.frequency)?.label}</p>}
-                        </div>
-                        <svg className="h-4 w-4 shrink-0 text-gray-300 group-hover:text-purple-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                        </svg>
-                      </Link>
-                      {/* Edit / delete — separate from nav */}
-                      <div className="shrink-0 flex gap-1.5 opacity-0 group-hover:opacity-100 transition">
-                        <button onClick={() => openEditCash(item)} title="Edit" className="rounded-full p-1 text-gray-300 hover:text-purple-500 hover:bg-purple-50 transition">
-                          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                        </button>
-                        <button onClick={() => deleteCashItem(item.id)} title="Delete" className="rounded-full p-1 text-gray-300 hover:text-red-400 hover:bg-red-50 transition">
-                          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            <p className="text-[11px] text-gray-400 text-center">Cash income is added to your monthly total and included in Next Up predictions.</p>
-          </>
-        )}
 
       </div>
 

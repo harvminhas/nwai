@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { useActiveProfile } from "@/contexts/ActiveProfileContext";
-import { TopNav } from "@/components/TopNav";
+import { MvpTopNav } from "@/components/MvpTopNav";
 
 export default function AccountLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -65,7 +65,7 @@ export default function AccountLayout({ children }: { children: React.ReactNode 
 
   return (
     <>
-      <TopNav netWorthData={netWorthData} />
+      <MvpTopNav netWorthData={netWorthData} />
       <main>{children}</main>
     </>
   );
