@@ -8,7 +8,6 @@ import { getFirebaseClient } from "@/lib/firebase";
 import { useActiveProfile } from "@/contexts/ActiveProfileContext";
 import { fmt } from "@/lib/currencyUtils";
 import { Drawer, type DrawerType } from "@/components/Drawer";
-import { ChevronRight } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -303,7 +302,9 @@ function WhereMoneyGoes({
               <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-gray-500">
                 <span className="h-2.5 w-2.5 rounded" style={{ backgroundColor: "#9333ea" }} />
                 Income
-                <ChevronRight className="ml-auto h-4 w-4 text-gray-400" />
+                <svg className="ml-auto h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
               </div>
               <p className="text-2xl font-bold tracking-tight text-gray-900">
                 {fmt(incomeAmount, currency)}
@@ -366,7 +367,9 @@ function WhereMoneyGoes({
                         est.
                       </span>
                     )}
-                    <ChevronRight className="ml-auto h-4 w-4 text-gray-400" />
+                    <svg className="ml-auto h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
                   </div>
                   <p className="text-2xl font-bold tracking-tight text-gray-900">
                     {fmt(bucket.monthlyAverage, currency)}

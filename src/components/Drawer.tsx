@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X } from "lucide-react";
 
 export type DrawerType = "income" | "fixed" | "essentials" | "flexible" | "savings";
 
@@ -70,7 +69,9 @@ export function Drawer({ type, isOpen, onClose, token, currency }: DrawerProps) 
               onClick={onClose}
               className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
             >
-              <X className="h-5 w-5" />
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
             </button>
           </div>
 
