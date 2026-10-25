@@ -31,21 +31,25 @@ export default function AccountLayout({ children }: { children: React.ReactNode 
 
   const loadNetWorth = useCallback(async (tok: string) => {
     try {
-      const res = await fetch("/api/user/statements", {
+      const res = await fetch("/api/user/net-worth-summary", {
         headers: buildHeaders(tok),
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.netWorth) {
-          setNetWorthData({
-            netWorth: data.netWorth,
-            monthlyChange: data.monthlyChange || 0,
-            currency: data.currency || "USD",
-          });
-        }
+        setNetWorthData({
+          netWorth: data.netWorth ?? 0,
+          monthlyChange: data.monthlyChange ?? 0,
+          currency: data.currency ?? "CAD",
+        });
       }
     } catch (error) {
       console.error("Failed to load net worth:", error);
+      // Set empty data on error so the pill shows something
+      setNetWorthData({
+        netWorth: 0,
+        monthlyChange: 0,
+        currency: "CAD",
+      });
     }
   }, [buildHeaders]);
 

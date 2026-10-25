@@ -34,7 +34,8 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
 
   const isActive = (path: string) => pathname === path || pathname?.startsWith(path + "/");
 
-  const { netWorth = 0, monthlyChange = 0, currency = "USD" } = netWorthData || {};
+  const { netWorth = 0, monthlyChange = 0, currency = "CAD" } = netWorthData || {};
+  const isLoading = netWorthData === undefined;
 
   return (
     <>
@@ -142,8 +143,10 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
 
             {/* Right Side */}
             <div className="flex items-center gap-3">
-              {/* Net Worth Pill */}
-              {netWorth !== 0 && (
+              {/* Net Worth Pill - show skeleton while loading, always show when loaded */}
+              {isLoading ? (
+                <div className="hidden h-8 w-48 animate-pulse rounded-full border border-gray-200 bg-gray-100 sm:block" />
+              ) : (
                 <Link
                   href="/account/assets"
                   className="hidden items-center gap-2.5 whitespace-nowrap rounded-full border border-gray-200 bg-white px-3.5 py-1.5 text-[13px] transition-colors hover:border-gray-300 sm:flex"
@@ -243,7 +246,7 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
               </button>
             </div>
 
-            {netWorth !== 0 && (
+            {!isLoading && (
               <div className="mb-4 rounded-xl bg-gray-100 p-3 text-sm text-gray-600">
                 Net worth <span className="font-bold text-gray-900">{fmt(netWorth, currency)}</span>
                 {monthlyChange !== 0 && (
