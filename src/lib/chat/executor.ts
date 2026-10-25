@@ -12,6 +12,7 @@ import type { FinancialProfileCache } from "@/lib/financialProfile";
 import { FREQ_MONTHLY } from "@/app/api/user/cash-commitments/route";
 import { isCoreExcluded } from "@/lib/spendingMetrics";
 import { getParentCategory } from "@/lib/categoryTaxonomy";
+import { getHomeCurrency, toHome as toHomeCurrency } from "@/lib/currencyUtils";
 import type { ToolName } from "@/lib/chat/tools";
 import { TOOL_NAMES } from "@/lib/chat/tools";
 
@@ -52,18 +53,6 @@ function makeFmt(currency: string) {
     }).format(v);
 }
 
-function toHome(
-  amount: number,
-  currency: string | undefined,
-  home: string,
-  fxRates: Record<string, number>,
-): number {
-  const cur = (currency ?? home).toUpperCase();
-  if (cur === home) return amount;
-  const rate = fxRates[cur];
-  return rate ? amount * rate : amount;
-}
-
 /** Expand YYYY-MM to a date range [YYYY-MM-01, YYYY-MM-31] for comparison. */
 function expandDateParam(d: string, end: boolean): string {
   if (d.length === 7) return end ? `${d}-31` : `${d}-01`;
@@ -87,7 +76,7 @@ export function executeSearchTransactions(
   profile: FinancialProfileCache,
   params: ToolParams,
 ): ToolResult {
-  const home = (profile.homeCurrency ?? "USD").toUpperCase();
+  const home = getHomeCurrency(profile);
   const fxRates = profile.fxRates ?? {};
   const fmt = makeFmt(home);
 
@@ -140,7 +129,7 @@ export function executeSearchTransactions(
   const expenseRows = expenses.slice(0, limit).map((t) => ({
     date:     t.date,
     merchant: t.merchant,
-    amount:   fmt(toHome(t.amount, t.currency, home, fxRates)),
+    amount:   fmt(toHomeCurrency(t.amount, t.currency, profile)),
     category: t.category,
     account:  t.accountLabel ?? t.accountSlug,
     type:     "expense",
@@ -165,7 +154,7 @@ export function executeSearchTransactions(
       ...income.slice(0, limit).map((t) => ({
         date:     t.date,
         merchant: t.source,
-        amount:   fmt(toHome(t.amount, t.currency, home, fxRates)),
+        amount:   fmt(toHomeCurrency(t.amount, t.currency, profile)),
         category: "Income",
         account:  t.accountSlug ?? "",
         type:     "income",
@@ -190,7 +179,7 @@ export function executeSearchTransactions(
 
   // Compute summary stats for the caller
   const expSliced   = expenses.slice(0, limit);
-  const totalAmount = expSliced.reduce((s, t) => s + toHome(t.amount, t.currency, home, fxRates), 0);
+  const totalAmount = expSliced.reduce((s, t) => s + toHomeCurrency(t.amount, t.currency, profile), 0);
 
   // Per-merchant occurrence counts so the model can see duplicates clearly
   const merchantCounts: Record<string, number> = {};
@@ -221,7 +210,7 @@ export function executeGetMonthlyBreakdown(
   profile: FinancialProfileCache,
   params: ToolParams,
 ): ToolResult {
-  const home = (profile.homeCurrency ?? "USD").toUpperCase();
+  const home = getHomeCurrency(profile);
   const fxRates = profile.fxRates ?? {};
   const fmt = makeFmt(home);
 
@@ -272,7 +261,7 @@ export function executeGetMonthlyBreakdown(
         ) {
           continue;
         } // skip transfers + revolving settlement + interest
-        const homeAmt = toHome(t.amount, t.currency, home, fxRates);
+        const homeAmt = toHomeCurrency(t.amount, t.currency, profile);
         catTotals[t.category] = (catTotals[t.category] ?? 0) + homeAmt;
       }
       entry.by_category = Object.entries(catTotals)
@@ -292,7 +281,7 @@ export function executeRollupCategories(
   profile: FinancialProfileCache,
   params: ToolParams,
 ): ToolResult {
-  const home = (profile.homeCurrency ?? "USD").toUpperCase();
+  const home = getHomeCurrency(profile);
   const fxRates = profile.fxRates ?? {};
   const fmt = makeFmt(home);
 
@@ -334,7 +323,7 @@ export function executeRollupCategories(
     const label = parentOnly
       ? getParentCategory(t.category ?? "Other").trim() || "Other"
       : (t.category ?? "Uncategorized").trim() || "Uncategorized";
-    const homeAmt = toHome(t.amount, t.currency, home, fxRates);
+    const homeAmt = toHomeCurrency(t.amount, t.currency, profile);
     const prev = catTotals.get(label) ?? { total: 0, count: 0 };
     catTotals.set(label, { total: prev.total + homeAmt, count: prev.count + 1 });
   }
@@ -367,7 +356,7 @@ export function executeRollupMerchants(
   profile: FinancialProfileCache,
   params: ToolParams,
 ): ToolResult {
-  const home = (profile.homeCurrency ?? "USD").toUpperCase();
+  const home = getHomeCurrency(profile);
   const fxRates = profile.fxRates ?? {};
   const fmt = makeFmt(home);
 
@@ -403,7 +392,7 @@ export function executeRollupMerchants(
       continue;
     }
     const name = (t.merchant ?? "Unknown").trim() || "Unknown";
-    const homeAmt = toHome(t.amount, t.currency, home, fxRates);
+    const homeAmt = toHomeCurrency(t.amount, t.currency, profile);
     const prev = merchantTotals.get(name) ?? { total: 0, count: 0 };
     merchantTotals.set(name, { total: prev.total + homeAmt, count: prev.count + 1 });
   }
@@ -433,7 +422,7 @@ export function executeRollupMerchants(
 // ── list_recurring_charges ────────────────────────────────────────────────────
 
 export function executeListRecurringCharges(profile: FinancialProfileCache): ToolResult {
-  const home = (profile.homeCurrency ?? "USD").toUpperCase();
+  const home = getHomeCurrency(profile);
   const fxRates = profile.fxRates ?? {};
   const fmt = makeFmt(home);
 
@@ -441,7 +430,7 @@ export function executeListRecurringCharges(profile: FinancialProfileCache): Too
     const raw =
       s.amount ?? s.suggestedAmount ?? 0;
     const ccy = (s.currency ?? home).toUpperCase();
-    const amtHome = toHome(raw, ccy, home, fxRates);
+    const amtHome = toHomeCurrency(raw, ccy, profile);
     const freq = s.frequency ?? s.suggestedFrequency ?? "monthly";
     return {
       name: s.name,
@@ -485,7 +474,7 @@ export function executeGetDebtPaymentTrend(
   profile: FinancialProfileCache,
   params: ToolParams,
 ): ToolResult {
-  const home = (profile.homeCurrency ?? "USD").toUpperCase();
+  const home = getHomeCurrency(profile);
   const fmt = makeFmt(home);
   const cap = Math.min(Math.max((params.months as number | undefined) ?? 12, 1), 36);
 
