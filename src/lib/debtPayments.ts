@@ -21,25 +21,44 @@ export interface ScheduledDebtPayment {
   isEstimated: boolean;
   /** Type: "loan" for installment debt, "credit" for revolving credit */
   debtType: "loan" | "credit";
+  /** Method used: "fixed payment" | "est. interest-only" | "est. 2% of balance" | "est. 2.5% of balance" */
+  method?: string;
 }
+
+// ── Named constants for revolving debt minimums ──────────────────────────────
+
+/** Credit cards: 2.5% of balance or $25 floor */
+const CREDIT_CARD_MIN_PCT = 0.025;
+const CREDIT_CARD_MIN_FLOOR = 25;
+
+/** Small personal LOCs (<$100K): interest + 2% principal */
+const SMALL_LOC_PRINCIPAL_PCT = 0.02;
+
+/** Large HELOCs (>=$100K): interest-only threshold */
+const HELOC_INTEREST_ONLY_THRESHOLD = 100000;
 
 /**
  * Estimate minimum payment for a credit card.
- * Industry standard: greater of $25 or 2-3% of balance.
+ * Industry standard: greater of $25 or 2.5% of balance.
  */
-function estimateCreditMinPayment(balance: number): number {
-  return Math.max(25, balance * 0.025);
+function estimateCreditMinPayment(balance: number): { amount: number; method: string } {
+  const amount = Math.max(CREDIT_CARD_MIN_FLOOR, balance * CREDIT_CARD_MIN_PCT);
+  return { 
+    amount, 
+    method: `est. ${CREDIT_CARD_MIN_PCT * 100}% of balance`
+  };
 }
 
 /**
  * Find recurring payment amount from transaction history.
  * Returns median of past regular payments (excluding outliers).
+ * Uses ALL available history (not filtered to window) to find the pattern.
  */
 function findRecurringPayment(
   accountSlug: string,
   expenseTxns: ExpenseTxnRecord[]
-): number | null {
-  // Get all debt payment transactions for this account
+): { amount: number; confidence: "high" | "medium" | "low" } | null {
+  // Get all debt payment transactions for this account (ALL history)
   const payments = expenseTxns
     .filter(t => 
       t.accountSlug === accountSlug && 
@@ -50,7 +69,11 @@ function findRecurringPayment(
     .sort((a, b) => a - b);
 
   if (payments.length === 0) return null;
-  if (payments.length === 1) return payments[0];
+  
+  // Single payment: low confidence
+  if (payments.length === 1) {
+    return { amount: payments[0], confidence: "low" };
+  }
 
   // Filter outliers: remove payments > 2x the median (likely extra paydowns)
   const medianIdx = Math.floor(payments.length / 2);
@@ -60,25 +83,36 @@ function findRecurringPayment(
 
   const regularPayments = payments.filter(p => p <= rawMedian * 2);
 
-  if (regularPayments.length === 0) return rawMedian;
+  if (regularPayments.length === 0) {
+    return { amount: rawMedian, confidence: "low" };
+  }
 
   // Return median of regular payments
   const midIdx = Math.floor(regularPayments.length / 2);
-  return regularPayments.length % 2 === 0
+  const amount = regularPayments.length % 2 === 0
     ? (regularPayments[midIdx - 1] + regularPayments[midIdx]) / 2
     : regularPayments[midIdx];
+
+  // Confidence based on number of data points
+  const confidence = regularPayments.length >= 6 ? "high" : regularPayments.length >= 3 ? "medium" : "low";
+
+  return { amount, confidence };
 }
 
 /**
  * Calculate interest-based minimum payment for LOC/HELOC.
- * For revolving credit lines, minimum = interest charged + small principal %.
+ * 
+ * Large HELOCs (>=$100K): interest-only (no principal requirement)
+ * Small LOCs (<$100K): interest + 2% of balance
  */
 function estimateLOCMinimum(
   accountSlug: string,
   balance: number,
   apr: number,
   expenseTxns: ExpenseTxnRecord[]
-): number {
+): { amount: number; method: string } {
+  const isLargeHELOC = balance >= HELOC_INTEREST_ONLY_THRESHOLD;
+
   // Try to find actual interest charged from transactions
   const interestTxns = expenseTxns
     .filter(t => 
@@ -89,24 +123,50 @@ function estimateLOCMinimum(
     .map(t => Math.abs(t.amount));
 
   if (interestTxns.length > 0) {
-    // Use median interest charged + 1% of balance (typical principal requirement)
+    // Use median interest charged
     const sortedInterest = [...interestTxns].sort((a, b) => a - b);
     const midIdx = Math.floor(sortedInterest.length / 2);
     const medianInterest = sortedInterest.length % 2 === 0
       ? (sortedInterest[midIdx - 1] + sortedInterest[midIdx]) / 2
       : sortedInterest[midIdx];
     
-    return medianInterest + (balance * 0.01);
+    if (isLargeHELOC) {
+      // Large HELOC: interest-only
+      return {
+        amount: medianInterest,
+        method: "est. interest-only"
+      };
+    } else {
+      // Small LOC: interest + 2% principal
+      return {
+        amount: medianInterest + (balance * SMALL_LOC_PRINCIPAL_PCT),
+        method: `est. interest + ${SMALL_LOC_PRINCIPAL_PCT * 100}% principal`
+      };
+    }
   }
 
   // Fallback: estimate from APR
   if (apr > 0) {
     const monthlyInterest = (balance * apr / 100) / 12;
-    return monthlyInterest + (balance * 0.01);
+    
+    if (isLargeHELOC) {
+      return {
+        amount: monthlyInterest,
+        method: "est. interest-only (from APR)"
+      };
+    } else {
+      return {
+        amount: monthlyInterest + (balance * SMALL_LOC_PRINCIPAL_PCT),
+        method: `est. interest + ${SMALL_LOC_PRINCIPAL_PCT * 100}% principal`
+      };
+    }
   }
 
   // Last resort: 2% of balance
-  return balance * 0.02;
+  return {
+    amount: balance * 0.02,
+    method: "est. 2% of balance"
+  };
 }
 
 /**
@@ -185,42 +245,51 @@ export function computeScheduledDebtPayments(
       }
 
       // Carrying balance: estimate minimum payment (never use paymentsMade)
-      const minPayment = estimateCreditMinPayment(balance);
+      const { amount, method } = estimateCreditMinPayment(balance);
 
       scheduledPayments.push({
         accountSlug: account.slug,
         accountName: account.accountName,
-        amount: minPayment,
+        amount,
         isEstimated: true,
         debtType: "credit",
+        method,
       });
     } else if (account.accountType === "line_of_credit") {
-      // LOC/HELOC: minimum = interest + small principal requirement
-      const minPayment = estimateLOCMinimum(account.slug, balance, rate, expenseTxns);
+      // LOC/HELOC: interest-only for large HELOCs, interest + 2% for small LOCs
+      const { amount, method } = estimateLOCMinimum(account.slug, balance, rate, expenseTxns);
 
       scheduledPayments.push({
         accountSlug: account.slug,
         accountName: account.accountName,
-        amount: minPayment,
+        amount,
         isEstimated: true,
         debtType: "loan",
+        method,
       });
     } else {
       // Installment loan (mortgage, auto, student, personal)
       let scheduledPayment = 0;
       let isEstimated = false;
+      let method = "fixed payment";
 
-      // Try to find recurring payment from transaction history
-      const recurringPayment = findRecurringPayment(account.slug, expenseTxns);
+      // Try to find recurring payment from transaction history (ALL history)
+      const recurringResult = findRecurringPayment(account.slug, expenseTxns);
 
-      if (recurringPayment !== null) {
-        // Use median of past payments, capped at 3% of balance
-        scheduledPayment = Math.min(recurringPayment, balance * 0.03);
-        isEstimated = false;
+      if (recurringResult !== null) {
+        // Use median of past payments
+        scheduledPayment = recurringResult.amount;
+        isEstimated = recurringResult.confidence !== "high";
+        method = recurringResult.confidence === "high" 
+          ? "fixed payment"
+          : recurringResult.confidence === "medium"
+          ? "fixed payment (est.)"
+          : "fixed payment (low confidence)";
       } else {
         // No history: estimate from balance and rate
         scheduledPayment = estimateLoanPayment(balance, rate, account.accountType);
         isEstimated = true;
+        method = "est. from balance & rate";
       }
 
       scheduledPayments.push({
@@ -229,6 +298,7 @@ export function computeScheduledDebtPayments(
         amount: scheduledPayment,
         isEstimated,
         debtType: "loan",
+        method,
       });
     }
   }
