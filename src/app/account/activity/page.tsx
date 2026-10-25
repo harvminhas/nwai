@@ -1,4 +1,8 @@
 "use client";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { isFeatureEnabled } from "@/lib/features";
+
 
 import React, { useEffect, useState, useCallback, Suspense } from "react";
 import Link from "next/link";
@@ -553,5 +557,16 @@ function ActivityContent() {
 }
 
 export default function ActivityPage() {
+  const router = useRouter();
+  
+  useEffect(() => {
+    if (!isFeatureEnabled("showExtendedPages")) {
+      router.replace("/account/dashboard");
+    }
+  }, [router]);
+  
+  if (!isFeatureEnabled("showExtendedPages")) {
+    return <div className="flex min-h-screen items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-300 border-t-violet-600" /></div>;
+  }
   return <Suspense><ActivityContent /></Suspense>;
 }

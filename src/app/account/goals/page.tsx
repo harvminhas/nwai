@@ -1,4 +1,8 @@
 "use client";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { isFeatureEnabled } from "@/lib/features";
+
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -388,6 +392,17 @@ function RateEditor({
 // ── page ──────────────────────────────────────────────────────────────────────
 
 export default function GoalsPage() {
+  const router = useRouter();
+  
+  useEffect(() => {
+    if (!isFeatureEnabled("showExtendedPages")) {
+      router.replace("/account/dashboard");
+    }
+  }, [router]);
+  
+  if (!isFeatureEnabled("showExtendedPages")) {
+    return <div className="flex min-h-screen items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-300 border-t-violet-600" /></div>;
+  }
   const router = useRouter();
   const { loading: planLoading } = usePlan();
 

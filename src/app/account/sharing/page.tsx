@@ -1,4 +1,8 @@
 "use client";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { isFeatureEnabled } from "@/lib/features";
+
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
@@ -7,6 +11,17 @@ import { getFirebaseClient } from "@/lib/firebase";
 import type { LinkedPartner, PendingPartnerInvite } from "@/lib/access/types";
 
 export default function SharingPage() {
+  const router = useRouter();
+  
+  useEffect(() => {
+    if (!isFeatureEnabled("showExtendedPages")) {
+      router.replace("/account/dashboard");
+    }
+  }, [router]);
+  
+  if (!isFeatureEnabled("showExtendedPages")) {
+    return <div className="flex min-h-screen items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-300 border-t-violet-600" /></div>;
+  }
   const router = useRouter();
   const [token, setToken] = useState<string | null>(null);
   const [canView, setCanView] = useState<LinkedPartner | null>(null);
