@@ -22,6 +22,7 @@ import { CATEGORY_COLORS, categoryColor, ALL_CATEGORIES, CategoryPicker, Recurri
 import type { CashFrequency, HistoryPoint } from "./shared";
 import { CategoryListRow, CategoryNameLink } from "./CategoryListRow";
 import { MerchantDrawer, useMerchantDrawer } from "./MerchantDrawer";
+import MerchantsTab from "@/components/MerchantsTab";
 import { getParentCategory, isSubtype, CATEGORY_TAXONOMY } from "@/lib/categoryTaxonomy";
 import { fmt, getCurrencySymbol, formatCurrency } from "@/lib/currencyUtils";
 import RefreshToast from "@/components/RefreshToast";
@@ -2740,7 +2741,12 @@ function SpendingPageInner() {
           )}
 
           {/* ── By Merchant tab ───────────────────────────────────────── */}
-          {activeTab === "merchants" && (
+          {activeTab === "merchants" && token && (
+            <MerchantsTab token={token} />
+          )}
+
+          {/* ── By Category tab ───────────────────────────────────────── */}
+          {activeTab === "categories" && (
             <div className="space-y-4">
               {!allTimeMerchants ? (
                 <div className="flex justify-center py-16">
