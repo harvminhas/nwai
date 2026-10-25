@@ -24,19 +24,26 @@ const US_BANK_RE = /\b(bank of america|chase|wells fargo|citibank|citi|capital o
  * explicit currency the AI already extracted.
  *
  * Priority:
- *   1. `explicitCurrency` — AI-extracted (always trusted when present)
- *   2. Bank-name heuristic — CA banks → CAD, US banks → USD
+ *   1. Bank-name heuristic — CA banks → CAD, US banks → USD (prevents parser errors)
+ *   2. `explicitCurrency` — AI-extracted (used only when bank is unrecognized)
  *   3. `fallback` — caller's home currency (last resort)
+ *
+ * Rationale: The AI parser sometimes sees foreign-exchange notes (e.g. "USD 99.00")
+ * on Canadian bank statements and incorrectly sets the statement currency to USD.
+ * A TD/RBC/BMO statement is ALWAYS in CAD unless the user explicitly marks that
+ * specific account as foreign currency via accountCurrencies override.
  */
 export function inferCurrencyFromBankName(
   bankName: string | null | undefined,
   explicitCurrency: string | null | undefined,
   fallback = HOME_CURRENCY,
 ): string {
-  if (explicitCurrency) return explicitCurrency.toUpperCase();
   const name = bankName ?? "";
+  // Check bank name FIRST - this prevents parser errors from foreign exchange notes
   if (CA_BANK_RE.test(name)) return "CAD";
   if (US_BANK_RE.test(name)) return "USD";
+  // Only trust explicit currency if bank is unrecognized
+  if (explicitCurrency) return explicitCurrency.toUpperCase();
   return fallback.toUpperCase();
 }
 
