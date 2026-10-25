@@ -88,15 +88,20 @@ const mockExpenseTxns: ExpenseTxnRecord[] = [
   { txMonth: "2026-10", date: "2026-10-01", category: "Housing", merchant: "Landlord", amount: -2000, accountSlug: "checking-1234", accountLabel: "Checking", currency: "CAD" },
   { txMonth: "2026-10", date: "2026-10-12", category: "Transportation", merchant: "Gas Station", amount: -120, accountSlug: "checking-1234", accountLabel: "Checking", currency: "CAD" },
   { txMonth: "2026-10", date: "2026-10-05", category: "Subscriptions", merchant: "Netflix", amount: -15, accountSlug: "credit-5678", accountLabel: "Chase Visa", currency: "CAD" },
-  // HELOC transactions: regular interest + large paydown
-  { txMonth: "2026-10", date: "2026-10-01", category: "Interest", merchant: "INTEREST CHARGE", amount: -820, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
-  { txMonth: "2026-10", date: "2026-10-02", category: "Debt Payments", merchant: "TD HELOC PAYMENT", amount: -33160, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
+  
+  // Mortgage (TD Home Equity FlexLine): regular monthly payments + one large prepayment
+  { txMonth: "2026-10", date: "2026-10-01", category: "Debt Payments", merchant: "TD MORTGAGE PAYMENT", amount: -2845, accountSlug: "td-heloc-9999", accountLabel: "TD Mortgage", currency: "CAD" },
+  { txMonth: "2026-10", date: "2026-10-15", category: "Debt Payments", merchant: "TD MORTGAGE PREPAYMENT", amount: -32000, accountSlug: "td-heloc-9999", accountLabel: "TD Mortgage", currency: "CAD" },
+  { txMonth: "2026-09", date: "2026-09-01", category: "Debt Payments", merchant: "TD MORTGAGE PAYMENT", amount: -2850, accountSlug: "td-heloc-9999", accountLabel: "TD Mortgage", currency: "CAD" },
+  { txMonth: "2026-08", date: "2026-08-01", category: "Debt Payments", merchant: "TD MORTGAGE PAYMENT", amount: -2855, accountSlug: "td-heloc-9999", accountLabel: "TD Mortgage", currency: "CAD" },
+  { txMonth: "2026-07", date: "2026-07-01", category: "Debt Payments", merchant: "TD MORTGAGE PAYMENT", amount: -2848, accountSlug: "td-heloc-9999", accountLabel: "TD Mortgage", currency: "CAD" },
+  { txMonth: "2026-06", date: "2026-06-01", category: "Debt Payments", merchant: "TD MORTGAGE PAYMENT", amount: -2852, accountSlug: "td-heloc-9999", accountLabel: "TD Mortgage", currency: "CAD" },
+  { txMonth: "2026-05", date: "2026-05-01", category: "Debt Payments", merchant: "TD MORTGAGE PAYMENT", amount: -2847, accountSlug: "td-heloc-9999", accountLabel: "TD Mortgage", currency: "CAD" },
+  
   { txMonth: "2026-09", date: "2026-09-15", category: "Groceries", merchant: "Safeway", amount: -480, accountSlug: "checking-1234", accountLabel: "Checking", currency: "CAD" },
   { txMonth: "2026-09", date: "2026-09-20", category: "Dining", merchant: "Starbucks", amount: -25, accountSlug: "credit-5678", accountLabel: "Chase Visa", currency: "CAD" },
-  { txMonth: "2026-09", date: "2026-09-01", category: "Interest", merchant: "INTEREST CHARGE", amount: -815, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
   { txMonth: "2026-08", date: "2026-08-15", category: "Groceries", merchant: "Trader Joes", amount: -420, accountSlug: "checking-1234", accountLabel: "Checking", currency: "CAD" },
-  { txMonth: "2026-08", date: "2026-08-01", category: "Interest", merchant: "INTEREST CHARGE", amount: -810, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
-  { txMonth: "2026-07", date: "2026-07-01", category: "Interest", merchant: "INTEREST CHARGE", amount: -808, accountSlug: "td-heloc-9999", accountLabel: "TD Home Equity FlexLine", currency: "CAD" },
+  
   // Car loan payments (regular pattern)
   { txMonth: "2026-09", date: "2026-09-15", category: "Debt Payments", merchant: "SCOTIA PLAN PAYMENT", amount: -1087, accountSlug: "scotia-plan-1234", accountLabel: "Scotia Plan", currency: "CAD" },
   { txMonth: "2026-08", date: "2026-08-15", category: "Debt Payments", merchant: "SCOTIA PLAN PAYMENT", amount: -1094, accountSlug: "scotia-plan-1234", accountLabel: "Scotia Plan", currency: "CAD" },
@@ -120,12 +125,12 @@ const mockAccountSnapshots: AccountSnapshot[] = [
     slug: "td-heloc-9999",
     bankName: "TD",
     accountId: "9999",
-    accountName: "TD Home Equity FlexLine",
-    accountType: "line_of_credit",
-    balance: -990900, // Large HELOC balance (interest-only minimum)
+    accountName: "TD Home Equity FlexLine (Mortgage)",
+    accountType: "mortgage",
+    balance: -425000, // Mortgage balance
     statementMonth: "2026-10",
-    interestRate: 6.5,
-    paymentsMade: 33160, // Large paydown this month (should NOT all go to Fixed costs)
+    interestRate: 4.5,
+    paymentsMade: 33160, // Large prepayment this month
   },
   {
     slug: "scotia-plan-1234",
@@ -352,83 +357,76 @@ console.log("=== END BUG REPRODUCTION ===\n");
 
 // ── Regression Test: Large LOC Paydown (Bug Fix Verification) ──────────────────
 
-console.log("=== REGRESSION TEST: Production Bug Fix ===");
-console.log("Production bugs:");
-console.log("  1. TD Home Equity FlexLine: showed CA$9,909 (1% of $991K balance)");
-console.log("  2. Scotia Plan (car loan): showed CA$858 (capped at 3% of $25K balance = $750)");
-console.log("\nExpected after fix:");
-console.log("  1. FlexLine: ~CA$813 (interest-only for large HELOC)");
-console.log("  2. Scotia Plan: ~CA$1,090 (median of recurring payments)\n");
+console.log("=== REGRESSION TEST: Anomaly Detection ===");
+console.log("Test scenario:");
+console.log("  Mortgage: regular ~CA$2,850/mo + one CA$32,000 prepayment (anomaly)");
+console.log("  Car loan: regular ~CA$1,090/mo (4 payments)");
+console.log("\nExpected:");
+console.log("  Mortgage Fixed: ~CA$2,850 (usual payment, CA$32K flagged as anomaly)");
+console.log("  Car loan Fixed: ~CA$1,090 (usual payment)\n");
 
 try {
-  const fixedBreakdown = computeBucketBreakdown(
-    "fixed",
-    mockExpenseTxns,
-    mockAccountSnapshots,
-    ["2026-07", "2026-08", "2026-09"], // Last 3 complete months
-    "CAD"
-  );
-
-  const loanCategory = fixedBreakdown.categories.find(c => c.category === "Loan payments");
+  // Test debt payment detection directly
+  const { computeScheduledDebtPayments, getAllUnreviewedAnomalies } = require("../debtPayments");
   
-  if (loanCategory) {
-    // Test 1: TD Home Equity FlexLine
-    const tdHeloc = loanCategory.merchants.find(m => m.accountSlug === "td-heloc-9999");
-    
-    if (tdHeloc) {
-      const scheduledAmount = tdHeloc.amount;
-      console.log(`TD Home Equity FlexLine:`);
-      console.log(`  Balance: CA$990,900`);
-      console.log(`  Calculated: CA$${Math.round(scheduledAmount)}/month`);
-      console.log(`  Expected: ~CA$813 (median interest, no principal)`);
-      
-      if (scheduledAmount >= 800 && scheduledAmount <= 830) {
-        console.log(`  ✓ FIXED: Interest-only minimum (large HELOC)\n`);
-      } else if (scheduledAmount > 9000) {
-        console.log(`  ✗ STILL BROKEN: Including 1% principal on huge balance\n`);
-      } else {
-        console.log(`  ? Unexpected value: CA$${Math.round(scheduledAmount)}\n`);
-      }
+  const scheduledPayments = computeScheduledDebtPayments(mockAccountSnapshots, mockExpenseTxns);
+  const anomalies = getAllUnreviewedAnomalies(mockAccountSnapshots, mockExpenseTxns);
+  
+  console.log("Detected scheduled payments:");
+  for (const payment of scheduledPayments) {
+    console.log(`  ${payment.accountName}: CA$${Math.round(payment.amount)}/mo`);
+    console.log(`    Method: ${payment.method}`);
+    console.log(`    Anomalies: ${payment.unreviewedAnomalies?.length || 0}`);
+  }
+  
+  console.log(`\nTotal unreviewed anomalies: ${anomalies.length}`);
+  for (const anomaly of anomalies) {
+    console.log(`  ${anomaly.date}: CA$${Math.round(anomaly.amount)} - ${anomaly.reason}`);
+  }
+  
+  // Verify mortgage
+  const mortgage = scheduledPayments.find(p => p.accountSlug === "td-heloc-9999");
+  if (mortgage) {
+    if (mortgage.amount >= 2840 && mortgage.amount <= 2860) {
+      console.log(`\n✓ Mortgage: CA$${Math.round(mortgage.amount)} (correct usual payment)`);
     } else {
-      console.log("✗ TD Home Equity FlexLine not found in loan payments\n");
+      console.log(`\n✗ Mortgage: CA$${Math.round(mortgage.amount)} (expected ~CA$2,850)`);
     }
     
-    // Test 2: Scotia Plan car loan
-    const scotia = loanCategory.merchants.find(m => m.accountSlug === "scotia-plan-1234");
-    
-    if (scotia) {
-      const scheduledAmount = scotia.amount;
-      console.log(`Scotia Plan (car loan):`);
-      console.log(`  Balance: CA$25,000`);
-      console.log(`  Payment history: CA$1,091, CA$1,089, CA$1,094, CA$1,087`);
-      console.log(`  Calculated: CA$${Math.round(scheduledAmount)}/month`);
-      console.log(`  Expected: ~CA$1,090 (median of recurring payments)`);
-      
-      if (scheduledAmount >= 1085 && scheduledAmount <= 1095) {
-        console.log(`  ✓ FIXED: Using actual recurring payment\n`);
-      } else if (scheduledAmount < 900) {
-        console.log(`  ✗ STILL BROKEN: Capped at 3% of balance or low payment\n`);
+    if (mortgage.unreviewedAnomalies && mortgage.unreviewedAnomalies.length === 1) {
+      const anomaly = mortgage.unreviewedAnomalies[0];
+      if (anomaly.amount >= 31000 && anomaly.amount <= 33000) {
+        console.log(`✓ Anomaly detected: CA$${Math.round(anomaly.amount)} (prepayment)`);
       } else {
-        console.log(`  ? Unexpected value: CA$${Math.round(scheduledAmount)}\n`);
+        console.log(`✗ Anomaly amount wrong: CA$${Math.round(anomaly.amount)}`);
       }
     } else {
-      console.log("✗ Scotia Plan not found in loan payments\n");
-    }
-    
-    // Verify all accounts are shown
-    const totalMerchants = loanCategory.merchants.length;
-    console.log(`Total loan accounts shown: ${totalMerchants}`);
-    if (totalMerchants >= 2) {
-      console.log(`✓ All debt accounts displayed\n`);
-    } else {
-      console.log(`✗ Missing accounts (expected at least 2)\n`);
+      console.log(`✗ Expected 1 anomaly, found ${mortgage.unreviewedAnomalies?.length || 0}`);
     }
   } else {
-    console.log("✗ Loan payments category not found in Fixed bucket\n");
+    console.log("\n✗ Mortgage not found");
+  }
+  
+  // Verify car loan
+  const carLoan = scheduledPayments.find(p => p.accountSlug === "scotia-plan-1234");
+  if (carLoan) {
+    if (carLoan.amount >= 1085 && carLoan.amount <= 1095) {
+      console.log(`\n✓ Car loan: CA$${Math.round(carLoan.amount)} (correct usual payment)`);
+    } else {
+      console.log(`\n✗ Car loan: CA$${Math.round(carLoan.amount)} (expected ~CA$1,090)`);
+    }
+    
+    if (!carLoan.unreviewedAnomalies || carLoan.unreviewedAnomalies.length === 0) {
+      console.log(`✓ No anomalies (all payments regular)`);
+    } else {
+      console.log(`✗ Unexpected anomalies: ${carLoan.unreviewedAnomalies.length}`);
+    }
+  } else {
+    console.log("\n✗ Car loan not found");
   }
 
 } catch (err) {
   console.log(`✗ ERROR: ${err instanceof Error ? err.message : String(err)}`);
 }
 
-console.log("✅ Regression test complete\n");
+console.log("\n✅ Regression test complete\n");

@@ -1,45 +1,168 @@
 /**
- * Scheduled Debt Payment Calculation
+ * Debt Payment Calculation with Anomaly Detection
  * 
- * Computes scheduled monthly payments for loans and minimum payments for credit cards
- * from account snapshots and transaction history. Used by money coach to correctly
- * attribute debt servicing to Fixed costs (scheduled amount) vs Savings & debt (extra paydown).
- * 
- * Key principle: NEVER use paymentsMade as scheduled payment proxy. That conflates
- * scheduled payments with extra paydowns, causing large paydowns to inflate Fixed costs.
+ * All loans/mortgages: learn regular payment from recurring patterns.
+ * Anomalies (1.5× or 0.5× regular) are flagged for review.
+ * Credit cards: estimated minimum when carrying balance.
  */
 
 import type { AccountSnapshot, ExpenseTxnRecord } from "./extractTransactions";
 
 export interface ScheduledDebtPayment {
   accountSlug: string;
-  /** Account name for display (e.g. "TD Home Equity FlexLine") */
   accountName?: string;
-  /** Scheduled/minimum payment amount per month */
+  /** Regular/scheduled payment amount per month */
   amount: number;
-  /** True when amount is estimated vs actual from statement */
+  /** True when amount is estimated (no payment history) */
   isEstimated: boolean;
   /** Type: "loan" for installment debt, "credit" for revolving credit */
   debtType: "loan" | "credit";
-  /** Method used: "fixed payment" | "est. interest-only" | "est. 2% of balance" | "est. 2.5% of balance" */
-  method?: string;
+  /** Method label: "usual payment" | "est. 3% of balance" | "set by you" */
+  method: string;
+  /** Unreviewed anomalies for this account (excluded from both Fixed and Savings) */
+  unreviewedAnomalies?: DebtAnomaly[];
 }
 
-// ── Named constants for revolving debt minimums ──────────────────────────────
+export interface DebtAnomaly {
+  txMonth: string;
+  date: string;
+  amount: number;
+  description: string;
+  /** Why flagged: "much_higher" | "much_lower" | "extra_in_month" */
+  reason: string;
+  /** Account slug */
+  accountSlug: string;
+}
 
-/** Credit cards: 2.5% of balance or $25 floor */
-const CREDIT_CARD_MIN_PCT = 0.025;
-const CREDIT_CARD_MIN_FLOOR = 25;
+// ── Constants ──────────────────────────────────────────────────────────────
 
-/** Small personal LOCs (<$100K): interest + 2% principal */
-const SMALL_LOC_PRINCIPAL_PCT = 0.02;
+/** Credit cards: 3% of balance or $10 floor */
+const CREDIT_CARD_MIN_PCT = 0.03;
+const CREDIT_CARD_MIN_FLOOR = 10;
 
-/** Large HELOCs (>=$100K): interest-only threshold */
-const HELOC_INTEREST_ONLY_THRESHOLD = 100000;
+/** Anomaly thresholds */
+const ANOMALY_HIGH_THRESHOLD = 1.5;  // Payment > 1.5× median
+const ANOMALY_LOW_THRESHOLD = 0.5;   // Payment < 0.5× median
+
+/**
+ * Detect recurring payment amount and flag anomalies.
+ * Returns median of regular payments (6-12 months history), plus list of anomalies.
+ */
+function detectRecurringPayment(
+  accountSlug: string,
+  expenseTxns: ExpenseTxnRecord[]
+): { 
+  regularAmount: number | null; 
+  anomalies: DebtAnomaly[];
+  paymentCount: number;
+} {
+  // Get all debt payment transactions for this account
+  const payments = expenseTxns
+    .filter(t => 
+      t.accountSlug === accountSlug && 
+      t.category === "Debt Payments" &&
+      t.amount < 0
+    )
+    .map(t => ({
+      date: t.date,
+      txMonth: t.txMonth,
+      amount: Math.abs(t.amount),
+      description: t.merchant,
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  if (payments.length === 0) {
+    return { regularAmount: null, anomalies: [], paymentCount: 0 };
+  }
+
+  if (payments.length === 1) {
+    // Single payment: can't detect pattern yet
+    return { 
+      regularAmount: payments[0].amount, 
+      anomalies: [], 
+      paymentCount: 1 
+    };
+  }
+
+  // Calculate initial median to identify outliers
+  const amounts = payments.map(p => p.amount).sort((a, b) => a - b);
+  const medianIdx = Math.floor(amounts.length / 2);
+  const rawMedian = amounts.length % 2 === 0
+    ? (amounts[medianIdx - 1] + amounts[medianIdx]) / 2
+    : amounts[medianIdx];
+
+  // Separate regular payments from anomalies
+  const anomalies: DebtAnomaly[] = [];
+  const regularPayments: number[] = [];
+
+  // Track payments by month to detect multiple payments
+  const paymentsByMonth = new Map<string, typeof payments>();
+  for (const p of payments) {
+    const existing = paymentsByMonth.get(p.txMonth) || [];
+    existing.push(p);
+    paymentsByMonth.set(p.txMonth, existing);
+  }
+
+  for (const payment of payments) {
+    const monthPayments = paymentsByMonth.get(payment.txMonth)!;
+    
+    // Check if this is an anomaly
+    let isAnomaly = false;
+    let reason = "";
+
+    // Anomaly type 1: Much higher or lower than median
+    if (payment.amount > rawMedian * ANOMALY_HIGH_THRESHOLD) {
+      isAnomaly = true;
+      reason = "much_higher";
+    } else if (payment.amount < rawMedian * ANOMALY_LOW_THRESHOLD && rawMedian > 100) {
+      isAnomaly = true;
+      reason = "much_lower";
+    } 
+    // Anomaly type 2: Extra payment in same month (if this isn't the first/largest)
+    else if (monthPayments.length > 1) {
+      const sortedByAmount = [...monthPayments].sort((a, b) => b.amount - a.amount);
+      if (sortedByAmount[0] !== payment) {
+        isAnomaly = true;
+        reason = "extra_in_month";
+      }
+    }
+
+    if (isAnomaly) {
+      anomalies.push({
+        txMonth: payment.txMonth,
+        date: payment.date,
+        amount: payment.amount,
+        description: payment.description,
+        reason,
+        accountSlug,
+      });
+    } else {
+      regularPayments.push(payment.amount);
+    }
+  }
+
+  if (regularPayments.length === 0) {
+    // All payments were anomalies - use raw median but flag concern
+    return { 
+      regularAmount: rawMedian, 
+      anomalies, 
+      paymentCount: payments.length 
+    };
+  }
+
+  // Return median of regular payments
+  const sorted = regularPayments.sort((a, b) => a - b);
+  const midIdx = Math.floor(sorted.length / 2);
+  const regularAmount = sorted.length % 2 === 0
+    ? (sorted[midIdx - 1] + sorted[midIdx]) / 2
+    : sorted[midIdx];
+
+  return { regularAmount, anomalies, paymentCount: payments.length };
+}
 
 /**
  * Estimate minimum payment for a credit card.
- * Industry standard: greater of $25 or 2.5% of balance.
+ * 3% of balance or $10 floor.
  */
 function estimateCreditMinPayment(balance: number): { amount: number; method: string } {
   const amount = Math.max(CREDIT_CARD_MIN_FLOOR, balance * CREDIT_CARD_MIN_PCT);
@@ -47,155 +170,6 @@ function estimateCreditMinPayment(balance: number): { amount: number; method: st
     amount, 
     method: `est. ${CREDIT_CARD_MIN_PCT * 100}% of balance`
   };
-}
-
-/**
- * Find recurring payment amount from transaction history.
- * Returns median of past regular payments (excluding outliers).
- * Uses ALL available history (not filtered to window) to find the pattern.
- */
-function findRecurringPayment(
-  accountSlug: string,
-  expenseTxns: ExpenseTxnRecord[]
-): { amount: number; confidence: "high" | "medium" | "low" } | null {
-  // Get all debt payment transactions for this account (ALL history)
-  const payments = expenseTxns
-    .filter(t => 
-      t.accountSlug === accountSlug && 
-      t.category === "Debt Payments" &&
-      t.amount < 0
-    )
-    .map(t => Math.abs(t.amount))
-    .sort((a, b) => a - b);
-
-  if (payments.length === 0) return null;
-  
-  // Single payment: low confidence
-  if (payments.length === 1) {
-    return { amount: payments[0], confidence: "low" };
-  }
-
-  // Filter outliers: remove payments > 2x the median (likely extra paydowns)
-  const medianIdx = Math.floor(payments.length / 2);
-  const rawMedian = payments.length % 2 === 0
-    ? (payments[medianIdx - 1] + payments[medianIdx]) / 2
-    : payments[medianIdx];
-
-  const regularPayments = payments.filter(p => p <= rawMedian * 2);
-
-  if (regularPayments.length === 0) {
-    return { amount: rawMedian, confidence: "low" };
-  }
-
-  // Return median of regular payments
-  const midIdx = Math.floor(regularPayments.length / 2);
-  const amount = regularPayments.length % 2 === 0
-    ? (regularPayments[midIdx - 1] + regularPayments[midIdx]) / 2
-    : regularPayments[midIdx];
-
-  // Confidence based on number of data points
-  const confidence = regularPayments.length >= 6 ? "high" : regularPayments.length >= 3 ? "medium" : "low";
-
-  return { amount, confidence };
-}
-
-/**
- * Calculate interest-based minimum payment for LOC/HELOC.
- * 
- * Large HELOCs (>=$100K): interest-only (no principal requirement)
- * Small LOCs (<$100K): interest + 2% of balance
- */
-function estimateLOCMinimum(
-  accountSlug: string,
-  balance: number,
-  apr: number,
-  expenseTxns: ExpenseTxnRecord[]
-): { amount: number; method: string } {
-  const isLargeHELOC = balance >= HELOC_INTEREST_ONLY_THRESHOLD;
-
-  // Try to find actual interest charged from transactions
-  const interestTxns = expenseTxns
-    .filter(t => 
-      t.accountSlug === accountSlug && 
-      t.category === "Interest" &&
-      t.amount < 0
-    )
-    .map(t => Math.abs(t.amount));
-
-  if (interestTxns.length > 0) {
-    // Use median interest charged
-    const sortedInterest = [...interestTxns].sort((a, b) => a - b);
-    const midIdx = Math.floor(sortedInterest.length / 2);
-    const medianInterest = sortedInterest.length % 2 === 0
-      ? (sortedInterest[midIdx - 1] + sortedInterest[midIdx]) / 2
-      : sortedInterest[midIdx];
-    
-    if (isLargeHELOC) {
-      // Large HELOC: interest-only
-      return {
-        amount: medianInterest,
-        method: "est. interest-only"
-      };
-    } else {
-      // Small LOC: interest + 2% principal
-      return {
-        amount: medianInterest + (balance * SMALL_LOC_PRINCIPAL_PCT),
-        method: `est. interest + ${SMALL_LOC_PRINCIPAL_PCT * 100}% principal`
-      };
-    }
-  }
-
-  // Fallback: estimate from APR
-  if (apr > 0) {
-    const monthlyInterest = (balance * apr / 100) / 12;
-    
-    if (isLargeHELOC) {
-      return {
-        amount: monthlyInterest,
-        method: "est. interest-only (from APR)"
-      };
-    } else {
-      return {
-        amount: monthlyInterest + (balance * SMALL_LOC_PRINCIPAL_PCT),
-        method: `est. interest + ${SMALL_LOC_PRINCIPAL_PCT * 100}% principal`
-      };
-    }
-  }
-
-  // Last resort: 2% of balance
-  return {
-    amount: balance * 0.02,
-    method: "est. 2% of balance"
-  };
-}
-
-/**
- * Estimate monthly payment for an installment loan using simple amortization.
- * Formula: P = L * [r(1+r)^n] / [(1+r)^n - 1]
- * where P = payment, L = loan amount, r = monthly rate, n = term in months
- * 
- * For unknown term, assume 5 years for auto/personal, 25 years for mortgage.
- */
-function estimateLoanPayment(
-  balance: number, 
-  apr: number, 
-  accountType: string
-): number {
-  if (apr <= 0) {
-    // No interest rate: estimate based on balance only
-    const assumedTermMonths = accountType === "mortgage" ? 300 : 60;
-    return balance / assumedTermMonths;
-  }
-
-  const monthlyRate = apr / 100 / 12;
-  const assumedTermMonths = accountType === "mortgage" ? 300 : 60; // 25yr or 5yr
-
-  if (monthlyRate === 0) return balance / assumedTermMonths;
-
-  const numerator = balance * monthlyRate * Math.pow(1 + monthlyRate, assumedTermMonths);
-  const denominator = Math.pow(1 + monthlyRate, assumedTermMonths) - 1;
-
-  return numerator / denominator;
 }
 
 /**
@@ -208,15 +182,12 @@ function isPaidInFull(balance: number, paymentMade: number): boolean {
 }
 
 /**
- * Compute scheduled debt payments for all debt accounts in the profile.
- * Returns list of scheduled payments that should go to Fixed costs.
+ * Compute scheduled debt payments for all debt accounts.
  * 
  * Logic:
- * - Credit cards: if carried balance (payment < 95% of balance), estimate minimum (2-3% or $25).
- *   If paid in full, return 0 (no fixed cost).
- * - LOC/HELOC: use interest charged + 1% principal, NEVER paymentsMade (which includes extra paydowns).
- * - Installment loans (mortgage, auto, student, personal): find median of past regular payments.
- *   Cap at a plausible max (3% of balance) to catch data errors.
+ * - Installment loans (mortgage, LOC, car loan, personal): learn regular payment from history
+ * - Anomalies (>1.5× or <0.5× median) are flagged for review
+ * - Credit cards: estimate minimum when carrying balance
  */
 export function computeScheduledDebtPayments(
   accountSnapshots: AccountSnapshot[],
@@ -235,7 +206,6 @@ export function computeScheduledDebtPayments(
   for (const account of debtAccounts) {
     const balance = Math.abs(account.balance);
     const paymentMade = account.paymentsMade ?? 0;
-    const rate = account.interestRate ?? 0;
 
     if (account.accountType === "credit") {
       // Credit card: check if carrying balance
@@ -244,7 +214,7 @@ export function computeScheduledDebtPayments(
         continue;
       }
 
-      // Carrying balance: estimate minimum payment (never use paymentsMade)
+      // Carrying balance: estimate minimum (never use paymentsMade)
       const { amount, method } = estimateCreditMinPayment(balance);
 
       scheduledPayments.push({
@@ -254,52 +224,32 @@ export function computeScheduledDebtPayments(
         isEstimated: true,
         debtType: "credit",
         method,
-      });
-    } else if (account.accountType === "line_of_credit") {
-      // LOC/HELOC: interest-only for large HELOCs, interest + 2% for small LOCs
-      const { amount, method } = estimateLOCMinimum(account.slug, balance, rate, expenseTxns);
-
-      scheduledPayments.push({
-        accountSlug: account.slug,
-        accountName: account.accountName,
-        amount,
-        isEstimated: true,
-        debtType: "loan",
-        method,
+        unreviewedAnomalies: [],
       });
     } else {
-      // Installment loan (mortgage, auto, student, personal)
-      let scheduledPayment = 0;
-      let isEstimated = false;
-      let method = "fixed payment";
+      // Installment loan/mortgage/LOC: detect recurring payment
+      const { regularAmount, anomalies, paymentCount } = detectRecurringPayment(
+        account.slug,
+        expenseTxns
+      );
 
-      // Try to find recurring payment from transaction history (ALL history)
-      const recurringResult = findRecurringPayment(account.slug, expenseTxns);
-
-      if (recurringResult !== null) {
-        // Use median of past payments
-        scheduledPayment = recurringResult.amount;
-        isEstimated = recurringResult.confidence !== "high";
-        method = recurringResult.confidence === "high" 
-          ? "fixed payment"
-          : recurringResult.confidence === "medium"
-          ? "fixed payment (est.)"
-          : "fixed payment (low confidence)";
+      if (regularAmount !== null && paymentCount >= 2) {
+        // Have payment history
+        scheduledPayments.push({
+          accountSlug: account.slug,
+          accountName: account.accountName,
+          amount: regularAmount,
+          isEstimated: paymentCount < 6, // Low confidence if < 6 payments
+          debtType: "loan",
+          method: paymentCount >= 6 ? "usual payment" : "usual payment (low confidence)",
+          unreviewedAnomalies: anomalies,
+        });
       } else {
-        // No history: estimate from balance and rate
-        scheduledPayment = estimateLoanPayment(balance, rate, account.accountType);
-        isEstimated = true;
-        method = "est. from balance & rate";
+        // No payment history: estimate from rate or skip
+        // For now, skip accounts with no payment data
+        // (Owner can add via "Set payment" override)
+        continue;
       }
-
-      scheduledPayments.push({
-        accountSlug: account.slug,
-        accountName: account.accountName,
-        amount: scheduledPayment,
-        isEstimated,
-        debtType: "loan",
-        method,
-      });
     }
   }
 
@@ -309,7 +259,7 @@ export function computeScheduledDebtPayments(
 /**
  * Compute extra debt paydown for a given month.
  * Extra = actual payments made - scheduled payments.
- * This goes to Savings & debt bucket.
+ * Excludes unreviewed anomalies (they go nowhere until reviewed).
  */
 export function computeExtraDebtPaydown(
   debtTransactions: { accountSlug: string; amount: number }[],
@@ -338,4 +288,24 @@ export function computeExtraDebtPaydown(
   }
 
   return Math.max(0, totalPaid - totalScheduled);
+}
+
+/**
+ * Get all unreviewed anomalies across all accounts.
+ * Used by UI to show "N to review" badge and review list.
+ */
+export function getAllUnreviewedAnomalies(
+  accountSnapshots: AccountSnapshot[],
+  expenseTxns: ExpenseTxnRecord[]
+): DebtAnomaly[] {
+  const payments = computeScheduledDebtPayments(accountSnapshots, expenseTxns);
+  const allAnomalies: DebtAnomaly[] = [];
+
+  for (const payment of payments) {
+    if (payment.unreviewedAnomalies && payment.unreviewedAnomalies.length > 0) {
+      allAnomalies.push(...payment.unreviewedAnomalies);
+    }
+  }
+
+  return allAnomalies;
 }
