@@ -876,6 +876,11 @@ export async function GET(request: NextRequest) {
        */
       accountBalanceHistory: profile.accountBalanceHistory ?? [],
       /**
+       * Scheduled debt payments (learned regular monthly amounts for loans/mortgages).
+       * Used by spending page to show correct monthly payment instead of averaged raw transactions.
+       */
+      scheduledDebtPayments: computeScheduledDebtPayments(profile.accountSnapshots, profile.expenseTxns),
+      /**
        * Number of accounts where backfillPromptNeeded or accountConfirmNeeded is true.
        * Used by the Today page to show a "set up accounts" nudge.
        */
