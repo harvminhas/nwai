@@ -6,6 +6,7 @@
  */
 
 import type { UserStatementSummary } from "./types";
+import { buildAccountSlug } from "./accountSlug";
 
 export interface CoverageMonth {
   yearMonth: string;
@@ -63,14 +64,51 @@ function generateMonthColumns(count: number): CoverageMonth[] {
 }
 
 /**
- * Build account slug from bankName + accountId.
+ * Clean an account name by removing trademark symbols and extra whitespace.
  */
-function buildAccountSlug(bankName: string, accountId: string): string {
-  return `${bankName.toLowerCase().replace(/\s+/g, "-")}-${accountId}`;
+function cleanAccountName(name: string): string {
+  return name
+    .replace(/[®™]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Pick the best account name from multiple statements of the same account.
+ * Prefers: 1) cleaned names, 2) most recent statement, 3) longest name.
+ */
+function pickBestAccountName(names: string[], uploadDates: string[]): string {
+  if (names.length === 0) return "";
+  if (names.length === 1) return cleanAccountName(names[0]);
+  
+  // Pair names with their upload dates
+  const pairs = names.map((name, i) => ({
+    name,
+    cleanName: cleanAccountName(name),
+    uploadDate: uploadDates[i],
+  }));
+  
+  // Sort by: cleanest name first, then most recent, then longest
+  pairs.sort((a, b) => {
+    const aHasSymbols = /[®™]/.test(a.name);
+    const bHasSymbols = /[®™]/.test(b.name);
+    if (aHasSymbols !== bHasSymbols) {
+      return aHasSymbols ? 1 : -1; // no symbols preferred
+    }
+    if (a.uploadDate !== b.uploadDate) {
+      return b.uploadDate.localeCompare(a.uploadDate); // most recent first
+    }
+    return b.cleanName.length - a.cleanName.length; // longest first
+  });
+  
+  return pairs[0].cleanName;
 }
 
 /**
  * Compute coverage grid data from statements.
+ * 
+ * Uses the canonical account slug from accountSlug.ts to deduplicate accounts
+ * that may have name variations (e.g. with/without ®/™ symbols).
  * 
  * @param statements - All user statements (must have parsedData fields)
  * @param monthCount - Number of months to show (default 13)
@@ -83,10 +121,11 @@ export function computeStatementCoverage(
   const months = generateMonthColumns(monthCount);
   const currentMonth = months[months.length - 1].yearMonth;
   
-  // Group statements by account
+  // Group statements by canonical account slug
   const accountMap = new Map<string, {
     bankName: string;
-    accountName: string;
+    accountNames: string[];
+    uploadDates: string[];
     accountType: string;
     accountId: string;
     months: Set<string>;
@@ -97,20 +136,29 @@ export function computeStatementCoverage(
       continue;
     }
     
-    const slug = buildAccountSlug(stmt.bankName, stmt.accountId);
+    // Use canonical slug from accountSlug.ts (primarily last 4 digits)
+    const slug = buildAccountSlug(stmt.bankName, stmt.accountId, stmt.accountName, stmt.accountType);
     const yearMonth = stmt.statementDate.slice(0, 7);
     
     if (!accountMap.has(slug)) {
       accountMap.set(slug, {
         bankName: stmt.bankName,
-        accountName: stmt.accountName || "",
+        accountNames: [],
+        uploadDates: [],
         accountType: stmt.accountType || "other",
         accountId: stmt.accountId,
         months: new Set(),
       });
     }
     
-    accountMap.get(slug)!.months.add(yearMonth);
+    const account = accountMap.get(slug)!;
+    account.months.add(yearMonth);
+    
+    // Collect all name variants to pick the best one
+    if (stmt.accountName) {
+      account.accountNames.push(stmt.accountName);
+      account.uploadDates.push(stmt.uploadedAt);
+    }
   }
   
   // Build rows for each account
@@ -120,6 +168,9 @@ export function computeStatementCoverage(
     const uploadedMonths = Array.from(data.months).sort();
     const firstMonth = uploadedMonths[0] || null;
     const lastMonth = uploadedMonths[uploadedMonths.length - 1] || null;
+    
+    // Pick the best account name from all variants
+    const bestName = pickBestAccountName(data.accountNames, data.uploadDates);
     
     const cells: CoverageCell[] = months.map((m) => {
       const yearMonth = m.yearMonth;
@@ -157,7 +208,7 @@ export function computeStatementCoverage(
     rows.push({
       accountSlug: slug,
       bankName: data.bankName,
-      accountName: data.accountName,
+      accountName: bestName || "Unnamed Account",
       accountType: data.accountType,
       accountId: data.accountId,
       cells,
