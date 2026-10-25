@@ -11,6 +11,7 @@ import { getCategoryBucket, type MoneyCoachBucket } from "./moneyCoachBuckets";
 import { isCoreExcluded } from "./spendingMetrics";
 import { getParentCategory } from "./categoryTaxonomy";
 import { computeScheduledDebtPayments } from "./debtPayments";
+import { merchantSlug } from "./applyRules";
 
 export interface MerchantBreakdown {
   merchant: string;
@@ -86,13 +87,18 @@ export function getMonthsForWindow(
 
 /**
  * Compute detailed breakdown for a specific bucket and time window.
+ * 
+ * For subscriptions: uses the subscription's monthly rate from users/{uid}/subscriptions
+ * instead of averaging total÷months. This ensures recurring charges show their actual
+ * monthly cost, not a diluted average.
  */
 export function computeBucketBreakdown(
   bucket: MoneyCoachBucket,
   expenseTxns: ExpenseTxnRecord[],
   accountSnapshots: AccountSnapshot[],
   months: string[],
-  homeCurrency: string
+  homeCurrency: string,
+  subscriptions?: Array<{ merchantSlug: string; amount: number | null; frequency: string | null; status: string }>
 ): BucketDetailedBreakdown {
   // Filter transactions to selected months
   const txnsInWindow = expenseTxns.filter(t => months.includes(t.txMonth));
@@ -187,9 +193,50 @@ export function computeBucketBreakdown(
   // Build category breakdowns
   const categories: CategoryBreakdown[] = [];
   
+  // Build subscription lookup map (merchantSlug → monthly amount)
+  const subscriptionMonthlyAmount = new Map<string, number>();
+  if (subscriptions) {
+    for (const sub of subscriptions) {
+      if (sub.amount && sub.frequency && (sub.status === "confirmed" || sub.status === "user_confirmed")) {
+        // Convert to monthly amount
+        let monthlyAmount = sub.amount;
+        if (sub.frequency === "annual") monthlyAmount = sub.amount / 12;
+        if (sub.frequency === "quarterly") monthlyAmount = sub.amount / 3;
+        if (sub.frequency === "biweekly") monthlyAmount = sub.amount * 26 / 12;
+        if (sub.frequency === "weekly") monthlyAmount = sub.amount * 52 / 12;
+        subscriptionMonthlyAmount.set(sub.merchantSlug, monthlyAmount);
+      }
+    }
+  }
+  
   for (const [category, txns] of categoryMap) {
     const total = txns.reduce((sum, t) => sum + Math.abs(t.amount), 0);
-    const avgMonthly = total / (months.length || 1);
+    
+    // Check if this category consists primarily of subscriptions
+    const isSubscriptionCategory = category.toLowerCase().includes("subscriptions");
+    let avgMonthly: number;
+    
+    if (isSubscriptionCategory && subscriptions) {
+      // For subscription category, use the sum of subscription monthly rates
+      // instead of averaging transaction totals
+      const merchantSlugs = new Set(txns.map(t => merchantSlug(t.merchant)));
+      
+      let subscriptionTotal = 0;
+      let hasSubscriptionData = false;
+      for (const slug of merchantSlugs) {
+        const monthlyAmt = subscriptionMonthlyAmount.get(slug);
+        if (monthlyAmt) {
+          subscriptionTotal += monthlyAmt;
+          hasSubscriptionData = true;
+        }
+      }
+      
+      // Use subscription data if available, otherwise fall back to averaging
+      avgMonthly = hasSubscriptionData ? subscriptionTotal : total / (months.length || 1);
+    } else {
+      // Non-subscription: use averaging as before
+      avgMonthly = total / (months.length || 1);
+    }
 
     // Group by merchant
     const merchantMap = new Map<string, number>();
@@ -208,11 +255,19 @@ export function computeBucketBreakdown(
 
     // Convert to sorted merchant array (top merchants first)
     const merchants = Array.from(merchantMap.entries())
-      .map(([merchant, amount]) => ({
-        merchant,
-        amount: amount / (months.length || 1),
-        ...merchantAccounts.get(merchant),
-      }))
+      .map(([merchant, amount]) => {
+        const slug = merchantSlug(merchant);
+        const subMonthlyAmt = subscriptionMonthlyAmount.get(slug);
+        
+        // Use subscription monthly rate if available, otherwise average
+        const displayAmount = subMonthlyAmt || (amount / (months.length || 1));
+        
+        return {
+          merchant,
+          amount: displayAmount,
+          ...merchantAccounts.get(merchant),
+        };
+      })
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 5); // Top 5 merchants per category
 
@@ -281,7 +336,8 @@ export function compute3MonthTrend(
   bucket: MoneyCoachBucket,
   expenseTxns: ExpenseTxnRecord[],
   accountSnapshots: AccountSnapshot[],
-  monthlyHistory: MonthlyHistoryEntry[]
+  monthlyHistory: MonthlyHistoryEntry[],
+  subscriptions?: Array<{ merchantSlug: string; amount: number | null; frequency: string | null; status: string }>
 ): { months: string[]; values: number[] } {
   const now = new Date();
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -305,7 +361,8 @@ export function compute3MonthTrend(
       expenseTxns,
       accountSnapshots,
       [month],
-      "CAD"
+      "CAD",
+      subscriptions // Pass subscriptions for consistent calculation
     );
     values.push(breakdown.monthlyAverage);
   }

@@ -103,14 +103,16 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       profile.expenseTxns,
       profile.accountSnapshots,
       months,
-      profile.homeCurrency
+      profile.homeCurrency,
+      profile.confirmedSubscriptions // Pass subscription data for monthly rate lookup
     );
 
     const trend = compute3MonthTrend(
       bucket,
       profile.expenseTxns,
       profile.accountSnapshots,
-      profile.monthlyHistory
+      profile.monthlyHistory,
+      profile.confirmedSubscriptions // Pass subscriptions here too
     );
 
     const response: BucketDrawerData = {
