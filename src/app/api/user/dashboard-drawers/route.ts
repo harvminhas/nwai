@@ -45,16 +45,36 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       );
 
       // Get 12-month history for chart
-      const last12Months = profile.monthlyHistory
-        .filter(h => h.incomeTotal > 0)
-        .slice(-12)
-        .map(h => ({
-          month: h.yearMonth,
-          regularIncome: h.incomeTotal,
+      // Generate all 12 calendar months, newest first, including missing months
+      const now = new Date();
+      const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const allMonths: string[] = [];
+      
+      for (let i = 0; i < 12; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        allMonths.push(ym);
+      }
+      
+      // Create a map of actual data
+      const incomeByMonth = new Map(
+        profile.monthlyHistory.map(h => [h.yearMonth, h.incomeTotal])
+      );
+      
+      const last12Months = allMonths.map(ym => {
+        const hasData = incomeByMonth.has(ym);
+        const income = incomeByMonth.get(ym) || 0;
+        const isCurrent = ym === currentYearMonth;
+        
+        return {
+          month: ym,
+          regularIncome: income,
           oneOffIncome: 0, // TODO: detect one-offs from transactions
-          isInWindow: detailedMetrics.windowMonths.includes(h.yearMonth),
-          isCurrentMonth: h.yearMonth === new Date().toISOString().slice(0, 7),
-        }));
+          isInWindow: detailedMetrics.windowMonths.includes(ym),
+          isCurrentMonth: isCurrent,
+          hasData: hasData && income > 0,
+        };
+      });
 
       const response: IncomeDrawerData = {
         type: "income",

@@ -18,6 +18,7 @@ export interface IncomeDrawerData {
     oneOffIncome: number;
     isInWindow: boolean;
     isCurrentMonth: boolean;
+    hasData: boolean;
   }[];
   homeCurrency: string;
 }

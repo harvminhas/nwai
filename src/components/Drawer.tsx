@@ -209,6 +209,8 @@ function IncomeDrawerContent({ data, currency }: { data: import("@/lib/drawerTyp
             });
             const isInWindow = month.isInWindow;
             const isCurrent = month.isCurrentMonth;
+            const hasData = month.hasData;
+            const maxIncome = Math.max(...chartData.filter(m => m.hasData).map(m => m.regularIncome), 1);
 
             return (
               <div key={month.month} className="flex items-center gap-3">
@@ -220,22 +222,38 @@ function IncomeDrawerContent({ data, currency }: { data: import("@/lib/drawerTyp
                   {monthLabel}
                 </span>
                 <div className="relative h-8 flex-1 rounded bg-gray-100">
-                  <div
-                    className={`h-full rounded ${
-                      isCurrent
-                        ? "bg-gradient-to-r from-green-400 to-green-600 bg-[length:200%_100%] animate-pulse"
-                        : "bg-green-500"
-                    }`}
-                    style={{
-                      width: `${Math.min(100, (month.regularIncome / Math.max(...chartData.map((m) => m.regularIncome))) * 100)}%`,
-                    }}
-                  />
-                  {isInWindow && (
-                    <div className="absolute inset-0 rounded border-2 border-purple-500" />
+                  {hasData ? (
+                    <>
+                      <div
+                        className={`h-full rounded ${
+                          isCurrent
+                            ? "bg-gradient-to-r from-green-400 to-green-600 bg-[length:200%_100%]"
+                            : "bg-green-500"
+                        }`}
+                        style={{
+                          width: `${Math.min(100, (month.regularIncome / maxIncome) * 100)}%`,
+                        }}
+                      />
+                      {isInWindow && (
+                        <div className="absolute inset-0 rounded border-2 border-purple-500" />
+                      )}
+                    </>
+                  ) : (
+                    <div className="flex h-full items-center justify-center">
+                      <span className="text-xs text-gray-400">no data</span>
+                    </div>
                   )}
                 </div>
                 <span className="w-20 text-right text-xs font-medium text-gray-900">
-                  {fmt(month.regularIncome)}
+                  {hasData ? (
+                    isCurrent ? (
+                      <span className="text-xs text-gray-500">in progress</span>
+                    ) : (
+                      fmt(month.regularIncome)
+                    )
+                  ) : (
+                    <span className="text-xs text-gray-400">—</span>
+                  )}
                 </span>
               </div>
             );
