@@ -104,7 +104,8 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       profile.accountSnapshots,
       months,
       profile.homeCurrency,
-      profile.confirmedSubscriptions // Pass subscription data for monthly rate lookup
+      profile.merchantCadence, // Pass merchantCadence as primary source
+      profile.confirmedSubscriptions
     );
 
     const trend = compute3MonthTrend(
@@ -112,7 +113,8 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       profile.expenseTxns,
       profile.accountSnapshots,
       profile.monthlyHistory,
-      profile.confirmedSubscriptions // Pass subscriptions here too
+      profile.merchantCadence, // Pass merchantCadence here too
+      profile.confirmedSubscriptions
     );
 
     const response: BucketDrawerData = {

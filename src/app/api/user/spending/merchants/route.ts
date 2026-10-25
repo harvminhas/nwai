@@ -148,9 +148,30 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Read homeCurrency from user profile (for display reference only — no conversion needed)
+    // Read homeCurrency from user profile, with auto-detection fallback from bank names
     const profileSnap = await db.collection("users").doc(uid).get();
-    const homeCurrency: string = profileSnap.data()?.country === "CA" ? "CAD" : "USD";
+    const storedCountry = profileSnap.data()?.country as "CA" | "US" | undefined;
+    
+    // Auto-detect country from bank names if not explicitly set
+    let homeCurrency = "USD"; // default
+    if (storedCountry === "CA") {
+      homeCurrency = "CAD";
+    } else if (storedCountry === "US") {
+      homeCurrency = "USD";
+    } else {
+      // Auto-detect from bank names across all statements
+      const CA_BANK_DETECT = /\b(td|rbc|bmo|cibc|scotiabank|desjardins|national bank|tangerine|simplii|hsbc canada|laurentian|coast capital|meridian|atb|wealthsimple|questrade|eq bank|manulife)\b/i;
+      const bankText = Array.from(bestDocPerSlugYm.values())
+        .map(doc => {
+          const p = doc.data().parsedData as ParsedStatementData | undefined;
+          return [p?.bankName ?? "", p?.accountName ?? ""].join(" ");
+        })
+        .join(" ");
+      
+      if (CA_BANK_DETECT.test(bankText)) {
+        homeCurrency = "CAD";
+      }
+    }
 
     const inferStmtCurrency = (parsed: ParsedStatementData) =>
       inferCurrencyFromBankName(parsed.bankName, parsed.currency, homeCurrency);

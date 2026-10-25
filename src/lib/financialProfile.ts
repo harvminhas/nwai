@@ -207,6 +207,12 @@ export interface FinancialProfileCache {
    */
   confirmedSubscriptions: SubscriptionRecord[];
   /**
+   * Merchant cadence map: merchantSlug → frequency (user's chosen billing cycle).
+   * Primary source of truth for how often the user actually spends at each merchant.
+   * Overrides subscription frequency for display and bucket breakdowns.
+   */
+  merchantCadence?: Record<string, string>;
+  /**
    * Manual cash commitment entries already loaded during build — exposed here so
    * consumers (AI brief, etc.) don't need a separate Firestore read.
    */
@@ -328,7 +334,7 @@ export async function buildAndCacheFinancialProfile(
   db: Firestore.Firestore,
 ): Promise<FinancialProfileCache> {
   // Fetch all data sources in parallel — same collections the assets page uses.
-  const [txData, rulesSnap, txnOverridesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap, backfillsSnap, cashCommitmentsSnap, manualLiabSnap, accountRatesSnap, goalsSnap, allSubsSnap, userDocSnap] =
+  const [txData, rulesSnap, txnOverridesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap, backfillsSnap, cashCommitmentsSnap, manualLiabSnap, accountRatesSnap, goalsSnap, allSubsSnap, merchantCadenceSnap, userDocSnap] =
     await Promise.all([
       extractAllTransactions(uid, db),
       db.collection(`users/${uid}/categoryRules`).get(),
@@ -347,6 +353,7 @@ export async function buildAndCacheFinancialProfile(
       db.collection(`users/${uid}/accountRates`).get(),
       db.collection(`users/${uid}/goals`).get(),
       db.collection(`users/${uid}/subscriptions`).get(),
+      db.collection(`users/${uid}/merchantCadence`).get(),
       db.collection("users").doc(uid).get(),
     ]);
   // Split all subscriptions into confirmed (for Upcoming/profile) vs all (for category mapping).
@@ -958,6 +965,13 @@ export async function buildAndCacheFinancialProfile(
     (d) => d.data() as SubscriptionRecord,
   );
 
+  // Merchant cadence map: merchantSlug → frequency (user's chosen billing cycle)
+  const merchantCadenceMap: Record<string, string> = {};
+  for (const doc of merchantCadenceSnap.docs) {
+    const d = doc.data() as { frequency?: string };
+    if (d.frequency) merchantCadenceMap[doc.id] = d.frequency;
+  }
+
   const profile: FinancialProfileCache = {
     updatedAt: now.toISOString(),
     sourceVersion,
@@ -980,6 +994,7 @@ export async function buildAndCacheFinancialProfile(
     accountRates,
     goals,
     confirmedSubscriptions,
+    merchantCadence: merchantCadenceMap,
     cashCommitmentEntries,
   };
 

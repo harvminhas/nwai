@@ -88,9 +88,9 @@ export function getMonthsForWindow(
 /**
  * Compute detailed breakdown for a specific bucket and time window.
  * 
- * For subscriptions: uses the subscription's monthly rate from users/{uid}/subscriptions
- * instead of averaging total÷months. This ensures recurring charges show their actual
- * monthly cost, not a diluted average.
+ * For subscriptions: uses merchantCadence (user's chosen billing cycle) as primary source,
+ * falling back to subscription frequency from users/{uid}/subscriptions.
+ * Annual cadence = last charge / 12, labelled 'yearly'.
  */
 export function computeBucketBreakdown(
   bucket: MoneyCoachBucket,
@@ -98,6 +98,7 @@ export function computeBucketBreakdown(
   accountSnapshots: AccountSnapshot[],
   months: string[],
   homeCurrency: string,
+  merchantCadence?: Record<string, string>,
   subscriptions?: Array<{ merchantSlug: string; amount: number | null; frequency: string | null; status: string }>
 ): BucketDetailedBreakdown {
   // Filter transactions to selected months
@@ -194,16 +195,21 @@ export function computeBucketBreakdown(
   const categories: CategoryBreakdown[] = [];
   
   // Build subscription lookup map (merchantSlug → monthly amount)
+  // Priority: merchantCadence (user's chosen billing cycle) > subscription frequency
   const subscriptionMonthlyAmount = new Map<string, number>();
   if (subscriptions) {
     for (const sub of subscriptions) {
-      if (sub.amount && sub.frequency && (sub.status === "confirmed" || sub.status === "user_confirmed")) {
+      if (sub.amount && (sub.status === "confirmed" || sub.status === "user_confirmed")) {
+        // Get frequency: merchantCadence first, then subscription record
+        const frequency = merchantCadence?.[sub.merchantSlug] ?? sub.frequency;
+        if (!frequency) continue;
+        
         // Convert to monthly amount
         let monthlyAmount = sub.amount;
-        if (sub.frequency === "annual") monthlyAmount = sub.amount / 12;
-        if (sub.frequency === "quarterly") monthlyAmount = sub.amount / 3;
-        if (sub.frequency === "biweekly") monthlyAmount = sub.amount * 26 / 12;
-        if (sub.frequency === "weekly") monthlyAmount = sub.amount * 52 / 12;
+        if (frequency === "annual" || frequency === "yearly") monthlyAmount = sub.amount / 12;
+        if (frequency === "quarterly") monthlyAmount = sub.amount / 3;
+        if (frequency === "biweekly") monthlyAmount = sub.amount * 26 / 12;
+        if (frequency === "weekly") monthlyAmount = sub.amount * 52 / 12;
         subscriptionMonthlyAmount.set(sub.merchantSlug, monthlyAmount);
       }
     }
@@ -337,6 +343,7 @@ export function compute3MonthTrend(
   expenseTxns: ExpenseTxnRecord[],
   accountSnapshots: AccountSnapshot[],
   monthlyHistory: MonthlyHistoryEntry[],
+  merchantCadence?: Record<string, string>,
   subscriptions?: Array<{ merchantSlug: string; amount: number | null; frequency: string | null; status: string }>
 ): { months: string[]; values: number[] } {
   const now = new Date();
@@ -362,7 +369,8 @@ export function compute3MonthTrend(
       accountSnapshots,
       [month],
       "CAD",
-      subscriptions // Pass subscriptions for consistent calculation
+      merchantCadence, // Pass merchantCadence for consistent calculation
+      subscriptions
     );
     values.push(breakdown.monthlyAverage);
   }
