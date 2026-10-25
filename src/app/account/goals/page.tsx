@@ -390,6 +390,14 @@ function RateEditor({
 
 export default function GoalsPage() {
   const router = useRouter();
+  
+  // Feature flag guard
+  useEffect(() => {
+    if (!isFeatureEnabled("showExtendedPages")) {
+      router.replace("/account/dashboard");
+    }
+  }, [router]);
+  
   const { loading: planLoading } = usePlan();
 
   const [netWorth, setNetWorth]                       = useState(0);
