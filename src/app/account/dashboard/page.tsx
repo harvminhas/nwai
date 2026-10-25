@@ -128,7 +128,15 @@ function AnswerCard({
   );
 }
 
-function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdown; currency: string }) {
+function WhereMoneyGoes({ 
+  breakdown, 
+  currency, 
+  onOpenDrawer 
+}: { 
+  breakdown: MoneyCoachBreakdown; 
+  currency: string;
+  onOpenDrawer: (type: DrawerType) => void;
+}) {
   const [expanded, setExpanded] = useState(true);
 
   const { coverage, incomeAmount, incomeBasisLabel, buckets } = breakdown;
@@ -289,7 +297,7 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             {/* Income Card */}
             <button
-              onClick={() => openDrawer("income")}
+              onClick={() => onOpenDrawer("income")}
               className="rounded-2xl border border-gray-200 bg-gradient-to-br from-purple-50 to-white p-5 shadow-sm transition hover:shadow-md hover:border-purple-300 text-left"
             >
               <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-gray-500">
@@ -344,7 +352,7 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
               return (
                 <button
                   key={bucket.bucket}
-                  onClick={() => openDrawer(bucket.bucket as DrawerType)}
+                  onClick={() => onOpenDrawer(bucket.bucket as DrawerType)}
                   className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition hover:shadow-md hover:border-purple-300 text-left"
                 >
                   <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-gray-500">
@@ -566,7 +574,7 @@ export default function DashboardPage() {
 
         {/* Where Money Goes */}
         {breakdown && breakdown.coverage.monthsCovered > 0 ? (
-          <WhereMoneyGoes breakdown={breakdown} currency={currency} />
+          <WhereMoneyGoes breakdown={breakdown} currency={currency} onOpenDrawer={openDrawer} />
         ) : (
           <div className="mx-auto mt-16 max-w-2xl rounded-2xl border-2 border-dashed border-purple-200 bg-purple-50/30 p-12 text-center">
             <p className="mb-3 text-lg font-semibold text-gray-600">
