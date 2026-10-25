@@ -36,18 +36,22 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
     // Income drawer data
     if (bucket === "income") {
       const incomeWindow = window as IncomeTimeWindow;
+      
+      // Get current year-month to exclude from historical calculations
+      const now = new Date();
+      const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      
       const detailedMetrics = computeDetailedIncomeMetrics(
         profile.monthlyHistory,
         profile.incomeTxns,
         incomeWindow,
         currentYear,
-        true // core only
+        true, // core only
+        currentYearMonth // exclude current month from last3/12month
       );
 
       // Get 12-month history for chart
       // Generate all 12 calendar months, newest first, including missing months
-      const now = new Date();
-      const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
       const allMonths: string[] = [];
       
       for (let i = 0; i < 12; i++) {
