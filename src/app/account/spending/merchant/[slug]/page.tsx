@@ -332,7 +332,7 @@ export default function MerchantDetailPage() {
   // ── analytics ────────────────────────────────────────────────────────────────
 
   const color        = categoryColor(merchant.category);
-  const sym          = getCurrencySymbol(homeCurrency);
+  const sym          = getCurrencySymbol(merchant.currency);
   const activeMonths = merchant.monthly.length;
   // User-set display name takes precedence; falls back to auto-derived statement name
   const displayedName = merchant.displayName ?? merchant.name;
@@ -464,9 +464,9 @@ export default function MerchantDetailPage() {
   const annualRounded = Math.round(annualPace / 50) * 50;
   const insightText =
     annualDiff !== null && Math.abs(annualDiff) > 50
-      ? `At your current pace, you'll spend ~${formatCurrency(annualRounded, homeCurrency, undefined, true)} at ${displayedName} this year — about ${formatCurrency(Math.abs(Math.round(annualDiff / 50) * 50), homeCurrency, undefined, true)} ${annualDiff > 0 ? "more" : "less"} than last year's run rate.`
+      ? `At your current pace, you'll spend ~${formatCurrency(annualRounded, homeCurrency, merchant.currency, false)} at ${displayedName} this year — about ${formatCurrency(Math.abs(Math.round(annualDiff / 50) * 50), homeCurrency, merchant.currency, false)} ${annualDiff > 0 ? "more" : "less"} than last year's run rate.`
       : annualPace > 50
-      ? `At your current pace, you'll spend ~${formatCurrency(annualRounded, homeCurrency, undefined, true)} at ${displayedName} this year.`
+      ? `At your current pace, you'll spend ~${formatCurrency(annualRounded, homeCurrency, merchant.currency, false)} at ${displayedName} this year.`
       : null;
 
   // Trip size distribution
@@ -649,14 +649,14 @@ export default function MerchantDetailPage() {
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium text-gray-800">{m.name}</p>
                           <p className="mt-0.5 text-xs text-gray-500">
-                            {allCount} {vocab.visit}{allCount !== 1 ? "s" : ""} · {formatCurrency(allTotal, homeCurrency, m.currency, true)} total
+                            {allCount} {vocab.visit}{allCount !== 1 ? "s" : ""} · {formatCurrency(allTotal, homeCurrency, m.currency, false)} total
                             {m.category && m.category !== merchant.category && (
                               <span className="ml-1.5 text-amber-600">· {m.category}</span>
                             )}
                           </p>
                         </div>
                         <p className="shrink-0 text-sm font-semibold text-gray-700 tabular-nums">
-                          {formatCurrency(allTotal, homeCurrency, m.currency, true)}
+                          {formatCurrency(allTotal, homeCurrency, m.currency, false)}
                         </p>
                       </button>
                     );
@@ -755,7 +755,7 @@ export default function MerchantDetailPage() {
             </div>
           )}
           <p className="mt-1 text-sm text-gray-400">
-            {formatCurrency(monthlyAvg, homeCurrency, undefined, true)}/mo avg · {activeMonths} active month{activeMonths !== 1 ? "s" : ""}
+            {formatCurrency(monthlyAvg, homeCurrency, merchant.currency, false)}/mo avg · {activeMonths} active month{activeMonths !== 1 ? "s" : ""}
           </p>
           {/* Inline controls — cadence + status only; category lives on transactions */}
           <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -809,10 +809,10 @@ export default function MerchantDetailPage() {
             <p className="text-[11px] text-gray-400">{vocab.tripLabel}</p>
             <p className="mt-0.5 text-base font-bold text-gray-900 tabular-nums">
               {showRange
-                ? `${formatCurrency(Math.round(tripLow / 5) * 5, homeCurrency, undefined, true)}–${formatCurrency(Math.round(tripHigh / 5) * 5, homeCurrency, undefined, true)}`
-                : formatCurrency(merchant.avgAmount, homeCurrency, undefined, true)}
+                ? `${formatCurrency(Math.round(tripLow / 5) * 5, homeCurrency, merchant.currency, false)}–${formatCurrency(Math.round(tripHigh / 5) * 5, homeCurrency, merchant.currency, false)}`
+                : formatCurrency(merchant.avgAmount, homeCurrency, merchant.currency, false)}
             </p>
-            <p className="text-[11px] text-gray-400">avg {fmtDec(merchant.avgAmount, homeCurrency)}</p>
+            <p className="text-[11px] text-gray-400">avg {fmtDec(merchant.avgAmount, merchant.currency)}</p>
           </div>
           {categoryShare !== null ? (
             <div className="px-4 py-3.5">
@@ -839,7 +839,7 @@ export default function MerchantDetailPage() {
               </p>
               <p className="mt-0.5 text-xs text-gray-600">
                 {fmtDate(merchant.lastDate!)}
-                {lastVisitTxn ? ` · ${formatCurrency(Math.abs(lastVisitTxn.amount), homeCurrency, lastVisitTxn.currency, true)}` : ""}
+                {lastVisitTxn ? ` · ${formatCurrency(Math.abs(lastVisitTxn.amount), homeCurrency, lastVisitTxn.currency, false)}` : ""}
               </p>
               {isLongestGap && (
                 <p className="mt-1 text-[11px] text-amber-600">Your longest gap yet (typical {avgGap}d)</p>
@@ -947,7 +947,7 @@ export default function MerchantDetailPage() {
                 <span className="font-semibold text-orange-500">{shortMonth(outlierMonth.ym)}</span> was{" "}
                 <span className="font-medium text-gray-700">{outlierMonth.pct}% above typical.</span>
                 {outlierMonth.bigTxn && outlierMonth.bigTxn.date
-                  ? ` One ${outlierMonth.pct > 50 ? "large" : "notable"} ${vocab.trip} on ${fmtDate(outlierMonth.bigTxn.date)} (${formatCurrency(Math.abs(outlierMonth.bigTxn.amount), homeCurrency, outlierMonth.bigTxn.currency, true)}) drove most of the spike.`
+                  ? ` One ${outlierMonth.pct > 50 ? "large" : "notable"} ${vocab.trip} on ${fmtDate(outlierMonth.bigTxn.date)} (${formatCurrency(Math.abs(outlierMonth.bigTxn.amount), homeCurrency, outlierMonth.bigTxn.currency, false)}) drove most of the spike.`
                   : ""}
               </p>
             )}
@@ -959,7 +959,7 @@ export default function MerchantDetailPage() {
           <InsightCard icon="warn">
             <span className="font-semibold">{shortMonth(outlierMonth.ym)}</span> was {outlierMonth.pct}% above your typical month.
             {outlierMonth.bigTxn?.date
-              ? ` One ${outlierMonth.pct > 50 ? "large" : "notable"} ${vocab.trip} on ${fmtDate(outlierMonth.bigTxn.date)} (${formatCurrency(Math.abs(outlierMonth.bigTxn.amount), homeCurrency, outlierMonth.bigTxn.currency, true)}) drove most of the spike — similar in size to your previous ${vocab.largeVisits}.`
+              ? ` One ${outlierMonth.pct > 50 ? "large" : "notable"} ${vocab.trip} on ${fmtDate(outlierMonth.bigTxn.date)} (${formatCurrency(Math.abs(outlierMonth.bigTxn.amount), homeCurrency, outlierMonth.bigTxn.currency, false)}) drove most of the spike — similar in size to your previous ${vocab.largeVisits}.`
               : ""}
           </InsightCard>
         )}
@@ -972,9 +972,9 @@ export default function MerchantDetailPage() {
         {annualDiff !== null && Math.abs(annualDiff) > 50 && (
           <InsightCard icon="info">
             At your current pace, you&apos;ll spend{" "}
-            <span className="font-semibold">~{formatCurrency(annualRounded, homeCurrency, undefined, true)}</span>{" "}
+            <span className="font-semibold">~{formatCurrency(annualRounded, homeCurrency, merchant.currency, false)}</span>{" "}
             at {displayedName} this year — about{" "}
-            <span className="font-semibold">{formatCurrency(Math.abs(Math.round(annualDiff / 50) * 50), homeCurrency, undefined, true)}</span>{" "}
+            <span className="font-semibold">{formatCurrency(Math.abs(Math.round(annualDiff / 50) * 50), homeCurrency, merchant.currency, false)}</span>{" "}
             {annualDiff > 0 ? "more" : "less"} than last year&apos;s run rate.
           </InsightCard>
         )}

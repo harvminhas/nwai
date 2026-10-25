@@ -172,6 +172,9 @@ export async function GET(request: NextRequest) {
       const d = doc.data();
       const parsed = d.parsedData as ParsedStatementData;
       const stmtYm = docYearMonth(d);
+      
+      // Statement-level currency is the single source of truth for all transactions.
+      // Every transaction from this statement is in the account's native currency.
       const stmtCurrency = inferStmtCurrency(parsed);
 
       if ((parsed.accountType ?? "").toLowerCase() === "investment") continue;

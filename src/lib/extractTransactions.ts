@@ -250,6 +250,11 @@ export async function extractAllTransactions(
       const label = parsed.accountName
         ?? (slug === "unknown" ? bank || "Unknown Account" : [bank, `••••${slug}`].filter(Boolean).join(" "));
 
+      // Statement-level currency is the single source of truth for all transactions.
+      // Every transaction from this statement is in the account's native currency,
+      // regardless of any per-transaction currency the AI parser may have emitted.
+      const statementCurrency = inferCurrencyFromBankName(parsed.bankName, parsed.currency);
+
       // Investment accounts hold portfolio activity (stock buys/sells/dividends),
       // not personal expenses. Skip their expense transactions entirely — the account
       // still appears in accountSnapshots for balance tracking.
@@ -276,7 +281,7 @@ export async function extractAllTransactions(
               source: txn.merchant ?? "Unknown",
               description: txn.merchant ?? "Unknown",
               accountSlug: slug,
-              currency: inferCurrencyFromBankName(parsed.bankName, parsed.currency),
+              currency: statementCurrency,
             });
             continue;
           }
@@ -296,7 +301,7 @@ export async function extractAllTransactions(
             }),
             accountSlug: slug,
             accountLabel: label,
-            currency: inferCurrencyFromBankName(parsed.bankName, parsed.currency),
+            currency: statementCurrency,
             recurring: txn.recurring,
             ...(txn.debtType ? { debtType: txn.debtType } : {}),
             ...(txn.installmentInterestAmount != null
@@ -326,6 +331,10 @@ export async function extractAllTransactions(
       const stmtYm = docYearMonth(d);
       const parsed = d.parsedData as ParsedStatementData;
       const slug = canonicalAccountSlug(d, parsed, slugByLabelKey);
+      
+      // Statement-level currency is the single source of truth for all transactions.
+      const statementCurrency = inferCurrencyFromBankName(parsed.bankName, parsed.currency);
+      
       for (const txn of parsed.income?.transactions ?? []) {
         const absAmount = Math.abs(txn.amount ?? 0);
         if (absAmount <= 0) continue;
@@ -341,7 +350,7 @@ export async function extractAllTransactions(
           source: txn.source ?? "Income",
           description: txn.source ?? txn.category ?? "Income",
           accountSlug: slug,
-          currency: inferCurrencyFromBankName(parsed.bankName, parsed.currency),
+          currency: statementCurrency,
           category: txn.category,
         });
       }
