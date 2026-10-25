@@ -18,6 +18,7 @@ interface MoneyCoachBucket {
   pctOfIncome: number;
   targetPct: number;
   advice: string;
+  hasEstimates?: boolean;
 }
 
 interface MoneyCoachBreakdown {
@@ -319,13 +320,13 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
               let statusColor = "bg-green-100 text-green-800";
               
               if (diff > 3) {
-                statusTag = `+${Math.round(absDiff)}% over`;
+                statusTag = `${Math.round(absDiff)}% over`;
                 statusColor = "bg-amber-100 text-amber-800";
               } else if (diff < -3) {
                 statusTag = `${Math.round(absDiff)}% under`;
                 statusColor = "bg-green-100 text-green-800";
               } else if (diff > 0) {
-                statusTag = `+${Math.round(absDiff)}% ahead`;
+                statusTag = `${Math.round(absDiff)}% ahead`;
                 statusColor = "bg-green-100 text-green-800";
               }
 
@@ -337,6 +338,11 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
                       style={{ backgroundColor: bucketColors[bucket.bucket as keyof typeof bucketColors] }}
                     />
                     {bucket.label}
+                    {bucket.hasEstimates && (
+                      <span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold normal-case text-gray-600">
+                        est.
+                      </span>
+                    )}
                   </div>
                   <p className="text-2xl font-bold tracking-tight text-gray-900">
                     {fmt(bucket.monthlyMedian, currency)}

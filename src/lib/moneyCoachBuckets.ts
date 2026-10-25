@@ -68,7 +68,7 @@ export const BUCKET_METADATA: Record<MoneyCoachBucket, BucketMetadata> = {
   fixed: {
     id: "fixed",
     label: "Fixed costs",
-    description: "Housing, insurance, utilities, subscriptions, minimum loan payments",
+    description: "Housing, insurance, utilities, subscriptions, scheduled debt payments",
     emoji: "🏠",
     targetPct: 35, // Fixed 35% + Essentials 15% = Needs 50%
   },
