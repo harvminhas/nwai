@@ -43,33 +43,42 @@ export type TimeWindow = "last3" | "12month" | "ytd";
 
 /**
  * Get months for a specific time window.
+ * Excludes the current incomplete month (same logic as incomeMetrics.ts).
  */
 export function getMonthsForWindow(
   monthlyHistory: MonthlyHistoryEntry[],
   window: TimeWindow,
   currentYear: number
 ): string[] {
-  const monthsWithData = monthlyHistory
-    .filter(h => h.incomeTotal > 0 || h.expensesTotal > 0)
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+  // Filter to complete months only (exclude current incomplete month)
+  const completeMonths = monthlyHistory
+    .filter(h => {
+      const hasData = h.incomeTotal > 0 || h.expensesTotal > 0;
+      const isComplete = h.yearMonth < currentMonth;
+      return hasData && isComplete;
+    })
     .map(h => h.yearMonth)
     .sort();
 
-  if (monthsWithData.length === 0) return [];
+  if (completeMonths.length === 0) return [];
 
   switch (window) {
     case "last3":
-      return monthsWithData.slice(-3);
+      return completeMonths.slice(-3);
     
     case "12month":
-      return monthsWithData.slice(-12);
+      return completeMonths.slice(-12);
     
     case "ytd": {
       const ytdStart = `${currentYear}-01`;
-      return monthsWithData.filter(ym => ym >= ytdStart);
+      return completeMonths.filter(ym => ym >= ytdStart);
     }
     
     default:
-      return monthsWithData.slice(-3);
+      return completeMonths.slice(-3);
   }
 }
 
@@ -110,7 +119,7 @@ export function computeBucketBreakdown(
   const scheduledDebtCategories: CategoryBreakdown[] = [];
   
   if (bucket === "fixed") {
-    const scheduledPayments = computeScheduledDebtPayments(accountSnapshots);
+    const scheduledPayments = computeScheduledDebtPayments(accountSnapshots, expenseTxns);
     const monthCount = months.length || 1;
     
     // Group by debt type
@@ -126,7 +135,7 @@ export function computeBucketBreakdown(
         amount: mortgageTotal,
         pctOfBucket: 0, // Will be calculated later
         merchants: mortgagePayments.map(p => ({
-          merchant: `Scheduled payment`,
+          merchant: p.accountName || p.accountSlug,
           amount: p.amount,
           accountSlug: p.accountSlug,
         })),
@@ -143,7 +152,7 @@ export function computeBucketBreakdown(
         amount: loanTotal,
         pctOfBucket: 0,
         merchants: loanPayments.map(p => ({
-          merchant: `Scheduled payment`,
+          merchant: p.accountName || p.accountSlug,
           amount: p.amount,
           accountSlug: p.accountSlug,
         })),
@@ -160,7 +169,7 @@ export function computeBucketBreakdown(
         amount: creditTotal,
         pctOfBucket: 0,
         merchants: creditPayments.map(p => ({
-          merchant: `Minimum payment`,
+          merchant: p.accountName || p.accountSlug,
           amount: p.amount,
           accountSlug: p.accountSlug,
         })),
@@ -260,7 +269,8 @@ export function computeBucketBreakdown(
 }
 
 /**
- * Compute 3-month trend values for sparkline (most recent 3 months).
+ * Compute 3-month trend values for sparkline (most recent 3 complete months).
+ * Excludes the current incomplete month.
  */
 export function compute3MonthTrend(
   bucket: MoneyCoachBucket,
@@ -268,15 +278,23 @@ export function compute3MonthTrend(
   accountSnapshots: AccountSnapshot[],
   monthlyHistory: MonthlyHistoryEntry[]
 ): { months: string[]; values: number[] } {
-  const monthsWithData = monthlyHistory
-    .filter(h => h.incomeTotal > 0 || h.expensesTotal > 0)
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+  // Filter to complete months only (exclude current incomplete month)
+  const completeMonths = monthlyHistory
+    .filter(h => {
+      const hasData = h.incomeTotal > 0 || h.expensesTotal > 0;
+      const isComplete = h.yearMonth < currentMonth;
+      return hasData && isComplete;
+    })
     .map(h => h.yearMonth)
     .sort()
     .slice(-3);
 
   const values: number[] = [];
 
-  for (const month of monthsWithData) {
+  for (const month of completeMonths) {
     const breakdown = computeBucketBreakdown(
       bucket,
       expenseTxns,
@@ -287,5 +305,5 @@ export function compute3MonthTrend(
     values.push(breakdown.monthlyAverage);
   }
 
-  return { months: monthsWithData, values };
+  return { months: completeMonths, values };
 }

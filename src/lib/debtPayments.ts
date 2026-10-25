@@ -2,14 +2,19 @@
  * Scheduled Debt Payment Calculation
  * 
  * Computes scheduled monthly payments for loans and minimum payments for credit cards
- * from account snapshots. Used by money coach to correctly attribute debt servicing
- * to Fixed costs (scheduled amount) vs Savings & debt (extra paydown).
+ * from account snapshots and transaction history. Used by money coach to correctly
+ * attribute debt servicing to Fixed costs (scheduled amount) vs Savings & debt (extra paydown).
+ * 
+ * Key principle: NEVER use paymentsMade as scheduled payment proxy. That conflates
+ * scheduled payments with extra paydowns, causing large paydowns to inflate Fixed costs.
  */
 
-import type { AccountSnapshot } from "./extractTransactions";
+import type { AccountSnapshot, ExpenseTxnRecord } from "./extractTransactions";
 
 export interface ScheduledDebtPayment {
   accountSlug: string;
+  /** Account name for display (e.g. "TD Home Equity FlexLine") */
+  accountName?: string;
   /** Scheduled/minimum payment amount per month */
   amount: number;
   /** True when amount is estimated vs actual from statement */
@@ -24,6 +29,84 @@ export interface ScheduledDebtPayment {
  */
 function estimateCreditMinPayment(balance: number): number {
   return Math.max(25, balance * 0.025);
+}
+
+/**
+ * Find recurring payment amount from transaction history.
+ * Returns median of past regular payments (excluding outliers).
+ */
+function findRecurringPayment(
+  accountSlug: string,
+  expenseTxns: ExpenseTxnRecord[]
+): number | null {
+  // Get all debt payment transactions for this account
+  const payments = expenseTxns
+    .filter(t => 
+      t.accountSlug === accountSlug && 
+      t.category === "Debt Payments" &&
+      t.amount < 0
+    )
+    .map(t => Math.abs(t.amount))
+    .sort((a, b) => a - b);
+
+  if (payments.length === 0) return null;
+  if (payments.length === 1) return payments[0];
+
+  // Filter outliers: remove payments > 2x the median (likely extra paydowns)
+  const medianIdx = Math.floor(payments.length / 2);
+  const rawMedian = payments.length % 2 === 0
+    ? (payments[medianIdx - 1] + payments[medianIdx]) / 2
+    : payments[medianIdx];
+
+  const regularPayments = payments.filter(p => p <= rawMedian * 2);
+
+  if (regularPayments.length === 0) return rawMedian;
+
+  // Return median of regular payments
+  const midIdx = Math.floor(regularPayments.length / 2);
+  return regularPayments.length % 2 === 0
+    ? (regularPayments[midIdx - 1] + regularPayments[midIdx]) / 2
+    : regularPayments[midIdx];
+}
+
+/**
+ * Calculate interest-based minimum payment for LOC/HELOC.
+ * For revolving credit lines, minimum = interest charged + small principal %.
+ */
+function estimateLOCMinimum(
+  accountSlug: string,
+  balance: number,
+  apr: number,
+  expenseTxns: ExpenseTxnRecord[]
+): number {
+  // Try to find actual interest charged from transactions
+  const interestTxns = expenseTxns
+    .filter(t => 
+      t.accountSlug === accountSlug && 
+      t.category === "Interest" &&
+      t.amount < 0
+    )
+    .map(t => Math.abs(t.amount));
+
+  if (interestTxns.length > 0) {
+    // Use median interest charged + 1% of balance (typical principal requirement)
+    const sortedInterest = [...interestTxns].sort((a, b) => a - b);
+    const midIdx = Math.floor(sortedInterest.length / 2);
+    const medianInterest = sortedInterest.length % 2 === 0
+      ? (sortedInterest[midIdx - 1] + sortedInterest[midIdx]) / 2
+      : sortedInterest[midIdx];
+    
+    return medianInterest + (balance * 0.01);
+  }
+
+  // Fallback: estimate from APR
+  if (apr > 0) {
+    const monthlyInterest = (balance * apr / 100) / 12;
+    return monthlyInterest + (balance * 0.01);
+  }
+
+  // Last resort: 2% of balance
+  return balance * 0.02;
 }
 
 /**
@@ -69,13 +152,15 @@ function isPaidInFull(balance: number, paymentMade: number): boolean {
  * Returns list of scheduled payments that should go to Fixed costs.
  * 
  * Logic:
- * - Installment loans (mortgage, auto, student, personal, LOC): use paymentsMade from statement
- *   as proxy for scheduled payment. If not available, estimate from balance + rate.
- * - Credit cards: if carried balance (payment < 95% of balance), use paymentsMade as minimum.
+ * - Credit cards: if carried balance (payment < 95% of balance), estimate minimum (2-3% or $25).
  *   If paid in full, return 0 (no fixed cost).
+ * - LOC/HELOC: use interest charged + 1% principal, NEVER paymentsMade (which includes extra paydowns).
+ * - Installment loans (mortgage, auto, student, personal): find median of past regular payments.
+ *   Cap at a plausible max (3% of balance) to catch data errors.
  */
 export function computeScheduledDebtPayments(
-  accountSnapshots: AccountSnapshot[]
+  accountSnapshots: AccountSnapshot[],
+  expenseTxns: ExpenseTxnRecord[] = []
 ): ScheduledDebtPayment[] {
   const debtAccounts = accountSnapshots.filter(
     (a) =>
@@ -99,41 +184,48 @@ export function computeScheduledDebtPayments(
         continue;
       }
 
-      // Carrying balance: minimum payment is fixed
-      let minPayment = 0;
-      let isEstimated = false;
-
-      if (paymentMade > 0) {
-        // Use actual payment from statement as minimum
-        minPayment = paymentMade;
-      } else {
-        // Estimate minimum payment
-        minPayment = estimateCreditMinPayment(balance);
-        isEstimated = true;
-      }
+      // Carrying balance: estimate minimum payment (never use paymentsMade)
+      const minPayment = estimateCreditMinPayment(balance);
 
       scheduledPayments.push({
         accountSlug: account.slug,
+        accountName: account.accountName,
         amount: minPayment,
-        isEstimated,
+        isEstimated: true,
         debtType: "credit",
       });
+    } else if (account.accountType === "line_of_credit") {
+      // LOC/HELOC: minimum = interest + small principal requirement
+      const minPayment = estimateLOCMinimum(account.slug, balance, rate, expenseTxns);
+
+      scheduledPayments.push({
+        accountSlug: account.slug,
+        accountName: account.accountName,
+        amount: minPayment,
+        isEstimated: true,
+        debtType: "loan",
+      });
     } else {
-      // Installment loan (mortgage, auto, student, personal, LOC)
+      // Installment loan (mortgage, auto, student, personal)
       let scheduledPayment = 0;
       let isEstimated = false;
 
-      if (paymentMade > 0) {
-        // Use actual payment from statement
-        scheduledPayment = paymentMade;
+      // Try to find recurring payment from transaction history
+      const recurringPayment = findRecurringPayment(account.slug, expenseTxns);
+
+      if (recurringPayment !== null) {
+        // Use median of past payments, capped at 3% of balance
+        scheduledPayment = Math.min(recurringPayment, balance * 0.03);
+        isEstimated = false;
       } else {
-        // Estimate from balance and rate
+        // No history: estimate from balance and rate
         scheduledPayment = estimateLoanPayment(balance, rate, account.accountType);
         isEstimated = true;
       }
 
       scheduledPayments.push({
         accountSlug: account.slug,
+        accountName: account.accountName,
         amount: scheduledPayment,
         isEstimated,
         debtType: "loan",
