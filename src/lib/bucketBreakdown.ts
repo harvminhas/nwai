@@ -17,6 +17,8 @@ export interface MerchantBreakdown {
   amount: number;
   accountSlug?: string;
   accountLabel?: string;
+  /** Method used for debt payments: "fixed payment" | "est. interest-only" | etc. */
+  method?: string;
 }
 
 export interface CategoryBreakdown {
@@ -138,6 +140,7 @@ export function computeBucketBreakdown(
           merchant: p.accountName || p.accountSlug,
           amount: p.amount,
           accountSlug: p.accountSlug,
+          method: p.method,
         })),
         isScheduled: true,
         isEstimated: mortgagePayments.some(p => p.isEstimated),
@@ -155,6 +158,7 @@ export function computeBucketBreakdown(
           merchant: p.accountName || p.accountSlug,
           amount: p.amount,
           accountSlug: p.accountSlug,
+          method: p.method,
         })),
         isScheduled: true,
         isEstimated: loanPayments.some(p => p.isEstimated),
@@ -172,6 +176,7 @@ export function computeBucketBreakdown(
           merchant: p.accountName || p.accountSlug,
           amount: p.amount,
           accountSlug: p.accountSlug,
+          method: p.method,
         })),
         isScheduled: true,
         isEstimated: creditPayments.some(p => p.isEstimated),
