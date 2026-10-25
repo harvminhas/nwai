@@ -1848,56 +1848,27 @@ function LiabilitiesPageInner() {
       </div>
 
       {error && <p className="mb-4 mt-4 rounded-lg bg-red-50 px-4 py-2 text-sm text-red-600">{error}</p>}
-
-      {/* Tab bar */}
-      <div className="mt-5 mb-6 flex border-b border-gray-200">
+        <div className="mt-6 flex gap-2">
         {TABS.map((tab) => {
           const isLocked = tab.id === "payoff" && !can("payoffPlanner");
           return (
             <button
               key={tab.id}
               onClick={() => switchTab(tab.id)}
-              className={`relative mr-6 pb-3 text-sm font-medium transition-colors ${
+              disabled={isLocked}
+              className={`rounded-full border px-4 py-2 text-[14px] font-medium transition-all ${
                 activeTab === tab.id
-                  ? "text-gray-900 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:rounded-full after:bg-gray-900 after:content-['']"
-                  : "text-gray-400 hover:text-gray-600"
-              }`}
-            >
-              <span className="flex items-center gap-1.5">
-                {tab.label}
-                {isLocked && (
-                  <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-600">
-                    Pro
-                  </span>
-                )}
-              </span>
+                  ? "border-gray-900 bg-gray-900 text-white shadow-sm"
+                  : isLocked
+                  ? "border-gray-200 bg-gray-50 text-gray-300 cursor-not-allowed"
+                  : "border-gray-200 bg-white text-gray-500 hover:border-gray-400 hover:text-gray-900"
+              }`}>
+              {tab.label}
+              {isLocked && <span className="ml-1.5 text-[10px]">🔒</span>}
             </button>
           );
         })}
-      </div>
-
-      {/* Tab content */}
-      {activeTab === "overview" && (
-        <OverviewTab
-          libs={displayLibs}
-          debtHistory={debtHistory}
-          accountMonthly={accountMonthly}
-          paymentsMade={paymentsMade}
-          accountRates={accountRates}
-          homeCurrency={homeCurrency}
-          fxRates={fxRates}
-        />
-      )}
-      {activeTab === "accounts" && (
-        <AccountsTab
-          libs={displayLibs} manualLibs={manualLibs} accountMonthly={accountMonthly} deletingId={deletingId}
-          deletingSlug={deletingSlug}
-          homeCurrency={homeCurrency}
-          fxRates={fxRates}
-          onAdd={() => { setEditing(null); setModalOpen(true); }}
-          onEdit={(m) => { setEditing(m); setModalOpen(true); }}
-          onDelete={handleDelete}
-          onDeleteAccount={(slug, label) => setDeleteConfirm({ slug, label })}
+        </div>
         />
       )}
 
