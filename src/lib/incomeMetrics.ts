@@ -55,6 +55,17 @@ export interface DetailedIncomeMetrics extends IncomeMetrics {
   ytdOneOff: number;
   /** Projected full year (based on monthly average) */
   projectedFullYear: number;
+  /** Calculation breakdown for transparency (shows how windowAmount was computed) */
+  calculation?: {
+    /** Income amount for each month in the window */
+    monthlyAmounts: { month: string; amount: number }[];
+    /** Total sum across all months */
+    sum: number;
+    /** Number of months used */
+    count: number;
+    /** Whether one-off detection was applied */
+    oneOffDetectionApplied: boolean;
+  };
 }
 
 /**
@@ -90,11 +101,13 @@ function isOneOffDeposit(
 
 /**
  * Get months for a specific time window.
+ * Excludes the current month (incomplete data) for "last3" and "12month" windows.
  */
 export function getMonthsForWindow(
   monthlyHistory: MonthlyHistoryEntry[],
   window: IncomeTimeWindow,
-  currentYear: number
+  currentYear: number,
+  currentYearMonth?: string
 ): string[] {
   const monthsWithIncome = monthlyHistory
     .filter(h => h.incomeTotal > 0)
@@ -103,12 +116,18 @@ export function getMonthsForWindow(
 
   if (monthsWithIncome.length === 0) return [];
 
+  // Exclude current month for historical windows (last3, 12month)
+  // YTD includes all months up to today, including partial current month
+  const historicalMonths = currentYearMonth && window !== "ytd"
+    ? monthsWithIncome.filter(ym => ym < currentYearMonth)
+    : monthsWithIncome;
+
   switch (window) {
     case "last3":
-      return monthsWithIncome.slice(-3);
+      return historicalMonths.slice(-3);
     
     case "12month":
-      return monthsWithIncome.slice(-12);
+      return historicalMonths.slice(-12);
     
     case "ytd": {
       const ytdStart = `${currentYear}-01`;
@@ -116,7 +135,7 @@ export function getMonthsForWindow(
     }
     
     default:
-      return monthsWithIncome.slice(-3);
+      return historicalMonths.slice(-3);
   }
 }
 
@@ -200,19 +219,22 @@ export function computeIncomeMetrics(
 /**
  * Compute detailed income metrics for a specific time window.
  * Includes one-off detection, sources breakdown, and year projections.
+ * 
+ * @param currentYearMonth - Optional current month in YYYY-MM format (excluded from last3/12month)
  */
 export function computeDetailedIncomeMetrics(
   monthlyHistory: MonthlyHistoryEntry[],
   incomeTxns: IncomeTxnRecord[],
   window: IncomeTimeWindow,
   currentYear: number,
-  useCoreOnly: boolean = true
+  useCoreOnly: boolean = true,
+  currentYearMonth?: string
 ): DetailedIncomeMetrics {
   // Get basic metrics
   const basic = computeIncomeMetrics(monthlyHistory, useCoreOnly);
 
-  // Get months for this window
-  const windowMonths = getMonthsForWindow(monthlyHistory, window, currentYear);
+  // Get months for this window (excluding current month for historical windows)
+  const windowMonths = getMonthsForWindow(monthlyHistory, window, currentYear, currentYearMonth);
   
   if (windowMonths.length === 0) {
     return {
@@ -243,7 +265,11 @@ export function computeDetailedIncomeMetrics(
     sourceMap.set(source, existing);
   }
 
-  // Separate regular and one-off sources
+  // Separate regular and one-off income at the TRANSACTION level
+  // For "last3" window: DISABLE one-off detection to show actual recent run-rate
+  // For longer windows: apply one-off detection to avoid skewing projections
+  const applyOneOffDetection = window !== "last3" && windowMonths.length > 3;
+  
   const regularSources: IncomeSource[] = [];
   const oneOffSources: IncomeSource[] = [];
 
@@ -251,22 +277,48 @@ export function computeDetailedIncomeMetrics(
     const total = data.amounts.reduce((sum, a) => sum + a, 0);
     const avgMonthly = total / windowMonths.length;
 
-    // Check if any transaction from this source is a one-off
-    const hasOneOff = data.txns.some(t => isOneOffDeposit(t.amount, source, incomeTxns));
-
-    if (hasOneOff) {
-      oneOffSources.push({
-        source,
-        category: data.category,
-        amount: total,
-        isOneOff: true,
-      });
-    } else {
+    if (!applyOneOffDetection) {
+      // Include all income (no one-off filtering)
       regularSources.push({
         source,
         category: data.category,
         amount: avgMonthly,
       });
+    } else {
+      // Split transactions into regular vs one-off
+      const regularTxns = data.txns.filter(t => !isOneOffDeposit(t.amount, source, incomeTxns));
+      const oneOffTxns = data.txns.filter(t => isOneOffDeposit(t.amount, source, incomeTxns));
+
+      // If ALL transactions are one-offs, treat as one-off source
+      if (regularTxns.length === 0 && oneOffTxns.length > 0) {
+        oneOffSources.push({
+          source,
+          category: data.category,
+          amount: total,
+          isOneOff: true,
+        });
+      } else if (regularTxns.length > 0) {
+        // Has regular income - compute average from regular transactions only
+        const regularTotal = regularTxns.reduce((sum, t) => sum + t.amount, 0);
+        const regularAvgMonthly = regularTotal / windowMonths.length;
+        
+        regularSources.push({
+          source,
+          category: data.category,
+          amount: regularAvgMonthly,
+        });
+
+        // Track one-offs separately if they exist
+        if (oneOffTxns.length > 0) {
+          const oneOffTotal = oneOffTxns.reduce((sum, t) => sum + t.amount, 0);
+          oneOffSources.push({
+            source: `${source} (bonus)`,
+            category: data.category,
+            amount: oneOffTotal,
+            isOneOff: true,
+          });
+        }
+      }
     }
   }
 
@@ -274,6 +326,24 @@ export function computeDetailedIncomeMetrics(
   const windowAmount = Math.round(
     regularSources.reduce((sum, s) => sum + s.amount, 0)
   );
+
+  // Build calculation breakdown for transparency
+  const monthlyAmounts = windowMonths.map(month => {
+    const monthHistory = monthlyHistory.find(h => h.yearMonth === month);
+    return {
+      month,
+      amount: monthHistory 
+        ? (useCoreOnly ? monthHistory.incomeTotal : (monthHistory.incomeTotalAllCredits ?? monthHistory.incomeTotal))
+        : 0,
+    };
+  });
+  
+  const calculation = {
+    monthlyAmounts,
+    sum: monthlyAmounts.reduce((sum, m) => sum + m.amount, 0),
+    count: windowMonths.length,
+    oneOffDetectionApplied: applyOneOffDetection,
+  };
 
   // Window label
   let windowLabel: string;
@@ -291,8 +361,8 @@ export function computeDetailedIncomeMetrics(
       windowLabel = `${windowMonths.length}-month avg`;
   }
 
-  // Year-to-date calculations
-  const ytdMonths = getMonthsForWindow(monthlyHistory, "ytd", currentYear);
+  // Year-to-date calculations (includes current month)
+  const ytdMonths = getMonthsForWindow(monthlyHistory, "ytd", currentYear, currentYearMonth);
   const ytdTxns = incomeTxns.filter(t => ytdMonths.includes(t.txMonth));
   
   const ytdRegularTxns = ytdTxns.filter(t => !isOneOffDeposit(t.amount, t.source, incomeTxns));
@@ -320,6 +390,7 @@ export function computeDetailedIncomeMetrics(
     ytdRegular,
     ytdOneOff,
     projectedFullYear,
+    calculation,
   };
 }
 

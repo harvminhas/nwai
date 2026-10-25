@@ -263,11 +263,82 @@ for (const bucket of buckets) {
   }
 }
 
-console.log("\n✅ All checks complete");
+console.log("\n✅ All checks complete\n");
+
+// ========================================================================
+// BUG REPRODUCTION: Screenshot scenario (Oct 26 current month with no data)
+// ========================================================================
+console.log("=== BUG REPRODUCTION: Income Drawer Calculation ===\n");
+
+const bugScenarioHistory: MonthlyHistoryEntry[] = [
+  { yearMonth: "2026-06", incomeTotal: 7460, expensesTotal: 0, netWorth: 0, coreExpensesTotal: 0, debtPaymentsTotal: 0, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 0, incomeTotalAllCredits: 7460, totalAssets: 0, totalDebts: 0 },
+  { yearMonth: "2026-07", incomeTotal: 10011, expensesTotal: 0, netWorth: 0, coreExpensesTotal: 0, debtPaymentsTotal: 0, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 0, incomeTotalAllCredits: 10011, totalAssets: 0, totalDebts: 0 },
+  { yearMonth: "2026-08", incomeTotal: 15226, expensesTotal: 0, netWorth: 0, coreExpensesTotal: 0, debtPaymentsTotal: 0, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 0, incomeTotalAllCredits: 15226, totalAssets: 0, totalDebts: 0 },
+  { yearMonth: "2026-09", incomeTotal: 41424, expensesTotal: 0, netWorth: 0, coreExpensesTotal: 0, debtPaymentsTotal: 0, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 0, incomeTotalAllCredits: 41424, totalAssets: 0, totalDebts: 0 },
+  // Oct 26 - current month with partial data (should be EXCLUDED from "last 3 months")
+  { yearMonth: "2026-10", incomeTotal: 3533, expensesTotal: 0, netWorth: 0, coreExpensesTotal: 0, debtPaymentsTotal: 0, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 0, incomeTotalAllCredits: 3533, totalAssets: 0, totalDebts: 0 },
+];
+
+const bugScenarioIncome: IncomeTxnRecord[] = [
+  { txMonth: "2026-07", source: "Payroll", category: "Salary", amount: 10011, date: "2026-07-31", accountSlug: "checking", currency: "CAD", description: "Salary" },
+  { txMonth: "2026-08", source: "Payroll", category: "Salary", amount: 15226, date: "2026-08-31", accountSlug: "checking", currency: "CAD", description: "Salary" },
+  { txMonth: "2026-09", source: "Payroll", category: "Salary", amount: 41424, date: "2026-09-30", accountSlug: "checking", currency: "CAD", description: "Salary" },
+  { txMonth: "2026-10", source: "Payroll", category: "Salary", amount: 3533, date: "2026-10-15", accountSlug: "checking", currency: "CAD", description: "Salary" },
+];
+
+try {
+  const bugMetrics = computeDetailedIncomeMetrics(
+    bugScenarioHistory,
+    bugScenarioIncome,
+    "last3",
+    2026,
+    true
+  );
+
+  const expectedAvg = Math.round((10011 + 15226 + 41424) / 3); // = 22,220
+  const actualAvg = bugMetrics.windowAmount;
+
+  console.log(`Expected "Last 3 months" average: CA$${expectedAvg.toLocaleString()}`);
+  console.log(`Actual computed windowAmount: CA$${actualAvg.toLocaleString()}`);
+  console.log(`Window months used: ${bugMetrics.windowMonths.join(", ")}`);
+  console.log(`Regular sources:`, bugMetrics.regularSources.map(s => `${s.source}: $${Math.round(s.amount)}`).join(", "));
+  console.log(`One-off sources:`, bugMetrics.oneOffSources.map(s => `${s.source}: $${Math.round(s.amount)}`).join(", "));
+  
+  // Verify calculation breakdown
+  if (bugMetrics.calculation) {
+    console.log(`\nCalculation breakdown:`);
+    bugMetrics.calculation.monthlyAmounts.forEach(m => {
+      console.log(`  ${m.month}: CA$${m.amount.toLocaleString()}`);
+    });
+    console.log(`  Sum: CA$${bugMetrics.calculation.sum.toLocaleString()}`);
+    console.log(`  Count: ${bugMetrics.calculation.count}`);
+    console.log(`  Average: CA$${Math.round(bugMetrics.calculation.sum / bugMetrics.calculation.count).toLocaleString()}`);
+    console.log(`  One-off detection: ${bugMetrics.calculation.oneOffDetectionApplied ? "enabled" : "disabled"}`);
+  }
+
+  if (actualAvg === expectedAvg) {
+    console.log(`\n✅ BUG FIXED: Calculation is correct!\n`);
+  } else {
+    console.log(`\n❌ BUG PRESENT: windowAmount should be CA$${expectedAvg.toLocaleString()}, not CA$${actualAvg.toLocaleString()}\n`);
+    
+    // Explain the likely root cause
+    if (bugMetrics.windowMonths.includes("2026-10")) {
+      console.log(`🐛 ROOT CAUSE: Current month (2026-10) is included in windowMonths.`);
+      console.log(`   getMonthsForWindow() should exclude the current month for "last3" window.\n`);
+    } else if (bugMetrics.oneOffSources.length > 0) {
+      console.log(`🐛 ROOT CAUSE: Sep's CA$41,424 was detected as one-off (>40% above median CA$15,226).`);
+      console.log(`   The entire income source was moved to oneOffSources and excluded from windowAmount.\n`);
+    }
+  }
+} catch (err) {
+  console.log(`❌ ERROR: ${err instanceof Error ? err.message : String(err)}\n`);
+}
+
+console.log("=== END BUG REPRODUCTION ===\n");
 
 // ── Regression Test: Large LOC Paydown (Bug Fix Verification) ──────────────────
 
-console.log("\n=== REGRESSION TEST: Large LOC Paydown ===");
+console.log("=== REGRESSION TEST: Large LOC Paydown ===");
 console.log("Bug: Large paydown on LOC was counted entirely as Fixed cost.");
 console.log("Expected: Only scheduled payment (~$812 interest + 1% principal = ~$2,312) goes to Fixed.");
 console.log("         Extra paydown (~$30,848) should go to Savings & debt.\n");

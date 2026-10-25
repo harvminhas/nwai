@@ -1,9 +1,11 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { usePlan } from "@/contexts/PlanContext";
+import { isFeatureEnabled } from "@/lib/features";
 import UpgradePrompt from "@/components/UpgradePrompt";
 import { fmt } from "@/lib/currencyUtils";
 import type {
@@ -1425,6 +1427,15 @@ function WhatIfWorkspace() {
 // ── Page export ────────────────────────────────────────────────────────────────
 
 export default function WhatIfPage() {
+  const router = useRouter();
+  
+  // Feature flag guard
+  useEffect(() => {
+    if (!isFeatureEnabled("showExtendedPages")) {
+      router.replace("/account/dashboard");
+    }
+  }, [router]);
+  
   const { can, loading } = usePlan();
 
   if (loading) return (

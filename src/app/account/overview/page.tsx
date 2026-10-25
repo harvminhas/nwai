@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { useActiveProfile } from "@/contexts/ActiveProfileContext";
+import { isFeatureEnabled } from "@/lib/features";
 import ConsolidatedCurrentDashboard from "@/components/ConsolidatedCurrentDashboard";
 import { FinancialFutureModules } from "@/components/FinancialFutureModules";
 import type { DashboardAlert } from "@/app/api/user/insights/route";
@@ -17,6 +18,14 @@ import type { EmergencyFundMetrics } from "@/lib/profileMetrics";
 
 export default function OverviewPage() {
   const router = useRouter();
+  
+  // Feature flag guard
+  useEffect(() => {
+    if (!isFeatureEnabled("showExtendedPages")) {
+      router.replace("/account/dashboard");
+    }
+  }, [router]);
+  
   const { buildHeaders } = useActiveProfile();
 
   const [alerts,  setAlerts]  = useState<DashboardAlert[]>([]);
