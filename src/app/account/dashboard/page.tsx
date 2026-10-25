@@ -7,6 +7,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { useActiveProfile } from "@/contexts/ActiveProfileContext";
 import { fmt } from "@/lib/currencyUtils";
+import { Drawer, type DrawerType } from "@/components/Drawer";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -14,14 +15,16 @@ interface MoneyCoachBucket {
   bucket: string;
   label: string;
   emoji: string;
-  monthlyMedian: number;
+  monthlyAverage: number;
   pctOfIncome: number;
   targetPct: number;
   advice: string;
+  hasEstimates?: boolean;
 }
 
 interface MoneyCoachBreakdown {
-  incomeMedian: number;
+  incomeAmount: number;
+  incomeBasisLabel: string;
   buckets: MoneyCoachBucket[];
   totalSpending: number;
   savingsRate: number;
@@ -31,6 +34,7 @@ interface MoneyCoachBreakdown {
     coveragePct: number;
     missingMonths: string[];
   };
+  homeCurrency?: string;
 }
 
 // ── Components ─────────────────────────────────────────────────────────────────
@@ -123,20 +127,22 @@ function AnswerCard({
   );
 }
 
-function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdown; currency: string }) {
-  const [expanded, setExpanded] = useState(true);
-
-  const { coverage, incomeMedian, buckets } = breakdown;
+function WhereMoneyGoes({ 
+  breakdown, 
+  currency, 
+  onOpenDrawer 
+}: { 
+  breakdown: MoneyCoachBreakdown; 
+  currency: string;
+  onOpenDrawer: (type: DrawerType) => void;
+}) {
+  const { coverage, incomeAmount, incomeBasisLabel, buckets } = breakdown;
   
-  // Calculate Needs % (Fixed + Essentials)
+  // Calculate bucket percentages
   const fixedBucket = buckets.find(b => b.bucket === "fixed");
   const essentialsBucket = buckets.find(b => b.bucket === "essentials");
   const flexibleBucket = buckets.find(b => b.bucket === "flexible");
   const savingsBucket = buckets.find(b => b.bucket === "savings");
-  
-  const needsPct = (fixedBucket?.pctOfIncome || 0) + (essentialsBucket?.pctOfIncome || 0);
-  const flexPct = flexibleBucket?.pctOfIncome || 0;
-  const savPct = savingsBucket?.pctOfIncome || 0;
 
   const bucketColors: Record<string, string> = {
     fixed: "#7c3aed",
@@ -147,160 +153,41 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
 
   return (
     <section className="mt-10">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-5 rounded-2xl border border-gray-200 bg-white p-5 text-left shadow-sm transition-all hover:border-purple-200"
-        aria-expanded={expanded}
-      >
-        <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-bold text-gray-900">Where your money goes</h2>
-          <p className="mt-0.5 text-sm text-gray-500">
-            Monthly average · {fmt(incomeMedian, currency)} take-home
-          </p>
+      {/* Coverage Note */}
+      {coverage.coveragePct < 90 && (
+        <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900">
+          <span>⚠</span>
+          <span>
+            Based on {coverage.monthsCovered} of {coverage.monthsSpan} months
+            {coverage.missingMonths.length > 0 && `, missing ${coverage.missingMonths.slice(0, 2).join(", ")}`}
+            {coverage.missingMonths.length > 2 && `, +${coverage.missingMonths.length - 2} more`}
+          </span>
+          <span>·</span>
+          <Link href="/account/statements" className="font-semibold underline">
+            Upload missing months
+          </Link>
         </div>
-        
-        {/* Mini bar */}
-        <div className="flex h-2.5 min-w-20 flex-1 max-w-xs gap-0.5 overflow-hidden rounded-full">
-          <div style={{ flex: needsPct, background: bucketColors.fixed }} />
-          <div style={{ flex: flexPct, background: bucketColors.flexible }} />
-          <div style={{ flex: savPct, background: bucketColors.savings }} />
-        </div>
-        
-        <span className="whitespace-nowrap text-sm text-gray-700">
-          Needs {Math.round(needsPct)}% · Flexible {Math.round(flexPct)}% · Savings {Math.round(savPct)}%
-        </span>
-        
-        <svg 
-          className={`h-6 w-6 shrink-0 text-gray-500 transition-transform ${expanded ? "rotate-180" : ""}`}
-          fill="none" 
-          viewBox="0 0 24 24" 
-          stroke="currentColor"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
+      )}
 
-      {expanded && (
-        <div className="mt-4 space-y-4">
-          {/* Coverage Note */}
-          {coverage.coveragePct < 90 && (
-            <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900">
-              <span>⚠</span>
-              <span>
-                Based on {coverage.monthsCovered} of {coverage.monthsSpan} months
-                {coverage.missingMonths.length > 0 && `, missing ${coverage.missingMonths.slice(0, 2).join(", ")}`}
-                {coverage.missingMonths.length > 2 && `, +${coverage.missingMonths.length - 2} more`}
-              </span>
-              <span>·</span>
-              <Link href="/account/statements" className="font-semibold underline">
-                Upload missing months
-              </Link>
-            </div>
-          )}
-
-          {/* Stacked Bar Card */}
-          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="flex items-baseline justify-between gap-3 flex-wrap">
-              <h3 className="text-base font-bold text-gray-900">
-                {fmt(incomeMedian, currency)} take-home / month
-              </h3>
-              <p className="text-sm text-gray-500">
-                Needs {Math.round(needsPct)}% · Wants {Math.round(flexPct)}% · Savings {Math.round(savPct)}%
-              </p>
-            </div>
-            
-            {/* Main Bar */}
-            <div className="mt-4 flex h-5 gap-0.5 overflow-hidden rounded-lg">
-              {fixedBucket && (
-                <div 
-                  style={{ flex: fixedBucket.pctOfIncome, backgroundColor: bucketColors.fixed }}
-                  className="flex items-center justify-center text-[11px] font-bold text-white"
-                >
-                  {Math.round(fixedBucket.pctOfIncome)}%
-                </div>
-              )}
-              {essentialsBucket && (
-                <div 
-                  style={{ flex: essentialsBucket.pctOfIncome, backgroundColor: bucketColors.essentials }}
-                  className="flex items-center justify-center text-[11px] font-bold text-white"
-                >
-                  {Math.round(essentialsBucket.pctOfIncome)}%
-                </div>
-              )}
-              {flexibleBucket && (
-                <div 
-                  style={{ flex: flexibleBucket.pctOfIncome, backgroundColor: bucketColors.flexible }}
-                  className="flex items-center justify-center text-[11px] font-bold text-white"
-                >
-                  {Math.round(flexibleBucket.pctOfIncome)}%
-                </div>
-              )}
-              {savingsBucket && (
-                <div 
-                  style={{ flex: savingsBucket.pctOfIncome, backgroundColor: bucketColors.savings }}
-                  className="flex items-center justify-center text-[11px] font-bold text-white"
-                >
-                  {Math.round(savingsBucket.pctOfIncome)}%
-                </div>
-              )}
-            </div>
-
-            {/* Target Bar */}
-            <div className="mt-1.5 flex h-1.5 gap-0.5 overflow-hidden rounded opacity-35">
-              <div style={{ flex: 35, backgroundColor: bucketColors.fixed }} />
-              <div style={{ flex: 15, backgroundColor: bucketColors.essentials }} />
-              <div style={{ flex: 30, backgroundColor: bucketColors.flexible }} />
-              <div style={{ flex: 20, backgroundColor: bucketColors.savings }} />
-            </div>
-
-            <div className="mt-2 flex justify-between text-xs text-gray-500">
-              <span>Target: Needs 50% (Fixed 35 + Essentials 15)</span>
-              <span>Flexible 30% · Savings 20%</span>
-            </div>
-
-            {/* Legend */}
-            <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-sm text-gray-700">
-              {fixedBucket && (
-                <span className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded" style={{ backgroundColor: bucketColors.fixed }} />
-                  Fixed {fmt(fixedBucket.monthlyMedian, currency)}
-                </span>
-              )}
-              {essentialsBucket && (
-                <span className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded" style={{ backgroundColor: bucketColors.essentials }} />
-                  Essentials {fmt(essentialsBucket.monthlyMedian, currency)}
-                </span>
-              )}
-              {flexibleBucket && (
-                <span className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded" style={{ backgroundColor: bucketColors.flexible }} />
-                  Flexible {fmt(flexibleBucket.monthlyMedian, currency)}
-                </span>
-              )}
-              {savingsBucket && (
-                <span className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded" style={{ backgroundColor: bucketColors.savings }} />
-                  Savings & debt {fmt(savingsBucket.monthlyMedian, currency)}
-                </span>
-              )}
-              <span className="text-gray-400">= {fmt(incomeMedian, currency)}</span>
-            </div>
-          </div>
-
-          {/* Five Bucket Cards */}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      {/* Five Bucket Cards */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             {/* Income Card */}
-            <div className="rounded-2xl border border-gray-200 bg-gradient-to-br from-purple-50 to-white p-5 shadow-sm">
+            <button
+              onClick={() => onOpenDrawer("income")}
+              className="rounded-2xl border border-gray-200 bg-gradient-to-br from-purple-50 to-white p-5 shadow-sm transition hover:shadow-md hover:border-purple-300 text-left"
+            >
               <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-gray-500">
                 <span className="h-2.5 w-2.5 rounded" style={{ backgroundColor: "#9333ea" }} />
                 Income
+                <svg className="ml-auto h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
               </div>
               <p className="text-2xl font-bold tracking-tight text-gray-900">
-                {fmt(incomeMedian, currency)}
+                {fmt(incomeAmount, currency)}
                 <span className="text-sm font-medium text-gray-400">/mo</span>
               </p>
-              <p className="mt-1 text-xs text-gray-500">100% · take-home</p>
+              <p className="mt-1 text-xs text-gray-500">{incomeBasisLabel} · take-home</p>
               
               <div className="mt-4 h-2 w-full rounded-full bg-gray-100">
                 <div className="h-full w-full rounded-full bg-purple-600" />
@@ -316,7 +203,10 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
               <p className="mt-2 min-h-[2.5rem] text-xs leading-relaxed text-gray-700">
                 Consistent pay — a solid base to plan around.
               </p>
-            </div>
+              <p className="mt-2 text-xs text-purple-600 font-medium">
+                How is this calculated? →
+              </p>
+            </button>
 
             {/* Other Buckets */}
             {buckets.filter(b => b.bucket !== "uncategorized").map((bucket) => {
@@ -327,27 +217,39 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
               let statusColor = "bg-green-100 text-green-800";
               
               if (diff > 3) {
-                statusTag = `+${Math.round(absDiff)}% over`;
+                statusTag = `${Math.round(absDiff)}% over`;
                 statusColor = "bg-amber-100 text-amber-800";
               } else if (diff < -3) {
                 statusTag = `${Math.round(absDiff)}% under`;
                 statusColor = "bg-green-100 text-green-800";
               } else if (diff > 0) {
-                statusTag = `+${Math.round(absDiff)}% ahead`;
+                statusTag = `${Math.round(absDiff)}% ahead`;
                 statusColor = "bg-green-100 text-green-800";
               }
 
               return (
-                <div key={bucket.bucket} className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                <button
+                  key={bucket.bucket}
+                  onClick={() => onOpenDrawer(bucket.bucket as DrawerType)}
+                  className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition hover:shadow-md hover:border-purple-300 text-left"
+                >
                   <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-gray-500">
                     <span 
                       className="h-2.5 w-2.5 rounded" 
                       style={{ backgroundColor: bucketColors[bucket.bucket as keyof typeof bucketColors] }}
                     />
                     {bucket.label}
+                    {bucket.hasEstimates && (
+                      <span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold normal-case text-gray-600">
+                        est.
+                      </span>
+                    )}
+                    <svg className="ml-auto h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
                   </div>
                   <p className="text-2xl font-bold tracking-tight text-gray-900">
-                    {fmt(bucket.monthlyMedian, currency)}
+                    {fmt(bucket.monthlyAverage, currency)}
                     <span className="text-sm font-medium text-gray-400">/mo</span>
                   </p>
                   <p className="mt-1 text-xs text-gray-500">
@@ -379,12 +281,13 @@ function WhereMoneyGoes({ breakdown, currency }: { breakdown: MoneyCoachBreakdow
                   <p className="mt-2 min-h-[2.5rem] text-xs leading-relaxed text-gray-700">
                     {bucket.advice}
                   </p>
-                </div>
+                  <p className="mt-2 text-xs text-purple-600 font-medium">
+                    See breakdown →
+                  </p>
+                </button>
               );
             })}
           </div>
-        </div>
-      )}
     </section>
   );
 }
@@ -401,6 +304,31 @@ export default function DashboardPage() {
   const [breakdown, setBreakdown] = useState<MoneyCoachBreakdown | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [currency, setCurrency] = useState("USD");
+  const [activeDrawer, setActiveDrawer] = useState<DrawerType | null>(null);
+
+  // Handle URL hash for drawer state
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.slice(1); // Remove #
+      if (hash && ["income", "fixed", "essentials", "flexible", "savings"].includes(hash)) {
+        setActiveDrawer(hash as DrawerType);
+      } else {
+        setActiveDrawer(null);
+      }
+    };
+
+    handleHashChange(); // Initial load
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
+
+  const openDrawer = (type: DrawerType) => {
+    window.location.hash = type;
+  };
+
+  const closeDrawer = () => {
+    window.location.hash = "";
+  };
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -425,7 +353,7 @@ export default function DashboardPage() {
       if (coachRes.ok) {
         const data = await coachRes.json();
         setBreakdown(data);
-        setCurrency("USD");
+        setCurrency(data.homeCurrency || "USD");
       }
       
       if (suggestionsRes.ok) {
@@ -524,7 +452,7 @@ export default function DashboardPage() {
 
         {/* Where Money Goes */}
         {breakdown && breakdown.coverage.monthsCovered > 0 ? (
-          <WhereMoneyGoes breakdown={breakdown} currency={currency} />
+          <WhereMoneyGoes breakdown={breakdown} currency={currency} onOpenDrawer={openDrawer} />
         ) : (
           <div className="mx-auto mt-16 max-w-2xl rounded-2xl border-2 border-dashed border-purple-200 bg-purple-50/30 p-12 text-center">
             <p className="mb-3 text-lg font-semibold text-gray-600">
@@ -542,6 +470,15 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+
+      {/* Drawer */}
+      <Drawer
+        type={activeDrawer || "income"}
+        isOpen={activeDrawer !== null}
+        onClose={closeDrawer}
+        token={token}
+        currency={currency}
+      />
     </div>
   );
 }

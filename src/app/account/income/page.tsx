@@ -18,6 +18,7 @@ import {
   type Reliability,
 } from "@/lib/incomeEngine";
 import type { SourceMonthData } from "@/lib/incomeEngine";
+import { computeIncomeMetrics } from "@/lib/incomeMetrics";
 import { fmt, getCurrencySymbol, formatCurrency } from "@/lib/currencyUtils";
 import { incomeTxnKey } from "@/lib/applyRules";
 import type { SourceSuggestion } from "@/lib/sourceMappings";
@@ -893,6 +894,23 @@ function IncomePageInner() {
       ) / regularHistoryPoints.length,
     )
     : 0;
+  
+  // Current monthly (last 3 months run-rate)
+  const recentPoints = regularHistoryPoints.slice(-3);
+  const currentMonthly = recentPoints.length >= 2
+    ? Math.round(
+      recentPoints.reduce(
+        (s, h) => s + historyIncomePoint(h, incomeShowAllCredits),
+        0,
+      ) / recentPoints.length,
+    )
+    : avgIncome;
+  const currentBasisLabel = recentPoints.length === 3 
+    ? "last 3 months" 
+    : recentPoints.length === 2 
+    ? "last 2 months" 
+    : `${regularHistoryPoints.length}-month avg`;
+  
   const tabMonths       = sortedHistory.slice(-6).map((h) => h.yearMonth);
   const txCount         = transactions.length;
 
@@ -1253,7 +1271,13 @@ function IncomePageInner() {
             )}
 
             {/* All-time summary strip */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              {/* Current Monthly */}
+              <div className="rounded-xl border border-purple-200 bg-purple-50 p-4 shadow-sm">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-purple-600 mb-1">Current monthly</p>
+                <p className="text-xl font-bold text-gray-900 tabular-nums">{currentMonthly > 0 ? fmt(currentMonthly, homeCurrency) : "—"}</p>
+                <p className="text-xs text-purple-600 mt-0.5">{currentBasisLabel}</p>
+              </div>
               {/* Monthly Average */}
               <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
                 <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Monthly average</p>

@@ -1,0 +1,291 @@
+/**
+ * Bucket Breakdown — per-category and per-merchant aggregations for money coach drawers.
+ * 
+ * Provides detailed breakdowns of spending by category and merchant for each bucket,
+ * supporting multiple time windows (last 3 months, 12-month avg, year-to-date).
+ */
+
+import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
+import type { MonthlyHistoryEntry } from "./financialProfile";
+import { getCategoryBucket, type MoneyCoachBucket } from "./moneyCoachBuckets";
+import { isCoreExcluded } from "./spendingMetrics";
+import { getParentCategory } from "./categoryTaxonomy";
+import { computeScheduledDebtPayments } from "./debtPayments";
+
+export interface MerchantBreakdown {
+  merchant: string;
+  amount: number;
+  accountSlug?: string;
+  accountLabel?: string;
+}
+
+export interface CategoryBreakdown {
+  category: string;
+  amount: number;
+  pctOfBucket: number;
+  merchants: MerchantBreakdown[];
+  isEstimated?: boolean;
+  isScheduled?: boolean;
+}
+
+export interface BucketDetailedBreakdown {
+  bucket: MoneyCoachBucket;
+  monthlyAverage: number;
+  categories: CategoryBreakdown[];
+  notCountedHere: {
+    label: string;
+    reason: string;
+    amount?: number;
+  }[];
+}
+
+export type TimeWindow = "last3" | "12month" | "ytd";
+
+/**
+ * Get months for a specific time window.
+ */
+export function getMonthsForWindow(
+  monthlyHistory: MonthlyHistoryEntry[],
+  window: TimeWindow,
+  currentYear: number
+): string[] {
+  const monthsWithData = monthlyHistory
+    .filter(h => h.incomeTotal > 0 || h.expensesTotal > 0)
+    .map(h => h.yearMonth)
+    .sort();
+
+  if (monthsWithData.length === 0) return [];
+
+  switch (window) {
+    case "last3":
+      return monthsWithData.slice(-3);
+    
+    case "12month":
+      return monthsWithData.slice(-12);
+    
+    case "ytd": {
+      const ytdStart = `${currentYear}-01`;
+      return monthsWithData.filter(ym => ym >= ytdStart);
+    }
+    
+    default:
+      return monthsWithData.slice(-3);
+  }
+}
+
+/**
+ * Compute detailed breakdown for a specific bucket and time window.
+ */
+export function computeBucketBreakdown(
+  bucket: MoneyCoachBucket,
+  expenseTxns: ExpenseTxnRecord[],
+  accountSnapshots: AccountSnapshot[],
+  months: string[],
+  homeCurrency: string
+): BucketDetailedBreakdown {
+  // Filter transactions to selected months
+  const txnsInWindow = expenseTxns.filter(t => months.includes(t.txMonth));
+
+  // Group by category
+  const categoryMap = new Map<string, ExpenseTxnRecord[]>();
+  
+  for (const txn of txnsInWindow) {
+    // Skip transfers and excluded categories
+    if (isCoreExcluded(txn.category)) continue;
+
+    // Skip Card Servicing - it's excluded from buckets
+    const parentCategory = getParentCategory(txn.category);
+    if (parentCategory === "Debt") continue;
+
+    const txnBucket = getCategoryBucket(txn.category);
+    if (txnBucket !== bucket) continue;
+
+    const existing = categoryMap.get(parentCategory) || [];
+    existing.push(txn);
+    categoryMap.set(parentCategory, existing);
+  }
+
+  // For Fixed bucket, add scheduled debt payments
+  let scheduledDebtAmount = 0;
+  const scheduledDebtCategories: CategoryBreakdown[] = [];
+  
+  if (bucket === "fixed") {
+    const scheduledPayments = computeScheduledDebtPayments(accountSnapshots);
+    const monthCount = months.length || 1;
+    
+    // Group by debt type
+    const mortgagePayments = scheduledPayments.filter(p => p.debtType === "loan" && p.accountSlug.includes("mortgage"));
+    const loanPayments = scheduledPayments.filter(p => p.debtType === "loan" && !p.accountSlug.includes("mortgage"));
+    const creditPayments = scheduledPayments.filter(p => p.debtType === "credit");
+    
+    if (mortgagePayments.length > 0) {
+      const mortgageTotal = mortgagePayments.reduce((sum, p) => sum + p.amount, 0);
+      scheduledDebtAmount += mortgageTotal;
+      scheduledDebtCategories.push({
+        category: "Mortgage payment",
+        amount: mortgageTotal,
+        pctOfBucket: 0, // Will be calculated later
+        merchants: mortgagePayments.map(p => ({
+          merchant: `Scheduled payment`,
+          amount: p.amount,
+          accountSlug: p.accountSlug,
+        })),
+        isScheduled: true,
+        isEstimated: mortgagePayments.some(p => p.isEstimated),
+      });
+    }
+
+    if (loanPayments.length > 0) {
+      const loanTotal = loanPayments.reduce((sum, p) => sum + p.amount, 0);
+      scheduledDebtAmount += loanTotal;
+      scheduledDebtCategories.push({
+        category: "Loan payments",
+        amount: loanTotal,
+        pctOfBucket: 0,
+        merchants: loanPayments.map(p => ({
+          merchant: `Scheduled payment`,
+          amount: p.amount,
+          accountSlug: p.accountSlug,
+        })),
+        isScheduled: true,
+        isEstimated: loanPayments.some(p => p.isEstimated),
+      });
+    }
+
+    if (creditPayments.length > 0) {
+      const creditTotal = creditPayments.reduce((sum, p) => sum + p.amount, 0);
+      scheduledDebtAmount += creditTotal;
+      scheduledDebtCategories.push({
+        category: "Credit card minimums",
+        amount: creditTotal,
+        pctOfBucket: 0,
+        merchants: creditPayments.map(p => ({
+          merchant: `Minimum payment`,
+          amount: p.amount,
+          accountSlug: p.accountSlug,
+        })),
+        isScheduled: true,
+        isEstimated: creditPayments.some(p => p.isEstimated),
+      });
+    }
+  }
+
+  // Build category breakdowns
+  const categories: CategoryBreakdown[] = [];
+  
+  for (const [category, txns] of categoryMap) {
+    const total = txns.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    const avgMonthly = total / (months.length || 1);
+
+    // Group by merchant
+    const merchantMap = new Map<string, number>();
+    const merchantAccounts = new Map<string, { accountSlug?: string; accountLabel?: string }>();
+    
+    for (const txn of txns) {
+      const merchant = txn.merchant || "Unknown";
+      merchantMap.set(merchant, (merchantMap.get(merchant) || 0) + Math.abs(txn.amount));
+      if (!merchantAccounts.has(merchant)) {
+        merchantAccounts.set(merchant, {
+          accountSlug: txn.accountSlug,
+          accountLabel: txn.accountLabel,
+        });
+      }
+    }
+
+    // Convert to sorted merchant array (top merchants first)
+    const merchants = Array.from(merchantMap.entries())
+      .map(([merchant, amount]) => ({
+        merchant,
+        amount: amount / (months.length || 1),
+        ...merchantAccounts.get(merchant),
+      }))
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 5); // Top 5 merchants per category
+
+    categories.push({
+      category,
+      amount: avgMonthly,
+      pctOfBucket: 0, // Will be calculated later
+      merchants,
+    });
+  }
+
+  // Add scheduled debt categories
+  categories.push(...scheduledDebtCategories);
+
+  // Sort by amount (largest first)
+  categories.sort((a, b) => b.amount - a.amount);
+
+  // Calculate total and percentages
+  const totalAmount = categories.reduce((sum, c) => sum + c.amount, 0);
+  categories.forEach(c => {
+    c.pctOfBucket = totalAmount > 0 ? (c.amount / totalAmount) * 100 : 0;
+  });
+
+  // Build "Not counted here" notes
+  const notCountedHere: BucketDetailedBreakdown["notCountedHere"] = [];
+  
+  if (bucket === "fixed") {
+    // Card payments are excluded
+    const cardPayments = txnsInWindow.filter(t => getParentCategory(t.category) === "Debt");
+    const cardPaymentTotal = cardPayments.reduce((sum, t) => sum + Math.abs(t.amount), 0) / (months.length || 1);
+    if (cardPaymentTotal > 0) {
+      notCountedHere.push({
+        label: "Credit card payments",
+        reason: "Purchases already counted in their categories",
+        amount: cardPaymentTotal,
+      });
+    }
+  }
+
+  if (bucket === "savings") {
+    notCountedHere.push({
+      label: "Scheduled mortgage & loan payments",
+      reason: "Counted in Fixed costs",
+    });
+  }
+
+  // Transfers always excluded
+  notCountedHere.push({
+    label: "Transfers between your accounts",
+    reason: "Moving your own money isn't spending",
+  });
+
+  return {
+    bucket,
+    monthlyAverage: totalAmount,
+    categories,
+    notCountedHere,
+  };
+}
+
+/**
+ * Compute 3-month trend values for sparkline (most recent 3 months).
+ */
+export function compute3MonthTrend(
+  bucket: MoneyCoachBucket,
+  expenseTxns: ExpenseTxnRecord[],
+  accountSnapshots: AccountSnapshot[],
+  monthlyHistory: MonthlyHistoryEntry[]
+): { months: string[]; values: number[] } {
+  const monthsWithData = monthlyHistory
+    .filter(h => h.incomeTotal > 0 || h.expensesTotal > 0)
+    .map(h => h.yearMonth)
+    .sort()
+    .slice(-3);
+
+  const values: number[] = [];
+
+  for (const month of monthsWithData) {
+    const breakdown = computeBucketBreakdown(
+      bucket,
+      expenseTxns,
+      accountSnapshots,
+      [month],
+      "CAD"
+    );
+    values.push(breakdown.monthlyAverage);
+  }
+
+  return { months: monthsWithData, values };
+}
