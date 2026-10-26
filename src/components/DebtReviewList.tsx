@@ -71,7 +71,19 @@ export function DebtReviewList({ token, onReviewComplete }: DebtReviewListProps)
           onReviewComplete?.();
         }, 300);
       } else {
-        console.error("Failed to save classification");
+        const errorText = await res.text();
+        console.error("Failed to save classification", {
+          status: res.status,
+          statusText: res.statusText,
+          body: errorText,
+          sent: {
+            txFingerprint: anomaly.txFingerprint,
+            accountSlug: anomaly.accountSlug,
+            classification,
+            date: anomaly.date,
+            amount: anomaly.amount,
+          },
+        });
         setSubmitting(false);
         setAnimatingOut(false);
       }
