@@ -8,7 +8,7 @@ import { getFirebaseClient } from "@/lib/firebase";
 import { useActiveProfile } from "@/contexts/ActiveProfileContext";
 import { fmt } from "@/lib/currencyUtils";
 import { Drawer, type DrawerType } from "@/components/Drawer";
-import { DebtReviewList } from "@/components/DebtReviewList";
+import { ReviewList } from "@/components/ReviewList";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -472,8 +472,9 @@ export default function DashboardPage() {
         {/* Debt Review List */}
         {breakdown && breakdown.coverage.monthsCovered > 0 && unreviewedCount > 0 && (
           <div className="mb-10">
-            <DebtReviewList 
-              token={token} 
+            <ReviewList 
+              token={token}
+              reviewType="debt_payment"
               onReviewComplete={() => {
                 // Silent background refresh - keep current UI, swap in new numbers
                 if (token) {
