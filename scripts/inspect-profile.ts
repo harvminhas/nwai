@@ -6,14 +6,17 @@
  * data access layer functions that the pages use.
  * 
  * Usage:
- *   npx tsx scripts/inspect-profile.ts <uid> [month1,month2,...]
- *   npx tsx scripts/inspect-profile.ts 9s3BrR 2026-07,2026-08,2026-09
+ *   npx tsx --env-file=.env.local scripts/inspect-profile.ts <uid> [month1,month2,...]
  * 
- * Requires: .env.local with Firebase Admin credentials
+ * Example:
+ *   npx tsx --env-file=.env.local scripts/inspect-profile.ts 9s3BrR 2026-07,2026-08,2026-09
+ * 
+ * Requirements:
+ *   - .env.local with Firebase Admin credentials
+ *   - Use --env-file flag (ESM import hoisting prevents dotenv from loading in time)
+ * 
  * Makes NO writes, prints NO secrets
  */
-
-import 'dotenv/config';
 import { resolve } from 'path';
 import { getFirebaseAdmin } from '../src/lib/firebase-admin.js';
 import { getFinancialProfile } from '../src/lib/financialProfile.js';
@@ -30,8 +33,8 @@ function parseArgs(): Args {
   const args = process.argv.slice(2);
   
   if (args.length === 0) {
-    console.error('Usage: npx tsx scripts/inspect-profile.ts <uid> [month1,month2,...]');
-    console.error('Example: npx tsx scripts/inspect-profile.ts 9s3BrR 2026-07,2026-08,2026-09');
+    console.error('Usage: npx tsx --env-file=.env.local scripts/inspect-profile.ts <uid> [month1,month2,...]');
+    console.error('Example: npx tsx --env-file=.env.local scripts/inspect-profile.ts 9s3BrR 2026-07,2026-08,2026-09');
     process.exit(1);
   }
 
@@ -66,9 +69,27 @@ async function main() {
   const profile = await getFinancialProfile(uid, db);
 
   console.log(`✓ Loaded profile (updated: ${profile.updatedAt})`);
+  console.log(`  Schema version: ${profile.schemaVersion || '(unknown)'}`);
   console.log(`  Home currency: ${profile.homeCurrency}`);
   console.log(`  Accounts: ${profile.accountSnapshots.length}`);
   console.log(`  Expense transactions: ${profile.expenseTxns.length}`);
+  
+  // Guard against stale cache missing debtPaymentHistory
+  if (!profile.debtPaymentHistory) {
+    console.log(`  ⚠️  Debt payment history: MISSING (stale cache)`);
+    console.log('');
+    console.log('  The cached profile was built with older code that did not include');
+    console.log('  debtPaymentHistory. The schema version has been bumped to v54, so the');
+    console.log('  cache will be automatically rebuilt on the next page load.');
+    console.log('');
+    console.log('  Skipping debt payment sections (they would crash).');
+    console.log('');
+    console.log('='.repeat(80));
+    console.log('Inspection complete (partial - stale cache)');
+    console.log('='.repeat(80));
+    return;
+  }
+  
   console.log(`  Debt payment history entries: ${profile.debtPaymentHistory.length}`);
   console.log('');
 
@@ -263,6 +284,14 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error('Error:', err.message);
+  console.error('');
+  console.error('='.repeat(80));
+  console.error('ERROR');
+  console.error('='.repeat(80));
+  console.error('Message:', err.message);
+  console.error('');
+  console.error('Stack trace:');
+  console.error(err.stack || '(no stack trace available)');
+  console.error('='.repeat(80));
   process.exit(1);
 });
