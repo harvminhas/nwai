@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env tsx
 /**
  * Financial Profile Inspector CLI
  * 
@@ -6,22 +6,20 @@
  * data access layer functions that the pages use.
  * 
  * Usage:
- *   npm run inspect:profile -- --uid <uid> [--months 2026-07,2026-09]
+ *   npx tsx scripts/inspect-profile.ts <uid> [month1,month2,...]
+ *   npx tsx scripts/inspect-profile.ts 9s3BrR 2026-07,2026-08,2026-09
  * 
- * Requires: .env.local with Firestore credentials
+ * Requires: .env.local with Firebase Admin credentials
  * Makes NO writes, prints NO secrets
  */
 
-import { config } from 'dotenv';
+import 'dotenv/config';
 import { resolve } from 'path';
-import { getFirebaseAdmin } from '../lib/firebase-admin';
-import { getFinancialProfile } from '../lib/financialProfile';
-import { computeScheduledDebtPayments, getAllUnreviewedAnomalies } from '../lib/debtPayments';
-import { computeBucketBreakdown, getMonthsForWindow } from '../lib/bucketBreakdown';
-import type { DebtPaymentReview } from '../lib/types';
-
-// Load environment variables
-config({ path: resolve(process.cwd(), '.env.local') });
+import { getFirebaseAdmin } from '../src/lib/firebase-admin.js';
+import { getFinancialProfile } from '../src/lib/financialProfile.js';
+import { computeScheduledDebtPayments, getAllUnreviewedAnomalies } from '../src/lib/debtPayments.js';
+import { computeBucketBreakdown } from '../src/lib/bucketBreakdown.js';
+import type { DebtPaymentReview } from '../src/lib/types.js';
 
 interface Args {
   uid: string;
@@ -30,23 +28,15 @@ interface Args {
 
 function parseArgs(): Args {
   const args = process.argv.slice(2);
-  let uid = '';
-  let months: string[] | undefined;
-
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--uid' && args[i + 1]) {
-      uid = args[i + 1];
-      i++;
-    } else if (args[i] === '--months' && args[i + 1]) {
-      months = args[i + 1].split(',').map(m => m.trim());
-      i++;
-    }
-  }
-
-  if (!uid) {
-    console.error('Usage: npm run inspect:profile -- --uid <uid> [--months 2026-07,2026-09]');
+  
+  if (args.length === 0) {
+    console.error('Usage: npx tsx scripts/inspect-profile.ts <uid> [month1,month2,...]');
+    console.error('Example: npx tsx scripts/inspect-profile.ts 9s3BrR 2026-07,2026-08,2026-09');
     process.exit(1);
   }
+
+  const uid = args[0];
+  const months = args[1] ? args[1].split(',').map(m => m.trim()) : undefined;
 
   return { uid, months };
 }
