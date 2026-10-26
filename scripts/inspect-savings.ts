@@ -105,7 +105,7 @@ function computeCurrentCardLogic(
  * Main inspection routine.
  */
 async function inspect(uid: string) {
-  console.log("🔍 Savings Calculation Inspector\n");
+  console.log("🔍 Savings Calculation Inspector (NET Approach)\n");
   console.log(`User ID: ${uid}`);
   console.log(`Loading financial profile...\n`);
 
@@ -141,35 +141,46 @@ async function inspect(uid: string) {
 
     console.log(`\n  💰 computeMonthlySavings() = ${fmt(result.total)}\n`);
     
-    console.log(`  Component Breakdown:`);
-    console.log(`    1️⃣  Contributions:          ${fmt(result.contributions)}`);
+    // Component 1: Cash accounts
+    console.log(`  💵 CASH ACCOUNTS (NET CHANGE: ${fmt(result.netCashChange)}):`);
+    if (result.details.cashAccounts.length > 0) {
+      for (const acc of result.details.cashAccounts) {
+        const priorFlag = acc.priorCarriedForward ? " [carried forward]" : "";
+        const currentFlag = acc.currentCarriedForward ? " [carried forward]" : "";
+        console.log(`      • ${acc.accountLabel}`);
+        console.log(`        Prior:   ${fmt(acc.priorBalance).padStart(12)}${priorFlag}`);
+        console.log(`        Current: ${fmt(acc.currentBalance).padStart(12)}${currentFlag}`);
+        console.log(`        Change:  ${fmt(acc.change).padStart(12)} ${acc.change >= 0 ? "✓" : "⚠️"}`);
+      }
+    } else {
+      console.log(`      (no cash accounts tracked)\n`);
+    }
+    
+    // Component 2: Debt accounts
+    console.log(`\n  💳 DEBT ACCOUNTS (NET CHANGE: ${fmt(result.netDebtChange)}):`);
+    if (result.details.debtAccounts.length > 0) {
+      for (const acc of result.details.debtAccounts) {
+        const priorFlag = acc.priorCarriedForward ? " [carried forward]" : "";
+        const currentFlag = acc.currentCarriedForward ? " [carried forward]" : "";
+        const changeLabel = acc.change > 0 ? "paid down" : acc.change < 0 ? "new borrowing" : "no change";
+        console.log(`      • ${acc.accountLabel}`);
+        console.log(`        Prior:   ${fmt(acc.priorBalance).padStart(12)}${priorFlag}`);
+        console.log(`        Current: ${fmt(acc.currentBalance).padStart(12)}${currentFlag}`);
+        console.log(`        Change:  ${fmt(acc.change).padStart(12)} (${changeLabel})`);
+      }
+    } else {
+      console.log(`      (no debt accounts tracked)\n`);
+    }
+    
+    // Component 3: Outside contributions
+    console.log(`\n  🏦 CONTRIBUTIONS TO OUTSIDE ACCOUNTS: ${fmt(result.contributionsToOutside)}`);
     if (result.details.contributions.length > 0) {
       for (const txn of result.details.contributions) {
         const flag = txn.needsConfirmation ? " ⚠️  NEEDS CONFIRMATION" : "";
-        console.log(`        • ${txn.merchant.padEnd(30)} ${fmt(txn.amount).padStart(12)} (${txn.category})${flag}`);
+        console.log(`      • ${txn.merchant.padEnd(30)} ${fmt(txn.amount).padStart(12)} (${txn.category})${flag}`);
       }
     } else {
-      console.log(`        (none)`);
-    }
-    
-    console.log(`\n    2️⃣  Cash growth (bank accounts): ${fmt(result.cashGrowth)}`);
-    if (result.details.cashGrowth.length > 0) {
-      for (const acc of result.details.cashGrowth) {
-        console.log(`        • ${acc.accountLabel.padEnd(30)} ${fmt(acc.growth).padStart(12)}`);
-        console.log(`          Balance: ${fmt(acc.priorBalance)} → ${fmt(acc.currentBalance)}`);
-      }
-    } else {
-      console.log(`        (none)`);
-    }
-    
-    console.log(`\n    3️⃣  Debt principal paid:       ${fmt(result.debtPrincipal)}`);
-    if (result.details.debtPrincipal.length > 0) {
-      for (const acc of result.details.debtPrincipal) {
-        console.log(`        • ${acc.accountLabel.padEnd(30)} ${fmt(acc.reduction).padStart(12)}`);
-        console.log(`          Balance: ${fmt(acc.priorBalance)} → ${fmt(acc.currentBalance)}`);
-      }
-    } else {
-      console.log(`        (none)`);
+      console.log(`      (none)\n`);
     }
     
     if (result.needsConfirmation.length > 0) {
@@ -181,7 +192,14 @@ async function inspect(uid: string) {
       }
     }
     
-    console.log(`\n  📈 computeAssetGains():`);
+    console.log(`\n  📊 CALCULATION BREAKDOWN:`);
+    console.log(`      Cash change:         ${fmt(result.netCashChange).padStart(12)}`);
+    console.log(`      Debt change:         ${fmt(result.netDebtChange).padStart(12)}`);
+    console.log(`      Outside contrib:     ${fmt(result.contributionsToOutside).padStart(12)}`);
+    console.log(`      ────────────────────────────────`);
+    console.log(`      Total savings:       ${fmt(result.total).padStart(12)}`);
+    
+    console.log(`\n  📈 computeAssetGains() (excluded from savings):`);
     console.log(`      Market gains:              ${fmt(gains.marketGains)}`);
     console.log(`      Manual asset changes:      ${fmt(gains.manualAssetChanges)}`);
     console.log(`      Total gains:               ${fmt(gains.totalGains)}`);

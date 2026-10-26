@@ -1,19 +1,20 @@
 /**
- * Tests for savings calculations.
+ * Tests for savings calculations (NET balance approach).
  * 
  * Validates that:
  * 1. Market gains are NOT counted as savings
  * 2. Manual asset value changes (home, car) are NOT counted as savings
- * 3. Actual contributions + debt paydown ARE counted as savings
- * 4. Balance-based debt principal calculation works correctly
- * 5. Balance-based cash growth calculation works correctly
+ * 3. Actual savings uses NET approach (cash change + debt change + outside contributions)
+ * 4. Debt transfers net to 0 (paying CC with FlexLine)
+ * 5. Balance carry-forward works correctly
+ * 6. Negative months are handled (spent more than saved)
  */
 
 import { computeMonthlySavings, computeAssetGains, computeAverageSavings } from "../savingsCalculations";
 import type { MonthlyHistoryEntry, AccountBalanceHistory } from "../financialProfile";
 import type { ExpenseTxnRecord } from "../extractTransactions";
 
-console.log("🧪 Savings Calculations Tests\n");
+console.log("🧪 Savings Calculations Tests (NET Approach)\n");
 
 // Test 1: Market gain should NOT count as savings
 console.log("=== TEST 1: Market Gain NOT Counted ===");
@@ -23,9 +24,9 @@ console.log("=== TEST 1: Market Gain NOT Counted ===");
     { yearMonth: "2026-10", netWorth: 105000 }, // +$5K from market gain
   ] as MonthlyHistoryEntry[];
 
-  const expenseTxns = [] as ExpenseTxnRecord[]; // No contribution transactions
+  const expenseTxns = [] as ExpenseTxnRecord[];
   
-  // Investment account with market gain, no contributions
+  // Investment account with market gain
   const accountBalanceHistory = [
     { 
       slug: "investment-tfsa",
@@ -42,12 +43,10 @@ console.log("=== TEST 1: Market Gain NOT Counted ===");
   const result = computeMonthlySavings(monthlyHistory, accountBalanceHistory, expenseTxns, "2026-10");
   const gains = computeAssetGains(monthlyHistory, accountBalanceHistory, expenseTxns, "2026-10");
 
-  console.log(`  Net worth increased by: $${(105000 - 100000).toLocaleString()}`);
-  console.log(`  Investment account increased by: $5,000 (market gain)`);
-  console.log(`  Contributions: $0`);
+  console.log(`  Investment account: $50,000 → $55,000 (+$5,000 market gain)`);
   console.log(`  Savings calculated: $${Math.round(result.total).toLocaleString()}`);
   console.log(`  Market gains tracked: $${Math.round(gains.marketGains).toLocaleString()}`);
-  console.log(`  Expected savings: $0 (no contributions)`);
+  console.log(`  Expected: $0 savings (investment gains excluded)`);
   console.log(`  Status: ${result.total === 0 ? "✓ PASS" : `✗ FAIL - got $${result.total}, expected $0`}\n`);
 }
 
@@ -60,44 +59,51 @@ console.log("=== TEST 2: Home Equity Gain NOT Counted ===");
   ] as MonthlyHistoryEntry[];
 
   const expenseTxns = [] as ExpenseTxnRecord[];
-  
-  // No account snapshots (manual asset like house isn't in accountBalanceHistory)
   const accountBalanceHistory = [] as AccountBalanceHistory[];
 
   const result = computeMonthlySavings(monthlyHistory, accountBalanceHistory, expenseTxns, "2026-10");
   const gains = computeAssetGains(monthlyHistory, accountBalanceHistory, expenseTxns, "2026-10");
 
-  console.log(`  Net worth increased by: $${(510000 - 500000).toLocaleString()}`);
-  console.log(`  Total assets increased by: $${(560000 - 550000).toLocaleString()}`);
+  console.log(`  Total assets: $550,000 → $560,000 (+$10,000 home equity)`);
   console.log(`  Savings calculated: $${Math.round(result.total).toLocaleString()}`);
-  console.log(`  Manual asset changes tracked: $${Math.round(gains.manualAssetChanges).toLocaleString()}`);
-  console.log(`  Expected savings: $0 (no actual contributions)`);
+  console.log(`  Manual asset changes: $${Math.round(gains.manualAssetChanges).toLocaleString()}`);
+  console.log(`  Expected: $0 savings (home equity excluded)`);
   console.log(`  Status: ${result.total === 0 ? "✓ PASS" : `✗ FAIL - got $${result.total}, expected $0`}\n`);
 }
 
-// Test 3: Actual contribution + debt paydown SHOULD count as savings (balance-based)
-console.log("=== TEST 3: Contribution + Debt Paydown Counted (Balance-Based) ===");
+// Test 3: NET approach - cash + debt + contributions
+console.log("=== TEST 3: NET Approach (Cash + Debt + Contributions) ===");
 {
   const monthlyHistory = [
-    { yearMonth: "2026-09", netWorth: 50000, debtPaymentsTotal: 0 },
-    { yearMonth: "2026-10", netWorth: 53500, debtPaymentsTotal: 1500 }, // +$3.5K net worth
+    { yearMonth: "2026-09", netWorth: 50000 },
+    { yearMonth: "2026-10", netWorth: 52500 },
   ] as MonthlyHistoryEntry[];
 
   const expenseTxns = [
-    // $2K contribution to RRSP (using canonical category name)
     { 
       txMonth: "2026-10", 
       date: "2026-10-15",
-      category: "CA: RRSP", // Canonical category that maps to "Investments & Savings"
+      category: "CA: RRSP",
       merchant: "Wealthsimple", 
-      amount: -2000,
-      accountSlug: "checking-1234",
+      amount: -500,
+      accountSlug: "checking",
       accountLabel: "Checking"
     },
   ] as ExpenseTxnRecord[];
 
-  // Credit card debt paid down $1,500 (from balance history)
   const accountBalanceHistory = [
+    // Checking account (cash grows by $1,000)
+    {
+      slug: "checking-td",
+      label: "TD Chequing",
+      accountType: "checking",
+      currency: "CAD",
+      entries: [
+        { yearMonth: "2026-09", balance: 5000 },
+        { yearMonth: "2026-10", balance: 6000 }, // +$1,000 cash
+      ],
+    },
+    // Credit card (debt paid down by $1,000)
     {
       slug: "credit-visa",
       label: "RBC Visa",
@@ -105,102 +111,151 @@ console.log("=== TEST 3: Contribution + Debt Paydown Counted (Balance-Based) ===
       currency: "CAD",
       entries: [
         { yearMonth: "2026-09", balance: -5000 },
-        { yearMonth: "2026-10", balance: -3500 }, // Paid down $1,500
+        { yearMonth: "2026-10", balance: -4000 }, // -$1,000 debt
       ],
     },
   ] as AccountBalanceHistory[];
 
   const result = computeMonthlySavings(monthlyHistory, accountBalanceHistory, expenseTxns, "2026-10");
 
-  console.log(`  RRSP contribution: $2,000`);
-  console.log(`  Debt paid down (balance-based): $1,500`);
-  console.log(`  Net worth increased by: $${(53500 - 50000).toLocaleString()}`);
-  console.log(`  Savings calculated: $${Math.round(result.total).toLocaleString()}`);
-  console.log(`  Components: contributions=$${Math.round(result.contributions)}, debt=$${Math.round(result.debtPrincipal)}, cash=$${Math.round(result.cashGrowth)}`);
-  console.log(`  Expected savings: $3,500 (contribution + debt paydown)`);
-  console.log(`  Status: ${Math.abs(result.total - 3500) < 50 ? "✓ PASS" : `⚠️  FAIL - got $${result.total}, expected $3,500`}\n`);
+  console.log(`  Cash change: +$1,000`);
+  console.log(`  Debt change: -$1,000 (paid down)`);
+  console.log(`  Outside contributions: +$500 (RRSP)`);
+  console.log(`  Total savings: $${Math.round(result.total).toLocaleString()}`);
+  console.log(`  Expected: $2,500 ($1,000 + $1,000 + $500)`);
+  console.log(`  Status: ${Math.abs(result.total - 2500) < 1 ? "✓ PASS" : `✗ FAIL - got $${result.total}, expected $2,500`}\n`);
 }
 
-// Test 4: Balance-based debt principal paid (car loan + FlexLine)
-console.log("=== TEST 4: Balance-Based Debt Principal (Multiple Accounts) ===");
-{
-  const monthlyHistory = [
-    { yearMonth: "2026-06", netWorth: 50000 },
-    { yearMonth: "2026-07", netWorth: 54442 }, // +$4,442
-  ] as MonthlyHistoryEntry[];
-
-  const expenseTxns = [] as ExpenseTxnRecord[];
-
-  // Scotia car loan + TD FlexLine balances
-  const accountBalanceHistory = [
-    {
-      slug: "loan-scotia-auto",
-      label: "Scotia Auto Loan",
-      accountType: "loan",
-      currency: "CAD",
-      entries: [
-        { yearMonth: "2026-06", balance: -25000 },
-        { yearMonth: "2026-07", balance: -23858 }, // Paid $1,142
-      ],
-    },
-    {
-      slug: "loc-td-flexline",
-      label: "TD Home Equity FlexLine",
-      accountType: "loc",
-      currency: "CAD",
-      entries: [
-        { yearMonth: "2026-06", balance: -80000 },
-        { yearMonth: "2026-07", balance: -76700 }, // Paid $3,300
-      ],
-    },
-  ] as AccountBalanceHistory[];
-
-  const result = computeMonthlySavings(monthlyHistory, accountBalanceHistory, expenseTxns, "2026-07");
-
-  console.log(`  Scotia Auto Loan: -$25,000 → -$23,858 = $1,142 paid`);
-  console.log(`  TD FlexLine: -$80,000 → -$76,700 = $3,300 paid`);
-  console.log(`  Total debt principal paid: $4,442`);
-  console.log(`  Savings calculated: $${Math.round(result.total).toLocaleString()}`);
-  console.log(`  Debt detail: ${result.details.debtPrincipal.map(d => `${d.accountLabel}=$${Math.round(d.reduction)}`).join(", ")}`);
-  console.log(`  Expected savings: $4,442 (debt principal only)`);
-  console.log(`  Status: ${Math.abs(result.total - 4442) < 1 ? "✓ PASS" : `⚠️  FAIL - got $${result.total}, expected $4,442`}\n`);
-}
-
-// Test 5: Balance-based cash growth in checking/savings
-console.log("=== TEST 5: Balance-Based Cash Growth ===");
+// Test 4: Debt transfer nets to 0 (paying CC with FlexLine)
+console.log("=== TEST 4: Debt Transfer Nets to Zero ===");
 {
   const monthlyHistory = [
     { yearMonth: "2026-08", netWorth: 50000 },
-    { yearMonth: "2026-09", netWorth: 52000 }, // +$2K
+    { yearMonth: "2026-09", netWorth: 50000 }, // No net change
   ] as MonthlyHistoryEntry[];
 
   const expenseTxns = [] as ExpenseTxnRecord[];
 
-  // Checking account with cash growth
   const accountBalanceHistory = [
+    // Credit card paid off with FlexLine
     {
-      slug: "checking-td-chequing",
-      label: "TD Chequing",
-      accountType: "checking",
+      slug: "credit-visa",
+      label: "RBC Visa",
+      accountType: "credit",
       currency: "CAD",
       entries: [
-        { yearMonth: "2026-08", balance: 5000 },
-        { yearMonth: "2026-09", balance: 7000 }, // +$2,000 cash growth
+        { yearMonth: "2026-08", balance: -10000 },
+        { yearMonth: "2026-09", balance: 0 }, // Paid off completely
+      ],
+    },
+    // FlexLine increased by same amount
+    {
+      slug: "loc-flexline",
+      label: "TD FlexLine",
+      accountType: "loc",
+      currency: "CAD",
+      entries: [
+        { yearMonth: "2026-08", balance: -50000 },
+        { yearMonth: "2026-09", balance: -60000 }, // Drew $10,000
       ],
     },
   ] as AccountBalanceHistory[];
 
   const result = computeMonthlySavings(monthlyHistory, accountBalanceHistory, expenseTxns, "2026-09");
 
-  console.log(`  TD Chequing: $5,000 → $7,000 = $2,000 cash growth`);
-  console.log(`  Savings calculated: $${Math.round(result.total).toLocaleString()}`);
-  console.log(`  Cash detail: ${result.details.cashGrowth.map(d => `${d.accountLabel}=$${Math.round(d.growth)}`).join(", ")}`);
-  console.log(`  Expected savings: $2,000 (cash growth only)`);
-  console.log(`  Status: ${Math.abs(result.total - 2000) < 1 ? "✓ PASS" : `⚠️  FAIL - got $${result.total}, expected $2,000`}\n`);
+  console.log(`  Visa: -$10,000 → $0 (paid off $10,000)`);
+  console.log(`  FlexLine: -$50,000 → -$60,000 (drew $10,000)`);
+  console.log(`  Net debt change: $10,000 - $10,000 = $0`);
+  console.log(`  Total savings: $${Math.round(result.total).toLocaleString()}`);
+  console.log(`  Expected: $0 (debt transfer nets to 0)`);
+  console.log(`  Status: ${Math.abs(result.total) < 1 ? "✓ PASS" : `✗ FAIL - got $${result.total}, expected $0`}\n`);
 }
 
-// Test 6: Gap handling - use most recent prior month
-console.log("=== TEST 6: Gap Handling (Prior Month Missing) ===");
+// Test 5: Carried-forward balance (missing month)
+console.log("=== TEST 5: Carried-Forward Balance ===");
+{
+  const monthlyHistory = [
+    { yearMonth: "2026-07", netWorth: 50000 },
+    { yearMonth: "2026-08", netWorth: 51000 },
+    { yearMonth: "2026-09", netWorth: 52000 },
+  ] as MonthlyHistoryEntry[];
+
+  const expenseTxns = [] as ExpenseTxnRecord[];
+
+  const accountBalanceHistory = [
+    // Loan with missing Aug balance (should carry forward from July)
+    {
+      slug: "loan-auto",
+      label: "Scotia Auto Loan",
+      accountType: "loan",
+      currency: "CAD",
+      entries: [
+        { yearMonth: "2026-07", balance: -20000 },
+        // Aug missing - should carry forward -$20,000
+        { yearMonth: "2026-09", balance: -18858 }, // Paid $1,142
+      ],
+    },
+  ] as AccountBalanceHistory[];
+
+  const result = computeMonthlySavings(monthlyHistory, accountBalanceHistory, expenseTxns, "2026-09");
+
+  console.log(`  July balance: -$20,000`);
+  console.log(`  Aug balance: [carried forward from July: -$20,000]`);
+  console.log(`  Sep balance: -$18,858`);
+  console.log(`  Debt paid: $20,000 - $18,858 = $1,142`);
+  console.log(`  Total savings: $${Math.round(result.total).toLocaleString()}`);
+  console.log(`  Expected: $1,142 (with carry-forward)`);
+  console.log(`  Status: ${Math.abs(result.total - 1142) < 1 ? "✓ PASS" : `✗ FAIL - got $${result.total}, expected $1,142`}\n`);
+  console.log(`  Carried forward flag: ${result.details.debtAccounts[0]?.priorCarriedForward ? "✓" : "✗"}\n`);
+}
+
+// Test 6: Negative month (spent more than saved)
+console.log("=== TEST 6: Negative Month ===");
+{
+  const monthlyHistory = [
+    { yearMonth: "2026-08", netWorth: 50000 },
+    { yearMonth: "2026-09", netWorth: 46000 }, // Lost $4,000
+  ] as MonthlyHistoryEntry[];
+
+  const expenseTxns = [] as ExpenseTxnRecord[];
+
+  const accountBalanceHistory = [
+    // Checking account depleted
+    {
+      slug: "checking-td",
+      label: "TD Chequing",
+      accountType: "checking",
+      currency: "CAD",
+      entries: [
+        { yearMonth: "2026-08", balance: 10000 },
+        { yearMonth: "2026-09", balance: 5000 }, // Spent $5,000
+      ],
+    },
+    // Credit card paid down slightly
+    {
+      slug: "credit-visa",
+      label: "RBC Visa",
+      accountType: "credit",
+      currency: "CAD",
+      entries: [
+        { yearMonth: "2026-08", balance: -5000 },
+        { yearMonth: "2026-09", balance: -4000 }, // Paid $1,000
+      ],
+    },
+  ] as AccountBalanceHistory[];
+
+  const result = computeMonthlySavings(monthlyHistory, accountBalanceHistory, expenseTxns, "2026-09");
+
+  console.log(`  Cash change: -$5,000 (spent down checking)`);
+  console.log(`  Debt change: +$1,000 (paid down CC)`);
+  console.log(`  Net: -$5,000 + $1,000 = -$4,000`);
+  console.log(`  Total savings: $${Math.round(result.total).toLocaleString()}`);
+  console.log(`  Expected: -$4,000 (negative month)`);
+  console.log(`  Status: ${Math.abs(result.total - (-4000)) < 1 ? "✓ PASS" : `✗ FAIL - got $${result.total}, expected -$4,000`}\n`);
+}
+
+// Test 7: Gap handling with normalization
+console.log("=== TEST 7: Gap Handling (Normalized) ===");
 {
   const monthlyHistory = [
     { yearMonth: "2026-07", netWorth: 100000 },
@@ -209,19 +264,17 @@ console.log("=== TEST 6: Gap Handling (Prior Month Missing) ===");
   ] as MonthlyHistoryEntry[];
 
   const expenseTxns = [
-    // $500 contribution in Oct only
     { 
       txMonth: "2026-10", 
       date: "2026-10-15",
-      category: "CA: RRSP", 
+      category: "CA: RRSP",
       merchant: "Wealthsimple",
-      amount: -500, 
+      amount: -1500, // $1,500 contribution in Oct
       accountSlug: "checking",
       accountLabel: "Checking"
     },
   ] as ExpenseTxnRecord[];
 
-  // Debt paid down $4,500 over 3 months (normalized to $1,500/mo)
   const accountBalanceHistory = [
     {
       slug: "credit-visa",
@@ -230,98 +283,29 @@ console.log("=== TEST 6: Gap Handling (Prior Month Missing) ===");
       currency: "CAD",
       entries: [
         { yearMonth: "2026-07", balance: -10000 },
-        { yearMonth: "2026-10", balance: -5500 }, // Paid down $4,500
+        { yearMonth: "2026-10", balance: -5500 }, // Paid $4,500 over 3 months
       ],
     },
   ] as AccountBalanceHistory[];
 
   const result = computeMonthlySavings(monthlyHistory, accountBalanceHistory, expenseTxns, "2026-10");
 
-  console.log(`  July balance: -$10,000`);
+  console.log(`  July debt: -$10,000`);
   console.log(`  Aug-Sept: [missing]`);
-  console.log(`  Oct balance: -$5,500 → $4,500 paid over 3 months`);
-  console.log(`  Contributions: $500 (Oct only)`);
+  console.log(`  Oct debt: -$5,500 → $4,500 paid over 3 months`);
+  console.log(`  Oct contribution: $1,500`);
+  console.log(`  Total over 3 months: $4,500 + $1,500 = $6,000`);
+  console.log(`  Normalized per month: $6,000 ÷ 3 = $2,000/mo`);
   console.log(`  Savings calculated: $${Math.round(result.total).toLocaleString()}/mo`);
-  console.log(`  Expected: ~$1,667/mo ($500 contribution + $4,500 debt ÷ 3 months)`);
-  console.log(`  Status: ${Math.abs(result.total - 1667) < 100 ? "✓ PASS" : `⚠️  Got $${Math.round(result.total)}/mo, expected ~$1,667/mo`}\n`);
-}
-
-// Test 7: Average savings calculation
-console.log("=== TEST 7: Average Savings Calculation ===");
-{
-  const monthlyHistory = [
-    { yearMonth: "2026-07", netWorth: 100000 },
-    { yearMonth: "2026-08", netWorth: 102000 }, // +$2K
-    { yearMonth: "2026-09", netWorth: 105000 }, // +$3K
-    { yearMonth: "2026-10", netWorth: 106500 }, // +$1.5K
-  ] as MonthlyHistoryEntry[];
-
-  const expenseTxns = [
-    { 
-      txMonth: "2026-08", 
-      date: "2026-08-15",
-      category: "CA: RRSP", 
-      merchant: "Wealthsimple",
-      amount: -1000, 
-      accountSlug: "checking",
-      accountLabel: "Checking"
-    },
-    { 
-      txMonth: "2026-09", 
-      date: "2026-09-15",
-      category: "CA: TFSA", 
-      merchant: "Wealthsimple",
-      amount: -1500, 
-      accountSlug: "checking",
-      accountLabel: "Checking"
-    },
-    { 
-      txMonth: "2026-10", 
-      date: "2026-10-15",
-      category: "Investment", 
-      merchant: "Questrade",
-      amount: -800, 
-      accountSlug: "checking",
-      accountLabel: "Checking"
-    },
-  ] as ExpenseTxnRecord[];
-
-  const accountBalanceHistory = [
-    // Debt paid down varying amounts each month
-    { 
-      slug: "credit-visa", 
-      label: "Visa",
-      accountType: "credit",
-      currency: "CAD",
-      entries: [
-        { yearMonth: "2026-07", balance: -10000 },
-        { yearMonth: "2026-08", balance: -9000 }, // -$1K
-        { yearMonth: "2026-09", balance: -7500 }, // -$1.5K
-        { yearMonth: "2026-10", balance: -6800 }, // -$700
-      ],
-    },
-  ] as AccountBalanceHistory[];
-
-  const avgSavings = computeAverageSavings(
-    monthlyHistory, 
-    accountBalanceHistory,
-    expenseTxns, 
-    ["2026-08", "2026-09", "2026-10"]
-  );
-
-  console.log(`  Aug: $1,000 contribution + $1,000 debt = $2,000`);
-  console.log(`  Sep: $1,500 contribution + $1,500 debt = $3,000`);
-  console.log(`  Oct: $800 contribution + $700 debt = $1,500`);
-  console.log(`  Average calculated: $${Math.round(avgSavings).toLocaleString()}/mo`);
-  console.log(`  Expected: $2,167/mo (($2K + $3K + $1.5K) ÷ 3)`);
-  console.log(`  Status: ${Math.abs(avgSavings - 2167) < 50 ? "✓ PASS" : `⚠️  Got $${Math.round(avgSavings)}/mo, expected $2,167/mo`}\n`);
+  console.log(`  Expected: $2,000/mo`);
+  console.log(`  Status: ${Math.abs(result.total - 2000) < 1 ? "✓ PASS" : `✗ FAIL - got $${result.total}/mo, expected $2,000/mo`}\n`);
 }
 
 console.log("✅ Tests complete\n");
 console.log("📝 KEY PRINCIPLES:");
-console.log("  - Savings = contributions + cash growth + debt paydown ONLY");
-console.log("  - Uses accountBalanceHistory (existing data source for balances)");
-console.log("  - Investment account balance changes are NOT counted (only transactions)");
-console.log("  - Manual asset value changes (home, car) are NOT counted");
-console.log("  - Market gains are tracked separately in computeAssetGains()");
-console.log("  - Gap handling: uses most recent prior month, normalizes by elapsed months\n");
+console.log("  - Savings = NET change: (cash up) + (debt down) + (outside contributions)");
+console.log("  - Debt transfers net to 0 (e.g., paying CC with FlexLine)");
+console.log("  - Can be negative (spent more than saved)");
+console.log("  - Balances carry forward if missing");
+console.log("  - Uses accountBalanceHistory (existing data source)");
+console.log("  - Investment gains and home equity excluded\n");
