@@ -17,6 +17,7 @@ import { getFirebaseAdmin } from "../src/lib/firebase-admin";
 import { getFinancialProfile } from "../src/lib/financialProfile";
 import { computeMoneyCoachBreakdown } from "../src/lib/moneyCoach";
 import { computeBucketBreakdown } from "../src/lib/bucketBreakdown";
+import { computeAverageSavings, computeMonthlySavings } from "../src/lib/savingsCalculations";
 import type { MoneyCoachBucket } from "../src/lib/moneyCoachBuckets";
 import type { DebtPaymentReview } from "../src/lib/types";
 
@@ -96,19 +97,67 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     const bucketSummary = breakdown.buckets.find(b => b.bucket === bucket);
     const cardValue = bucketSummary?.monthlyAverage || 0;
     
-    // Get drawer breakdown
-    const drawerBreakdown = computeBucketBreakdown(
-      bucket,
-      profile.expenseTxns,
-      profile.accountSnapshots,
-      profile.debtPaymentHistory,
-      completeMonths,
-      currency,
-      userReviews,
-      profile.fxRates || {}
-    );
+    let drawerTotal: number;
+    let categories: Array<{ name: string; amount: number }> = [];
+    let loans: Array<{ name: string; amount: number }> = [];
     
-    const drawerTotal = drawerBreakdown.monthlyAverage;
+    if (bucket === "savings") {
+      // Savings drawer uses NET balance calculation, not category breakdown
+      drawerTotal = computeAverageSavings(
+        profile.monthlyHistory,
+        profile.accountBalanceHistory,
+        profile.expenseTxns,
+        completeMonths
+      );
+      
+      // Get cash/debt/contributions breakdown for display
+      const lastMonth = completeMonths[completeMonths.length - 1];
+      const monthlySavings = computeMonthlySavings(
+        profile.monthlyHistory,
+        profile.accountBalanceHistory,
+        profile.expenseTxns,
+        lastMonth
+      );
+      
+      categories = [
+        { name: "Cash change", amount: monthlySavings.netCashChange },
+        { name: "Debt paydown", amount: monthlySavings.netDebtChange },
+        { name: "Outside contributions", amount: monthlySavings.contributionsToOutside },
+      ].filter(c => Math.abs(c.amount) > 0.5);
+    } else {
+      // Other buckets use category breakdown
+      const drawerBreakdown = computeBucketBreakdown(
+        bucket,
+        profile.expenseTxns,
+        profile.accountSnapshots,
+        profile.debtPaymentHistory,
+        completeMonths,
+        currency,
+        userReviews,
+        profile.fxRates || {}
+      );
+      
+      drawerTotal = drawerBreakdown.monthlyAverage;
+      
+      categories = drawerBreakdown.categories.map(cat => ({
+        name: cat.category,
+        amount: cat.amount,
+      }));
+      
+      // Extract loan details for Fixed bucket
+      if (bucket === "fixed") {
+        const loanCategory = drawerBreakdown.categories.find(c => c.category === "Loan payments");
+        if (loanCategory) {
+          for (const merchant of loanCategory.merchants) {
+            loans.push({
+              name: merchant.merchant,
+              amount: merchant.amount,
+            });
+          }
+        }
+      }
+    }
+    
     const match = Math.abs(cardValue - drawerTotal) < 1; // Allow $1 rounding difference
     
     const report: BucketReport = {
@@ -116,33 +165,9 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       cardValue,
       drawerTotal,
       match,
+      categories,
+      loans: loans.length > 0 ? loans : undefined,
     };
-    
-    // Add category breakdown for verification
-    if (bucket === "fixed") {
-      report.categories = drawerBreakdown.categories.map(cat => ({
-        name: cat.category,
-        amount: cat.amount,
-      }));
-      
-      // Extract loan details from merchants
-      const loanPayments: Array<{ name: string; amount: number }> = [];
-      const loanCategory = drawerBreakdown.categories.find(c => c.category === "Loan payments");
-      if (loanCategory) {
-        for (const merchant of loanCategory.merchants) {
-          loanPayments.push({
-            name: merchant.merchant,
-            amount: merchant.amount,
-          });
-        }
-      }
-      report.loans = loanPayments;
-    } else {
-      report.categories = drawerBreakdown.categories.map(cat => ({
-        name: cat.category,
-        amount: cat.amount,
-      }));
-    }
     
     reports.push(report);
   }
