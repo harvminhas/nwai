@@ -125,6 +125,7 @@ describe("Savings & Debt card vs drawer consistency", () => {
     debtPaymentHistory,
     subscriptions: [],
     monthlyHistory,
+    accountBalanceHistory: [], // Empty for this test (no NET savings calculation needed)
     typicalMonthly: {
       income: 22700,
       coreExpenses: 8000,
