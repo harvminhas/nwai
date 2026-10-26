@@ -351,8 +351,10 @@ export default function DashboardPage() {
     });
   }, [router]);
 
-  const loadData = useCallback(async (tok: string) => {
-    setLoading(true);
+  const loadData = useCallback(async (tok: string, options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setLoading(true);
+    }
     try {
       const [coachRes, suggestionsRes, anomaliesRes] = await Promise.all([
         fetch("/api/user/money-coach", { headers: buildHeaders(tok) }),
@@ -378,7 +380,9 @@ export default function DashboardPage() {
     } catch (error) {
       console.error("Failed to load dashboard data:", error);
     } finally {
-      setLoading(false);
+      if (!options?.silent) {
+        setLoading(false);
+      }
     }
   }, [buildHeaders]);
 
@@ -471,9 +475,9 @@ export default function DashboardPage() {
             <DebtReviewList 
               token={token} 
               onReviewComplete={() => {
-                // Reload data after review to update counts
+                // Silent background refresh - keep current UI, swap in new numbers
                 if (token) {
-                  loadData(token);
+                  loadData(token, { silent: true });
                 }
               }} 
             />
