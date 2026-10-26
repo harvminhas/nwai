@@ -101,9 +101,11 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       bucket,
       profile.expenseTxns,
       profile.accountSnapshots,
+      profile.debtPaymentHistory,
       completeMonths,
       currency,
-      userReviews
+      userReviews,
+      profile.fxRates || {}
     );
     
     const drawerTotal = drawerBreakdown.monthlyAverage;
