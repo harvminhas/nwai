@@ -1388,7 +1388,7 @@ function SpendingPageInner() {
         const topMerchants = loanPayments.map(p => ({
           name: p.accountName || p.accountSlug,
           slug: p.accountSlug,
-          displayName: p.accountName,
+          displayName: p.accountName ?? undefined,
           category: "Debt",
           categories: ["Debt"],
           currency: homeCurrency,

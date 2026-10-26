@@ -326,7 +326,7 @@ export function computeBucketBreakdown(
         const transactions: MerchantTransaction[] = data.txns.map(t => ({
           date: t.date,
           amount: Math.abs(t.amount),
-          description: t.description || '',
+          description: t.merchant || '',
           accountSlug: t.accountSlug,
           accountLabel: t.accountLabel,
         }));
