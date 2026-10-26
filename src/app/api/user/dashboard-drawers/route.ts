@@ -3,8 +3,9 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { computeDetailedIncomeMetrics, getMonthsForWindow, type IncomeTimeWindow } from "@/lib/incomeMetrics";
 import { computeBucketBreakdown, compute3MonthTrend, getMonthsForWindow as getBucketMonths, type TimeWindow } from "@/lib/bucketBreakdown";
+import { computeMonthlySavings, computeAverageSavings } from "@/lib/savingsCalculations";
 import type { MoneyCoachBucket } from "@/lib/moneyCoachBuckets";
-import type { IncomeDrawerData, BucketDrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
+import type { IncomeDrawerData, BucketDrawerData, SavingsDrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
 import type { DebtPaymentReview } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +14,7 @@ export const dynamic = "force-dynamic";
  * GET /api/user/dashboard-drawers?window=last3&bucket=fixed
  * Returns detailed drawer data for income or a specific bucket.
  */
-export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerData | BucketDrawerData | DrawerErrorResponse>> {
+export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerData | BucketDrawerData | SavingsDrawerData | DrawerErrorResponse>> {
   try {
     const token = req.headers.get("authorization")?.replace("Bearer ", "");
     if (!token) {
@@ -103,7 +104,89 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       return NextResponse.json(response);
     }
 
-    // Bucket drawer data
+    // Savings drawer data (special handling with NET balance approach)
+    if (bucket === "savings") {
+      // Get complete months for the window (exclude current incomplete month)
+      const now = new Date();
+      const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+      
+      let completeMonths: string[];
+      
+      if (window === "last3") {
+        completeMonths = profile.monthlyHistory
+          .filter(h => h.yearMonth < currentMonth)
+          .slice(-3)
+          .map(h => h.yearMonth);
+      } else if (window === "12month") {
+        completeMonths = profile.monthlyHistory
+          .filter(h => h.yearMonth < currentMonth)
+          .slice(-12)
+          .map(h => h.yearMonth);
+      } else { // ytd
+        completeMonths = profile.monthlyHistory
+          .filter(h => 
+            h.yearMonth.startsWith(String(currentYear)) && 
+            h.yearMonth < currentMonth
+          )
+          .map(h => h.yearMonth);
+      }
+      
+      if (completeMonths.length === 0) {
+        return NextResponse.json({ error: "No complete months available for selected window" }, { status: 404 });
+      }
+      
+      // Compute savings for each month
+      const monthlyResults = completeMonths.map(month => {
+        const result = computeMonthlySavings(
+          profile.monthlyHistory,
+          profile.accountBalanceHistory,
+          profile.expenseTxns,
+          month
+        );
+        return {
+          month,
+          total: result.total,
+          netCashChange: result.netCashChange,
+          netDebtChange: result.netDebtChange,
+          contributionsToOutside: result.contributionsToOutside,
+          isInWindow: true,
+        };
+      });
+      
+      // Compute average savings for the period
+      const avgSavings = computeAverageSavings(
+        profile.monthlyHistory,
+        profile.accountBalanceHistory,
+        profile.expenseTxns,
+        completeMonths
+      );
+      
+      // Get detailed breakdown for the entire period (aggregate all accounts)
+      const lastMonthResult = monthlyResults[monthlyResults.length - 1];
+      const lastMonthFull = computeMonthlySavings(
+        profile.monthlyHistory,
+        profile.accountBalanceHistory,
+        profile.expenseTxns,
+        lastMonthResult.month
+      );
+      
+      const response: SavingsDrawerData = {
+        type: "savings",
+        window,
+        monthlyBreakdown: monthlyResults,
+        periodBreakdown: lastMonthFull.details,
+        monthlyAverage: avgSavings,
+        needsConfirmation: lastMonthFull.needsConfirmation,
+        homeCurrency: profile.homeCurrency,
+        basisLabel: completeMonths.length > 0
+          ? `Monthly average, ${completeMonths[0]} to ${completeMonths[completeMonths.length - 1]}`
+          : "No data",
+      };
+      
+      return NextResponse.json(response);
+    }
+
+    // Bucket drawer data (for non-savings buckets)
     const months = getBucketMonths(profile.monthlyHistory, window, currentYear);
     
     if (months.length === 0) {

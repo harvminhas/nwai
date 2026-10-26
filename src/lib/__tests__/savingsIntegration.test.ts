@@ -85,7 +85,7 @@ const mockProfile: FinancialProfileCache = {
     coveragePct: 100,
     missingMonths: [],
   },
-  typicalMonthly: { income: 8000, coreExpenses: 6000 },
+  typicalMonthly: { median: 6000, avg: 6000, monthsTracked: 4 },
   homeCurrency: "CAD",
   fxRates: {},
   manualLiabilities: [],
@@ -93,7 +93,11 @@ const mockProfile: FinancialProfileCache = {
   goals: [],
   confirmedSubscriptions: [],
   cashCommitmentEntries: [],
-  debtPaymentHistory: [],
+  manualAssets: [],
+  balanceSnapshots: [],
+  allTxMonths: ["2026-07", "2026-08", "2026-09", "2026-10"],
+  latestTxMonth: "2026-10",
+  portfolioHoldings: [],
 };
 
 console.log("=== TEST: Card, Insight, and Drawer Use Same Calculation ===\n");
