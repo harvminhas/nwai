@@ -22,6 +22,8 @@ import { getFirebaseAdmin } from '../src/lib/firebase-admin.js';
 import { getFinancialProfile } from '../src/lib/financialProfile.js';
 import { computeScheduledDebtPayments, getAllUnreviewedAnomalies } from '../src/lib/debtPayments.js';
 import { computeBucketBreakdown, getMonthsForWindow } from '../src/lib/bucketBreakdown.js';
+import { merchantSlug } from '../src/lib/applyRules.js';
+import { normalizeMerchantName } from '../src/lib/merchantUtils.js';
 import type { DebtPaymentReview } from '../src/lib/types.js';
 
 interface Args {
@@ -314,6 +316,46 @@ async function main() {
     }
   } else {
     console.log('  (none found)');
+  }
+
+  // ── Merchant Deduplication Check ───────────────────────────────────────────
+
+  console.log('');
+  console.log('─'.repeat(80));
+  console.log('MERCHANT NAME DEDUPLICATION (case-variant check)');
+  console.log('─'.repeat(80));
+
+  // Find merchants with potential case-variant duplicates
+  const merchantsBySlug = new Map<string, Set<string>>();
+  for (const txn of profile.expenseTxns) {
+    const merchant = txn.merchant || 'Unknown';
+    const slug = merchantSlug(merchant);
+    if (!merchantsBySlug.has(slug)) {
+      merchantsBySlug.set(slug, new Set());
+    }
+    merchantsBySlug.get(slug)!.add(merchant);
+  }
+
+  // Show only those with multiple variants
+  const duplicates = Array.from(merchantsBySlug.entries())
+    .filter(([, variants]) => variants.size > 1)
+    .sort((a, b) => b[1].size - a[1].size);
+
+  if (duplicates.length > 0) {
+    console.log(`Found ${duplicates.length} merchant(s) with case-variant duplicates:`);
+    console.log('');
+    for (const [slug, variants] of duplicates.slice(0, 10)) {
+      const variantList = Array.from(variants).sort();
+      console.log(`  ${slug}:`);
+      for (const variant of variantList) {
+        const count = profile.expenseTxns.filter(t => t.merchant === variant).length;
+        console.log(`    - "${variant}" (${count} txns)`);
+      }
+      console.log(`    → Normalized: "${normalizeMerchantName(variantList[0])}"`);
+      console.log('');
+    }
+  } else {
+    console.log('  (no case-variant duplicates found)');
   }
 
   // ── Subscriptions ──────────────────────────────────────────────────────────

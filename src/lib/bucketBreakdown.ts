@@ -13,6 +13,7 @@ import { isCoreExcluded } from "./spendingMetrics";
 import { getParentCategory } from "./categoryTaxonomy";
 import { computeScheduledDebtPayments } from "./debtPayments";
 import { merchantSlug } from "./applyRules";
+import { normalizeMerchantName, detectRecurringMonthlyAmount } from "./merchantUtils";
 
 export interface MerchantBreakdown {
   merchant: string;
@@ -249,34 +250,66 @@ export function computeBucketBreakdown(
       avgMonthly = total / (months.length || 1);
     }
 
-    // Group by merchant
-    const merchantMap = new Map<string, number>();
-    const merchantAccounts = new Map<string, { accountSlug?: string; accountLabel?: string }>();
+    // Group by merchant SLUG (normalized), not raw merchant name
+    // This merges case-variant duplicates like "AVIVA GENERAL INSURANCE" and "Aviva General Insurance"
+    const merchantMap = new Map<string, { total: number; displayName: string; txns: typeof txns }>();
     
     for (const txn of txns) {
-      const merchant = txn.merchant || "Unknown";
-      merchantMap.set(merchant, (merchantMap.get(merchant) || 0) + Math.abs(txn.amount));
-      if (!merchantAccounts.has(merchant)) {
-        merchantAccounts.set(merchant, {
-          accountSlug: txn.accountSlug,
-          accountLabel: txn.accountLabel,
+      const slug = merchantSlug(txn.merchant || "Unknown");
+      const existing = merchantMap.get(slug);
+      
+      if (existing) {
+        // Merge into existing merchant
+        existing.total += Math.abs(txn.amount);
+        existing.txns.push(txn);
+      } else {
+        // New merchant - use normalized name for display
+        merchantMap.set(slug, {
+          total: Math.abs(txn.amount),
+          displayName: normalizeMerchantName(txn.merchant || "Unknown"),
+          txns: [txn],
         });
       }
     }
 
     // Convert to sorted merchant array (top merchants first)
     const merchants = Array.from(merchantMap.entries())
-      .map(([merchant, amount]) => {
-        const slug = merchantSlug(merchant);
+      .map(([slug, data]) => {
         const subMonthlyAmt = subscriptionMonthlyAmount.get(slug);
         
-        // Use subscription monthly rate if available, otherwise average
-        const displayAmount = subMonthlyAmt || (amount / (months.length || 1));
+        // Check for user-set cadence
+        const userCadence = merchantCadence?.[slug];
+        
+        // Detect recurring monthly amount from transaction history
+        const recurringAmt = detectRecurringMonthlyAmount(
+          data.txns.map(t => ({ txMonth: t.txMonth, amount: Math.abs(t.amount) })),
+          2 // Minimum 2 months to detect pattern
+        );
+        
+        // Priority: subscription monthly rate > user cadence > detected recurring > period average
+        let displayAmount: number;
+        if (subMonthlyAmt) {
+          // Subscription with known monthly rate
+          displayAmount = subMonthlyAmt;
+        } else if (userCadence === "monthly" && recurringAmt) {
+          // User marked as monthly + detected recurring pattern
+          displayAmount = recurringAmt;
+        } else if (recurringAmt) {
+          // Auto-detected recurring monthly charge (insurance, utilities, etc.)
+          displayAmount = recurringAmt;
+        } else {
+          // No recurring pattern - use period average
+          displayAmount = data.total / (months.length || 1);
+        }
+        
+        // Get account info from first transaction
+        const firstTxn = data.txns[0];
         
         return {
-          merchant,
+          merchant: data.displayName,
           amount: displayAmount,
-          ...merchantAccounts.get(merchant),
+          accountSlug: firstTxn.accountSlug,
+          accountLabel: firstTxn.accountLabel,
         };
       })
       .sort((a, b) => b.amount - a.amount)
