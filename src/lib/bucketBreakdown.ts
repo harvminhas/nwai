@@ -13,7 +13,15 @@ import { isCoreExcluded } from "./spendingMetrics";
 import { getParentCategory } from "./categoryTaxonomy";
 import { computeScheduledDebtPayments } from "./debtPayments";
 import { merchantSlug } from "./applyRules";
-import { normalizeMerchantName, detectRecurringMonthlyAmount } from "./merchantUtils";
+import { normalizeMerchantName, detectRecurringMonthlyAmount, resolveMerchantAlias, resolveCanonicalSlug } from "./merchantUtils";
+
+export interface MerchantTransaction {
+  date: string;
+  amount: number;
+  description: string;
+  accountSlug: string;
+  accountLabel?: string;
+}
 
 export interface MerchantBreakdown {
   merchant: string;
@@ -22,6 +30,10 @@ export interface MerchantBreakdown {
   accountLabel?: string;
   /** Method used for debt payments: "fixed payment" | "est. interest-only" | etc. */
   method?: string;
+  /** Transaction count for this merchant in the period */
+  txCount?: number;
+  /** Individual transactions (for expandable detail view) */
+  transactions?: MerchantTransaction[];
 }
 
 export interface CategoryBreakdown {
@@ -252,10 +264,13 @@ export function computeBucketBreakdown(
 
     // Group by merchant SLUG (normalized), not raw merchant name
     // This merges case-variant duplicates like "AVIVA GENERAL INSURANCE" and "Aviva General Insurance"
+    // Also merges obvious aliases like "Amazon" / "Amazon.ca" / "Amzn Mktp CA"
     const merchantMap = new Map<string, { total: number; displayName: string; txns: typeof txns }>();
     
     for (const txn of txns) {
-      const slug = merchantSlug(txn.merchant || "Unknown");
+      const rawSlug = merchantSlug(txn.merchant || "Unknown");
+      // Resolve to canonical slug for grouping (merges aliases)
+      const slug = resolveCanonicalSlug(rawSlug);
       const existing = merchantMap.get(slug);
       
       if (existing) {
@@ -263,10 +278,10 @@ export function computeBucketBreakdown(
         existing.total += Math.abs(txn.amount);
         existing.txns.push(txn);
       } else {
-        // New merchant - use normalized name for display
+        // New merchant - resolve aliases and normalize name for display
         merchantMap.set(slug, {
           total: Math.abs(txn.amount),
-          displayName: normalizeMerchantName(txn.merchant || "Unknown"),
+          displayName: resolveMerchantAlias(slug, txn.merchant || "Unknown"),
           txns: [txn],
         });
       }
@@ -286,7 +301,12 @@ export function computeBucketBreakdown(
           2 // Minimum 2 months to detect pattern
         );
         
-        // Priority: subscription monthly rate > user cadence > detected recurring > period average
+        // Determine if this is a recurring fixed item
+        const isRecurring = !!(subMonthlyAmt || recurringAmt || (userCadence === "monthly" && recurringAmt !== null));
+        
+        // Display amount logic:
+        // - Recurring items (subscriptions, insurance, etc.): show actual monthly charge
+        // - Non-recurring items: show actual period total (NOT average)
         let displayAmount: number;
         if (subMonthlyAmt) {
           // Subscription with known monthly rate
@@ -298,22 +318,30 @@ export function computeBucketBreakdown(
           // Auto-detected recurring monthly charge (insurance, utilities, etc.)
           displayAmount = recurringAmt;
         } else {
-          // No recurring pattern - use period average
-          displayAmount = data.total / (months.length || 1);
+          // Non-recurring - show actual period total
+          displayAmount = data.total;
         }
         
-        // Get account info from first transaction
-        const firstTxn = data.txns[0];
+        // Build transaction list for expandable detail view
+        const transactions: MerchantTransaction[] = data.txns.map(t => ({
+          date: t.date,
+          amount: Math.abs(t.amount),
+          description: t.description || '',
+          accountSlug: t.accountSlug,
+          accountLabel: t.accountLabel,
+        }));
         
         return {
           merchant: data.displayName,
           amount: displayAmount,
-          accountSlug: firstTxn.accountSlug,
-          accountLabel: firstTxn.accountLabel,
+          accountSlug: data.txns[0].accountSlug,
+          accountLabel: data.txns[0].accountLabel,
+          txCount: data.txns.length,
+          transactions,
         };
       })
       .sort((a, b) => b.amount - a.amount)
-      .slice(0, 5); // Top 5 merchants per category
+      .slice(0, 10); // Top 10 merchants per category (increased from 5)
 
     categories.push({
       category,

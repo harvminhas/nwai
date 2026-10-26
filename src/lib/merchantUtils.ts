@@ -77,3 +77,66 @@ export function detectRecurringMonthlyAmount(
   
   return isConsistent ? median : null;
 }
+
+/**
+ * Common merchant aliases that should be merged into canonical names.
+ * Maps normalized slug to canonical display name.
+ */
+const MERCHANT_ALIASES: Record<string, string> = {
+  // Amazon variants
+  "amazon": "Amazon",
+  "amazon-ca": "Amazon",
+  "amazon-com": "Amazon",
+  "amzn-mktp-ca": "Amazon",
+  "amzn-mktp-us": "Amazon",
+  "amznmktplace": "Amazon",
+  "amazonca": "Amazon",
+  
+  // Home Depot variants
+  "home-depot": "Home Depot",
+  "homedepot-com": "Home Depot",
+  "the-home-depot": "Home Depot",
+  
+  // Google variants
+  "google-cloud": "Google Cloud",
+  "google-cloud-ca": "Google Cloud",
+  "google-cloud-us": "Google Cloud",
+  "googlecloud": "Google Cloud",
+};
+
+/**
+ * Resolve merchant slug to canonical slug for grouping.
+ * E.g. "amazon-ca" → "amazon", "amzn-mktp-ca" → "amazon"
+ */
+export function resolveCanonicalSlug(slug: string): string {
+  // Check if this slug should be grouped with a canonical merchant
+  for (const [variantSlug, canonicalName] of Object.entries(MERCHANT_ALIASES)) {
+    if (slug === variantSlug) {
+      // Find the canonical slug for this merchant
+      // (the first entry with this canonical name)
+      for (const [s, n] of Object.entries(MERCHANT_ALIASES)) {
+        if (n === canonicalName) {
+          return s; // Return first slug with this canonical name
+        }
+      }
+    }
+  }
+  return slug; // No alias - return original slug
+}
+
+/**
+ * Resolve merchant aliases to canonical names.
+ * E.g. "Amazon.ca" and "Amzn Mktp CA" both resolve to "Amazon"
+ * 
+ * @param slug - The normalized merchant slug (from merchantSlug())
+ * @param originalName - The original merchant name for fallback
+ * @returns Canonical merchant name to display
+ */
+export function resolveMerchantAlias(slug: string, originalName: string): string {
+  // Check if this slug has a known alias
+  const canonical = MERCHANT_ALIASES[slug];
+  if (canonical) return canonical;
+  
+  // No alias - return normalized original name
+  return normalizeMerchantName(originalName);
+}
