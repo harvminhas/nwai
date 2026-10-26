@@ -21,6 +21,7 @@ import { isCoreExcluded } from "./spendingMetrics";
 import { computeScheduledDebtPayments, type ScheduledDebtPayment } from "./debtPayments";
 import { getParentCategory } from "./categoryTaxonomy";
 import { getMoneyCoachIncome } from "./incomeMetrics";
+import { computeAverageSavings } from "./savingsCalculations";
 
 export interface MoneyCoachBucketSummary {
   bucket: MoneyCoachBucket;
@@ -64,53 +65,6 @@ export interface MoneyCoachBreakdown {
 function average(values: number[]): number {
   if (values.length === 0) return 0;
   return values.reduce((sum, v) => sum + v, 0) / values.length;
-}
-
-/**
- * Calculate number of months between two YYYY-MM strings.
- */
-function getMonthsBetween(startYM: string, endYM: string): number {
-  const [startYear, startMonth] = startYM.split('-').map(Number);
-  const [endYear, endMonth] = endYM.split('-').map(Number);
-  return (endYear - startYear) * 12 + (endMonth - startMonth);
-}
-
-/**
- * Find the most recent month before the given month that has data.
- * Handles gaps in data gracefully.
- */
-function findPriorMonth(
-  monthlyHistory: MonthlyHistoryEntry[],
-  currentMonth: string
-): MonthlyHistoryEntry | null {
-  const sorted = [...monthlyHistory]
-    .filter(h => h.yearMonth < currentMonth)
-    .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth));
-  
-  return sorted[0] || null;
-}
-
-/**
- * Compute monthly savings rate using balance sheet approach (net worth delta).
- * Uses most recent available prior month as baseline, handles gaps.
- */
-function computeMonthlySavings(
-  monthlyHistory: MonthlyHistoryEntry[],
-  currentMonth: string
-): number {
-  const current = monthlyHistory.find(h => h.yearMonth === currentMonth);
-  const prior = findPriorMonth(monthlyHistory, currentMonth);
-  
-  if (!current || !prior) {
-    // First month or no baseline - return 0
-    return 0;
-  }
-  
-  const monthsElapsed = getMonthsBetween(prior.yearMonth, current.yearMonth);
-  const netWorthDelta = current.netWorth - prior.netWorth;
-  
-  // Normalize to monthly rate
-  return monthsElapsed > 0 ? netWorthDelta / monthsElapsed : netWorthDelta;
 }
 
 /**
@@ -206,18 +160,14 @@ export function computeMoneyCoachBreakdown(
   }
 
   // Compute average for each bucket (same window as income)
-  // Savings uses balance sheet approach (net worth delta), not transaction-based
-  const savingsByMonth: number[] = [];
-  for (const ym of spendingMonths) {
-    const monthlySavings = computeMonthlySavings(monthlyHistory, ym);
-    savingsByMonth.push(monthlySavings);
-  }
+  // Savings uses shared calculation function (actual contributions + debt paydown)
+  const averageSavings = computeAverageSavings(monthlyHistory, expenseTxns, spendingMonths);
 
   const bucketAverages: Record<MoneyCoachBucket, number> = {
     fixed: average([...bucketsByMonth.values()].map(b => b.fixed)),
     essentials: average([...bucketsByMonth.values()].map(b => b.essentials)),
     flexible: average([...bucketsByMonth.values()].map(b => b.flexible)),
-    savings: average(savingsByMonth), // Balance sheet: net worth increase
+    savings: averageSavings, // From shared data layer
     uncategorized: average([...bucketsByMonth.values()].map(b => b.uncategorized)),
   };
 
