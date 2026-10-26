@@ -6,20 +6,68 @@
  * Key principle: Savings = money you PUT ASIDE, not market gains or equity changes.
  * 
  * Components:
- * 1. Contributions to savings/investment accounts (from transactions)
- * 2. Cash growth in bank accounts (checking, savings only - NOT investment accounts)
- * 3. Debt principal paid down
+ * 1. Contributions to savings/investment accounts (from transactions + user confirmations)
+ * 2. Cash growth in bank accounts (from accountBalanceHistory - checking, savings only)
+ * 3. Debt principal paid down (from accountBalanceHistory - debt account balance decreases)
  * 
  * Excluded (tracked separately in computeAssetGains):
  * - Market gains/losses on investments
  * - Changes in manual asset values (house, car appreciation)
  * - Investment account balance changes (use transactions for contributions only)
+ * - New debt draws (e.g., FlexLine draws)
  */
 
-import type { MonthlyHistoryEntry } from "./financialProfile";
-import type { ExpenseTxnRecord, AccountSnapshot } from "./extractTransactions";
+import type { MonthlyHistoryEntry, AccountBalanceHistory } from "./financialProfile";
+import type { ExpenseTxnRecord } from "./extractTransactions";
 import { isCoreExcluded } from "./spendingMetrics";
 import { getParentCategory } from "./categoryTaxonomy";
+
+/**
+ * User confirmation for whether a transaction counts as savings.
+ * Stored in users/{uid}/savingsConfirmations collection.
+ */
+export interface SavingsConfirmation {
+  /** Unique ID for this confirmation (merchant + category fingerprint) */
+  id: string;
+  /** Merchant name from the transaction */
+  merchant: string;
+  /** Transaction category */
+  category: string;
+  /** Sample amount (for display) */
+  amount: number;
+  /** Sample date (for display) */
+  date: string;
+  /** User's decision: true = counts as savings, false = exclude, undefined = needs review */
+  countAsSavings?: boolean;
+  /** When the user made this decision */
+  confirmedAt?: string;
+}
+
+/**
+ * Get confirmation key for a transaction (merchant + category).
+ */
+function getConfirmationKey(merchant: string, category: string): string {
+  return `${merchant.toLowerCase().trim()}:${category.toLowerCase().trim()}`;
+}
+
+/**
+ * Check if a transaction category needs user confirmation.
+ * Returns true for ambiguous items like life insurance premiums.
+ */
+function needsConfirmation(category: string, merchant: string): boolean {
+  const cat = category.toLowerCase();
+  const merch = merchant.toLowerCase();
+  
+  // Life insurance premiums are ambiguous (protection vs. investment component)
+  if (cat.includes("life") && cat.includes("ins")) return true;
+  if (merch.includes("life") && merch.includes("ins")) return true;
+  
+  // Whole life / universal life with investment component
+  if (merch.includes("whole life") || merch.includes("universal life")) return true;
+  
+  // Add more patterns as needed
+  return false;
+}
 
 /**
  * Calculate number of months between two YYYY-MM strings.
@@ -46,13 +94,14 @@ function findPriorMonth(
 }
 
 /**
- * Get account snapshots for a specific month.
+ * Get account balance for a specific month from balance history.
  */
-function getSnapshotsForMonth(
-  accountSnapshots: AccountSnapshot[],
+function getBalanceForMonth(
+  account: AccountBalanceHistory,
   month: string
-): AccountSnapshot[] {
-  return accountSnapshots.filter(s => s.statementMonth === month);
+): number | null {
+  const entry = account.entries.find(e => e.yearMonth === month);
+  return entry ? entry.balance : null;
 }
 
 /**
@@ -73,16 +122,30 @@ function isDebtAccount(accountType: string): boolean {
 }
 
 /**
+ * Result of monthly savings calculation with detailed breakdown.
+ */
+export interface MonthlySavingsResult {
+  total: number;
+  contributions: number;
+  cashGrowth: number;
+  debtPrincipal: number;
+  /** Transactions that need user confirmation */
+  needsConfirmation: SavingsConfirmation[];
+  /** Detailed breakdown by component */
+  details: {
+    contributions: Array<{ merchant: string; amount: number; category: string; needsConfirmation: boolean }>;
+    cashGrowth: Array<{ accountLabel: string; slug: string; growth: number; priorBalance: number; currentBalance: number }>;
+    debtPrincipal: Array<{ accountLabel: string; slug: string; reduction: number; priorBalance: number; currentBalance: number }>;
+  };
+}
+
+/**
  * Compute asset gains (market gains + manual asset value changes).
  * This is SEPARATE from savings - tracks wealth changes from appreciation, not contributions.
- * 
- * Calculation:
- * - Investment account balance changes MINUS contributions (transactions)
- * - Manual asset value changes (not tracked in accountSnapshots)
  */
 export function computeAssetGains(
   monthlyHistory: MonthlyHistoryEntry[],
-  accountSnapshots: AccountSnapshot[],
+  accountBalanceHistory: AccountBalanceHistory[],
   expenseTxns: ExpenseTxnRecord[],
   currentMonth: string
 ): {
@@ -95,17 +158,16 @@ export function computeAssetGains(
     return { marketGains: 0, manualAssetChanges: 0, totalGains: 0 };
   }
 
-  const currentSnapshots = getSnapshotsForMonth(accountSnapshots, currentMonth);
-  const priorSnapshots = getSnapshotsForMonth(accountSnapshots, prior.yearMonth);
-
   // Calculate investment account balance changes
   let investmentBalanceChange = 0;
   
-  for (const currentSnap of currentSnapshots) {
-    if (currentSnap.accountType.toLowerCase() === "investment") {
-      const priorSnap = priorSnapshots.find(p => p.slug === currentSnap.slug);
-      if (priorSnap) {
-        investmentBalanceChange += (currentSnap.balance - priorSnap.balance);
+  for (const account of accountBalanceHistory) {
+    if (account.accountType.toLowerCase() === "investment") {
+      const currentBalance = getBalanceForMonth(account, currentMonth);
+      const priorBalance = getBalanceForMonth(account, prior.yearMonth);
+      
+      if (currentBalance !== null && priorBalance !== null) {
+        investmentBalanceChange += (currentBalance - priorBalance);
       }
     }
   }
@@ -139,79 +201,140 @@ export function computeAssetGains(
 /**
  * Compute monthly savings from actual components (NOT net worth delta).
  * 
- * Components:
- * 1. Contributions to savings/investment accounts (from "Investments & Savings" transactions)
- * 2. Cash growth in checking/savings accounts (balance increases in bank accounts only)
- * 3. Debt principal paid down (debt balance decreases)
- * 
- * EXCLUDES:
- * - Investment account balance changes (only count transactions/contributions)
- * - Manual asset value changes
- * - Market gains
+ * Uses accountBalanceHistory (the existing data source for account pages/dashboard).
+ * Returns detailed breakdown including items that need user confirmation.
  */
 export function computeMonthlySavings(
   monthlyHistory: MonthlyHistoryEntry[],
-  accountSnapshots: AccountSnapshot[],
+  accountBalanceHistory: AccountBalanceHistory[],
   expenseTxns: ExpenseTxnRecord[],
-  currentMonth: string
-): number {
+  currentMonth: string,
+  confirmedItems: Map<string, boolean> = new Map()
+): MonthlySavingsResult {
   const prior = findPriorMonth(monthlyHistory, currentMonth);
   
   if (!prior) {
-    // First month or no baseline - return 0
-    return 0;
+    // First month or no baseline - return empty result
+    return {
+      total: 0,
+      contributions: 0,
+      cashGrowth: 0,
+      debtPrincipal: 0,
+      needsConfirmation: [],
+      details: { contributions: [], cashGrowth: [], debtPrincipal: [] },
+    };
   }
 
-  const currentSnapshots = getSnapshotsForMonth(accountSnapshots, currentMonth);
-  const priorSnapshots = getSnapshotsForMonth(accountSnapshots, prior.yearMonth);
   const monthsElapsed = getMonthsBetween(prior.yearMonth, currentMonth);
+  const needsConfirmationList: SavingsConfirmation[] = [];
 
   // Component 1: Investment/savings contributions from transactions
-  // These are expense transactions in the "Investments & Savings" parent category
-  const contributions = expenseTxns
-    .filter(t => {
-      if (t.txMonth !== currentMonth) return false;
-      if (isCoreExcluded(t.category)) return false;
-      const parent = getParentCategory(t.category);
-      return parent === "Investments & Savings";
-    })
-    .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+  let contributions = 0;
+  const contributionDetails: Array<{ merchant: string; amount: number; category: string; needsConfirmation: boolean }> = [];
+  
+  for (const t of expenseTxns) {
+    if (t.txMonth !== currentMonth) continue;
+    if (isCoreExcluded(t.category)) continue;
+    
+    const parent = getParentCategory(t.category);
+    if (parent !== "Investments & Savings") continue;
+    
+    const amount = Math.abs(t.amount);
+    const key = getConfirmationKey(t.merchant, t.category);
+    
+    // Check if this needs user confirmation
+    if (needsConfirmation(t.category, t.merchant)) {
+      const confirmed = confirmedItems.get(key);
+      
+      if (confirmed === undefined) {
+        // Needs confirmation - add to list but don't count yet
+        needsConfirmationList.push({
+          id: key,
+          merchant: t.merchant,
+          category: t.category,
+          amount,
+          date: t.date,
+        });
+        contributionDetails.push({ merchant: t.merchant, amount, category: t.category, needsConfirmation: true });
+        continue;
+      } else if (!confirmed) {
+        // User said no - skip it
+        continue;
+      }
+      // User said yes - fall through and count it
+    }
+    
+    contributions += amount;
+    contributionDetails.push({ merchant: t.merchant, amount, category: t.category, needsConfirmation: false });
+  }
 
   // Component 2: Cash growth in checking/savings accounts ONLY
-  // NOT investment accounts, NOT manual assets
   let cashGrowth = 0;
+  const cashGrowthDetails: Array<{ accountLabel: string; slug: string; growth: number; priorBalance: number; currentBalance: number }> = [];
   
-  for (const currentSnap of currentSnapshots) {
-    if (isCashAccount(currentSnap.accountType)) {
-      const priorSnap = priorSnapshots.find(p => p.slug === currentSnap.slug);
-      if (priorSnap) {
-        const growth = currentSnap.balance - priorSnap.balance;
-        cashGrowth += Math.max(0, growth); // Only count increases, not decreases
+  for (const account of accountBalanceHistory) {
+    if (!isCashAccount(account.accountType)) continue;
+    
+    const currentBalance = getBalanceForMonth(account, currentMonth);
+    const priorBalance = getBalanceForMonth(account, prior.yearMonth);
+    
+    if (currentBalance !== null && priorBalance !== null) {
+      const growth = currentBalance - priorBalance;
+      if (growth > 0) {
+        cashGrowth += growth;
+        cashGrowthDetails.push({
+          accountLabel: account.label,
+          slug: account.slug,
+          growth,
+          priorBalance,
+          currentBalance,
+        });
       }
     }
   }
 
-  // Component 3: Debt principal paid down (debt balance decreases)
-  // Debt balances are stored as negative numbers
-  let debtReduction = 0;
+  // Component 3: Debt principal paid down (debt balance decreases, excluding new draws)
+  let debtPrincipal = 0;
+  const debtPrincipalDetails: Array<{ accountLabel: string; slug: string; reduction: number; priorBalance: number; currentBalance: number }> = [];
   
-  for (const currentSnap of currentSnapshots) {
-    if (isDebtAccount(currentSnap.accountType)) {
-      const priorSnap = priorSnapshots.find(p => p.slug === currentSnap.slug);
-      if (priorSnap) {
-        // Both balances are negative, so reduction = abs(prior) - abs(current)
-        // e.g., -$5000 to -$4000 means $1000 paid down
-        const reduction = Math.abs(priorSnap.balance) - Math.abs(currentSnap.balance);
-        debtReduction += Math.max(0, reduction); // Only count reductions, not new borrowing
+  for (const account of accountBalanceHistory) {
+    if (!isDebtAccount(account.accountType)) continue;
+    
+    const currentBalance = getBalanceForMonth(account, currentMonth);
+    const priorBalance = getBalanceForMonth(account, prior.yearMonth);
+    
+    if (currentBalance !== null && priorBalance !== null) {
+      // Debt balances are negative, so reduction = abs(prior) - abs(current)
+      // e.g., -$5000 to -$4000 means $1000 paid down
+      const reduction = Math.abs(priorBalance) - Math.abs(currentBalance);
+      if (reduction > 0) {
+        debtPrincipal += reduction;
+        debtPrincipalDetails.push({
+          accountLabel: account.label,
+          slug: account.slug,
+          reduction,
+          priorBalance,
+          currentBalance,
+        });
       }
     }
   }
-
-  // Total savings = contributions + cash growth + debt reduction
-  const totalSavings = contributions + cashGrowth + debtReduction;
 
   // Normalize by months elapsed (handles gaps)
-  return monthsElapsed > 0 ? totalSavings / monthsElapsed : totalSavings;
+  const normalize = (val: number) => monthsElapsed > 0 ? val / monthsElapsed : val;
+  
+  return {
+    total: normalize(contributions + cashGrowth + debtPrincipal),
+    contributions: normalize(contributions),
+    cashGrowth: normalize(cashGrowth),
+    debtPrincipal: normalize(debtPrincipal),
+    needsConfirmation: needsConfirmationList,
+    details: {
+      contributions: contributionDetails,
+      cashGrowth: cashGrowthDetails.map(d => ({ ...d, growth: normalize(d.growth) })),
+      debtPrincipal: debtPrincipalDetails.map(d => ({ ...d, reduction: normalize(d.reduction) })),
+    },
+  };
 }
 
 /**
@@ -220,14 +343,15 @@ export function computeMonthlySavings(
  */
 export function computeAverageSavings(
   monthlyHistory: MonthlyHistoryEntry[],
-  accountSnapshots: AccountSnapshot[],
+  accountBalanceHistory: AccountBalanceHistory[],
   expenseTxns: ExpenseTxnRecord[],
-  months: string[]
+  months: string[],
+  confirmedItems: Map<string, boolean> = new Map()
 ): number {
   if (months.length === 0) return 0;
 
   const savingsByMonth = months.map(m => 
-    computeMonthlySavings(monthlyHistory, accountSnapshots, expenseTxns, m)
+    computeMonthlySavings(monthlyHistory, accountBalanceHistory, expenseTxns, m, confirmedItems).total
   );
 
   const total = savingsByMonth.reduce((sum, s) => sum + s, 0);

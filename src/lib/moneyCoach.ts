@@ -76,7 +76,7 @@ export function computeMoneyCoachBreakdown(
   profile: FinancialProfileCache,
   userReviews: DebtPaymentReview[] = []
 ): MoneyCoachBreakdown {
-  const { monthlyHistory, expenseTxns, coverage, accountSnapshots, fxRates, homeCurrency } = profile;
+  const { monthlyHistory, expenseTxns, coverage, accountSnapshots, accountBalanceHistory, fxRates, homeCurrency } = profile;
 
   // Compute income using shared function (matches Income page logic)
   const { amount: incomeAmount, basisLabel: incomeBasisLabel } = getMoneyCoachIncome(monthlyHistory);
@@ -161,7 +161,7 @@ export function computeMoneyCoachBreakdown(
 
   // Compute average for each bucket (same window as income)
   // Savings uses shared calculation function (actual contributions + debt paydown)
-  const averageSavings = computeAverageSavings(monthlyHistory, accountSnapshots, expenseTxns, spendingMonths);
+  const averageSavings = computeAverageSavings(monthlyHistory, accountBalanceHistory, expenseTxns, spendingMonths);
 
   const bucketAverages: Record<MoneyCoachBucket, number> = {
     fixed: average([...bucketsByMonth.values()].map(b => b.fixed)),

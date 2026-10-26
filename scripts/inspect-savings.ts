@@ -14,11 +14,11 @@
  */
 
 import * as admin from "firebase-admin";
-import { getFinancialProfile } from "../src/lib/financialProfile";
-import { computeMonthlySavings, computeAssetGains, computeAverageSavings } from "../src/lib/savingsCalculations";
+import { getFinancialProfile, type AccountBalanceHistory } from "../src/lib/financialProfile";
+import { computeMonthlySavings, computeAssetGains, computeAverageSavings, type MonthlySavingsResult } from "../src/lib/savingsCalculations";
 import { getMoneyCoachIncome } from "../src/lib/incomeMetrics";
 import { isCoreExcluded } from "../src/lib/spendingMetrics";
-import type { ExpenseTxnRecord, AccountSnapshot } from "../src/lib/extractTransactions";
+import type { ExpenseTxnRecord } from "../src/lib/extractTransactions";
 
 // Parse CLI args first
 const args = process.argv.slice(2);
@@ -80,124 +80,6 @@ function getLast3CompleteMonths(): string[] {
 }
 
 /**
- * Compute savings components for one month (detailed breakdown).
- */
-function computeSavingsComponents(
-  monthlyHistory: any[],
-  accountSnapshots: AccountSnapshot[],
-  expenseTxns: ExpenseTxnRecord[],
-  month: string
-): {
-  contributions: number;
-  contributionTxns: Array<{ merchant: string; amount: number; category: string }>;
-  cashGrowth: number;
-  cashGrowthByAccount: Array<{ accountLabel: string; growth: number }>;
-  debtPrincipal: number;
-  debtPrincipalByAccount: Array<{ accountLabel: string; reduction: number }>;
-  total: number;
-} {
-  // Find prior month
-  const priorMonths = monthlyHistory.filter(h => h.yearMonth < month).sort((a, b) => b.yearMonth.localeCompare(a.yearMonth));
-  const prior = priorMonths[0];
-  
-  if (!prior) {
-    return {
-      contributions: 0,
-      contributionTxns: [],
-      cashGrowth: 0,
-      cashGrowthByAccount: [],
-      debtPrincipal: 0,
-      debtPrincipalByAccount: [],
-      total: 0,
-    };
-  }
-
-  const currentSnaps = accountSnapshots.filter(s => s.statementMonth === month);
-  const priorSnaps = accountSnapshots.filter(s => s.statementMonth === prior.yearMonth);
-  
-  // Component 1: Contributions
-  const contributionTxns = expenseTxns
-    .filter(t => {
-      if (t.txMonth !== month) return false;
-      if (isCoreExcluded(t.category)) return false;
-      // Check if parent is "Investments & Savings"
-      const { getParentCategory } = require("../src/lib/categoryTaxonomy");
-      return getParentCategory(t.category) === "Investments & Savings";
-    })
-    .map(t => ({
-      merchant: t.merchant,
-      amount: Math.abs(t.amount),
-      category: t.category,
-    }));
-  
-  const contributions = contributionTxns.reduce((sum, t) => sum + t.amount, 0);
-
-  // Component 2: Cash growth in checking/savings accounts
-  const isCashAccount = (type: string) => {
-    const t = type.toLowerCase();
-    return t === "checking" || t === "savings" || t === "chequing";
-  };
-  
-  const cashGrowthByAccount: Array<{ accountLabel: string; growth: number }> = [];
-  let cashGrowth = 0;
-  
-  for (const current of currentSnaps) {
-    if (isCashAccount(current.accountType)) {
-      const priorSnap = priorSnaps.find(p => p.slug === current.slug);
-      if (priorSnap) {
-        const growth = current.balance - priorSnap.balance;
-        if (growth > 0) {
-          cashGrowth += growth;
-          cashGrowthByAccount.push({
-            accountLabel: current.accountName || current.slug,
-            growth,
-          });
-        }
-      }
-    }
-  }
-
-  // Component 3: Debt principal paid down
-  const isDebtAccount = (type: string) => {
-    const t = type.toLowerCase();
-    return t === "credit" || t === "loan" || t === "mortgage" || t === "loc";
-  };
-  
-  const debtPrincipalByAccount: Array<{ accountLabel: string; reduction: number }> = [];
-  let debtPrincipal = 0;
-  
-  for (const current of currentSnaps) {
-    if (isDebtAccount(current.accountType)) {
-      const priorSnap = priorSnaps.find(p => p.slug === current.slug);
-      if (priorSnap) {
-        const reduction = Math.abs(priorSnap.balance) - Math.abs(current.balance);
-        if (reduction > 0) {
-          debtPrincipal += reduction;
-          debtPrincipalByAccount.push({
-            accountLabel: current.accountName || current.slug,
-            reduction,
-          });
-        }
-      }
-    }
-  }
-
-  // Normalize by months elapsed
-  const monthsElapsed = Math.max(1, (new Date(month + "-01").getTime() - new Date(prior.yearMonth + "-01").getTime()) / (1000 * 60 * 60 * 24 * 30));
-  const monthsElapsedRounded = Math.round(monthsElapsed);
-  
-  return {
-    contributions: contributions / monthsElapsedRounded,
-    contributionTxns,
-    cashGrowth: cashGrowth / monthsElapsedRounded,
-    cashGrowthByAccount: cashGrowthByAccount.map(a => ({ ...a, growth: a.growth / monthsElapsedRounded })),
-    debtPrincipal: debtPrincipal / monthsElapsedRounded,
-    debtPrincipalByAccount: debtPrincipalByAccount.map(a => ({ ...a, reduction: a.reduction / monthsElapsedRounded })),
-    total: (contributions + cashGrowth + debtPrincipal) / monthsElapsedRounded,
-  };
-}
-
-/**
  * Compute current card logic (income - spending).
  */
 function computeCurrentCardLogic(
@@ -243,58 +125,60 @@ async function inspect(uid: string) {
     console.log(`\n📊 ${month}`);
     console.log("─".repeat(80));
     
-    const components = computeSavingsComponents(
+    const result = computeMonthlySavings(
       profile.monthlyHistory,
-      profile.accountSnapshots,
+      profile.accountBalanceHistory,
       profile.expenseTxns,
       month
     );
     
     const gains = computeAssetGains(
       profile.monthlyHistory,
-      profile.accountSnapshots,
-      profile.expenseTxns,
-      month
-    );
-    
-    const actualSavings = computeMonthlySavings(
-      profile.monthlyHistory,
-      profile.accountSnapshots,
+      profile.accountBalanceHistory,
       profile.expenseTxns,
       month
     );
 
-    console.log(`\n  💰 computeMonthlySavings() = ${fmt(actualSavings)}\n`);
+    console.log(`\n  💰 computeMonthlySavings() = ${fmt(result.total)}\n`);
     
     console.log(`  Component Breakdown:`);
-    console.log(`    1️⃣  Contributions:          ${fmt(components.contributions)}`);
-    if (components.contributionTxns.length > 0) {
-      for (const txn of components.contributionTxns.slice(0, 5)) {
-        console.log(`        • ${txn.merchant.padEnd(30)} ${fmt(txn.amount).padStart(12)} (${txn.category})`);
-      }
-      if (components.contributionTxns.length > 5) {
-        console.log(`        ... and ${components.contributionTxns.length - 5} more`);
+    console.log(`    1️⃣  Contributions:          ${fmt(result.contributions)}`);
+    if (result.details.contributions.length > 0) {
+      for (const txn of result.details.contributions) {
+        const flag = txn.needsConfirmation ? " ⚠️  NEEDS CONFIRMATION" : "";
+        console.log(`        • ${txn.merchant.padEnd(30)} ${fmt(txn.amount).padStart(12)} (${txn.category})${flag}`);
       }
     } else {
       console.log(`        (none)`);
     }
     
-    console.log(`\n    2️⃣  Cash growth (bank accounts): ${fmt(components.cashGrowth)}`);
-    if (components.cashGrowthByAccount.length > 0) {
-      for (const acc of components.cashGrowthByAccount) {
+    console.log(`\n    2️⃣  Cash growth (bank accounts): ${fmt(result.cashGrowth)}`);
+    if (result.details.cashGrowth.length > 0) {
+      for (const acc of result.details.cashGrowth) {
         console.log(`        • ${acc.accountLabel.padEnd(30)} ${fmt(acc.growth).padStart(12)}`);
+        console.log(`          Balance: ${fmt(acc.priorBalance)} → ${fmt(acc.currentBalance)}`);
       }
     } else {
       console.log(`        (none)`);
     }
     
-    console.log(`\n    3️⃣  Debt principal paid:       ${fmt(components.debtPrincipal)}`);
-    if (components.debtPrincipalByAccount.length > 0) {
-      for (const acc of components.debtPrincipalByAccount) {
+    console.log(`\n    3️⃣  Debt principal paid:       ${fmt(result.debtPrincipal)}`);
+    if (result.details.debtPrincipal.length > 0) {
+      for (const acc of result.details.debtPrincipal) {
         console.log(`        • ${acc.accountLabel.padEnd(30)} ${fmt(acc.reduction).padStart(12)}`);
+        console.log(`          Balance: ${fmt(acc.priorBalance)} → ${fmt(acc.currentBalance)}`);
       }
     } else {
       console.log(`        (none)`);
+    }
+    
+    if (result.needsConfirmation.length > 0) {
+      console.log(`\n  ⚠️  ITEMS NEEDING USER CONFIRMATION:`);
+      for (const item of result.needsConfirmation) {
+        console.log(`      • ${item.merchant} - ${fmt(item.amount)} on ${item.date}`);
+        console.log(`        Category: ${item.category}`);
+        console.log(`        Question: Does this count as savings?`);
+      }
     }
     
     console.log(`\n  📈 computeAssetGains():`);
@@ -307,7 +191,7 @@ async function inspect(uid: string) {
   console.log("\n" + "═".repeat(80));
   const avgSavings = computeAverageSavings(
     profile.monthlyHistory,
-    profile.accountSnapshots,
+    profile.accountBalanceHistory,
     profile.expenseTxns,
     months
   );
