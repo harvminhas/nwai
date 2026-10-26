@@ -734,7 +734,12 @@ export async function buildAndCacheFinancialProfile(
   // Maps label+type → the first non-real-account-number slug seen (canonical)
   const slugByLabelKey = new Map<string, string>();
 
-  const balanceHistoryMap = new Map<string, { label: string; accountType: string; entries: Map<string, number> }>();
+  const balanceHistoryMap = new Map<string, { 
+    label: string; 
+    accountType: string; 
+    entries: Map<string, number>;
+    latestDateByMonth: Map<string, string>; // Track latest statement date per month for deduplication
+  }>();
   for (const doc of confirmedDocs) {
     const d = doc.data();
     const parsed = d.parsedData as ParsedStatementData | undefined;
@@ -772,12 +777,19 @@ export async function buildAndCacheFinancialProfile(
         label:       parsed.accountName ?? parsed.bankName ?? slug,
         accountType: parsed.accountType ?? "other",
         entries:     new Map(),
+        latestDateByMonth: new Map(),
       });
     }
     // Keep the highest-date entry per yearMonth (handles multiple uploads same month)
     const entry = balanceHistoryMap.get(slug)!;
-    const existingUploadedAt = entry.entries.get(ym);
-    if (existingUploadedAt == null) entry.entries.set(ym, parsed.netWorth);
+    const stmtDate = parsed.statementDate ?? "";
+    const latestDateByMonth = entry.latestDateByMonth;
+    
+    // Overwrite if this is the first entry for this month OR this statement is newer
+    if (!entry.entries.has(ym) || stmtDate > (latestDateByMonth.get(ym) ?? "")) {
+      entry.entries.set(ym, parsed.netWorth);
+      latestDateByMonth.set(ym, stmtDate);
+    }
   }
   // Apply synthetic backfill entries — each doc is one pre-computed monthly record.
   // Real statement data (loaded above) takes priority: only fill months with no real data.
