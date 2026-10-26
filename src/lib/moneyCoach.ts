@@ -161,7 +161,7 @@ export function computeMoneyCoachBreakdown(
 
   // Compute average for each bucket (same window as income)
   // Savings uses shared calculation function (actual contributions + debt paydown)
-  const averageSavings = computeAverageSavings(monthlyHistory, expenseTxns, spendingMonths);
+  const averageSavings = computeAverageSavings(monthlyHistory, accountSnapshots, expenseTxns, spendingMonths);
 
   const bucketAverages: Record<MoneyCoachBucket, number> = {
     fixed: average([...bucketsByMonth.values()].map(b => b.fixed)),
