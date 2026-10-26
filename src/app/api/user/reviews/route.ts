@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { getAllUnreviewedAnomalies } from "@/lib/debtPayments";
-import type { ReviewItem, ReviewClassification, DebtPaymentReviewItem, SavingsReviewItem } from "@/lib/reviewTypes";
+import { generateIncomeReviews } from "@/lib/incomeReviews";
+import type { ReviewItem, ReviewClassification, DebtPaymentReviewItem, SavingsReviewItem, IncomeClassificationReviewItem } from "@/lib/reviewTypes";
 
 export const dynamic = "force-dynamic";
 
@@ -64,9 +65,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       items = [];
     } else if (reviewType === "income_classification") {
       // Get income items needing classification
-      // For now, return empty - will be populated when we wire income review detection
-      // TODO: Wire income classification detection
-      items = [];
+      const incomeReviews = generateIncomeReviews(
+        profile.incomeTxns,
+        reviewedIds
+      );
+      items = incomeReviews as IncomeClassificationReviewItem[];
     }
 
     return NextResponse.json({ items });

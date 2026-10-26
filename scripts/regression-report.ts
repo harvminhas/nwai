@@ -18,6 +18,7 @@ import { getFinancialProfile } from "../src/lib/financialProfile";
 import { computeMoneyCoachBreakdown } from "../src/lib/moneyCoach";
 import { computeBucketBreakdown } from "../src/lib/bucketBreakdown";
 import { computeAverageSavings, computeMonthlySavings } from "../src/lib/savingsCalculations";
+import { buildIncomeSummary } from "../src/lib/incomeSummary";
 import type { MoneyCoachBucket } from "../src/lib/moneyCoachBuckets";
 import type { DebtPaymentReview } from "../src/lib/types";
 
@@ -36,6 +37,11 @@ interface RegressionReport {
   uid: string;
   timestamp: string;
   buckets: BucketReport[];
+  income: {
+    typicalMonthly: number;
+    regularSourcesCount: number;
+    last3MonthsTotal: number;
+  };
   summary: {
     totalMismatches: number;
     baselineComparison?: {
@@ -87,6 +93,20 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     .map(h => h.yearMonth);
   
   console.log(`📅 Last 3 complete months: ${completeMonths.join(", ")}\n`);
+  
+  // Test income summary
+  const incomeSummary = buildIncomeSummary(
+    profile.incomeTxns,
+    profile.accountSnapshots,
+    currency
+  );
+  
+  console.log(`💰 Income Summary (buildIncomeSummary):`);
+  console.log(`   Typical monthly (last 3 complete): ${formatCurrency(incomeSummary.typicalMonthly, currency)}`);
+  console.log(`   Regular sources: ${incomeSummary.regularSources.length}`);
+  console.log(`   One-off sources: ${incomeSummary.oneOffSources.length}`);
+  console.log(`   Transfer sources: ${incomeSummary.transferSources.length}`);
+  console.log(`   Last 3 months total: ${formatCurrency(incomeSummary.last3MonthsTotal, currency)}\n`);
   
   // Test each bucket
   const buckets: MoneyCoachBucket[] = ["fixed", "essentials", "flexible", "savings"];
@@ -265,6 +285,11 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       uid,
       timestamp: new Date().toISOString(),
       buckets: reports,
+      income: {
+        typicalMonthly: incomeSummary.typicalMonthly,
+        regularSourcesCount: incomeSummary.regularSources.length,
+        last3MonthsTotal: incomeSummary.last3MonthsTotal,
+      },
       summary: {
         totalMismatches,
         baselineComparison,

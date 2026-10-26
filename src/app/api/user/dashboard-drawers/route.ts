@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
-import { computeDetailedIncomeMetrics, getMonthsForWindow, type IncomeTimeWindow } from "@/lib/incomeMetrics";
+import { buildIncomeSummary } from "@/lib/incomeSummary";
 import { computeBucketBreakdown, compute3MonthTrend, getMonthsForWindow as getBucketMonths, type TimeWindow } from "@/lib/bucketBreakdown";
 import { computeMonthlySavings, computeAverageSavings } from "@/lib/savingsCalculations";
 import type { MoneyCoachBucket } from "@/lib/moneyCoachBuckets";
@@ -48,23 +48,15 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
 
     // Income drawer data
     if (bucket === "income") {
-      const incomeWindow = window as IncomeTimeWindow;
-      
-      // Get current year-month to exclude from historical calculations
-      const now = new Date();
-      const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      
-      const detailedMetrics = computeDetailedIncomeMetrics(
-        profile.monthlyHistory,
+      // Build income summary using unified data layer
+      const summary = buildIncomeSummary(
         profile.incomeTxns,
-        incomeWindow,
-        currentYear,
-        true, // core only
-        currentYearMonth // exclude current month from last3/12month
+        profile.accountSnapshots,
+        profile.homeCurrency
       );
-
-      // Get 12-month history for chart
-      // Generate all 12 calendar months, newest first, including missing months
+      
+      // Map to drawer data format
+      const now = new Date();
       const allMonths: string[] = [];
       
       for (let i = 0; i < 12; i++) {
@@ -73,30 +65,72 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
         allMonths.push(ym);
       }
       
-      // Create a map of actual data
-      const incomeByMonth = new Map(
-        profile.monthlyHistory.map(h => [h.yearMonth, h.incomeTotal])
-      );
+      // Get window months based on drawer window parameter
+      let windowMonths: string[];
+      if (window === "last3") {
+        windowMonths = summary.last3Months;
+      } else if (window === "ytd") {
+        const ytdMonths = summary.monthlyHistory
+          .filter(m => m.yearMonth >= `${currentYear}-01` && m.yearMonth < summary.currentMonth)
+          .map(m => m.yearMonth);
+        windowMonths = ytdMonths;
+      } else { // 12month
+        const complete = summary.monthlyHistory.filter(m => m.yearMonth < summary.currentMonth);
+        windowMonths = complete.slice(-12).map(m => m.yearMonth);
+      }
       
       const last12Months = allMonths.map(ym => {
-        const hasData = incomeByMonth.has(ym);
-        const income = incomeByMonth.get(ym) || 0;
-        const isCurrent = ym === currentYearMonth;
+        const monthData = summary.monthlyHistory.find(m => m.yearMonth === ym);
+        const hasData = monthData !== undefined;
+        const isCurrent = ym === summary.currentMonth;
         
         return {
           month: ym,
-          regularIncome: income,
-          oneOffIncome: 0, // TODO: detect one-offs from transactions
-          isInWindow: detailedMetrics.windowMonths.includes(ym),
+          regularIncome: monthData?.regular || 0,
+          oneOffIncome: monthData?.oneOff || 0,
+          isInWindow: windowMonths.includes(ym),
           isCurrentMonth: isCurrent,
-          hasData: hasData && income > 0,
+          hasData: hasData && (monthData?.total || 0) > 0,
         };
       });
+      
+      // Build metrics compatible with existing drawer format
+      const windowTotal = windowMonths.reduce((sum, ym) => {
+        const monthData = summary.monthlyHistory.find(m => m.yearMonth === ym);
+        return sum + (monthData?.regular || 0);
+      }, 0);
+      
+      const metrics = {
+        averageMonthly: summary.typicalMonthly,
+        currentMonthly: summary.typicalMonthly,
+        monthsTracked: windowMonths.length,
+        currentMonthsTracked: windowMonths.length,
+        currentBasisLabel: `last ${windowMonths.length} months`,
+        currentDiffersFromAverage: false,
+        windowAmount: Math.round(windowTotal / windowMonths.length),
+        windowLabel: window === "last3" ? "last 3 months" : window === "ytd" ? "year-to-date" : "12-month avg",
+        windowMonths,
+        regularSources: summary.regularSources.map(s => ({ 
+          source: s.description, 
+          category: s.category, 
+          amount: s.monthlyEquivalent 
+        })),
+        oneOffSources: summary.oneOffSources.map(s => ({ 
+          source: s.description, 
+          category: s.category, 
+          amount: s.total, 
+          isOneOff: true 
+        })),
+        ytdTotal: 0,
+        ytdRegular: 0,
+        ytdOneOff: 0,
+        projectedFullYear: 0,
+      };
 
       const response: IncomeDrawerData = {
         type: "income",
         window,
-        metrics: detailedMetrics,
+        metrics,
         chartData: last12Months,
         homeCurrency: profile.homeCurrency,
       };
