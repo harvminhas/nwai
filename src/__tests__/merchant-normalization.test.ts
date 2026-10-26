@@ -216,7 +216,7 @@ describe('Bucket Breakdown Merchant Merging', () => {
     expect(avivaMerchant!.amount).toBeCloseTo(763.00, 2);
   });
 
-  test('uses period average for non-recurring merchants', () => {
+  test('shows period total for non-recurring merchants', () => {
     const expenseTxns: ExpenseTxnRecord[] = [
       // Varying amounts - not recurring
       { merchant: 'Amazon', description: 'Shopping', amount: 50.00, category: 'Shopping', date: '2026-07-05', txMonth: '2026-07', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
@@ -239,7 +239,8 @@ describe('Bucket Breakdown Merchant Merging', () => {
     const amazonMerchant = shoppingCategory!.merchants.find(m => m.merchant === 'Amazon');
     expect(amazonMerchant).toBeDefined();
     
-    // Should use period average: (50 + 100 + 75) / 3 = 75
-    expect(amazonMerchant!.amount).toBeCloseTo(75.00, 2);
+    // Should show period total: (50 + 100 + 75) = 225
+    // NOT period average: 225 / 3 = 75
+    expect(amazonMerchant!.amount).toBeCloseTo(225.00, 2);
   });
 });

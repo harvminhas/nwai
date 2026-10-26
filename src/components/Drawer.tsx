@@ -26,6 +26,7 @@ export function Drawer({ type, isOpen, onClose, token, currency }: DrawerProps) 
   const [data, setData] = useState<DrawerData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [expandedMerchants, setExpandedMerchants] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!isOpen || !token) return;
@@ -479,38 +480,101 @@ function BucketDrawerContent({
                       <div className="space-y-1">
                         {category.merchants.map((merchant, mIdx) => {
                           const isDebtAccount = !!merchant.method;
-                          const Component = isDebtAccount ? "button" : "div";
+                          const merchantKey = `${category.category}-${merchant.merchant}-${mIdx}`;
+                          const isExpanded = expandedMerchants.has(merchantKey);
+                          const hasTransactions = merchant.transactions && merchant.transactions.length > 0;
+                          
+                          const toggleExpanded = () => {
+                            if (!hasTransactions) return;
+                            setExpandedMerchants(prev => {
+                              const next = new Set(prev);
+                              if (next.has(merchantKey)) {
+                                next.delete(merchantKey);
+                              } else {
+                                next.add(merchantKey);
+                              }
+                              return next;
+                            });
+                          };
                           
                           return (
-                            <Component
-                              key={mIdx}
-                              {...(isDebtAccount ? {
-                                onClick: () => setSelectedDebtAccount(merchant.accountSlug || null),
-                                className: "w-full flex items-center justify-between text-xs hover:bg-gray-100 rounded p-1 -mx-1 transition"
-                              } : {
-                                className: "flex items-center justify-between text-xs"
-                              })}
-                            >
-                              <div className="flex items-center gap-2 flex-1 min-w-0">
-                                <span className="text-gray-700 truncate">{merchant.merchant}</span>
-                                {merchant.method && (
-                                  <span 
-                                    className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-700 whitespace-nowrap"
-                                    style={{ fontFamily: "Inter, sans-serif" }}
-                                  >
-                                    {merchant.method}
-                                  </span>
+                            <div key={mIdx} className="space-y-1">
+                              {/* Merchant row */}
+                              <div
+                                className={`flex items-center justify-between text-xs ${
+                                  hasTransactions ? 'cursor-pointer hover:bg-gray-100 rounded p-1 -mx-1' : ''
+                                } ${isDebtAccount ? 'cursor-pointer hover:bg-gray-100 rounded p-1 -mx-1' : ''} transition`}
+                                onClick={() => {
+                                  if (isDebtAccount) {
+                                    setSelectedDebtAccount(merchant.accountSlug || null);
+                                  } else if (hasTransactions) {
+                                    toggleExpanded();
+                                  }
+                                }}
+                              >
+                                <div className="flex items-center gap-2 flex-1 min-w-0">
+                                  {hasTransactions && (
+                                    <svg 
+                                      className={`h-3 w-3 text-gray-400 transition-transform flex-shrink-0 ${isExpanded ? 'rotate-90' : ''}`} 
+                                      fill="none" 
+                                      viewBox="0 0 24 24" 
+                                      stroke="currentColor"
+                                    >
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                    </svg>
+                                  )}
+                                  <span className="text-gray-700 truncate">{merchant.merchant}</span>
+                                  {merchant.txCount && merchant.txCount > 1 && (
+                                    <span className="text-gray-500 text-[10px]">
+                                      ({merchant.txCount} transactions)
+                                    </span>
+                                  )}
+                                  {merchant.method && (
+                                    <span 
+                                      className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-700 whitespace-nowrap"
+                                      style={{ fontFamily: "Inter, sans-serif" }}
+                                    >
+                                      {merchant.method}
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="font-medium text-gray-900 ml-2">
+                                  {fmt(merchant.amount)}
+                                </span>
+                                {isDebtAccount && (
+                                  <svg className="ml-1 h-3 w-3 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                  </svg>
                                 )}
                               </div>
-                              <span className="font-medium text-gray-900 ml-2">
-                                {fmt(merchant.amount)}
-                              </span>
-                              {isDebtAccount && (
-                                <svg className="ml-1 h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                                </svg>
+                              
+                              {/* Expanded transaction details */}
+                              {isExpanded && hasTransactions && (
+                                <div className="ml-6 space-y-1 py-1">
+                                  {merchant.transactions!.map((txn, txIdx) => (
+                                    <div 
+                                      key={txIdx}
+                                      className="flex items-center justify-between text-[11px] text-gray-600 py-1"
+                                    >
+                                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                                        <span className="text-gray-500">{txn.date}</span>
+                                        <span className="text-gray-400">•</span>
+                                        <span className="truncate">{txn.description || merchant.merchant}</span>
+                                        {txn.accountLabel && (
+                                          <>
+                                            <span className="text-gray-400">•</span>
+                                            <span className="text-gray-500 text-[10px] truncate">{txn.accountLabel}</span>
+                                          </>
+                                        )}
+                                      </div>
+                                      <span className="text-gray-700 ml-2 font-medium">
+                                        {fmt(txn.amount)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
                               )}
-                            </Component>
+                            </div>
                           );
                         })}
                       </div>
