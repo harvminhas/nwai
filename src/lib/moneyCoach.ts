@@ -148,10 +148,10 @@ export function computeMoneyCoachBreakdown(
       const scheduled = scheduledByAccount.get(accountSlug);
       if (scheduled) {
         extraPaydown += Math.max(0, paid - scheduled.amount);
-      } else {
-        // No scheduled payment found - treat all as extra paydown
-        extraPaydown += paid;
       }
+      // Note: If no scheduled payment is found for this accountSlug, we skip it.
+      // This typically means the transaction's accountSlug (source account) doesn't
+      // match any debt account slug. The scheduled baseline is already in "fixed".
     }
 
     buckets.savings += extraPaydown;
