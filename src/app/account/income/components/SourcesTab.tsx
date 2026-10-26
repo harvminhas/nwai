@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { IncomeSummary, IncomeSource } from "@/lib/incomeSummary";
 import { formatDate } from "@/lib/dateFormatting";
 import { formatCurrency } from "@/lib/currencyUtils";
-import { INCOME_CATEGORIES, FREQUENCY_CONFIG, type Frequency } from "@/lib/incomeEngine";
+import { INCOME_CATEGORIES, FREQUENCY_CONFIG, type Frequency, type IncomeCategory } from "@/lib/incomeEngine";
 
 interface SourcesTabProps {
   summary: IncomeSummary;
@@ -16,6 +16,9 @@ export function SourcesTab({ summary, token, onUpdate }: SourcesTabProps) {
   const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
   const [cashIncomeExpanded, setCashIncomeExpanded] = useState(false);
   const [byCategoryExpanded, setByCategoryExpanded] = useState(false);
+  const [editingSource, setEditingSource] = useState<string | null>(null);
+  const [newSourceName, setNewSourceName] = useState("");
+  const [saving, setSaving] = useState(false);
   
   const toggleSource = (sourceName: string) => {
     setExpandedSources(prev => {
@@ -27,6 +30,113 @@ export function SourcesTab({ summary, token, onUpdate }: SourcesTabProps) {
       }
       return next;
     });
+  };
+  
+  const handleRename = async (oldName: string, newName: string) => {
+    if (!token || !newName.trim() || newName === oldName) {
+      setEditingSource(null);
+      return;
+    }
+    
+    setSaving(true);
+    try {
+      const res = await fetch("/api/user/income-source-rename", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ oldName, newName: newName.trim() }),
+      });
+      
+      if (res.ok) {
+        setEditingSource(null);
+        setNewSourceName("");
+        onUpdate?.();
+      } else {
+        alert("Failed to rename source");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+  
+  const handleMarkAsTransfer = async (sourceName: string) => {
+    if (!token) return;
+    
+    setSaving(true);
+    try {
+      const res = await fetch("/api/user/income-category-rules", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ 
+          source: sourceName, 
+          category: "Transfer"
+        }),
+      });
+      
+      if (res.ok) {
+        onUpdate?.();
+      } else {
+        alert("Failed to mark as transfer");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+  
+  const handleExclude = async (sourceName: string) => {
+    if (!token) return;
+    
+    const confirmed = confirm(`Exclude all income from "${sourceName}"? This will hide it from totals.`);
+    if (!confirmed) return;
+    
+    setSaving(true);
+    try {
+      const res = await fetch("/api/user/income-source-exclude", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ source: sourceName, excluded: true }),
+      });
+      
+      if (res.ok) {
+        onUpdate?.();
+      } else {
+        alert("Failed to exclude source");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+  
+  const handleCategoryChange = async (sourceName: string, category: IncomeCategory) => {
+    if (!token) return;
+    
+    setSaving(true);
+    try {
+      const res = await fetch("/api/user/income-category-rules", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ source: sourceName, category }),
+      });
+      
+      if (res.ok) {
+        onUpdate?.();
+      } else {
+        alert("Failed to update category");
+      }
+    } finally {
+      setSaving(false);
+    }
   };
   
   // Group sources by type
@@ -57,7 +167,19 @@ export function SourcesTab({ summary, token, onUpdate }: SourcesTabProps) {
               filteredMonths={last3Months}
               currency={summary.currency}
               token={token}
-              onUpdate={onUpdate}
+              onRename={(newName) => handleRename(source.canonicalName, newName)}
+              onMarkAsTransfer={() => handleMarkAsTransfer(source.canonicalName)}
+              onExclude={() => handleExclude(source.canonicalName)}
+              onCategoryChange={(cat) => handleCategoryChange(source.canonicalName, cat)}
+              isEditing={editingSource === source.description}
+              onStartEdit={() => {
+                setEditingSource(source.description);
+                setNewSourceName(source.canonicalName);
+              }}
+              onCancelEdit={() => setEditingSource(null)}
+              newName={editingSource === source.description ? newSourceName : ""}
+              onNameChange={setNewSourceName}
+              saving={saving}
             />
           ))}
           
@@ -86,7 +208,19 @@ export function SourcesTab({ summary, token, onUpdate }: SourcesTabProps) {
                 filteredMonths={last3Months}
                 currency={summary.currency}
                 token={token}
-                onUpdate={onUpdate}
+                onRename={(newName) => handleRename(source.canonicalName, newName)}
+                onMarkAsTransfer={() => handleMarkAsTransfer(source.canonicalName)}
+                onExclude={() => handleExclude(source.canonicalName)}
+                onCategoryChange={(cat) => handleCategoryChange(source.canonicalName, cat)}
+                isEditing={editingSource === source.description}
+                onStartEdit={() => {
+                  setEditingSource(source.description);
+                  setNewSourceName(source.canonicalName);
+                }}
+                onCancelEdit={() => setEditingSource(null)}
+                newName={editingSource === source.description ? newSourceName : ""}
+                onNameChange={setNewSourceName}
+                saving={saving}
               />
             ))}
           </div>
@@ -110,7 +244,19 @@ export function SourcesTab({ summary, token, onUpdate }: SourcesTabProps) {
                 filteredMonths={last3Months}
                 currency={summary.currency}
                 token={token}
-                onUpdate={onUpdate}
+                onRename={(newName) => handleRename(source.canonicalName, newName)}
+                onMarkAsTransfer={() => handleMarkAsTransfer(source.canonicalName)}
+                onExclude={() => handleExclude(source.canonicalName)}
+                onCategoryChange={(cat) => handleCategoryChange(source.canonicalName, cat)}
+                isEditing={editingSource === source.description}
+                onStartEdit={() => {
+                  setEditingSource(source.description);
+                  setNewSourceName(source.canonicalName);
+                }}
+                onCancelEdit={() => setEditingSource(null)}
+                newName={editingSource === source.description ? newSourceName : ""}
+                onNameChange={setNewSourceName}
+                saving={saving}
               />
             ))}
           </div>
@@ -164,7 +310,7 @@ export function SourcesTab({ summary, token, onUpdate }: SourcesTabProps) {
           <div className="divide-y divide-gray-100">
             {INCOME_CATEGORIES.filter(c => c !== "Transfer").map(category => {
               const categorySources = regularSources.filter(s => s.category === category);
-              const total = categorySources.reduce((sum, s) => s + s.total, 0);
+              const total = categorySources.reduce((sum, s) => sum + s.total, 0);
               
               if (total === 0) return null;
               
@@ -191,10 +337,37 @@ interface SourceRowProps {
   filteredMonths: string[];
   currency: string;
   token: string | null;
-  onUpdate?: () => void;
+  onRename: (newName: string) => void;
+  onMarkAsTransfer: () => void;
+  onExclude: () => void;
+  onCategoryChange: (category: IncomeCategory) => void;
+  isEditing: boolean;
+  onStartEdit: () => void;
+  onCancelEdit: () => void;
+  newName: string;
+  onNameChange: (name: string) => void;
+  saving: boolean;
 }
 
-function SourceRow({ source, isExpanded, onToggle, filteredMonths, currency }: SourceRowProps) {
+function SourceRow({
+  source,
+  isExpanded,
+  onToggle,
+  filteredMonths,
+  currency,
+  onRename,
+  onMarkAsTransfer,
+  onExclude,
+  onCategoryChange,
+  isEditing,
+  onStartEdit,
+  onCancelEdit,
+  newName,
+  onNameChange,
+  saving
+}: SourceRowProps) {
+  const [showActions, setShowActions] = useState(false);
+  
   // Filter transactions to the display window
   const visibleTransactions = source.transactions.filter(t => 
     filteredMonths.includes(t.date.slice(0, 7))
@@ -207,42 +380,128 @@ function SourceRow({ source, isExpanded, onToggle, filteredMonths, currency }: S
   
   return (
     <div>
-      <button
-        className="w-full px-6 py-4 flex items-center gap-4 hover:bg-gray-50 transition text-left"
-        onClick={onToggle}
-      >
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <p className="text-sm font-medium text-gray-900 truncate">{source.description}</p>
-            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-50 text-purple-700 uppercase tracking-wide">
-              {freqLabel}
-            </span>
+      <div className="px-6 py-4 flex items-center gap-4 hover:bg-gray-50 transition">
+        <button
+          className="flex-1 flex items-center gap-2 text-left"
+          onClick={onToggle}
+        >
+          <div className="flex-1 min-w-0">
+            {isEditing ? (
+              <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={(e) => onNameChange(e.target.value)}
+                  className="flex-1 px-2 py-1 text-sm border border-purple-300 rounded focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  disabled={saving}
+                />
+                <button
+                  onClick={() => onRename(newName)}
+                  disabled={saving}
+                  className="text-xs px-2 py-1 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={onCancelEdit}
+                  disabled={saving}
+                  className="text-xs px-2 py-1 border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-gray-900 truncate">{source.description}</p>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-50 text-purple-700 uppercase tracking-wide">
+                    {freqLabel}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {visibleTransactions.length} deposit{visibleTransactions.length !== 1 ? "s" : ""} · {Math.round(source.reliabilityScore)}% reliable
+                </p>
+              </>
+            )}
           </div>
-          <p className="text-xs text-gray-500 mt-0.5">
-            {visibleTransactions.length} deposit{visibleTransactions.length !== 1 ? "s" : ""} · {Math.round(source.reliabilityScore)}% reliable
-          </p>
-        </div>
+        </button>
         
         <div className="flex items-center gap-3">
           <span className="text-base font-semibold text-gray-900 tabular-nums">
             {formatCurrency(visibleTotal, currency)}
           </span>
-          <svg
-            className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? "rotate-180" : ""}`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={2}
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-          </svg>
+          
+          {/* Actions menu */}
+          <div className="relative">
+            <button
+              onClick={() => setShowActions(!showActions)}
+              className="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+              </svg>
+            </button>
+            
+            {showActions && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setShowActions(false)} />
+                <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 z-20 py-1">
+                  <button
+                    onClick={() => { onStartEdit(); setShowActions(false); }}
+                    className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    Rename
+                  </button>
+                  <button
+                    onClick={() => { onMarkAsTransfer(); setShowActions(false); }}
+                    className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    Mark as transfer
+                  </button>
+                  <button
+                    onClick={() => { onExclude(); setShowActions(false); }}
+                    className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                  >
+                    Exclude
+                  </button>
+                  
+                  <div className="border-t border-gray-100 my-1" />
+                  <div className="px-4 py-1 text-xs font-semibold text-gray-500 uppercase">Category</div>
+                  
+                  {INCOME_CATEGORIES.filter(c => c !== "Transfer").map(cat => (
+                    <button
+                      key={cat}
+                      onClick={() => { onCategoryChange(cat); setShowActions(false); }}
+                      className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-50 ${
+                        source.category === cat ? "text-purple-600 font-medium" : "text-gray-700"
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+          
+          <button onClick={onToggle} className="p-1">
+            <svg
+              className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
         </div>
-      </button>
+      </div>
       
       {isExpanded && visibleTransactions.length > 0 && (
         <div className="bg-gray-50 border-t border-gray-100">
           <div className="px-6 py-2 text-xs text-gray-500 uppercase tracking-wide">
-            Actual deposits · tap to expand
+            Actual deposits
           </div>
           <div className="divide-y divide-gray-100">
             {visibleTransactions
