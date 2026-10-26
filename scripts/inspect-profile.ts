@@ -208,13 +208,45 @@ async function main() {
   const monthsToAnalyze = requestedMonths || 
     getMonthsForWindow(profile.monthlyHistory, 'last3', currentYear);
 
+  console.log('');
+  console.log('─'.repeat(80));
+  console.log('BUCKET BREAKDOWN DEBUG');
+  console.log('─'.repeat(80));
+  console.log(`Selected months: ${monthsToAnalyze.join(', ')}`);
+  console.log(`Total expense transactions in profile: ${profile.expenseTxns.length}`);
+  console.log('');
+  
+  // Debug: show transaction counts and totals per month
+  if (monthsToAnalyze.length > 0) {
+    console.log('Per-month expense transaction analysis:');
+    for (const month of monthsToAnalyze) {
+      const monthTxns = profile.expenseTxns.filter(t => t.txMonth === month);
+      const monthTotal = monthTxns.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+      const categoryCounts = new Map<string, number>();
+      for (const txn of monthTxns) {
+        categoryCounts.set(txn.category, (categoryCounts.get(txn.category) || 0) + 1);
+      }
+      
+      console.log(`  ${month}: ${monthTxns.length} txns, total ${fmt(monthTotal, profile.homeCurrency)}`);
+      
+      // Show top 5 categories by transaction count
+      const topCats = [...categoryCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5);
+      
+      for (const [cat, count] of topCats) {
+        console.log(`    - ${cat}: ${count} txns`);
+      }
+    }
+  }
+
   if (monthsToAnalyze.length > 0) {
     console.log('');
     console.log('─'.repeat(80));
-    console.log(`BUCKET BREAKDOWN (${monthsToAnalyze.join(', ')})`);
+    console.log(`BUCKET BREAKDOWN RESULTS (${monthsToAnalyze.join(', ')})`);
     console.log('─'.repeat(80));
 
-    for (const bucket of ['fixed', 'variable', 'savings'] as const) {
+    for (const bucket of ['fixed', 'essentials', 'flexible', 'savings'] as const) {
       const breakdown = computeBucketBreakdown(
         bucket,
         profile.expenseTxns,
