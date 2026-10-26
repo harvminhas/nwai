@@ -5,7 +5,7 @@ import type { ReviewItem, ReviewClassification } from "@/lib/reviewTypes";
 
 interface ReviewListProps {
   token: string | null;
-  reviewType: "debt_payment" | "savings_item";
+  reviewType: "debt_payment" | "savings_item" | "income_classification";
   onReviewComplete?: () => void;
 }
 
@@ -126,6 +126,15 @@ export function ReviewList({ token, reviewType, onReviewComplete }: ReviewListPr
 
       {currentItem.type === "savings_item" && (
         <SavingsReviewCard
+          item={currentItem as any}
+          animatingOut={animatingOut}
+          submitting={submitting}
+          onClassify={handleClassify}
+        />
+      )}
+      
+      {currentItem.type === "income_classification" && (
+        <IncomeClassificationReviewCard
           item={currentItem as any}
           animatingOut={animatingOut}
           submitting={submitting}
@@ -281,6 +290,79 @@ function SavingsReviewCard({
           style={{ fontFamily: "Inter, sans-serif" }}
         >
           No, it's not
+        </button>
+        <button
+          onClick={() => onClassify(item, "ignore")}
+          disabled={submitting}
+          className="text-xs font-medium px-3 py-1.5 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          style={{ fontFamily: "Inter, sans-serif" }}
+        >
+          Skip
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Income classification review card
+function IncomeClassificationReviewCard({
+  item,
+  animatingOut,
+  submitting,
+  onClassify,
+}: {
+  item: any;
+  animatingOut: boolean;
+  submitting: boolean;
+  onClassify: (item: any, classification: ReviewClassification) => void;
+}) {
+  return (
+    <div
+      className={`rounded-lg border border-gray-200 bg-white p-4 transition-all duration-300 ${
+        animatingOut ? "opacity-0 scale-95" : "opacity-100 scale-100"
+      }`}
+    >
+      <div className="mb-3">
+        <div className="font-semibold text-gray-900" style={{ fontFamily: "Inter, sans-serif" }}>
+          {item.source}
+        </div>
+        <div className="flex items-center gap-2 mt-1 text-sm text-gray-600">
+          <span>{item.date}</span>
+          <span className="text-gray-400">•</span>
+          <span>CA${Math.abs(item.amount).toLocaleString()}</span>
+          {item.reason && (
+            <>
+              <span className="text-gray-400">•</span>
+              <span className="text-orange-600">{item.reason}</span>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => onClassify(item, "is_income")}
+          disabled={submitting}
+          className="text-xs font-medium px-3 py-1.5 rounded-md border border-violet-600 bg-white text-violet-700 hover:bg-violet-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          style={{ fontFamily: "Inter, sans-serif" }}
+        >
+          Income
+        </button>
+        <button
+          onClick={() => onClassify(item, "is_transfer")}
+          disabled={submitting}
+          className="text-xs font-medium px-3 py-1.5 rounded-md border border-violet-600 bg-white text-violet-700 hover:bg-violet-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          style={{ fontFamily: "Inter, sans-serif" }}
+        >
+          Transfer
+        </button>
+        <button
+          onClick={() => onClassify(item, "is_refund")}
+          disabled={submitting}
+          className="text-xs font-medium px-3 py-1.5 rounded-md border border-violet-600 bg-white text-violet-700 hover:bg-violet-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          style={{ fontFamily: "Inter, sans-serif" }}
+        >
+          Refund
         </button>
         <button
           onClick={() => onClassify(item, "ignore")}

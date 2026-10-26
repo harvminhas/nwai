@@ -30,13 +30,22 @@ export interface SavingsReviewItem extends BaseReviewItem {
   reason: string; // e.g., "life insurance ambiguous"
 }
 
+// Income classification review (is this income, transfer, or refund?)
+export interface IncomeClassificationReviewItem extends BaseReviewItem {
+  type: "income_classification";
+  source: string;
+  reason: "possible_transfer" | "possible_refund" | "ambiguous_category";
+  suggestedCategory?: string;
+}
+
 // Union of all review types
-export type ReviewItem = DebtPaymentReviewItem | SavingsReviewItem;
+export type ReviewItem = DebtPaymentReviewItem | SavingsReviewItem | IncomeClassificationReviewItem;
 
 // Classification options per review type
 export type DebtPaymentClassification = "extra_prepayment" | "new_regular_payment" | "ignore";
 export type SavingsClassification = "is_savings" | "not_savings" | "ignore";
-export type ReviewClassification = DebtPaymentClassification | SavingsClassification;
+export type IncomeClassification = "is_income" | "is_transfer" | "is_refund" | "ignore";
+export type ReviewClassification = DebtPaymentClassification | SavingsClassification | IncomeClassification;
 
 // Persisted review record
 export interface ReviewRecord {

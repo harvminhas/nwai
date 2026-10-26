@@ -59,7 +59,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "58"; // NET balance savings + debt payment reviews + currency conversion
+const SCHEMA_VERSION = "59"; // Unified income data layer + income summary
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**

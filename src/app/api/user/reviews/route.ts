@@ -20,9 +20,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const { auth, db } = getFirebaseAdmin();
     const decoded = await auth.verifyIdToken(token);
     const { searchParams } = new URL(req.url);
-    const reviewType = searchParams.get("type") as "debt_payment" | "savings_item" | null;
+    const reviewType = searchParams.get("type") as "debt_payment" | "savings_item" | "income_classification" | null;
 
-    if (!reviewType || !["debt_payment", "savings_item"].includes(reviewType)) {
+    if (!reviewType || !["debt_payment", "savings_item", "income_classification"].includes(reviewType)) {
       return NextResponse.json({ error: "Invalid review type" }, { status: 400 });
     }
 
@@ -62,6 +62,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       // For now, return empty - savings confirmations will be wired later
       // TODO: Wire savings confirmations from computeMonthlySavings
       items = [];
+    } else if (reviewType === "income_classification") {
+      // Get income items needing classification
+      // For now, return empty - will be populated when we wire income review detection
+      // TODO: Wire income classification detection
+      items = [];
     }
 
     return NextResponse.json({ items });
@@ -95,7 +100,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    if (!["debt_payment", "savings_item"].includes(type)) {
+    if (!["debt_payment", "savings_item", "income_classification"].includes(type)) {
       return NextResponse.json({ error: "Invalid review type" }, { status: 400 });
     }
 
