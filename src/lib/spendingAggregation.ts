@@ -10,7 +10,7 @@
 
 import { getParentCategory } from "./categoryTaxonomy";
 import { computeScheduledDebtPayments, type ScheduledDebtPayment } from "./debtPayments";
-import type { AccountSnapshot, ExpenseTxnRecord } from "./extractTransactions";
+import type { AccountSnapshot, ExpenseTxnRecord, DebtPaymentHistoryEntry } from "./extractTransactions";
 import { merchantSlug } from "./applyRules";
 
 export interface CategorySpendingSummary {
@@ -38,12 +38,13 @@ export interface CategorySpendingSummary {
 export function aggregateSpendingByCategory(
   expenseTxns: ExpenseTxnRecord[],
   accountSnapshots: AccountSnapshot[],
+  debtPaymentHistory: DebtPaymentHistoryEntry[],
   months: number
 ): CategorySpendingSummary[] {
   const monthCount = Math.max(1, months);
   
   // Compute scheduled debt payments (learned regular amounts)
-  const scheduledPayments = computeScheduledDebtPayments(accountSnapshots, expenseTxns);
+  const scheduledPayments = computeScheduledDebtPayments(accountSnapshots, debtPaymentHistory);
   const scheduledByAccount = new Map(
     scheduledPayments.map(p => [p.accountSlug, p])
   );

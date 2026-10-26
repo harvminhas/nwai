@@ -9,7 +9,7 @@
  * Balances, payments, and minimums must be in home currency before aggregation.
  */
 
-import type { AccountSnapshot, ExpenseTxnRecord } from "./extractTransactions";
+import type { AccountSnapshot, ExpenseTxnRecord, DebtPaymentHistoryEntry } from "./extractTransactions";
 import type { DebtPaymentReview } from "./types";
 import { txFingerprint } from "./txFingerprint";
 
@@ -53,16 +53,14 @@ const ANOMALY_LOW_THRESHOLD = 0.5;   // Payment < 0.5× median
 
 /**
  * Detect recurring payment amount and flag anomalies.
- * Returns median of regular payments (6-12 months history), plus list of anomalies.
+ * Returns median of regular payments (all non-zero paymentsMade history), plus list of anomalies.
  * All amounts are converted to home currency.
  * 
- * For loan/mortgage accounts, payment history comes from paymentsMade field on statements.
- * For checking accounts making payments, we'd look in expense transactions, but those
- * are tracked separately (not used here).
+ * For loan/mortgage accounts, payment history comes from all paymentsMade across ALL statements.
  */
 function detectRecurringPayment(
   accountSlug: string,
-  accountSnapshots: AccountSnapshot[],
+  debtPaymentHistory: DebtPaymentHistoryEntry[],
   userReviews: Map<string, DebtPaymentReview>,
   toHome: (amount: number, currency?: string) => number
 ): { 
@@ -71,33 +69,27 @@ function detectRecurringPayment(
   paymentCount: number;
   reviewedAnomalies: DebtAnomaly[];
 } {
-  // Get all statements for this account that have paymentsMade
-  const statementsWithPayments = accountSnapshots
-    .filter(snap => 
-      snap.slug === accountSlug && 
-      snap.paymentsMade && 
-      snap.paymentsMade > 0
-    )
-    .map(snap => {
-      const date = `${snap.statementMonth}-15`; // Use mid-month for statement date
-      const amount = toHome(snap.paymentsMade!, snap.currency);
-      const fingerprint = txFingerprint(snap.slug, date, amount, "Payment");
+  // Get all non-zero payments for this account
+  const payments = debtPaymentHistory
+    .filter(entry => entry.accountSlug === accountSlug && entry.paymentsMade > 0)
+    .map(entry => {
+      const date = `${entry.statementMonth}-15`; // Use mid-month for statement date
+      const amount = toHome(entry.paymentsMade, entry.currency);
+      const fingerprint = txFingerprint(accountSlug, date, amount, "Payment");
       return {
         date,
-        txMonth: snap.statementMonth,
+        txMonth: entry.statementMonth,
         amount,
-        description: `Payment to ${snap.accountName || snap.slug}`,
+        description: `Payment ${entry.statementMonth}`,
         fingerprint,
-        currency: snap.currency,
+        currency: entry.currency,
       };
     })
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  if (statementsWithPayments.length === 0) {
+  if (payments.length === 0) {
     return { regularAmount: null, anomalies: [], paymentCount: 0, reviewedAnomalies: [] };
   }
-
-  const payments = statementsWithPayments;
 
   if (payments.length === 1) {
     // Single payment: can't detect pattern yet
@@ -246,17 +238,19 @@ function isPaidInFull(balance: number, paymentMade: number): boolean {
  * Compute scheduled debt payments for all debt accounts.
  * 
  * Logic:
- * - Installment loans (mortgage, LOC, car loan, personal): learn regular payment from history
+ * - Installment loans (mortgage, LOC, car loan, personal): learn regular payment from ALL payment history
  * - Anomalies (>1.5× or <0.5× median) are flagged for review
  * - Credit cards: estimate minimum when carrying balance
+ * - A loan with even 1 known payment uses it (low confidence is acceptable)
  * 
+ * @param debtPaymentHistory - All paymentsMade values from all debt account statements
  * @param fxRates - Currency conversion rates (e.g. { "CAD": 0.72 } means 1 CAD = 0.72 USD)
  * @param homeCurrency - The home currency to convert all amounts to (e.g. "USD" or "CAD")
  * @param userReviews - User classifications for anomalous transactions
  */
 export function computeScheduledDebtPayments(
   accountSnapshots: AccountSnapshot[],
-  expenseTxns: ExpenseTxnRecord[] = [],
+  debtPaymentHistory: DebtPaymentHistoryEntry[],
   userReviews: DebtPaymentReview[] = [],
   fxRates: Record<string, number> = {},
   homeCurrency: string = "CAD"
@@ -309,16 +303,16 @@ export function computeScheduledDebtPayments(
         unreviewedAnomalies: [],
       });
     } else {
-      // Installment loan/mortgage/LOC: detect recurring payment from paymentsMade history
+      // Installment loan/mortgage/LOC: detect recurring payment from ALL payment history
       const { regularAmount, anomalies, paymentCount, reviewedAnomalies } = detectRecurringPayment(
         account.slug,
-        accountSnapshots,
+        debtPaymentHistory,
         reviewMap,
         toHome
       );
 
-      if (regularAmount !== null && paymentCount >= 2) {
-        // Have payment history
+      if (regularAmount !== null && paymentCount >= 1) {
+        // Have payment history (even 1 payment is usable, though low confidence)
         scheduledPayments.push({
           accountSlug: account.slug,
           accountName: account.accountName,
@@ -380,12 +374,12 @@ export function computeExtraDebtPaydown(
  */
 export function getAllUnreviewedAnomalies(
   accountSnapshots: AccountSnapshot[],
-  expenseTxns: ExpenseTxnRecord[],
+  debtPaymentHistory: DebtPaymentHistoryEntry[],
   userReviews: DebtPaymentReview[] = [],
   fxRates: Record<string, number> = {},
   homeCurrency: string = "CAD"
 ): DebtAnomaly[] {
-  const payments = computeScheduledDebtPayments(accountSnapshots, expenseTxns, userReviews, fxRates, homeCurrency);
+  const payments = computeScheduledDebtPayments(accountSnapshots, debtPaymentHistory, userReviews, fxRates, homeCurrency);
   const allAnomalies: DebtAnomaly[] = [];
 
   for (const payment of payments) {

@@ -5,7 +5,7 @@
  * supporting multiple time windows (last 3 months, 12-month avg, year-to-date).
  */
 
-import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
+import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot, DebtPaymentHistoryEntry } from "./extractTransactions";
 import type { MonthlyHistoryEntry } from "./financialProfile";
 import type { DebtPaymentReview } from "./types";
 import { getCategoryBucket, type MoneyCoachBucket } from "./moneyCoachBuckets";
@@ -98,6 +98,7 @@ export function computeBucketBreakdown(
   bucket: MoneyCoachBucket,
   expenseTxns: ExpenseTxnRecord[],
   accountSnapshots: AccountSnapshot[],
+  debtPaymentHistory: DebtPaymentHistoryEntry[],
   months: string[],
   homeCurrency: string,
   userReviews: DebtPaymentReview[] = [],
@@ -132,7 +133,7 @@ export function computeBucketBreakdown(
   const scheduledDebtCategories: CategoryBreakdown[] = [];
   
   if (bucket === "fixed") {
-    const scheduledPayments = computeScheduledDebtPayments(accountSnapshots, expenseTxns, userReviews, fxRates, homeCurrency);
+    const scheduledPayments = computeScheduledDebtPayments(accountSnapshots, debtPaymentHistory, userReviews, fxRates, homeCurrency);
     const monthCount = months.length || 1;
     
     // Group by debt type
@@ -346,6 +347,7 @@ export function compute3MonthTrend(
   bucket: MoneyCoachBucket,
   expenseTxns: ExpenseTxnRecord[],
   accountSnapshots: AccountSnapshot[],
+  debtPaymentHistory: DebtPaymentHistoryEntry[],
   monthlyHistory: MonthlyHistoryEntry[],
   homeCurrency: string,
   userReviews: DebtPaymentReview[] = [],
@@ -374,6 +376,7 @@ export function compute3MonthTrend(
       bucket,
       expenseTxns,
       accountSnapshots,
+      debtPaymentHistory,
       [month],
       homeCurrency,
       userReviews,

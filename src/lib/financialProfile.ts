@@ -28,7 +28,7 @@ import { occurrencesInMonth } from "./cashIncome";
 import type { CashCommitment } from "@/app/api/user/cash-commitments/route";
 import { commitmentOccurrencesInMonth } from "@/app/api/user/cash-commitments/route";
 import { merchantSlug, isIncomeCategory, txnKey } from "./applyRules";
-import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
+import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot, DebtPaymentHistoryEntry } from "./extractTransactions";
 import { txFingerprint } from "./txFingerprint";
 import type { TypicalSpend } from "./spendingMetrics";
 import { resolveTxnCurrencyFromSnapshots } from "./currencyUtils";
@@ -213,6 +213,12 @@ export interface FinancialProfileCache {
    */
   merchantCadence?: Record<string, string>;
   /**
+   * Debt payment history: all paymentsMade values across all debt account statements.
+   * Used to compute recurring payment amounts (median of non-zero payments).
+   * Deduped by accountSlug + statementMonth.
+   */
+  debtPaymentHistory: DebtPaymentHistoryEntry[];
+  /**
    * Manual cash commitment entries already loaded during build — exposed here so
    * consumers (AI brief, etc.) don't need a separate Firestore read.
    */
@@ -383,6 +389,62 @@ export async function buildAndCacheFinancialProfile(
   }
 
   const { accountSnapshots, latestTxMonth, allTxMonths } = txData;
+
+  // ── Build debt payment history from all statements ──────────────────────────
+  // For computing recurring debt payment amounts, we need ALL paymentsMade values
+  // across all statements, not just the latest snapshot per account.
+  const debtPaymentHistory: DebtPaymentHistoryEntry[] = [];
+  const seenPaymentKeys = new Set<string>(); // for deduplication: accountSlug+statementMonth
+
+  for (const doc of completedSnap.docs) {
+    const d = doc.data();
+    const parsed = d.parsedData as ParsedStatementData | undefined;
+    if (!parsed) continue;
+
+    const accountType = (parsed.accountType ?? "").toLowerCase();
+    const isDebtAccount = ["credit", "loan", "mortgage", "line_of_credit"].includes(accountType);
+    if (!isDebtAccount) continue;
+
+    const paymentsMade = parsed.paymentsMade as number | undefined;
+    if (!paymentsMade || paymentsMade <= 0) continue;
+
+    // Get statement month
+    let stmtYm = parsed.statementDate ? getYearMonth(parsed.statementDate) : "";
+    if (!stmtYm) {
+      const raw = d.uploadedAt?.toDate?.() ?? d.uploadedAt;
+      if (raw instanceof Date) {
+        stmtYm = `${raw.getFullYear()}-${String(raw.getMonth() + 1).padStart(2, "0")}`;
+      }
+    }
+    if (!stmtYm) continue;
+
+    // Build account slug (same logic as extractTransactions)
+    const slug = buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
+    
+    // Dedupe by slug + month (handle duplicate uploads)
+    const key = `${slug}:${stmtYm}`;
+    if (seenPaymentKeys.has(key)) continue;
+    seenPaymentKeys.add(key);
+
+    debtPaymentHistory.push({
+      accountSlug: slug,
+      statementMonth: stmtYm,
+      paymentsMade,
+      currency: inferCurrencyFromBankName(parsed.bankName, parsed.currency),
+    });
+  }
+
+  // Helper to infer currency from bank name (same as extractTransactions)
+  function inferCurrencyFromBankName(bankName?: string, explicitCurrency?: string): string {
+    if (explicitCurrency) return explicitCurrency.toUpperCase();
+    const bank = (bankName ?? "").toLowerCase();
+    if (/td|rbc|bmo|cibc|scotiabank|tangerine|simplii|desjardins|eq bank/i.test(bank)) return "CAD";
+    return "CAD"; // default
+  }
+  function getYearMonth(dateStr: string): string {
+    const match = /^(\d{4})-(\d{2})/.exec(dateStr);
+    return match ? `${match[1]}-${match[2]}` : "";
+  }
 
   // User-marked transfer sources — deposits that should NOT count as income
   const userTransferSources = new Set<string>(
@@ -995,6 +1057,7 @@ export async function buildAndCacheFinancialProfile(
     goals,
     confirmedSubscriptions,
     merchantCadence: merchantCadenceMap,
+    debtPaymentHistory,
     cashCommitmentEntries,
   };
 

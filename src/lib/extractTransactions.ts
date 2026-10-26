@@ -88,6 +88,17 @@ export interface AccountSnapshot {
   paymentsMade?: number;
 }
 
+/**
+ * Payment history entry for a single debt account statement.
+ * Used to compute recurring payment amounts across all history.
+ */
+export interface DebtPaymentHistoryEntry {
+  accountSlug: string;
+  statementMonth: string; // YYYY-MM
+  paymentsMade: number;
+  currency: string;
+}
+
 export interface ExtractedFinancialData {
   /** All deduped expense transactions, sorted newest-first */
   expenseTxns: ExpenseTxnRecord[];

@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
     const profile = await getFinancialProfile(decoded.uid, db);
     const anomalies = getAllUnreviewedAnomalies(
       profile.accountSnapshots,
-      profile.expenseTxns,
+      profile.debtPaymentHistory,
       userReviews,
       profile.fxRates ?? {},
       profile.homeCurrency

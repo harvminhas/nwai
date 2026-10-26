@@ -95,7 +95,7 @@ export function computeMoneyCoachBreakdown(
   // Compute scheduled debt payments (fixed costs)
   const scheduledPayments = computeScheduledDebtPayments(
     accountSnapshots, 
-    expenseTxns, 
+    profile.debtPaymentHistory, 
     userReviews,
     fxRates ?? {},
     homeCurrency ?? "CAD"
