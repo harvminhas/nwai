@@ -266,7 +266,7 @@ export function buildIncomeSummary(
     amount: t.amount,
     date: t.date,
     category: (t.category as IncomeCategory) || "Other",
-    accountLabel: accountSnapshots.find(a => a.accountSlug === t.accountSlug)?.label || t.accountSlug,
+    accountLabel: accountSnapshots.find(a => a.slug === t.accountSlug)?.accountName || t.accountSlug,
     accountSlug: t.accountSlug
   }));
 

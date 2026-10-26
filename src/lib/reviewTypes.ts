@@ -5,8 +5,8 @@
 
 // Base review item (all review types extend this)
 export interface BaseReviewItem {
-  id: string; // Unique identifier (txFingerprint for debt, generated for savings)
-  type: "debt_payment" | "savings_item";
+  id: string; // Unique identifier (txFingerprint for debt, generated for savings/income)
+  type: "debt_payment" | "savings_item" | "income_classification";
   accountSlug?: string;
   accountName?: string;
   date: string;
