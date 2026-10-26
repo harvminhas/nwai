@@ -39,6 +39,10 @@ export interface DebtAnomaly {
   accountSlug: string;
   /** Transaction fingerprint for linking to reviews */
   txFingerprint: string;
+  /** Account name for display (e.g. "TD Home Equity FlexLine") */
+  accountName?: string;
+  /** Regular/usual payment amount for this account (for comparison) */
+  regularAmount?: number;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -384,7 +388,13 @@ export function getAllUnreviewedAnomalies(
 
   for (const payment of payments) {
     if (payment.unreviewedAnomalies && payment.unreviewedAnomalies.length > 0) {
-      allAnomalies.push(...payment.unreviewedAnomalies);
+      // Enrich anomalies with account name and regular amount from parent payment
+      const enriched = payment.unreviewedAnomalies.map(anomaly => ({
+        ...anomaly,
+        accountName: payment.accountName,
+        regularAmount: payment.amount,
+      }));
+      allAnomalies.push(...enriched);
     }
   }
 
