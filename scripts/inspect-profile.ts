@@ -21,7 +21,7 @@ import { resolve } from 'path';
 import { getFirebaseAdmin } from '../src/lib/firebase-admin.js';
 import { getFinancialProfile } from '../src/lib/financialProfile.js';
 import { computeScheduledDebtPayments, getAllUnreviewedAnomalies } from '../src/lib/debtPayments.js';
-import { computeBucketBreakdown } from '../src/lib/bucketBreakdown.js';
+import { computeBucketBreakdown, getMonthsForWindow } from '../src/lib/bucketBreakdown.js';
 import type { DebtPaymentReview } from '../src/lib/types.js';
 
 interface Args {
@@ -203,10 +203,10 @@ async function main() {
 
   // ── Bucket Breakdown ───────────────────────────────────────────────────────
 
+  // Use the same month selection logic as the dashboard
+  const currentYear = new Date().getFullYear();
   const monthsToAnalyze = requestedMonths || 
-    (profile.monthlyHistory.length > 0 
-      ? profile.monthlyHistory.slice(-3).map(h => h.yearMonth)
-      : []);
+    getMonthsForWindow(profile.monthlyHistory, 'last3', currentYear);
 
   if (monthsToAnalyze.length > 0) {
     console.log('');
@@ -232,18 +232,56 @@ async function main() {
       console.log(`${bucket.toUpperCase()}: ${fmt(breakdown.monthlyAverage, profile.homeCurrency)}/month`);
       
       if (breakdown.categories.length > 0) {
-        for (const cat of breakdown.categories.slice(0, 5)) { // Top 5
+        console.log(`  Categories (${breakdown.categories.length}):`);
+        for (const cat of breakdown.categories) { // Show ALL categories
           const badge = cat.isScheduled ? ' [scheduled]' : cat.isEstimated ? ' [est.]' : '';
-          console.log(`  ${cat.category}: ${fmt(cat.amount, profile.homeCurrency)}${badge}`);
+          console.log(`    ${cat.category}: ${fmt(cat.amount, profile.homeCurrency)}${badge}`);
           if (cat.merchants && cat.merchants.length > 0) {
-            for (const merch of cat.merchants.slice(0, 3)) {
+            for (const merch of cat.merchants.slice(0, 3)) { // Top 3 merchants per category
               const method = merch.method ? ` [${merch.method}]` : '';
-              console.log(`    - ${merch.merchant}: ${fmt(merch.amount, profile.homeCurrency)}${method}`);
+              console.log(`      - ${merch.merchant}: ${fmt(merch.amount, profile.homeCurrency)}${method}`);
             }
           }
         }
+      } else {
+        console.log('  (no categories)');
       }
     }
+  } else {
+    console.log('');
+    console.log('─'.repeat(80));
+    console.log('BUCKET BREAKDOWN');
+    console.log('─'.repeat(80));
+    console.log('  (no complete months available)');
+  }
+
+  // ── Otter Transactions ─────────────────────────────────────────────────────
+
+  console.log('');
+  console.log('─'.repeat(80));
+  console.log('OTTER TRANSACTIONS (for debugging annual subscription)');
+  console.log('─'.repeat(80));
+
+  const otterTxns = profile.expenseTxns.filter(t => 
+    (t.merchant || '').toLowerCase().includes('otter') ||
+    (t.description || '').toLowerCase().includes('otter')
+  );
+
+  if (otterTxns.length > 0) {
+    console.log(`Found ${otterTxns.length} Otter transaction(s):`);
+    console.log('');
+    for (const txn of otterTxns) {
+      console.log(`  Date: ${txn.date}`);
+      console.log(`  Merchant: ${txn.merchant}`);
+      console.log(`  Amount: ${fmt(txn.amount, txn.currency || profile.homeCurrency)}`);
+      console.log(`  Currency: ${txn.currency || profile.homeCurrency}`);
+      console.log(`  Category: ${txn.category}`);
+      console.log(`  Account: ${txn.accountLabel || txn.accountSlug}`);
+      console.log(`  Month: ${txn.txMonth}`);
+      console.log('');
+    }
+  } else {
+    console.log('  (none found)');
   }
 
   // ── Subscriptions ──────────────────────────────────────────────────────────
@@ -255,8 +293,9 @@ async function main() {
 
   if (profile.confirmedSubscriptions && profile.confirmedSubscriptions.length > 0) {
     console.log('');
-    console.log('Confirmed Subscriptions:');
-    for (const sub of profile.confirmedSubscriptions.slice(0, 10)) {
+    console.log(`Confirmed Subscriptions (${profile.confirmedSubscriptions.length} total):`);
+    console.log('');
+    for (const sub of profile.confirmedSubscriptions) { // Show ALL, no truncation
       const cadence = profile.merchantCadence?.[sub.merchantSlug];
       const freq = cadence || sub.frequency || 'unknown';
       const amount = sub.amount || 0;
@@ -272,6 +311,7 @@ async function main() {
       if (cadence) {
         console.log(`    Cadence: ${cadence} [user-set]`);
       }
+      console.log('');
     }
   } else {
     console.log('  (none)');
