@@ -297,8 +297,7 @@ async function main() {
   console.log('─'.repeat(80));
 
   const otterTxns = profile.expenseTxns.filter(t => 
-    (t.merchant || '').toLowerCase().includes('otter') ||
-    (t.description || '').toLowerCase().includes('otter')
+    (t.merchant || '').toLowerCase().includes('otter')
   );
 
   if (otterTxns.length > 0) {
@@ -379,7 +378,7 @@ async function main() {
                       freq === 'weekly' ? amount * 52 / 12 :
                       amount;
       
-      console.log(`  ${sub.merchant || sub.merchantSlug}`);
+      console.log(`  ${sub.name || sub.merchantSlug}`);
       console.log(`    Amount: ${fmt(amount, profile.homeCurrency)} (${freq})`);
       console.log(`    Monthly rate: ${fmt(monthly, profile.homeCurrency)}`);
       if (cadence) {

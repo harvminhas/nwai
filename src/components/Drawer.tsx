@@ -26,7 +26,6 @@ export function Drawer({ type, isOpen, onClose, token, currency }: DrawerProps) 
   const [data, setData] = useState<DrawerData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [expandedMerchants, setExpandedMerchants] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!isOpen || !token) return;
@@ -354,6 +353,7 @@ function BucketDrawerContent({
 }) {
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [selectedDebtAccount, setSelectedDebtAccount] = useState<string | null>(null);
+  const [expandedMerchants, setExpandedMerchants] = useState<Set<string>>(new Set());
 
   const fmt = (amount: number) =>
     new Intl.NumberFormat("en-US", {
