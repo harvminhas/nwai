@@ -122,19 +122,13 @@ export function computeMoneyCoachBreakdown(
     // Get transactions for this month
     const monthTxns = expenseTxns.filter(t => t.txMonth === ym);
 
-    // Track debt payments made this month (for extra paydown calculation)
-    const debtPaymentsMade = new Map<string, number>();
-
     for (const txn of monthTxns) {
       // Skip transfers and other excluded categories
       if (isCoreExcluded(txn.category)) continue;
 
-      // Skip Card Servicing entirely - purchases already counted in their own categories
+      // Skip Debt payments entirely - handled by NET balance approach in savings calculation
       const parentCategory = getParentCategory(txn.category);
       if (parentCategory === "Debt") {
-        // Track actual debt payments for extra paydown calculation
-        const current = debtPaymentsMade.get(txn.accountSlug) ?? 0;
-        debtPaymentsMade.set(txn.accountSlug, current + Math.abs(txn.amount));
         continue; // Don't add to any bucket
       }
 
@@ -143,19 +137,7 @@ export function computeMoneyCoachBreakdown(
       buckets[bucket] += amount;
     }
 
-    // Calculate extra debt paydown (payments above scheduled)
-    let extraPaydown = 0;
-    for (const [accountSlug, paid] of debtPaymentsMade) {
-      const scheduled = scheduledByAccount.get(accountSlug);
-      if (scheduled) {
-        extraPaydown += Math.max(0, paid - scheduled.amount);
-      }
-      // Note: If no scheduled payment is found for this accountSlug, we skip it.
-      // This typically means the transaction's accountSlug (source account) doesn't
-      // match any debt account slug. The scheduled baseline is already in "fixed".
-    }
-
-    buckets.savings += extraPaydown;
+    // Note: savings bucket is NOT calculated here - uses NET balance approach below
     bucketsByMonth.set(ym, buckets);
   }
 
