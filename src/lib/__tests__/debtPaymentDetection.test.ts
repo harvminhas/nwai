@@ -5,83 +5,14 @@
  * are correctly detected from statement paymentsMade, with anomalies flagged.
  */
 
+import { describe, test, expect } from 'vitest';
 import { computeScheduledDebtPayments } from "../debtPayments";
-import type { AccountSnapshot, ExpenseTxnRecord } from "../extractTransactions";
+import type { AccountSnapshot, DebtPaymentHistoryEntry } from "../extractTransactions";
 
 describe("Debt Payment Detection", () => {
   test("Scotia Plan Loan: detects CA$1,142 regular payment from paymentsMade", () => {
     // Scotia Plan Loan with 6 months of regular payments
     const accountSnapshots: AccountSnapshot[] = [
-      {
-        slug: "scotiabank-plan-loan-5678",
-        bankName: "Scotiabank",
-        accountId: "5678",
-        accountName: "Scotia Plan Loan",
-        accountType: "loan",
-        balance: -50000,
-        parsedAssets: 0,
-        parsedDebts: 50000,
-        statementMonth: "2026-04",
-        interestRate: 6.5,
-        currency: "CAD",
-        paymentsMade: 1142,
-      },
-      {
-        slug: "scotiabank-plan-loan-5678",
-        bankName: "Scotiabank",
-        accountId: "5678",
-        accountName: "Scotia Plan Loan",
-        accountType: "loan",
-        balance: -48858,
-        parsedAssets: 0,
-        parsedDebts: 48858,
-        statementMonth: "2026-05",
-        interestRate: 6.5,
-        currency: "CAD",
-        paymentsMade: 1142,
-      },
-      {
-        slug: "scotiabank-plan-loan-5678",
-        bankName: "Scotiabank",
-        accountId: "5678",
-        accountName: "Scotia Plan Loan",
-        accountType: "loan",
-        balance: -47716,
-        parsedAssets: 0,
-        parsedDebts: 47716,
-        statementMonth: "2026-06",
-        interestRate: 6.5,
-        currency: "CAD",
-        paymentsMade: 1142,
-      },
-      {
-        slug: "scotiabank-plan-loan-5678",
-        bankName: "Scotiabank",
-        accountId: "5678",
-        accountName: "Scotia Plan Loan",
-        accountType: "loan",
-        balance: -46574,
-        parsedAssets: 0,
-        parsedDebts: 46574,
-        statementMonth: "2026-07",
-        interestRate: 6.5,
-        currency: "CAD",
-        paymentsMade: 1142,
-      },
-      {
-        slug: "scotiabank-plan-loan-5678",
-        bankName: "Scotiabank",
-        accountId: "5678",
-        accountName: "Scotia Plan Loan",
-        accountType: "loan",
-        balance: -45432,
-        parsedAssets: 0,
-        parsedDebts: 45432,
-        statementMonth: "2026-08",
-        interestRate: 6.5,
-        currency: "CAD",
-        paymentsMade: 1142,
-      },
       {
         slug: "scotiabank-plan-loan-5678",
         bankName: "Scotiabank",
@@ -98,11 +29,18 @@ describe("Debt Payment Detection", () => {
       },
     ];
 
-    const expenseTxns: ExpenseTxnRecord[] = [];
+    const debtPaymentHistory: DebtPaymentHistoryEntry[] = [
+      { accountSlug: "scotiabank-plan-loan-5678", statementMonth: "2026-04", paymentsMade: 1142, currency: "CAD" },
+      { accountSlug: "scotiabank-plan-loan-5678", statementMonth: "2026-05", paymentsMade: 1142, currency: "CAD" },
+      { accountSlug: "scotiabank-plan-loan-5678", statementMonth: "2026-06", paymentsMade: 1142, currency: "CAD" },
+      { accountSlug: "scotiabank-plan-loan-5678", statementMonth: "2026-07", paymentsMade: 1142, currency: "CAD" },
+      { accountSlug: "scotiabank-plan-loan-5678", statementMonth: "2026-08", paymentsMade: 1142, currency: "CAD" },
+      { accountSlug: "scotiabank-plan-loan-5678", statementMonth: "2026-09", paymentsMade: 1142, currency: "CAD" },
+    ];
 
     const result = computeScheduledDebtPayments(
       accountSnapshots,
-      expenseTxns,
+      debtPaymentHistory,
       [],
       {},
       "CAD"
@@ -125,90 +63,6 @@ describe("Debt Payment Detection", () => {
         accountId: "1185-4190085",
         accountName: "TD Home Equity FlexLine",
         accountType: "line_of_credit",
-        balance: -520000,
-        parsedAssets: 0,
-        parsedDebts: 520000,
-        statementMonth: "2026-03",
-        interestRate: 4.65,
-        currency: "CAD",
-        paymentsMade: 2849,
-      },
-      {
-        slug: "td-flexline-1185",
-        bankName: "TD Bank",
-        accountId: "1185-4190085",
-        accountName: "TD Home Equity FlexLine",
-        accountType: "line_of_credit",
-        balance: -517151,
-        parsedAssets: 0,
-        parsedDebts: 517151,
-        statementMonth: "2026-04",
-        interestRate: 4.65,
-        currency: "CAD",
-        paymentsMade: 2849,
-      },
-      {
-        slug: "td-flexline-1185",
-        bankName: "TD Bank",
-        accountId: "1185-4190085",
-        accountName: "TD Home Equity FlexLine",
-        accountType: "line_of_credit",
-        balance: -514302,
-        parsedAssets: 0,
-        parsedDebts: 514302,
-        statementMonth: "2026-05",
-        interestRate: 4.65,
-        currency: "CAD",
-        paymentsMade: 2849,
-      },
-      {
-        slug: "td-flexline-1185",
-        bankName: "TD Bank",
-        accountId: "1185-4190085",
-        accountName: "TD Home Equity FlexLine",
-        accountType: "line_of_credit",
-        balance: -511453,
-        parsedAssets: 0,
-        parsedDebts: 511453,
-        statementMonth: "2026-06",
-        interestRate: 4.65,
-        currency: "CAD",
-        paymentsMade: 2849,
-      },
-      {
-        slug: "td-flexline-1185",
-        bankName: "TD Bank",
-        accountId: "1185-4190085",
-        accountName: "TD Home Equity FlexLine",
-        accountType: "line_of_credit",
-        balance: -476604,
-        parsedAssets: 0,
-        parsedDebts: 476604,
-        statementMonth: "2026-07",
-        interestRate: 4.65,
-        currency: "CAD",
-        paymentsMade: 32000, // Large lump-sum prepayment
-      },
-      {
-        slug: "td-flexline-1185",
-        bankName: "TD Bank",
-        accountId: "1185-4190085",
-        accountName: "TD Home Equity FlexLine",
-        accountType: "line_of_credit",
-        balance: -473755,
-        parsedAssets: 0,
-        parsedDebts: 473755,
-        statementMonth: "2026-08",
-        interestRate: 4.65,
-        currency: "CAD",
-        paymentsMade: 2849,
-      },
-      {
-        slug: "td-flexline-1185",
-        bankName: "TD Bank",
-        accountId: "1185-4190085",
-        accountName: "TD Home Equity FlexLine",
-        accountType: "line_of_credit",
         balance: -470906,
         parsedAssets: 0,
         parsedDebts: 470906,
@@ -219,11 +73,19 @@ describe("Debt Payment Detection", () => {
       },
     ];
 
-    const expenseTxns: ExpenseTxnRecord[] = [];
+    const debtPaymentHistory: DebtPaymentHistoryEntry[] = [
+      { accountSlug: "td-flexline-1185", statementMonth: "2026-03", paymentsMade: 2849, currency: "CAD" },
+      { accountSlug: "td-flexline-1185", statementMonth: "2026-04", paymentsMade: 2849, currency: "CAD" },
+      { accountSlug: "td-flexline-1185", statementMonth: "2026-05", paymentsMade: 2849, currency: "CAD" },
+      { accountSlug: "td-flexline-1185", statementMonth: "2026-06", paymentsMade: 2849, currency: "CAD" },
+      { accountSlug: "td-flexline-1185", statementMonth: "2026-07", paymentsMade: 32000, currency: "CAD" }, // Anomaly
+      { accountSlug: "td-flexline-1185", statementMonth: "2026-08", paymentsMade: 2849, currency: "CAD" },
+      { accountSlug: "td-flexline-1185", statementMonth: "2026-09", paymentsMade: 2849, currency: "CAD" },
+    ];
 
     const result = computeScheduledDebtPayments(
       accountSnapshots,
-      expenseTxns,
+      debtPaymentHistory,
       [],
       {},
       "CAD"
@@ -253,20 +115,6 @@ describe("Debt Payment Detection", () => {
         accountId: "1185-4190085",
         accountName: "TD Home Equity FlexLine",
         accountType: "line_of_credit",
-        balance: -500000,
-        parsedAssets: 0,
-        parsedDebts: 500000,
-        statementMonth: "2026-08",
-        interestRate: 4.65,
-        currency: "CAD",
-        paymentsMade: 2849,
-      },
-      {
-        slug: "td-flexline-1185",
-        bankName: "TD Bank",
-        accountId: "1185-4190085",
-        accountName: "TD Home Equity FlexLine",
-        accountType: "line_of_credit",
         balance: -497151,
         parsedAssets: 0,
         parsedDebts: 497151,
@@ -277,9 +125,14 @@ describe("Debt Payment Detection", () => {
       },
     ];
 
+    const debtPaymentHistory: DebtPaymentHistoryEntry[] = [
+      { accountSlug: "td-flexline-1185", statementMonth: "2026-08", paymentsMade: 2849, currency: "CAD" },
+      { accountSlug: "td-flexline-1185", statementMonth: "2026-09", paymentsMade: 2849, currency: "CAD" },
+    ];
+
     const result = computeScheduledDebtPayments(
       accountSnapshots,
-      [],
+      debtPaymentHistory,
       [],
       {},
       "CAD"
