@@ -58,6 +58,13 @@ function SpendingPageContent() {
     }
   };
 
+  const handleReviewComplete = async () => {
+    // Silent background refresh after review
+    if (token) {
+      await loadData(token);
+    }
+  };
+
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
@@ -79,12 +86,6 @@ function SpendingPageContent() {
     const url = new URL(window.location.href);
     url.searchParams.set("tab", tabId);
     window.history.pushState({}, "", url);
-  };
-
-  const handleReviewComplete = async () => {
-    if (token) {
-      await loadData(token);
-    }
   };
 
   if (loading) {
@@ -135,7 +136,7 @@ function SpendingPageContent() {
       </div>
 
       <div>
-        {activeTab === "overview" && <OverviewTab summary={summary} token={token} />}
+        {activeTab === "overview" && <OverviewTab summary={summary} token={token} onReviewComplete={handleReviewComplete} />}
         {activeTab === "trends" && <TrendsTab summary={summary} />}
         {activeTab === "where" && <WhereItGoesTab summary={summary} />}
         {activeTab === "merchants" && <ByMerchantTab summary={summary} />}

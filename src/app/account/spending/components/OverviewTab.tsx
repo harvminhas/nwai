@@ -10,30 +10,31 @@ import Link from "next/link";
 interface OverviewTabProps {
   summary: SpendingSummary;
   token: string | null;
+  onReviewComplete?: () => void;
 }
 
-export function OverviewTab({ summary, token }: OverviewTabProps) {
+export function OverviewTab({ summary, token, onReviewComplete }: OverviewTabProps) {
   const [subscriptions, setSubscriptions] = useState<SubscriptionSummary | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [expandedMerchants, setExpandedMerchants] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
+  const loadSubscriptions = async () => {
     if (!token) return;
-
-    const loadSubscriptions = async () => {
-      try {
-        const res = await fetch("/api/user/subscriptions", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setSubscriptions(data);
-        }
-      } catch (err) {
-        console.error("Failed to load subscriptions:", err);
+    
+    try {
+      const res = await fetch("/api/user/subscriptions", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSubscriptions(data);
       }
-    };
+    } catch (err) {
+      console.error("Failed to load subscriptions:", err);
+    }
+  };
 
+  useEffect(() => {
     loadSubscriptions();
   }, [token]);
   const lastMonth = summary.lastCompleteMonth;
@@ -194,7 +195,7 @@ export function OverviewTab({ summary, token }: OverviewTabProps) {
               <ReviewList
                 token={token}
                 reviewType="subscription"
-                onReviewComplete={() => window.location.reload()}
+                onReviewComplete={() => loadSubscriptions()}
               />
             </div>
           )}
@@ -272,7 +273,7 @@ export function OverviewTab({ summary, token }: OverviewTabProps) {
           <ReviewList
             token={token}
             reviewType="debt_payment"
-            onReviewComplete={() => window.location.reload()}
+            onReviewComplete={onReviewComplete}
           />
         </div>
       )}

@@ -38,28 +38,67 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     let items: ReviewItem[] = [];
 
     if (reviewType === "debt_payment") {
-      // Get debt payment anomalies
+      // Load existing debt payment reviews from BOTH collections (unified + legacy)
+      const unifiedDebtReviewsSnap = await db
+        .collection(`users/${decoded.uid}/reviews`)
+        .where("type", "==", "debt_payment")
+        .get();
+      
+      const legacyDebtReviewsSnap = await db
+        .collection(`users/${decoded.uid}/debtPaymentReviews`)
+        .get();
+      
+      // Build userReviews array (same format as debt-payment-anomalies route)
+      const debtReviewedIds = new Set<string>();
+      const userReviews: any[] = [];
+      
+      // Add from unified collection first
+      unifiedDebtReviewsSnap.docs.forEach(doc => {
+        debtReviewedIds.add(doc.id);
+        userReviews.push({
+          txFingerprint: doc.id,
+          accountSlug: doc.get("accountSlug"),
+          classification: doc.get("classification"),
+          date: doc.get("date"),
+          amount: doc.get("amount"),
+          reviewedAt: doc.get("reviewedAt"),
+        });
+      });
+      
+      // Add from legacy collection only if not already in unified
+      legacyDebtReviewsSnap.docs.forEach(doc => {
+        if (!debtReviewedIds.has(doc.id)) {
+          userReviews.push({
+            txFingerprint: doc.id,
+            accountSlug: doc.get("accountSlug"),
+            classification: doc.get("classification"),
+            date: doc.get("date"),
+            amount: doc.get("amount"),
+            reviewedAt: doc.get("reviewedAt"),
+          });
+        }
+      });
+      
+      // Get debt payment anomalies WITH proper review filtering
       const anomalies = getAllUnreviewedAnomalies(
         profile.accountSnapshots,
         profile.debtPaymentHistory,
-        [], // We'll filter by reviewedIds below
+        userReviews, // Pass actual reviews, not empty array
         profile.fxRates ?? {},
         profile.homeCurrency
       );
 
-      items = anomalies
-        .filter(a => !reviewedIds.has(a.txFingerprint))
-        .map(a => ({
-          id: a.txFingerprint,
-          type: "debt_payment" as const,
-          accountSlug: a.accountSlug,
-          accountName: a.accountName,
-          date: a.date,
-          amount: a.amount,
-          txMonth: a.txMonth,
-          reason: a.reason,
-          regularAmount: a.regularAmount,
-        })) as DebtPaymentReviewItem[];
+      items = anomalies.map(a => ({
+        id: a.txFingerprint,
+        type: "debt_payment" as const,
+        accountSlug: a.accountSlug,
+        accountName: a.accountName,
+        date: a.date,
+        amount: a.amount,
+        txMonth: a.txMonth,
+        reason: a.reason,
+        regularAmount: a.regularAmount,
+      })) as DebtPaymentReviewItem[];
     } else if (reviewType === "savings_item") {
       // Get savings items needing confirmation
       const savingsReviews = generateSavingsReviews(profile, reviewedIds);

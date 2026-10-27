@@ -205,4 +205,55 @@ describe("Subscription Review API Integration", () => {
     expectedNextDate.setMonth(expectedNextDate.getMonth() + 3);
     expect(afterSub.nextDate).toBe(expectedNextDate.toISOString().slice(0, 10));
   });
+
+  it.skipIf(!hasFirebase)("Debt payment review saved from one surface hides item on other surfaces", async () => {
+    const { db } = getFirebaseAdmin();
+    
+    // Use test UID
+    const testUid = "test-debt-review-" + Date.now();
+    
+    try {
+      // Setup: Create test data with debt payment anomaly
+      const testAccountSlug = "test-debt-account-1234";
+      const testTxFingerprint = "test-fingerprint-" + Date.now();
+      
+      // Save a debt payment review via unified API
+      await db
+        .collection(`users/${testUid}/reviews`)
+        .doc(testTxFingerprint)
+        .set({
+          type: "debt_payment",
+          classification: "extra_prepayment",
+          accountSlug: testAccountSlug,
+          date: "2024-03-15",
+          amount: 10000,
+          reviewedAt: new Date().toISOString(),
+        });
+      
+      // Verify it appears in unified reviews collection
+      const unifiedReviewsSnap = await db
+        .collection(`users/${testUid}/reviews`)
+        .where("type", "==", "debt_payment")
+        .get();
+      
+      expect(unifiedReviewsSnap.docs.length).toBeGreaterThan(0);
+      const reviewDoc = unifiedReviewsSnap.docs.find(d => d.id === testTxFingerprint);
+      expect(reviewDoc).toBeDefined();
+      expect(reviewDoc?.get("classification")).toBe("extra_prepayment");
+      
+      // Verify it also appears in legacy collection (backward compatibility)
+      const legacyReviewDoc = await db
+        .collection(`users/${testUid}/debtPaymentReviews`)
+        .doc(testTxFingerprint)
+        .get();
+      
+      expect(legacyReviewDoc.exists).toBe(true);
+      expect(legacyReviewDoc.get("classification")).toBe("extra_prepayment");
+      
+    } finally {
+      // Cleanup
+      await db.collection(`users/${testUid}/reviews`).doc("test-fingerprint-*").delete().catch(() => {});
+      await db.collection(`users/${testUid}/debtPaymentReviews`).doc("test-fingerprint-*").delete().catch(() => {});
+    }
+  });
 });

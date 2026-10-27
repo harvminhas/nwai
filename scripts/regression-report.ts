@@ -748,6 +748,50 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   console.log(`SUMMARY: ${totalMismatches} mismatch(es) found`);
   console.log("=".repeat(80) + "\n");
   
+  // ── Review Items Check ──
+  console.log("🔍 REVIEW ITEMS CROSS-SURFACE CHECK");
+  console.log("=".repeat(80) + "\n");
+  
+  // Load debt payment reviews from BOTH collections
+  const unifiedDebtReviewsSnap = await db
+    .collection(`users/${uid}/reviews`)
+    .where("type", "==", "debt_payment")
+    .get();
+  
+  const legacyDebtReviewsSnap = await db
+    .collection(`users/${uid}/debtPaymentReviews`)
+    .get();
+  
+  const allDebtReviewIds = new Set<string>();
+  unifiedDebtReviewsSnap.docs.forEach(doc => allDebtReviewIds.add(doc.id));
+  legacyDebtReviewsSnap.docs.forEach(doc => allDebtReviewIds.add(doc.id));
+  
+  console.log(`📝 Reviewed Debt Payment Items:`);
+  console.log(`   Unified collection: ${unifiedDebtReviewsSnap.docs.length}`);
+  console.log(`   Legacy collection: ${legacyDebtReviewsSnap.docs.length}`);
+  console.log(`   Total unique IDs: ${allDebtReviewIds.size}\n`);
+  
+  // List open review items
+  // Note: This is a simplified check. In production, the API route generates items dynamically
+  // by calling getAllUnreviewedAnomalies which filters out reviewed items.
+  // Here we just verify the review collections are accessible and consistent.
+  
+  if (unifiedDebtReviewsSnap.docs.length > 0) {
+    console.log(`   Sample unified reviews:`);
+    unifiedDebtReviewsSnap.docs.slice(0, 3).forEach(doc => {
+      const data = doc.data();
+      console.log(`     - ${doc.id}: ${data.classification} (${data.accountSlug}, ${data.date})`);
+    });
+    console.log();
+  }
+  
+  if (legacyDebtReviewsSnap.docs.length > 0 && legacyDebtReviewsSnap.docs.length !== unifiedDebtReviewsSnap.docs.length) {
+    console.log(`   ⚠️  Warning: Legacy collection has different count than unified`);
+    console.log(`   This is expected during migration, but all new reviews should appear in unified collection.\n`);
+  }
+  
+  console.log("=".repeat(80) + "\n");
+  
   // Compare against baseline
   let baselineComparison;
   if (fs.existsSync(BASELINE_PATH)) {

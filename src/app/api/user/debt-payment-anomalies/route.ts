@@ -20,16 +20,48 @@ export async function GET(req: NextRequest) {
     const { auth, db } = getFirebaseAdmin();
     const decoded = await auth.verifyIdToken(token);
 
-    // Load user debt payment reviews
-    const reviewsSnap = await db.collection(`users/${decoded.uid}/debtPaymentReviews`).get();
-    const userReviews: DebtPaymentReview[] = reviewsSnap.docs.map((doc) => ({
-      txFingerprint: doc.id,
-      accountSlug: doc.get("accountSlug"),
-      classification: doc.get("classification"),
-      date: doc.get("date"),
-      amount: doc.get("amount"),
-      reviewedAt: doc.get("reviewedAt"),
-    }));
+    // Load user debt payment reviews from BOTH collections (unified + legacy)
+    // 1. New unified reviews collection
+    const unifiedReviewsSnap = await db
+      .collection(`users/${decoded.uid}/reviews`)
+      .where("type", "==", "debt_payment")
+      .get();
+    
+    // 2. Old debtPaymentReviews collection (for backward compatibility)
+    const legacyReviewsSnap = await db
+      .collection(`users/${decoded.uid}/debtPaymentReviews`)
+      .get();
+    
+    // Combine both sources, using unified as source of truth
+    const reviewedIds = new Set<string>();
+    const userReviews: DebtPaymentReview[] = [];
+    
+    // Add from unified collection first
+    unifiedReviewsSnap.docs.forEach(doc => {
+      reviewedIds.add(doc.id);
+      userReviews.push({
+        txFingerprint: doc.id,
+        accountSlug: doc.get("accountSlug"),
+        classification: doc.get("classification"),
+        date: doc.get("date"),
+        amount: doc.get("amount"),
+        reviewedAt: doc.get("reviewedAt"),
+      });
+    });
+    
+    // Add from legacy collection only if not already in unified
+    legacyReviewsSnap.docs.forEach(doc => {
+      if (!reviewedIds.has(doc.id)) {
+        userReviews.push({
+          txFingerprint: doc.id,
+          accountSlug: doc.get("accountSlug"),
+          classification: doc.get("classification"),
+          date: doc.get("date"),
+          amount: doc.get("amount"),
+          reviewedAt: doc.get("reviewedAt"),
+        });
+      }
+    });
 
     const profile = await getFinancialProfile(decoded.uid, db);
     const anomalies = getAllUnreviewedAnomalies(
