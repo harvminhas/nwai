@@ -217,8 +217,9 @@ function isOneOff(
 ): boolean {
   const uniqueMonths = new Set(transactions.map(t => t.date.slice(0, 7)));
   
-  // Single-occurrence sources must never be "regular"
-  if (uniqueMonths.size === 1 && totalMonthsTracked >= 2) {
+  // Single-occurrence sources must never be "regular" if we have enough history
+  // Need at least 3 months of data to confidently say something is one-off
+  if (uniqueMonths.size === 1 && totalMonthsTracked >= 3) {
     return true;
   }
   
@@ -228,13 +229,17 @@ function isOneOff(
     return false;
   }
   
-  // Check for one-time keywords (only for single-month sources)
-  const lower = source.toLowerCase();
-  const ONE_TIME_KEYWORDS = [
-    "cra", "gst", "hst", "refund", "rebate", "tax return", "ccb", "canada child",
-    "oas", "cerb", "ei benefit", "ei payment", "stimulus", "benefit payment", "bonus"
-  ];
-  return ONE_TIME_KEYWORDS.some(k => lower.includes(k));
+  // Check for one-time keywords (only for single-month sources with enough history)
+  if (totalMonthsTracked >= 3) {
+    const lower = source.toLowerCase();
+    const ONE_TIME_KEYWORDS = [
+      "cra", "gst", "hst", "refund", "rebate", "tax return", "ccb", "canada child",
+      "oas", "cerb", "ei benefit", "ei payment", "stimulus", "benefit payment", "bonus"
+    ];
+    return ONE_TIME_KEYWORDS.some(k => lower.includes(k));
+  }
+  
+  return false;
 }
 
 /**
