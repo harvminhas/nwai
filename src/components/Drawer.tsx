@@ -577,6 +577,7 @@ function SavingsDrawerContent({
   onRefresh: () => void;
 }) {
   const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
+  const [expandedCategories, setExpandedCategories] = useState<Record<string, Set<string>>>({});
   
   const fmt = (amount: number) =>
     new Intl.NumberFormat("en-US", {
@@ -585,12 +586,42 @@ function SavingsDrawerContent({
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     }).format(amount);
+  
+  const fmtChange = (amount: number) => {
+    if (amount === 0) {
+      return fmt(0).replace(/^[+-]/, ''); // Remove any sign for zero
+    }
+    const formatted = fmt(amount);
+    return amount > 0 ? `+${formatted}` : formatted;
+  };
 
   const { windowSavings, basisLabel } = data;
   const { monthlyBreakdown, monthlyAverage, windowPeriodAccounts } = windowSavings;
   
   const toggleMonth = (month: string) => {
     setExpandedMonth(expandedMonth === month ? null : month);
+  };
+  
+  const toggleCategory = (month: string, category: string) => {
+    setExpandedCategories(prev => {
+      const monthCategories = prev[month] || new Set<string>();
+      const newMonthCategories = new Set(monthCategories);
+      
+      if (newMonthCategories.has(category)) {
+        newMonthCategories.delete(category);
+      } else {
+        newMonthCategories.add(category);
+      }
+      
+      return {
+        ...prev,
+        [month]: newMonthCategories
+      };
+    });
+  };
+  
+  const isCategoryExpanded = (month: string, category: string) => {
+    return expandedCategories[month]?.has(category) || false;
   };
 
   return (
@@ -663,52 +694,45 @@ function SavingsDrawerContent({
                 {/* Expanded per-account detail */}
                 {isExpanded && (
                   <div className="mt-2 ml-2 p-4 bg-gray-50 rounded-lg border border-gray-200 space-y-3">
-                    {/* Cash accounts */}
+                    {/* Cash & Savings accounts */}
                     {month.accounts.cashAccounts.length > 0 && (
                       <div>
-                        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
-                          💵 Cash & Savings
-                        </h4>
-                        <div className="space-y-2">
-                          {month.accounts.cashAccounts.map((acc) => (
-                            <div key={acc.slug} className="bg-white rounded p-2 text-xs border border-gray-200">
-                              <div className="flex items-start justify-between mb-1">
-                                <div>
-                                  <span className="font-medium text-gray-900">{acc.accountLabel.split(' (')[0]}</span>
-                                  <span className="text-gray-500 ml-1">(...{acc.accountLast4})</span>
-                                  {(acc.priorCarriedForward || acc.currentCarriedForward) && (
-                                    <span className="ml-2 text-orange-600 font-semibold" title="Balance carried forward from earlier month">
-                                      [CF]
-                                    </span>
-                                  )}
-                                </div>
-                                <span className={`font-semibold whitespace-nowrap ${acc.change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                  {acc.change >= 0 ? '+' : ''}{fmt(acc.change)}
-                                </span>
-                              </div>
-                              <div className="flex gap-4 text-gray-600">
-                                <span>Prior: {fmt(acc.priorBalance)}</span>
-                                <span>→</span>
-                                <span>Current: {fmt(acc.currentBalance)}</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Debt accounts */}
-                    {month.accounts.debtAccounts.length > 0 && (
-                      <div>
-                        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
-                          💳 Debt
-                        </h4>
-                        <div className="space-y-2">
-                          {month.accounts.debtAccounts.map((acc) => {
-                            const isPaidDown = acc.change > 0;
-                            const isBorrowing = acc.change < 0;
-                            
-                            return (
+                        {/* Category Header - Collapsible */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleCategory(month.month, 'cash');
+                          }}
+                          className="w-full flex items-center justify-between py-2 rounded hover:bg-gray-50 transition"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-base">💵</span>
+                            <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">
+                              Cash & Savings
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              ({month.accounts.cashAccounts.length})
+                            </span>
+                            <svg
+                              className={`w-3 h-3 text-gray-400 transition-transform ${
+                                isCategoryExpanded(month.month, 'cash') ? 'rotate-180' : ''
+                              }`}
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </div>
+                          <span className={`text-sm font-bold whitespace-nowrap ${getSignColor(month.netCashChange)}`}>
+                            {fmtChange(month.netCashChange)}
+                          </span>
+                        </button>
+                        
+                        {/* Account Cards - Expandable */}
+                        {isCategoryExpanded(month.month, 'cash') && (
+                          <div className="space-y-2 mt-2">
+                            {month.accounts.cashAccounts.map((acc) => (
                               <div key={acc.slug} className="bg-white rounded p-2 text-xs border border-gray-200">
                                 <div className="flex items-start justify-between mb-1">
                                   <div>
@@ -720,14 +744,9 @@ function SavingsDrawerContent({
                                       </span>
                                     )}
                                   </div>
-                                  <div className="text-right">
-                                    <div className={`font-semibold whitespace-nowrap ${isPaidDown ? 'text-green-600' : isBorrowing ? 'text-red-600' : 'text-gray-600'}`}>
-                                      {acc.change > 0 ? '+' : ''}{fmt(acc.change)}
-                                    </div>
-                                    <div className="text-xs text-gray-500">
-                                      {isPaidDown ? 'Paid down' : isBorrowing ? 'New borrowing' : 'No change'}
-                                    </div>
-                                  </div>
+                                  <span className={`font-semibold whitespace-nowrap ${getSignColor(acc.change)}`}>
+                                    {fmtChange(acc.change)}
+                                  </span>
                                 </div>
                                 <div className="flex gap-4 text-gray-600">
                                   <span>Prior: {fmt(acc.priorBalance)}</span>
@@ -735,36 +754,144 @@ function SavingsDrawerContent({
                                   <span>Current: {fmt(acc.currentBalance)}</span>
                                 </div>
                               </div>
-                            );
-                          })}
-                        </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* Debt accounts */}
+                    {month.accounts.debtAccounts.length > 0 && (
+                      <div>
+                        {/* Category Header - Collapsible */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleCategory(month.month, 'debt');
+                          }}
+                          className="w-full flex items-center justify-between py-2 rounded hover:bg-gray-50 transition"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-base">💳</span>
+                            <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">
+                              Debt
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              ({month.accounts.debtAccounts.length})
+                            </span>
+                            <svg
+                              className={`w-3 h-3 text-gray-400 transition-transform ${
+                                isCategoryExpanded(month.month, 'debt') ? 'rotate-180' : ''
+                              }`}
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </div>
+                          <span className={`text-sm font-bold whitespace-nowrap ${getSignColor(month.netDebtChange)}`}>
+                            {fmtChange(month.netDebtChange)}
+                          </span>
+                        </button>
+                        
+                        {/* Account Cards - Expandable */}
+                        {isCategoryExpanded(month.month, 'debt') && (
+                          <div className="space-y-2 mt-2">
+                            {month.accounts.debtAccounts.map((acc) => {
+                              const isPaidDown = acc.change > 0;
+                              const isBorrowing = acc.change < 0;
+                              
+                              return (
+                                <div key={acc.slug} className="bg-white rounded p-2 text-xs border border-gray-200">
+                                  <div className="flex items-start justify-between mb-1">
+                                    <div>
+                                      <span className="font-medium text-gray-900">{acc.accountLabel.split(' (')[0]}</span>
+                                      <span className="text-gray-500 ml-1">(...{acc.accountLast4})</span>
+                                      {(acc.priorCarriedForward || acc.currentCarriedForward) && (
+                                        <span className="ml-2 text-orange-600 font-semibold" title="Balance carried forward from earlier month">
+                                          [CF]
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="text-right">
+                                      <div className={`font-semibold whitespace-nowrap ${getSignColor(acc.change)}`}>
+                                        {fmtChange(acc.change)}
+                                      </div>
+                                      <div className="text-xs text-gray-500">
+                                        {isPaidDown ? 'Paid down' : isBorrowing ? 'New borrowing' : 'No change'}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-4 text-gray-600">
+                                    <span>Prior: {fmt(acc.priorBalance)}</span>
+                                    <span>→</span>
+                                    <span>Current: {fmt(acc.currentBalance)}</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     )}
                     
                     {/* Outside contributions */}
                     {month.accounts.contributions.length > 0 && (
                       <div>
-                        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
-                          🏦 Outside Contributions
-                        </h4>
-                        <div className="space-y-2">
-                          {month.accounts.contributions.map((contrib, idx) => (
-                            <div key={idx} className="bg-white rounded p-2 text-xs border border-gray-200">
-                              <div className="flex items-start justify-between">
-                                <div>
-                                  <span className="font-medium text-gray-900">{contrib.merchant}</span>
-                                  <div className="text-gray-500">{contrib.category}</div>
-                                  {contrib.needsConfirmation && (
-                                    <span className="text-orange-600 font-semibold">⚠️ Needs confirmation</span>
-                                  )}
+                        {/* Category Header - Collapsible */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleCategory(month.month, 'contributions');
+                          }}
+                          className="w-full flex items-center justify-between py-2 rounded hover:bg-gray-50 transition"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-base">🏦</span>
+                            <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">
+                              Outside Contributions
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              ({month.accounts.contributions.length})
+                            </span>
+                            <svg
+                              className={`w-3 h-3 text-gray-400 transition-transform ${
+                                isCategoryExpanded(month.month, 'contributions') ? 'rotate-180' : ''
+                              }`}
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </div>
+                          <span className={`text-sm font-bold whitespace-nowrap ${getSignColor(month.contributionsToOutside)}`}>
+                            {fmtChange(month.contributionsToOutside)}
+                          </span>
+                        </button>
+                        
+                        {/* Contribution Cards - Expandable */}
+                        {isCategoryExpanded(month.month, 'contributions') && (
+                          <div className="space-y-2 mt-2">
+                            {month.accounts.contributions.map((contrib, idx) => (
+                              <div key={idx} className="bg-white rounded p-2 text-xs border border-gray-200">
+                                <div className="flex items-start justify-between">
+                                  <div>
+                                    <span className="font-medium text-gray-900">{contrib.merchant}</span>
+                                    <div className="text-gray-500">{contrib.category}</div>
+                                    {contrib.needsConfirmation && (
+                                      <span className="text-orange-600 font-semibold">⚠️ Needs confirmation</span>
+                                    )}
+                                  </div>
+                                  <span className="font-semibold text-gray-900 whitespace-nowrap">
+                                    {fmt(contrib.amount)}
+                                  </span>
                                 </div>
-                                <span className="font-semibold text-gray-900 whitespace-nowrap">
-                                  {fmt(contrib.amount)}
-                                </span>
                               </div>
-                            </div>
-                          ))}
-                        </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
