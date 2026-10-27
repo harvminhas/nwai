@@ -67,6 +67,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   console.log(`Time: ${new Date().toISOString()}\n`);
 
   const { db } = getFirebaseAdmin();
+  const errors: string[] = []; // Collect errors, exit at the end
   
   // Get financial profile
   const profile = await getFinancialProfile(uid, db);
@@ -162,7 +163,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   
   if (hasSpendingError) {
     console.error("❌ Spending reconciliation failed\n");
-    process.exit(1);
+    errors.push("Spending reconciliation failed");
   } else {
     console.log(`✅ Spending reconciliation passed (${spendingSummary.monthlyHistory.length} months)\n`);
   }
@@ -192,10 +193,10 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   
   if (hasBucketMismatch) {
     console.error("\n❌ BUCKET MISMATCH: Spending page buckets don't match dashboard cards\n");
-    process.exit(1);
+    errors.push("Bucket mismatch between spending page and dashboard");
+  } else {
+    console.log(`✅ Spending buckets match dashboard cards\n`);
   }
-  
-  console.log(`✅ Spending buckets match dashboard cards\n`);
   
   // Verify typical monthly matches bucket sum
   const bucketSum = spendingSummary.buckets.reduce((s, b) => s + b.total, 0);
@@ -205,7 +206,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     console.error(`   Typical monthly = ${formatCurrency(spendingSummary.typicalMonthly, currency)}`);
     console.error(`   Bucket sum = ${formatCurrency(bucketSum, currency)}`);
     console.error(`   Difference = ${formatCurrency(typicalDiff, currency)}\n`);
-    process.exit(1);
+    errors.push("Typical monthly doesn't match bucket sum");
   }
   
   // Test subscriptions
@@ -227,7 +228,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     console.error(`\n❌ SUBSCRIPTION SANITY CHECK FAILED:`);
     subscriptionSummary.sanityCheckFailures.forEach(f => console.error(`   • ${f}`));
     console.error();
-    process.exit(1);
+    errors.push("Subscription sanity check failed");
   }
   
   // Additional sanity: subscriptions should be reasonable
@@ -236,15 +237,17 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   
   if (subscriptionSummary.activeCount > 30) {
     console.error(`\n❌ Too many subscriptions: ${subscriptionSummary.activeCount} (max 30)\n`);
-    process.exit(1);
+    errors.push("Too many subscriptions");
   }
   
   if (subPct > 10) {
     console.error(`\n❌ Subscriptions too high: ${subPct.toFixed(1)}% of spending (max 10%)\n`);
-    process.exit(1);
+    errors.push("Subscriptions percentage too high");
   }
   
-  console.log(`✅ Subscription detection passed sanity checks\n`);
+  if (subscriptionSummary.sanityCheckFailures.length === 0 && subscriptionSummary.activeCount <= 30 && subPct <= 10) {
+    console.log(`✅ Subscription detection passed sanity checks\n`);
+  }
   
   // Check for pending savings reviews
   const savingsReviewsSnap = await db
@@ -613,6 +616,14 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     
     fs.writeFileSync(BASELINE_PATH, JSON.stringify(reportData, null, 2), "utf-8");
     console.log(`✅ Baseline saved to ${BASELINE_PATH}\n`);
+  }
+  
+  // Exit with error code if any errors were collected
+  if (errors.length > 0) {
+    console.error(`\n❌ Test failed with ${errors.length} error(s):`);
+    errors.forEach((e, i) => console.error(`   ${i + 1}. ${e}`));
+    console.error();
+    process.exit(1);
   }
   
   // Exit with error code if mismatches found

@@ -37,10 +37,12 @@ export interface MonthlyBucketResult {
   yearMonth: string;
   /** Bucket totals */
   buckets: Record<MoneyCoachBucket, number>;
-  /** Per-category breakdown with transactions */
+  /** Per-category breakdown with transactions (ONLY spending buckets: fixed, essentials, flexible) */
   items: MonthlyBucketItem[];
   /** Total spending (sum of fixed + essentials + flexible) */
   total: number;
+  /** Non-spending items (savings, uncategorized) — excluded from total */
+  excludedItems: MonthlyBucketItem[];
 }
 
 /**
@@ -131,11 +133,19 @@ export function computeMonthlyBuckets(
     item.transactions.push(txn);
   }
   
-  // Add category items to result
-  items.push(...Array.from(categoryMap.values()));
+  // Add category items to result, split by spending vs non-spending
+  const allItems = Array.from(categoryMap.values());
+  const spendingBuckets: MoneyCoachBucket[] = ["fixed", "essentials", "flexible"];
   
-  // Sort items by amount (descending)
+  const spendingItems = allItems.filter(item => spendingBuckets.includes(item.bucket));
+  const excludedItems = allItems.filter(item => !spendingBuckets.includes(item.bucket));
+  
+  // Add synthetic loan payments to spending items
+  items.push(...spendingItems);
+  
+  // Sort both by amount (descending)
   items.sort((a, b) => b.amount - a.amount);
+  excludedItems.sort((a, b) => b.amount - a.amount);
   
   const total = buckets.fixed + buckets.essentials + buckets.flexible;
   
@@ -144,6 +154,7 @@ export function computeMonthlyBuckets(
     buckets,
     items,
     total,
+    excludedItems,
   };
 }
 

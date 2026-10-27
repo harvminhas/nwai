@@ -179,6 +179,7 @@ export function buildSpendingSummary(
         amount: item.amount,
         bucket: item.bucket
       }))
+      // Note: result.excludedItems (savings, uncategorized) are NOT included in categories
     };
   });
   

@@ -89,6 +89,29 @@ describe("Spending summary matches dashboard", () => {
       txFingerprint: "sub-1",
       accountType: "checking",
     },
+    // Non-spending categories (should be excluded from total)
+    {
+      date: "2026-09-20",
+      merchant: "RRSP CONTRIBUTION",
+      category: "Investments & Savings",
+      amount: -100,
+      accountLabel: "TD Chequing",
+      accountSlug: "td-chequing-5678",
+      txMonth: "2026-09",
+      txFingerprint: "savings-1",
+      accountType: "checking",
+    },
+    {
+      date: "2026-09-22",
+      merchant: "UNKNOWN MERCHANT",
+      category: "Other",
+      amount: -50,
+      accountLabel: "TD Chequing",
+      accountSlug: "td-chequing-5678",
+      txMonth: "2026-09",
+      txFingerprint: "other-1",
+      accountType: "checking",
+    },
     // Same for Aug
     {
       date: "2026-08-15",
@@ -123,6 +146,28 @@ describe("Spending summary matches dashboard", () => {
       txFingerprint: "sub-2",
       accountType: "checking",
     },
+    {
+      date: "2026-08-20",
+      merchant: "TFSA CONTRIBUTION",
+      category: "Investments & Savings",
+      amount: -100,
+      accountLabel: "TD Chequing",
+      accountSlug: "td-chequing-5678",
+      txMonth: "2026-08",
+      txFingerprint: "savings-2",
+      accountType: "checking",
+    },
+    {
+      date: "2026-08-22",
+      merchant: "UNKNOWN MERCHANT",
+      category: "Other",
+      amount: -50,
+      accountLabel: "TD Chequing",
+      accountSlug: "td-chequing-5678",
+      txMonth: "2026-08",
+      txFingerprint: "other-2",
+      accountType: "checking",
+    },
     // Same for Jul
     {
       date: "2026-07-15",
@@ -155,6 +200,28 @@ describe("Spending summary matches dashboard", () => {
       accountSlug: "td-chequing-5678",
       txMonth: "2026-07",
       txFingerprint: "sub-3",
+      accountType: "checking",
+    },
+    {
+      date: "2026-07-20",
+      merchant: "RRSP CONTRIBUTION",
+      category: "Investments & Savings",
+      amount: -100,
+      accountLabel: "TD Chequing",
+      accountSlug: "td-chequing-5678",
+      txMonth: "2026-07",
+      txFingerprint: "savings-3",
+      accountType: "checking",
+    },
+    {
+      date: "2026-07-22",
+      merchant: "UNKNOWN MERCHANT",
+      category: "Other",
+      amount: -50,
+      accountLabel: "TD Chequing",
+      accountSlug: "td-chequing-5678",
+      txMonth: "2026-07",
+      txFingerprint: "other-3",
       accountType: "checking",
     },
   ];
@@ -253,9 +320,13 @@ describe("Spending summary matches dashboard", () => {
     const debtPaymentsCategory = spendingSummary.categories.find(c => c.category === "Debt Payments");
     expect(debtPaymentsCategory).toBeUndefined();
     
-    // Only Groceries and Subscriptions should appear
+    // Only Groceries and Subscriptions should appear (spending buckets)
     expect(spendingSummary.categories.length).toBe(2);
     expect(spendingSummary.categories.some(c => c.category === "Groceries")).toBe(true);
     expect(spendingSummary.categories.some(c => c.category === "Subscriptions")).toBe(true);
+    
+    // Non-spending categories (savings, uncategorized) should NOT appear
+    expect(spendingSummary.categories.some(c => c.category === "Investments & Savings")).toBe(false);
+    expect(spendingSummary.categories.some(c => c.category === "Other")).toBe(false);
   });
 });
