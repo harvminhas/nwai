@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import type { SpendingSummary } from "@/lib/spendingSummary";
 import type { SubscriptionSummary } from "@/lib/subscriptionEngine";
 import { formatMonthYear, formatMonth } from "@/lib/dateFormatting";
-import { formatCurrency } from "@/lib/currency";
+import { formatCurrency } from "@/lib/currencyUtils";
 import { getSignColor } from "@/lib/colorHelpers";
 import { ReviewList } from "@/components/ReviewList";
 import Link from "next/link";
