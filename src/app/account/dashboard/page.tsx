@@ -7,6 +7,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { useActiveProfile } from "@/contexts/ActiveProfileContext";
 import { fmt } from "@/lib/currencyUtils";
+import { getSignColor } from "@/lib/colorHelpers";
 import { Drawer, type DrawerType } from "@/components/Drawer";
 import { ReviewList } from "@/components/ReviewList";
 
@@ -256,7 +257,7 @@ function WhereMoneyGoes({
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>
                   </div>
-                  <p className="text-2xl font-bold tracking-tight text-gray-900">
+                  <p className={`text-2xl font-bold tracking-tight ${bucket.bucket === 'savings' ? getSignColor(bucket.monthlyAverage) : 'text-gray-900'}`}>
                     {fmt(bucket.monthlyAverage, currency)}
                     <span className="text-sm font-medium text-gray-400">/mo</span>
                   </p>

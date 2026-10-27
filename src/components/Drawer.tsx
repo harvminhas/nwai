@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { DrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
 import { formatMonthYear } from "@/lib/dateFormatting";
+import { getSignColor, getSignBgColor } from "@/lib/colorHelpers";
 
 export type DrawerType = "income" | "fixed" | "essentials" | "flexible" | "savings";
 
@@ -563,7 +564,7 @@ function SavingsDrawerContent({
     }).format(amount);
 
   const { windowSavings, basisLabel } = data;
-  const { monthlyBreakdown, monthlyAverage, windowPeriodAccounts, needsConfirmation } = windowSavings;
+  const { monthlyBreakdown, monthlyAverage, windowPeriodAccounts } = windowSavings;
   
   const toggleMonth = (month: string) => {
     setExpandedMonth(expandedMonth === month ? null : month);
@@ -577,7 +578,7 @@ function SavingsDrawerContent({
           <p className="text-sm font-medium uppercase tracking-wide text-gray-500">
             Monthly average
           </p>
-          <p className={`mt-2 text-4xl font-bold ${monthlyAverage.total >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+          <p className={`mt-2 text-4xl font-bold ${getSignColor(monthlyAverage.total)}`}>
             {fmt(monthlyAverage.total)}
           </p>
           <p className="mt-1 text-xs text-gray-500">{basisLabel}</p>
@@ -606,9 +607,7 @@ function SavingsDrawerContent({
                     <div className="relative h-2 rounded-full bg-gray-100">
                       {month.total !== 0 && (
                         <div
-                          className={`absolute top-0 h-full rounded-full ${
-                            month.total >= 0 ? 'bg-green-500' : 'bg-red-500'
-                          }`}
+                          className={`absolute top-0 h-full rounded-full ${getSignBgColor(month.total)}`}
                           style={{
                             width: `${Math.min(Math.abs(month.total) / Math.max(...monthlyBreakdown.map(m => Math.abs(m.total)), 1) * 100, 100)}%`,
                             left: month.total >= 0 ? '0' : 'auto',
@@ -618,7 +617,7 @@ function SavingsDrawerContent({
                       )}
                     </div>
                   </div>
-                  <span className={`w-20 text-right text-xs font-semibold whitespace-nowrap ${month.total >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  <span className={`w-20 text-right text-xs font-semibold whitespace-nowrap ${getSignColor(month.total)}`}>
                     {fmt(month.total)}
                   </span>
                   <svg
@@ -794,16 +793,16 @@ function SavingsDrawerContent({
                       </svg>
                     </div>
                   </td>
-                  <td className={`text-right py-2 px-2 whitespace-nowrap ${month.netCashChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  <td className={`text-right py-2 px-2 whitespace-nowrap ${getSignColor(month.netCashChange)}`}>
                     {fmt(month.netCashChange)}
                   </td>
-                  <td className={`text-right py-2 px-2 whitespace-nowrap ${month.netDebtChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  <td className={`text-right py-2 px-2 whitespace-nowrap ${getSignColor(month.netDebtChange)}`}>
                     {fmt(month.netDebtChange)}
                   </td>
                   <td className="text-right py-2 px-2 text-gray-900 whitespace-nowrap">
                     {fmt(month.contributionsToOutside)}
                   </td>
-                  <td className={`text-right py-2 pl-2 font-semibold whitespace-nowrap ${month.total >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  <td className={`text-right py-2 pl-2 font-semibold whitespace-nowrap ${getSignColor(month.total)}`}>
                     {fmt(month.total)}
                   </td>
                 </tr>
@@ -811,16 +810,16 @@ function SavingsDrawerContent({
               {/* Monthly average row */}
               <tr className="border-t-2 border-gray-400 bg-gray-50 font-semibold">
                 <td className="py-2 pr-2 text-gray-900">Avg</td>
-                <td className={`text-right py-2 px-2 whitespace-nowrap ${monthlyAverage.netCashChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                <td className={`text-right py-2 px-2 whitespace-nowrap ${getSignColor(monthlyAverage.netCashChange)}`}>
                   {fmt(monthlyAverage.netCashChange)}
                 </td>
-                <td className={`text-right py-2 px-2 whitespace-nowrap ${monthlyAverage.netDebtChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                <td className={`text-right py-2 px-2 whitespace-nowrap ${getSignColor(monthlyAverage.netDebtChange)}`}>
                   {fmt(monthlyAverage.netDebtChange)}
                 </td>
                 <td className="text-right py-2 px-2 text-gray-900 whitespace-nowrap">
                   {fmt(monthlyAverage.contributionsToOutside)}
                 </td>
-                <td className={`text-right py-2 pl-2 whitespace-nowrap ${monthlyAverage.total >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                <td className={`text-right py-2 pl-2 whitespace-nowrap ${getSignColor(monthlyAverage.total)}`}>
                   {fmt(monthlyAverage.total)}
                 </td>
               </tr>
@@ -828,49 +827,6 @@ function SavingsDrawerContent({
           </table>
         </div>
       </div>
-
-      {/* Needs Confirmation Section */}
-      {needsConfirmation.length > 0 && (
-        <div className="rounded-xl border border-orange-300 bg-orange-50 p-6">
-          <h3 className="mb-4 text-sm font-bold text-orange-900">
-            ⚠️ Needs Your Confirmation
-          </h3>
-          <p className="mb-4 text-sm text-orange-800">
-            Some transactions are ambiguous. Please confirm if they should count as savings:
-          </p>
-          <div className="space-y-3">
-            {needsConfirmation.map((item) => (
-              <div
-                key={item.id}
-                className="rounded-lg border border-orange-300 bg-white p-4"
-              >
-                <div className="mb-3">
-                  <p className="text-sm font-semibold text-gray-900">{item.merchant}</p>
-                  <p className="text-xs text-gray-500">{item.category} • {item.date}</p>
-                  <p className="mt-1 text-lg font-bold text-gray-900">{fmt(item.amount)}</p>
-                </div>
-                <p className="mb-3 text-xs text-gray-600">
-                  Does this count as savings?
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => handleConfirmation(item.id, true)}
-                    className="flex-1 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
-                  >
-                    Yes, count it
-                  </button>
-                  <button
-                    onClick={() => handleConfirmation(item.id, false)}
-                    className="flex-1 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-                  >
-                    No, exclude it
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Coach Note */}
       <div className="rounded-xl border border-purple-200 bg-purple-50 p-4">
@@ -883,9 +839,4 @@ function SavingsDrawerContent({
       </div>
     </div>
   );
-
-  async function handleConfirmation(id: string, countAsSavings: boolean) {
-    // TODO: Implement confirmation API call and silent recompute
-    console.log(`Confirmation: ${id} = ${countAsSavings}`);
-  }
 }

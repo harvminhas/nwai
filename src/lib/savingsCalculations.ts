@@ -655,12 +655,6 @@ export function computeWindowSavings(
     monthlyBreakdown,
     monthlyAverage,
     windowPeriodAccounts: { cashAccounts, debtAccounts },
-    needsConfirmation: Array.from(allConfirmations).map(id => ({
-      id,
-      merchant: '',
-      category: '',
-      amount: 0,
-      date: '',
-    })),
+    needsConfirmation: [], // Savings confirmations handled via shared review framework
   };
 }
