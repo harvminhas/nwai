@@ -108,6 +108,28 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   console.log(`   Transfer sources: ${incomeSummary.transferSources.length}`);
   console.log(`   Last 3 months total: ${formatCurrency(incomeSummary.last3MonthsTotal, currency)}\n`);
   
+  // Verify monthly income bar values match source detail
+  console.log(`🔍 Income Monthly Bar Verification:`);
+  let incomeBarMismatches = 0;
+  for (const month of incomeSummary.monthlyHistory.slice(-12)) { // Check last 12 months
+    const barValue = month.total;
+    const sourceSum = month.sources.reduce((sum, src) => sum + src.amount, 0);
+    const diff = Math.abs(barValue - sourceSum);
+    
+    if (diff > 0.01) { // Allow 1 cent rounding
+      incomeBarMismatches++;
+      console.log(`   ❌ ${month.yearMonth}: Bar ${formatCurrency(barValue, currency)} ≠ Sources ${formatCurrency(sourceSum, currency)} (diff: ${formatCurrency(diff, currency)})`);
+    } else {
+      console.log(`   ✓ ${month.yearMonth}: ${formatCurrency(barValue, currency)} (bar = sources)`);
+    }
+  }
+  
+  if (incomeBarMismatches === 0) {
+    console.log(`   ✅ All monthly income bars match source details\n`);
+  } else {
+    console.log(`   ❌ ${incomeBarMismatches} month(s) have mismatches between bar and source totals\n`);
+  }
+  
   // Check for pending savings reviews
   const savingsReviewsSnap = await db
     .collection(`users/${uid}/reviews`)
@@ -480,6 +502,11 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   // Exit with error code if mismatches found
   if (totalMismatches > 0) {
     console.error(`❌ Test failed: ${totalMismatches} card/drawer mismatch(es)\n`);
+    process.exit(1);
+  }
+  
+  if (incomeBarMismatches > 0) {
+    console.error(`❌ Test failed: ${incomeBarMismatches} income bar/source mismatch(es)\n`);
     process.exit(1);
   }
   

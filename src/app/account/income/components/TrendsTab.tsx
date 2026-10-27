@@ -5,6 +5,7 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Toolti
 import type { IncomeSummary } from "@/lib/incomeSummary";
 import { formatMonth, formatMonthYear } from "@/lib/dateFormatting";
 import { formatCurrency, getCurrencySymbol } from "@/lib/currencyUtils";
+import { getSignColor } from "@/lib/colorHelpers";
 
 type TimeWindow = "12month" | "ytd" | "last3";
 
@@ -14,6 +15,7 @@ interface TrendsTabProps {
 
 export function TrendsTab({ summary }: TrendsTabProps) {
   const [timeWindow, setTimeWindow] = useState<TimeWindow>("12month");
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const { monthlyHistory, currency, yoy } = summary;
   
   // Filter months based on window
@@ -219,8 +221,8 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                   );
                 }}
               />
-              <Bar dataKey="regular" stackId="a" fill="#7c3aed" radius={[0, 0, 0, 0]} />
-              <Bar dataKey="oneOff" stackId="a" fill="#fbbf24" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="regular" stackId="a" fill="#7c3aed" radius={[0, 0, 0, 0]} onClick={(data: any) => data?.payload?.yearMonth && setSelectedMonth(data.payload.yearMonth)} cursor="pointer" />
+              <Bar dataKey="oneOff" stackId="a" fill="#fbbf24" radius={[4, 4, 0, 0]} onClick={(data: any) => data?.payload?.yearMonth && setSelectedMonth(data.payload.yearMonth)} cursor="pointer" />
               {chartData.some(d => d.lastYear) && (
                 <Line type="monotone" dataKey="lastYear" stroke="#9ca3af" strokeWidth={2} strokeDasharray="4 4" dot={false} />
               )}
@@ -287,6 +289,215 @@ export function TrendsTab({ summary }: TrendsTabProps) {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Month Detail Drawer */}
+      {selectedMonth && (() => {
+        const monthData = monthlyHistory.find(m => m.yearMonth === selectedMonth);
+        if (!monthData) return null;
+        
+        const typicalMonthly = summary.typicalMonthly;
+        const vsTypical = typicalMonthly > 0 ? ((monthData.total - typicalMonthly) / typicalMonthly) * 100 : 0;
+        
+        // Group sources by type
+        const regularSources = monthData.sources.filter(s => {
+          const sourceDef = summary.regularSources.find(src => src.description === s.source);
+          return sourceDef && !sourceDef.isTransfer && !s.isOneOff;
+        });
+        
+        const oneOffSources = monthData.sources.filter(s => s.isOneOff);
+        
+        const transferSources = monthData.sources.filter(s => {
+          const sourceDef = summary.regularSources.find(src => src.description === s.source) 
+            || summary.oneOffSources.find(src => src.description === s.source);
+          return sourceDef?.isTransfer;
+        });
+        
+        return (
+          <>
+            {/* Backdrop */}
+            <div 
+              className="fixed inset-0 bg-black/20 z-40"
+              onClick={() => setSelectedMonth(null)}
+            />
+            
+            {/* Drawer */}
+            <div className="fixed right-0 top-0 h-full w-full max-w-lg bg-white shadow-2xl z-50 flex flex-col overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-purple-600">Income Detail</p>
+                  <h2 className="text-lg font-bold text-gray-900 mt-0.5">{formatMonthYear(selectedMonth)}</h2>
+                </div>
+                <button
+                  onClick={() => setSelectedMonth(null)}
+                  className="rounded-full p-2 text-gray-400 hover:bg-gray-100 transition"
+                  aria-label="Close"
+                >
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              
+              {/* Content */}
+              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+                {/* Total */}
+                <div className="text-center">
+                  <p className="text-sm font-medium uppercase tracking-wide text-gray-500">Total Income</p>
+                  <p className={`mt-2 text-4xl font-bold ${getSignColor(monthData.total)}`}>
+                    {formatCurrency(monthData.total, currency)}
+                  </p>
+                  {typicalMonthly > 0 && (
+                    <p className={`mt-1 text-sm ${getSignColor(vsTypical)}`}>
+                      {vsTypical >= 0 ? '+' : ''}{vsTypical.toFixed(0)}% vs typical month
+                    </p>
+                  )}
+                </div>
+                
+                {/* Income Sources */}
+                <IncomeSourcesSection 
+                  title="Regular Income"
+                  icon="💼"
+                  sources={regularSources}
+                  summary={summary}
+                  currency={currency}
+                />
+                
+                {oneOffSources.length > 0 && (
+                  <IncomeSourcesSection 
+                    title="One-Off Income"
+                    icon="✨"
+                    sources={oneOffSources}
+                    summary={summary}
+                    currency={currency}
+                  />
+                )}
+                
+                {transferSources.length > 0 && (
+                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                    <div className="flex items-center gap-2 text-xs text-gray-500 mb-2">
+                      <span>🔄</span>
+                      <span className="font-semibold uppercase tracking-wide">Transfers (excluded)</span>
+                    </div>
+                    <p className="text-xs text-gray-600 leading-relaxed">
+                      {transferSources.length} transfer{transferSources.length !== 1 ? 's' : ''} totaling{' '}
+                      {formatCurrency(transferSources.reduce((s, src) => s + src.amount, 0), currency)}{' '}
+                      excluded from income totals
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        );
+      })()}
+    </div>
+  );
+}
+
+// Source section with expandable transactions
+function IncomeSourcesSection({
+  title,
+  icon,
+  sources,
+  summary,
+  currency
+}: {
+  title: string;
+  icon: string;
+  sources: Array<{ source: string; amount: number; isOneOff: boolean }>;
+  summary: IncomeSummary;
+  currency: string;
+}) {
+  const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
+  
+  const toggleSource = (source: string) => {
+    setExpandedSources(prev => {
+      const next = new Set(prev);
+      if (next.has(source)) {
+        next.delete(source);
+      } else {
+        next.add(source);
+      }
+      return next;
+    });
+  };
+  
+  if (sources.length === 0) return null;
+  
+  const total = sources.reduce((s, src) => s + src.amount, 0);
+  
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className="text-base">{icon}</span>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-700">{title}</h3>
+          <span className="text-xs text-gray-500">({sources.length})</span>
+        </div>
+        <span className={`text-sm font-bold ${getSignColor(total)}`}>
+          {formatCurrency(total, currency)}
+        </span>
+      </div>
+      
+      <div className="space-y-2">
+        {sources.map((src) => {
+          const sourceDef = summary.regularSources.find(s => s.description === src.source)
+            || summary.oneOffSources.find(s => s.description === src.source);
+          const isExpanded = expandedSources.has(src.source);
+          
+          return (
+            <div key={src.source} className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+              {/* Source header - clickable */}
+              <button
+                onClick={() => toggleSource(src.source)}
+                className="w-full flex items-center justify-between p-3 text-left hover:bg-gray-50 transition"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">{src.source}</p>
+                  {sourceDef && (
+                    <p className="text-xs text-gray-500">
+                      {sourceDef.transactions.length} transaction{sourceDef.transactions.length !== 1 ? 's' : ''}
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-gray-900 tabular-nums">
+                    {formatCurrency(src.amount, currency)}
+                  </span>
+                  <svg
+                    className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
+              </button>
+              
+              {/* Transactions - expandable */}
+              {isExpanded && sourceDef && (
+                <div className="border-t border-gray-100 bg-gray-50 p-3 space-y-2">
+                  {sourceDef.transactions.map((txn, idx) => (
+                    <div key={idx} className="flex items-start justify-between text-xs">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-gray-600">{new Date(txn.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p>
+                        {txn.accountLabel && (
+                          <p className="text-gray-500 truncate">{txn.accountLabel}</p>
+                        )}
+                      </div>
+                      <span className="text-gray-900 font-medium tabular-nums ml-2">
+                        {formatCurrency(txn.amount, currency)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
