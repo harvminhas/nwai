@@ -5,6 +5,7 @@ import type { SubscriptionSummary, DetectedSubscription } from "@/lib/subscripti
 import { formatCurrency } from "@/lib/currencyUtils";
 import { formatDate } from "@/lib/dateFormatting";
 import { getSignColor } from "@/lib/colorHelpers";
+import { ReviewList } from "@/components/ReviewList";
 
 interface SubscriptionsTabProps {
   token: string | null;
@@ -15,31 +16,103 @@ export function SubscriptionsTab({ token }: SubscriptionsTabProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showInactive, setShowInactive] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [toast, setToast] = useState<{ message: string; undoId?: string } | null>(null);
+
+  const loadSubscriptions = async () => {
+    try {
+      const res = await fetch("/api/user/subscriptions", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to load subscriptions");
+      }
+
+      const data = await res.json();
+      setSummary(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load subscriptions");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!token) return;
-
-    const loadSubscriptions = async () => {
-      try {
-        const res = await fetch("/api/user/subscriptions", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-
-        if (!res.ok) {
-          throw new Error("Failed to load subscriptions");
-        }
-
-        const data = await res.json();
-        setSummary(data);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load subscriptions");
-      } finally {
-        setLoading(false);
-      }
-    };
-
     loadSubscriptions();
   }, [token]);
+
+  const handleClassify = async (
+    item: DetectedSubscription,
+    classification: "is_subscription" | "not_subscription" | "still_active" | "cancelled"
+  ) => {
+    if (!token || submitting) return;
+
+    setSubmitting(true);
+
+    try {
+      const res = await fetch("/api/user/reviews", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: item.merchantSlug,
+          type: "subscription",
+          classification,
+          merchantSlug: item.merchantSlug,
+          date: item.lastDate,
+          amount: item.amount,
+        }),
+      });
+
+      if (res.ok) {
+        // Silent refresh
+        await loadSubscriptions();
+        
+        // Show toast with undo
+        const actionText = 
+          classification === "is_subscription" ? "marked as subscription" :
+          classification === "not_subscription" ? "marked as not a subscription" :
+          classification === "still_active" ? "marked as still active" :
+          "marked as cancelled";
+        
+        setToast({ 
+          message: `${item.merchant} ${actionText}`,
+          undoId: item.merchantSlug,
+        });
+        
+        // Auto-hide toast after 5 seconds
+        setTimeout(() => setToast(null), 5000);
+      } else {
+        console.error("Failed to save classification", await res.text());
+      }
+    } catch (err) {
+      console.error("Error saving classification:", err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleUndo = async (id: string) => {
+    if (!token) return;
+
+    try {
+      const res = await fetch(`/api/user/reviews?id=${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.ok) {
+        setToast(null);
+        await loadSubscriptions();
+      }
+    } catch (err) {
+      console.error("Failed to undo:", err);
+    }
+  };
 
   if (loading) {
     return (
@@ -61,6 +134,7 @@ export function SubscriptionsTab({ token }: SubscriptionsTabProps) {
     subscriptions, 
     candidates, 
     inactive, 
+    cancelled,
     monthlyTotal, 
     yearlyTotal, 
     monthlyChange, 
@@ -71,6 +145,28 @@ export function SubscriptionsTab({ token }: SubscriptionsTabProps) {
 
   return (
     <div className="space-y-6">
+      {/* ReviewList for one-at-a-time review */}
+      <ReviewList 
+        token={token} 
+        reviewType="subscription" 
+        onReviewComplete={() => loadSubscriptions()}
+      />
+
+      {/* Toast notification */}
+      {toast && (
+        <div className="fixed bottom-4 right-4 bg-gray-900 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 z-50">
+          <span>{toast.message}</span>
+          {toast.undoId && (
+            <button
+              onClick={() => handleUndo(toast.undoId!)}
+              className="text-violet-400 hover:text-violet-300 font-medium"
+            >
+              Undo
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Summary cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white rounded-xl border border-gray-200 p-5">
@@ -139,7 +235,13 @@ export function SubscriptionsTab({ token }: SubscriptionsTabProps) {
           </h3>
           <p className="text-xs text-gray-500 mt-0.5">Known subscription merchants counted in totals</p>
         </div>
-        <SubscriptionTable subscriptions={subscriptions} currency={summary.currency} />
+        <SubscriptionTable 
+          subscriptions={subscriptions} 
+          currency={summary.currency}
+          onClassify={handleClassify}
+          submitting={submitting}
+          showActions="active"
+        />
       </div>
 
       {/* Candidates to review */}
@@ -150,10 +252,16 @@ export function SubscriptionsTab({ token }: SubscriptionsTabProps) {
               To Review ({candidates.length})
             </h3>
             <p className="text-xs text-orange-700 mt-0.5">
-              Recurring charges not on known list — NOT counted in totals
+              Is this a subscription? Not counted until you confirm.
             </p>
           </div>
-          <SubscriptionTable subscriptions={candidates} currency={summary.currency} isCandidate />
+          <SubscriptionTable 
+            subscriptions={candidates} 
+            currency={summary.currency}
+            onClassify={handleClassify}
+            submitting={submitting}
+            showActions="candidate"
+          />
         </div>
       )}
 
@@ -179,7 +287,13 @@ export function SubscriptionsTab({ token }: SubscriptionsTabProps) {
             <p className="text-xs text-gray-500">Not charged within grace period</p>
           </button>
           {showInactive && (
-            <SubscriptionTable subscriptions={inactive} currency={summary.currency} isInactive />
+            <SubscriptionTable 
+              subscriptions={inactive} 
+              currency={summary.currency}
+              onClassify={handleClassify}
+              submitting={submitting}
+              showActions="inactive"
+            />
           )}
         </div>
       )}
@@ -190,14 +304,18 @@ export function SubscriptionsTab({ token }: SubscriptionsTabProps) {
 function SubscriptionTable({
   subscriptions,
   currency,
-  isCandidate = false,
-  isInactive = false,
+  onClassify,
+  submitting,
+  showActions,
 }: {
   subscriptions: DetectedSubscription[];
   currency: string;
-  isCandidate?: boolean;
-  isInactive?: boolean;
+  onClassify: (item: DetectedSubscription, classification: any) => void;
+  submitting: boolean;
+  showActions?: "active" | "candidate" | "inactive";
 }) {
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full">
@@ -207,10 +325,12 @@ function SubscriptionTable({
             <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700">Cadence</th>
             <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700">Last charge</th>
             <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700">
-              {isInactive ? "Last expected" : "Next expected"}
+              {showActions === "inactive" ? "Last expected" : "Next expected"}
             </th>
             <th className="px-6 py-3 text-right text-xs font-semibold text-gray-700">Amount</th>
-            <th className="px-6 py-3 text-right text-xs font-semibold text-gray-700">Status</th>
+            <th className="px-6 py-3 text-right text-xs font-semibold text-gray-700">
+              {showActions ? "Actions" : "Status"}
+            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
@@ -224,7 +344,7 @@ function SubscriptionTable({
             subscriptions.map((sub, idx) => (
               <tr 
                 key={idx} 
-                className={`hover:bg-gray-50 transition-colors ${isInactive ? 'opacity-60' : ''}`}
+                className={`hover:bg-gray-50 transition-colors ${showActions === "inactive" ? 'opacity-60' : ''}`}
               >
                 <td className="px-6 py-4">
                   <div className="text-sm font-medium text-gray-900">{sub.merchant}</div>
@@ -260,28 +380,97 @@ function SubscriptionTable({
                   )}
                 </td>
                 <td className="px-6 py-4 text-right">
-                  <div className="flex flex-col items-end gap-1">
-                    {isCandidate && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold">
-                        Review
-                      </span>
-                    )}
-                    {isInactive && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 text-xs font-semibold">
-                        Inactive
-                      </span>
-                    )}
-                    {!isCandidate && !isInactive && sub.isNew && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-green-100 text-green-800 text-xs font-semibold">
-                        New
-                      </span>
-                    )}
-                    {!isCandidate && !isInactive && sub.priceIncrease && sub.priceIncreaseAmount && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-xs font-semibold">
-                        +{formatCurrency(sub.priceIncreaseAmount, currency)}
-                      </span>
-                    )}
-                  </div>
+                  {showActions === "candidate" && (
+                    <div className="flex flex-col gap-1.5 items-end">
+                      <button
+                        onClick={() => onClassify(sub, "is_subscription")}
+                        disabled={submitting}
+                        className="text-xs font-medium px-3 py-1.5 rounded-md bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                      >
+                        Yes, subscription
+                      </button>
+                      <button
+                        onClick={() => onClassify(sub, "not_subscription")}
+                        disabled={submitting}
+                        className="text-xs font-medium px-3 py-1.5 rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                      >
+                        Not a subscription
+                      </button>
+                    </div>
+                  )}
+                  
+                  {showActions === "active" && (
+                    <div className="relative">
+                      <button
+                        onClick={() => setOpenMenu(openMenu === sub.merchantSlug ? null : sub.merchantSlug)}
+                        className="p-2 hover:bg-gray-100 rounded transition"
+                      >
+                        <svg className="w-5 h-5 text-gray-600" fill="currentColor" viewBox="0 0 24 24">
+                          <circle cx="12" cy="5" r="2" />
+                          <circle cx="12" cy="12" r="2" />
+                          <circle cx="12" cy="19" r="2" />
+                        </svg>
+                      </button>
+                      {openMenu === sub.merchantSlug && (
+                        <div className="absolute right-0 top-10 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-10 w-48">
+                          <button
+                            onClick={() => {
+                              setOpenMenu(null);
+                              onClassify(sub, "not_subscription");
+                            }}
+                            disabled={submitting}
+                            className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                          >
+                            Not a subscription
+                          </button>
+                          <button
+                            onClick={() => {
+                              setOpenMenu(null);
+                              onClassify(sub, "cancelled");
+                            }}
+                            disabled={submitting}
+                            className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                          >
+                            Mark as cancelled
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {showActions === "inactive" && (
+                    <div className="flex flex-col gap-1.5 items-end">
+                      <button
+                        onClick={() => onClassify(sub, "still_active")}
+                        disabled={submitting}
+                        className="text-xs font-medium px-3 py-1.5 rounded-md border border-violet-600 text-violet-700 hover:bg-violet-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                      >
+                        Still active
+                      </button>
+                      <button
+                        onClick={() => onClassify(sub, "cancelled")}
+                        disabled={submitting}
+                        className="text-xs font-medium px-3 py-1.5 rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                      >
+                        Cancelled
+                      </button>
+                    </div>
+                  )}
+                  
+                  {!showActions && (
+                    <div className="flex flex-col items-end gap-1">
+                      {sub.isNew && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-green-100 text-green-800 text-xs font-semibold">
+                          New
+                        </span>
+                      )}
+                      {sub.priceIncrease && sub.priceIncreaseAmount && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-xs font-semibold">
+                          +{formatCurrency(sub.priceIncreaseAmount, currency)}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </td>
               </tr>
             ))

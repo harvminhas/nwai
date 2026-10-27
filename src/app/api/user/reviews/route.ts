@@ -168,3 +168,47 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
     );
   }
 }
+
+/**
+ * DELETE /api/user/reviews?id=xxx
+ * Deletes a review (for undo functionality)
+ */
+export async function DELETE(req: NextRequest): Promise<NextResponse> {
+  try {
+    const token = req.headers.get("authorization")?.replace("Bearer ", "");
+    if (!token) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { auth, db } = getFirebaseAdmin();
+    const decoded = await auth.verifyIdToken(token);
+
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get("id");
+
+    if (!id) {
+      return NextResponse.json({ error: "Missing review ID" }, { status: 400 });
+    }
+
+    // Delete from reviews collection
+    await db
+      .collection(`users/${decoded.uid}/reviews`)
+      .doc(id)
+      .delete();
+
+    // Also delete from old debt payment reviews if it exists
+    await db
+      .collection(`users/${decoded.uid}/debtPaymentReviews`)
+      .doc(id)
+      .delete()
+      .catch(() => {}); // Ignore if doesn't exist
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Reviews DELETE error:", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Failed to delete review" },
+      { status: 500 }
+    );
+  }
+}
