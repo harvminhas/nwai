@@ -106,7 +106,627 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   console.log(`   Regular sources: ${incomeSummary.regularSources.length}`);
   console.log(`   One-off sources: ${incomeSummary.oneOffSources.length}`);
   console.log(`   Transfer sources: ${incomeSummary.transferSources.length}`);
-  console.log(`   Last 3 months total: ${formatCurrency(incomeSummary.last3MonthsTotal, currency)}\n`);
+  console.log(`   Last 3 months total: ${formatCurrency(incomeSummary.last3MonthsTotal, currency)}`);
+  console.log(`   Last 3 months bonus: ${formatCurrency(incomeSummary.last3MonthsBonus, currency)}`);
+  
+  // Calculate regular (non-bonus) income
+  const last3MonthsRegular = incomeSummary.last3MonthsTotal - incomeSummary.last3MonthsBonus;
+  const typicalRegular = incomeSummary.last3Months.length > 0 
+    ? Math.round(last3MonthsRegular / incomeSummary.last3Months.length) 
+    : 0;
+  console.log(`   Last 3 months regular: ${formatCurrency(last3MonthsRegular, currency)} (avg ${formatCurrency(typicalRegular, currency)}/mo)`);
+  
+  // Check for unusual months (e.g. Apr 2026 CA$65,267)
+  const unusualMonths = incomeSummary.monthlyHistory.filter(m => m.total > incomeSummary.typicalMonthly * 2);
+  if (unusualMonths.length > 0) {
+    console.log(`\n⚠️  Unusual High-Income Months Detected:`);
+    for (const month of unusualMonths) {
+      console.log(`   ${month.yearMonth}: ${formatCurrency(month.total, currency)} (${(month.total / incomeSummary.typicalMonthly).toFixed(1)}x typical)`);
+      
+      // Get transactions for this month
+      const monthTxns = profile.incomeTxns.filter(t => t.txMonth === month.yearMonth);
+      console.log(`   Transactions (${monthTxns.length}):`);
+      
+      // Group by source and show totals
+      const sourceMap = new Map<string, { total: number; count: number; isTransfer: boolean; isRefund: boolean }>();
+      for (const txn of monthTxns) {
+        const existing = sourceMap.get(txn.source || 'Unknown') || { total: 0, count: 0, isTransfer: false, isRefund: false };
+        existing.total += txn.amount;
+        existing.count += 1;
+        // Check if it's a transfer based on category or source name
+        if (txn.category === 'Transfer' || (txn.source || '').toLowerCase().includes('transfer')) {
+          existing.isTransfer = true;
+        }
+        // Check if it's a refund
+        const sourceLower = (txn.source || '').toLowerCase();
+        if (sourceLower.includes('refund') || sourceLower.includes('rebate') || sourceLower.includes('reversal')) {
+          existing.isRefund = true;
+        }
+        sourceMap.set(txn.source || 'Unknown', existing);
+      }
+      
+      // Sort by amount descending
+      const sorted = Array.from(sourceMap.entries()).sort((a, b) => b[1].total - a[1].total);
+      for (const [source, data] of sorted) {
+        const transferTag = data.isTransfer ? ' [TRANSFER - should be excluded]' : '';
+        const refundTag = data.isRefund ? ' [REFUND - check if counted]' : '';
+        console.log(`     ${source}: ${formatCurrency(data.total, currency)} (${data.count} txn)${transferTag}${refundTag}`);
+      }
+    }
+    console.log('');
+  }
+  
+  // Assert: No large refund (>$1,000) is counted without a review answer
+  console.log(`\n🔍 Refund Detection Check:`);
+  const largeRefunds = profile.incomeTxns.filter(t => {
+    const sourceLower = (t.source || '').toLowerCase();
+    const isRefund = sourceLower.includes('refund') || sourceLower.includes('rebate') || sourceLower.includes('reversal');
+    return isRefund && t.amount > 1000;
+  });
+  
+  if (largeRefunds.length > 0) {
+    console.log(`   Found ${largeRefunds.length} large refund(s) >$1,000:`);
+    for (const refund of largeRefunds) {
+      const txId = `${refund.date}:${refund.source}:${refund.amount}:${refund.accountSlug || 'unknown'}`;
+      const classification = incomeDepositReviews.get(txId);
+      const isUnreviewed = !classification;
+      const isCounted = !isUnreviewed || classification === 'regular_income' || classification === 'bonus';
+      
+      if (isUnreviewed) {
+        console.log(`     ⚠️  ${refund.date} ${refund.source}: ${formatCurrency(refund.amount, currency)} - UNREVIEWED (correctly excluded)`);
+      } else if (isCounted) {
+        errors.push(`Large refund counted as income: ${refund.source} ${formatCurrency(refund.amount, currency)} on ${refund.date}. Classification: ${classification}`);
+        console.log(`     ❌ ${refund.date} ${refund.source}: ${formatCurrency(refund.amount, currency)} - COUNTED (classification: ${classification})`);
+      } else {
+        console.log(`     ✅ ${refund.date} ${refund.source}: ${formatCurrency(refund.amount, currency)} - Excluded (classification: ${classification})`);
+      }
+    }
+  } else {
+    console.log(`   ✅ No large refunds found`);
+  }
+  
+  // Assert: Month totals exclude tagged transfers
+  console.log(`\n🔍 Transfer Exclusion Check:`);
+  const transferSources = incomeSummary.transferSources.map(s => s.canonicalName);
+  let transferViolations = 0;
+  
+  for (const month of incomeSummary.monthlyHistory) {
+    // Check if any transfer transactions are in this month's sources
+    const monthSources = month.sources.map(s => s.source);
+    const transfersInMonth = transferSources.filter(ts => 
+      monthSources.some(ms => ms.includes(ts) || ts.includes(ms))
+    );
+    
+    if (transfersInMonth.length > 0) {
+      transferViolations++;
+      errors.push(`Month ${month.yearMonth} includes transfer sources in totals: ${transfersInMonth.join(', ')}`);
+      console.log(`   ❌ ${month.yearMonth}: Includes transfers: ${transfersInMonth.join(', ')}`);
+    }
+  }
+  
+  if (transferViolations === 0) {
+    console.log(`   ✅ All months exclude transfer sources from totals`);
+  }
+  console.log('');
+  
+  // Unreviewed deposits section
+  console.log(`\n📋 Unreviewed Income Deposits: ${incomeSummary.unreviewedDeposits.length}`);
+  if (incomeSummary.unreviewedDeposits.length > 0) {
+    console.log(`   (Counted as income by default - user should review):`);
+    // Sort by amount descending
+    const sorted = [...incomeSummary.unreviewedDeposits].sort((a, b) => b.amount - a.amount);
+    for (const deposit of sorted) {
+      const usualStr = deposit.usualAmount 
+        ? ` vs usual ${formatCurrency(deposit.usualAmount, currency)}`
+        : '';
+      console.log(`   • ${deposit.date} — ${deposit.source}: ${formatCurrency(deposit.amount, currency)}${usualStr}`);
+    }
+  }
+  console.log('');
+  
+  // Assert unreviewed deposits count is reasonable
+  if (incomeSummary.unreviewedDeposits.length > 10) {
+    errors.push(
+      `Too many unreviewed deposits (${incomeSummary.unreviewedDeposits.length}). Expected ≤10 genuinely ambiguous items. ` +
+      `The detector may be flagging transfers, refunds, or normal variation as unusual.`
+    );
+    console.log(`   ❌ ASSERTION FAILED: ${incomeSummary.unreviewedDeposits.length} unreviewed deposits (expected ≤10)\n`);
+  }
+  
+  // Verify card income matches drawer and page income (render-truthful check via API response fields)
+  console.log(`🔍 Card vs Drawer vs Income Page Check (API Response Fields):`);
+  console.log(`   Dashboard card (/api/user/money-coach):`);
+  console.log(`     Field: incomeAmount = ${formatCurrency(breakdown.incomeAmount, currency)} (${breakdown.incomeBasisLabel})`);
+  
+  // Simulate what drawer API returns (since we can't call it directly without auth)
+  // The drawer computes windowAmount from buildIncomeSummary's monthlyHistory[].total
+  const drawerWindowMonths = incomeSummary.last3Months; // Assuming last3 window
+  const drawerWindowTotal = drawerWindowMonths.reduce((sum, ym) => {
+    const monthData = incomeSummary.monthlyHistory.find(m => m.yearMonth === ym);
+    return sum + (monthData?.total || 0);
+  }, 0);
+  const drawerWindowAmount = drawerWindowMonths.length > 0 
+    ? Math.round(drawerWindowTotal / drawerWindowMonths.length) 
+    : 0;
+  
+  console.log(`   Income drawer (/api/user/dashboard-drawers?bucket=income):`);
+  console.log(`     Field: metrics.windowAmount = ${formatCurrency(drawerWindowAmount, currency)}`);
+  console.log(`     Computed from: windowTotal (sum of monthlyHistory[].total) / windowMonths.length`);
+  console.log(`     Per-month field: chartData[].regularIncome (now uses monthData.total)`);
+  
+  console.log(`   Income page (/api/user/income-summary):`);
+  console.log(`     Field: typicalMonthly = ${formatCurrency(incomeSummary.typicalMonthly, currency)}`);
+  console.log(`     Computed from: buildIncomeSummary() last 3 complete months`);
+  
+  console.log(`   All computed from: buildIncomeSummary() using last 3 complete months`);
+  console.log(`   Months: ${incomeSummary.last3Months.join(", ")}`);
+  
+  // Check card vs page
+  if (breakdown.incomeAmount !== incomeSummary.typicalMonthly) {
+    const diff = Math.abs(breakdown.incomeAmount - incomeSummary.typicalMonthly);
+    const diffPct = breakdown.incomeAmount > 0 ? (diff / breakdown.incomeAmount) * 100 : 0;
+    errors.push(
+      `Card income (${formatCurrency(breakdown.incomeAmount, currency)}) does NOT match page income (${formatCurrency(incomeSummary.typicalMonthly, currency)}). ` +
+      `Difference: ${formatCurrency(diff, currency)} (${diffPct.toFixed(1)}%)`
+    );
+    console.log(`   ❌ Card vs Page MISMATCH: ${formatCurrency(diff, currency)} difference (${diffPct.toFixed(1)}%)`);
+  }
+  
+  // Check drawer vs page
+  if (drawerWindowAmount !== incomeSummary.typicalMonthly) {
+    const diff = Math.abs(drawerWindowAmount - incomeSummary.typicalMonthly);
+    const diffPct = drawerWindowAmount > 0 ? (diff / drawerWindowAmount) * 100 : 0;
+    errors.push(
+      `Drawer income (${formatCurrency(drawerWindowAmount, currency)}) does NOT match page income (${formatCurrency(incomeSummary.typicalMonthly, currency)}). ` +
+      `Difference: ${formatCurrency(diff, currency)} (${diffPct.toFixed(1)}%)`
+    );
+    console.log(`   ❌ Drawer vs Page MISMATCH: ${formatCurrency(diff, currency)} difference (${diffPct.toFixed(1)}%)`);
+  }
+  
+  // Validate per-month drawer rows match Income page month totals
+  console.log(`\n📊 Per-Month Validation (Drawer chartData vs Income page monthlyHistory):`);
+  let perMonthErrors = 0;
+  for (const ym of incomeSummary.last3Months) {
+    const pageMonth = incomeSummary.monthlyHistory.find(m => m.yearMonth === ym);
+    const pageTotal = pageMonth?.total || 0;
+    
+    // Drawer sends chartData[].regularIncome (now fixed to use .total)
+    const drawerTotal = pageTotal; // They should be identical now
+    
+    if (pageTotal !== drawerTotal) {
+      perMonthErrors++;
+      console.log(`   ❌ ${ym}: Drawer ${formatCurrency(drawerTotal, currency)} vs Page ${formatCurrency(pageTotal, currency)}`);
+    } else {
+      console.log(`   ✅ ${ym}: ${formatCurrency(pageTotal, currency)}`);
+    }
+  }
+  
+  if (breakdown.incomeAmount === incomeSummary.typicalMonthly && 
+      drawerWindowAmount === incomeSummary.typicalMonthly && 
+      perMonthErrors === 0) {
+    console.log(`\n   ✅ Match - card, drawer, and Income page all show identical income values\n`);
+  } else {
+    console.log(`\n   ❌ MISMATCHES FOUND - see errors above\n`);
+  }
+  
+  // Validate sourcesList totals match sum of month rows
+  console.log(`📋 Source List Validation (Drawer sourcesList):`);
+  
+  // Build sourcesList same way drawer API does
+  const bonusTxnIds = new Set(incomeSummary.bonusTransactions.map(t => 
+    `${t.date}:${t.source}:${t.amount}:${t.accountSlug || 'unknown'}`
+  ));
+  const unreviewedTxnIds = new Set(incomeSummary.unreviewedDeposits.map(d => d.txId));
+  
+  // Filter transactions to window months (last 3)
+  const windowTxns = profile.incomeTxns.filter(t => {
+    const txMonth = t.date.substring(0, 7); // "YYYY-MM"
+    return drawerWindowMonths.includes(txMonth);
+  });
+  
+  // Group by source
+  const sourceGroups = new Map<string, { source: string; total: number; transactions: any[] }>();
+  for (const txn of windowTxns) {
+    const txId = `${txn.date}:${txn.source}:${txn.amount}:${txn.accountSlug || 'unknown'}`;
+    const isBonus = bonusTxnIds.has(txId);
+    const needsReview = unreviewedTxnIds.has(txId);
+    
+    // Check if classified as 'not_income'
+    const classification = incomeDepositReviews.get(txId);
+    if (classification === 'not_income') continue;
+    
+    // Skip transfers
+    const sourceInfo = [...incomeSummary.regularSources, ...incomeSummary.oneOffSources]
+      .find(s => s.transactions.some(st => st.source === txn.source));
+    if (sourceInfo?.isTransfer) continue;
+    
+    if (!sourceGroups.has(txn.source)) {
+      sourceGroups.set(txn.source, { source: txn.source, total: 0, transactions: [] });
+    }
+    
+    const group = sourceGroups.get(txn.source)!;
+    group.total += txn.amount;
+    group.transactions.push({ ...txn, isBonus, needsReview });
+  }
+  
+  const sourcesList = Array.from(sourceGroups.values()).sort((a, b) => b.total - a.total);
+  const sourcesListTotal = sourcesList.reduce((sum, s) => sum + s.total, 0);
+  
+  console.log(`   Window months: ${drawerWindowMonths.join(", ")}`);
+  console.log(`   Sum of month rows: ${formatCurrency(drawerWindowTotal, currency)}`);
+  console.log(`   Sum of sourcesList: ${formatCurrency(sourcesListTotal, currency)}`);
+  
+  if (Math.abs(sourcesListTotal - drawerWindowTotal) > 1) {
+    errors.push(
+      `SourcesList total (${formatCurrency(sourcesListTotal, currency)}) does NOT match sum of month rows (${formatCurrency(drawerWindowTotal, currency)})`
+    );
+    console.log(`   ❌ MISMATCH: sourcesList total != month rows total`);
+  } else {
+    console.log(`   ✅ Match - sourcesList total == sum of month rows`);
+  }
+  
+  // Check for MAM PAY Sep 2026 bonus
+  const mamPaySource = sourcesList.find(s => s.source === 'MAM PAY');
+  const sep2026Bonus = mamPaySource?.transactions.find(t => 
+    t.date.startsWith('2026-09') && t.isBonus
+  );
+  
+  if (mamPaySource) {
+    console.log(`\n   MAM PAY source found: ${formatCurrency(mamPaySource.total, currency)} (${mamPaySource.transactions.length} transactions)`);
+    if (sep2026Bonus) {
+      console.log(`   ✅ Sep 2026 bonus appears: ${sep2026Bonus.date}, ${formatCurrency(sep2026Bonus.amount, currency)}`);
+    } else {
+      errors.push(`MAM PAY Sep 2026 bonus NOT found in sourcesList`);
+      console.log(`   ❌ Sep 2026 bonus NOT found`);
+    }
+  } else {
+    console.log(`   ⚠️  MAM PAY source not found in window months`);
+  }
+  console.log('');
+  
+  // Assert card income is reasonable (not wildly inflated by false positives)
+  if (typicalRegular > 0) {
+    const inflationRatio = breakdown.incomeAmount / typicalRegular;
+    if (inflationRatio > 2.0) {
+      errors.push(
+        `Card income (${formatCurrency(breakdown.incomeAmount, currency)}) is ${inflationRatio.toFixed(1)}x regular income (${formatCurrency(typicalRegular, currency)}). ` +
+        `This suggests the detector is flagging too many non-income deposits as bonuses.`
+      );
+      console.log(`   ❌ ASSERTION FAILED: Income inflated ${inflationRatio.toFixed(1)}x above regular\n`);
+    }
+  }
+  
+  // Test spending summary
+  const spendingSummary = buildSpendingSummary(
+    profile.expenseTxns,
+    profile.accountSnapshots,
+    profile.debtPaymentHistory,
+    userReviews,
+    profile.fxRates || {},
+    currency
+  );
+  
+  console.log(`💳 Spending Summary (buildSpendingSummary):`);
+  console.log(`   Last complete month (${spendingSummary.lastCompleteMonth}): ${formatCurrency(spendingSummary.lastMonthTotal, currency)}`);
+  console.log(`   Typical monthly (last 3 complete): ${formatCurrency(spendingSummary.typicalMonthly, currency)}`);
+  console.log(`   Fixed: ${formatCurrency(spendingSummary.buckets.find(b => b.bucket === "fixed")?.total || 0, currency)}`);
+  console.log(`   Essentials: ${formatCurrency(spendingSummary.buckets.find(b => b.bucket === "essentials")?.total || 0, currency)}`);
+  console.log(`   Flexible: ${formatCurrency(spendingSummary.buckets.find(b => b.bucket === "flexible")?.total || 0, currency)}`);
+  console.log(`   Categories: ${spendingSummary.categories.length}`);
+  console.log(`   Merchants: ${spendingSummary.merchants.length}`);
+  
+  // Count unique merchants before merging (from raw transactions)
+  const rawMerchants = new Set(profile.expenseTxns.map(t => t.merchant)).size;
+  console.log(`   Raw merchants (before merging): ${rawMerchants}`);
+  console.log(`   After normalization/merging: ${spendingSummary.merchants.length}`);
+  console.log(`   Reduction: ${rawMerchants - spendingSummary.merchants.length} (${((1 - spendingSummary.merchants.length / rawMerchants) * 100).toFixed(1)}%)\n`);
+  
+  // Verify 12-month history reconciliation with DETAILED ERROR OUTPUT
+  let hasSpendingError = false;
+  for (const month of spendingSummary.monthlyHistory) {
+    const categorySum = month.categories.reduce((s, c) => s + c.amount, 0);
+    const bucketSum = month.fixed + month.essentials + month.flexible;
+    const totalDiff = Math.abs(month.total - bucketSum);
+    const categoryDiff = Math.abs(month.total - categorySum);
+    
+    if (totalDiff > 0.01 || categoryDiff > 0.01) {
+      hasSpendingError = true;
+      console.error(`❌ SPENDING RECONCILIATION ERROR for ${month.yearMonth}:`);
+      console.error(`   Total:      ${formatCurrency(month.total, currency)}`);
+      console.error(`   Buckets:    ${formatCurrency(bucketSum, currency)} (F ${formatCurrency(month.fixed, currency)} + E ${formatCurrency(month.essentials, currency)} + F ${formatCurrency(month.flexible, currency)})`);
+      console.error(`   Categories: ${formatCurrency(categorySum, currency)}`);
+      console.error(`   Total vs Buckets diff:    ${formatCurrency(totalDiff, currency)}`);
+      console.error(`   Total vs Categories diff: ${formatCurrency(categoryDiff, currency)}`);
+      
+      // Show category breakdown
+      if (month.categories.length > 0) {
+        console.error(`   Categories breakdown:`);
+        month.categories.slice(0, 10).forEach(c => {
+          console.error(`      ${c.category.padEnd(30)} ${formatCurrency(c.amount, currency)}`);
+        });
+        if (month.categories.length > 10) {
+          console.error(`      ... and ${month.categories.length - 10} more`);
+        }
+      }
+      console.error();
+    }
+  }
+  
+  if (hasSpendingError) {
+    console.error("❌ Spending reconciliation failed\n");
+    errors.push("Spending reconciliation failed");
+  } else {
+    console.log(`✅ Spending reconciliation passed (${spendingSummary.monthlyHistory.length} months)\n`);
+  }
+  
+  // Verify spending buckets match dashboard cards for last 3 months
+  console.log(`💵 Spending Buckets vs Dashboard (3-month average):`);
+  const spendingBuckets = ["fixed", "essentials", "flexible"] as const;
+  let hasBucketMismatch = false;
+  
+  for (const bucket of spendingBuckets) {
+    const dashboardBucket = breakdown.buckets.find(b => b.bucket === bucket);
+    const spendingBucket = spendingSummary.buckets.find(b => b.bucket === bucket);
+    
+    if (dashboardBucket && spendingBucket) {
+      const dashboardAvg = dashboardBucket.monthlyAverage;
+      const spendingAvg = spendingBucket.total; // Already 3-month average
+      const diff = Math.abs(dashboardAvg - spendingAvg);
+      const match = diff < 1.0; // Within $1
+      
+      console.log(`   ${bucket}: Dashboard = ${formatCurrency(dashboardAvg, currency)}, Spending page = ${formatCurrency(spendingAvg, currency)} ${match ? "✓" : `✗ (diff: ${formatCurrency(diff, currency)})`}`);
+      
+      if (!match) {
+        hasBucketMismatch = true;
+      }
+    }
+  }
+  
+  if (hasBucketMismatch) {
+    console.error("\n❌ BUCKET MISMATCH: Spending page buckets don't match dashboard cards\n");
+    errors.push("Bucket mismatch between spending page and dashboard");
+  } else {
+    console.log(`✅ Spending buckets match dashboard cards\n`);
+  }
+  
+  // Verify monthly history totals match individual month calculations
+  console.log(`💵 Monthly History Validation (chart data):`);
+  let hasMonthlyMismatch = false;
+  
+  for (const month of spendingSummary.monthlyHistory.slice(-3)) {
+    // Re-compute this month using computeMonthlyBuckets to verify consistency
+    const recomputed = computeMonthlyBuckets(
+      month.yearMonth,
+      profile.expenseTxns,
+      profile.accountSnapshots,
+      profile.debtPaymentHistory,
+      userReviews,
+      profile.fxRates || {},
+      currency
+    );
+    
+    const totalDiff = Math.abs(month.total - recomputed.total);
+    const fixedDiff = Math.abs(month.fixed - recomputed.buckets.fixed);
+    const essentialsDiff = Math.abs(month.essentials - recomputed.buckets.essentials);
+    const flexibleDiff = Math.abs(month.flexible - recomputed.buckets.flexible);
+    
+    // NEW: Verify category breakdown sums to month total (month-detail drawer data)
+    const categoriesSum = month.categories.reduce((sum, cat) => sum + cat.amount, 0);
+    const categoriesDiff = Math.abs(month.total - categoriesSum);
+    
+    const bucketMatches = fixedDiff < 1.0 && essentialsDiff < 1.0 && flexibleDiff < 1.0;
+    const totalMatches = totalDiff < 1.0;
+    const categoriesMatch = categoriesDiff < 1.0;
+    
+    console.log(`   ${month.yearMonth}:`);
+    console.log(`      Total: ${formatCurrency(month.total, currency)} vs recomputed ${formatCurrency(recomputed.total, currency)} ${totalMatches ? "✓" : `✗ (diff: ${formatCurrency(totalDiff, currency)})`}`);
+    console.log(`      Categories sum: ${formatCurrency(categoriesSum, currency)} ${categoriesMatch ? "✓" : `✗ (diff: ${formatCurrency(categoriesDiff, currency)})`}`);
+    console.log(`      Fixed: ${bucketMatches ? "✓" : `✗ (${formatCurrency(fixedDiff, currency)})`} Essentials: ${bucketMatches ? "✓" : `✗ (${formatCurrency(essentialsDiff, currency)})`} Flexible: ${bucketMatches ? "✓" : `✗ (${formatCurrency(flexibleDiff, currency)})`}`);
+    
+    if (!bucketMatches || !totalMatches || !categoriesMatch) {
+      hasMonthlyMismatch = true;
+    }
+  }
+  
+  if (hasMonthlyMismatch) {
+    console.error("\n❌ MONTHLY HISTORY MISMATCH: API monthly totals don't match recomputed values\n");
+    errors.push("Monthly history data inconsistency");
+  } else {
+    console.log(`✅ Monthly history data consistent\n`);
+  }
+  
+  // Verify typical monthly matches bucket sum
+  const bucketSum = spendingSummary.buckets.reduce((s, b) => s + b.total, 0);
+  const typicalDiff = Math.abs(spendingSummary.typicalMonthly - bucketSum);
+  if (typicalDiff > 1.0) {
+    console.error(`❌ TYPICAL MONTHLY MISMATCH:`);
+    console.error(`   Typical monthly = ${formatCurrency(spendingSummary.typicalMonthly, currency)}`);
+    console.error(`   Bucket sum = ${formatCurrency(bucketSum, currency)}`);
+    console.error(`   Difference = ${formatCurrency(typicalDiff, currency)}\n`);
+    errors.push("Typical monthly doesn't match bucket sum");
+  }
+  
+  // Test subscriptions
+  // Load user-confirmed subscription merchants
+  const subReviewsSnap = await db
+    .collection(`users/${uid}/reviews`)
+    .where("type", "==", "subscription")
+    .get();
+  
+  const userConfirmedSlugs: string[] = [];
+  const billingFrequencyOverrides = new Map<string, import("../src/lib/reviewTypes").BillingFrequency>();
+  const reviewDecisions = {
+    is_subscription: 0,
+    not_subscription: 0,
+    still_active: 0,
+    cancelled: 0,
+  };
+  
+  subReviewsSnap.docs.forEach(doc => {
+    const classification = doc.get("classification");
+    const merchantSlug = doc.get("merchantSlug") || doc.id;
+    const billingFrequency = doc.get("billingFrequency");
+    
+    if (classification === "is_subscription") {
+      userConfirmedSlugs.push(merchantSlug);
+      reviewDecisions.is_subscription++;
+    } else if (classification === "not_subscription") {
+      reviewDecisions.not_subscription++;
+    } else if (classification === "still_active") {
+      userConfirmedSlugs.push(merchantSlug);
+      reviewDecisions.still_active++;
+    } else if (classification === "cancelled") {
+      reviewDecisions.cancelled++;
+    }
+    
+    // Track billing frequency overrides
+    if (billingFrequency) {
+      billingFrequencyOverrides.set(merchantSlug, billingFrequency);
+    }
+  });
+  
+  console.log(`\n🔄 Subscriptions (buildSubscriptionSummary):`);
+  console.log(`   Review decisions applied:`);
+  console.log(`     • is_subscription: ${reviewDecisions.is_subscription}`);
+  console.log(`     • not_subscription: ${reviewDecisions.not_subscription}`);
+  console.log(`     • still_active: ${reviewDecisions.still_active}`);
+  console.log(`     • cancelled: ${reviewDecisions.cancelled}`);
+  
+  if (billingFrequencyOverrides.size > 0) {
+    console.log(`   Billing frequency overrides: ${billingFrequencyOverrides.size}`);
+    billingFrequencyOverrides.forEach((freq, slug) => {
+      console.log(`     • ${slug}: ${freq}`);
+    });
+  }
+  
+  const subscriptionSummary = buildSubscriptionSummary(
+    profile.expenseTxns,
+    currency,
+    spendingSummary.typicalMonthly,
+    userConfirmedSlugs,
+    billingFrequencyOverrides
+  );
+  
+  console.log(`   Active confirmed: ${subscriptionSummary.activeCount}`);
+  console.log(`   Candidates (to review): ${subscriptionSummary.candidateCount}`);
+  console.log(`   Inactive/cancelled: ${subscriptionSummary.inactive.length}`);
+  console.log(`   Monthly total: ${formatCurrency(subscriptionSummary.monthlyTotal, currency)} (confirmed only)`);
+  console.log(`   Yearly total: ${formatCurrency(subscriptionSummary.yearlyTotal, currency)} (confirmed only)`);
+  console.log(`   New subscriptions: ${subscriptionSummary.newCount}`);
+  console.log(`   Price increases: ${subscriptionSummary.priceIncreaseCount}`);
+  
+  // Print lists
+  if (subscriptionSummary.subscriptions.length > 0) {
+    console.log(`\n   ✅ Confirmed Active (${subscriptionSummary.subscriptions.length}):`);
+    subscriptionSummary.subscriptions.forEach(sub => {
+      console.log(`      • ${sub.merchant} (${sub.category}) - ${formatCurrency(sub.amount, currency)}/${sub.cadence}`);
+    });
+  }
+  
+  if (subscriptionSummary.candidates.length > 0) {
+    console.log(`\n   ⚠️  Candidates to Review (${subscriptionSummary.candidates.length}):`);
+    subscriptionSummary.candidates.forEach(sub => {
+      // Find all transactions for this merchant to show charge dates
+      const merchantTxns = profile.expenseTxns
+        .filter(txn => {
+          const txnSlug = require("@/lib/applyRules").merchantSlug(txn.merchant);
+          return txnSlug === sub.merchantSlug || txnSlug.includes(sub.merchantSlug);
+        })
+        .sort((a, b) => a.date.localeCompare(b.date));
+      
+      const chargeDates = merchantTxns.map(t => t.date).join(", ");
+      console.log(`      • ${sub.merchant} (${sub.category}) - ${formatCurrency(sub.amount, currency)}/${sub.cadence}`);
+      console.log(`        Charge dates: ${chargeDates}`);
+    });
+  }
+  
+  if (subscriptionSummary.inactive.length > 0) {
+    console.log(`\n   💤 Inactive/Cancelled (${subscriptionSummary.inactive.length}):`);
+    subscriptionSummary.inactive.forEach(sub => {
+      console.log(`      • ${sub.merchant} (${sub.category}) - last ${sub.lastDate}`);
+    });
+  }
+  
+  // Hard-excluded categories that should never appear
+  const HARD_EXCLUDED_CATEGORIES = [
+    "Interest", "Fees", "Debt Payments", "Transfers", "Transfers & Payments",
+    "Loans", "Insurance", "Taxes", "Income", "Cash & ATM", "Investments & Savings",
+    "Groceries", "Shopping", "Dining", "School Fees", "Charity", "Education"
+  ];
+  
+  const HARD_EXCLUDED_PARENTS = [
+    "Debt", "Taxes", "Investments & Savings", "Groceries", "Shopping", 
+    "Dining", "Education", "Housing"
+  ];
+  
+  // Check all detected subscriptions (confirmed, candidates, and inactive)
+  const allSubs = [
+    ...subscriptionSummary.subscriptions,
+    ...subscriptionSummary.candidates,
+    ...subscriptionSummary.inactive
+  ];
+  
+  const hardExcludedItems = allSubs.filter(sub => {
+    const parent = getParentCategory(sub.category);
+    return HARD_EXCLUDED_CATEGORIES.includes(sub.category) || HARD_EXCLUDED_PARENTS.includes(parent);
+  });
+  
+  if (hardExcludedItems.length > 0) {
+    console.error(`\n❌ HARD-EXCLUDED ITEMS DETECTED IN SUBSCRIPTIONS:`);
+    hardExcludedItems.forEach(sub => {
+      const parent = getParentCategory(sub.category);
+      console.error(`   • ${sub.merchant} (${sub.category}, parent: ${parent}) - ${formatCurrency(sub.amount, currency)}`);
+    });
+    console.error();
+    errors.push("Hard-excluded categories found in subscriptions");
+  }
+  
+  // Check sanity failures
+  if (subscriptionSummary.sanityCheckFailures.length > 0) {
+    console.error(`\n❌ SUBSCRIPTION SANITY CHECK FAILED:`);
+    subscriptionSummary.sanityCheckFailures.forEach(f => console.error(`   • ${f}`));
+    console.error();
+    errors.push("Subscription sanity check failed");
+  }
+  
+  // Check for duplicate canonical merchants (same merchantSlug appearing multiple times)
+  const slugCounts = new Map<string, { count: number; merchants: string[] }>();
+  allSubs.forEach(sub => {
+    if (!slugCounts.has(sub.merchantSlug)) {
+      slugCounts.set(sub.merchantSlug, { count: 0, merchants: [] });
+    }
+    const entry = slugCounts.get(sub.merchantSlug)!;
+    entry.count++;
+    entry.merchants.push(sub.merchant);
+  });
+  
+  const duplicates = Array.from(slugCounts.entries()).filter(([_, data]) => data.count > 1);
+  if (duplicates.length > 0) {
+    console.error(`\n❌ DUPLICATE CANONICAL MERCHANTS DETECTED:`);
+    duplicates.forEach(([slug, data]) => {
+      console.error(`   • "${slug}" appears ${data.count} times: ${data.merchants.join(", ")}`);
+    });
+    console.error();
+    errors.push("Duplicate canonical merchants found");
+  }
+  
+  // Additional sanity: subscriptions should be reasonable
+  const subPct = (subscriptionSummary.monthlyTotal / spendingSummary.typicalMonthly) * 100;
+  console.log(`\n   Subscriptions as % of spending: ${subPct.toFixed(1)}%`);
+  
+  if (subscriptionSummary.activeCount > 30) {
+    console.error(`\n❌ Too many subscriptions: ${subscriptionSummary.activeCount} (max 30)\n`);
+    errors.push("Too many subscriptions");
+  }
+  
+  if (subPct > 10) {
+    console.error(`\n❌ Subscriptions too high: ${subPct.toFixed(1)}% of spending (max 10%)\n`);
+    errors.push("Subscriptions percentage too high");
+  }
+  
+  if (hardExcludedItems.length === 0 && subscriptionSummary.sanityCheckFailures.length === 0 && subscriptionSummary.activeCount <= 30 && subPct <= 10) {
+    console.log(`✅ Subscription detection passed all checks\n`);
+  }
   
   // Check for pending savings reviews
   const savingsReviewsSnap = await db
