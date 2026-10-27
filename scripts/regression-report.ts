@@ -24,6 +24,7 @@ import { buildSubscriptionSummary } from "../src/lib/subscriptionEngine";
 import { computeMonthlyBuckets } from "../src/lib/monthlyBucketComputation";
 import type { MoneyCoachBucket } from "../src/lib/moneyCoachBuckets";
 import type { DebtPaymentReview } from "../src/lib/types";
+import { getParentCategory } from "../src/lib/categoryTaxonomy";
 
 const BASELINE_PATH = path.join(__dirname, "regression-baseline.json");
 
@@ -308,7 +309,13 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   // Hard-excluded categories that should never appear
   const HARD_EXCLUDED_CATEGORIES = [
     "Interest", "Fees", "Debt Payments", "Transfers", "Transfers & Payments",
-    "Loans", "Insurance", "Taxes", "Income", "Cash & ATM", "Investments & Savings"
+    "Loans", "Insurance", "Taxes", "Income", "Cash & ATM", "Investments & Savings",
+    "Groceries", "Shopping", "Dining", "School Fees", "Charity", "Education"
+  ];
+  
+  const HARD_EXCLUDED_PARENTS = [
+    "Debt", "Taxes", "Investments & Savings", "Groceries", "Shopping", 
+    "Dining", "Education", "Housing"
   ];
   
   // Check all detected subscriptions (confirmed, candidates, and inactive)
@@ -318,14 +325,16 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     ...subscriptionSummary.inactive
   ];
   
-  const hardExcludedItems = allSubs.filter(sub => 
-    HARD_EXCLUDED_CATEGORIES.includes(sub.category)
-  );
+  const hardExcludedItems = allSubs.filter(sub => {
+    const parent = getParentCategory(sub.category);
+    return HARD_EXCLUDED_CATEGORIES.includes(sub.category) || HARD_EXCLUDED_PARENTS.includes(parent);
+  });
   
   if (hardExcludedItems.length > 0) {
     console.error(`\n❌ HARD-EXCLUDED ITEMS DETECTED IN SUBSCRIPTIONS:`);
     hardExcludedItems.forEach(sub => {
-      console.error(`   • ${sub.merchant} (${sub.category}) - ${formatCurrency(sub.amount, currency)}`);
+      const parent = getParentCategory(sub.category);
+      console.error(`   • ${sub.merchant} (${sub.category}, parent: ${parent}) - ${formatCurrency(sub.amount, currency)}`);
     });
     console.error();
     errors.push("Hard-excluded categories found in subscriptions");

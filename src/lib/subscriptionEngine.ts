@@ -3,21 +3,22 @@
  * 
  * TIER 1 - CONFIRMED (counted in totals):
  * - Known subscription merchants (streaming, software, memberships, cloud)
+ * - Category 'Subscriptions', 'Software', 'Streaming' with recurring pattern
  * - User-confirmed via review framework
  * - Regular cadence + consistent amount
  * 
  * TIER 2 - CANDIDATES (NOT counted):
- * - Recurring-looking but not on known list
+ * - Recurring-looking but not on known list and not in subscription categories
  * - Sent to 'subscription' review for user confirmation
  * 
  * HARD EXCLUSIONS (never subscriptions):
- * - Interest, fees, bank charges categories
- * - Debt, transfers, e-transfers, person names
+ * - Groceries, Shopping, Dining, School Fees, Charity, Housing categories
+ * - Interest, fees, bank charges, debt, transfers, e-transfers, person names
  * - Loans, insurance, utilities, rent, taxes, income
  * 
- * ACTIVE STATUS:
- * - Monthly: charged within 45 days
- * - Yearly: charged within 400 days
+ * ACTIVE STATUS (relative to latest transaction date, NOT today):
+ * - Monthly: charged within cadence+grace (45 days) of latest txn date
+ * - Yearly: charged within 400 days of latest txn date
  * - Otherwise: Inactive/cancelled (not counted in totals)
  * 
  * PRICE INCREASE:
@@ -84,10 +85,10 @@ export interface SubscriptionSummary {
 const KNOWN_SUBSCRIPTION_MERCHANTS = [
   // Streaming video
   "netflix", "disney", "disney-plus", "hbo", "hbo-max", "amazon-prime", 
-  "prime-video", "apple-tv", "youtube-premium", "paramount",
+  "prime-video", "apple-tv", "youtube-premium", "paramount", "crave",
   
   // Streaming music
-  "spotify", "apple-music", "tidal", "deezer", "youtube-music",
+  "spotify", "apple-music", "tidal", "deezer", "youtube-music", "siriusxm", "sirius",
   
   // Cloud storage
   "icloud", "google-one", "dropbox", "microsoft-onedrive", "onedrive",
@@ -96,9 +97,12 @@ const KNOWN_SUBSCRIPTION_MERCHANTS = [
   "adobe", "microsoft-365", "office-365", "google-workspace",
   "obsidian", "notion", "evernote", "todoist", "slack",
   
-  // Development & cloud
-  "github", "gitlab", "aws", "amazon-web-services", "google-cloud",
-  "digitalocean", "heroku", "vercel", "netlify", "resend",
+  // AI & Development tools
+  "openai", "chatgpt", "anthropic", "claude", "github", "gitlab", 
+  "vercel", "netlify", "ngrok", "digitalocean", "heroku",
+  
+  // Cloud services (only when in Subscriptions/Software category)
+  "aws", "amazon-web-services", "google-cloud",
   
   // Fitness & wellness
   "peloton", "goodlife", "planet-fitness", "anytime-fitness",
@@ -111,6 +115,28 @@ const KNOWN_SUBSCRIPTION_MERCHANTS = [
   // Other subscriptions
   "audible", "kindle-unlimited", "scribd", "masterclass",
 ];
+
+/**
+ * Merchant variants that should be merged
+ */
+const MERCHANT_VARIANT_MAP: Record<string, string> = {
+  "anthropic": "anthropic",
+  "claude": "anthropic",
+  "claude-ai": "anthropic",
+  "chatgpt": "openai",
+  "openai": "openai",
+  "siriusxm": "siriusxm",
+  "sirius": "siriusxm",
+};
+
+/**
+ * Categories that automatically confirm recurring charges as subscriptions
+ */
+const SUBSCRIPTION_CATEGORIES = new Set([
+  "Subscriptions",
+  "Software",
+  "Streaming",
+]);
 
 /**
  * Hard-exclude categories (never subscriptions)
@@ -127,6 +153,12 @@ const EXCLUDED_CATEGORIES = new Set([
   "Income",
   "Cash & ATM",
   "Investments & Savings",
+  "Groceries",
+  "Shopping",
+  "Dining",
+  "School Fees",
+  "Charity",
+  "Education",
 ]);
 
 /**
@@ -136,6 +168,11 @@ const EXCLUDED_PARENT_CATEGORIES = new Set([
   "Debt",
   "Taxes",
   "Investments & Savings",
+  "Groceries",
+  "Shopping",
+  "Dining",
+  "Education",
+  "Housing", // Includes utilities, home comfort, alarm
 ]);
 
 /**
@@ -150,11 +187,12 @@ const EXCLUDED_MERCHANT_PATTERNS = [
   
   // Person names (e-transfers to people)
   /^(mr|mrs|ms|miss|dr)\.?\s+[a-z]/i,
-  /^[a-z]+\s+[a-z]+$/i, // Simple "firstname lastname" pattern
+  /^[a-z]+\s+[a-z]+\s+[a-z]+$/i, // "firstname middlename lastname" pattern
   
-  // Utilities
-  /hydro|water|electric|power|gas|enbridge|utility/i,
+  // Utilities & home services
+  /hydro|water|electric|power|enbridge|utility/i,
   /internet|rogers|bell|telus|shaw|videotron/i,
+  /alarm|home comfort|adt security|protection plan/i,
   
   // Insurance
   /insurance|allstate|state farm|td insurance|manulife/i,
@@ -163,16 +201,23 @@ const EXCLUDED_MERCHANT_PATTERNS = [
   /loan|mortgage|line of credit|credit payment/i,
   
   // Rent & property
-  /rent|landlord|property management|condo fee/i,
+  /rent|landlord|property management|condo fee|strata/i,
   
   // Transportation
   /gas station|esso|shell|petro|fuel|parking/i,
   
-  // Groceries
-  /loblaws|sobeys|metro|walmart|costco|safeway|freshco|nofrills/i,
+  // Groceries (specific stores)
+  /loblaws|sobeys|metro|walmart|costco|safeway|freshco|nofrills|food basics/i,
+  /t&t|singh.*farm|warraich|punjabi.*bazaar|indian.*bazaar|grocery|supermarket/i,
+  
+  // Shopping
+  /dollarama|dollar store|home depot|canadian tire|best buy/i,
   
   // Dining
   /restaurant|mcdonald|tim horton|starbucks|subway|burger king/i,
+  
+  // School & charity
+  /school|tuition|daycare|donation|charity|temple|church|gurdwara|mosque/i,
 ];
 
 function daysBetween(date1: string, date2: string): number {
@@ -200,23 +245,41 @@ function isHardExcluded(merchant: string, category: string): boolean {
   return false;
 }
 
-function isKnownSubscription(merchantSlugValue: string): boolean {
+function isKnownSubscription(merchantSlugValue: string, category: string): boolean {
+  // Check if category is a subscription category
+  if (SUBSCRIPTION_CATEGORIES.has(category)) {
+    return true;
+  }
+  
+  // Check known merchants
   return KNOWN_SUBSCRIPTION_MERCHANTS.some(known => 
     merchantSlugValue === known || merchantSlugValue.includes(known)
   );
 }
 
+function normalizeSubscriptionMerchant(merchantSlugValue: string): string {
+  // Check variant map
+  for (const [variant, canonical] of Object.entries(MERCHANT_VARIANT_MAP)) {
+    if (merchantSlugValue.includes(variant)) {
+      return canonical;
+    }
+  }
+  return merchantSlugValue;
+}
+
 function determineStatus(
   lastDate: string,
-  cadence: SubscriptionCadence
+  cadence: SubscriptionCadence,
+  latestTxnDate: string
 ): SubscriptionStatus {
-  const daysSinceLast = daysBetween(lastDate, new Date().toISOString().slice(0, 10));
+  // Use latest transaction date, NOT today
+  const daysSinceLast = daysBetween(lastDate, latestTxnDate);
   
   if (cadence === "monthly") {
-    // Monthly: active if charged within 45 days
+    // Monthly: active if charged within 45 days of latest txn date
     return daysSinceLast <= 45 ? "active" : "inactive";
   } else if (cadence === "yearly") {
-    // Yearly: active if charged within 400 days
+    // Yearly: active if charged within 400 days of latest txn date
     return daysSinceLast <= 400 ? "active" : "inactive";
   }
   
@@ -233,7 +296,8 @@ interface MerchantPattern {
 
 function detectSubscription(
   pattern: MerchantPattern,
-  userConfirmed: Set<string>
+  userConfirmed: Set<string>,
+  latestTxnDate: string
 ): DetectedSubscription | null {
   const { merchant, merchantSlug, category, transactions } = pattern;
   
@@ -281,17 +345,20 @@ function detectSubscription(
     nextDate = addMonths(lastDate, 12);
   }
   
+  // Normalize merchant slug for variant matching
+  const normalizedSlug = normalizeSubscriptionMerchant(merchantSlug);
+  
   // Determine tier: confirmed or candidate
-  const isKnown = isKnownSubscription(merchantSlug);
-  const isUserConfirmed = userConfirmed.has(merchantSlug);
+  const isKnown = isKnownSubscription(normalizedSlug, category);
+  const isUserConfirmed = userConfirmed.has(merchantSlug) || userConfirmed.has(normalizedSlug);
   const tier: SubscriptionTier = (isKnown || isUserConfirmed) ? "confirmed" : "candidate";
   
-  // Determine status: active or inactive
-  const status = determineStatus(lastDate, cadence);
+  // Determine status: active or inactive (relative to latest txn date)
+  const status = determineStatus(lastDate, cadence, latestTxnDate);
   
-  // Check if new (first charge in last 60 days)
+  // Check if new (first charge in last 60 days relative to latest txn date)
   const firstDate = sorted[0].date;
-  const daysSinceFirst = daysBetween(firstDate, new Date().toISOString().slice(0, 10));
+  const daysSinceFirst = daysBetween(firstDate, latestTxnDate);
   const isNew = daysSinceFirst <= 60 && sorted.length <= 2;
   
   // Check for price increase (only for confirmed subs with same cadence)
@@ -312,7 +379,7 @@ function detectSubscription(
   
   return {
     merchant,
-    merchantSlug,
+    merchantSlug: normalizedSlug,
     category,
     amount,
     cadence,
@@ -337,6 +404,11 @@ export function buildSubscriptionSummary(
 ): SubscriptionSummary {
   const userConfirmed = new Set(userConfirmedSlugs);
   
+  // Find latest transaction date (use this for active status, not today)
+  const latestTxnDate = expenseTxns.length > 0
+    ? expenseTxns.reduce((latest, txn) => txn.date > latest ? txn.date : latest, expenseTxns[0].date)
+    : new Date().toISOString().slice(0, 10);
+  
   // Group by merchant
   const merchantMap = new Map<string, MerchantPattern>();
   
@@ -360,7 +432,7 @@ export function buildSubscriptionSummary(
   // Detect subscriptions
   const allDetected: DetectedSubscription[] = [];
   merchantMap.forEach(pattern => {
-    const sub = detectSubscription(pattern, userConfirmed);
+    const sub = detectSubscription(pattern, userConfirmed, latestTxnDate);
     if (sub) {
       allDetected.push(sub);
     }
@@ -411,7 +483,7 @@ export function buildSubscriptionSummary(
   }
   
   // Check for hard-excluded items in results (should never happen)
-  [...confirmedActive, ...candidates].forEach(sub => {
+  [...confirmedActive, ...candidates, ...inactive].forEach(sub => {
     if (isHardExcluded(sub.merchant, sub.category)) {
       sanityCheckFailures.push(`Hard-excluded item detected: ${sub.merchant} (${sub.category})`);
     }

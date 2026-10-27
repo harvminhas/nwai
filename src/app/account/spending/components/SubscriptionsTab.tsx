@@ -5,7 +5,6 @@ import type { SubscriptionSummary, DetectedSubscription } from "@/lib/subscripti
 import { formatCurrency } from "@/lib/currencyUtils";
 import { formatDate } from "@/lib/dateFormatting";
 import { getSignColor } from "@/lib/colorHelpers";
-import { ChevronDown, ChevronRight } from "lucide-react";
 
 interface SubscriptionsTabProps {
   token: string | null;
@@ -166,7 +165,13 @@ export function SubscriptionsTab({ token }: SubscriptionsTabProps) {
             className="w-full px-6 py-4 border-b border-gray-200 bg-gray-50 flex items-center justify-between hover:bg-gray-100 transition-colors"
           >
             <div className="flex items-center gap-2">
-              {showInactive ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                {showInactive ? (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                ) : (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                )}
+              </svg>
               <h3 className="text-sm font-semibold text-gray-700">
                 Inactive / Cancelled? ({inactive.length})
               </h3>
