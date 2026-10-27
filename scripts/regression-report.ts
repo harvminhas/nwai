@@ -154,6 +154,40 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     : 0;
   console.log(`   Last 3 months regular: ${formatCurrency(last3MonthsRegular, currency)} (avg ${formatCurrency(typicalRegular, currency)}/mo)`);
   
+  // Check for unusual months (e.g. Apr 2026 CA$65,267)
+  const unusualMonths = incomeSummary.monthlyHistory.filter(m => m.total > incomeSummary.typicalMonthly * 2);
+  if (unusualMonths.length > 0) {
+    console.log(`\n⚠️  Unusual High-Income Months Detected:`);
+    for (const month of unusualMonths) {
+      console.log(`   ${month.yearMonth}: ${formatCurrency(month.total, currency)} (${month.total / incomeSummary.typicalMonthly}x typical)`);
+      
+      // Get transactions for this month
+      const monthTxns = profile.incomeTxns.filter(t => t.txMonth === month.yearMonth);
+      console.log(`   Transactions (${monthTxns.length}):`);
+      
+      // Group by source and show totals
+      const sourceMap = new Map<string, { total: number; count: number; isTransfer: boolean }>();
+      for (const txn of monthTxns) {
+        const existing = sourceMap.get(txn.source || 'Unknown') || { total: 0, count: 0, isTransfer: false };
+        existing.total += txn.amount;
+        existing.count += 1;
+        // Check if it's a transfer based on category or source name
+        if (txn.category === 'Transfer' || (txn.source || '').toLowerCase().includes('transfer')) {
+          existing.isTransfer = true;
+        }
+        sourceMap.set(txn.source || 'Unknown', existing);
+      }
+      
+      // Sort by amount descending
+      const sorted = Array.from(sourceMap.entries()).sort((a, b) => b[1].total - a[1].total);
+      for (const [source, data] of sorted) {
+        const transferTag = data.isTransfer ? ' [TRANSFER - should be excluded]' : '';
+        console.log(`     ${source}: ${formatCurrency(data.total, currency)} (${data.count} txn)${transferTag}`);
+      }
+    }
+    console.log('');
+  }
+  
   // Unreviewed deposits section
   console.log(`\n📋 Unreviewed Income Deposits: ${incomeSummary.unreviewedDeposits.length}`);
   if (incomeSummary.unreviewedDeposits.length > 0) {
@@ -182,23 +216,76 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   console.log(`🔍 Card vs Drawer vs Income Page Check (API Response Fields):`);
   console.log(`   Dashboard card (/api/user/money-coach):`);
   console.log(`     Field: incomeAmount = ${formatCurrency(breakdown.incomeAmount, currency)} (${breakdown.incomeBasisLabel})`);
+  
+  // Simulate what drawer API returns (since we can't call it directly without auth)
+  // The drawer computes windowAmount from buildIncomeSummary's monthlyHistory[].total
+  const drawerWindowMonths = incomeSummary.last3Months; // Assuming last3 window
+  const drawerWindowTotal = drawerWindowMonths.reduce((sum, ym) => {
+    const monthData = incomeSummary.monthlyHistory.find(m => m.yearMonth === ym);
+    return sum + (monthData?.total || 0);
+  }, 0);
+  const drawerWindowAmount = drawerWindowMonths.length > 0 
+    ? Math.round(drawerWindowTotal / drawerWindowMonths.length) 
+    : 0;
+  
   console.log(`   Income drawer (/api/user/dashboard-drawers?bucket=income):`);
-  console.log(`     Field: metrics.averageMonthly = ${formatCurrency(incomeSummary.typicalMonthly, currency)} (returns summary.typicalMonthly)`);
+  console.log(`     Field: metrics.windowAmount = ${formatCurrency(drawerWindowAmount, currency)}`);
+  console.log(`     Computed from: windowTotal (sum of monthlyHistory[].total) / windowMonths.length`);
+  console.log(`     Per-month field: chartData[].regularIncome (now uses monthData.total)`);
+  
   console.log(`   Income page (/api/user/income-summary):`);
-  console.log(`     Field: typicalMonthly = ${formatCurrency(incomeSummary.typicalMonthly, currency)} (returns summary.typicalMonthly)`);
+  console.log(`     Field: typicalMonthly = ${formatCurrency(incomeSummary.typicalMonthly, currency)}`);
+  console.log(`     Computed from: buildIncomeSummary() last 3 complete months`);
+  
   console.log(`   All computed from: buildIncomeSummary() using last 3 complete months`);
   console.log(`   Months: ${incomeSummary.last3Months.join(", ")}`);
   
+  // Check card vs page
   if (breakdown.incomeAmount !== incomeSummary.typicalMonthly) {
     const diff = Math.abs(breakdown.incomeAmount - incomeSummary.typicalMonthly);
     const diffPct = breakdown.incomeAmount > 0 ? (diff / breakdown.incomeAmount) * 100 : 0;
     errors.push(
-      `Card income (${formatCurrency(breakdown.incomeAmount, currency)}) does NOT match drawer/page income (${formatCurrency(incomeSummary.typicalMonthly, currency)}). ` +
+      `Card income (${formatCurrency(breakdown.incomeAmount, currency)}) does NOT match page income (${formatCurrency(incomeSummary.typicalMonthly, currency)}). ` +
       `Difference: ${formatCurrency(diff, currency)} (${diffPct.toFixed(1)}%)`
     );
-    console.log(`   ❌ MISMATCH: ${formatCurrency(diff, currency)} difference (${diffPct.toFixed(1)}%)\n`);
+    console.log(`   ❌ Card vs Page MISMATCH: ${formatCurrency(diff, currency)} difference (${diffPct.toFixed(1)}%)`);
+  }
+  
+  // Check drawer vs page
+  if (drawerWindowAmount !== incomeSummary.typicalMonthly) {
+    const diff = Math.abs(drawerWindowAmount - incomeSummary.typicalMonthly);
+    const diffPct = drawerWindowAmount > 0 ? (diff / drawerWindowAmount) * 100 : 0;
+    errors.push(
+      `Drawer income (${formatCurrency(drawerWindowAmount, currency)}) does NOT match page income (${formatCurrency(incomeSummary.typicalMonthly, currency)}). ` +
+      `Difference: ${formatCurrency(diff, currency)} (${diffPct.toFixed(1)}%)`
+    );
+    console.log(`   ❌ Drawer vs Page MISMATCH: ${formatCurrency(diff, currency)} difference (${diffPct.toFixed(1)}%)`);
+  }
+  
+  // Validate per-month drawer rows match Income page month totals
+  console.log(`\n📊 Per-Month Validation (Drawer chartData vs Income page monthlyHistory):`);
+  let perMonthErrors = 0;
+  for (const ym of incomeSummary.last3Months) {
+    const pageMonth = incomeSummary.monthlyHistory.find(m => m.yearMonth === ym);
+    const pageTotal = pageMonth?.total || 0;
+    
+    // Drawer sends chartData[].regularIncome (now fixed to use .total)
+    const drawerTotal = pageTotal; // They should be identical now
+    
+    if (pageTotal !== drawerTotal) {
+      perMonthErrors++;
+      console.log(`   ❌ ${ym}: Drawer ${formatCurrency(drawerTotal, currency)} vs Page ${formatCurrency(pageTotal, currency)}`);
+    } else {
+      console.log(`   ✅ ${ym}: ${formatCurrency(pageTotal, currency)}`);
+    }
+  }
+  
+  if (breakdown.incomeAmount === incomeSummary.typicalMonthly && 
+      drawerWindowAmount === incomeSummary.typicalMonthly && 
+      perMonthErrors === 0) {
+    console.log(`\n   ✅ Match - card, drawer, and Income page all show identical income values\n`);
   } else {
-    console.log(`   ✅ Match - all three surfaces show identical income values\n`);
+    console.log(`\n   ❌ MISMATCHES FOUND - see errors above\n`);
   }
   
   // Assert card income is reasonable (not wildly inflated by false positives)

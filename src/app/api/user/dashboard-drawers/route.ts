@@ -98,8 +98,8 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
         
         return {
           month: ym,
-          regularIncome: monthData?.regular || 0,
-          oneOffIncome: monthData?.oneOff || 0,
+          regularIncome: monthData?.total || 0, // Use total (regular + bonus) not just regular
+          oneOffIncome: monthData?.bonus || 0,  // Track bonus separately for reference
           isInWindow: windowMonths.includes(ym),
           isCurrentMonth: isCurrent,
           hasData: hasData && (monthData?.total || 0) > 0,
@@ -109,7 +109,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       // Build metrics compatible with existing drawer format
       const windowTotal = windowMonths.reduce((sum, ym) => {
         const monthData = summary.monthlyHistory.find(m => m.yearMonth === ym);
-        return sum + (monthData?.regular || 0);
+        return sum + (monthData?.total || 0); // Use total (regular + bonus + pending, excluding 'not_income')
       }, 0);
       
       const metrics = {

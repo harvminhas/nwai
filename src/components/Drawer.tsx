@@ -212,7 +212,7 @@ function IncomeDrawerContent({ data, currency }: { data: import("@/lib/drawerTyp
     <div className="space-y-6">
       {/* Current Amount */}
       <div className="rounded-xl border border-gray-200 bg-gray-50 p-6">
-        <p className="text-sm font-medium text-gray-600">Monthly take-home</p>
+        <p className="text-sm font-medium text-gray-600">Average monthly income</p>
         <p className="mt-1 text-3xl font-bold text-gray-900">
           {fmt(metrics.windowAmount)}
         </p>
