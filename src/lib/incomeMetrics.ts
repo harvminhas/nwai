@@ -48,6 +48,18 @@ export interface DetailedIncomeMetrics extends IncomeMetrics {
   regularSources: IncomeSource[];
   /** One-off income (bonuses, unusual amounts) */
   oneOffSources: IncomeSource[];
+  /** Transaction-level source groups for the selected window period */
+  sourcesList?: Array<{
+    source: string;
+    total: number;
+    transactions: Array<{
+      date: string;
+      amount: number;
+      accountSlug: string;
+      isBonus: boolean;
+      needsReview: boolean;
+    }>;
+  }>;
   /** Year-to-date total (regular + one-off) */
   ytdTotal: number;
   /** Year-to-date regular only */
