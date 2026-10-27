@@ -36,19 +36,27 @@ import { getParentCategory } from "./categoryTaxonomy";
 
 /**
  * User confirmation for whether a transaction counts as savings.
- * Stored in users/{uid}/savingsConfirmations collection.
+ * Stored in users/{uid}/reviews collection with type: "savings_item".
  */
 export interface SavingsConfirmation {
-  /** Unique ID for this confirmation (merchant + category fingerprint) */
+  /** Unique ID for this confirmation (merchant + category + accountSlug fingerprint) */
   id: string;
   /** Merchant name from the transaction */
   merchant: string;
   /** Transaction category */
   category: string;
+  /** Account slug */
+  accountSlug: string;
+  /** Account name */
+  accountName: string;
+  /** Account last 4 digits */
+  accountLast4: string;
   /** Sample amount (for display) */
   amount: number;
   /** Sample date (for display) */
   date: string;
+  /** Transaction month (YYYY-MM) */
+  txMonth: string;
   /** User's decision: true = counts as savings, false = exclude, undefined = needs review */
   countAsSavings?: boolean;
   /** When the user made this decision */
@@ -56,10 +64,10 @@ export interface SavingsConfirmation {
 }
 
 /**
- * Get confirmation key for a transaction (merchant + category).
+ * Get confirmation key for a transaction (merchant + category + accountSlug).
  */
-function getConfirmationKey(merchant: string, category: string): string {
-  return `${merchant.toLowerCase().trim()}:${category.toLowerCase().trim()}`;
+function getConfirmationKey(merchant: string, category: string, accountSlug: string): string {
+  return `${merchant.toLowerCase().trim()}:${category.toLowerCase().trim()}:${accountSlug}`;
 }
 
 /**
@@ -405,6 +413,15 @@ export function computeMonthlySavings(
   // Get list of tracked account slugs to avoid double-counting
   const trackedSlugs = new Set(accountBalanceHistory.map(a => a.slug));
   
+  // Build account lookup for getting names and last 4
+  const accountLookup = new Map(
+    accountBalanceHistory.map(a => {
+      const last4Match = a.label.match(/\(\.\.\.(\d{4})\)/);
+      const last4 = last4Match ? last4Match[1] : a.slug.slice(-4);
+      return [a.slug, { name: a.label, last4 }];
+    })
+  );
+  
   for (const t of expenseTxns) {
     if (t.txMonth !== currentMonth) continue;
     if (isCoreExcluded(t.category)) continue;
@@ -418,7 +435,7 @@ export function computeMonthlySavings(
     // (refinement: check if destination account is tracked)
     
     const amount = Math.abs(t.amount);
-    const key = getConfirmationKey(t.merchant, t.category);
+    const key = getConfirmationKey(t.merchant, t.category, t.accountSlug);
     
     // Check if this needs user confirmation
     if (needsConfirmation(t.category, t.merchant)) {
@@ -426,13 +443,22 @@ export function computeMonthlySavings(
       
       if (confirmed === undefined) {
         // Needs confirmation - add to list but don't count yet
-        needsConfirmationList.push({
-          id: key,
-          merchant: t.merchant,
-          category: t.category,
-          amount,
-          date: t.date,
-        });
+        const accountInfo = accountLookup.get(t.accountSlug);
+        
+        // Only emit if we have account info and non-zero amount
+        if (accountInfo && amount > 0) {
+          needsConfirmationList.push({
+            id: key,
+            merchant: t.merchant,
+            category: t.category,
+            accountSlug: t.accountSlug,
+            accountName: accountInfo.name,
+            accountLast4: accountInfo.last4,
+            amount,
+            date: t.date,
+            txMonth: t.txMonth,
+          });
+        }
         contributionDetails.push({ merchant: t.merchant, amount, category: t.category, needsConfirmation: true });
         continue;
       } else if (!confirmed) {

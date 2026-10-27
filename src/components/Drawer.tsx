@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { DrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
 import { formatMonthYear } from "@/lib/dateFormatting";
 import { getSignColor, getSignBgColor } from "@/lib/colorHelpers";
+import { ReviewList } from "./ReviewList";
 
 export type DrawerType = "income" | "fixed" | "essentials" | "flexible" | "savings";
 
@@ -162,7 +163,25 @@ export function Drawer({ type, isOpen, onClose, token, currency }: DrawerProps) 
           )}
 
           {!loading && !error && data && data.type === "savings" && (
-            <SavingsDrawerContent data={data} currency={currency} />
+            <SavingsDrawerContent 
+              data={data} 
+              currency={currency} 
+              token={token}
+              onRefresh={() => {
+                setError(null);
+                setData(null);
+                // Trigger refetch
+                fetch(`/api/user/dashboard-drawers?window=${window}&bucket=${type}`, {
+                  headers: { Authorization: `Bearer ${token}` },
+                })
+                  .then(async (res) => {
+                    if (res.ok) {
+                      setData(await res.json());
+                    }
+                  })
+                  .catch(console.error);
+              }}
+            />
           )}
         </div>
       </div>
@@ -549,9 +568,13 @@ function BucketDrawerContent({
 function SavingsDrawerContent({
   data,
   currency,
+  token,
+  onRefresh,
 }: {
   data: import("@/lib/drawerTypes").SavingsDrawerData;
   currency: string;
+  token: string | null;
+  onRefresh: () => void;
 }) {
   const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
   
@@ -572,6 +595,13 @@ function SavingsDrawerContent({
 
   return (
     <div className="space-y-6">
+      {/* Savings Reviews */}
+      <ReviewList 
+        token={token} 
+        reviewType="savings_item"
+        onReviewComplete={onRefresh}
+      />
+      
       {/* Monthly Average Summary */}
       <div className="rounded-xl border border-gray-200 bg-white p-6">
         <div className="text-center">

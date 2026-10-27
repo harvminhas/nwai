@@ -108,6 +108,48 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   console.log(`   Transfer sources: ${incomeSummary.transferSources.length}`);
   console.log(`   Last 3 months total: ${formatCurrency(incomeSummary.last3MonthsTotal, currency)}\n`);
   
+  // Check for pending savings reviews
+  const savingsReviewsSnap = await db
+    .collection(`users/${uid}/reviews`)
+    .where("type", "==", "savings_item")
+    .get();
+  
+  const reviewedSavingsIds = new Set(savingsReviewsSnap.docs.map(doc => doc.id));
+  
+  // Compute savings for each complete month to get pending confirmations
+  const allSavingsConfirmations: any[] = [];
+  for (const month of completeMonths) {
+    const result = computeMonthlySavings(
+      profile.monthlyHistory,
+      profile.accountBalanceHistory,
+      profile.expenseTxns,
+      month
+    );
+    for (const item of result.needsConfirmation) {
+      if (!reviewedSavingsIds.has(item.id)) {
+        allSavingsConfirmations.push(item);
+      }
+    }
+  }
+  
+  // Dedupe by ID
+  const seenIds = new Set<string>();
+  const uniqueSavingsConfirmations = allSavingsConfirmations.filter(item => {
+    if (seenIds.has(item.id)) return false;
+    seenIds.add(item.id);
+    return true;
+  });
+  
+  if (uniqueSavingsConfirmations.length > 0) {
+    console.log(`⚠️  Pending Savings Reviews (${uniqueSavingsConfirmations.length}):`);
+    for (const item of uniqueSavingsConfirmations) {
+      console.log(`   • ${item.merchant} - ${item.accountName} - ${formatCurrency(item.amount, currency)} (${item.txMonth})`);
+    }
+    console.log();
+  } else {
+    console.log(`✅ No pending savings reviews\n`);
+  }
+  
   // Test each bucket
   const buckets: MoneyCoachBucket[] = ["fixed", "essentials", "flexible", "savings"];
   const reports: BucketReport[] = [];

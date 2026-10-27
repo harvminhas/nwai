@@ -170,12 +170,26 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
         return NextResponse.json({ error: "No complete months available for selected window" }, { status: 404 });
       }
       
+      // Load savings confirmations
+      const savingsReviewsSnap = await db
+        .collection(`users/${decoded.uid}/reviews`)
+        .where("type", "==", "savings_item")
+        .get();
+      
+      const confirmedItems = new Map<string, boolean>();
+      savingsReviewsSnap.docs.forEach(doc => {
+        const classification = doc.get("classification");
+        // "is_savings" → true (count it), anything else → false (exclude it)
+        confirmedItems.set(doc.id, classification === "is_savings");
+      });
+      
       // Compute window savings with per-month reconciliation
       const windowSavings = computeWindowSavings(
         profile.monthlyHistory,
         profile.accountBalanceHistory,
         profile.expenseTxns,
-        completeMonths
+        completeMonths,
+        confirmedItems
       );
       
       const response: SavingsDrawerData = {

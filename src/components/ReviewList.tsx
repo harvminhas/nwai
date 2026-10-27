@@ -266,6 +266,8 @@ function SavingsReviewCard({
           {item.merchant}
         </div>
         <div className="flex items-center gap-2 mt-1 text-sm text-gray-600">
+          <span>{item.accountName}</span>
+          <span className="text-gray-400">•</span>
           <span>{item.date}</span>
           <span className="text-gray-400">•</span>
           <span>CA${Math.abs(item.amount).toLocaleString()}</span>

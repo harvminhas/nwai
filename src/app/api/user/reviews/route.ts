@@ -3,6 +3,7 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { getAllUnreviewedAnomalies } from "@/lib/debtPayments";
 import { generateIncomeReviews } from "@/lib/incomeReviews";
+import { generateSavingsReviews } from "@/lib/savingsReviews";
 import type { ReviewItem, ReviewClassification, DebtPaymentReviewItem, SavingsReviewItem, IncomeClassificationReviewItem } from "@/lib/reviewTypes";
 
 export const dynamic = "force-dynamic";
@@ -60,9 +61,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         })) as DebtPaymentReviewItem[];
     } else if (reviewType === "savings_item") {
       // Get savings items needing confirmation
-      // For now, return empty - savings confirmations will be wired later
-      // TODO: Wire savings confirmations from computeMonthlySavings
-      items = [];
+      const savingsReviews = generateSavingsReviews(profile, reviewedIds);
+      items = savingsReviews as SavingsReviewItem[];
     } else if (reviewType === "income_classification") {
       // Get income items needing classification
       const incomeReviews = generateIncomeReviews(
