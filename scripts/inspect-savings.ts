@@ -85,9 +85,17 @@ function getLast3CompleteMonths(): string[] {
 function computeCurrentCardLogic(
   monthlyHistory: any[],
   expenseTxns: ExpenseTxnRecord[],
+  incomeTxns: any[],
+  accountSnapshots: any[],
+  currency: string,
   months: string[]
 ): { savings: number; savingsRate: number; income: number; spending: number } {
-  const { amount: incomeAmount } = getMoneyCoachIncome(monthlyHistory);
+  const { amount: incomeAmount } = getMoneyCoachIncome(
+    monthlyHistory,
+    incomeTxns,
+    accountSnapshots,
+    currency
+  );
   
   // Total spending (excluding transfers)
   const spending = expenseTxns
@@ -217,7 +225,14 @@ async function inspect(uid: string) {
   console.log(`   computeAverageSavings() = ${fmt(avgSavings)}/mo\n`);
 
   // Current card logic (for comparison)
-  const cardLogic = computeCurrentCardLogic(profile.monthlyHistory, profile.expenseTxns, months);
+  const cardLogic = computeCurrentCardLogic(
+    profile.monthlyHistory, 
+    profile.expenseTxns, 
+    profile.incomeTxns,
+    profile.accountSnapshots,
+    profile.homeCurrency || "CAD",
+    months
+  );
   console.log(`💳 Current Card Logic (for comparison):`);
   console.log(`   Income:                   ${fmt(cardLogic.income)}/mo`);
   console.log(`   Spending:                 ${fmt(cardLogic.spending)}/mo`);
