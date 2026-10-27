@@ -174,8 +174,15 @@ export function buildSpendingSummary(
   expenseTxns: ExpenseTxnRecord[],
   currency: string = "CAD"
 ): SpendingSummary {
-  // Filter out excluded categories (transfers, etc.)
-  const validTxns = expenseTxns.filter(t => !isCoreExcluded(t.category));
+  // Filter EXACTLY like dashboard moneyCoach.ts does:
+  // 1. Exclude transfers and core-excluded categories
+  // 2. Exclude Debt parent category (handled by scheduled payments in dashboard)
+  const validTxns = expenseTxns.filter(t => {
+    if (isCoreExcluded(t.category)) return false;
+    const parent = getParentCategory(t.category);
+    if (parent === "Debt") return false; // Dashboard skips Debt category (line 130-133 in moneyCoach.ts)
+    return true;
+  });
   
   // Get time windows
   const currentMonth = new Date().toISOString().slice(0, 7);
@@ -204,9 +211,10 @@ export function buildSpendingSummary(
       if (bucket === "fixed") fixed += amt;
       else if (bucket === "essentials") essentials += amt;
       else if (bucket === "flexible") flexible += amt;
-      // Note: "savings" bucket (Investments & Savings) is excluded by isCoreExcluded
+      // Note: "savings" and "uncategorized" buckets excluded from spending totals
     });
     
+    // Categories from SAME filtered set (no Debt, no transfers)
     const categories = Array.from(categoryTotals.entries()).map(([category, amount]) => ({
       category,
       amount,
@@ -239,7 +247,7 @@ export function buildSpendingSummary(
   const vsTypical = lastMonthTotal - typicalMonthly;
   const vsTypicalPct = typicalMonthly > 0 ? (vsTypical / typicalMonthly) * 100 : 0;
   
-  // Build merchant summaries (all time)
+  // Build merchant summaries (all time, from SAME filtered set)
   const merchantMap = new Map<string, MerchantSummary>();
   validTxns.forEach(t => {
     const slug = merchantSlug(t.merchant);
@@ -283,7 +291,7 @@ export function buildSpendingSummary(
   
   const merchants = Array.from(merchantMap.values());
   
-  // Build category summaries (all time)
+  // Build category summaries (all time, from SAME filtered set)
   const categoryMap = new Map<string, CategorySummary>();
   merchants.forEach(m => {
     if (!categoryMap.has(m.category)) {
