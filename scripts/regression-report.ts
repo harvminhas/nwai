@@ -21,6 +21,7 @@ import { computeAverageSavings, computeMonthlySavings, computeWindowSavings } fr
 import { buildIncomeSummary } from "../src/lib/incomeSummary";
 import { buildSpendingSummary } from "../src/lib/spendingSummary";
 import { buildSubscriptionSummary } from "../src/lib/subscriptionEngine";
+import { computeMonthlyBuckets } from "../src/lib/monthlyBucketComputation";
 import type { MoneyCoachBucket } from "../src/lib/moneyCoachBuckets";
 import type { DebtPaymentReview } from "../src/lib/types";
 
@@ -202,6 +203,47 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     errors.push("Bucket mismatch between spending page and dashboard");
   } else {
     console.log(`✅ Spending buckets match dashboard cards\n`);
+  }
+  
+  // Verify monthly history totals match individual month calculations
+  console.log(`💵 Monthly History Validation (chart data):`);
+  let hasMonthlyMismatch = false;
+  
+  for (const month of spendingSummary.monthlyHistory.slice(-3)) {
+    // Re-compute this month using computeMonthlyBuckets to verify consistency
+    const recomputed = computeMonthlyBuckets(
+      month.yearMonth,
+      profile.expenseTxns,
+      profile.accountSnapshots,
+      profile.debtPaymentHistory,
+      userReviews,
+      profile.fxRates || {},
+      currency
+    );
+    
+    const totalDiff = Math.abs(month.total - recomputed.total);
+    const fixedDiff = Math.abs(month.fixed - recomputed.buckets.fixed);
+    const essentialsDiff = Math.abs(month.essentials - recomputed.buckets.essentials);
+    const flexibleDiff = Math.abs(month.flexible - recomputed.buckets.flexible);
+    
+    const match = totalDiff < 0.01 && fixedDiff < 0.01 && essentialsDiff < 0.01 && flexibleDiff < 0.01;
+    
+    if (!match) {
+      hasMonthlyMismatch = true;
+      console.error(`   ❌ ${month.yearMonth}:`);
+      console.error(`      API total:  ${formatCurrency(month.total, currency)} (F ${formatCurrency(month.fixed, currency)} + E ${formatCurrency(month.essentials, currency)} + F ${formatCurrency(month.flexible, currency)})`);
+      console.error(`      Recomputed: ${formatCurrency(recomputed.total, currency)} (F ${formatCurrency(recomputed.buckets.fixed, currency)} + E ${formatCurrency(recomputed.buckets.essentials, currency)} + F ${formatCurrency(recomputed.buckets.flexible, currency)})`);
+      console.error(`      Diffs: total ${formatCurrency(totalDiff, currency)}, fixed ${formatCurrency(fixedDiff, currency)}, essentials ${formatCurrency(essentialsDiff, currency)}, flexible ${formatCurrency(flexibleDiff, currency)}`);
+    } else {
+      console.log(`   ✓ ${month.yearMonth}: ${formatCurrency(month.total, currency)}`);
+    }
+  }
+  
+  if (hasMonthlyMismatch) {
+    console.error("\n❌ MONTHLY HISTORY MISMATCH: API monthly totals don't match recomputed values\n");
+    errors.push("Monthly history data inconsistency");
+  } else {
+    console.log(`✅ Monthly history data consistent\n`);
   }
   
   // Verify typical monthly matches bucket sum

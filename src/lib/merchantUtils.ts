@@ -102,6 +102,12 @@ const MERCHANT_ALIASES: Record<string, string> = {
   "google-cloud-ca": "Google Cloud",
   "google-cloud-us": "Google Cloud",
   "googlecloud": "Google Cloud",
+  
+  // CIBC variants
+  "cibc-mc": "CIBC Mastercard",
+  "cibc-mastercard": "CIBC Mastercard",
+  "cibc-visa": "CIBC Visa",
+  "cibc-m-c": "CIBC Mastercard",
 };
 
 /**
