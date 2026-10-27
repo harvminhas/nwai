@@ -239,7 +239,11 @@ export function OverviewTab({ summary, token }: OverviewTabProps) {
       {/* Review list */}
       {token && (
         <div>
-          <ReviewList token={token} onComplete={() => window.location.reload()} />
+          <ReviewList
+            token={token}
+            reviewType="debt_payment"
+            onReviewComplete={() => window.location.reload()}
+          />
         </div>
       )}
     </div>
