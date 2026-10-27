@@ -4,7 +4,8 @@ import { getFinancialProfile } from "@/lib/financialProfile";
 import { getAllUnreviewedAnomalies } from "@/lib/debtPayments";
 import { generateIncomeReviews } from "@/lib/incomeReviews";
 import { generateSavingsReviews } from "@/lib/savingsReviews";
-import type { ReviewItem, ReviewClassification, DebtPaymentReviewItem, SavingsReviewItem, IncomeClassificationReviewItem } from "@/lib/reviewTypes";
+import { buildSubscriptionSummary } from "@/lib/subscriptionEngine";
+import type { ReviewItem, ReviewClassification, DebtPaymentReviewItem, SavingsReviewItem, IncomeClassificationReviewItem, SubscriptionReviewItem } from "@/lib/reviewTypes";
 
 export const dynamic = "force-dynamic";
 
@@ -22,9 +23,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const { auth, db } = getFirebaseAdmin();
     const decoded = await auth.verifyIdToken(token);
     const { searchParams } = new URL(req.url);
-    const reviewType = searchParams.get("type") as "debt_payment" | "savings_item" | "income_classification" | null;
+    const reviewType = searchParams.get("type") as "debt_payment" | "savings_item" | "income_classification" | "subscription" | null;
 
-    if (!reviewType || !["debt_payment", "savings_item", "income_classification"].includes(reviewType)) {
+    if (!reviewType || !["debt_payment", "savings_item", "income_classification", "subscription"].includes(reviewType)) {
       return NextResponse.json({ error: "Invalid review type" }, { status: 400 });
     }
 
@@ -70,6 +71,29 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         reviewedIds
       );
       items = incomeReviews as IncomeClassificationReviewItem[];
+    } else if (reviewType === "subscription") {
+      // Get subscription candidates needing confirmation
+      const subSummary = buildSubscriptionSummary(
+        profile.expenseTxns,
+        profile.homeCurrency,
+        undefined,
+        [] // Don't pass confirmed slugs yet, we want candidates
+      );
+      
+      items = subSummary.candidates
+        .filter(c => !reviewedIds.has(c.merchantSlug))
+        .map(c => ({
+          id: c.merchantSlug,
+          type: "subscription" as const,
+          merchant: c.merchant,
+          merchantSlug: c.merchantSlug,
+          category: c.category,
+          cadence: c.cadence,
+          chargeCount: c.chargeCount,
+          date: c.lastDate,
+          amount: c.amount,
+          txMonth: c.lastDate.slice(0, 7), // YYYY-MM
+        })) as SubscriptionReviewItem[];
     }
 
     return NextResponse.json({ items });
@@ -97,13 +121,13 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
     const decoded = await auth.verifyIdToken(token);
 
     const body = await req.json();
-    const { id, type, classification, accountSlug, date, amount } = body;
+    const { id, type, classification, accountSlug, merchantSlug, date, amount } = body;
 
     if (!id || !type || !classification) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    if (!["debt_payment", "savings_item", "income_classification"].includes(type)) {
+    if (!["debt_payment", "savings_item", "income_classification", "subscription"].includes(type)) {
       return NextResponse.json({ error: "Invalid review type" }, { status: 400 });
     }
 
@@ -115,6 +139,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
         type,
         classification,
         accountSlug: accountSlug || null,
+        merchantSlug: merchantSlug || null,
         date,
         amount,
         reviewedAt: new Date().toISOString(),

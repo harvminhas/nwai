@@ -503,6 +503,7 @@ export function buildSubscriptionSummary(
     subscriptions: confirmedActive,
     candidates,
     inactive,
+    cancelled: [], // Handled at API layer based on reviews
     monthlyTotal,
     yearlyTotal,
     monthlyChange: 0, // TODO: implement if needed

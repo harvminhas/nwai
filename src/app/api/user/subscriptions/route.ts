@@ -33,14 +33,39 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       reviewedAt: doc.get("reviewedAt"),
     }));
     
-    // Load user-confirmed subscription merchants
+    // Load user subscription reviews
     const subReviewsSnap = await db
       .collection(`users/${decoded.uid}/reviews`)
       .where("type", "==", "subscription")
-      .where("confirmed", "==", true)
       .get();
     
-    const userConfirmedSlugs = subReviewsSnap.docs.map(doc => doc.get("merchantSlug")).filter(Boolean);
+    // Process reviews: build sets for different actions
+    const userConfirmedSlugs: string[] = [];
+    const excludedSlugs = new Set<string>();
+    const stillActiveSlugs = new Set<string>();
+    const cancelledSlugs = new Set<string>();
+    
+    subReviewsSnap.docs.forEach(doc => {
+      const classification = doc.get("classification");
+      const merchantSlug = doc.get("merchantSlug") || doc.id;
+      
+      if (classification === "is_subscription") {
+        userConfirmedSlugs.push(merchantSlug);
+      } else if (classification === "not_subscription") {
+        excludedSlugs.add(merchantSlug);
+      } else if (classification === "still_active") {
+        userConfirmedSlugs.push(merchantSlug); // Treat as confirmed
+        stillActiveSlugs.add(merchantSlug);
+      } else if (classification === "cancelled") {
+        cancelledSlugs.add(merchantSlug);
+      }
+    });
+    
+    // Filter out excluded merchants from expense transactions before passing to engine
+    const filteredExpenseTxns = profile.expenseTxns.filter(txn => {
+      const slug = require("@/lib/applyRules").merchantSlug(txn.merchant);
+      return !excludedSlugs.has(slug);
+    });
     
     // Get total spending for sanity check
     const spendingSummary = buildSpendingSummary(
@@ -53,13 +78,35 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     );
     
     const summary = buildSubscriptionSummary(
-      profile.expenseTxns,
+      filteredExpenseTxns, // Use filtered transactions (excluded merchants removed)
       profile.homeCurrency,
       spendingSummary.typicalMonthly,
       userConfirmedSlugs
     );
+    
+    // Post-process: handle cancelled subscriptions
+    // Move cancelled items from inactive to a separate cancelled list
+    const cancelled = summary.inactive.filter(s => cancelledSlugs.has(s.merchantSlug));
+    const inactive = summary.inactive.filter(s => !cancelledSlugs.has(s.merchantSlug));
+    
+    // Override status for still_active items (move from inactive to active if needed)
+    const stillActiveItems = summary.inactive.filter(s => stillActiveSlugs.has(s.merchantSlug));
+    stillActiveItems.forEach(item => {
+      item.status = "active";
+    });
+    
+    // Rebuild lists with overrides
+    const confirmedActive = [
+      ...summary.subscriptions,
+      ...stillActiveItems, // Add still_active items to active list
+    ].sort((a, b) => b.amount - a.amount);
 
-    return NextResponse.json(summary);
+    return NextResponse.json({
+      ...summary,
+      subscriptions: confirmedActive,
+      inactive,
+      cancelled,
+    });
   } catch (error) {
     console.error("Subscriptions error:", error);
     return NextResponse.json(
