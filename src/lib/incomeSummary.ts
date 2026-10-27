@@ -328,14 +328,20 @@ export function buildIncomeSummary(
 ): IncomeSummary {
   const currentMonth = getCurrentMonth();
   
-  // Convert to simpler transaction format
-  const transactions: IncomeTransaction[] = incomeTxns.map(t => ({
+  // Helper: Generate stable transaction ID for review matching
+  const getTxId = (txn: IncomeTransaction): string => {
+    return `${txn.date}:${txn.source}:${txn.amount}:${txn.accountSlug || 'unknown'}`;
+  };
+  
+  // Convert to simpler transaction format with IDs
+  const transactions: (IncomeTransaction & { txId: string })[] = incomeTxns.map(t => ({
     source: t.source || "Unknown",
     amount: t.amount,
     date: t.date,
     category: (t.category as IncomeCategory) || "Other",
     accountLabel: accountSnapshots.find(a => a.slug === t.accountSlug)?.accountName || t.accountSlug,
-    accountSlug: t.accountSlug
+    accountSlug: t.accountSlug,
+    txId: `${t.date}:${t.source || 'Unknown'}:${t.amount}:${t.accountSlug || 'unknown'}`
   }));
 
   // Group by source
@@ -436,12 +442,17 @@ export function buildIncomeSummary(
 
   // Build monthly history
   const allMonths = Array.from(new Set(transactions.map(t => t.date.slice(0, 7)))).sort();
+  
+  // Track bonus transactions and unreviewed deposits
+  const bonusTransactions: IncomeTransaction[] = [];
+  const unreviewedDeposits: Array<{ txId: string; source: string; date: string; amount: number; usualAmount?: number }> = [];
+  
   const monthlyHistory: MonthlyIncomeSummary[] = allMonths.map(ym => {
     const monthTxns = transactions.filter(t => t.date.startsWith(ym));
     
-    // Split into regular and one-off at the transaction level
+    // Split into regular, bonus, and excluded at the transaction level
     let regularTotal = 0;
-    let oneOffTotal = 0;
+    let bonusTotal = 0;
     
     for (const source of allSources) {
       const sourceTxnsThisMonth = source.transactions.filter(t => t.date.startsWith(ym));
@@ -449,21 +460,68 @@ export function buildIncomeSummary(
       
       for (const txn of sourceTxnsThisMonth) {
         const txnKey = `${txn.date}:${txn.amount}`;
-        if (source.isOneOff || withinSourceOneOffs.has(txnKey)) {
-          oneOffTotal += txn.amount;
+        const txnWithId = transactions.find(t => 
+          t.date === txn.date && 
+          t.source === txn.source && 
+          t.amount === txn.amount &&
+          t.accountSlug === txn.accountSlug
+        );
+        const txId = txnWithId?.txId || '';
+        const classification = incomeDepositReviews.get(txId);
+        
+        const isUnusual = source.isOneOff || withinSourceOneOffs.has(txnKey);
+        
+        if (isUnusual) {
+          // Unusual deposit - check classification
+          if (classification === 'not_income') {
+            // Exclude completely
+            continue;
+          } else if (classification === 'regular_income') {
+            // User marked as regular - treat as normal income
+            regularTotal += txn.amount;
+          } else if (classification === 'bonus') {
+            // User marked as bonus - count and tag
+            bonusTotal += txn.amount;
+            if (txnWithId) bonusTransactions.push(txnWithId);
+          } else {
+            // Unreviewed - count as income (needs review)
+            bonusTotal += txn.amount;
+            
+            // Add to unreviewed list (once per transaction, not per month)
+            if (!unreviewedDeposits.some(d => d.txId === txId)) {
+              // Calculate usual amount (median of other transactions from this source)
+              const otherAmounts = source.transactions
+                .filter(t => !withinSourceOneOffs.has(`${t.date}:${t.amount}`))
+                .map(t => t.amount)
+                .sort((a, b) => a - b);
+              const usualAmount = otherAmounts.length > 0
+                ? otherAmounts[Math.floor(otherAmounts.length / 2)]
+                : undefined;
+                
+              unreviewedDeposits.push({
+                txId,
+                source: txn.source,
+                date: txn.date,
+                amount: txn.amount,
+                usualAmount
+              });
+            }
+          }
         } else {
+          // Normal transaction
           regularTotal += txn.amount;
         }
       }
     }
     
-    const total = regularTotal + oneOffTotal;
+    const total = regularTotal + bonusTotal;
     
     return {
       yearMonth: ym,
       total,
       regular: regularTotal,
-      oneOff: oneOffTotal,
+      oneOff: bonusTotal, // For backwards compatibility
+      bonus: bonusTotal,
       sources: allSources
         .filter(s => s.transactions.some(t => t.date.startsWith(ym)))
         .map(s => {
@@ -472,29 +530,45 @@ export function buildIncomeSummary(
           const amount = sourceTxnsThisMonth.reduce((sum, t) => sum + t.amount, 0);
           const hasOneOff = sourceTxnsThisMonth.some(t => withinSourceOneOffs.has(`${t.date}:${t.amount}`));
           
+          // Check if any transactions are bonus
+          const hasBonus = sourceTxnsThisMonth.some(t => {
+            const txnWithId = transactions.find(tx => 
+              tx.date === t.date && 
+              tx.source === t.source && 
+              tx.amount === t.amount &&
+              tx.accountSlug === t.accountSlug
+            );
+            const txId = txnWithId?.txId || '';
+            return incomeDepositReviews.get(txId) === 'bonus' || 
+                   (withinSourceOneOffs.has(`${t.date}:${t.amount}`) && !incomeDepositReviews.has(txId));
+          });
+          
           return {
             source: s.description,
             amount,
-            isOneOff: s.isOneOff || hasOneOff
+            isOneOff: s.isOneOff || hasOneOff,
+            isBonus: hasBonus
           };
         })
     };
   });
 
-  // Compute last 3 complete months
+  // Compute last 3 complete months (regular + bonus)
   const last3Months = getLastCompleteMonths(allMonths, 3);
   const last3MonthsData = monthlyHistory.filter(m => last3Months.includes(m.yearMonth));
   const last3MonthsRegularTotal = last3MonthsData.reduce((s, m) => s + m.regular, 0);
+  const last3MonthsBonusTotal = last3MonthsData.reduce((s, m) => s + m.bonus, 0);
+  const last3MonthsTotal = last3MonthsRegularTotal + last3MonthsBonusTotal;
   const typicalMonthly = last3Months.length > 0 
-    ? Math.round(last3MonthsRegularTotal / last3Months.length)
+    ? Math.round(last3MonthsTotal / last3Months.length)
     : 0;
-  const last3MonthsTotal = last3MonthsData.reduce((s, m) => s + m.total, 0);
 
-  // Current month totals
+  // Current month totals (including bonus)
   const currentMonthData = monthlyHistory.find(m => m.yearMonth === currentMonth);
   const currentMonthTotal = currentMonthData?.total || 0;
   const currentMonthRegular = currentMonthData?.regular || 0;
   const currentMonthOneOff = currentMonthData?.oneOff || 0;
+  const currentMonthBonus = currentMonthData?.bonus || 0;
 
   // Year-over-year comparison
   let yoy: IncomeComparison | undefined;
@@ -596,15 +670,19 @@ export function buildIncomeSummary(
     currentMonthTotal,
     currentMonthRegular,
     currentMonthOneOff,
+    currentMonthBonus,
     last3Months,
     typicalMonthly,
     last3MonthsTotal,
+    last3MonthsBonus: last3MonthsBonusTotal,
     allMonths,
     monthlyHistory,
     sources: allSources,
     transferSources,
     oneOffSources,
     regularSources,
+    bonusTransactions,
+    unreviewedDeposits,
     yoy,
     whatChanged,
     currency,

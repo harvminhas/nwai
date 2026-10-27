@@ -88,13 +88,15 @@ function computeCurrentCardLogic(
   incomeTxns: any[],
   accountSnapshots: any[],
   currency: string,
+  incomeDepositReviews: Map<string, string>,
   months: string[]
 ): { savings: number; savingsRate: number; income: number; spending: number } {
   const { amount: incomeAmount } = getMoneyCoachIncome(
     monthlyHistory,
     incomeTxns,
     accountSnapshots,
-    currency
+    currency,
+    incomeDepositReviews
   );
   
   // Total spending (excluding transfers)
@@ -231,6 +233,7 @@ async function inspect(uid: string) {
     profile.incomeTxns,
     profile.accountSnapshots,
     profile.homeCurrency || "CAD",
+    new Map(), // No income deposit reviews in this script
     months
   );
   console.log(`💳 Current Card Logic (for comparison):`);

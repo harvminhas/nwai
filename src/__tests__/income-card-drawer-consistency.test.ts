@@ -10,8 +10,8 @@ import type { IncomeTxnRecord, AccountSnapshot } from "@/lib/extractTransactions
  * regular income only (excludes one-offs like bonuses).
  */
 describe("Income Card vs Drawer Consistency", () => {
-  it("card income matches drawer default (last 3 months regular income)", () => {
-    // Mock income transactions (3 months of regular + 1 one-off)
+  it("card income matches drawer default (last 3 months regular + bonus income)", () => {
+    // Mock income transactions (3 months of regular + 1 bonus/unusual)
     const incomeTxns: IncomeTxnRecord[] = [
       // Regular salary - Sep, Aug, Jul
       {
@@ -44,13 +44,13 @@ describe("Income Card vs Drawer Consistency", () => {
         accountLabel: "Checking ••1234",
         currency: "CAD",
       },
-      // One-off bonus (should be excluded)
+      // Unusual deposit (unreviewed - should count as bonus by default)
       {
         txMonth: "2024-08",
         date: "2024-08-20",
         source: "ACME CORP PAYROLL",
         category: "Employment",
-        amount: 10000, // 100% higher than usual = one-off
+        amount: 10000, // 100% higher than usual = unusual
         accountSlug: "checking-1234",
         accountLabel: "Checking ••1234",
         currency: "CAD",
@@ -68,49 +68,59 @@ describe("Income Card vs Drawer Consistency", () => {
       },
     ];
 
-    // Mock monthlyHistory (not used by new implementation, but kept for compatibility)
     const monthlyHistory: any[] = [];
+    const incomeDepositReviews = new Map<string, string>(); // No reviews - should count by default
 
     // Get card income (dashboard)
     const cardIncome = getMoneyCoachIncome(
       monthlyHistory,
       incomeTxns,
       accountSnapshots,
-      "CAD"
+      "CAD",
+      incomeDepositReviews
     );
 
     // Get drawer income (default last3 window)
-    const summary = buildIncomeSummary(incomeTxns, accountSnapshots, "CAD");
+    const summary = buildIncomeSummary(incomeTxns, accountSnapshots, "CAD", incomeDepositReviews);
 
     // Main assertion: card shows same value as drawer
     expect(cardIncome.amount).toBe(summary.typicalMonthly);
     
-    // Card and drawer should show regular income only (excluding $10,000 bonus)
-    // Expected: (5000 + 5000 + 5000) / 3 = 5000
-    // If one-off detection works: 5000
-    // If one-off detection fails: (5000 + 15000 + 5000) / 3 = 8333
+    // NEW BEHAVIOR: Unreviewed unusual deposits COUNT as income (tagged as bonus)
+    // Expected: (5000 + 15000 + 5000) / 3 = 8333
     console.log(`Card income: ${cardIncome.amount}, Drawer typical: ${summary.typicalMonthly}`);
-    console.log(`Last 3 months regular: ${summary.last3MonthsTotal}`);
-    console.log(`Monthly breakdown:`, summary.monthlyHistory.map(m => ({ month: m.yearMonth, total: m.total, regular: m.regular, oneOff: m.oneOff })));
+    console.log(`Bonus amount: ${cardIncome.bonusAmount}`);
+    console.log(`Unreviewed deposits: ${summary.unreviewedDeposits.length}`);
+    console.log(`Monthly breakdown:`, summary.monthlyHistory.map(m => ({ month: m.yearMonth, total: m.total, regular: m.regular, bonus: m.bonus })));
     
-    // The key assertion: both must match (whether or not one-off detection worked)
-    // If both show 8333, that's consistent (though not ideal)
-    // If both show 5000, that's perfect (one-off detected)
+    // Both should show regular + bonus (unreviewed deposits count)
+    expect(cardIncome.amount).toBe(8333);
+    expect(summary.typicalMonthly).toBe(8333);
+    
+    // Bonus should be 10000 total across last 3 months (10000 / 3 = 3333 per month avg in totals)
+    expect(cardIncome.bonusAmount).toBe(10000);
+    expect(summary.last3MonthsBonus).toBe(10000);
+    
+    // Should have 1 unreviewed deposit
+    expect(summary.unreviewedDeposits.length).toBe(1);
+    expect(summary.unreviewedDeposits[0].amount).toBe(10000);
   });
 
   it("card and drawer both show zero when no income", () => {
     const emptyIncomeTxns: IncomeTxnRecord[] = [];
     const emptyAccountSnapshots: AccountSnapshot[] = [];
     const emptyMonthlyHistory: any[] = [];
+    const emptyReviews = new Map<string, string>();
 
     const cardIncome = getMoneyCoachIncome(
       emptyMonthlyHistory,
       emptyIncomeTxns,
       emptyAccountSnapshots,
-      "CAD"
+      "CAD",
+      emptyReviews
     );
 
-    const summary = buildIncomeSummary(emptyIncomeTxns, emptyAccountSnapshots, "CAD");
+    const summary = buildIncomeSummary(emptyIncomeTxns, emptyAccountSnapshots, "CAD", emptyReviews);
 
     expect(cardIncome.amount).toBe(0);
     expect(summary.typicalMonthly).toBe(0);
@@ -143,15 +153,17 @@ describe("Income Card vs Drawer Consistency", () => {
 
     const accountSnapshots: AccountSnapshot[] = [];
     const monthlyHistory: any[] = [];
+    const reviews = new Map<string, string>();
 
     const cardIncome = getMoneyCoachIncome(
       monthlyHistory,
       incomeTxns,
       accountSnapshots,
-      "CAD"
+      "CAD",
+      reviews
     );
 
-    const summary = buildIncomeSummary(incomeTxns, accountSnapshots, "CAD");
+    const summary = buildIncomeSummary(incomeTxns, accountSnapshots, "CAD", reviews);
 
     // Both should average the 2 months: (3000 + 3200) / 2 = 3100
     expect(cardIncome.amount).toBe(summary.typicalMonthly);
@@ -159,5 +171,126 @@ describe("Income Card vs Drawer Consistency", () => {
     
     // Label should reflect 2 months
     expect(cardIncome.basisLabel).toContain("2");
+  });
+  
+  it("classified 'not_income' deposits are excluded from totals", () => {
+    const incomeTxns: IncomeTxnRecord[] = [
+      // Regular salary - need >=3 for detection
+      {
+        txMonth: "2024-07",
+        date: "2024-07-15",
+        source: "SALARY",
+        category: "Employment",
+        amount: 5000,
+        accountSlug: "checking-1234",
+        accountLabel: "Checking ••1234",
+        currency: "CAD",
+      },
+      {
+        txMonth: "2024-08",
+        date: "2024-08-15",
+        source: "SALARY",
+        category: "Employment",
+        amount: 5000,
+        accountSlug: "checking-1234",
+        accountLabel: "Checking ••1234",
+        currency: "CAD",
+      },
+      {
+        txMonth: "2024-09",
+        date: "2024-09-15",
+        source: "SALARY",
+        category: "Employment",
+        amount: 5000,
+        accountSlug: "checking-1234",
+        accountLabel: "Checking ••1234",
+        currency: "CAD",
+      },
+      {
+        txMonth: "2024-09",
+        date: "2024-09-20",
+        source: "SALARY",
+        category: "Other",
+        amount: 10000, // Unusual amount (2x median)
+        accountSlug: "checking-1234",
+        accountLabel: "Checking ••1234",
+        currency: "CAD",
+      },
+    ];
+
+    const accountSnapshots: AccountSnapshot[] = [];
+    const monthlyHistory: any[] = [];
+    
+    // User reviewed and marked as "not_income" (refund/transfer)
+    const reviews = new Map<string, string>();
+    reviews.set("2024-09-20:SALARY:10000:checking-1234", "not_income");
+
+    const summary = buildIncomeSummary(incomeTxns, accountSnapshots, "CAD", reviews);
+
+    // Only regular 5000/month should count, unusual 10000 excluded
+    // (5000 + 5000 + 5000) / 3 = 5000
+    expect(summary.typicalMonthly).toBe(5000);
+    expect(summary.last3MonthsTotal).toBe(15000);
+  });
+
+  it("classified 'bonus' deposits are included and tracked separately", () => {
+    const incomeTxns: IncomeTxnRecord[] = [
+      // Regular salary - need >=3 for detection
+      {
+        txMonth: "2024-07",
+        date: "2024-07-15",
+        source: "SALARY",
+        category: "Employment",
+        amount: 5000,
+        accountSlug: "checking-1234",
+        accountLabel: "Checking ••1234",
+        currency: "CAD",
+      },
+      {
+        txMonth: "2024-08",
+        date: "2024-08-15",
+        source: "SALARY",
+        category: "Employment",
+        amount: 5000,
+        accountSlug: "checking-1234",
+        accountLabel: "Checking ••1234",
+        currency: "CAD",
+      },
+      {
+        txMonth: "2024-09",
+        date: "2024-09-15",
+        source: "SALARY",
+        category: "Employment",
+        amount: 5000,
+        accountSlug: "checking-1234",
+        accountLabel: "Checking ••1234",
+        currency: "CAD",
+      },
+      {
+        txMonth: "2024-09",
+        date: "2024-09-20",
+        source: "SALARY",
+        category: "Employment",
+        amount: 10000, // Unusual amount (2x median)
+        accountSlug: "checking-1234",
+        accountLabel: "Checking ••1234",
+        currency: "CAD",
+      },
+    ];
+
+    const accountSnapshots: AccountSnapshot[] = [];
+    const monthlyHistory: any[] = [];
+    
+    // User reviewed and marked as "bonus"
+    const reviews = new Map<string, string>();
+    reviews.set("2024-09-20:SALARY:10000:checking-1234", "bonus");
+
+    const summary = buildIncomeSummary(incomeTxns, accountSnapshots, "CAD", reviews);
+
+    // Both should count: (5000 + 5000 + 15000) / 3 = 8333
+    expect(summary.typicalMonthly).toBe(8333);
+    expect(summary.last3MonthsTotal).toBe(25000);
+    expect(summary.last3MonthsBonus).toBe(10000);
+    expect(summary.bonusTransactions.length).toBe(1);
   });
 });

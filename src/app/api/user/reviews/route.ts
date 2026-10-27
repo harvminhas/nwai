@@ -5,7 +5,8 @@ import { getAllUnreviewedAnomalies } from "@/lib/debtPayments";
 import { generateIncomeReviews } from "@/lib/incomeReviews";
 import { generateSavingsReviews } from "@/lib/savingsReviews";
 import { buildSubscriptionSummary } from "@/lib/subscriptionEngine";
-import type { ReviewItem, ReviewClassification, DebtPaymentReviewItem, SavingsReviewItem, IncomeClassificationReviewItem, SubscriptionReviewItem } from "@/lib/reviewTypes";
+import { buildIncomeSummary } from "@/lib/incomeSummary";
+import type { ReviewItem, ReviewClassification, DebtPaymentReviewItem, SavingsReviewItem, IncomeClassificationReviewItem, SubscriptionReviewItem, IncomeDepositReviewItem } from "@/lib/reviewTypes";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const { searchParams } = new URL(req.url);
     const reviewType = searchParams.get("type") as "debt_payment" | "savings_item" | "income_classification" | "subscription" | null;
 
-    if (!reviewType || !["debt_payment", "savings_item", "income_classification", "subscription"].includes(reviewType)) {
+    if (!reviewType || !["debt_payment", "savings_item", "income_classification", "subscription", "income_deposit"].includes(reviewType)) {
       return NextResponse.json({ error: "Invalid review type" }, { status: 400 });
     }
 
@@ -110,6 +111,26 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         reviewedIds
       );
       items = incomeReviews as IncomeClassificationReviewItem[];
+    } else if (reviewType === "income_deposit") {
+      // Get unusual income deposits needing review
+      const incomeSummary = buildIncomeSummary(
+        profile.incomeTxns,
+        profile.accountSnapshots,
+        profile.homeCurrency
+      );
+      
+      items = incomeSummary.unreviewedDeposits
+        .filter(d => !reviewedIds.has(d.txId))
+        .map(d => ({
+          id: d.txId,
+          type: "income_deposit" as const,
+          source: d.source,
+          date: d.date,
+          amount: d.amount,
+          usualAmount: d.usualAmount,
+          txMonth: d.date.slice(0, 7),
+          reason: "unusual_amount" as const
+        })) as IncomeDepositReviewItem[];
     } else if (reviewType === "subscription") {
       // Get subscription candidates needing confirmation
       const subSummary = buildSubscriptionSummary(
@@ -166,7 +187,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    if (!["debt_payment", "savings_item", "income_classification", "subscription"].includes(type)) {
+    if (!["debt_payment", "savings_item", "income_classification", "subscription", "income_deposit"].includes(type)) {
       return NextResponse.json({ error: "Invalid review type" }, { status: 400 });
     }
 

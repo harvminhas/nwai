@@ -86,13 +86,24 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     reviewedAt: doc.get("reviewedAt"),
   }));
   
+  // Load income deposit reviews
+  const incomeReviewsSnap = await db
+    .collection(`users/${uid}/reviews`)
+    .where("type", "==", "income_deposit")
+    .get();
+  const incomeDepositReviews = new Map<string, string>();
+  incomeReviewsSnap.docs.forEach(doc => {
+    incomeDepositReviews.set(doc.id, doc.get("classification"));
+  });
+  
   // Compute Money Coach breakdown (card values)
   const breakdown = computeMoneyCoachBreakdown(
     profile, 
     userReviews,
     profile.incomeTxns,
     profile.accountSnapshots,
-    currency
+    currency,
+    incomeDepositReviews
   );
   
   // Get last 3 complete months
@@ -109,15 +120,19 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   const incomeSummary = buildIncomeSummary(
     profile.incomeTxns,
     profile.accountSnapshots,
-    currency
+    currency,
+    incomeDepositReviews
   );
   
   console.log(`💰 Income Summary (buildIncomeSummary):`);
   console.log(`   Typical monthly (last 3 complete): ${formatCurrency(incomeSummary.typicalMonthly, currency)}`);
   console.log(`   Regular sources: ${incomeSummary.regularSources.length}`);
+  console.log(`   Bonus transactions: ${incomeSummary.bonusTransactions.length}`);
   console.log(`   One-off sources: ${incomeSummary.oneOffSources.length}`);
   console.log(`   Transfer sources: ${incomeSummary.transferSources.length}`);
-  console.log(`   Last 3 months total: ${formatCurrency(incomeSummary.last3MonthsTotal, currency)}\n`);
+  console.log(`   Unreviewed deposits: ${incomeSummary.unreviewedDeposits.length}`);
+  console.log(`   Last 3 months total: ${formatCurrency(incomeSummary.last3MonthsTotal, currency)}`);
+  console.log(`   Last 3 months bonus: ${formatCurrency(incomeSummary.last3MonthsBonus, currency)}\n`);
   
   // Verify card income matches drawer income (single source of truth)
   console.log(`🔍 Card vs Drawer Income Check:`);

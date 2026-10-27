@@ -152,11 +152,13 @@ export function ReviewList({ token, reviewType, onReviewComplete }: ReviewListPr
               {reviewType === "debt_payment" && "Debt payments to review"}
               {reviewType === "savings_item" && "Savings items to review"}
               {reviewType === "subscription" && "Is this a subscription?"}
+              {reviewType === "income_deposit" && "Unusual deposits to review"}
             </h3>
             <p className="text-xs text-gray-600 mt-0.5">
               {reviewType === "debt_payment" && "Help us classify unusual payments"}
               {reviewType === "savings_item" && "Does this count as savings?"}
               {reviewType === "subscription" && "Not counted until you confirm"}
+              {reviewType === "income_deposit" && "Counted as income (needs review)"}
             </p>
           </div>
           <div className="text-xs font-medium text-violet-700 bg-violet-100 px-2.5 py-1 rounded-full">
@@ -184,6 +186,15 @@ export function ReviewList({ token, reviewType, onReviewComplete }: ReviewListPr
       
       {currentItem.type === "income_classification" && (
         <IncomeClassificationReviewCard
+          item={currentItem as any}
+          animatingOut={animatingOut}
+          submitting={submitting}
+          onClassify={handleClassify}
+        />
+      )}
+      
+      {currentItem.type === "income_deposit" && (
+        <IncomeDepositReviewCard
           item={currentItem as any}
           animatingOut={animatingOut}
           submitting={submitting}
@@ -487,6 +498,75 @@ function SubscriptionReviewCard({
           style={{ fontFamily: "Inter, sans-serif" }}
         >
           Not a subscription
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Income deposit review card
+function IncomeDepositReviewCard({
+  item,
+  animatingOut,
+  submitting,
+  onClassify,
+}: {
+  item: any;
+  animatingOut: boolean;
+  submitting: boolean;
+  onClassify: (item: any, classification: ReviewClassification) => void;
+}) {
+  const formattedDate = new Date(item.date + "T12:00:00").toLocaleDateString("en-US", { 
+    month: "short", 
+    day: "numeric", 
+    year: "numeric" 
+  });
+  
+  const comparisonText = item.usualAmount
+    ? `CA$${item.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} vs usual CA$${item.usualAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : `CA$${item.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  return (
+    <div
+      className={`rounded-lg border border-gray-200 bg-white p-4 transition-all duration-300 ${
+        animatingOut ? "opacity-0 scale-95" : "opacity-100 scale-100"
+      }`}
+    >
+      <div className="mb-3">
+        <div className="font-semibold text-gray-900" style={{ fontFamily: "Inter, sans-serif" }}>
+          {item.source}
+        </div>
+        <div className="flex items-center gap-2 mt-1 text-sm text-gray-600">
+          <span>{formattedDate}</span>
+          <span className="text-gray-400">•</span>
+          <span className="text-orange-600 font-medium">{comparisonText}</span>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => onClassify(item, "regular_income")}
+          disabled={submitting}
+          className="text-xs font-medium px-3 py-1.5 rounded-md border border-violet-600 bg-white text-violet-700 hover:bg-violet-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          style={{ fontFamily: "Inter, sans-serif" }}
+        >
+          Regular income
+        </button>
+        <button
+          onClick={() => onClassify(item, "bonus")}
+          disabled={submitting}
+          className="text-xs font-medium px-3 py-1.5 rounded-md bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          style={{ fontFamily: "Inter, sans-serif" }}
+        >
+          Bonus
+        </button>
+        <button
+          onClick={() => onClassify(item, "not_income")}
+          disabled={submitting}
+          className="text-xs font-medium px-3 py-1.5 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          style={{ fontFamily: "Inter, sans-serif" }}
+        >
+          Not income
         </button>
       </div>
     </div>

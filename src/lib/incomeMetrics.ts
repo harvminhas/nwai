@@ -403,22 +403,25 @@ export function computeDetailedIncomeMetrics(
  * otherwise falls back to overall average.
  * 
  * Uses buildIncomeSummary to ensure consistency with Income page and drawers.
- * Returns REGULAR income only (excludes one-offs like bonuses).
+ * Returns REGULAR + BONUS income (excludes only "not_income" classifications).
  */
 export function getMoneyCoachIncome(
   monthlyHistory: MonthlyHistoryEntry[],
   incomeTxns: IncomeTxnRecord[],
   accountSnapshots: any[],
-  homeCurrency: string = "CAD"
+  homeCurrency: string = "CAD",
+  incomeDepositReviews: Map<string, string> = new Map()
 ): {
   amount: number;
   basisLabel: string;
+  bonusAmount: number;
 } {
   // Use buildIncomeSummary (same as Income page and drawer) for consistency
-  const summary = buildIncomeSummary(incomeTxns, accountSnapshots, homeCurrency);
+  const summary = buildIncomeSummary(incomeTxns, accountSnapshots, homeCurrency, incomeDepositReviews);
   
   return {
-    amount: summary.typicalMonthly,  // Regular income only, last 3 complete months average
+    amount: summary.typicalMonthly,  // Regular + bonus income, last 3 complete months average
     basisLabel: summary.last3Months.length === 3 ? "last 3 months" : `${summary.last3Months.length}-month avg`,
+    bonusAmount: summary.last3MonthsBonus,
   };
 }

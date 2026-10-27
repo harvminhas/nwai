@@ -46,14 +46,25 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       amount: doc.get("amount"),
       reviewedAt: doc.get("reviewedAt"),
     }));
+    
+    // Load income deposit reviews
+    const incomeReviewsSnap = await db
+      .collection(`users/${decoded.uid}/reviews`)
+      .where("type", "==", "income_deposit")
+      .get();
+    const incomeDepositReviews = new Map<string, string>();
+    incomeReviewsSnap.docs.forEach(doc => {
+      incomeDepositReviews.set(doc.id, doc.get("classification"));
+    });
 
     // Income drawer data
     if (bucket === "income") {
-      // Build income summary using unified data layer
+      // Build income summary using unified data layer with income deposit reviews
       const summary = buildIncomeSummary(
         profile.incomeTxns,
         profile.accountSnapshots,
-        profile.homeCurrency
+        profile.homeCurrency,
+        incomeDepositReviews
       );
       
       // Map to drawer data format
