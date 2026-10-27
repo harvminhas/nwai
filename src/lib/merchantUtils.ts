@@ -107,19 +107,16 @@ const MERCHANT_ALIASES: Record<string, string> = {
 /**
  * Resolve merchant slug to canonical slug for grouping.
  * E.g. "amazon-ca" → "amazon", "amzn-mktp-ca" → "amazon"
+ * 
+ * This ensures that merchant variants are grouped together under one key.
  */
-export function resolveCanonicalSlug(slug: string): string {
-  // Check if this slug should be grouped with a canonical merchant
-  for (const [variantSlug, canonicalName] of Object.entries(MERCHANT_ALIASES)) {
-    if (slug === variantSlug) {
-      // Find the canonical slug for this merchant
-      // (the first entry with this canonical name)
-      for (const [s, n] of Object.entries(MERCHANT_ALIASES)) {
-        if (n === canonicalName) {
-          return s; // Return first slug with this canonical name
-        }
-      }
-    }
+export function resolveCanonicalMerchantSlug(slug: string): string {
+  // Check if this slug should be mapped to a canonical merchant
+  const canonical = MERCHANT_ALIASES[slug];
+  if (canonical) {
+    // Return the slug of the first entry with this canonical name
+    // (or a normalized version of the canonical name)
+    return canonical.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   }
   return slug; // No alias - return original slug
 }

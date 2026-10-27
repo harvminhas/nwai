@@ -13,7 +13,7 @@ import { isCoreExcluded } from "./spendingMetrics";
 import { getParentCategory } from "./categoryTaxonomy";
 import { computeScheduledDebtPayments } from "./debtPayments";
 import { merchantSlug } from "./applyRules";
-import { normalizeMerchantName, detectRecurringMonthlyAmount, resolveMerchantAlias, resolveCanonicalSlug } from "./merchantUtils";
+import { normalizeMerchantName, detectRecurringMonthlyAmount, resolveMerchantAlias, resolveCanonicalMerchantSlug } from "./merchantUtils";
 import { getLastCompleteMonth, getCurrentMonth } from "./monthAnchor";
 
 export interface MerchantTransaction {
@@ -270,7 +270,7 @@ export function computeBucketBreakdown(
     for (const txn of txns) {
       const rawSlug = merchantSlug(txn.merchant || "Unknown");
       // Resolve to canonical slug for grouping (merges aliases)
-      const slug = resolveCanonicalSlug(rawSlug);
+      const slug = resolveCanonicalMerchantSlug(rawSlug);
       const existing = merchantMap.get(slug);
       
       if (existing) {

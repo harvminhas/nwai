@@ -9,6 +9,7 @@ import type { ExpenseTxnRecord, AccountSnapshot, DebtPaymentHistoryEntry } from 
 import type { DebtPaymentReview } from "./types";
 import { getCategoryBucket, type MoneyCoachBucket } from "./moneyCoachBuckets";
 import { merchantSlug } from "./applyRules";
+import { resolveMerchantAlias, resolveCanonicalMerchantSlug } from "./merchantUtils";
 import { getLastCompleteMonth } from "./monthAnchor";
 import { computeMonthlyBuckets } from "./monthlyBucketComputation";
 
@@ -212,10 +213,13 @@ export function buildSpendingSummary(
       
       categoryTxns.forEach(t => {
         const slug = merchantSlug(t.merchant);
-        if (!merchantMap.has(slug)) {
-          merchantMap.set(slug, {
-            merchant: t.merchant,
-            merchantSlug: slug,
+        const canonicalSlug = resolveCanonicalMerchantSlug(slug); // Use canonical slug for grouping
+        const canonicalName = resolveMerchantAlias(slug, t.merchant);
+        
+        if (!merchantMap.has(canonicalSlug)) {
+          merchantMap.set(canonicalSlug, {
+            merchant: canonicalName,
+            merchantSlug: canonicalSlug,
             category: t.category,
             bucket: getCategoryBucket(t.category),
             total: 0,
@@ -227,13 +231,13 @@ export function buildSpendingSummary(
           });
         }
         
-        const m = merchantMap.get(slug)!;
+        const m = merchantMap.get(canonicalSlug)!;
         m.total += Math.abs(t.amount);
         m.count++;
         m.transactions.push({
           date: t.date,
-          merchant: t.merchant,
-          merchantSlug: slug,
+          merchant: canonicalName,
+          merchantSlug: canonicalSlug,
           category: t.category,
           amount: Math.abs(t.amount),
           accountLabel: t.accountLabel,

@@ -128,7 +128,13 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   console.log(`   Essentials: ${formatCurrency(spendingSummary.buckets.find(b => b.bucket === "essentials")?.total || 0, currency)}`);
   console.log(`   Flexible: ${formatCurrency(spendingSummary.buckets.find(b => b.bucket === "flexible")?.total || 0, currency)}`);
   console.log(`   Categories: ${spendingSummary.categories.length}`);
-  console.log(`   Merchants: ${spendingSummary.merchants.length}\n`);
+  console.log(`   Merchants: ${spendingSummary.merchants.length}`);
+  
+  // Count unique merchants before merging (from raw transactions)
+  const rawMerchants = new Set(profile.expenseTxns.map(t => t.merchant)).size;
+  console.log(`   Raw merchants (before merging): ${rawMerchants}`);
+  console.log(`   After normalization/merging: ${spendingSummary.merchants.length}`);
+  console.log(`   Reduction: ${rawMerchants - spendingSummary.merchants.length} (${((1 - spendingSummary.merchants.length / rawMerchants) * 100).toFixed(1)}%)\n`);
   
   // Verify 12-month history reconciliation with DETAILED ERROR OUTPUT
   let hasSpendingError = false;
