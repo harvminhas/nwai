@@ -5,7 +5,7 @@ import type { ReviewItem, ReviewClassification } from "@/lib/reviewTypes";
 
 interface ReviewListProps {
   token: string | null;
-  reviewType: "debt_payment" | "savings_item" | "income_classification";
+  reviewType: "debt_payment" | "savings_item" | "income_classification" | "subscription";
   onReviewComplete?: () => void;
 }
 
@@ -102,12 +102,14 @@ export function ReviewList({ token, reviewType, onReviewComplete }: ReviewListPr
       <div className="flex items-center justify-between mb-4">
         <div>
           <h3 className="text-base font-bold text-gray-900" style={{ fontFamily: "Inter, sans-serif" }}>
-            {reviewType === "debt_payment" ? "Debt payments to review" : "Savings items to review"}
+            {reviewType === "debt_payment" && "Debt payments to review"}
+            {reviewType === "savings_item" && "Savings items to review"}
+            {reviewType === "subscription" && "Is this a subscription?"}
           </h3>
           <p className="text-xs text-gray-600 mt-0.5">
-            {reviewType === "debt_payment" 
-              ? "Help us classify unusual payments"
-              : "Does this count as savings?"}
+            {reviewType === "debt_payment" && "Help us classify unusual payments"}
+            {reviewType === "savings_item" && "Does this count as savings?"}
+            {reviewType === "subscription" && "Not counted until you confirm"}
           </p>
         </div>
         <div className="text-xs font-medium text-violet-700 bg-violet-100 px-2.5 py-1 rounded-full">
@@ -135,6 +137,15 @@ export function ReviewList({ token, reviewType, onReviewComplete }: ReviewListPr
       
       {currentItem.type === "income_classification" && (
         <IncomeClassificationReviewCard
+          item={currentItem as any}
+          animatingOut={animatingOut}
+          submitting={submitting}
+          onClassify={handleClassify}
+        />
+      )}
+      
+      {currentItem.type === "subscription" && (
+        <SubscriptionReviewCard
           item={currentItem as any}
           animatingOut={animatingOut}
           submitting={submitting}
@@ -373,6 +384,61 @@ function IncomeClassificationReviewCard({
           style={{ fontFamily: "Inter, sans-serif" }}
         >
           Skip
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Subscription review card
+function SubscriptionReviewCard({
+  item,
+  animatingOut,
+  submitting,
+  onClassify,
+}: {
+  item: any;
+  animatingOut: boolean;
+  submitting: boolean;
+  onClassify: (item: any, classification: ReviewClassification) => void;
+}) {
+  const cadenceDisplay = item.cadence === "monthly" ? "Monthly" : item.cadence === "yearly" ? "Yearly" : "Recurring";
+  
+  return (
+    <div
+      className={`rounded-lg border border-gray-200 bg-white p-4 transition-all duration-300 ${
+        animatingOut ? "opacity-0 scale-95" : "opacity-100 scale-100"
+      }`}
+    >
+      <div className="mb-3">
+        <div className="font-semibold text-gray-900" style={{ fontFamily: "Inter, sans-serif" }}>
+          {item.merchant}
+        </div>
+        <div className="flex items-center gap-2 mt-1 text-sm text-gray-600">
+          <span>{cadenceDisplay}</span>
+          <span className="text-gray-400">•</span>
+          <span>CA${Math.abs(item.amount).toLocaleString()}</span>
+          <span className="text-gray-400">•</span>
+          <span>{item.chargeCount} charges</span>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => onClassify(item, "is_subscription")}
+          disabled={submitting}
+          className="text-xs font-medium px-3 py-1.5 rounded-md bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          style={{ fontFamily: "Inter, sans-serif" }}
+        >
+          Yes, subscription
+        </button>
+        <button
+          onClick={() => onClassify(item, "not_subscription")}
+          disabled={submitting}
+          className="text-xs font-medium px-3 py-1.5 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          style={{ fontFamily: "Inter, sans-serif" }}
+        >
+          Not a subscription
         </button>
       </div>
     </div>

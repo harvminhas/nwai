@@ -61,6 +61,8 @@ export interface SubscriptionSummary {
   candidates: DetectedSubscription[];
   /** Inactive/cancelled subscriptions */
   inactive: DetectedSubscription[];
+  /** Explicitly cancelled by user */
+  cancelled: DetectedSubscription[];
   /** Total per month (confirmed active only, yearly prorated) */
   monthlyTotal: number;
   /** Total per year (confirmed active only) */
@@ -76,6 +78,14 @@ export interface SubscriptionSummary {
   candidateCount: number;
   currency: string;
   sanityCheckFailures: string[];
+}
+
+/**
+ * User review decisions for subscriptions
+ */
+export interface SubscriptionReview {
+  merchantSlug: string;
+  decision: "is_subscription" | "not_subscription" | "still_active" | "cancelled";
 }
 
 /**
@@ -306,8 +316,8 @@ function detectSubscription(
     return null;
   }
   
-  // Need at least 2 transactions for recurring pattern
-  if (transactions.length < 2) return null;
+  // Need at least 3 transactions for recurring pattern (prevents one-off flights from being candidates)
+  if (transactions.length < 3) return null;
   
   // Sort by date
   const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
