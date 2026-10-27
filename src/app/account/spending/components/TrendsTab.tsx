@@ -85,11 +85,6 @@ export function TrendsTab({ summary }: TrendsTabProps) {
             <BarChart
               data={chartData}
               margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
-              onClick={(data) => {
-                if (data?.activePayload?.[0]?.payload?.yearMonth) {
-                  setSelectedMonth(data.activePayload[0].payload.yearMonth);
-                }
-              }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
               <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
@@ -109,17 +104,17 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                   );
                 }}
               />
-              <Bar dataKey="fixed" stackId="a" fill="#7c3aed" radius={[0, 0, 0, 0]} cursor="pointer">
+              <Bar dataKey="fixed" stackId="a" fill="#7c3aed" radius={[0, 0, 0, 0]} cursor="pointer" onClick={(data) => setSelectedMonth(data.yearMonth)}>
                 {chartData.map((entry, index) => (
                   <Cell key={`cell-${index}`} opacity={selectedMonth && entry.yearMonth !== selectedMonth ? 0.4 : 1} />
                 ))}
               </Bar>
-              <Bar dataKey="essentials" stackId="a" fill="#2563eb" radius={[0, 0, 0, 0]} cursor="pointer">
+              <Bar dataKey="essentials" stackId="a" fill="#2563eb" radius={[0, 0, 0, 0]} cursor="pointer" onClick={(data) => setSelectedMonth(data.yearMonth)}>
                 {chartData.map((entry, index) => (
                   <Cell key={`cell-${index}`} opacity={selectedMonth && entry.yearMonth !== selectedMonth ? 0.4 : 1} />
                 ))}
               </Bar>
-              <Bar dataKey="flexible" stackId="a" fill="#16a34a" radius={[4, 4, 0, 0]} cursor="pointer">
+              <Bar dataKey="flexible" stackId="a" fill="#16a34a" radius={[4, 4, 0, 0]} cursor="pointer" onClick={(data) => setSelectedMonth(data.yearMonth)}>
                 {chartData.map((entry, index) => (
                   <Cell key={`cell-${index}`} opacity={selectedMonth && entry.yearMonth !== selectedMonth ? 0.4 : 1} />
                 ))}
