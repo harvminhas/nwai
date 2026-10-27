@@ -1,4 +1,6 @@
+import { useState, useEffect } from "react";
 import type { SpendingSummary } from "@/lib/spendingSummary";
+import type { SubscriptionSummary } from "@/lib/subscriptionEngine";
 import { formatMonthYear, formatMonth } from "@/lib/dateFormatting";
 import { formatCurrency } from "@/lib/currency";
 import { getSignColor } from "@/lib/colorHelpers";
@@ -11,6 +13,27 @@ interface OverviewTabProps {
 }
 
 export function OverviewTab({ summary, token }: OverviewTabProps) {
+  const [subscriptions, setSubscriptions] = useState<SubscriptionSummary | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+
+    const loadSubscriptions = async () => {
+      try {
+        const res = await fetch("/api/user/subscriptions", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setSubscriptions(data);
+        }
+      } catch (err) {
+        console.error("Failed to load subscriptions:", err);
+      }
+    };
+
+    loadSubscriptions();
+  }, [token]);
   const lastMonth = summary.lastCompleteMonth;
   const lastMonthData = summary.monthlyHistory.find(m => m.yearMonth === lastMonth);
   
@@ -153,21 +176,65 @@ export function OverviewTab({ summary, token }: OverviewTabProps) {
         </div>
       )}
 
-      {/* Subscriptions summary - placeholder for now */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-base font-semibold text-neutral-900">Subscriptions</h3>
-          <Link
-            href="/account/spending?tab=subscriptions"
-            className="text-sm text-purple-600 hover:text-purple-700 font-medium"
-          >
-            See all →
-          </Link>
+      {/* Subscriptions summary */}
+      {subscriptions && subscriptions.subscriptions.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-base font-semibold text-neutral-900">Subscriptions</h3>
+            <Link
+              href="/account/spending?tab=subscriptions"
+              className="text-sm text-purple-600 hover:text-purple-700 font-medium"
+            >
+              See all →
+            </Link>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <div className="grid grid-cols-3 gap-4 mb-4">
+              <div>
+                <p className="text-xs text-gray-500 mb-1">PER MONTH</p>
+                <p className="text-xl font-bold text-gray-900 tabular-nums">
+                  {formatCurrency(subscriptions.monthlyTotal, summary.currency, undefined, true)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 mb-1">PER YEAR</p>
+                <p className="text-xl font-bold text-gray-900 tabular-nums">
+                  {formatCurrency(subscriptions.yearlyTotal, summary.currency, undefined, true)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 mb-1">ACTIVE</p>
+                <p className="text-xl font-bold text-gray-900 tabular-nums">
+                  {subscriptions.activeCount}
+                </p>
+              </div>
+            </div>
+            
+            {(subscriptions.newCount > 0 || subscriptions.priceIncreaseCount > 0) && (
+              <div className="border-t border-gray-100 pt-3">
+                {subscriptions.newCount > 0 && (
+                  <div className="text-sm text-green-700 mb-1">
+                    ✓ {subscriptions.newCount} new {subscriptions.newCount === 1 ? "subscription" : "subscriptions"}
+                  </div>
+                )}
+                {subscriptions.priceIncreaseCount > 0 && (
+                  <div className="text-sm text-red-700">
+                    {subscriptions.subscriptions
+                      .filter(s => s.priceIncrease && s.priceIncreaseAmount)
+                      .slice(0, 2)
+                      .map((s, idx) => (
+                        <div key={idx}>
+                          • {s.merchant} went up {formatCurrency(s.priceIncreaseAmount!, summary.currency)} (now {formatCurrency(s.amount, summary.currency)}/
+                          {s.cadence === "monthly" ? "month" : "year"})
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
-        <div className="bg-neutral-50 rounded p-4 text-center text-sm text-neutral-500">
-          Subscription tracking coming in next stage
-        </div>
-      </div>
+      )}
 
       {/* Review list */}
       {token && (
