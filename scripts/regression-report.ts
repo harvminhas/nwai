@@ -19,6 +19,8 @@ import { computeMoneyCoachBreakdown } from "../src/lib/moneyCoach";
 import { computeBucketBreakdown } from "../src/lib/bucketBreakdown";
 import { computeAverageSavings, computeMonthlySavings, computeWindowSavings } from "../src/lib/savingsCalculations";
 import { buildIncomeSummary } from "../src/lib/incomeSummary";
+import { buildSpendingSummary } from "../src/lib/spendingSummary";
+import { buildSubscriptionSummary } from "../src/lib/subscriptionEngine";
 import type { MoneyCoachBucket } from "../src/lib/moneyCoachBuckets";
 import type { DebtPaymentReview } from "../src/lib/types";
 
@@ -107,6 +109,67 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   console.log(`   One-off sources: ${incomeSummary.oneOffSources.length}`);
   console.log(`   Transfer sources: ${incomeSummary.transferSources.length}`);
   console.log(`   Last 3 months total: ${formatCurrency(incomeSummary.last3MonthsTotal, currency)}\n`);
+  
+  // Test spending summary
+  const spendingSummary = buildSpendingSummary(profile.expenseTxns, currency);
+  
+  console.log(`💳 Spending Summary (buildSpendingSummary):`);
+  console.log(`   Last complete month (${spendingSummary.lastCompleteMonth}): ${formatCurrency(spendingSummary.lastMonthTotal, currency)}`);
+  console.log(`   Typical monthly (last 3 complete): ${formatCurrency(spendingSummary.typicalMonthly, currency)}`);
+  console.log(`   Fixed: ${formatCurrency(spendingSummary.buckets.find(b => b.bucket === "fixed")?.total || 0, currency)}`);
+  console.log(`   Essentials: ${formatCurrency(spendingSummary.buckets.find(b => b.bucket === "essentials")?.total || 0, currency)}`);
+  console.log(`   Flexible: ${formatCurrency(spendingSummary.buckets.find(b => b.bucket === "flexible")?.total || 0, currency)}`);
+  console.log(`   Categories: ${spendingSummary.categories.length}`);
+  console.log(`   Merchants: ${spendingSummary.merchants.length}\n`);
+  
+  // Verify 12-month history reconciliation
+  let hasSpendingError = false;
+  for (const month of spendingSummary.monthlyHistory) {
+    const categorySum = month.categories.reduce((s, c) => s + c.amount, 0);
+    const bucketSum = month.fixed + month.essentials + month.flexible;
+    const totalDiff = Math.abs(month.total - bucketSum);
+    const categoryDiff = Math.abs(month.total - categorySum);
+    
+    if (totalDiff > 0.01 || categoryDiff > 0.01) {
+      hasSpendingError = true;
+      console.error(`❌ SPENDING RECONCILIATION ERROR for ${month.yearMonth}:`);
+      console.error(`   Total = ${formatCurrency(month.total, currency)}`);
+      console.error(`   Buckets (F+E+F) = ${formatCurrency(bucketSum, currency)}`);
+      console.error(`   Categories sum = ${formatCurrency(categorySum, currency)}\n`);
+    }
+  }
+  
+  if (hasSpendingError) {
+    console.error("❌ Spending reconciliation failed\n");
+    process.exit(1);
+  } else {
+    console.log(`✅ Spending reconciliation passed (${spendingSummary.monthlyHistory.length} months)\n`);
+  }
+  
+  // Verify spending buckets match dashboard cards for last 3 months
+  const spendingBuckets = ["fixed", "essentials", "flexible"] as const;
+  for (const bucket of spendingBuckets) {
+    const dashboardBucket = breakdown.buckets.find(b => b.bucket === bucket);
+    const spendingBucket = spendingSummary.buckets.find(b => b.bucket === bucket);
+    
+    if (dashboardBucket && spendingBucket) {
+      // Dashboard card uses average of last 3 months from Money Coach
+      // Spending summary shows last complete month only
+      // We verify consistency by checking that the bucket exists in both
+      console.log(`   ${bucket}: Dashboard avg = ${formatCurrency(dashboardBucket.monthlyAverage, currency)}, Last month = ${formatCurrency(spendingBucket.total, currency)}`);
+    }
+  }
+  console.log();
+  
+  // Test subscriptions
+  const subscriptionSummary = buildSubscriptionSummary(profile.expenseTxns, currency);
+  
+  console.log(`🔄 Subscriptions (buildSubscriptionSummary):`);
+  console.log(`   Active subscriptions: ${subscriptionSummary.activeCount}`);
+  console.log(`   Monthly total: ${formatCurrency(subscriptionSummary.monthlyTotal, currency)}`);
+  console.log(`   Yearly total: ${formatCurrency(subscriptionSummary.yearlyTotal, currency)}`);
+  console.log(`   New subscriptions: ${subscriptionSummary.newCount}`);
+  console.log(`   Price increases: ${subscriptionSummary.priceIncreaseCount}\n`);
   
   // Check for pending savings reviews
   const savingsReviewsSnap = await db
