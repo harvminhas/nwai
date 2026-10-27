@@ -323,7 +323,17 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   if (subscriptionSummary.candidates.length > 0) {
     console.log(`\n   ⚠️  Candidates to Review (${subscriptionSummary.candidates.length}):`);
     subscriptionSummary.candidates.forEach(sub => {
+      // Find all transactions for this merchant to show charge dates
+      const merchantTxns = profile.expenseTxns
+        .filter(txn => {
+          const txnSlug = require("@/lib/applyRules").merchantSlug(txn.merchant);
+          return txnSlug === sub.merchantSlug || txnSlug.includes(sub.merchantSlug);
+        })
+        .sort((a, b) => a.date.localeCompare(b.date));
+      
+      const chargeDates = merchantTxns.map(t => t.date).join(", ");
       console.log(`      • ${sub.merchant} (${sub.category}) - ${formatCurrency(sub.amount, currency)}/${sub.cadence}`);
+      console.log(`        Charge dates: ${chargeDates}`);
     });
   }
   
@@ -374,6 +384,27 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     subscriptionSummary.sanityCheckFailures.forEach(f => console.error(`   • ${f}`));
     console.error();
     errors.push("Subscription sanity check failed");
+  }
+  
+  // Check for duplicate canonical merchants (same merchantSlug appearing multiple times)
+  const slugCounts = new Map<string, { count: number; merchants: string[] }>();
+  allSubs.forEach(sub => {
+    if (!slugCounts.has(sub.merchantSlug)) {
+      slugCounts.set(sub.merchantSlug, { count: 0, merchants: [] });
+    }
+    const entry = slugCounts.get(sub.merchantSlug)!;
+    entry.count++;
+    entry.merchants.push(sub.merchant);
+  });
+  
+  const duplicates = Array.from(slugCounts.entries()).filter(([_, data]) => data.count > 1);
+  if (duplicates.length > 0) {
+    console.error(`\n❌ DUPLICATE CANONICAL MERCHANTS DETECTED:`);
+    duplicates.forEach(([slug, data]) => {
+      console.error(`   • "${slug}" appears ${data.count} times: ${data.merchants.join(", ")}`);
+    });
+    console.error();
+    errors.push("Duplicate canonical merchants found");
   }
   
   // Additional sanity: subscriptions should be reasonable

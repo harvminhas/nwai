@@ -128,15 +128,33 @@ const KNOWN_SUBSCRIPTION_MERCHANTS = [
 
 /**
  * Merchant variants that should be merged
+ * Maps various merchant name patterns to canonical names
  */
 const MERCHANT_VARIANT_MAP: Record<string, string> = {
+  // Anthropic / Claude variants
   "anthropic": "anthropic",
   "claude": "anthropic",
   "claude-ai": "anthropic",
+  "claudeai": "anthropic",
+  
+  // OpenAI / ChatGPT variants
   "chatgpt": "openai",
   "openai": "openai",
+  "chat-gpt": "openai",
+  
+  // Sirius XM
   "siriusxm": "siriusxm",
   "sirius": "siriusxm",
+  "sirius-xm": "siriusxm",
+};
+
+/**
+ * Display names for canonical merchant slugs
+ */
+const CANONICAL_DISPLAY_NAMES: Record<string, string> = {
+  "anthropic": "Anthropic (Claude)",
+  "openai": "OpenAI (ChatGPT)",
+  "siriusxm": "SiriusXM",
 };
 
 /**
@@ -268,12 +286,30 @@ function isKnownSubscription(merchantSlugValue: string, category: string): boole
 }
 
 function normalizeSubscriptionMerchant(merchantSlugValue: string): string {
-  // Check variant map
+  // Check variant map - match if any key is contained in the slug
   for (const [variant, canonical] of Object.entries(MERCHANT_VARIANT_MAP)) {
     if (merchantSlugValue.includes(variant)) {
       return canonical;
     }
   }
+  
+  // Additional fuzzy matching for common patterns
+  // Remove common suffixes that create duplicates
+  const cleaned = merchantSlugValue
+    .replace(/\*+/g, '') // Remove asterisks
+    .replace(/-subscription$/, '')
+    .replace(/-sub$/, '')
+    .replace(/-ai$/, '')
+    .toLowerCase()
+    .trim();
+  
+  // Check variant map again with cleaned slug
+  for (const [variant, canonical] of Object.entries(MERCHANT_VARIANT_MAP)) {
+    if (cleaned.includes(variant)) {
+      return canonical;
+    }
+  }
+  
   return merchantSlugValue;
 }
 
@@ -316,20 +352,55 @@ function detectSubscription(
     return null;
   }
   
-  // Need at least 3 transactions for recurring pattern (prevents one-off flights from being candidates)
-  if (transactions.length < 3) return null;
-  
   // Sort by date
   const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
   
-  // Calculate intervals between charges
+  // Normalize merchant slug for variant matching (do this early)
+  const normalizedSlug = normalizeSubscriptionMerchant(merchantSlug);
+  
+  // Determine tier FIRST: confirmed or candidate
+  const isKnown = isKnownSubscription(normalizedSlug, category);
+  const isUserConfirmed = userConfirmed.has(merchantSlug) || userConfirmed.has(normalizedSlug);
+  const tier: SubscriptionTier = (isKnown || isUserConfirmed) ? "confirmed" : "candidate";
+  
+  // Known/confirmed subscriptions can have any number of transactions
+  // Candidates need ≥3 transactions AND consistent intervals/amounts
+  if (tier === "candidate") {
+    if (transactions.length < 3) return null;
+    
+    // Calculate intervals and amounts for consistency check
+    const intervals: number[] = [];
+    const amounts: number[] = [];
+    for (let i = 1; i < sorted.length; i++) {
+      intervals.push(daysBetween(sorted[i - 1].date, sorted[i].date));
+      amounts.push(sorted[i].amount);
+    }
+    amounts.unshift(sorted[0].amount); // Include first amount
+    
+    // Average interval
+    const avgInterval = intervals.reduce((s, i) => s + i, 0) / intervals.length;
+    
+    // Check interval consistency: all intervals within ±5 days of average
+    const intervalConsistent = intervals.every(i => Math.abs(i - avgInterval) <= 5);
+    if (!intervalConsistent) return null;
+    
+    // Check amount consistency: all amounts within ±15% of median
+    const sortedAmounts = [...amounts].sort((a, b) => a - b);
+    const medianAmount = sortedAmounts[Math.floor(sortedAmounts.length / 2)];
+    const amountConsistent = amounts.every(a => Math.abs(a - medianAmount) / medianAmount <= 0.15);
+    if (!amountConsistent) return null;
+  }
+  
+  // Calculate intervals for cadence determination
   const intervals: number[] = [];
   for (let i = 1; i < sorted.length; i++) {
     intervals.push(daysBetween(sorted[i - 1].date, sorted[i].date));
   }
   
-  // Average interval
-  const avgInterval = intervals.reduce((s, i) => s + i, 0) / intervals.length;
+  // Average interval (or use a reasonable default for single-charge known subs)
+  const avgInterval = intervals.length > 0 
+    ? intervals.reduce((s, i) => s + i, 0) / intervals.length 
+    : 30; // Default to monthly for known subs with 1 charge
   
   // Determine cadence
   let cadence: SubscriptionCadence = "ambiguous";
@@ -337,8 +408,11 @@ function detectSubscription(
     cadence = "monthly";
   } else if (avgInterval >= 320 && avgInterval <= 400) {
     cadence = "yearly";
+  } else if (tier === "confirmed") {
+    // Known/confirmed subs get monthly cadence by default if ambiguous
+    cadence = "monthly";
   } else {
-    // Not a clear recurring pattern
+    // Candidates with unclear cadence are rejected
     return null;
   }
   
@@ -354,14 +428,6 @@ function detectSubscription(
   } else if (cadence === "yearly") {
     nextDate = addMonths(lastDate, 12);
   }
-  
-  // Normalize merchant slug for variant matching
-  const normalizedSlug = normalizeSubscriptionMerchant(merchantSlug);
-  
-  // Determine tier: confirmed or candidate
-  const isKnown = isKnownSubscription(normalizedSlug, category);
-  const isUserConfirmed = userConfirmed.has(merchantSlug) || userConfirmed.has(normalizedSlug);
-  const tier: SubscriptionTier = (isKnown || isUserConfirmed) ? "confirmed" : "candidate";
   
   // Determine status: active or inactive (relative to latest txn date)
   const status = determineStatus(lastDate, cadence, latestTxnDate);
@@ -419,21 +485,26 @@ export function buildSubscriptionSummary(
     ? expenseTxns.reduce((latest, txn) => txn.date > latest ? txn.date : latest, expenseTxns[0].date)
     : new Date().toISOString().slice(0, 10);
   
-  // Group by merchant
+  // Group by merchant (normalize slug early to merge variants)
   const merchantMap = new Map<string, MerchantPattern>();
   
   expenseTxns.forEach(txn => {
-    const slug = merchantSlug(txn.merchant);
-    if (!merchantMap.has(slug)) {
-      merchantMap.set(slug, {
-        merchant: txn.merchant,
-        merchantSlug: slug,
+    const rawSlug = merchantSlug(txn.merchant);
+    const normalizedSlug = normalizeSubscriptionMerchant(rawSlug);
+    
+    if (!merchantMap.has(normalizedSlug)) {
+      // Use canonical display name if available, otherwise first merchant name seen
+      const displayName = CANONICAL_DISPLAY_NAMES[normalizedSlug] || txn.merchant;
+      
+      merchantMap.set(normalizedSlug, {
+        merchant: displayName,
+        merchantSlug: normalizedSlug,
         category: txn.category,
         transactions: [],
       });
     }
     
-    merchantMap.get(slug)!.transactions.push({
+    merchantMap.get(normalizedSlug)!.transactions.push({
       date: txn.date,
       amount: Math.abs(txn.amount),
     });
