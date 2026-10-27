@@ -217,19 +217,82 @@ function WhereMoneyGoes({
               const diff = bucket.pctOfIncome - bucket.targetPct;
               const absDiff = Math.abs(diff);
               
+              // Status badge logic
               let statusTag = "On track";
-              let statusColor = "bg-green-100 text-green-800";
+              let statusBgColor = "bg-green-50";
+              let statusTextColor = "text-green-700";
+              let statusBorderColor = "border-green-100";
+              let dotColor = "#10b981"; // green
+              let barColor = bucketColors[bucket.bucket as keyof typeof bucketColors];
               
-              if (diff > 3) {
-                statusTag = `${Math.round(absDiff)}% over`;
-                statusColor = "bg-amber-100 text-amber-800";
-              } else if (diff < -3) {
-                statusTag = `${Math.round(absDiff)}% under`;
-                statusColor = "bg-green-100 text-green-800";
-              } else if (diff > 0) {
-                statusTag = `${Math.round(absDiff)}% ahead`;
-                statusColor = "bg-green-100 text-green-800";
+              if (bucket.bucket === "savings") {
+                // Savings uses actual value sign
+                if (bucket.monthlyAverage < 0) {
+                  statusTag = "Negative";
+                  statusBgColor = "bg-red-50";
+                  statusTextColor = "text-red-700";
+                  statusBorderColor = "border-red-100";
+                  dotColor = "#ef4444"; // red
+                  barColor = "#ef4444"; // red bar
+                } else if (diff < -3) {
+                  statusTag = `Below target by ${Math.round(absDiff)} pts`;
+                  statusBgColor = "bg-red-50";
+                  statusTextColor = "text-red-700";
+                  statusBorderColor = "border-red-100";
+                  dotColor = "#ef4444"; // red
+                  barColor = "#ef4444"; // red bar
+                } else if (diff < 0 && diff >= -3) {
+                  // Slightly below target (0-3 pts under)
+                  statusTag = `${Math.round(absDiff)} pts below target`;
+                  statusBgColor = "bg-amber-50";
+                  statusTextColor = "text-amber-700";
+                  statusBorderColor = "border-amber-100";
+                  dotColor = "#f59e0b"; // amber
+                  barColor = "#f59e0b"; // amber bar
+                } else if (bucket.pctOfIncome >= bucket.targetPct) {
+                  statusTag = "On track";
+                  statusBgColor = "bg-green-50";
+                  statusTextColor = "text-green-700";
+                  statusBorderColor = "border-green-100";
+                  dotColor = "#10b981"; // green
+                }
+              } else {
+                // Other buckets: over target is bad, under is good
+                if (diff > 3) {
+                  statusTag = `${Math.round(absDiff)} pts over`;
+                  statusBgColor = "bg-red-50";
+                  statusTextColor = "text-red-700";
+                  statusBorderColor = "border-red-100";
+                  dotColor = "#ef4444"; // red
+                  barColor = "#ef4444"; // red bar
+                } else if (diff > 0 && diff <= 3) {
+                  statusTag = `${Math.round(absDiff)} pts over`;
+                  statusBgColor = "bg-amber-50";
+                  statusTextColor = "text-amber-700";
+                  statusBorderColor = "border-amber-100";
+                  dotColor = "#f59e0b"; // amber
+                  barColor = "#f59e0b"; // amber bar
+                } else if (diff < -3) {
+                  // Well under target for spending = good
+                  statusTag = `${Math.round(absDiff)} pts under`;
+                  statusBgColor = "bg-green-50";
+                  statusTextColor = "text-green-700";
+                  statusBorderColor = "border-green-100";
+                  dotColor = "#10b981"; // green
+                } else {
+                  // On track
+                  statusTag = "On track";
+                  statusBgColor = "bg-green-50";
+                  statusTextColor = "text-green-700";
+                  statusBorderColor = "border-green-100";
+                  dotColor = "#10b981"; // green
+                }
               }
+              
+              // Calculate bar width - clamp negative values to 0 for savings
+              let barWidth = bucket.bucket === "savings" && bucket.pctOfIncome < 0 
+                ? 0 
+                : Math.min(100, (bucket.pctOfIncome / 50) * 100);
 
               return (
                 <button
@@ -240,7 +303,7 @@ function WhereMoneyGoes({
                   <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-gray-500">
                     <span 
                       className="h-2.5 w-2.5 rounded" 
-                      style={{ backgroundColor: bucketColors[bucket.bucket as keyof typeof bucketColors] }}
+                      style={{ backgroundColor: dotColor }}
                     />
                     {bucket.label}
                     {bucket.hasEstimates && (
@@ -263,28 +326,32 @@ function WhereMoneyGoes({
                   </p>
                   <p className="mt-1 text-xs text-gray-500">
                     {Math.round(bucket.pctOfIncome)}% of take-home
+                    {bucket.bucket === "savings" && ` · target ${bucket.targetPct}%`}
                   </p>
                   
                   <div className="relative mt-4 h-2 w-full rounded-full bg-gray-100">
                     <div 
                       className="h-full rounded-full" 
                       style={{ 
-                        width: `${Math.min(100, (bucket.pctOfIncome / 50) * 100)}%`,
-                        backgroundColor: bucketColors[bucket.bucket as keyof typeof bucketColors]
+                        width: `${barWidth}%`,
+                        backgroundColor: barColor
                       }}
                     />
-                    <div 
-                      className="absolute top-[-3px] h-4 w-0.5 rounded-full bg-gray-900"
-                      style={{ left: `${(bucket.targetPct / 50) * 100}%` }}
-                    />
+                    {/* Target marker - only show for savings */}
+                    {bucket.bucket === "savings" && (
+                      <div 
+                        className="absolute top-[-3px] h-4 w-0.5 rounded-full bg-gray-900"
+                        style={{ left: `${Math.min(100, (bucket.targetPct / 50) * 100)}%` }}
+                      />
+                    )}
                   </div>
                   <div className="mt-1 flex justify-between text-[11px] text-gray-400">
                     <span>0%</span>
-                    <span>target {bucket.targetPct}%</span>
+                    {bucket.bucket === "savings" && <span>target {bucket.targetPct}%</span>}
                     <span>{bucket.bucket === "fixed" ? "50%" : bucket.bucket === "essentials" ? "25%" : bucket.bucket === "flexible" ? "40%" : "30%"}</span>
                   </div>
                   
-                  <span className={`mt-3 inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusColor}`}>
+                  <span className={`mt-3 inline-block rounded-full border px-2 py-0.5 text-[11px] font-semibold ${statusBgColor} ${statusTextColor} ${statusBorderColor}`}>
                     {statusTag}
                   </span>
                   <p className="mt-2 min-h-[2.5rem] text-xs leading-relaxed text-gray-700">
