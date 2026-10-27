@@ -18,6 +18,7 @@ import type { IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
 import { INCOME_TRANSFER_RE } from "./spendingMetrics";
 import { GENERIC_SOURCE_NAMES, scoreSource, detectFrequency, type Frequency, type Reliability } from "./incomeEngine";
 import type { IncomeCategory } from "./incomeEngine";
+import { getLastCompleteMonth, getCurrentMonth } from "./statementCoverage";
 
 export interface IncomeTransaction {
   source: string;
@@ -133,18 +134,10 @@ export interface IncomeSummary {
   totalMonthsTracked: number;
 }
 
-/** Helper to get current month in YYYY-MM format */
-function getCurrentMonth(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  return `${year}-${month}`;
-}
-
-/** Helper to get last N complete months (excluding current) */
+/** Helper to get last N complete months (excluding current, anchored to last complete month) */
 function getLastCompleteMonths(allMonths: string[], n: number): string[] {
-  const current = getCurrentMonth();
-  const complete = allMonths.filter(m => m < current);
+  const lastComplete = getLastCompleteMonth();
+  const complete = allMonths.filter(m => m <= lastComplete);
   return complete.slice(-n);
 }
 

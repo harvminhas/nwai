@@ -14,6 +14,7 @@ import { getParentCategory } from "./categoryTaxonomy";
 import { computeScheduledDebtPayments } from "./debtPayments";
 import { merchantSlug } from "./applyRules";
 import { normalizeMerchantName, detectRecurringMonthlyAmount, resolveMerchantAlias, resolveCanonicalSlug } from "./merchantUtils";
+import { getLastCompleteMonth, getCurrentMonth } from "./statementCoverage";
 
 export interface MerchantTransaction {
   date: string;
@@ -60,21 +61,20 @@ export type TimeWindow = "last3" | "12month" | "ytd";
 
 /**
  * Get months for a specific time window.
- * Excludes the current incomplete month (same logic as incomeMetrics.ts).
+ * Uses the shared anchor (last complete month = previous calendar month).
  */
 export function getMonthsForWindow(
   monthlyHistory: MonthlyHistoryEntry[],
   window: TimeWindow,
   currentYear: number
 ): string[] {
-  const now = new Date();
-  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const lastComplete = getLastCompleteMonth();
 
   // Filter to complete months only (exclude current incomplete month)
   const completeMonths = monthlyHistory
     .filter(h => {
       const hasData = h.incomeTotal > 0 || h.expensesTotal > 0;
-      const isComplete = h.yearMonth < currentMonth;
+      const isComplete = h.yearMonth <= lastComplete;
       return hasData && isComplete;
     })
     .map(h => h.yearMonth)
@@ -416,14 +416,13 @@ export function compute3MonthTrend(
   merchantCadence?: Record<string, string>,
   subscriptions?: Array<{ merchantSlug: string; amount: number | null; frequency: string | null; status: string }>
 ): { months: string[]; values: number[] } {
-  const now = new Date();
-  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const lastComplete = getLastCompleteMonth();
 
   // Filter to complete months only (exclude current incomplete month)
   const completeMonths = monthlyHistory
     .filter(h => {
       const hasData = h.incomeTotal > 0 || h.expensesTotal > 0;
-      const isComplete = h.yearMonth < currentMonth;
+      const isComplete = h.yearMonth <= lastComplete;
       return hasData && isComplete;
     })
     .map(h => h.yearMonth)
