@@ -313,6 +313,7 @@ describe("subscriptionEngine", () => {
     it("should require >=5% increase to flag", () => {
       const now = new Date();
       const txns: ExpenseTxnRecord[] = [
+        createTxn("NETFLIX", "Subscriptions", 16.99, new Date(now.getFullYear(), now.getMonth() - 2, 15).toISOString()),
         createTxn("NETFLIX", "Subscriptions", 16.99, new Date(now.getFullYear(), now.getMonth() - 1, 15).toISOString()),
         createTxn("NETFLIX", "Subscriptions", 17.50, new Date(now.getFullYear(), now.getMonth(), 15).toISOString()), // 3% increase
       ];
@@ -344,10 +345,12 @@ describe("subscriptionEngine", () => {
     it("should pass with reasonable subscription count", () => {
       const now = new Date();
       const txns: ExpenseTxnRecord[] = [
-        createTxn("NETFLIX", "Subscriptions", 16.99, new Date(now.getFullYear(), now.getMonth(), 15).toISOString()),
+        createTxn("NETFLIX", "Subscriptions", 16.99, new Date(now.getFullYear(), now.getMonth() - 2, 15).toISOString()),
         createTxn("NETFLIX", "Subscriptions", 16.99, new Date(now.getFullYear(), now.getMonth() - 1, 15).toISOString()),
-        createTxn("SPOTIFY", "Subscriptions", 10.99, new Date(now.getFullYear(), now.getMonth(), 1).toISOString()),
+        createTxn("NETFLIX", "Subscriptions", 16.99, new Date(now.getFullYear(), now.getMonth(), 15).toISOString()),
+        createTxn("SPOTIFY", "Subscriptions", 10.99, new Date(now.getFullYear(), now.getMonth() - 2, 1).toISOString()),
         createTxn("SPOTIFY", "Subscriptions", 10.99, new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString()),
+        createTxn("SPOTIFY", "Subscriptions", 10.99, new Date(now.getFullYear(), now.getMonth(), 1).toISOString()),
       ];
 
       const summary = buildSubscriptionSummary(txns, "CAD");
@@ -355,6 +358,71 @@ describe("subscriptionEngine", () => {
       expect(summary.subscriptions).toHaveLength(2);
       expect(summary.activeCount).toBe(2);
       expect(summary.sanityCheckFailures).toHaveLength(0);
+    });
+  });
+
+  describe("User review decisions", () => {
+    it("should require ≥3 charges for candidate detection", () => {
+      const now = new Date();
+      // Only 2 charges - should not be detected
+      const txns: ExpenseTxnRecord[] = [
+        createTxn("AIRCANADA", "Travel", 124, new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString()),
+        createTxn("AIRCANADA", "Travel", 124, new Date(now.getFullYear(), now.getMonth(), 1).toISOString()),
+      ];
+
+      const summary = buildSubscriptionSummary(txns, "CAD");
+      
+      expect(summary.candidates).toHaveLength(0);
+      expect(summary.subscriptions).toHaveLength(0);
+    });
+
+    it("should detect candidates with ≥3 charges", () => {
+      const now = new Date();
+      const txns: ExpenseTxnRecord[] = [
+        createTxn("AIRCANADA", "Travel", 124, new Date(now.getFullYear(), now.getMonth() - 2, 1).toISOString()),
+        createTxn("AIRCANADA", "Travel", 124, new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString()),
+        createTxn("AIRCANADA", "Travel", 124, new Date(now.getFullYear(), now.getMonth(), 1).toISOString()),
+      ];
+
+      const summary = buildSubscriptionSummary(txns, "CAD");
+      
+      expect(summary.candidates).toHaveLength(1);
+      expect(summary.candidates[0].merchant).toBe("AIRCANADA");
+    });
+
+    it("should promote candidate to confirmed with is_subscription", () => {
+      const now = new Date();
+      const txns: ExpenseTxnRecord[] = [
+        createTxn("Test Service", "Other", 20, new Date(now.getFullYear(), now.getMonth() - 2, 1).toISOString()),
+        createTxn("Test Service", "Other", 20, new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString()),
+        createTxn("Test Service", "Other", 20, new Date(now.getFullYear(), now.getMonth(), 1).toISOString()),
+      ];
+
+      // Without confirmation: candidate
+      const beforeSummary = buildSubscriptionSummary(txns, "CAD", undefined, []);
+      expect(beforeSummary.candidates.length).toBeGreaterThan(0);
+      expect(beforeSummary.subscriptions.length).toBe(0);
+      
+      // With confirmation: promoted to confirmed
+      const afterSummary = buildSubscriptionSummary(txns, "CAD", undefined, ["test-service"]);
+      expect(afterSummary.candidates.length).toBe(0);
+      expect(afterSummary.subscriptions.length).toBe(1);
+      expect(afterSummary.activeCount).toBe(1);
+    });
+
+    it("should return cancelled array", () => {
+      const now = new Date();
+      const txns: ExpenseTxnRecord[] = [
+        createTxn("NETFLIX", "Subscriptions", 16.99, new Date(now.getFullYear(), now.getMonth() - 2, 15).toISOString()),
+        createTxn("NETFLIX", "Subscriptions", 16.99, new Date(now.getFullYear(), now.getMonth() - 1, 15).toISOString()),
+        createTxn("NETFLIX", "Subscriptions", 16.99, new Date(now.getFullYear(), now.getMonth(), 15).toISOString()),
+      ];
+
+      const summary = buildSubscriptionSummary(txns, "CAD");
+      
+      // Cancelled handling is at API layer, but engine should return empty array
+      expect(summary.cancelled).toBeDefined();
+      expect(Array.isArray(summary.cancelled)).toBe(true);
     });
   });
 });

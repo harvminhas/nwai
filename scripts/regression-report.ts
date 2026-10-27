@@ -263,19 +263,47 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   const subReviewsSnap = await db
     .collection(`users/${uid}/reviews`)
     .where("type", "==", "subscription")
-    .where("confirmed", "==", true)
     .get();
   
-  const userConfirmedSlugs = subReviewsSnap.docs.map(doc => doc.get("merchantSlug")).filter(Boolean);
+  const userConfirmedSlugs: string[] = [];
+  const reviewDecisions = {
+    is_subscription: 0,
+    not_subscription: 0,
+    still_active: 0,
+    cancelled: 0,
+  };
+  
+  subReviewsSnap.docs.forEach(doc => {
+    const classification = doc.get("classification");
+    const merchantSlug = doc.get("merchantSlug") || doc.id;
+    
+    if (classification === "is_subscription") {
+      userConfirmedSlugs.push(merchantSlug);
+      reviewDecisions.is_subscription++;
+    } else if (classification === "not_subscription") {
+      reviewDecisions.not_subscription++;
+    } else if (classification === "still_active") {
+      userConfirmedSlugs.push(merchantSlug);
+      reviewDecisions.still_active++;
+    } else if (classification === "cancelled") {
+      reviewDecisions.cancelled++;
+    }
+  });
+  
+  console.log(`\n🔄 Subscriptions (buildSubscriptionSummary):`);
+  console.log(`   Review decisions applied:`);
+  console.log(`     • is_subscription: ${reviewDecisions.is_subscription}`);
+  console.log(`     • not_subscription: ${reviewDecisions.not_subscription}`);
+  console.log(`     • still_active: ${reviewDecisions.still_active}`);
+  console.log(`     • cancelled: ${reviewDecisions.cancelled}`);
   
   const subscriptionSummary = buildSubscriptionSummary(
-    profile.expenseTxns, 
-    currency, 
+    profile.expenseTxns,
+    currency,
     spendingSummary.typicalMonthly,
     userConfirmedSlugs
   );
   
-  console.log(`🔄 Subscriptions (buildSubscriptionSummary):`);
   console.log(`   Active confirmed: ${subscriptionSummary.activeCount}`);
   console.log(`   Candidates (to review): ${subscriptionSummary.candidateCount}`);
   console.log(`   Inactive/cancelled: ${subscriptionSummary.inactive.length}`);
