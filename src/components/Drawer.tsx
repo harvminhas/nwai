@@ -552,6 +552,8 @@ function SavingsDrawerContent({
   data: import("@/lib/drawerTypes").SavingsDrawerData;
   currency: string;
 }) {
+  const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
+  
   const fmt = (amount: number) =>
     new Intl.NumberFormat("en-US", {
       style: "currency",
@@ -567,6 +569,10 @@ function SavingsDrawerContent({
   const windowLabel = monthlyBreakdown.length > 0
     ? `${formatMonthYear(monthlyBreakdown[0].month).split(' ')[0]}–${formatMonthYear(monthlyBreakdown[monthlyBreakdown.length - 1].month)}`
     : '';
+  
+  const toggleMonth = (month: string) => {
+    setExpandedMonth(expandedMonth === month ? null : month);
+  };
 
   return (
     <div className="space-y-6">
@@ -589,40 +595,167 @@ function SavingsDrawerContent({
           Monthly breakdown
         </h3>
         <div className="space-y-2">
-          {monthlyBreakdown.map((month) => (
-            <div key={month.month}>
-              <div className="flex items-center gap-3">
-                <span className="w-20 text-sm font-medium text-gray-700">
-                  {formatMonthYear(month.month).split(' ')[0]}
-                </span>
-                <div className="flex-1">
-                  <div className="relative h-8 rounded-lg bg-gray-100">
-                    {month.total !== 0 && (
-                      <div
-                        className={`absolute top-0 h-full rounded-lg ${
-                          month.total >= 0 ? 'bg-green-500' : 'bg-red-500'
-                        }`}
-                        style={{
-                          width: `${Math.min(Math.abs(month.total) / Math.max(...monthlyBreakdown.map(m => Math.abs(m.total)), 1) * 100, 100)}%`,
-                          left: month.total >= 0 ? '0' : 'auto',
-                          right: month.total < 0 ? '0' : 'auto',
-                        }}
-                      />
+          {monthlyBreakdown.map((month) => {
+            const isExpanded = expandedMonth === month.month;
+            
+            return (
+              <div key={month.month}>
+                <button
+                  onClick={() => toggleMonth(month.month)}
+                  className="w-full text-left hover:bg-gray-50 rounded-lg p-2 -mx-2 transition"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="w-20 text-sm font-medium text-gray-700">
+                      {formatMonthYear(month.month).split(' ')[0]}
+                    </span>
+                    <div className="flex-1">
+                      <div className="relative h-8 rounded-lg bg-gray-100">
+                        {month.total !== 0 && (
+                          <div
+                            className={`absolute top-0 h-full rounded-lg ${
+                              month.total >= 0 ? 'bg-green-500' : 'bg-red-500'
+                            }`}
+                            style={{
+                              width: `${Math.min(Math.abs(month.total) / Math.max(...monthlyBreakdown.map(m => Math.abs(m.total)), 1) * 100, 100)}%`,
+                              left: month.total >= 0 ? '0' : 'auto',
+                              right: month.total < 0 ? '0' : 'auto',
+                            }}
+                          />
+                        )}
+                      </div>
+                    </div>
+                    <span className={`w-24 text-right text-sm font-semibold ${month.total >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {fmt(month.total)}
+                    </span>
+                    <svg
+                      className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
+                  {/* Driver note for negative months */}
+                  {month.driver && (
+                    <p className="mt-1 ml-24 text-xs text-gray-500 italic">
+                      {month.driver}
+                    </p>
+                  )}
+                </button>
+                
+                {/* Expanded per-account detail */}
+                {isExpanded && (
+                  <div className="mt-2 ml-2 p-4 bg-gray-50 rounded-lg border border-gray-200 space-y-3">
+                    {/* Cash accounts */}
+                    {month.accounts.cashAccounts.length > 0 && (
+                      <div>
+                        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                          💵 Cash & Savings
+                        </h4>
+                        <div className="space-y-2">
+                          {month.accounts.cashAccounts.map((acc) => (
+                            <div key={acc.slug} className="bg-white rounded p-2 text-xs border border-gray-200">
+                              <div className="flex items-start justify-between mb-1">
+                                <div>
+                                  <span className="font-medium text-gray-900">{acc.accountLabel.split(' (')[0]}</span>
+                                  <span className="text-gray-500 ml-1">(...{acc.accountLast4})</span>
+                                  {(acc.priorCarriedForward || acc.currentCarriedForward) && (
+                                    <span className="ml-2 text-orange-600 font-semibold" title="Balance carried forward from earlier month">
+                                      [CF]
+                                    </span>
+                                  )}
+                                </div>
+                                <span className={`font-semibold ${acc.change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                  {acc.change >= 0 ? '+' : ''}{fmt(acc.change)}
+                                </span>
+                              </div>
+                              <div className="flex gap-4 text-gray-600">
+                                <span>Prior: {fmt(acc.priorBalance)}</span>
+                                <span>→</span>
+                                <span>Current: {fmt(acc.currentBalance)}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Debt accounts */}
+                    {month.accounts.debtAccounts.length > 0 && (
+                      <div>
+                        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                          💳 Debt
+                        </h4>
+                        <div className="space-y-2">
+                          {month.accounts.debtAccounts.map((acc) => {
+                            const isPaidDown = acc.change > 0;
+                            const isBorrowing = acc.change < 0;
+                            
+                            return (
+                              <div key={acc.slug} className="bg-white rounded p-2 text-xs border border-gray-200">
+                                <div className="flex items-start justify-between mb-1">
+                                  <div>
+                                    <span className="font-medium text-gray-900">{acc.accountLabel.split(' (')[0]}</span>
+                                    <span className="text-gray-500 ml-1">(...{acc.accountLast4})</span>
+                                    {(acc.priorCarriedForward || acc.currentCarriedForward) && (
+                                      <span className="ml-2 text-orange-600 font-semibold" title="Balance carried forward from earlier month">
+                                        [CF]
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-right">
+                                    <div className={`font-semibold ${isPaidDown ? 'text-green-600' : isBorrowing ? 'text-red-600' : 'text-gray-600'}`}>
+                                      {acc.change > 0 ? '+' : ''}{fmt(acc.change)}
+                                    </div>
+                                    <div className="text-xs text-gray-500">
+                                      {isPaidDown ? 'Paid down' : isBorrowing ? 'New borrowing' : 'No change'}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="flex gap-4 text-gray-600">
+                                  <span>Prior: {fmt(acc.priorBalance)}</span>
+                                  <span>→</span>
+                                  <span>Current: {fmt(acc.currentBalance)}</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Outside contributions */}
+                    {month.accounts.contributions.length > 0 && (
+                      <div>
+                        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                          🏦 Outside Contributions
+                        </h4>
+                        <div className="space-y-2">
+                          {month.accounts.contributions.map((contrib, idx) => (
+                            <div key={idx} className="bg-white rounded p-2 text-xs border border-gray-200">
+                              <div className="flex items-start justify-between">
+                                <div>
+                                  <span className="font-medium text-gray-900">{contrib.merchant}</span>
+                                  <div className="text-gray-500">{contrib.category}</div>
+                                  {contrib.needsConfirmation && (
+                                    <span className="text-orange-600 font-semibold">⚠️ Needs confirmation</span>
+                                  )}
+                                </div>
+                                <span className="font-semibold text-gray-900">
+                                  {fmt(contrib.amount)}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     )}
                   </div>
-                </div>
-                <span className={`w-24 text-right text-sm font-semibold ${month.total >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {fmt(month.total)}
-                </span>
+                )}
               </div>
-              {/* Driver note for negative months */}
-              {month.driver && (
-                <p className="mt-1 ml-24 text-xs text-gray-500 italic">
-                  {month.driver}
-                </p>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -644,7 +777,13 @@ function SavingsDrawerContent({
             </thead>
             <tbody>
               {monthlyBreakdown.map((month) => (
-                <tr key={month.month} className="border-b border-gray-200">
+                <tr
+                  key={month.month}
+                  onClick={() => toggleMonth(month.month)}
+                  className={`border-b border-gray-200 cursor-pointer hover:bg-gray-50 transition ${
+                    expandedMonth === month.month ? 'bg-gray-50' : ''
+                  }`}
+                >
                   <td className="py-2 pr-3 text-gray-900">{formatMonthYear(month.month).split(' ')[0]}</td>
                   <td className={`text-right py-2 px-3 ${month.netCashChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                     {fmt(month.netCashChange)}

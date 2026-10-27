@@ -176,6 +176,31 @@ describe('Savings Reconciliation', () => {
     expect(julyMonth?.driver).toMatch(/(borrowing|spent down)/);
   });
 
+  it('per-month account rows sum to the month\'s components', () => {
+    const result = computeWindowSavings(
+      monthlyHistory,
+      accountBalanceHistory,
+      expenseTxns,
+      months
+    );
+
+    for (const month of result.monthlyBreakdown) {
+      // Sum cash account changes
+      const cashSum = month.accounts.cashAccounts.reduce((sum, acc) => sum + acc.change, 0);
+      expect(cashSum).toBeCloseTo(month.netCashChange, 2);
+      
+      // Sum debt account changes
+      const debtSum = month.accounts.debtAccounts.reduce((sum, acc) => sum + acc.change, 0);
+      expect(debtSum).toBeCloseTo(month.netDebtChange, 2);
+      
+      // Sum contributions
+      const contribSum = month.accounts.contributions
+        .filter(c => !c.needsConfirmation) // Only count confirmed
+        .reduce((sum, c) => sum + c.amount, 0);
+      expect(contribSum).toBeCloseTo(month.contributionsToOutside, 2);
+    }
+  });
+
   it('expected calculation for fixture data', () => {
     const result = computeWindowSavings(
       monthlyHistory,

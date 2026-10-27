@@ -165,6 +165,21 @@ export interface AccountBalanceDetail {
 }
 
 /**
+ * Per-account detail for a single month.
+ */
+export interface MonthAccountDetail {
+  accountLabel: string;
+  accountLast4: string;
+  slug: string;
+  accountType: string;
+  priorBalance: number;
+  currentBalance: number;
+  change: number;
+  priorCarriedForward: boolean;
+  currentCarriedForward: boolean;
+}
+
+/**
  * Per-month savings breakdown with component reconciliation.
  */
 export interface MonthSavingsBreakdown {
@@ -175,6 +190,12 @@ export interface MonthSavingsBreakdown {
   total: number;
   /** For negative months, identify the main driver */
   driver?: string;
+  /** Per-account details for this month (for expandable view) */
+  accounts: {
+    cashAccounts: MonthAccountDetail[];
+    debtAccounts: MonthAccountDetail[];
+    contributions: Array<{ merchant: string; amount: number; category: string; needsConfirmation: boolean }>;
+  };
 }
 
 /**
@@ -497,6 +518,42 @@ export function computeWindowSavings(
   for (const month of months) {
     const result = computeMonthlySavings(monthlyHistory, accountBalanceHistory, expenseTxns, month, confirmedItems);
     
+    // Build per-month per-account details
+    const monthCashAccounts: MonthAccountDetail[] = result.details.cashAccounts.map(acc => {
+      // Extract last 4 digits from account label (e.g., "TD Checking (...1234)" -> "1234")
+      const last4Match = acc.accountLabel.match(/\(\.\.\.(\d{4})\)/);
+      const last4 = last4Match ? last4Match[1] : acc.slug.slice(-4);
+      
+      return {
+        accountLabel: acc.accountLabel,
+        accountLast4: last4,
+        slug: acc.slug,
+        accountType: acc.accountType,
+        priorBalance: acc.priorBalance,
+        currentBalance: acc.currentBalance,
+        change: acc.change,
+        priorCarriedForward: acc.priorCarriedForward,
+        currentCarriedForward: acc.currentCarriedForward,
+      };
+    }).sort((a, b) => Math.abs(b.change) - Math.abs(a.change)); // Sort by absolute impact
+    
+    const monthDebtAccounts: MonthAccountDetail[] = result.details.debtAccounts.map(acc => {
+      const last4Match = acc.accountLabel.match(/\(\.\.\.(\d{4})\)/);
+      const last4 = last4Match ? last4Match[1] : acc.slug.slice(-4);
+      
+      return {
+        accountLabel: acc.accountLabel,
+        accountLast4: last4,
+        slug: acc.slug,
+        accountType: acc.accountType,
+        priorBalance: acc.priorBalance,
+        currentBalance: acc.currentBalance,
+        change: acc.change,
+        priorCarriedForward: acc.priorCarriedForward,
+        currentCarriedForward: acc.currentCarriedForward,
+      };
+    }).sort((a, b) => Math.abs(b.change) - Math.abs(a.change)); // Sort by absolute impact
+    
     // Identify driver for negative months
     let driver: string | undefined;
     if (result.total < 0) {
@@ -532,6 +589,11 @@ export function computeWindowSavings(
       contributionsToOutside: result.contributionsToOutside,
       total: result.total,
       driver,
+      accounts: {
+        cashAccounts: monthCashAccounts,
+        debtAccounts: monthDebtAccounts,
+        contributions: result.details.contributions,
+      },
     });
     
     result.needsConfirmation.forEach(c => allConfirmations.add(c.id));

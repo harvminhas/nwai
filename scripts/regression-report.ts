@@ -299,6 +299,59 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
           `${formatCurrency(windowSavings.monthlyAverage.contributionsToOutside, currency).padStart(12)}  ` +
           `${formatCurrency(windowSavings.monthlyAverage.total, currency).padStart(12)}`
         );
+        
+        // Print per-account detail for first month (Harvinder-agnostic fixture)
+        if (windowSavings.monthlyBreakdown.length > 0) {
+          const firstMonth = windowSavings.monthlyBreakdown[0];
+          const monthName = new Date(firstMonth.month + '-15').toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+          
+          console.log(`\n   Per-Account Detail for ${monthName}:`);
+          
+          if (firstMonth.accounts.cashAccounts.length > 0) {
+            console.log(`\n     💵 Cash & Savings:`);
+            for (const acc of firstMonth.accounts.cashAccounts) {
+              const cfFlag = (acc.priorCarriedForward || acc.currentCarriedForward) ? ' [CF]' : '';
+              console.log(
+                `       ${acc.accountLabel.padEnd(40)} ` +
+                `${formatCurrency(acc.priorBalance, currency).padStart(10)} → ` +
+                `${formatCurrency(acc.currentBalance, currency).padStart(10)} = ` +
+                `${(acc.change >= 0 ? '+' : '') + formatCurrency(acc.change, currency)}${cfFlag}`
+              );
+            }
+            const cashSum = firstMonth.accounts.cashAccounts.reduce((sum, a) => sum + a.change, 0);
+            console.log(`       ${'Total Cash Change:'.padEnd(40)} ${formatCurrency(cashSum, currency)} (should match ${formatCurrency(firstMonth.netCashChange, currency)})`);
+          }
+          
+          if (firstMonth.accounts.debtAccounts.length > 0) {
+            console.log(`\n     💳 Debt:`);
+            for (const acc of firstMonth.accounts.debtAccounts) {
+              const cfFlag = (acc.priorCarriedForward || acc.currentCarriedForward) ? ' [CF]' : '';
+              const label = acc.change > 0 ? 'Paid down' : acc.change < 0 ? 'New borrowing' : 'No change';
+              console.log(
+                `       ${acc.accountLabel.padEnd(40)} ` +
+                `${formatCurrency(acc.priorBalance, currency).padStart(10)} → ` +
+                `${formatCurrency(acc.currentBalance, currency).padStart(10)} = ` +
+                `${(acc.change >= 0 ? '+' : '') + formatCurrency(acc.change, currency)} (${label})${cfFlag}`
+              );
+            }
+            const debtSum = firstMonth.accounts.debtAccounts.reduce((sum, a) => sum + a.change, 0);
+            console.log(`       ${'Total Debt Change:'.padEnd(40)} ${formatCurrency(debtSum, currency)} (should match ${formatCurrency(firstMonth.netDebtChange, currency)})`);
+          }
+          
+          if (firstMonth.accounts.contributions.length > 0) {
+            console.log(`\n     🏦 Outside Contributions:`);
+            for (const contrib of firstMonth.accounts.contributions) {
+              const confFlag = contrib.needsConfirmation ? ' [Needs confirmation]' : '';
+              console.log(
+                `       ${contrib.merchant.padEnd(40)} ${formatCurrency(contrib.amount, currency)}${confFlag}`
+              );
+            }
+            const contribSum = firstMonth.accounts.contributions
+              .filter(c => !c.needsConfirmation)
+              .reduce((sum, c) => sum + c.amount, 0);
+            console.log(`       ${'Total Contributions:'.padEnd(40)} ${formatCurrency(contribSum, currency)} (should match ${formatCurrency(firstMonth.contributionsToOutside, currency)})`);
+          }
+        }
       }
     }
     
