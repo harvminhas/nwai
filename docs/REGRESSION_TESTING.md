@@ -18,17 +18,17 @@ For every new feature or changed functionality:
 
 3. **Document new checks** in PR description
 
-## Regression Checks Added for Spending Page (PR #16)
+## Regression Checks Added for Spending Page (PR #16) - UPDATED
 
 ### Spending Summary Reconciliation
 
-**File**: `scripts/regression-report.ts` (lines 113-175)
+**File**: `scripts/regression-report.ts` (lines 113-202)
 
-1. **Spending Summary Stats** (lines 113-123)
+1. **Spending Summary Stats** (lines 116-123)
    ```
    ✓ Last complete month total
-   ✓ Typical monthly (last 3 complete)
-   ✓ Fixed/Essentials/Flexible bucket totals
+   ✓ Typical monthly (3-month AVERAGE, matching dashboard)
+   ✓ Fixed/Essentials/Flexible bucket totals (3-month average)
    ✓ Category count
    ✓ Merchant count
    ```
@@ -40,24 +40,41 @@ For every new feature or changed functionality:
    - **Exit code 1** if any month fails reconciliation
    - **Pass**: All months reconcile
 
-3. **Spending Buckets vs Dashboard Cards** (lines 152-165)
-   - Compare spending page bucket totals with dashboard Money Coach breakdown
-   - Log dashboard average vs last month for each bucket (Fixed/Essentials/Flexible)
-   - Validates consistency between dashboard cards and spending page
+3. **Spending Buckets vs Dashboard Cards** (lines 152-177) - **NOW EXITS NON-ZERO**
+   - Compare 3-month average spending buckets with dashboard Money Coach 3-month average
+   - For each bucket (Fixed/Essentials/Flexible):
+     - `spendingPage.bucket.total === dashboard.bucket.monthlyAverage` (within $1)
+   - **Exit code 1** if any bucket mismatches by >$1
+   - **Exit code 1** if typical monthly ≠ bucket sum (within $1)
+   - Uses **same bucket classification**: `getCategoryBucket()` from `moneyCoachBuckets.ts`
 
-4. **Subscriptions Summary** (lines 168-175)
+4. **Subscriptions Summary with Sanity Checks** (lines 180-202)
    ```
    ✓ Active subscription count
    ✓ Monthly total (yearly prorated)
    ✓ Yearly total
    ✓ New subscriptions count (last 60 days)
    ✓ Price increase count (5% threshold)
+   ✓ Ambiguous count (need review)
    ```
+   
+   **Sanity Checks** (exit code 1 on failure):
+   - Subscription count must be ≤ 30
+   - Subscriptions must be ≤ 10% of total spending
+   - No sanityCheckFailures in response
+   
+   **Conservative Detection**:
+   - Only: streaming, software, gym, cloud storage
+   - Excluded: loans, utilities, insurance, rent, groceries, fuel, dining
+   - Ambiguous → review framework (not counted)
 
 ### Exit Behavior
 
 - **Exit 0**: All checks pass
-- **Exit 1**: Any reconciliation fails (spending history mismatch)
+- **Exit 1**: Spending history reconciliation fails
+- **Exit 1**: Bucket mismatch (spending page ≠ dashboard cards)
+- **Exit 1**: Typical monthly ≠ bucket sum
+- **Exit 1**: Subscription sanity checks fail (>30 or >10%)
 
 ### Example Output
 
@@ -73,9 +90,11 @@ For every new feature or changed functionality:
 
 ✅ Spending reconciliation passed (12 months)
 
-   fixed: Dashboard avg = CA$1,234, Last month = CA$1,234
-   essentials: Dashboard avg = CA$2,400, Last month = CA$2,456
-   flexible: Dashboard avg = CA$1,500, Last month = CA$1,544
+💵 Spending Buckets vs Dashboard (3-month average):
+   fixed: Dashboard = CA$1,234, Spending page = CA$1,234 ✓
+   essentials: Dashboard = CA$2,456, Spending page = CA$2,456 ✓
+   flexible: Dashboard = CA$1,544, Spending page = CA$1,544 ✓
+✅ Spending buckets match dashboard cards
 
 🔄 Subscriptions (buildSubscriptionSummary):
    Active subscriptions: 8
@@ -83,6 +102,9 @@ For every new feature or changed functionality:
    Yearly total: CA$1,524
    New subscriptions: 1
    Price increases: 2
+   Ambiguous (need review): 3
+   Subscriptions as % of spending: 2.5%
+✅ Subscription detection passed sanity checks
 ```
 
 ## Historical Checks (Pre-existing)
