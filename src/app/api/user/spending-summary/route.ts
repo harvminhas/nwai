@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { buildSpendingSummary } from "@/lib/spendingSummary";
+import type { DebtPaymentReview } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +21,26 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const decoded = await auth.verifyIdToken(token);
 
     const profile = await getFinancialProfile(decoded.uid, db);
-    const summary = buildSpendingSummary(profile.expenseTxns, profile.homeCurrency);
+    
+    // Load user debt payment reviews
+    const reviewsSnap = await db.collection(`users/${decoded.uid}/debtPaymentReviews`).get();
+    const userReviews: DebtPaymentReview[] = reviewsSnap.docs.map((doc) => ({
+      txFingerprint: doc.id,
+      accountSlug: doc.get("accountSlug"),
+      classification: doc.get("classification"),
+      date: doc.get("date"),
+      amount: doc.get("amount"),
+      reviewedAt: doc.get("reviewedAt"),
+    }));
+    
+    const summary = buildSpendingSummary(
+      profile.expenseTxns,
+      profile.accountSnapshots,
+      profile.debtPaymentHistory,
+      userReviews,
+      profile.fxRates || {},
+      profile.homeCurrency
+    );
 
     return NextResponse.json(summary);
   } catch (error) {

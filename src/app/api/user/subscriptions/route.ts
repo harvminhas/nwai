@@ -22,8 +22,26 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     const profile = await getFinancialProfile(decoded.uid, db);
     
+    // Load user debt payment reviews (needed for spending summary)
+    const reviewsSnap = await db.collection(`users/${decoded.uid}/debtPaymentReviews`).get();
+    const userReviews = reviewsSnap.docs.map((doc) => ({
+      txFingerprint: doc.id,
+      accountSlug: doc.get("accountSlug"),
+      classification: doc.get("classification"),
+      date: doc.get("date"),
+      amount: doc.get("amount"),
+      reviewedAt: doc.get("reviewedAt"),
+    }));
+    
     // Get total spending for sanity check
-    const spendingSummary = buildSpendingSummary(profile.expenseTxns, profile.homeCurrency);
+    const spendingSummary = buildSpendingSummary(
+      profile.expenseTxns,
+      profile.accountSnapshots,
+      profile.debtPaymentHistory,
+      userReviews,
+      profile.fxRates || {},
+      profile.homeCurrency
+    );
     
     const summary = buildSubscriptionSummary(
       profile.expenseTxns,

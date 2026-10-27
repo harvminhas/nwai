@@ -1,21 +1,16 @@
 /**
- * Unified Spending Data Layer — single source of truth for all spending computations.
+ * Unified Spending Data Layer — uses shared bucket computation with dashboard.
  * 
- * CRITICAL: Uses the SAME bucket classification as dashboard (getCategoryBucket from moneyCoachBuckets.ts)
- * to ensure spending page totals exactly match dashboard card averages.
- * 
- * Used by:
- * - Spending page (all 5 tabs)
- * - Dashboard Fixed/Essentials/Flexible cards/drawers
- * - Spending API routes
+ * CRITICAL: Calls computeMonthlyBuckets() from monthlyBucketComputation.ts
+ * (same function used by dashboard) to ensure identical bucket totals.
  */
 
-import type { ExpenseTxnRecord } from "./extractTransactions";
-import { getParentCategory } from "./categoryTaxonomy";
+import type { ExpenseTxnRecord, AccountSnapshot, DebtPaymentHistoryEntry } from "./extractTransactions";
+import type { DebtPaymentReview } from "./types";
 import { getCategoryBucket, type MoneyCoachBucket } from "./moneyCoachBuckets";
-import { isCoreExcluded } from "./spendingMetrics";
 import { merchantSlug } from "./applyRules";
 import { getLastCompleteMonth } from "./monthAnchor";
+import { computeMonthlyBuckets } from "./monthlyBucketComputation";
 
 export interface SpendingTransaction {
   date: string;
@@ -36,11 +31,8 @@ export interface MerchantSummary {
   total: number;
   count: number;
   transactions: SpendingTransaction[];
-  /** Average amount per transaction */
   avgAmount: number;
-  /** Most recent transaction date */
   lastDate: string;
-  /** True if this appears to be annual (for flagging) */
   isAnnual: boolean;
 }
 
@@ -50,22 +42,15 @@ export interface CategorySummary {
   total: number;
   count: number;
   merchants: MerchantSummary[];
-  /** Share of total spending (0-1) */
   share: number;
 }
 
 export interface MonthlySpendingSummary {
-  /** YYYY-MM */
   yearMonth: string;
-  /** Total spending (excluding transfers) */
   total: number;
-  /** Fixed bucket total */
   fixed: number;
-  /** Essentials bucket total */
   essentials: number;
-  /** Flexible bucket total */
   flexible: number;
-  /** Per-category breakdown */
   categories: Array<{ category: string; amount: number; bucket: MoneyCoachBucket }>;
 }
 
@@ -82,45 +67,29 @@ export interface SpendingInsight {
 }
 
 export interface SpendingSummary {
-  /** Current month (YYYY-MM) */
   currentMonth: string;
-  /** Last complete month (YYYY-MM) */
   lastCompleteMonth: string;
-  /** Typical monthly spending (average of last 3 complete months) */
   typicalMonthly: number;
-  /** Last 3 complete months totals */
   last3MonthTotals: number[];
-  /** Last complete month total */
   lastMonthTotal: number;
-  /** Change vs typical (absolute) */
   vsTypical: number;
-  /** Change vs typical (percentage) */
   vsTypicalPct: number;
-  /** Monthly history (last 12 complete months) */
   monthlyHistory: MonthlySpendingSummary[];
-  /** Last 3 complete months */
   last3Months: string[];
-  /** Bucket summaries for LAST 3 COMPLETE MONTHS (3-month average, matching dashboard) */
   buckets: BucketSummary[];
-  /** All categories across all time */
   categories: CategorySummary[];
-  /** All merchants across all time */
   merchants: MerchantSummary[];
-  /** Top categories by total */
   topCategories: CategorySummary[];
-  /** Insights (computed from data) */
   insights: SpendingInsight[];
-  /** Currency */
   currency: string;
 }
 
 function detectAnnualCharge(txns: SpendingTransaction[]): boolean {
-  // If only 1-2 transactions and they're ~12 months apart, it's annual
   if (txns.length <= 2) {
     const dates = txns.map(t => new Date(t.date).getTime());
     if (dates.length === 2) {
       const daysBetween = Math.abs(dates[1] - dates[0]) / (1000 * 60 * 60 * 24);
-      return daysBetween >= 320 && daysBetween <= 400; // ~11-13 months
+      return daysBetween >= 320 && daysBetween <= 400;
     }
   }
   return false;
@@ -132,7 +101,6 @@ function computeInsights(
 ): SpendingInsight[] {
   const insights: SpendingInsight[] = [];
   
-  // Trend: spending up or down vs typical
   if (Math.abs(summary.vsTypicalPct) >= 10) {
     const direction = summary.vsTypicalPct > 0 ? "up" : "down";
     const pct = Math.abs(summary.vsTypicalPct).toFixed(0);
@@ -142,10 +110,9 @@ function computeInsights(
     });
   }
   
-  // Notable category: biggest change
   if (monthlyHistory.length >= 2) {
     const lastMonth = monthlyHistory[monthlyHistory.length - 1];
-    const priorMonths = monthlyHistory.slice(-4, -1); // 3 months before last
+    const priorMonths = monthlyHistory.slice(-4, -1);
     
     for (const cat of lastMonth.categories) {
       const priorAvg = priorMonths.reduce((sum, m) => {
@@ -161,128 +128,122 @@ function computeInsights(
             type: "notable_category",
             message: `${cat.category} ${dir} ${Math.abs(change).toFixed(0)}% vs recent months`
           });
-          break; // Only show one
+          break;
         }
       }
     }
   }
   
-  return insights.slice(0, 2); // Max 2 insights
+  return insights.slice(0, 2);
 }
 
 export function buildSpendingSummary(
   expenseTxns: ExpenseTxnRecord[],
+  accountSnapshots: AccountSnapshot[],
+  debtPaymentHistory: DebtPaymentHistoryEntry[],
+  userReviews: DebtPaymentReview[],
+  fxRates: Record<string, number>,
   currency: string = "CAD"
 ): SpendingSummary {
-  // Filter EXACTLY like dashboard moneyCoach.ts does:
-  // 1. Exclude transfers and core-excluded categories
-  // 2. Exclude Debt parent category (handled by scheduled payments in dashboard)
-  const validTxns = expenseTxns.filter(t => {
-    if (isCoreExcluded(t.category)) return false;
-    const parent = getParentCategory(t.category);
-    if (parent === "Debt") return false; // Dashboard skips Debt category (line 130-133 in moneyCoach.ts)
-    return true;
-  });
-  
-  // Get time windows
   const currentMonth = new Date().toISOString().slice(0, 7);
   const lastCompleteMonth = getLastCompleteMonth();
   
-  // Build monthly history (last 12 complete months)
+  // Get all complete months
   const monthSet = new Set<string>();
-  validTxns.forEach(t => {
+  expenseTxns.forEach(t => {
     if (t.txMonth < currentMonth) monthSet.add(t.txMonth);
   });
   const allMonths = Array.from(monthSet).sort();
   const last12Months = allMonths.slice(-12);
   
+  // Use shared bucket computation for each month
   const monthlyHistory: MonthlySpendingSummary[] = last12Months.map(yearMonth => {
-    const monthTxns = validTxns.filter(t => t.txMonth === yearMonth);
-    
-    const categoryTotals = new Map<string, number>();
-    let fixed = 0, essentials = 0, flexible = 0;
-    
-    monthTxns.forEach(t => {
-      const amt = Math.abs(t.amount);
-      categoryTotals.set(t.category, (categoryTotals.get(t.category) || 0) + amt);
-      
-      // Use dashboard bucket classification
-      const bucket = getCategoryBucket(t.category);
-      if (bucket === "fixed") fixed += amt;
-      else if (bucket === "essentials") essentials += amt;
-      else if (bucket === "flexible") flexible += amt;
-      // Note: "savings" and "uncategorized" buckets excluded from spending totals
-    });
-    
-    // Categories from SAME filtered set (no Debt, no transfers)
-    const categories = Array.from(categoryTotals.entries()).map(([category, amount]) => ({
-      category,
-      amount,
-      bucket: getCategoryBucket(category)
-    }));
+    const result = computeMonthlyBuckets(
+      yearMonth,
+      expenseTxns,
+      accountSnapshots,
+      debtPaymentHistory,
+      userReviews,
+      fxRates,
+      currency
+    );
     
     return {
-      yearMonth,
-      total: fixed + essentials + flexible,
-      fixed,
-      essentials,
-      flexible,
-      categories
+      yearMonth: result.yearMonth,
+      total: result.total,
+      fixed: result.buckets.fixed,
+      essentials: result.buckets.essentials,
+      flexible: result.buckets.flexible,
+      categories: result.items.map(item => ({
+        category: item.category,
+        amount: item.amount,
+        bucket: item.bucket
+      }))
     };
   });
   
-  // Last 3 complete months
   const last3Months = last12Months.slice(-3);
   const last3Data = monthlyHistory.slice(-3);
   
-  // Typical monthly = AVERAGE of last 3 (matching dashboard definition)
   const last3Totals = last3Data.map(m => m.total);
   const typicalMonthly = last3Totals.length > 0
     ? last3Totals.reduce((a, b) => a + b, 0) / last3Totals.length
     : 0;
   
-  // Last month stats
   const lastMonthData = monthlyHistory.find(m => m.yearMonth === lastCompleteMonth);
   const lastMonthTotal = lastMonthData?.total || 0;
   const vsTypical = lastMonthTotal - typicalMonthly;
   const vsTypicalPct = typicalMonthly > 0 ? (vsTypical / typicalMonthly) * 100 : 0;
   
-  // Build merchant summaries (all time, from SAME filtered set)
+  // Build merchant summaries from actual transactions (not synthetic loan payments)
   const merchantMap = new Map<string, MerchantSummary>();
-  validTxns.forEach(t => {
-    const slug = merchantSlug(t.merchant);
-    if (!merchantMap.has(slug)) {
-      merchantMap.set(slug, {
-        merchant: t.merchant,
-        merchantSlug: slug,
-        category: t.category,
-        bucket: getCategoryBucket(t.category),
-        total: 0,
-        count: 0,
-        transactions: [],
-        avgAmount: 0,
-        lastDate: t.date,
-        isAnnual: false
+  
+  monthlyHistory.forEach(month => {
+    month.categories.forEach(cat => {
+      // Skip synthetic "Loan payments" category
+      if (cat.category === "Loan payments") return;
+      
+      // Find transactions for this category in this month
+      const categoryTxns = expenseTxns.filter(t =>
+        t.txMonth === month.yearMonth &&
+        t.category === cat.category
+      );
+      
+      categoryTxns.forEach(t => {
+        const slug = merchantSlug(t.merchant);
+        if (!merchantMap.has(slug)) {
+          merchantMap.set(slug, {
+            merchant: t.merchant,
+            merchantSlug: slug,
+            category: t.category,
+            bucket: getCategoryBucket(t.category),
+            total: 0,
+            count: 0,
+            transactions: [],
+            avgAmount: 0,
+            lastDate: t.date,
+            isAnnual: false
+          });
+        }
+        
+        const m = merchantMap.get(slug)!;
+        m.total += Math.abs(t.amount);
+        m.count++;
+        m.transactions.push({
+          date: t.date,
+          merchant: t.merchant,
+          merchantSlug: slug,
+          category: t.category,
+          amount: Math.abs(t.amount),
+          accountLabel: t.accountLabel,
+          accountSlug: t.accountSlug,
+          txMonth: t.txMonth
+        });
+        if (t.date > m.lastDate) m.lastDate = t.date;
       });
-    }
-    
-    const m = merchantMap.get(slug)!;
-    m.total += Math.abs(t.amount);
-    m.count++;
-    m.transactions.push({
-      date: t.date,
-      merchant: t.merchant,
-      merchantSlug: slug,
-      category: t.category,
-      amount: Math.abs(t.amount),
-      accountLabel: t.accountLabel,
-      accountSlug: t.accountSlug,
-      txMonth: t.txMonth
     });
-    if (t.date > m.lastDate) m.lastDate = t.date;
   });
   
-  // Calculate avg and detect annual
   merchantMap.forEach(m => {
     m.avgAmount = m.count > 0 ? m.total / m.count : 0;
     m.isAnnual = detectAnnualCharge(m.transactions);
@@ -291,24 +252,33 @@ export function buildSpendingSummary(
   
   const merchants = Array.from(merchantMap.values());
   
-  // Build category summaries (all time, from SAME filtered set)
+  // Build category summaries
   const categoryMap = new Map<string, CategorySummary>();
+  
+  // Aggregate categories across all months (including synthetic "Loan payments")
+  monthlyHistory.forEach(month => {
+    month.categories.forEach(cat => {
+      if (!categoryMap.has(cat.category)) {
+        categoryMap.set(cat.category, {
+          category: cat.category,
+          bucket: cat.bucket,
+          total: 0,
+          count: 0,
+          merchants: [],
+          share: 0
+        });
+      }
+      categoryMap.get(cat.category)!.total += cat.amount;
+    });
+  });
+  
+  // Add merchants to categories (skip "Loan payments" which has no merchants)
   merchants.forEach(m => {
-    if (!categoryMap.has(m.category)) {
-      categoryMap.set(m.category, {
-        category: m.category,
-        bucket: getCategoryBucket(m.category),
-        total: 0,
-        count: 0,
-        merchants: [],
-        share: 0
-      });
+    const cat = categoryMap.get(m.category);
+    if (cat) {
+      cat.merchants.push(m);
+      cat.count += m.count;
     }
-    
-    const c = categoryMap.get(m.category)!;
-    c.total += m.total;
-    c.count += m.count;
-    c.merchants.push(m);
   });
   
   const categories = Array.from(categoryMap.values());
@@ -318,10 +288,9 @@ export function buildSpendingSummary(
     c.merchants.sort((a, b) => b.total - a.total);
   });
   
-  // Top categories
   const topCategories = [...categories].sort((a, b) => b.total - a.total).slice(0, 5);
   
-  // Bucket summaries for LAST 3 MONTHS (3-month average to match dashboard)
+  // Bucket summaries (3-month average)
   const bucketMap = new Map<MoneyCoachBucket, BucketSummary>();
   
   ["fixed", "essentials", "flexible"].forEach(b => {
@@ -333,7 +302,6 @@ export function buildSpendingSummary(
     });
   });
   
-  // Average buckets over last 3 months
   last3Data.forEach(month => {
     bucketMap.get("fixed")!.total += month.fixed;
     bucketMap.get("essentials")!.total += month.essentials;
@@ -342,7 +310,7 @@ export function buildSpendingSummary(
   
   const buckets = Array.from(bucketMap.values());
   buckets.forEach(b => {
-    b.total = b.total / Math.max(1, last3Data.length); // Average over 3 months
+    b.total = b.total / Math.max(1, last3Data.length);
     b.categories = categories.filter(c => c.bucket === b.bucket);
   });
   
@@ -351,7 +319,6 @@ export function buildSpendingSummary(
     b.share = bucketTotal > 0 ? b.total / bucketTotal : 0;
   });
   
-  // Build summary object (without insights first)
   const summaryWithoutInsights: Omit<SpendingSummary, 'insights'> = {
     currentMonth,
     lastCompleteMonth,
@@ -369,7 +336,6 @@ export function buildSpendingSummary(
     currency
   };
   
-  // Compute insights
   const insights = computeInsights(summaryWithoutInsights, monthlyHistory);
   
   return {
@@ -377,3 +343,4 @@ export function buildSpendingSummary(
     insights
   };
 }
+

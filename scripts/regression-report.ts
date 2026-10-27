@@ -111,7 +111,14 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   console.log(`   Last 3 months total: ${formatCurrency(incomeSummary.last3MonthsTotal, currency)}\n`);
   
   // Test spending summary
-  const spendingSummary = buildSpendingSummary(profile.expenseTxns, currency);
+  const spendingSummary = buildSpendingSummary(
+    profile.expenseTxns,
+    profile.accountSnapshots,
+    profile.debtPaymentHistory,
+    userReviews,
+    profile.fxRates || {},
+    currency
+  );
   
   console.log(`💳 Spending Summary (buildSpendingSummary):`);
   console.log(`   Last complete month (${spendingSummary.lastCompleteMonth}): ${formatCurrency(spendingSummary.lastMonthTotal, currency)}`);
@@ -122,7 +129,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   console.log(`   Categories: ${spendingSummary.categories.length}`);
   console.log(`   Merchants: ${spendingSummary.merchants.length}\n`);
   
-  // Verify 12-month history reconciliation
+  // Verify 12-month history reconciliation with DETAILED ERROR OUTPUT
   let hasSpendingError = false;
   for (const month of spendingSummary.monthlyHistory) {
     const categorySum = month.categories.reduce((s, c) => s + c.amount, 0);
@@ -133,9 +140,23 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     if (totalDiff > 0.01 || categoryDiff > 0.01) {
       hasSpendingError = true;
       console.error(`❌ SPENDING RECONCILIATION ERROR for ${month.yearMonth}:`);
-      console.error(`   Total = ${formatCurrency(month.total, currency)}`);
-      console.error(`   Buckets (F+E+F) = ${formatCurrency(bucketSum, currency)}`);
-      console.error(`   Categories sum = ${formatCurrency(categorySum, currency)}\n`);
+      console.error(`   Total:      ${formatCurrency(month.total, currency)}`);
+      console.error(`   Buckets:    ${formatCurrency(bucketSum, currency)} (F ${formatCurrency(month.fixed, currency)} + E ${formatCurrency(month.essentials, currency)} + F ${formatCurrency(month.flexible, currency)})`);
+      console.error(`   Categories: ${formatCurrency(categorySum, currency)}`);
+      console.error(`   Total vs Buckets diff:    ${formatCurrency(totalDiff, currency)}`);
+      console.error(`   Total vs Categories diff: ${formatCurrency(categoryDiff, currency)}`);
+      
+      // Show category breakdown
+      if (month.categories.length > 0) {
+        console.error(`   Categories breakdown:`);
+        month.categories.slice(0, 10).forEach(c => {
+          console.error(`      ${c.category.padEnd(30)} ${formatCurrency(c.amount, currency)}`);
+        });
+        if (month.categories.length > 10) {
+          console.error(`      ... and ${month.categories.length - 10} more`);
+        }
+      }
+      console.error();
     }
   }
   
