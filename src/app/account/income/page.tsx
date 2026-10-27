@@ -103,12 +103,7 @@ function IncomePageContent() {
     <div className="mx-auto max-w-5xl px-4 pt-4 pb-12 sm:py-8 space-y-6">
       {/* Header */}
       <div>
-        <div className="flex items-baseline gap-3 mb-1">
-          <h1 className="text-3xl font-bold text-gray-900">Income</h1>
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-700 uppercase tracking-wide">
-            Sample Data
-          </span>
-        </div>
+        <h1 className="text-3xl font-bold text-gray-900">Income</h1>
         <p className="text-sm text-gray-500">
           Track income sources, trends, and reliability
         </p>

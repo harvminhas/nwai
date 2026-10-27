@@ -10,15 +10,25 @@ interface OverviewTabProps {
 }
 
 export function OverviewTab({ summary }: OverviewTabProps) {
-  const { currentMonth, currentMonthRegular, typicalMonthly, whatChanged, currency } = summary;
+  const { currentMonth, currentMonthRegular, typicalMonthly, whatChanged, currency, last3Months } = summary;
   
-  const progressPercent = typicalMonthly > 0 
+  const hasCurrentMonthData = currentMonthRegular > 0;
+  const progressPercent = typicalMonthly > 0 && hasCurrentMonthData
     ? Math.min(100, Math.round((currentMonthRegular / typicalMonthly) * 100))
     : 0;
   
   const currentMonthLabel = formatMonthYear(currentMonth);
   const isOnTrack = progressPercent >= 80;
   const progressColor = progressPercent >= 100 ? "#10b981" : progressPercent >= 80 ? "#7c3aed" : "#f59e0b";
+  
+  // Format last 3 months for label
+  const last3MonthsFormatted = last3Months
+    .map(m => formatMonthYear(m).split(" ")[0])
+    .join("–");
+  const last3Year = last3Months.length > 0 
+    ? formatMonthYear(last3Months[last3Months.length - 1]).split(" ")[1]
+    : new Date().getFullYear();
+  
   
   // What changed items (1-3 items)
   const whatChangedItems: { type: "late" | "new" | "change"; text: string; detail: string }[] = [];
@@ -60,30 +70,53 @@ export function OverviewTab({ summary }: OverviewTabProps) {
           </p>
         </div>
         
-        <div className="flex items-baseline gap-2 mb-3">
-          <span className="text-4xl font-bold text-gray-900 tabular-nums">
-            {formatCurrency(currentMonthRegular, currency, undefined, true)}
-          </span>
-        </div>
-        
-        {/* Progress bar */}
-        <div className="h-3 bg-gray-100 rounded-full overflow-hidden mb-2">
-          <div
-            className="h-full rounded-full transition-all duration-500"
-            style={{ width: `${progressPercent}%`, backgroundColor: progressColor }}
-          />
-        </div>
-        
-        <p className="text-xs text-gray-500">
-          {isOnTrack 
-            ? `${progressPercent}% received · typical = average regular income, Jul–Sep 2026 (one-offs excluded)`
-            : `${progressPercent}% received · still below typical month`}
-        </p>
+        {hasCurrentMonthData ? (
+          <>
+            <div className="flex items-baseline gap-2 mb-3">
+              <span className="text-4xl font-bold text-gray-900 tabular-nums">
+                {formatCurrency(currentMonthRegular, currency, undefined, true)}
+              </span>
+            </div>
+            
+            {/* Progress bar */}
+            <div className="h-3 bg-gray-100 rounded-full overflow-hidden mb-2">
+              <div
+                className="h-full rounded-full transition-all duration-500"
+                style={{ width: `${progressPercent}%`, backgroundColor: progressColor }}
+              />
+            </div>
+            
+            <p className="text-xs text-gray-500">
+              {isOnTrack 
+                ? `${progressPercent}% received · typical = avg regular, ${last3MonthsFormatted} ${last3Year} (one-offs excluded)`
+                : `${progressPercent}% received · still below typical month`}
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="flex items-baseline gap-2 mb-3">
+              <span className="text-4xl font-bold text-gray-400 tabular-nums">
+                {formatCurrency(0, currency, undefined, true)}
+              </span>
+            </div>
+            
+            {/* Muted progress bar */}
+            <div className="h-3 bg-gray-100 rounded-full overflow-hidden mb-2">
+              <div className="h-full rounded-full bg-gray-200" style={{ width: "0%" }} />
+            </div>
+            
+            <p className="text-xs text-gray-500">
+              No {currentMonthLabel} statements yet
+            </p>
+          </>
+        )}
       </div>
 
       {/* Average per month */}
       <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <h3 className="text-sm font-medium text-gray-500 mb-4">AVERAGE PER MONTH</h3>
+        <h3 className="text-sm font-medium text-gray-500 mb-4">
+          TYPICAL MONTH (avg regular, {last3MonthsFormatted} {last3Year})
+        </h3>
         
         <div className="flex items-center justify-between">
           <div>
@@ -95,7 +128,7 @@ export function OverviewTab({ summary }: OverviewTabProps) {
           
           <div className="text-right">
             <p className="text-xs text-gray-400 mb-1">
-              {summary.last3Months.map(m => formatMonthYear(m).split(" ")[0]).join(", ")} {new Date().getFullYear()}
+              {summary.last3Months.map(m => formatMonthYear(m).split(" ")[0]).join(", ")} {last3Year}
             </p>
             <p className="text-sm text-gray-600">
               {formatCurrency(summary.last3MonthsTotal, currency, undefined, true)} total incl. one-offs

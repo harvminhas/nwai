@@ -216,17 +216,66 @@ function isOneOff(
   totalMonthsTracked: number
 ): boolean {
   const uniqueMonths = new Set(transactions.map(t => t.date.slice(0, 7)));
-  if (uniqueMonths.size === 1 && totalMonthsTracked >= 3) {
+  
+  // Single-occurrence sources must never be "regular"
+  if (uniqueMonths.size === 1 && totalMonthsTracked >= 2) {
     return true;
   }
   
-  // Check for one-time keywords
+  // If it appears in multiple months, it's recurring - don't mark as one-off
+  // even if it contains keywords like "CRA" (could be recurring CRA payments)
+  if (uniqueMonths.size >= 2) {
+    return false;
+  }
+  
+  // Check for one-time keywords (only for single-month sources)
   const lower = source.toLowerCase();
   const ONE_TIME_KEYWORDS = [
     "cra", "gst", "hst", "refund", "rebate", "tax return", "ccb", "canada child",
     "oas", "cerb", "ei benefit", "ei payment", "stimulus", "benefit payment", "bonus"
   ];
   return ONE_TIME_KEYWORDS.some(k => lower.includes(k));
+}
+
+/**
+ * Detect outlier transactions within a recurring source (bonuses, one-time payments).
+ * Returns a set of transaction identifiers (date+amount) that are one-offs.
+ * 
+ * Rule: A deposit more than 1.5x (or >40% off) the source's median is a one-off.
+ */
+function detectWithinSourceOneOffs(
+  transactions: IncomeTransaction[]
+): Set<string> {
+  const result = new Set<string>();
+  
+  if (transactions.length <= 2) {
+    // Not enough data to detect outliers
+    return result;
+  }
+  
+  // Calculate median amount
+  const amounts = transactions.map(t => t.amount).sort((a, b) => a - b);
+  const mid = Math.floor(amounts.length / 2);
+  const median = amounts.length % 2 !== 0
+    ? amounts[mid]
+    : (amounts[mid - 1] + amounts[mid]) / 2;
+  
+  if (median === 0) {
+    return result;
+  }
+  
+  // Mark transactions that are >1.5x median or >40% different
+  for (const txn of transactions) {
+    const ratio = txn.amount / median;
+    const diffPct = Math.abs((txn.amount - median) / median);
+    
+    if (ratio > 1.5 || diffPct > 0.4) {
+      // Use date+amount as unique identifier
+      result.add(`${txn.date}:${txn.amount}`);
+    }
+  }
+  
+  return result;
 }
 
 /** Compute monthly equivalent based on frequency */
@@ -303,9 +352,26 @@ export function buildIncomeSummary(
       const allMonths = Array.from(new Set(transactions.map(t => t.date.slice(0, 7)))).sort();
       const reliabilityResult = scoreSource(cluster.description, monthHistory, allMonths.length, freqResult);
       
-      // Detect transfers and one-offs
+      // Detect transfers and source-level one-offs
       const isTransfer = isLikelyTransfer(cluster.description, cluster.transactions);
       const isOneOffSource = isOneOff(cluster.description, cluster.transactions, allMonths.length);
+      
+      // Detect within-source one-offs (bonuses, irregular large deposits)
+      const withinSourceOneOffs = detectWithinSourceOneOffs(cluster.transactions);
+      
+      // Split transactions into regular and one-off
+      const regularTransactions = cluster.transactions.filter(
+        t => !withinSourceOneOffs.has(`${t.date}:${t.amount}`)
+      );
+      const oneOffTransactions = cluster.transactions.filter(
+        t => withinSourceOneOffs.has(`${t.date}:${t.amount}`)
+      );
+      
+      // Calculate amounts for regular transactions only
+      const regularTotal = regularTransactions.reduce((s, t) => s + t.amount, 0);
+      const regularAvgAmount = regularTransactions.length > 0 
+        ? regularTotal / regularTransactions.length 
+        : avgAmount;
       
       // Get category (prefer most common category in transactions)
       const categories = cluster.transactions.map(t => t.category).filter(Boolean);
@@ -328,8 +394,8 @@ export function buildIncomeSummary(
         category: mostCommonCategory,
         isTransfer,
         isOneOff: isOneOffSource,
-        avgAmount,
-        monthlyEquivalent: computeMonthlyEquivalent(avgAmount, freqResult.frequency)
+        avgAmount: regularAvgAmount,
+        monthlyEquivalent: computeMonthlyEquivalent(regularAvgAmount, freqResult.frequency)
       });
     }
   }
@@ -346,27 +412,46 @@ export function buildIncomeSummary(
   const allMonths = Array.from(new Set(transactions.map(t => t.date.slice(0, 7)))).sort();
   const monthlyHistory: MonthlyIncomeSummary[] = allMonths.map(ym => {
     const monthTxns = transactions.filter(t => t.date.startsWith(ym));
-    const monthSources = allSources.filter(s => 
-      s.transactions.some(t => t.date.startsWith(ym))
-    );
     
-    const total = monthTxns.reduce((s, t) => s + t.amount, 0);
-    const oneOffTotal = monthSources
-      .filter(s => s.isOneOff)
-      .flatMap(s => s.transactions.filter(t => t.date.startsWith(ym)))
-      .reduce((s, t) => s + t.amount, 0);
-    const regularTotal = total - oneOffTotal;
+    // Split into regular and one-off at the transaction level
+    let regularTotal = 0;
+    let oneOffTotal = 0;
+    
+    for (const source of allSources) {
+      const sourceTxnsThisMonth = source.transactions.filter(t => t.date.startsWith(ym));
+      const withinSourceOneOffs = detectWithinSourceOneOffs(source.transactions);
+      
+      for (const txn of sourceTxnsThisMonth) {
+        const txnKey = `${txn.date}:${txn.amount}`;
+        if (source.isOneOff || withinSourceOneOffs.has(txnKey)) {
+          oneOffTotal += txn.amount;
+        } else {
+          regularTotal += txn.amount;
+        }
+      }
+    }
+    
+    const total = regularTotal + oneOffTotal;
     
     return {
       yearMonth: ym,
       total,
       regular: regularTotal,
       oneOff: oneOffTotal,
-      sources: monthSources.map(s => ({
-        source: s.description,
-        amount: s.transactions.filter(t => t.date.startsWith(ym)).reduce((sum, t) => sum + t.amount, 0),
-        isOneOff: s.isOneOff
-      }))
+      sources: allSources
+        .filter(s => s.transactions.some(t => t.date.startsWith(ym)))
+        .map(s => {
+          const sourceTxnsThisMonth = s.transactions.filter(t => t.date.startsWith(ym));
+          const withinSourceOneOffs = detectWithinSourceOneOffs(s.transactions);
+          const amount = sourceTxnsThisMonth.reduce((sum, t) => sum + t.amount, 0);
+          const hasOneOff = sourceTxnsThisMonth.some(t => withinSourceOneOffs.has(`${t.date}:${t.amount}`));
+          
+          return {
+            source: s.description,
+            amount,
+            isOneOff: s.isOneOff || hasOneOff
+          };
+        })
     };
   });
 
