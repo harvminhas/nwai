@@ -1,18 +1,28 @@
 /**
- * Subscription Detection Engine
+ * Subscription Detection Engine - Two-Tier System
  * 
- * CONSERVATIVE detection: Only true subscription-type merchants (streaming, software, memberships, cloud storage).
+ * TIER 1 - CONFIRMED (counted in totals):
+ * - Known subscription merchants (streaming, software, memberships, cloud)
+ * - User-confirmed via review framework
+ * - Regular cadence + consistent amount
  * 
- * EXCLUDED from subscriptions:
- * - Loans, utilities, insurance, rent/mortgage
- * - Transfers, groceries, fuel, dining
- * - Irregular merchants
+ * TIER 2 - CANDIDATES (NOT counted):
+ * - Recurring-looking but not on known list
+ * - Sent to 'subscription' review for user confirmation
  * 
- * Ambiguous candidates → 'subscription' review type (not counted until confirmed)
+ * HARD EXCLUSIONS (never subscriptions):
+ * - Interest, fees, bank charges categories
+ * - Debt, transfers, e-transfers, person names
+ * - Loans, insurance, utilities, rent, taxes, income
  * 
- * SANITY CHECKS:
- * - Fail if monthly subscriptions > 10% of spending
- * - Fail if count > 30 active subscriptions
+ * ACTIVE STATUS:
+ * - Monthly: charged within 45 days
+ * - Yearly: charged within 400 days
+ * - Otherwise: Inactive/cancelled (not counted in totals)
+ * 
+ * PRICE INCREASE:
+ * - Only for confirmed subs with same cadence
+ * - ≥5% change comparing consecutive charges
  */
 
 import type { ExpenseTxnRecord } from "./extractTransactions";
@@ -20,118 +30,149 @@ import { getParentCategory } from "./categoryTaxonomy";
 import { merchantSlug } from "./applyRules";
 
 export type SubscriptionCadence = "monthly" | "yearly" | "ambiguous";
+export type SubscriptionStatus = "active" | "inactive";
+export type SubscriptionTier = "confirmed" | "candidate";
 
 export interface DetectedSubscription {
   merchant: string;
   merchantSlug: string;
   category: string;
-  /** Current amount per charge */
   amount: number;
-  /** Monthly or yearly */
   cadence: SubscriptionCadence;
-  /** Last charge date */
   lastDate: string;
-  /** Expected next charge date (estimated) */
   nextDate: string | null;
-  /** Number of charges in history */
   chargeCount: number;
-  /** True if this is a new subscription (first charge in last 60 days) */
   isNew: boolean;
-  /** True if price increased recently */
   priceIncrease: boolean;
-  /** Amount of price increase if applicable */
   priceIncreaseAmount?: number;
-  /** Previous amount before increase */
   previousAmount?: number;
-  /** All transaction dates for this subscription */
   transactions: Array<{ date: string; amount: number }>;
-  /** True if this is ambiguous and needs review */
-  needsReview: boolean;
+  /** Tier: confirmed (counted) or candidate (needs review) */
+  tier: SubscriptionTier;
+  /** Status: active or inactive */
+  status: SubscriptionStatus;
 }
 
 export interface SubscriptionSummary {
-  /** Confirmed subscriptions only (excluding ambiguous/review items) */
+  /** Active confirmed subscriptions only */
   subscriptions: DetectedSubscription[];
-  /** Ambiguous candidates for review */
-  ambiguous: DetectedSubscription[];
-  /** Total per month (yearly prorated, confirmed only) */
+  /** Candidates needing review (NOT counted) */
+  candidates: DetectedSubscription[];
+  /** Inactive/cancelled subscriptions */
+  inactive: DetectedSubscription[];
+  /** Total per month (confirmed active only, yearly prorated) */
   monthlyTotal: number;
-  /** Total per year (confirmed only) */
+  /** Total per year (confirmed active only) */
   yearlyTotal: number;
-  /** Change in monthly total vs prior month */
   monthlyChange: number;
   /** Number of active confirmed subscriptions */
   activeCount: number;
-  /** Number of new subscriptions (last 60 days) */
+  /** Number of new subscriptions (confirmed, last 60 days) */
   newCount: number;
-  /** Number with price increases (last 90 days) */
+  /** Number with price increases (confirmed, last 90 days) */
   priceIncreaseCount: number;
-  /** Currency */
+  /** Number of candidates needing review */
+  candidateCount: number;
   currency: string;
-  /** Sanity check failures (if any) */
   sanityCheckFailures: string[];
 }
 
-interface MerchantPattern {
-  merchant: string;
-  merchantSlug: string;
-  category: string;
-  transactions: Array<{ date: string; amount: number }>;
-}
-
 /**
- * Parent categories that can contain subscriptions (whitelist)
+ * Known subscription merchants (streaming, software, memberships, cloud)
+ * These are automatically confirmed as subscriptions.
  */
-const SUBSCRIPTION_PARENT_CATEGORIES = new Set([
-  "Subscriptions",       // Streaming, software, memberships, news & media
-  "Entertainment",       // Streaming services specifically
-  "Personal Care",       // Gym/fitness memberships
-]);
-
-/**
- * Parent categories to EXCLUDE from subscription detection
- */
-const EXCLUDED_PARENT_CATEGORIES = new Set([
-  "Housing",            // Rent, mortgage, utilities, internet, home insurance
-  "Insurance",          // Life, disability, auto, home, health insurance
-  "Debt",               // Loans, credit card payments
-  "Taxes",              // Any tax payments
-  "Groceries",          // Grocery stores
-  "Transportation",     // Gas, parking, transit
-  "Healthcare",         // Pharmacy, medical
-  "Dining",             // Restaurants
-  "Shopping",           // Retail
-  "Travel",             // Hotels, flights
-  "Cash & ATM",         // Cash withdrawals
-  "Transfers",          // Transfers
-  "Fees",               // Bank fees
-  "Education",          // Tuition
-  "Investments & Savings", // RRSP, TFSA, etc.
-]);
-
-/**
- * Merchant name patterns that are NEVER subscriptions (even if recurring)
- */
-const EXCLUDED_MERCHANT_PATTERNS = [
-  /^(esso|shell|petro|gas|fuel)/i,
-  /^(loblaws|sobeys|metro|walmart|costco|safeway|freshco|nofrills|food basics)/i,
-  /^(mcdonald|tim horton|starbucks|subway|burger king)/i,
-  /^(td |rbc |bmo |cibc |scotiabank|tangerine|pc financial)/i,
-  /^(enbridge|hydro|water|electric|power|utility|internet|rogers|bell|telus|shaw)/i,
-  /^(rent|mortgage|property tax|condo fee|hoa)/i,
-  /^(insurance|allstate|state farm|td insurance)/i,
-  /loan|payment|transfer|withdraw/i,
+const KNOWN_SUBSCRIPTION_MERCHANTS = [
+  // Streaming video
+  "netflix", "disney", "disney-plus", "hbo", "hbo-max", "amazon-prime", 
+  "prime-video", "apple-tv", "youtube-premium", "paramount",
+  
+  // Streaming music
+  "spotify", "apple-music", "tidal", "deezer", "youtube-music",
+  
+  // Cloud storage
+  "icloud", "google-one", "dropbox", "microsoft-onedrive", "onedrive",
+  
+  // Software & productivity
+  "adobe", "microsoft-365", "office-365", "google-workspace",
+  "obsidian", "notion", "evernote", "todoist", "slack",
+  
+  // Development & cloud
+  "github", "gitlab", "aws", "amazon-web-services", "google-cloud",
+  "digitalocean", "heroku", "vercel", "netlify", "resend",
+  
+  // Fitness & wellness
+  "peloton", "goodlife", "planet-fitness", "anytime-fitness",
+  "classpass", "strava", "headspace", "calm",
+  
+  // News & media
+  "new-york-times", "wall-street-journal", "economist", 
+  "washington-post", "patreon", "substack", "medium",
+  
+  // Other subscriptions
+  "audible", "kindle-unlimited", "scribd", "masterclass",
 ];
 
 /**
- * Merchant name patterns that ARE likely subscriptions
+ * Hard-exclude categories (never subscriptions)
  */
-const SUBSCRIPTION_MERCHANT_PATTERNS = [
-  /netflix|spotify|disney|hbo|amazon prime|apple (tv|music|one)|youtube premium/i,
-  /adobe|microsoft 365|office|google (one|workspace)|dropbox|icloud/i,
-  /gym|fitness|peloton|yoga|planet fitness|goodlife|anytime fitness/i,
-  /patreon|substack|medium membership/i,
-  /audible|kindle unlimited/i,
+const EXCLUDED_CATEGORIES = new Set([
+  "Interest",
+  "Fees",
+  "Debt Payments",
+  "Transfers",
+  "Transfers & Payments",
+  "Loans",
+  "Insurance",
+  "Taxes",
+  "Income",
+  "Cash & ATM",
+  "Investments & Savings",
+]);
+
+/**
+ * Parent categories that are never subscriptions
+ */
+const EXCLUDED_PARENT_CATEGORIES = new Set([
+  "Debt",
+  "Taxes",
+  "Investments & Savings",
+]);
+
+/**
+ * Merchant patterns that are never subscriptions
+ */
+const EXCLUDED_MERCHANT_PATTERNS = [
+  // Bank fees & interest
+  /interest|int-chg|o\.d\.p\.|overdraft|nsf|service charge|account fee|monthly fee/i,
+  
+  // Transfers & e-transfers
+  /transfer|e-transfer|etransfer|interac|paypal transfer|venmo/i,
+  
+  // Person names (e-transfers to people)
+  /^(mr|mrs|ms|miss|dr)\.?\s+[a-z]/i,
+  /^[a-z]+\s+[a-z]+$/i, // Simple "firstname lastname" pattern
+  
+  // Utilities
+  /hydro|water|electric|power|gas|enbridge|utility/i,
+  /internet|rogers|bell|telus|shaw|videotron/i,
+  
+  // Insurance
+  /insurance|allstate|state farm|td insurance|manulife/i,
+  
+  // Loans & debt
+  /loan|mortgage|line of credit|credit payment/i,
+  
+  // Rent & property
+  /rent|landlord|property management|condo fee/i,
+  
+  // Transportation
+  /gas station|esso|shell|petro|fuel|parking/i,
+  
+  // Groceries
+  /loblaws|sobeys|metro|walmart|costco|safeway|freshco|nofrills/i,
+  
+  // Dining
+  /restaurant|mcdonald|tim horton|starbucks|subway|burger king/i,
 ];
 
 function daysBetween(date1: string, date2: string): number {
@@ -146,43 +187,58 @@ function addMonths(date: string, months: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-function isSubscriptionMerchant(merchant: string): boolean {
-  // Check explicit exclusions first
-  if (EXCLUDED_MERCHANT_PATTERNS.some(p => p.test(merchant))) {
-    return false;
-  }
-  
-  // Check if it matches known subscription patterns
-  return SUBSCRIPTION_MERCHANT_PATTERNS.some(p => p.test(merchant));
-}
-
-function isAmbiguousSubscription(merchant: string, category: string): boolean {
+function isHardExcluded(merchant: string, category: string): boolean {
   const parent = getParentCategory(category);
   
-  // If merchant is explicitly a subscription, not ambiguous
-  if (isSubscriptionMerchant(merchant)) {
-    return false;
-  }
+  // Check excluded categories
+  if (EXCLUDED_CATEGORIES.has(category)) return true;
+  if (EXCLUDED_PARENT_CATEGORIES.has(parent)) return true;
   
-  // If in subscription parent category but not explicitly matched, ambiguous
-  if (SUBSCRIPTION_PARENT_CATEGORIES.has(parent)) {
-    return true;
-  }
+  // Check excluded merchant patterns
+  if (EXCLUDED_MERCHANT_PATTERNS.some(p => p.test(merchant))) return true;
   
-  // Otherwise not a subscription at all
   return false;
 }
 
-function detectSubscription(pattern: MerchantPattern): DetectedSubscription | null {
-  const { merchant, merchantSlug, category, transactions } = pattern;
-  const parent = getParentCategory(category);
+function isKnownSubscription(merchantSlugValue: string): boolean {
+  return KNOWN_SUBSCRIPTION_MERCHANTS.some(known => 
+    merchantSlugValue === known || merchantSlugValue.includes(known)
+  );
+}
+
+function determineStatus(
+  lastDate: string,
+  cadence: SubscriptionCadence
+): SubscriptionStatus {
+  const daysSinceLast = daysBetween(lastDate, new Date().toISOString().slice(0, 10));
   
-  // Hard exclusions (never subscriptions)
-  if (EXCLUDED_PARENT_CATEGORIES.has(parent)) {
-    return null;
+  if (cadence === "monthly") {
+    // Monthly: active if charged within 45 days
+    return daysSinceLast <= 45 ? "active" : "inactive";
+  } else if (cadence === "yearly") {
+    // Yearly: active if charged within 400 days
+    return daysSinceLast <= 400 ? "active" : "inactive";
   }
   
-  if (EXCLUDED_MERCHANT_PATTERNS.some(p => p.test(merchant))) {
+  // Ambiguous cadence: consider active if within 45 days
+  return daysSinceLast <= 45 ? "active" : "inactive";
+}
+
+interface MerchantPattern {
+  merchant: string;
+  merchantSlug: string;
+  category: string;
+  transactions: Array<{ date: string; amount: number }>;
+}
+
+function detectSubscription(
+  pattern: MerchantPattern,
+  userConfirmed: Set<string>
+): DetectedSubscription | null {
+  const { merchant, merchantSlug, category, transactions } = pattern;
+  
+  // Hard exclusions
+  if (isHardExcluded(merchant, category)) {
     return null;
   }
   
@@ -225,20 +281,34 @@ function detectSubscription(pattern: MerchantPattern): DetectedSubscription | nu
     nextDate = addMonths(lastDate, 12);
   }
   
+  // Determine tier: confirmed or candidate
+  const isKnown = isKnownSubscription(merchantSlug);
+  const isUserConfirmed = userConfirmed.has(merchantSlug);
+  const tier: SubscriptionTier = (isKnown || isUserConfirmed) ? "confirmed" : "candidate";
+  
+  // Determine status: active or inactive
+  const status = determineStatus(lastDate, cadence);
+  
   // Check if new (first charge in last 60 days)
   const firstDate = sorted[0].date;
   const daysSinceFirst = daysBetween(firstDate, new Date().toISOString().slice(0, 10));
   const isNew = daysSinceFirst <= 60 && sorted.length <= 2;
   
-  // Check for price increase
-  const priorCharges = sorted.slice(0, -1);
-  const priorAvg = priorCharges.reduce((s, t) => s + t.amount, 0) / priorCharges.length;
-  const priceIncrease = amount > priorAvg * 1.05; // 5% threshold
-  const priceIncreaseAmount = priceIncrease ? amount - priorAvg : undefined;
-  const previousAmount = priceIncrease ? priorAvg : undefined;
+  // Check for price increase (only for confirmed subs with same cadence)
+  let priceIncrease = false;
+  let priceIncreaseAmount: number | undefined;
+  let previousAmount: number | undefined;
   
-  // Determine if needs review
-  const needsReview = isAmbiguousSubscription(merchant, category);
+  if (tier === "confirmed" && sorted.length >= 2) {
+    const prevTxn = sorted[sorted.length - 2];
+    const pctChange = ((amount - prevTxn.amount) / prevTxn.amount) * 100;
+    
+    if (pctChange >= 5) {
+      priceIncrease = true;
+      priceIncreaseAmount = amount - prevTxn.amount;
+      previousAmount = prevTxn.amount;
+    }
+  }
   
   return {
     merchant,
@@ -254,15 +324,19 @@ function detectSubscription(pattern: MerchantPattern): DetectedSubscription | nu
     priceIncreaseAmount,
     previousAmount,
     transactions: sorted,
-    needsReview,
+    tier,
+    status,
   };
 }
 
 export function buildSubscriptionSummary(
   expenseTxns: ExpenseTxnRecord[],
   currency: string = "CAD",
-  totalSpending?: number // For sanity check
+  totalSpending?: number,
+  userConfirmedSlugs: string[] = []
 ): SubscriptionSummary {
+  const userConfirmed = new Set(userConfirmedSlugs);
+  
   // Group by merchant
   const merchantMap = new Map<string, MerchantPattern>();
   
@@ -286,59 +360,74 @@ export function buildSubscriptionSummary(
   // Detect subscriptions
   const allDetected: DetectedSubscription[] = [];
   merchantMap.forEach(pattern => {
-    const sub = detectSubscription(pattern);
+    const sub = detectSubscription(pattern, userConfirmed);
     if (sub) {
       allDetected.push(sub);
     }
   });
   
-  // Split confirmed vs ambiguous
-  const subscriptions = allDetected.filter(s => !s.needsReview);
-  const ambiguous = allDetected.filter(s => s.needsReview);
+  // Split by tier and status
+  const confirmedActive = allDetected.filter(s => s.tier === "confirmed" && s.status === "active");
+  const candidates = allDetected.filter(s => s.tier === "candidate" && s.status === "active");
+  const inactive = allDetected.filter(s => s.status === "inactive");
   
   // Sort by amount (highest first)
-  subscriptions.sort((a, b) => b.amount - a.amount);
-  ambiguous.sort((a, b) => b.amount - a.amount);
+  confirmedActive.sort((a, b) => b.amount - a.amount);
+  candidates.sort((a, b) => b.amount - a.amount);
+  inactive.sort((a, b) => b.amount - a.amount);
   
-  // Calculate totals (confirmed only)
+  // Calculate totals (confirmed active only)
   let monthlyTotal = 0;
-  subscriptions.forEach(sub => {
+  let yearlyTotal = 0;
+  
+  confirmedActive.forEach(sub => {
     if (sub.cadence === "monthly") {
       monthlyTotal += sub.amount;
+      yearlyTotal += sub.amount * 12;
     } else if (sub.cadence === "yearly") {
       monthlyTotal += sub.amount / 12;
+      yearlyTotal += sub.amount;
     }
   });
   
-  const yearlyTotal = monthlyTotal * 12;
-  
-  // Count flags
-  const newCount = subscriptions.filter(s => s.isNew).length;
-  const priceIncreaseCount = subscriptions.filter(s => s.priceIncrease).length;
+  // Count stats (confirmed active only)
+  const activeCount = confirmedActive.length;
+  const newCount = confirmedActive.filter(s => s.isNew).length;
+  const priceIncreaseCount = confirmedActive.filter(s => s.priceIncrease).length;
+  const candidateCount = candidates.length;
   
   // Sanity checks
   const sanityCheckFailures: string[] = [];
   
-  if (subscriptions.length > 30) {
-    sanityCheckFailures.push(`Too many subscriptions: ${subscriptions.length} (max 30)`);
+  if (activeCount > 30) {
+    sanityCheckFailures.push(`Too many active subscriptions: ${activeCount} (max 30)`);
   }
   
   if (totalSpending && totalSpending > 0) {
-    const subscriptionPct = (monthlyTotal / totalSpending) * 100;
-    if (subscriptionPct > 10) {
-      sanityCheckFailures.push(`Subscriptions are ${subscriptionPct.toFixed(1)}% of spending (max 10%)`);
+    const subPct = (monthlyTotal / totalSpending) * 100;
+    if (subPct > 10) {
+      sanityCheckFailures.push(`Subscriptions ${subPct.toFixed(1)}% of spending (max 10%)`);
     }
   }
   
+  // Check for hard-excluded items in results (should never happen)
+  [...confirmedActive, ...candidates].forEach(sub => {
+    if (isHardExcluded(sub.merchant, sub.category)) {
+      sanityCheckFailures.push(`Hard-excluded item detected: ${sub.merchant} (${sub.category})`);
+    }
+  });
+  
   return {
-    subscriptions,
-    ambiguous,
+    subscriptions: confirmedActive,
+    candidates,
+    inactive,
     monthlyTotal,
     yearlyTotal,
-    monthlyChange: 0, // TODO: implement month-over-month comparison
-    activeCount: subscriptions.length,
+    monthlyChange: 0, // TODO: implement if needed
+    activeCount,
     newCount,
     priceIncreaseCount,
+    candidateCount,
     currency,
     sanityCheckFailures,
   };

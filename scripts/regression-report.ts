@@ -258,17 +258,77 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   }
   
   // Test subscriptions
-  const subscriptionSummary = buildSubscriptionSummary(profile.expenseTxns, currency, spendingSummary.typicalMonthly);
+  // Load user-confirmed subscription merchants
+  const subReviewsSnap = await db
+    .collection(`users/${uid}/reviews`)
+    .where("type", "==", "subscription")
+    .where("confirmed", "==", true)
+    .get();
+  
+  const userConfirmedSlugs = subReviewsSnap.docs.map(doc => doc.get("merchantSlug")).filter(Boolean);
+  
+  const subscriptionSummary = buildSubscriptionSummary(
+    profile.expenseTxns, 
+    currency, 
+    spendingSummary.typicalMonthly,
+    userConfirmedSlugs
+  );
   
   console.log(`🔄 Subscriptions (buildSubscriptionSummary):`);
-  console.log(`   Active subscriptions: ${subscriptionSummary.activeCount}`);
-  console.log(`   Monthly total: ${formatCurrency(subscriptionSummary.monthlyTotal, currency)}`);
-  console.log(`   Yearly total: ${formatCurrency(subscriptionSummary.yearlyTotal, currency)}`);
+  console.log(`   Active confirmed: ${subscriptionSummary.activeCount}`);
+  console.log(`   Candidates (to review): ${subscriptionSummary.candidateCount}`);
+  console.log(`   Inactive/cancelled: ${subscriptionSummary.inactive.length}`);
+  console.log(`   Monthly total: ${formatCurrency(subscriptionSummary.monthlyTotal, currency)} (confirmed only)`);
+  console.log(`   Yearly total: ${formatCurrency(subscriptionSummary.yearlyTotal, currency)} (confirmed only)`);
   console.log(`   New subscriptions: ${subscriptionSummary.newCount}`);
   console.log(`   Price increases: ${subscriptionSummary.priceIncreaseCount}`);
   
-  if (subscriptionSummary.ambiguous.length > 0) {
-    console.log(`   Ambiguous (need review): ${subscriptionSummary.ambiguous.length}`);
+  // Print lists
+  if (subscriptionSummary.subscriptions.length > 0) {
+    console.log(`\n   ✅ Confirmed Active (${subscriptionSummary.subscriptions.length}):`);
+    subscriptionSummary.subscriptions.forEach(sub => {
+      console.log(`      • ${sub.merchant} (${sub.category}) - ${formatCurrency(sub.amount, currency)}/${sub.cadence}`);
+    });
+  }
+  
+  if (subscriptionSummary.candidates.length > 0) {
+    console.log(`\n   ⚠️  Candidates to Review (${subscriptionSummary.candidates.length}):`);
+    subscriptionSummary.candidates.forEach(sub => {
+      console.log(`      • ${sub.merchant} (${sub.category}) - ${formatCurrency(sub.amount, currency)}/${sub.cadence}`);
+    });
+  }
+  
+  if (subscriptionSummary.inactive.length > 0) {
+    console.log(`\n   💤 Inactive/Cancelled (${subscriptionSummary.inactive.length}):`);
+    subscriptionSummary.inactive.forEach(sub => {
+      console.log(`      • ${sub.merchant} (${sub.category}) - last ${sub.lastDate}`);
+    });
+  }
+  
+  // Hard-excluded categories that should never appear
+  const HARD_EXCLUDED_CATEGORIES = [
+    "Interest", "Fees", "Debt Payments", "Transfers", "Transfers & Payments",
+    "Loans", "Insurance", "Taxes", "Income", "Cash & ATM", "Investments & Savings"
+  ];
+  
+  // Check all detected subscriptions (confirmed, candidates, and inactive)
+  const allSubs = [
+    ...subscriptionSummary.subscriptions,
+    ...subscriptionSummary.candidates,
+    ...subscriptionSummary.inactive
+  ];
+  
+  const hardExcludedItems = allSubs.filter(sub => 
+    HARD_EXCLUDED_CATEGORIES.includes(sub.category)
+  );
+  
+  if (hardExcludedItems.length > 0) {
+    console.error(`\n❌ HARD-EXCLUDED ITEMS DETECTED IN SUBSCRIPTIONS:`);
+    hardExcludedItems.forEach(sub => {
+      console.error(`   • ${sub.merchant} (${sub.category}) - ${formatCurrency(sub.amount, currency)}`);
+    });
+    console.error();
+    errors.push("Hard-excluded categories found in subscriptions");
   }
   
   // Check sanity failures
@@ -281,7 +341,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   
   // Additional sanity: subscriptions should be reasonable
   const subPct = (subscriptionSummary.monthlyTotal / spendingSummary.typicalMonthly) * 100;
-  console.log(`   Subscriptions as % of spending: ${subPct.toFixed(1)}%`);
+  console.log(`\n   Subscriptions as % of spending: ${subPct.toFixed(1)}%`);
   
   if (subscriptionSummary.activeCount > 30) {
     console.error(`\n❌ Too many subscriptions: ${subscriptionSummary.activeCount} (max 30)\n`);
@@ -293,8 +353,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     errors.push("Subscriptions percentage too high");
   }
   
-  if (subscriptionSummary.sanityCheckFailures.length === 0 && subscriptionSummary.activeCount <= 30 && subPct <= 10) {
-    console.log(`✅ Subscription detection passed sanity checks\n`);
+  if (hardExcludedItems.length === 0 && subscriptionSummary.sanityCheckFailures.length === 0 && subscriptionSummary.activeCount <= 30 && subPct <= 10) {
+    console.log(`✅ Subscription detection passed all checks\n`);
   }
   
   // Check for pending savings reviews

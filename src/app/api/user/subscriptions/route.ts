@@ -33,6 +33,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       reviewedAt: doc.get("reviewedAt"),
     }));
     
+    // Load user-confirmed subscription merchants
+    const subReviewsSnap = await db
+      .collection(`users/${decoded.uid}/reviews`)
+      .where("type", "==", "subscription")
+      .where("confirmed", "==", true)
+      .get();
+    
+    const userConfirmedSlugs = subReviewsSnap.docs.map(doc => doc.get("merchantSlug")).filter(Boolean);
+    
     // Get total spending for sanity check
     const spendingSummary = buildSpendingSummary(
       profile.expenseTxns,
@@ -46,7 +55,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const summary = buildSubscriptionSummary(
       profile.expenseTxns,
       profile.homeCurrency,
-      spendingSummary.typicalMonthly
+      spendingSummary.typicalMonthly,
+      userConfirmedSlugs
     );
 
     return NextResponse.json(summary);
