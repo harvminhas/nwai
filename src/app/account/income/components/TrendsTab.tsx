@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Line, ComposedChart } from "recharts";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Line, ComposedChart, Cell } from "recharts";
 import type { IncomeSummary } from "@/lib/incomeSummary";
 import { formatMonth, formatMonthYear } from "@/lib/dateFormatting";
 import { formatCurrency, getCurrencySymbol } from "@/lib/currencyUtils";
@@ -198,7 +198,11 @@ export function TrendsTab({ summary }: TrendsTabProps) {
         
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+            <ComposedChart 
+              data={chartData} 
+              margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+              className={selectedMonth ? 'has-selection' : ''}
+            >
               <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
               <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
               <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={60} />
@@ -221,8 +225,36 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                   );
                 }}
               />
-              <Bar dataKey="regular" stackId="a" fill="#7c3aed" radius={[0, 0, 0, 0]} onClick={(data: any) => data?.payload?.yearMonth && setSelectedMonth(data.payload.yearMonth)} cursor="pointer" />
-              <Bar dataKey="oneOff" stackId="a" fill="#fbbf24" radius={[4, 4, 0, 0]} onClick={(data: any) => data?.payload?.yearMonth && setSelectedMonth(data.payload.yearMonth)} cursor="pointer" />
+              <Bar 
+                dataKey="regular" 
+                stackId="a" 
+                fill="#7c3aed" 
+                radius={[0, 0, 0, 0]} 
+                onClick={(data: any) => data?.payload?.yearMonth && setSelectedMonth(data.payload.yearMonth)} 
+                cursor="pointer"
+              >
+                {chartData.map((entry, index) => (
+                  <Cell 
+                    key={`cell-regular-${index}`}
+                    opacity={selectedMonth && entry.yearMonth !== selectedMonth ? 0.4 : 1}
+                  />
+                ))}
+              </Bar>
+              <Bar 
+                dataKey="oneOff" 
+                stackId="a" 
+                fill="#fbbf24" 
+                radius={[4, 4, 0, 0]} 
+                onClick={(data: any) => data?.payload?.yearMonth && setSelectedMonth(data.payload.yearMonth)} 
+                cursor="pointer"
+              >
+                {chartData.map((entry, index) => (
+                  <Cell 
+                    key={`cell-oneoff-${index}`}
+                    opacity={selectedMonth && entry.yearMonth !== selectedMonth ? 0.4 : 1}
+                  />
+                ))}
+              </Bar>
               {chartData.some(d => d.lastYear) && (
                 <Line type="monotone" dataKey="lastYear" stroke="#9ca3af" strokeWidth={2} strokeDasharray="4 4" dot={false} />
               )}
