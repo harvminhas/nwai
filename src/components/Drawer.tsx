@@ -560,7 +560,13 @@ function SavingsDrawerContent({
       maximumFractionDigits: 0,
     }).format(amount);
 
-  const { monthlyBreakdown, periodBreakdown, monthlyAverage, needsConfirmation } = data;
+  const { windowSavings, basisLabel } = data;
+  const { monthlyBreakdown, monthlyAverage, windowPeriodAccounts, needsConfirmation } = windowSavings;
+  
+  // Format window label for account cards
+  const windowLabel = monthlyBreakdown.length > 0
+    ? `${formatMonthYear(monthlyBreakdown[0].month).split(' ')[0]}–${formatMonthYear(monthlyBreakdown[monthlyBreakdown.length - 1].month)}`
+    : '';
 
   return (
     <div className="space-y-6">
@@ -570,10 +576,10 @@ function SavingsDrawerContent({
           <p className="text-sm font-medium uppercase tracking-wide text-gray-500">
             Monthly average
           </p>
-          <p className={`mt-2 text-4xl font-bold ${monthlyAverage >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-            {fmt(monthlyAverage)}
+          <p className={`mt-2 text-4xl font-bold ${monthlyAverage.total >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            {fmt(monthlyAverage.total)}
           </p>
-          <p className="mt-1 text-xs text-gray-500">{data.basisLabel}</p>
+          <p className="mt-1 text-xs text-gray-500">{basisLabel}</p>
         </div>
       </div>
 
@@ -584,42 +590,106 @@ function SavingsDrawerContent({
         </h3>
         <div className="space-y-2">
           {monthlyBreakdown.map((month) => (
-            <div key={month.month} className="flex items-center gap-3">
-              <span className="w-20 text-sm font-medium text-gray-700">
-                {formatMonthYear(month.month).split(' ')[0]}
-              </span>
-              <div className="flex-1">
-                <div className="relative h-8 rounded-lg bg-gray-100">
-                  {month.total !== 0 && (
-                    <div
-                      className={`absolute top-0 h-full rounded-lg ${
-                        month.total >= 0 ? 'bg-green-500' : 'bg-red-500'
-                      }`}
-                      style={{
-                        width: `${Math.min(Math.abs(month.total) / Math.max(...monthlyBreakdown.map(m => Math.abs(m.total)), 1) * 100, 100)}%`,
-                        left: month.total >= 0 ? '0' : 'auto',
-                        right: month.total < 0 ? '0' : 'auto',
-                      }}
-                    />
-                  )}
+            <div key={month.month}>
+              <div className="flex items-center gap-3">
+                <span className="w-20 text-sm font-medium text-gray-700">
+                  {formatMonthYear(month.month).split(' ')[0]}
+                </span>
+                <div className="flex-1">
+                  <div className="relative h-8 rounded-lg bg-gray-100">
+                    {month.total !== 0 && (
+                      <div
+                        className={`absolute top-0 h-full rounded-lg ${
+                          month.total >= 0 ? 'bg-green-500' : 'bg-red-500'
+                        }`}
+                        style={{
+                          width: `${Math.min(Math.abs(month.total) / Math.max(...monthlyBreakdown.map(m => Math.abs(m.total)), 1) * 100, 100)}%`,
+                          left: month.total >= 0 ? '0' : 'auto',
+                          right: month.total < 0 ? '0' : 'auto',
+                        }}
+                      />
+                    )}
+                  </div>
                 </div>
+                <span className={`w-24 text-right text-sm font-semibold ${month.total >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {fmt(month.total)}
+                </span>
               </div>
-              <span className={`w-24 text-right text-sm font-semibold ${month.total >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {fmt(month.total)}
-              </span>
+              {/* Driver note for negative months */}
+              {month.driver && (
+                <p className="mt-1 ml-24 text-xs text-gray-500 italic">
+                  {month.driver}
+                </p>
+              )}
             </div>
           ))}
         </div>
       </div>
 
+      {/* Reconciliation Table */}
+      <div>
+        <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
+          How the numbers add up
+        </h3>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm border-collapse">
+            <thead>
+              <tr className="border-b border-gray-300">
+                <th className="text-left py-2 pr-3 font-semibold text-gray-700">Month</th>
+                <th className="text-right py-2 px-3 font-semibold text-gray-700">Cash & savings change</th>
+                <th className="text-right py-2 px-3 font-semibold text-gray-700">Debt change</th>
+                <th className="text-right py-2 px-3 font-semibold text-gray-700">Outside contributions</th>
+                <th className="text-right py-2 pl-3 font-semibold text-gray-700">Net savings</th>
+              </tr>
+            </thead>
+            <tbody>
+              {monthlyBreakdown.map((month) => (
+                <tr key={month.month} className="border-b border-gray-200">
+                  <td className="py-2 pr-3 text-gray-900">{formatMonthYear(month.month).split(' ')[0]}</td>
+                  <td className={`text-right py-2 px-3 ${month.netCashChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {fmt(month.netCashChange)}
+                  </td>
+                  <td className={`text-right py-2 px-3 ${month.netDebtChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {fmt(month.netDebtChange)}
+                  </td>
+                  <td className="text-right py-2 px-3 text-gray-900">
+                    {fmt(month.contributionsToOutside)}
+                  </td>
+                  <td className={`text-right py-2 pl-3 font-semibold ${month.total >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {fmt(month.total)}
+                  </td>
+                </tr>
+              ))}
+              {/* Monthly average row */}
+              <tr className="border-t-2 border-gray-400 bg-gray-50 font-semibold">
+                <td className="py-2 pr-3 text-gray-900">Monthly average</td>
+                <td className={`text-right py-2 px-3 ${monthlyAverage.netCashChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {fmt(monthlyAverage.netCashChange)}
+                </td>
+                <td className={`text-right py-2 px-3 ${monthlyAverage.netDebtChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {fmt(monthlyAverage.netDebtChange)}
+                </td>
+                <td className="text-right py-2 px-3 text-gray-900">
+                  {fmt(monthlyAverage.contributionsToOutside)}
+                </td>
+                <td className={`text-right py-2 pl-3 ${monthlyAverage.total >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {fmt(monthlyAverage.total)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {/* Cash Accounts Breakdown */}
-      {periodBreakdown.cashAccounts.length > 0 && (
+      {windowPeriodAccounts.cashAccounts.length > 0 && (
         <div>
           <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
             💵 Cash & Savings Accounts
           </h3>
+          <p className="mb-3 text-xs text-gray-500">Change over {windowLabel}</p>
           <div className="space-y-3">
-            {periodBreakdown.cashAccounts.map((acc, idx) => (
+            {windowPeriodAccounts.cashAccounts.map((acc, idx) => (
               <div key={idx} className="rounded-lg border border-gray-200 bg-white p-4">
                 <div className="mb-2 flex items-start justify-between">
                   <div>
@@ -661,13 +731,14 @@ function SavingsDrawerContent({
       )}
 
       {/* Debt Accounts Breakdown */}
-      {periodBreakdown.debtAccounts.length > 0 && (
+      {windowPeriodAccounts.debtAccounts.length > 0 && (
         <div>
           <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
             💳 Debt Accounts
           </h3>
+          <p className="mb-3 text-xs text-gray-500">Change over {windowLabel}</p>
           <div className="space-y-3">
-            {periodBreakdown.debtAccounts.map((acc, idx) => (
+            {windowPeriodAccounts.debtAccounts.map((acc, idx) => (
               <div key={idx} className="rounded-lg border border-gray-200 bg-white p-4">
                 <div className="mb-2 flex items-start justify-between">
                   <div>
@@ -706,42 +777,6 @@ function SavingsDrawerContent({
                       )}
                     </p>
                   </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Contributions to Outside Accounts */}
-      {periodBreakdown.contributions.length > 0 && (
-        <div>
-          <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
-            🏦 Contributions to Outside Accounts
-          </h3>
-          <div className="space-y-2">
-            {periodBreakdown.contributions.map((contrib, idx) => (
-              <div
-                key={idx}
-                className={`rounded-lg border p-3 ${
-                  contrib.needsConfirmation
-                    ? 'border-orange-300 bg-orange-50'
-                    : 'border-gray-200 bg-white'
-                }`}
-              >
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-gray-900">{contrib.merchant}</p>
-                    <p className="text-xs text-gray-500">{contrib.category}</p>
-                    {contrib.needsConfirmation && (
-                      <p className="mt-1 text-xs font-medium text-orange-600">
-                        ⚠️ Needs confirmation
-                      </p>
-                    )}
-                  </div>
-                  <span className="text-sm font-semibold text-gray-900">
-                    {fmt(contrib.amount)}
-                  </span>
                 </div>
               </div>
             ))}

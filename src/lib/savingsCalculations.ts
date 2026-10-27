@@ -566,7 +566,10 @@ export function computeWindowSavings(
     
     if (!endResult || !startResult) continue;
     
-    const change = endResult.balance - startResult.balance;
+    // For debt accounts, use absolute values so paydown is positive, borrowing is negative
+    const change = isDebt
+      ? Math.abs(startResult.balance) - Math.abs(endResult.balance)
+      : endResult.balance - startResult.balance;
     
     const detail: AccountBalanceDetail = {
       accountLabel: account.label,

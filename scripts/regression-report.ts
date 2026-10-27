@@ -17,7 +17,7 @@ import { getFirebaseAdmin } from "../src/lib/firebase-admin";
 import { getFinancialProfile } from "../src/lib/financialProfile";
 import { computeMoneyCoachBreakdown } from "../src/lib/moneyCoach";
 import { computeBucketBreakdown } from "../src/lib/bucketBreakdown";
-import { computeAverageSavings, computeMonthlySavings } from "../src/lib/savingsCalculations";
+import { computeAverageSavings, computeMonthlySavings, computeWindowSavings } from "../src/lib/savingsCalculations";
 import { buildIncomeSummary } from "../src/lib/incomeSummary";
 import type { MoneyCoachBucket } from "../src/lib/moneyCoachBuckets";
 import type { DebtPaymentReview } from "../src/lib/types";
@@ -130,19 +130,66 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         completeMonths
       );
       
-      // Get cash/debt/contributions breakdown for display
-      const lastMonth = completeMonths[completeMonths.length - 1];
-      const monthlySavings = computeMonthlySavings(
+      // Get window reconciliation breakdown
+      const windowSavings = computeWindowSavings(
         profile.monthlyHistory,
         profile.accountBalanceHistory,
         profile.expenseTxns,
-        lastMonth
+        completeMonths
       );
       
+      // Verify reconciliation: components sum to total for each month
+      let hasReconciliationError = false;
+      for (const month of windowSavings.monthlyBreakdown) {
+        const sum = month.netCashChange + month.netDebtChange + month.contributionsToOutside;
+        const diff = Math.abs(sum - month.total);
+        if (diff > 0.01) { // Allow 1 cent rounding
+          hasReconciliationError = true;
+          console.error(`❌ RECONCILIATION ERROR for ${month.month}:`);
+          console.error(`   Cash + Debt + Contributions = ${formatCurrency(sum, currency)}`);
+          console.error(`   Total = ${formatCurrency(month.total, currency)}`);
+          console.error(`   Difference = ${formatCurrency(diff, currency)}\n`);
+        }
+      }
+      
+      // Verify monthly average matches mean
+      const meanTotal = windowSavings.monthlyBreakdown.reduce((s, m) => s + m.total, 0) / completeMonths.length;
+      if (Math.abs(meanTotal - windowSavings.monthlyAverage.total) > 0.01) {
+        hasReconciliationError = true;
+        console.error(`❌ MONTHLY AVERAGE MISMATCH:`);
+        console.error(`   Mean of monthly totals = ${formatCurrency(meanTotal, currency)}`);
+        console.error(`   Reported average = ${formatCurrency(windowSavings.monthlyAverage.total, currency)}\n`);
+      }
+      
+      // Verify account changes sum to components
+      const totalCashFromMonths = windowSavings.monthlyBreakdown.reduce((s, m) => s + m.netCashChange, 0);
+      const totalCashFromAccounts = windowSavings.windowPeriodAccounts.cashAccounts.reduce((s, a) => s + a.change, 0);
+      if (Math.abs(totalCashFromMonths - totalCashFromAccounts) > 0.01) {
+        hasReconciliationError = true;
+        console.error(`❌ CASH ACCOUNT SUM MISMATCH:`);
+        console.error(`   Sum of monthly cash changes = ${formatCurrency(totalCashFromMonths, currency)}`);
+        console.error(`   Sum of account changes = ${formatCurrency(totalCashFromAccounts, currency)}\n`);
+      }
+      
+      const totalDebtFromMonths = windowSavings.monthlyBreakdown.reduce((s, m) => s + m.netDebtChange, 0);
+      const totalDebtFromAccounts = windowSavings.windowPeriodAccounts.debtAccounts.reduce((s, a) => s + a.change, 0);
+      if (Math.abs(totalDebtFromMonths - totalDebtFromAccounts) > 0.01) {
+        hasReconciliationError = true;
+        console.error(`❌ DEBT ACCOUNT SUM MISMATCH:`);
+        console.error(`   Sum of monthly debt changes = ${formatCurrency(totalDebtFromMonths, currency)}`);
+        console.error(`   Sum of account changes = ${formatCurrency(totalDebtFromAccounts, currency)}\n`);
+      }
+      
+      if (hasReconciliationError) {
+        console.error("❌ Savings reconciliation failed\n");
+        process.exit(1);
+      }
+      
+      // Store reconciliation for display
       categories = [
-        { name: "Cash change", amount: monthlySavings.netCashChange },
-        { name: "Debt paydown", amount: monthlySavings.netDebtChange },
-        { name: "Outside contributions", amount: monthlySavings.contributionsToOutside },
+        { name: "Cash change", amount: windowSavings.monthlyAverage.netCashChange },
+        { name: "Debt paydown", amount: windowSavings.monthlyAverage.netDebtChange },
+        { name: "Outside contributions", amount: windowSavings.monthlyAverage.contributionsToOutside },
       ].filter(c => Math.abs(c.amount) > 0.5);
     } else {
       // Other buckets use category breakdown
@@ -214,9 +261,44 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     }
     
     if (report.categories && report.categories.length > 0) {
-      console.log(`\n   Categories:`);
+      console.log(`\n   Monthly Average Components:`);
       for (const cat of report.categories) {
         console.log(`     ${cat.name.padEnd(30)} ${formatCurrency(cat.amount, currency)}`);
+      }
+      
+      // For savings, also print the reconciliation table
+      if (report.bucket === "savings") {
+        console.log(`\n   Per-Month Reconciliation:`);
+        console.log(`     Month      Cash Change   Debt Change   Contributions   Net Savings`);
+        console.log(`     ${"─".repeat(75)}`);
+        
+        // Get the window data again for display
+        const windowSavings = computeWindowSavings(
+          profile.monthlyHistory,
+          profile.accountBalanceHistory,
+          profile.expenseTxns,
+          completeMonths
+        );
+        
+        for (const month of windowSavings.monthlyBreakdown) {
+          const monthLabel = month.month.split('-')[1]; // Just the month number
+          console.log(
+            `     ${monthLabel.padEnd(10)} ` +
+            `${formatCurrency(month.netCashChange, currency).padStart(12)}  ` +
+            `${formatCurrency(month.netDebtChange, currency).padStart(12)}  ` +
+            `${formatCurrency(month.contributionsToOutside, currency).padStart(12)}  ` +
+            `${formatCurrency(month.total, currency).padStart(12)}`
+          );
+        }
+        
+        console.log(`     ${"─".repeat(75)}`);
+        console.log(
+          `     Avg       ` +
+          `${formatCurrency(windowSavings.monthlyAverage.netCashChange, currency).padStart(12)}  ` +
+          `${formatCurrency(windowSavings.monthlyAverage.netDebtChange, currency).padStart(12)}  ` +
+          `${formatCurrency(windowSavings.monthlyAverage.contributionsToOutside, currency).padStart(12)}  ` +
+          `${formatCurrency(windowSavings.monthlyAverage.total, currency).padStart(12)}`
+        );
       }
     }
     
