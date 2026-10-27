@@ -1,41 +1,21 @@
 /**
  * Unified Spending Data Layer — single source of truth for all spending computations.
  * 
+ * CRITICAL: Uses the SAME bucket classification as dashboard (getCategoryBucket from moneyCoachBuckets.ts)
+ * to ensure spending page totals exactly match dashboard card averages.
+ * 
  * Used by:
  * - Spending page (all 5 tabs)
  * - Dashboard Fixed/Essentials/Flexible cards/drawers
  * - Spending API routes
- * 
- * Handles:
- * - Bucket classification (Fixed/Essentials/Flexible)
- * - Category aggregation
- * - Merchant clustering
- * - Monthly history with trends
- * - Subscription detection (separate function)
- * - Annual charge normalization
  */
 
 import type { ExpenseTxnRecord } from "./extractTransactions";
-import { getParentCategory, CATEGORY_TAXONOMY } from "./categoryTaxonomy";
+import { getParentCategory } from "./categoryTaxonomy";
+import { getCategoryBucket, type MoneyCoachBucket } from "./moneyCoachBuckets";
 import { isCoreExcluded } from "./spendingMetrics";
 import { merchantSlug } from "./applyRules";
 import { getLastCompleteMonth } from "./monthAnchor";
-
-// Bucket classification
-export type SpendingBucket = "fixed" | "essentials" | "flexible";
-
-export function getBucket(category: string): SpendingBucket {
-  const parent = getParentCategory(category);
-  
-  // Fixed: Subscriptions, recurring bills, debt payments
-  if (parent === "Subscriptions" || parent === "Fees") return "fixed";
-  
-  // Essentials: Groceries, Healthcare, Transportation
-  if (parent === "Groceries" || parent === "Healthcare" || parent === "Transportation") return "essentials";
-  
-  // Flexible: Everything else (Dining, Shopping, Entertainment, etc.)
-  return "flexible";
-}
 
 export interface SpendingTransaction {
   date: string;
@@ -52,7 +32,7 @@ export interface MerchantSummary {
   merchant: string;
   merchantSlug: string;
   category: string;
-  bucket: SpendingBucket;
+  bucket: MoneyCoachBucket;
   total: number;
   count: number;
   transactions: SpendingTransaction[];
@@ -66,7 +46,7 @@ export interface MerchantSummary {
 
 export interface CategorySummary {
   category: string;
-  bucket: SpendingBucket;
+  bucket: MoneyCoachBucket;
   total: number;
   count: number;
   merchants: MerchantSummary[];
@@ -86,11 +66,11 @@ export interface MonthlySpendingSummary {
   /** Flexible bucket total */
   flexible: number;
   /** Per-category breakdown */
-  categories: Array<{ category: string; amount: number; bucket: SpendingBucket }>;
+  categories: Array<{ category: string; amount: number; bucket: MoneyCoachBucket }>;
 }
 
 export interface BucketSummary {
-  bucket: SpendingBucket;
+  bucket: MoneyCoachBucket;
   total: number;
   share: number;
   categories: CategorySummary[];
@@ -106,8 +86,10 @@ export interface SpendingSummary {
   currentMonth: string;
   /** Last complete month (YYYY-MM) */
   lastCompleteMonth: string;
-  /** Typical monthly spending (median of last 3 complete months) */
+  /** Typical monthly spending (average of last 3 complete months) */
   typicalMonthly: number;
+  /** Last 3 complete months totals */
+  last3MonthTotals: number[];
   /** Last complete month total */
   lastMonthTotal: number;
   /** Change vs typical (absolute) */
@@ -118,7 +100,7 @@ export interface SpendingSummary {
   monthlyHistory: MonthlySpendingSummary[];
   /** Last 3 complete months */
   last3Months: string[];
-  /** Bucket summaries for last complete month */
+  /** Bucket summaries for LAST 3 COMPLETE MONTHS (3-month average, matching dashboard) */
   buckets: BucketSummary[];
   /** All categories across all time */
   categories: CategorySummary[];
@@ -192,7 +174,7 @@ export function buildSpendingSummary(
   expenseTxns: ExpenseTxnRecord[],
   currency: string = "CAD"
 ): SpendingSummary {
-  // Filter out excluded categories
+  // Filter out excluded categories (transfers, etc.)
   const validTxns = expenseTxns.filter(t => !isCoreExcluded(t.category));
   
   // Get time windows
@@ -217,16 +199,18 @@ export function buildSpendingSummary(
       const amt = Math.abs(t.amount);
       categoryTotals.set(t.category, (categoryTotals.get(t.category) || 0) + amt);
       
-      const bucket = getBucket(t.category);
+      // Use dashboard bucket classification
+      const bucket = getCategoryBucket(t.category);
       if (bucket === "fixed") fixed += amt;
       else if (bucket === "essentials") essentials += amt;
-      else flexible += amt;
+      else if (bucket === "flexible") flexible += amt;
+      // Note: "savings" bucket (Investments & Savings) is excluded by isCoreExcluded
     });
     
     const categories = Array.from(categoryTotals.entries()).map(([category, amount]) => ({
       category,
       amount,
-      bucket: getBucket(category)
+      bucket: getCategoryBucket(category)
     }));
     
     return {
@@ -241,12 +225,13 @@ export function buildSpendingSummary(
   
   // Last 3 complete months
   const last3Months = last12Months.slice(-3);
+  const last3Data = monthlyHistory.slice(-3);
   
-  // Typical monthly (median of last 3)
-  const last3Totals = monthlyHistory.slice(-3).map(m => m.total);
-  const typicalMonthly = last3Totals.length >= 3
-    ? last3Totals.sort((a, b) => a - b)[1]
-    : last3Totals.reduce((a, b) => a + b, 0) / last3Totals.length;
+  // Typical monthly = AVERAGE of last 3 (matching dashboard definition)
+  const last3Totals = last3Data.map(m => m.total);
+  const typicalMonthly = last3Totals.length > 0
+    ? last3Totals.reduce((a, b) => a + b, 0) / last3Totals.length
+    : 0;
   
   // Last month stats
   const lastMonthData = monthlyHistory.find(m => m.yearMonth === lastCompleteMonth);
@@ -263,7 +248,7 @@ export function buildSpendingSummary(
         merchant: t.merchant,
         merchantSlug: slug,
         category: t.category,
-        bucket: getBucket(t.category),
+        bucket: getCategoryBucket(t.category),
         total: 0,
         count: 0,
         transactions: [],
@@ -304,7 +289,7 @@ export function buildSpendingSummary(
     if (!categoryMap.has(m.category)) {
       categoryMap.set(m.category, {
         category: m.category,
-        bucket: m.bucket,
+        bucket: getCategoryBucket(m.category),
         total: 0,
         count: 0,
         merchants: [],
@@ -328,29 +313,34 @@ export function buildSpendingSummary(
   // Top categories
   const topCategories = [...categories].sort((a, b) => b.total - a.total).slice(0, 5);
   
-  // Bucket summaries for last complete month
-  const lastMonthTxns = validTxns.filter(t => t.txMonth === lastCompleteMonth);
-  const bucketMap = new Map<SpendingBucket, BucketSummary>();
+  // Bucket summaries for LAST 3 MONTHS (3-month average to match dashboard)
+  const bucketMap = new Map<MoneyCoachBucket, BucketSummary>();
   
   ["fixed", "essentials", "flexible"].forEach(b => {
-    bucketMap.set(b as SpendingBucket, {
-      bucket: b as SpendingBucket,
+    bucketMap.set(b as MoneyCoachBucket, {
+      bucket: b as MoneyCoachBucket,
       total: 0,
       share: 0,
       categories: []
     });
   });
   
-  lastMonthTxns.forEach(t => {
-    const bucket = getBucket(t.category);
-    bucketMap.get(bucket)!.total += Math.abs(t.amount);
+  // Average buckets over last 3 months
+  last3Data.forEach(month => {
+    bucketMap.get("fixed")!.total += month.fixed;
+    bucketMap.get("essentials")!.total += month.essentials;
+    bucketMap.get("flexible")!.total += month.flexible;
   });
   
   const buckets = Array.from(bucketMap.values());
-  const lastMonthBucketTotal = buckets.reduce((sum, b) => sum + b.total, 0);
   buckets.forEach(b => {
-    b.share = lastMonthBucketTotal > 0 ? b.total / lastMonthBucketTotal : 0;
+    b.total = b.total / Math.max(1, last3Data.length); // Average over 3 months
     b.categories = categories.filter(c => c.bucket === b.bucket);
+  });
+  
+  const bucketTotal = buckets.reduce((sum, b) => sum + b.total, 0);
+  buckets.forEach(b => {
+    b.share = bucketTotal > 0 ? b.total / bucketTotal : 0;
   });
   
   // Build summary object (without insights first)
@@ -358,6 +348,7 @@ export function buildSpendingSummary(
     currentMonth,
     lastCompleteMonth,
     typicalMonthly,
+    last3MonthTotals: last3Totals,
     lastMonthTotal,
     vsTypical,
     vsTypicalPct,

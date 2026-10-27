@@ -147,29 +147,83 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   }
   
   // Verify spending buckets match dashboard cards for last 3 months
+  console.log(`💵 Spending Buckets vs Dashboard (3-month average):`);
   const spendingBuckets = ["fixed", "essentials", "flexible"] as const;
+  let hasBucketMismatch = false;
+  
   for (const bucket of spendingBuckets) {
     const dashboardBucket = breakdown.buckets.find(b => b.bucket === bucket);
     const spendingBucket = spendingSummary.buckets.find(b => b.bucket === bucket);
     
     if (dashboardBucket && spendingBucket) {
-      // Dashboard card uses average of last 3 months from Money Coach
-      // Spending summary shows last complete month only
-      // We verify consistency by checking that the bucket exists in both
-      console.log(`   ${bucket}: Dashboard avg = ${formatCurrency(dashboardBucket.monthlyAverage, currency)}, Last month = ${formatCurrency(spendingBucket.total, currency)}`);
+      const dashboardAvg = dashboardBucket.monthlyAverage;
+      const spendingAvg = spendingBucket.total; // Already 3-month average
+      const diff = Math.abs(dashboardAvg - spendingAvg);
+      const match = diff < 1.0; // Within $1
+      
+      console.log(`   ${bucket}: Dashboard = ${formatCurrency(dashboardAvg, currency)}, Spending page = ${formatCurrency(spendingAvg, currency)} ${match ? "✓" : `✗ (diff: ${formatCurrency(diff, currency)})`}`);
+      
+      if (!match) {
+        hasBucketMismatch = true;
+      }
     }
   }
-  console.log();
+  
+  if (hasBucketMismatch) {
+    console.error("\n❌ BUCKET MISMATCH: Spending page buckets don't match dashboard cards\n");
+    process.exit(1);
+  }
+  
+  console.log(`✅ Spending buckets match dashboard cards\n`);
+  
+  // Verify typical monthly matches bucket sum
+  const bucketSum = spendingSummary.buckets.reduce((s, b) => s + b.total, 0);
+  const typicalDiff = Math.abs(spendingSummary.typicalMonthly - bucketSum);
+  if (typicalDiff > 1.0) {
+    console.error(`❌ TYPICAL MONTHLY MISMATCH:`);
+    console.error(`   Typical monthly = ${formatCurrency(spendingSummary.typicalMonthly, currency)}`);
+    console.error(`   Bucket sum = ${formatCurrency(bucketSum, currency)}`);
+    console.error(`   Difference = ${formatCurrency(typicalDiff, currency)}\n`);
+    process.exit(1);
+  }
   
   // Test subscriptions
-  const subscriptionSummary = buildSubscriptionSummary(profile.expenseTxns, currency);
+  const subscriptionSummary = buildSubscriptionSummary(profile.expenseTxns, currency, spendingSummary.typicalMonthly);
   
   console.log(`🔄 Subscriptions (buildSubscriptionSummary):`);
   console.log(`   Active subscriptions: ${subscriptionSummary.activeCount}`);
   console.log(`   Monthly total: ${formatCurrency(subscriptionSummary.monthlyTotal, currency)}`);
   console.log(`   Yearly total: ${formatCurrency(subscriptionSummary.yearlyTotal, currency)}`);
   console.log(`   New subscriptions: ${subscriptionSummary.newCount}`);
-  console.log(`   Price increases: ${subscriptionSummary.priceIncreaseCount}\n`);
+  console.log(`   Price increases: ${subscriptionSummary.priceIncreaseCount}`);
+  
+  if (subscriptionSummary.ambiguous.length > 0) {
+    console.log(`   Ambiguous (need review): ${subscriptionSummary.ambiguous.length}`);
+  }
+  
+  // Check sanity failures
+  if (subscriptionSummary.sanityCheckFailures.length > 0) {
+    console.error(`\n❌ SUBSCRIPTION SANITY CHECK FAILED:`);
+    subscriptionSummary.sanityCheckFailures.forEach(f => console.error(`   • ${f}`));
+    console.error();
+    process.exit(1);
+  }
+  
+  // Additional sanity: subscriptions should be reasonable
+  const subPct = (subscriptionSummary.monthlyTotal / spendingSummary.typicalMonthly) * 100;
+  console.log(`   Subscriptions as % of spending: ${subPct.toFixed(1)}%`);
+  
+  if (subscriptionSummary.activeCount > 30) {
+    console.error(`\n❌ Too many subscriptions: ${subscriptionSummary.activeCount} (max 30)\n`);
+    process.exit(1);
+  }
+  
+  if (subPct > 10) {
+    console.error(`\n❌ Subscriptions too high: ${subPct.toFixed(1)}% of spending (max 10%)\n`);
+    process.exit(1);
+  }
+  
+  console.log(`✅ Subscription detection passed sanity checks\n`);
   
   // Check for pending savings reviews
   const savingsReviewsSnap = await db

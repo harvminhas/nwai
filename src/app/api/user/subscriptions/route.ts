@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { buildSubscriptionSummary } from "@/lib/subscriptionEngine";
+import { buildSpendingSummary } from "@/lib/spendingSummary";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +21,27 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const decoded = await auth.verifyIdToken(token);
 
     const profile = await getFinancialProfile(decoded.uid, db);
-    const summary = buildSubscriptionSummary(profile.expenseTxns, profile.homeCurrency);
+    
+    // Get total spending for sanity check
+    const spendingSummary = buildSpendingSummary(profile.expenseTxns, profile.homeCurrency);
+    
+    const summary = buildSubscriptionSummary(
+      profile.expenseTxns,
+      profile.homeCurrency,
+      spendingSummary.typicalMonthly
+    );
+
+    // If sanity checks fail, return error
+    if (summary.sanityCheckFailures.length > 0) {
+      console.error("Subscription sanity checks failed:", summary.sanityCheckFailures);
+      return NextResponse.json(
+        { 
+          error: "Subscription detection validation failed",
+          details: summary.sanityCheckFailures 
+        },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json(summary);
   } catch (error) {
