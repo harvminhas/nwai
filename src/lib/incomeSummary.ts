@@ -481,7 +481,17 @@ export function buildIncomeSummary(
         // Check if this is a large refund that needs review
         const sourceLower = txn.source.toLowerCase();
         const isRefund = sourceLower.includes('refund') || sourceLower.includes('rebate') || sourceLower.includes('reversal');
-        const isLargeRefund = isRefund && (txn.amount > 1000 || txn.amount > typicalMonthly * 0.5);
+        
+        // Calculate source's typical amount for threshold comparison (only for multi-transaction sources)
+        const sourceMedianAmount = (() => {
+          const amounts = source.transactions.map(t => t.amount).sort((a, b) => a - b);
+          if (amounts.length < 2) return 0; // Need multiple transactions to establish "typical"
+          const mid = Math.floor(amounts.length / 2);
+          return amounts.length % 2 !== 0 ? amounts[mid] : (amounts[mid - 1] + amounts[mid]) / 2;
+        })();
+        
+        // Large refund: >$1K OR (>50% of source's typical AND source has established pattern)
+        const isLargeRefund = isRefund && (txn.amount > 1000 || (sourceMedianAmount > 0 && txn.amount > sourceMedianAmount * 0.5));
         
         // Only flag as unusual if from a regular source AND detected as outlier
         const isUnusual = shouldCheckForUnusual && withinSourceOneOffs.has(txnKey);
