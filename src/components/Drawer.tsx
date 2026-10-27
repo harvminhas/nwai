@@ -732,29 +732,41 @@ function SavingsDrawerContent({
                         {/* Account Cards - Expandable */}
                         {isCategoryExpanded(month.month, 'cash') && (
                           <div className="space-y-2 mt-2">
-                            {month.accounts.cashAccounts.map((acc) => (
-                              <div key={acc.slug} className="bg-white rounded p-2 text-xs border border-gray-200">
-                                <div className="flex items-start justify-between mb-1">
-                                  <div>
-                                    <span className="font-medium text-gray-900">{acc.accountLabel.split(' (')[0]}</span>
-                                    <span className="text-gray-500 ml-1">(...{acc.accountLast4})</span>
-                                    {(acc.priorCarriedForward || acc.currentCarriedForward) && (
-                                      <span className="ml-2 text-orange-600 font-semibold" title="Balance carried forward from earlier month">
-                                        [CF]
-                                      </span>
-                                    )}
+                            {month.accounts.cashAccounts.map((acc) => {
+                              // Determine which month is missing
+                              const missingMonth = acc.priorCarriedForward 
+                                ? formatMonthYear(month.month).split(' ')[0] // Prior month missing
+                                : acc.currentCarriedForward
+                                  ? formatMonthYear(month.month).split(' ')[0] // Current month missing
+                                  : null;
+                              
+                              return (
+                                <div key={acc.slug} className="bg-white rounded p-2 text-xs border border-gray-200">
+                                  <div className="flex items-start justify-between mb-1">
+                                    <div>
+                                      <span className="font-medium text-gray-900">{acc.accountLabel.split(' (')[0]}</span>
+                                      <span className="text-gray-500 ml-1">(...{acc.accountLast4})</span>
+                                      {missingMonth && (
+                                        <span 
+                                          className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600" 
+                                          title="No statement uploaded for this month, so the last known balance is used. Upload it to include this account's change."
+                                        >
+                                          No {missingMonth} statement
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span className={`font-semibold whitespace-nowrap ${getSignColor(acc.change)}`}>
+                                      {fmtChange(acc.change)}
+                                    </span>
                                   </div>
-                                  <span className={`font-semibold whitespace-nowrap ${getSignColor(acc.change)}`}>
-                                    {fmtChange(acc.change)}
-                                  </span>
+                                  <div className="flex gap-4 text-gray-600">
+                                    <span>Prior: {fmt(acc.priorBalance)}</span>
+                                    <span>→</span>
+                                    <span>Current: {fmt(acc.currentBalance)}</span>
+                                  </div>
                                 </div>
-                                <div className="flex gap-4 text-gray-600">
-                                  <span>Prior: {fmt(acc.priorBalance)}</span>
-                                  <span>→</span>
-                                  <span>Current: {fmt(acc.currentBalance)}</span>
-                                </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                       </div>
@@ -802,15 +814,25 @@ function SavingsDrawerContent({
                               const isPaidDown = acc.change > 0;
                               const isBorrowing = acc.change < 0;
                               
+                              // Determine which month is missing
+                              const missingMonth = acc.priorCarriedForward 
+                                ? formatMonthYear(month.month).split(' ')[0] // Prior month missing
+                                : acc.currentCarriedForward
+                                  ? formatMonthYear(month.month).split(' ')[0] // Current month missing
+                                  : null;
+                              
                               return (
                                 <div key={acc.slug} className="bg-white rounded p-2 text-xs border border-gray-200">
                                   <div className="flex items-start justify-between mb-1">
                                     <div>
                                       <span className="font-medium text-gray-900">{acc.accountLabel.split(' (')[0]}</span>
                                       <span className="text-gray-500 ml-1">(...{acc.accountLast4})</span>
-                                      {(acc.priorCarriedForward || acc.currentCarriedForward) && (
-                                        <span className="ml-2 text-orange-600 font-semibold" title="Balance carried forward from earlier month">
-                                          [CF]
+                                      {missingMonth && (
+                                        <span 
+                                          className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600" 
+                                          title="No statement uploaded for this month, so the last known balance is used. Upload it to include this account's change."
+                                        >
+                                          No {missingMonth} statement
                                         </span>
                                       )}
                                     </div>
