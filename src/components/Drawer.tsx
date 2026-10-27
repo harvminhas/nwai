@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { DrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
+import { formatMonthYear } from "@/lib/dateFormatting";
 
 export type DrawerType = "income" | "fixed" | "essentials" | "flexible" | "savings";
 
@@ -584,8 +585,8 @@ function SavingsDrawerContent({
         <div className="space-y-2">
           {monthlyBreakdown.map((month) => (
             <div key={month.month} className="flex items-center gap-3">
-              <span className="w-16 text-sm font-medium text-gray-700">
-                {month.month.substring(5)}
+              <span className="w-20 text-sm font-medium text-gray-700">
+                {formatMonthYear(month.month).split(' ')[0]}
               </span>
               <div className="flex-1">
                 <div className="relative h-8 rounded-lg bg-gray-100">
