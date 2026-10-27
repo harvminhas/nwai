@@ -74,12 +74,23 @@ function average(values: number[]): number {
  */
 export function computeMoneyCoachBreakdown(
   profile: FinancialProfileCache,
-  userReviews: DebtPaymentReview[] = []
+  userReviews: DebtPaymentReview[] = [],
+  incomeTxns: any[] = [],
+  accountSnapshots: any[] = [],
+  homeCurrency: string = "CAD",
+  incomeDepositReviews: Map<string, string> = new Map()
 ): MoneyCoachBreakdown {
-  const { monthlyHistory, expenseTxns, coverage, accountSnapshots, accountBalanceHistory, fxRates, homeCurrency } = profile;
+  const { monthlyHistory, expenseTxns, coverage, debtPaymentHistory, accountBalanceHistory, fxRates } = profile;
 
-  // Compute income using shared function (matches Income page logic)
-  const { amount: incomeAmount, basisLabel: incomeBasisLabel } = getMoneyCoachIncome(monthlyHistory);
+  // Compute income using shared function (matches Income page and drawer logic)
+  // Uses buildIncomeSummary to ensure consistency - returns REGULAR + BONUS income (excludes only "not_income")
+  const { amount: incomeAmount, basisLabel: incomeBasisLabel, bonusAmount } = getMoneyCoachIncome(
+    monthlyHistory,
+    incomeTxns,
+    accountSnapshots,
+    homeCurrency,
+    incomeDepositReviews
+  );
 
   // Determine which months to use for spending (same window as income)
   // Exclude current incomplete month (matches incomeMetrics.ts and bucketBreakdown.ts logic)

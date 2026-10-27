@@ -12,6 +12,7 @@
 import type { MonthlyHistoryEntry } from "./financialProfile";
 import type { IncomeTxnRecord } from "./extractTransactions";
 import { getLastCompleteMonth, getCurrentMonth } from "./monthAnchor";
+import { buildIncomeSummary } from "./incomeSummary";
 
 export type IncomeTimeWindow = "last3" | "12month" | "ytd";
 
@@ -48,6 +49,18 @@ export interface DetailedIncomeMetrics extends IncomeMetrics {
   regularSources: IncomeSource[];
   /** One-off income (bonuses, unusual amounts) */
   oneOffSources: IncomeSource[];
+  /** Transaction-level source groups for the selected window period */
+  sourcesList?: Array<{
+    source: string;
+    total: number;
+    transactions: Array<{
+      date: string;
+      amount: number;
+      accountSlug: string;
+      isBonus: boolean;
+      needsReview: boolean;
+    }>;
+  }>;
   /** Year-to-date total (regular + one-off) */
   ytdTotal: number;
   /** Year-to-date regular only */
@@ -400,14 +413,27 @@ export function computeDetailedIncomeMetrics(
  * Get income value to use for money coach calculations.
  * Returns current run-rate (recent 3 months) when available,
  * otherwise falls back to overall average.
+ * 
+ * Uses buildIncomeSummary to ensure consistency with Income page and drawers.
+ * Returns REGULAR + BONUS income (excludes only "not_income" classifications).
  */
-export function getMoneyCoachIncome(monthlyHistory: MonthlyHistoryEntry[]): {
+export function getMoneyCoachIncome(
+  monthlyHistory: MonthlyHistoryEntry[],
+  incomeTxns: IncomeTxnRecord[],
+  accountSnapshots: any[],
+  homeCurrency: string = "CAD",
+  incomeDepositReviews: Map<string, string> = new Map()
+): {
   amount: number;
   basisLabel: string;
+  bonusAmount: number;
 } {
-  const metrics = computeIncomeMetrics(monthlyHistory, true);
+  // Use buildIncomeSummary (same as Income page and drawer) for consistency
+  const summary = buildIncomeSummary(incomeTxns, accountSnapshots, homeCurrency, incomeDepositReviews);
+  
   return {
-    amount: metrics.currentMonthly,
-    basisLabel: metrics.currentBasisLabel,
+    amount: summary.typicalMonthly,  // Regular + bonus income, last 3 complete months average
+    basisLabel: summary.last3Months.length === 3 ? "last 3 months" : `${summary.last3Months.length}-month avg`,
+    bonusAmount: summary.last3MonthsBonus,
   };
 }

@@ -20,6 +20,14 @@ export function SourcesTab({ summary, token, onUpdate }: SourcesTabProps) {
   const [newSourceName, setNewSourceName] = useState("");
   const [saving, setSaving] = useState(false);
   
+  // Build sets for quick lookup of bonus and unreviewed transactions
+  const bonusTxnIds = new Set(
+    summary.bonusTransactions.map(t => `${t.date}:${t.source}:${t.amount}:${t.accountSlug || 'unknown'}`)
+  );
+  const unreviewedTxnIds = new Set(
+    summary.unreviewedDeposits.map(d => d.txId)
+  );
+  
   const toggleSource = (sourceName: string) => {
     setExpandedSources(prev => {
       const next = new Set(prev);
@@ -180,6 +188,8 @@ export function SourcesTab({ summary, token, onUpdate }: SourcesTabProps) {
               newName={editingSource === source.description ? newSourceName : ""}
               onNameChange={setNewSourceName}
               saving={saving}
+              bonusTxnIds={bonusTxnIds}
+              unreviewedTxnIds={unreviewedTxnIds}
             />
           ))}
           
@@ -221,6 +231,8 @@ export function SourcesTab({ summary, token, onUpdate }: SourcesTabProps) {
                 newName={editingSource === source.description ? newSourceName : ""}
                 onNameChange={setNewSourceName}
                 saving={saving}
+                bonusTxnIds={bonusTxnIds}
+                unreviewedTxnIds={unreviewedTxnIds}
               />
             ))}
           </div>
@@ -257,6 +269,8 @@ export function SourcesTab({ summary, token, onUpdate }: SourcesTabProps) {
                 newName={editingSource === source.description ? newSourceName : ""}
                 onNameChange={setNewSourceName}
                 saving={saving}
+                bonusTxnIds={bonusTxnIds}
+                unreviewedTxnIds={unreviewedTxnIds}
               />
             ))}
           </div>
@@ -347,6 +361,8 @@ interface SourceRowProps {
   newName: string;
   onNameChange: (name: string) => void;
   saving: boolean;
+  bonusTxnIds: Set<string>;
+  unreviewedTxnIds: Set<string>;
 }
 
 function SourceRow({
@@ -364,7 +380,9 @@ function SourceRow({
   onCancelEdit,
   newName,
   onNameChange,
-  saving
+  saving,
+  bonusTxnIds,
+  unreviewedTxnIds
 }: SourceRowProps) {
   const [showActions, setShowActions] = useState(false);
   
@@ -506,19 +524,35 @@ function SourceRow({
           <div className="divide-y divide-gray-100">
             {visibleTransactions
               .sort((a, b) => b.date.localeCompare(a.date))
-              .map((txn, i) => (
-                <div key={i} className="px-6 py-2 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs text-gray-500 w-20">{formatDate(txn.date)}</span>
-                    {txn.accountLabel && (
-                      <span className="text-xs text-gray-400">{txn.accountLabel}</span>
-                    )}
+              .map((txn, i) => {
+                const txnId = `${txn.date}:${txn.source}:${txn.amount}:${txn.accountSlug || 'unknown'}`;
+                const isBonus = bonusTxnIds.has(txnId);
+                const needsReview = unreviewedTxnIds.has(txnId);
+                
+                return (
+                  <div key={i} className="px-6 py-2 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-gray-500 w-20">{formatDate(txn.date)}</span>
+                      {txn.accountLabel && (
+                        <span className="text-xs text-gray-400">{txn.accountLabel}</span>
+                      )}
+                      {isBonus && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 uppercase tracking-wide">
+                          Bonus
+                        </span>
+                      )}
+                      {needsReview && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-orange-50 text-orange-700 uppercase tracking-wide">
+                          Needs review
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-sm font-semibold text-green-600 tabular-nums">
+                      +{formatCurrency(txn.amount, currency)}
+                    </span>
                   </div>
-                  <span className="text-sm font-semibold text-green-600 tabular-nums">
-                    +{formatCurrency(txn.amount, currency)}
-                  </span>
-                </div>
-              ))}
+                );
+              })}
           </div>
         </div>
       )}

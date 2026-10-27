@@ -34,7 +34,24 @@ export async function GET(req: NextRequest) {
       reviewedAt: doc.get("reviewedAt"),
     }));
 
-    const breakdown = computeMoneyCoachBreakdown(profile, userReviews);
+    // Load income deposit reviews
+    const incomeReviewsSnap = await db
+      .collection(`users/${decoded.uid}/reviews`)
+      .where("type", "==", "income_deposit")
+      .get();
+    const incomeDepositReviews = new Map<string, string>();
+    incomeReviewsSnap.docs.forEach(doc => {
+      incomeDepositReviews.set(doc.id, doc.get("classification"));
+    });
+
+    const breakdown = computeMoneyCoachBreakdown(
+      profile, 
+      userReviews, 
+      profile.incomeTxns, 
+      profile.accountSnapshots, 
+      profile.homeCurrency || "CAD",
+      incomeDepositReviews
+    );
 
     return Response.json({
       ...breakdown,

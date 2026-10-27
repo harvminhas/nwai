@@ -46,14 +46,25 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       amount: doc.get("amount"),
       reviewedAt: doc.get("reviewedAt"),
     }));
+    
+    // Load income deposit reviews
+    const incomeReviewsSnap = await db
+      .collection(`users/${decoded.uid}/reviews`)
+      .where("type", "==", "income_deposit")
+      .get();
+    const incomeDepositReviews = new Map<string, string>();
+    incomeReviewsSnap.docs.forEach(doc => {
+      incomeDepositReviews.set(doc.id, doc.get("classification"));
+    });
 
     // Income drawer data
     if (bucket === "income") {
-      // Build income summary using unified data layer
+      // Build income summary using unified data layer with income deposit reviews
       const summary = buildIncomeSummary(
         profile.incomeTxns,
         profile.accountSnapshots,
-        profile.homeCurrency
+        profile.homeCurrency,
+        incomeDepositReviews
       );
       
       // Map to drawer data format
@@ -87,8 +98,8 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
         
         return {
           month: ym,
-          regularIncome: monthData?.regular || 0,
-          oneOffIncome: monthData?.oneOff || 0,
+          regularIncome: monthData?.total || 0, // Use total (regular + bonus) not just regular
+          oneOffIncome: monthData?.bonus || 0,  // Track bonus separately for reference
           isInWindow: windowMonths.includes(ym),
           isCurrentMonth: isCurrent,
           hasData: hasData && (monthData?.total || 0) > 0,
@@ -98,8 +109,75 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       // Build metrics compatible with existing drawer format
       const windowTotal = windowMonths.reduce((sum, ym) => {
         const monthData = summary.monthlyHistory.find(m => m.yearMonth === ym);
-        return sum + (monthData?.regular || 0);
+        return sum + (monthData?.total || 0); // Use total (regular + bonus + pending, excluding 'not_income')
       }, 0);
+      
+      // Build transaction-level source groups for the selected window
+      // Include ALL counted income (bonus included), exclude 'not_income' and transfers
+      const bonusTxnIds = new Set(summary.bonusTransactions.map(t => 
+        `${t.date}:${t.source}:${t.amount}:${t.accountSlug || 'unknown'}`
+      ));
+      const unreviewedTxnIds = new Set(summary.unreviewedDeposits.map(d => d.txId));
+      
+      // Filter transactions to window months
+      const windowTxns = profile.incomeTxns.filter(t => {
+        const txMonth = t.date.substring(0, 7); // "YYYY-MM"
+        return windowMonths.includes(txMonth);
+      });
+      
+      // Group by source
+      const sourceGroups = new Map<string, { 
+        source: string; 
+        total: number; 
+        transactions: Array<{
+          date: string;
+          amount: number;
+          accountSlug: string;
+          isBonus: boolean;
+          needsReview: boolean;
+        }>
+      }>();
+      
+      for (const txn of windowTxns) {
+        const txId = `${txn.date}:${txn.source}:${txn.amount}:${txn.accountSlug || 'unknown'}`;
+        const isBonus = bonusTxnIds.has(txId);
+        const needsReview = unreviewedTxnIds.has(txId);
+        
+        // Check if this transaction is classified as 'not_income'
+        const classification = incomeDepositReviews.get(txId);
+        if (classification === 'not_income') continue;
+        
+        // Find source info to check if it's a transfer
+        const sourceInfo = [...summary.regularSources, ...summary.oneOffSources]
+          .find(s => s.transactions.some(st => st.source === txn.source));
+        
+        // Skip transfers (both marked sources and transfer patterns)
+        if (sourceInfo?.isTransfer) continue;
+        // Also skip if source name matches transfer pattern (TFR-TO, SEND E-TFR, etc.)
+        if (/\bTFR[-\s]?(TO|FR|FROM)\b|\bE[-\s]?TFR\b|\bETFR\b|\bXFER\b|\bTRANSFER\b/i.test(txn.source)) continue;
+        
+        if (!sourceGroups.has(txn.source)) {
+          sourceGroups.set(txn.source, {
+            source: txn.source,
+            total: 0,
+            transactions: []
+          });
+        }
+        
+        const group = sourceGroups.get(txn.source)!;
+        group.total += txn.amount;
+        group.transactions.push({
+          date: txn.date,
+          amount: txn.amount,
+          accountSlug: txn.accountSlug || 'unknown',
+          isBonus,
+          needsReview
+        });
+      }
+      
+      // Convert to array and sort by total amount descending
+      const sourcesList = Array.from(sourceGroups.values())
+        .sort((a, b) => b.total - a.total);
       
       const metrics = {
         averageMonthly: summary.typicalMonthly,
@@ -111,6 +189,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
         windowAmount: Math.round(windowTotal / windowMonths.length),
         windowLabel: window === "last3" ? "last 3 months" : window === "ytd" ? "year-to-date" : "12-month avg",
         windowMonths,
+        sourcesList, // New: transaction-level source groups for the window
         regularSources: summary.regularSources.map(s => ({ 
           source: s.description, 
           category: s.category, 

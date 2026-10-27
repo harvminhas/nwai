@@ -27,11 +27,22 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // Load financial profile (single source of truth for transaction data)
     const profile = await getFinancialProfile(decoded.uid, db);
 
+    // Load income deposit reviews
+    const incomeReviewsSnap = await db
+      .collection(`users/${decoded.uid}/reviews`)
+      .where("type", "==", "income_deposit")
+      .get();
+    const incomeDepositReviews = new Map<string, string>();
+    incomeReviewsSnap.docs.forEach(doc => {
+      incomeDepositReviews.set(doc.id, doc.get("classification"));
+    });
+
     // Build income summary
     const summary = buildIncomeSummary(
       profile.incomeTxns,
       profile.accountSnapshots,
-      profile.homeCurrency
+      profile.homeCurrency,
+      incomeDepositReviews
     );
 
     return NextResponse.json(summary);

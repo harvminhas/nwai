@@ -60,14 +60,16 @@ export interface IncomeSource {
 export interface MonthlyIncomeSummary {
   /** YYYY-MM */
   yearMonth: string;
-  /** Total income (all sources) */
+  /** Total income (regular + bonus, excluding not_income) */
   total: number;
-  /** Regular income (excluding one-offs) */
+  /** Regular income */
   regular: number;
-  /** One-off income */
+  /** One-off income (for backwards compatibility - same as bonus now) */
   oneOff: number;
+  /** Bonus income (unusual deposits classified as bonus or unreviewed) */
+  bonus: number;
   /** Per-source breakdown */
-  sources: { source: string; amount: number; isOneOff: boolean }[];
+  sources: { source: string; amount: number; isOneOff: boolean; isBonus?: boolean }[];
 }
 
 export interface IncomeComparison {
@@ -99,13 +101,17 @@ export interface IncomeSummary {
   currentMonthRegular: number;
   /** Current month one-off only */
   currentMonthOneOff: number;
+  /** Current month bonus only */
+  currentMonthBonus: number;
   
   /** Last 3 complete months */
   last3Months: string[];
-  /** Average per month (regular only, last 3 complete months) */
+  /** Average per month (regular + bonus, excluding not_income), last 3 complete months */
   typicalMonthly: number;
-  /** Total across last 3 complete months */
+  /** Total across last 3 complete months (regular + bonus) */
   last3MonthsTotal: number;
+  /** Bonus total across last 3 complete months */
+  last3MonthsBonus: number;
   
   /** All available months (sorted ascending) */
   allMonths: string[];
@@ -120,6 +126,17 @@ export interface IncomeSummary {
   oneOffSources: IncomeSource[];
   /** Regular recurring sources */
   regularSources: IncomeSource[];
+  /** Transactions classified as bonus */
+  bonusTransactions: IncomeTransaction[];
+  /** Unusual deposits needing review (unusual_amount: counted by default, large_refund: excluded by default) */
+  unreviewedDeposits: Array<{
+    txId: string;
+    source: string;
+    date: string;
+    amount: number;
+    usualAmount?: number;
+    reason?: "unusual_amount" | "large_refund";
+  }>;
   
   /** Year-over-year comparison (if available) */
   yoy?: IncomeComparison;
@@ -153,6 +170,36 @@ function isLikelyTransfer(source: string, transactions: IncomeTransaction[]): bo
   if (transactions.length > 0 && transactions.every(t => t.category === "Transfer" || t.category === "Transfer In")) {
     return true;
   }
+  return false;
+}
+
+/**
+ * Check if a transaction should be excluded from income calculations.
+ * Used consistently across month totals, averages, sourcesList, Income page and card.
+ * 
+ * Returns true if the transaction should be EXCLUDED (not counted as income).
+ */
+function shouldExcludeTransaction(
+  txn: IncomeTransaction,
+  source: IncomeSource | undefined,
+  classification: string | undefined
+): boolean {
+  // 1. User explicitly marked as 'not_income' - exclude
+  if (classification === 'not_income') {
+    return true;
+  }
+  
+  // 2. Transfer sources - NEVER income
+  if (source?.isTransfer) {
+    return true;
+  }
+  
+  // 3. Outgoing transfers by source name pattern - NEVER income
+  // SEND E-TFR, TFR-TO, TFR-FR are outgoing between own accounts
+  if (INCOME_TRANSFER_RE.test(txn.source)) {
+    return true;
+  }
+  
   return false;
 }
 
@@ -299,22 +346,33 @@ function computeMonthlyEquivalent(avgAmount: number, frequency: Frequency): numb
 /**
  * Build income summary from transactions.
  * This is the single source of truth for all income data in the app.
+ * 
+ * @param incomeDepositReviews - Map of transaction ID → classification for unusual deposits
+ *                                 Classifications: "regular_income", "bonus", "not_income"
+ *                                 Default behavior: unreviewed deposits COUNT as income (bonus)
  */
 export function buildIncomeSummary(
   incomeTxns: IncomeTxnRecord[],
   accountSnapshots: AccountSnapshot[],
-  currency: string = "USD"
+  currency: string = "USD",
+  incomeDepositReviews: Map<string, string> = new Map()
 ): IncomeSummary {
   const currentMonth = getCurrentMonth();
   
-  // Convert to simpler transaction format
-  const transactions: IncomeTransaction[] = incomeTxns.map(t => ({
+  // Helper: Generate stable transaction ID for review matching
+  const getTxId = (txn: IncomeTransaction): string => {
+    return `${txn.date}:${txn.source}:${txn.amount}:${txn.accountSlug || 'unknown'}`;
+  };
+  
+  // Convert to simpler transaction format with IDs
+  const transactions: (IncomeTransaction & { txId: string })[] = incomeTxns.map(t => ({
     source: t.source || "Unknown",
     amount: t.amount,
     date: t.date,
     category: (t.category as IncomeCategory) || "Other",
     accountLabel: accountSnapshots.find(a => a.slug === t.accountSlug)?.accountName || t.accountSlug,
-    accountSlug: t.accountSlug
+    accountSlug: t.accountSlug,
+    txId: `${t.date}:${t.source || 'Unknown'}:${t.amount}:${t.accountSlug || 'unknown'}`
   }));
 
   // Group by source
@@ -415,65 +473,185 @@ export function buildIncomeSummary(
 
   // Build monthly history
   const allMonths = Array.from(new Set(transactions.map(t => t.date.slice(0, 7)))).sort();
+  
+  // Track bonus transactions and unreviewed deposits
+  const bonusTransactions: IncomeTransaction[] = [];
+  const unreviewedDeposits: Array<{ txId: string; source: string; date: string; amount: number; usualAmount?: number; reason?: "unusual_amount" | "large_refund" }> = [];
+  
   const monthlyHistory: MonthlyIncomeSummary[] = allMonths.map(ym => {
     const monthTxns = transactions.filter(t => t.date.startsWith(ym));
     
-    // Split into regular and one-off at the transaction level
+    // Split into regular, bonus, and excluded at the transaction level
     let regularTotal = 0;
-    let oneOffTotal = 0;
+    let bonusTotal = 0;
     
     for (const source of allSources) {
       const sourceTxnsThisMonth = source.transactions.filter(t => t.date.startsWith(ym));
-      const withinSourceOneOffs = detectWithinSourceOneOffs(source.transactions);
+      
+      // Skip transfers entirely - they should not be in month totals
+      if (source.isTransfer) {
+        continue;
+      }
+      
+      // Only check for unusual deposits in REGULAR income sources (not transfers, not one-offs)
+      const shouldCheckForUnusual = !source.isTransfer && !source.isOneOff;
+      const withinSourceOneOffs = shouldCheckForUnusual ? detectWithinSourceOneOffs(source.transactions) : new Set<string>();
       
       for (const txn of sourceTxnsThisMonth) {
         const txnKey = `${txn.date}:${txn.amount}`;
-        if (source.isOneOff || withinSourceOneOffs.has(txnKey)) {
-          oneOffTotal += txn.amount;
+        const txnWithId = transactions.find(t => 
+          t.date === txn.date && 
+          t.source === txn.source && 
+          t.amount === txn.amount &&
+          t.accountSlug === txn.accountSlug
+        );
+        const txId = txnWithId?.txId || '';
+        const classification = incomeDepositReviews.get(txId);
+        
+        // SHARED EXCLUSION LOGIC - skip if this transaction should be excluded
+        if (shouldExcludeTransaction(txn, source, classification)) {
+          continue;
+        }
+        
+        // Check if this is a large refund that needs review
+        const sourceLower = txn.source.toLowerCase();
+        const isRefund = sourceLower.includes('refund') || sourceLower.includes('rebate') || sourceLower.includes('reversal');
+        
+        // Calculate source's typical amount for threshold comparison (only for multi-transaction sources)
+        const sourceMedianAmount = (() => {
+          const amounts = source.transactions.map(t => t.amount).sort((a, b) => a - b);
+          if (amounts.length < 2) return 0; // Need multiple transactions to establish "typical"
+          const mid = Math.floor(amounts.length / 2);
+          return amounts.length % 2 !== 0 ? amounts[mid] : (amounts[mid - 1] + amounts[mid]) / 2;
+        })();
+        
+        // Large refund: ≥CA$500 AND (>$1K OR >50% of source's typical for recurring sources)
+        // Tiny rebates (<CA$500): count as regular income, no review
+        const isLargeRefund = isRefund && txn.amount >= 500 && (txn.amount > 1000 || (sourceMedianAmount > 0 && txn.amount > sourceMedianAmount * 0.5));
+        
+        // Only flag as unusual if from a regular source AND detected as outlier
+        const isUnusual = shouldCheckForUnusual && withinSourceOneOffs.has(txnKey);
+        
+        // Large refunds need review (default: NOT counted)
+        if (isLargeRefund && !classification) {
+          // Unreviewed large refund - add to review list, exclude from totals
+          if (!unreviewedDeposits.some(d => d.txId === txId)) {
+            unreviewedDeposits.push({
+              txId,
+              source: txn.source,
+              date: txn.date,
+              amount: txn.amount,
+              reason: 'large_refund'
+            });
+          }
+          // Don't count in totals until reviewed (opposite of unusual deposits)
+          continue;
+        }
+        
+        if (isUnusual || isLargeRefund) {
+          // Unusual deposit or large refund - check classification
+          if (classification === 'regular_income') {
+            // User marked as regular - treat as normal income
+            regularTotal += txn.amount;
+          } else if (classification === 'bonus') {
+            // User marked as bonus - count and tag
+            bonusTotal += txn.amount;
+            if (txnWithId) bonusTransactions.push(txnWithId);
+          } else {
+            // Unreviewed unusual deposit (NOT refund)
+            // Only generate review card if ≥CA$500 AND from recurring source (≥3 txns)
+            if (!isLargeRefund && txn.amount >= 500 && source.transactions.length >= 3) {
+              bonusTotal += txn.amount;
+              
+              // Add to unreviewed list (once per transaction, not per month)
+              if (!unreviewedDeposits.some(d => d.txId === txId)) {
+                // Calculate usual amount (median of other transactions from this source)
+                const otherAmounts = source.transactions
+                  .filter(t => !withinSourceOneOffs.has(`${t.date}:${t.amount}`))
+                  .map(t => t.amount)
+                  .sort((a, b) => a - b);
+                const usualAmount = otherAmounts.length > 0
+                  ? otherAmounts[Math.floor(otherAmounts.length / 2)]
+                  : undefined;
+                  
+                unreviewedDeposits.push({
+                  txId,
+                  source: txn.source,
+                  date: txn.date,
+                  amount: txn.amount,
+                  usualAmount,
+                  reason: 'unusual_amount'
+                });
+              }
+            } else {
+              // Small unusual amount or non-recurring source: count as regular, no review
+              regularTotal += txn.amount;
+            }
+          }
         } else {
+          // Normal transaction - add to regular total
           regularTotal += txn.amount;
         }
       }
     }
     
-    const total = regularTotal + oneOffTotal;
+    const total = regularTotal + bonusTotal;
     
     return {
       yearMonth: ym,
       total,
       regular: regularTotal,
-      oneOff: oneOffTotal,
+      oneOff: bonusTotal, // For backwards compatibility
+      bonus: bonusTotal,
       sources: allSources
+        .filter(s => !s.isTransfer) // Exclude transfers from month sources
         .filter(s => s.transactions.some(t => t.date.startsWith(ym)))
         .map(s => {
           const sourceTxnsThisMonth = s.transactions.filter(t => t.date.startsWith(ym));
-          const withinSourceOneOffs = detectWithinSourceOneOffs(s.transactions);
+          const shouldCheckForUnusual = !s.isTransfer && !s.isOneOff;
+          const withinSourceOneOffs = shouldCheckForUnusual ? detectWithinSourceOneOffs(s.transactions) : new Set<string>();
           const amount = sourceTxnsThisMonth.reduce((sum, t) => sum + t.amount, 0);
-          const hasOneOff = sourceTxnsThisMonth.some(t => withinSourceOneOffs.has(`${t.date}:${t.amount}`));
+          const hasOneOff = shouldCheckForUnusual && sourceTxnsThisMonth.some(t => withinSourceOneOffs.has(`${t.date}:${t.amount}`));
+          
+          // Check if any transactions are bonus (only for regular sources)
+          const hasBonus = shouldCheckForUnusual && sourceTxnsThisMonth.some(t => {
+            const txnWithId = transactions.find(tx => 
+              tx.date === t.date && 
+              tx.source === t.source && 
+              tx.amount === t.amount &&
+              tx.accountSlug === t.accountSlug
+            );
+            const txId = txnWithId?.txId || '';
+            return incomeDepositReviews.get(txId) === 'bonus' || 
+                   (withinSourceOneOffs.has(`${t.date}:${t.amount}`) && !incomeDepositReviews.has(txId));
+          });
           
           return {
             source: s.description,
             amount,
-            isOneOff: s.isOneOff || hasOneOff
+            isOneOff: s.isOneOff || hasOneOff,
+            isBonus: hasBonus
           };
         })
     };
   });
 
-  // Compute last 3 complete months
+  // Compute last 3 complete months (regular + bonus)
   const last3Months = getLastCompleteMonths(allMonths, 3);
   const last3MonthsData = monthlyHistory.filter(m => last3Months.includes(m.yearMonth));
   const last3MonthsRegularTotal = last3MonthsData.reduce((s, m) => s + m.regular, 0);
+  const last3MonthsBonusTotal = last3MonthsData.reduce((s, m) => s + m.bonus, 0);
+  const last3MonthsTotal = last3MonthsRegularTotal + last3MonthsBonusTotal;
   const typicalMonthly = last3Months.length > 0 
-    ? Math.round(last3MonthsRegularTotal / last3Months.length)
+    ? Math.round(last3MonthsTotal / last3Months.length)
     : 0;
-  const last3MonthsTotal = last3MonthsData.reduce((s, m) => s + m.total, 0);
 
-  // Current month totals
+  // Current month totals (including bonus)
   const currentMonthData = monthlyHistory.find(m => m.yearMonth === currentMonth);
   const currentMonthTotal = currentMonthData?.total || 0;
   const currentMonthRegular = currentMonthData?.regular || 0;
   const currentMonthOneOff = currentMonthData?.oneOff || 0;
+  const currentMonthBonus = currentMonthData?.bonus || 0;
 
   // Year-over-year comparison
   let yoy: IncomeComparison | undefined;
@@ -575,15 +753,19 @@ export function buildIncomeSummary(
     currentMonthTotal,
     currentMonthRegular,
     currentMonthOneOff,
+    currentMonthBonus,
     last3Months,
     typicalMonthly,
     last3MonthsTotal,
+    last3MonthsBonus: last3MonthsBonusTotal,
     allMonths,
     monthlyHistory,
     sources: allSources,
     transferSources,
     oneOffSources,
     regularSources,
+    bonusTransactions,
+    unreviewedDeposits,
     yoy,
     whatChanged,
     currency,

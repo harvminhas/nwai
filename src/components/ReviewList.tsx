@@ -5,7 +5,7 @@ import type { ReviewItem, ReviewClassification } from "@/lib/reviewTypes";
 
 interface ReviewListProps {
   token: string | null;
-  reviewType: "debt_payment" | "savings_item" | "income_classification";
+  reviewType: "debt_payment" | "savings_item" | "income_classification" | "subscription" | "income_deposit";
   onReviewComplete?: () => void;
 }
 
@@ -14,10 +14,11 @@ export function ReviewList({ token, reviewType, onReviewComplete }: ReviewListPr
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [animatingOut, setAnimatingOut] = useState(false);
+  const [undoData, setUndoData] = useState<{ item: ReviewItem; classification: ReviewClassification } | null>(null);
 
   const loadReviewItems = async () => {
     if (!token) return;
-
+    
     try {
       const res = await fetch(`/api/user/reviews?type=${reviewType}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -47,6 +48,14 @@ export function ReviewList({ token, reviewType, onReviewComplete }: ReviewListPr
     setSubmitting(true);
     setAnimatingOut(true);
 
+    // Optimistic update: remove from list immediately
+    const previousItems = items;
+    setItems((prev) => prev.filter((i) => i.id !== item.id));
+
+    // Show undo option
+    setUndoData({ item, classification });
+    setTimeout(() => setUndoData(null), 5000);
+
     try {
       const res = await fetch("/api/user/reviews", {
         method: "PUT",
@@ -65,22 +74,46 @@ export function ReviewList({ token, reviewType, onReviewComplete }: ReviewListPr
       });
 
       if (res.ok) {
-        // Wait for animation to complete before removing from list
-        setTimeout(() => {
-          setItems((prev) => prev.filter((i) => i.id !== item.id));
-          setAnimatingOut(false);
-          setSubmitting(false);
-          onReviewComplete?.();
-        }, 300);
-      } else {
-        console.error("Failed to save classification", await res.text());
-        setSubmitting(false);
+        // Success - keep optimistic update
         setAnimatingOut(false);
+        setSubmitting(false);
+        // Silent data refresh in background (no full reload)
+        onReviewComplete?.();
+      } else {
+        // Revert on error
+        console.error("Failed to save classification", await res.text());
+        setItems(previousItems);
+        setAnimatingOut(false);
+        setSubmitting(false);
+        setUndoData(null);
       }
     } catch (err) {
+      // Revert on error
       console.error("Error saving classification:", err);
-      setSubmitting(false);
+      setItems(previousItems);
       setAnimatingOut(false);
+      setSubmitting(false);
+      setUndoData(null);
+    }
+  };
+
+  const handleUndo = async () => {
+    if (!undoData || !token) return;
+
+    try {
+      // Delete the review
+      const res = await fetch(`/api/user/reviews?id=${undoData.item.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.ok) {
+        // Reload items to get it back
+        await loadReviewItems();
+        setUndoData(null);
+      }
+    } catch (err) {
+      console.error("Failed to undo:", err);
     }
   };
 
@@ -98,22 +131,40 @@ export function ReviewList({ token, reviewType, onReviewComplete }: ReviewListPr
   const totalCount = items.length;
 
   return (
-    <div className="rounded-xl border-2 border-violet-200 bg-violet-50 p-5">
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h3 className="text-base font-bold text-gray-900" style={{ fontFamily: "Inter, sans-serif" }}>
-            {reviewType === "debt_payment" ? "Debt payments to review" : "Savings items to review"}
-          </h3>
-          <p className="text-xs text-gray-600 mt-0.5">
-            {reviewType === "debt_payment" 
-              ? "Help us classify unusual payments"
-              : "Does this count as savings?"}
-          </p>
+    <>
+      {/* Undo toast */}
+      {undoData && (
+        <div className="fixed bottom-4 right-4 bg-gray-900 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 z-50">
+          <span>Review saved</span>
+          <button
+            onClick={handleUndo}
+            className="text-violet-400 hover:text-violet-300 font-medium"
+          >
+            Undo
+          </button>
         </div>
-        <div className="text-xs font-medium text-violet-700 bg-violet-100 px-2.5 py-1 rounded-full">
-          {currentIndex} of {totalCount}
+      )}
+
+      <div className="rounded-xl border-2 border-violet-200 bg-violet-50 p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-base font-bold text-gray-900" style={{ fontFamily: "Inter, sans-serif" }}>
+              {reviewType === "debt_payment" && "Debt payments to review"}
+              {reviewType === "savings_item" && "Savings items to review"}
+              {reviewType === "subscription" && "Is this a subscription?"}
+              {reviewType === "income_deposit" && "Unusual deposits to review"}
+            </h3>
+            <p className="text-xs text-gray-600 mt-0.5">
+              {reviewType === "debt_payment" && "Help us classify unusual payments"}
+              {reviewType === "savings_item" && "Does this count as savings?"}
+              {reviewType === "subscription" && "Not counted until you confirm"}
+              {reviewType === "income_deposit" && "Counted as income (needs review)"}
+            </p>
+          </div>
+          <div className="text-xs font-medium text-violet-700 bg-violet-100 px-2.5 py-1 rounded-full">
+            {currentIndex} of {totalCount}
+          </div>
         </div>
-      </div>
 
       {currentItem.type === "debt_payment" && (
         <DebtPaymentReviewCard
@@ -141,7 +192,26 @@ export function ReviewList({ token, reviewType, onReviewComplete }: ReviewListPr
           onClassify={handleClassify}
         />
       )}
+      
+      {currentItem.type === "income_deposit" && (
+        <IncomeDepositReviewCard
+          item={currentItem as any}
+          animatingOut={animatingOut}
+          submitting={submitting}
+          onClassify={handleClassify}
+        />
+      )}
+      
+      {currentItem.type === "subscription" && (
+        <SubscriptionReviewCard
+          item={currentItem as any}
+          animatingOut={animatingOut}
+          submitting={submitting}
+          onClassify={handleClassify}
+        />
+      )}
     </div>
+    </>
   );
 }
 
@@ -373,6 +443,137 @@ function IncomeClassificationReviewCard({
           style={{ fontFamily: "Inter, sans-serif" }}
         >
           Skip
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Subscription review card
+function SubscriptionReviewCard({
+  item,
+  animatingOut,
+  submitting,
+  onClassify,
+}: {
+  item: any;
+  animatingOut: boolean;
+  submitting: boolean;
+  onClassify: (item: any, classification: ReviewClassification) => void;
+}) {
+  const cadenceDisplay = item.cadence === "monthly" ? "Monthly" : item.cadence === "yearly" ? "Yearly" : "Recurring";
+  
+  return (
+    <div
+      className={`rounded-lg border border-gray-200 bg-white p-4 transition-all duration-300 ${
+        animatingOut ? "opacity-0 scale-95" : "opacity-100 scale-100"
+      }`}
+    >
+      <div className="mb-3">
+        <div className="font-semibold text-gray-900" style={{ fontFamily: "Inter, sans-serif" }}>
+          {item.merchant}
+        </div>
+        <div className="flex items-center gap-2 mt-1 text-sm text-gray-600">
+          <span>{cadenceDisplay}</span>
+          <span className="text-gray-400">•</span>
+          <span>CA${Math.abs(item.amount).toLocaleString()}</span>
+          <span className="text-gray-400">•</span>
+          <span>{item.chargeCount} charges</span>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => onClassify(item, "is_subscription")}
+          disabled={submitting}
+          className="text-xs font-medium px-3 py-1.5 rounded-md bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          style={{ fontFamily: "Inter, sans-serif" }}
+        >
+          Yes, subscription
+        </button>
+        <button
+          onClick={() => onClassify(item, "not_subscription")}
+          disabled={submitting}
+          className="text-xs font-medium px-3 py-1.5 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          style={{ fontFamily: "Inter, sans-serif" }}
+        >
+          Not a subscription
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Income deposit review card
+function IncomeDepositReviewCard({
+  item,
+  animatingOut,
+  submitting,
+  onClassify,
+}: {
+  item: any;
+  animatingOut: boolean;
+  submitting: boolean;
+  onClassify: (item: any, classification: ReviewClassification) => void;
+}) {
+  const formattedDate = new Date(item.date + "T12:00:00").toLocaleDateString("en-US", { 
+    month: "short", 
+    day: "numeric", 
+    year: "numeric" 
+  });
+  
+  const isRefund = item.reason === 'large_refund';
+  
+  const comparisonText = item.usualAmount
+    ? `CA$${item.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} vs usual CA$${item.usualAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : `CA$${item.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  return (
+    <div
+      className={`rounded-lg border border-gray-200 bg-white p-4 transition-all duration-300 ${
+        animatingOut ? "opacity-0 scale-95" : "opacity-100 scale-100"
+      }`}
+    >
+      <div className="mb-3">
+        <div className="font-semibold text-gray-900" style={{ fontFamily: "Inter, sans-serif" }}>
+          {item.source}
+        </div>
+        <div className="flex items-center gap-2 mt-1 text-sm text-gray-600">
+          <span>{formattedDate}</span>
+          <span className="text-gray-400">•</span>
+          <span className="text-orange-600 font-medium">{comparisonText}</span>
+        </div>
+        {isRefund && (
+          <div className="mt-2 text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded inline-block">
+            Not counted as income (pending review)
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => onClassify(item, "regular_income")}
+          disabled={submitting}
+          className="text-xs font-medium px-3 py-1.5 rounded-md border border-violet-600 bg-white text-violet-700 hover:bg-violet-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          style={{ fontFamily: "Inter, sans-serif" }}
+        >
+          Regular income
+        </button>
+        <button
+          onClick={() => onClassify(item, "bonus")}
+          disabled={submitting}
+          className="text-xs font-medium px-3 py-1.5 rounded-md bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          style={{ fontFamily: "Inter, sans-serif" }}
+        >
+          Bonus
+        </button>
+        <button
+          onClick={() => onClassify(item, "not_income")}
+          disabled={submitting}
+          className="text-xs font-medium px-3 py-1.5 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          style={{ fontFamily: "Inter, sans-serif" }}
+        >
+          Not income
         </button>
       </div>
     </div>

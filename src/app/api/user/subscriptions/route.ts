@@ -1,117 +1,125 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
-import { resolveAccess } from "@/lib/access/resolveAccess";
-import type { SubscriptionRecord, SubscriptionFrequency } from "@/lib/insights/types";
+import { getFinancialProfile } from "@/lib/financialProfile";
+import { buildSubscriptionSummary } from "@/lib/subscriptionEngine";
+import { buildSpendingSummary } from "@/lib/spendingSummary";
 
-const VALID_FREQUENCIES = new Set<SubscriptionFrequency>([
-  "weekly", "biweekly", "monthly", "quarterly", "annual",
-]);
+export const dynamic = "force-dynamic";
 
 /**
  * GET /api/user/subscriptions
- * Returns all SubscriptionRecords from users/{uid}/subscriptions — the
- * canonical, all-time subscription registry maintained by the insights pipeline.
+ * Returns detected subscriptions with price changes and new subs
  */
-export async function GET(req: NextRequest) {
-  const { db } = getFirebaseAdmin();
-  const access = await resolveAccess(req, db);
-  if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const uid = access.targetUid;
-
+export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
-    const snap = await db.collection(`users/${uid}/subscriptions`).get();
-    const subscriptions: SubscriptionRecord[] = snap.docs.map((d) => d.data() as SubscriptionRecord);
-    return NextResponse.json({ subscriptions });
-  } catch (err) {
-    console.error("[subscriptions] GET error uid=" + uid, err);
-    return NextResponse.json({ subscriptions: [] });
-  }
-}
-
-/**
- * PATCH /api/user/subscriptions
- * Body: { slug, frequency?, baseAmount? }
- *
- * Lets the user confirm/lock the frequency and/or base plan price for a subscription.
- * Sets status to user_confirmed and adds the touched fields to lockedFields.
- */
-export async function PATCH(req: NextRequest) {
-  const { db } = getFirebaseAdmin();
-  const access = await resolveAccess(req, db);
-  if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const uid = access.targetUid;
-
-  const body = await req.json().catch(() => ({})) as {
-    slug?: string;
-    frequency?: string;
-    baseAmount?: number;
-  };
-
-  const slug = typeof body.slug === "string" ? body.slug.trim() : "";
-  if (!slug) return NextResponse.json({ error: "slug required" }, { status: 400 });
-
-  const ref = db.doc(`users/${uid}/subscriptions/${slug}`);
-  const snap = await ref.get();
-  if (!snap.exists) return NextResponse.json({ error: "Subscription not found" }, { status: 404 });
-
-  const existing = snap.data() as SubscriptionRecord;
-  const now = new Date().toISOString();
-
-  const updates: Record<string, unknown> = {
-    status: "user_confirmed",
-    confirmedBy: "user",
-    confirmedAt: now,
-    updatedAt: now,
-  };
-
-  const newLocked = new Set<string>(existing.lockedFields ?? []);
-
-  if (body.frequency !== undefined) {
-    const freq = body.frequency as SubscriptionFrequency;
-    if (!VALID_FREQUENCIES.has(freq)) {
-      return NextResponse.json({ error: "Invalid frequency" }, { status: 400 });
+    const token = req.headers.get("authorization")?.replace("Bearer ", "");
+    if (!token) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    updates.frequency = freq;
-    newLocked.add("frequency");
-  }
 
-  if (body.baseAmount !== undefined) {
-    const amt = Number(body.baseAmount);
-    if (!Number.isFinite(amt) || amt < 0) {
-      return NextResponse.json({ error: "Invalid baseAmount" }, { status: 400 });
-    }
-    updates.baseAmount = amt;
-    newLocked.add("baseAmount");
-  }
+    const { auth, db } = getFirebaseAdmin();
+    const decoded = await auth.verifyIdToken(token);
 
-  updates.lockedFields = Array.from(newLocked);
+    const profile = await getFinancialProfile(decoded.uid, db);
+    
+    // Load user debt payment reviews (needed for spending summary)
+    const reviewsSnap = await db.collection(`users/${decoded.uid}/debtPaymentReviews`).get();
+    const userReviews = reviewsSnap.docs.map((doc) => ({
+      txFingerprint: doc.id,
+      accountSlug: doc.get("accountSlug"),
+      classification: doc.get("classification"),
+      date: doc.get("date"),
+      amount: doc.get("amount"),
+      reviewedAt: doc.get("reviewedAt"),
+    }));
+    
+    // Load user subscription reviews
+    const subReviewsSnap = await db
+      .collection(`users/${decoded.uid}/reviews`)
+      .where("type", "==", "subscription")
+      .get();
+    
+    // Process reviews: build sets for different actions and billing frequency overrides
+    const userConfirmedSlugs: string[] = [];
+    const excludedSlugs = new Set<string>();
+    const stillActiveSlugs = new Set<string>();
+    const cancelledSlugs = new Set<string>();
+    const billingFrequencyOverrides = new Map<string, import("@/lib/reviewTypes").BillingFrequency>();
+    
+    subReviewsSnap.docs.forEach(doc => {
+      const classification = doc.get("classification");
+      const merchantSlug = doc.get("merchantSlug") || doc.id;
+      const billingFrequency = doc.get("billingFrequency");
+      
+      if (classification === "is_subscription") {
+        userConfirmedSlugs.push(merchantSlug);
+      } else if (classification === "not_subscription") {
+        excludedSlugs.add(merchantSlug);
+      } else if (classification === "still_active") {
+        userConfirmedSlugs.push(merchantSlug); // Treat as confirmed
+        stillActiveSlugs.add(merchantSlug);
+      } else if (classification === "cancelled") {
+        cancelledSlugs.add(merchantSlug);
+      }
+      
+      // Store billing frequency override if present
+      if (billingFrequency) {
+        billingFrequencyOverrides.set(merchantSlug, billingFrequency);
+      }
+    });
+    
+    // Filter out excluded merchants from expense transactions before passing to engine
+    const filteredExpenseTxns = profile.expenseTxns.filter(txn => {
+      const slug = require("@/lib/applyRules").merchantSlug(txn.merchant);
+      return !excludedSlugs.has(slug);
+    });
+    
+    // Get total spending for sanity check
+    const spendingSummary = buildSpendingSummary(
+      profile.expenseTxns,
+      profile.accountSnapshots,
+      profile.debtPaymentHistory,
+      userReviews,
+      profile.fxRates || {},
+      profile.homeCurrency
+    );
+    
+    const summary = buildSubscriptionSummary(
+      filteredExpenseTxns, // Use filtered transactions (excluded merchants removed)
+      profile.homeCurrency,
+      spendingSummary.typicalMonthly,
+      userConfirmedSlugs,
+      billingFrequencyOverrides
+    );
+    
+    // Post-process: handle cancelled subscriptions
+    // Move cancelled items from inactive to a separate cancelled list
+    const cancelled = summary.inactive.filter(s => cancelledSlugs.has(s.merchantSlug));
+    const inactive = summary.inactive.filter(s => !cancelledSlugs.has(s.merchantSlug));
+    
+    // Override status for still_active items (move from inactive to active if needed)
+    const stillActiveItems = summary.inactive.filter(s => stillActiveSlugs.has(s.merchantSlug));
+    stillActiveItems.forEach(item => {
+      item.status = "active";
+    });
+    
+    // Rebuild lists with overrides
+    const confirmedActive = [
+      ...summary.subscriptions,
+      ...stillActiveItems, // Add still_active items to active list
+    ].sort((a, b) => b.amount - a.amount);
 
-  await ref.update(updates);
-
-  return NextResponse.json({ ok: true });
-}
-
-/**
- * DELETE /api/user/subscriptions
- * Body: { slug }
- *
- * Removes a subscription record (used when merging a duplicate into its canonical entry).
- */
-export async function DELETE(req: NextRequest) {
-  const { db } = getFirebaseAdmin();
-  const access = await resolveAccess(req, db);
-  if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const uid = access.targetUid;
-
-  const body = await req.json().catch(() => ({})) as { slug?: string };
-  const slug = typeof body.slug === "string" ? body.slug.trim() : "";
-  if (!slug) return NextResponse.json({ error: "slug required" }, { status: 400 });
-
-  try {
-    await db.doc(`users/${uid}/subscriptions/${slug}`).delete();
-    return NextResponse.json({ ok: true });
-  } catch (err) {
-    console.error("[subscriptions] DELETE error uid=" + uid, err);
-    return NextResponse.json({ error: "Failed to delete" }, { status: 500 });
+    return NextResponse.json({
+      ...summary,
+      subscriptions: confirmedActive,
+      inactive,
+      cancelled,
+    });
+  } catch (error) {
+    console.error("Subscriptions error:", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Failed to load subscriptions" },
+      { status: 500 }
+    );
   }
 }
