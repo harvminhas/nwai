@@ -41,13 +41,13 @@ export function OverviewTab({ summary, token }: OverviewTabProps) {
     return <div className="text-neutral-500">No data for {formatMonthYear(lastMonth)}</div>;
   }
 
-  const bucketLabels = {
+  const bucketLabels: Record<string, string> = {
     fixed: "Fixed",
     essentials: "Essentials",
     flexible: "Flexible",
   };
 
-  const bucketColors = {
+  const bucketColors: Record<string, string> = {
     fixed: "bg-purple-600",
     essentials: "bg-blue-600",
     flexible: "bg-green-600",
