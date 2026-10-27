@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { getLastCompleteMonth, getCurrentMonth, formatMonthWithStatus } from "../statementCoverage";
+import { getLastCompleteMonth, getCurrentMonth, formatMonthWithStatus } from "../monthAnchor";
 
-describe("statementCoverage", () => {
+describe("monthAnchor", () => {
   describe("getLastCompleteMonth", () => {
     it("should return previous calendar month", () => {
       // Test with Oct 2026 (middle of month)

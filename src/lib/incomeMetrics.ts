@@ -11,7 +11,7 @@
 
 import type { MonthlyHistoryEntry } from "./financialProfile";
 import type { IncomeTxnRecord } from "./extractTransactions";
-import { getLastCompleteMonth, getCurrentMonth } from "./statementCoverage";
+import { getLastCompleteMonth, getCurrentMonth } from "./monthAnchor";
 
 export type IncomeTimeWindow = "last3" | "12month" | "ytd";
 

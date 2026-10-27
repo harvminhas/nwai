@@ -14,7 +14,7 @@ import { getParentCategory } from "./categoryTaxonomy";
 import { computeScheduledDebtPayments } from "./debtPayments";
 import { merchantSlug } from "./applyRules";
 import { normalizeMerchantName, detectRecurringMonthlyAmount, resolveMerchantAlias, resolveCanonicalSlug } from "./merchantUtils";
-import { getLastCompleteMonth, getCurrentMonth } from "./statementCoverage";
+import { getLastCompleteMonth, getCurrentMonth } from "./monthAnchor";
 
 export interface MerchantTransaction {
   date: string;

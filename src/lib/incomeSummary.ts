@@ -18,7 +18,7 @@ import type { IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
 import { INCOME_TRANSFER_RE } from "./spendingMetrics";
 import { GENERIC_SOURCE_NAMES, scoreSource, detectFrequency, type Frequency, type Reliability } from "./incomeEngine";
 import type { IncomeCategory } from "./incomeEngine";
-import { getLastCompleteMonth, getCurrentMonth } from "./statementCoverage";
+import { getLastCompleteMonth, getCurrentMonth } from "./monthAnchor";
 
 export interface IncomeTransaction {
   source: string;
