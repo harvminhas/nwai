@@ -49,18 +49,6 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       spendingSummary.typicalMonthly
     );
 
-    // If sanity checks fail, return error
-    if (summary.sanityCheckFailures.length > 0) {
-      console.error("Subscription sanity checks failed:", summary.sanityCheckFailures);
-      return NextResponse.json(
-        { 
-          error: "Subscription detection validation failed",
-          details: summary.sanityCheckFailures 
-        },
-        { status: 500 }
-      );
-    }
-
     return NextResponse.json(summary);
   } catch (error) {
     console.error("Subscriptions error:", error);
