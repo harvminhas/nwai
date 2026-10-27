@@ -1,8 +1,8 @@
 /**
- * Test to reproduce and fix the Savings & Debt card vs drawer mismatch.
+ * Test to reproduce and fix the Net savings card vs drawer mismatch.
  * 
  * User reports:
- * - Dashboard card ("Savings & debt"): CA$5,219/mo (23% of take-home)
+ * - Dashboard card ("Net savings"): CA$5,219/mo (23% of take-home)
  * - Drawer (when clicked): CA$332/mo
  * - Expected: Both should show the same value from one data source
  * 
@@ -19,7 +19,7 @@ import type { FinancialProfileCache } from "../lib/financialProfile";
 import type { ExpenseTxnRecord, AccountSnapshot, DebtPaymentHistoryEntry } from "../lib/extractTransactions";
 import type { MonthlyHistoryEntry } from "../lib/financialProfile";
 
-describe("Savings & Debt card vs drawer consistency", () => {
+describe("Net savings card vs drawer consistency", () => {
   // Real user data scenario:
   // - Scheduled debt payments: CA$4,480/mo (Scotia CA$1,142 + FlexLine CA$3,292)
   // - Savings category transactions: CA$332/mo

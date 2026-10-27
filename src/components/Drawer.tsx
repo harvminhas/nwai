@@ -90,7 +90,7 @@ export function Drawer({ type, isOpen, onClose, token, currency }: DrawerProps) 
               {type === "fixed" && "Fixed costs"}
               {type === "essentials" && "Essentials"}
               {type === "flexible" && "Flexible spending"}
-              {type === "savings" && "Savings & debt"}
+              {type === "savings" && "Net savings"}
             </h2>
             <button
               onClick={onClose}

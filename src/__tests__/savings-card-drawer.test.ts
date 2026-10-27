@@ -1,7 +1,7 @@
 /**
- * Savings & Debt Card vs Drawer Consistency Test
+ * Net Savings Card vs Drawer Consistency Test
  * 
- * Verifies that the Savings & Debt card value on the dashboard
+ * Verifies that the Net Savings card value on the dashboard
  * matches the total shown in the drill-down drawer.
  */
 
@@ -11,7 +11,7 @@ import { computeBucketBreakdown, getMonthsForWindow } from '../lib/bucketBreakdo
 import type { FinancialProfileCache } from '../lib/financialProfile';
 import type { ExpenseTxnRecord, AccountSnapshot, DebtPaymentHistoryEntry } from '../lib/extractTransactions';
 
-describe('Savings & Debt Card vs Drawer Consistency', () => {
+describe('Net Savings Card vs Drawer Consistency', () => {
   // Create a minimal financial profile for testing
   const createTestProfile = (expenseTxns: ExpenseTxnRecord[]): FinancialProfileCache => {
     const monthlyHistory = [
