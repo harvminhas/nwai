@@ -227,16 +227,21 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     const essentialsDiff = Math.abs(month.essentials - recomputed.buckets.essentials);
     const flexibleDiff = Math.abs(month.flexible - recomputed.buckets.flexible);
     
-    const match = totalDiff < 0.01 && fixedDiff < 0.01 && essentialsDiff < 0.01 && flexibleDiff < 0.01;
+    // NEW: Verify category breakdown sums to month total (month-detail drawer data)
+    const categoriesSum = month.categories.reduce((sum, cat) => sum + cat.amount, 0);
+    const categoriesDiff = Math.abs(month.total - categoriesSum);
     
-    if (!match) {
+    const bucketMatches = fixedDiff < 1.0 && essentialsDiff < 1.0 && flexibleDiff < 1.0;
+    const totalMatches = totalDiff < 1.0;
+    const categoriesMatch = categoriesDiff < 1.0;
+    
+    console.log(`   ${month.yearMonth}:`);
+    console.log(`      Total: ${formatCurrency(month.total, currency)} vs recomputed ${formatCurrency(recomputed.total, currency)} ${totalMatches ? "✓" : `✗ (diff: ${formatCurrency(totalDiff, currency)})`}`);
+    console.log(`      Categories sum: ${formatCurrency(categoriesSum, currency)} ${categoriesMatch ? "✓" : `✗ (diff: ${formatCurrency(categoriesDiff, currency)})`}`);
+    console.log(`      Fixed: ${bucketMatches ? "✓" : `✗ (${formatCurrency(fixedDiff, currency)})`} Essentials: ${bucketMatches ? "✓" : `✗ (${formatCurrency(essentialsDiff, currency)})`} Flexible: ${bucketMatches ? "✓" : `✗ (${formatCurrency(flexibleDiff, currency)})`}`);
+    
+    if (!bucketMatches || !totalMatches || !categoriesMatch) {
       hasMonthlyMismatch = true;
-      console.error(`   ❌ ${month.yearMonth}:`);
-      console.error(`      API total:  ${formatCurrency(month.total, currency)} (F ${formatCurrency(month.fixed, currency)} + E ${formatCurrency(month.essentials, currency)} + F ${formatCurrency(month.flexible, currency)})`);
-      console.error(`      Recomputed: ${formatCurrency(recomputed.total, currency)} (F ${formatCurrency(recomputed.buckets.fixed, currency)} + E ${formatCurrency(recomputed.buckets.essentials, currency)} + F ${formatCurrency(recomputed.buckets.flexible, currency)})`);
-      console.error(`      Diffs: total ${formatCurrency(totalDiff, currency)}, fixed ${formatCurrency(fixedDiff, currency)}, essentials ${formatCurrency(essentialsDiff, currency)}, flexible ${formatCurrency(flexibleDiff, currency)}`);
-    } else {
-      console.log(`   ✓ ${month.yearMonth}: ${formatCurrency(month.total, currency)}`);
     }
   }
   

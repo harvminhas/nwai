@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from "recharts";
 import type { SpendingSummary } from "@/lib/spendingSummary";
 import { formatMonth, formatMonthYear } from "@/lib/dateFormatting";
@@ -38,17 +38,56 @@ export function TrendsTab({ summary }: TrendsTabProps) {
   // Get selected month data
   const selectedData = selectedMonth ? monthlyHistory.find(m => m.yearMonth === selectedMonth) : null;
 
-  // Handle bar click
+  // Handle bar click - multiple handlers for reliability
   const handleBarClick = (data: any) => {
+    // Chart-level onClick provides activeLabel
+    const month = data?.activeLabel;
+    if (month) {
+      const matchedData = chartData.find(d => d.month === month);
+      if (matchedData) {
+        if (matchedData.yearMonth === selectedMonth) {
+          setSelectedMonth(null);
+        } else {
+          setSelectedMonth(matchedData.yearMonth);
+          setExpandedCategories(new Set());
+        }
+        return;
+      }
+    }
+    
+    // Fallback to activePayload
     if (!data || !data.activePayload || !data.activePayload[0]) return;
-    const month = data.activePayload[0].payload.yearMonth;
-    if (month === selectedMonth) {
+    const yearMonth = data.activePayload[0].payload.yearMonth;
+    if (yearMonth === selectedMonth) {
       setSelectedMonth(null);
     } else {
-      setSelectedMonth(month);
-      setExpandedCategories(new Set()); // Reset expanded state when changing months
+      setSelectedMonth(yearMonth);
+      setExpandedCategories(new Set());
     }
   };
+  
+  // Individual bar click handler
+  const handleBarCellClick = (entry: any) => {
+    if (!entry || !entry.yearMonth) return;
+    if (entry.yearMonth === selectedMonth) {
+      setSelectedMonth(null);
+    } else {
+      setSelectedMonth(entry.yearMonth);
+      setExpandedCategories(new Set());
+    }
+  };
+  
+  // Keyboard handler for Escape
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && selectedMonth) {
+        setSelectedMonth(null);
+      }
+    };
+    
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [selectedMonth]);
 
   return (
     <div className="space-y-6">
@@ -81,17 +120,17 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                   );
                 }}
               />
-              <Bar dataKey="fixed" stackId="a" fill="#7c3aed" radius={[0, 0, 0, 0]} cursor="pointer">
+              <Bar dataKey="fixed" stackId="a" fill="#7c3aed" radius={[0, 0, 0, 0]} cursor="pointer" onClick={handleBarCellClick}>
                 {chartData.map((entry, index) => (
                   <Cell key={`cell-fixed-${index}`} opacity={selectedMonth && entry.yearMonth !== selectedMonth ? 0.3 : 1} />
                 ))}
               </Bar>
-              <Bar dataKey="essentials" stackId="a" fill="#2563eb" radius={[0, 0, 0, 0]} cursor="pointer">
+              <Bar dataKey="essentials" stackId="a" fill="#2563eb" radius={[0, 0, 0, 0]} cursor="pointer" onClick={handleBarCellClick}>
                 {chartData.map((entry, index) => (
                   <Cell key={`cell-ess-${index}`} opacity={selectedMonth && entry.yearMonth !== selectedMonth ? 0.3 : 1} />
                 ))}
               </Bar>
-              <Bar dataKey="flexible" stackId="a" fill="#16a34a" radius={[4, 4, 0, 0]} cursor="pointer">
+              <Bar dataKey="flexible" stackId="a" fill="#16a34a" radius={[4, 4, 0, 0]} cursor="pointer" onClick={handleBarCellClick}>
                 {chartData.map((entry, index) => (
                   <Cell key={`cell-flex-${index}`} opacity={selectedMonth && entry.yearMonth !== selectedMonth ? 0.3 : 1} />
                 ))}
@@ -133,7 +172,7 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                 <h2 className="text-xl font-bold text-gray-900">{formatMonthYear(selectedMonth)}</h2>
                 <button
                   onClick={() => setSelectedMonth(null)}
-                  className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                  className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 focus:outline-none"
                 >
                   <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -213,7 +252,7 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                             }
                             setExpandedCategories(newExpanded);
                           }}
-                          className="w-full flex items-center justify-between py-3 hover:bg-gray-50 transition-colors"
+                          className="w-full flex items-center justify-between py-3 hover:bg-gray-50 transition-colors focus:outline-none"
                         >
                           <span className="text-sm font-medium text-gray-900">{cat.category}</span>
                           <div className="flex items-center gap-2">
