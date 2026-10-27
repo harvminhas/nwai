@@ -10,11 +10,12 @@ interface OverviewTabProps {
 }
 
 export function OverviewTab({ summary }: OverviewTabProps) {
-  const { currentMonth, currentMonthRegular, typicalMonthly, whatChanged, currency, last3Months } = summary;
+  const { currentMonth, currentMonthRegular, currentMonthBonus, typicalMonthly, whatChanged, currency, last3Months, last3MonthsBonus } = summary;
   
-  const hasCurrentMonthData = currentMonthRegular > 0;
+  const hasCurrentMonthData = currentMonthRegular > 0 || currentMonthBonus > 0;
+  const currentMonthTotal = currentMonthRegular + currentMonthBonus;
   const progressPercent = typicalMonthly > 0 && hasCurrentMonthData
-    ? Math.min(100, Math.round((currentMonthRegular / typicalMonthly) * 100))
+    ? Math.min(100, Math.round((currentMonthTotal / typicalMonthly) * 100))
     : 0;
   
   const currentMonthLabel = formatMonthYear(currentMonth);
@@ -28,6 +29,12 @@ export function OverviewTab({ summary }: OverviewTabProps) {
   const last3Year = last3Months.length > 0 
     ? formatMonthYear(last3Months[last3Months.length - 1]).split(" ")[1]
     : new Date().getFullYear();
+  
+  // Calculate average bonus per month for display
+  const avgBonusPerMonth = last3Months.length > 0 
+    ? Math.round(last3MonthsBonus / last3Months.length)
+    : 0;
+  const hasBonusIncome = last3MonthsBonus > 0;
   
   
   // What changed items (1-3 items)
@@ -74,8 +81,13 @@ export function OverviewTab({ summary }: OverviewTabProps) {
           <>
             <div className="flex items-baseline gap-2 mb-3">
               <span className="text-4xl font-bold text-gray-900 tabular-nums">
-                {formatCurrency(currentMonthRegular, currency, undefined, true)}
+                {formatCurrency(currentMonthTotal, currency, undefined, true)}
               </span>
+              {currentMonthBonus > 0 && (
+                <span className="text-sm text-gray-500">
+                  (incl. {formatCurrency(currentMonthBonus, currency, undefined, true)} bonus)
+                </span>
+              )}
             </div>
             
             {/* Progress bar */}
@@ -88,7 +100,7 @@ export function OverviewTab({ summary }: OverviewTabProps) {
             
             <p className="text-xs text-gray-500">
               {isOnTrack 
-                ? `${progressPercent}% received · typical = avg regular, ${last3MonthsFormatted} ${last3Year} (one-offs excluded)`
+                ? `${progressPercent}% received · typical = avg regular + bonus, ${last3MonthsFormatted} ${last3Year}`
                 : `${progressPercent}% received · still below typical month`}
             </p>
           </>
@@ -115,7 +127,7 @@ export function OverviewTab({ summary }: OverviewTabProps) {
       {/* Average per month */}
       <div className="bg-white rounded-xl border border-gray-200 p-6">
         <h3 className="text-sm font-medium text-gray-500 mb-4">
-          TYPICAL MONTH (avg regular, {last3MonthsFormatted} {last3Year})
+          TYPICAL MONTH (avg regular + bonus, {last3MonthsFormatted} {last3Year})
         </h3>
         
         <div className="flex items-center justify-between">
@@ -124,6 +136,11 @@ export function OverviewTab({ summary }: OverviewTabProps) {
             <p className="text-2xl font-bold text-gray-900 tabular-nums">
               {formatCurrency(typicalMonthly, currency, undefined, true)}
             </p>
+            {hasBonusIncome && (
+              <p className="text-xs text-gray-500 mt-1">
+                incl. {formatCurrency(avgBonusPerMonth, currency, undefined, true)}/mo bonus
+              </p>
+            )}
           </div>
           
           <div className="text-right">
@@ -131,8 +148,13 @@ export function OverviewTab({ summary }: OverviewTabProps) {
               {summary.last3Months.map(m => formatMonthYear(m).split(" ")[0]).join(", ")} {last3Year}
             </p>
             <p className="text-sm text-gray-600">
-              {formatCurrency(summary.last3MonthsTotal, currency, undefined, true)} total incl. one-offs
+              {formatCurrency(summary.last3MonthsTotal, currency, undefined, true)} total
             </p>
+            {hasBonusIncome && (
+              <p className="text-xs text-gray-500 mt-0.5">
+                {formatCurrency(last3MonthsBonus, currency, undefined, true)} bonus
+              </p>
+            )}
           </div>
         </div>
       </div>

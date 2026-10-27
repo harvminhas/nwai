@@ -134,7 +134,14 @@ function IncomePageContent() {
           <div className="space-y-6">
             <OverviewTab summary={summary} onReviewComplete={handleReviewComplete} />
             
-            {/* Review cards */}
+            {/* Income deposit reviews (unusual deposits) */}
+            <ReviewList
+              token={token}
+              reviewType="income_deposit"
+              onReviewComplete={handleReviewComplete}
+            />
+            
+            {/* Income classification reviews (existing) */}
             <ReviewList
               token={token}
               reviewType="income_classification"

@@ -165,21 +165,22 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   }
   
   // Verify card income matches drawer income (single source of truth)
-  console.log(`🔍 Card vs Drawer Income Check:`);
+  console.log(`🔍 Card vs Drawer vs Income Page Check:`);
   console.log(`   Dashboard card income: ${formatCurrency(breakdown.incomeAmount, currency)} (${breakdown.incomeBasisLabel})`);
   console.log(`   Income drawer typical: ${formatCurrency(incomeSummary.typicalMonthly, currency)} (last ${incomeSummary.last3Months.length} months)`);
+  console.log(`   Income page headline: ${formatCurrency(incomeSummary.typicalMonthly, currency)} (same source)`);
   console.log(`   Breakdown: Regular ${formatCurrency(typicalRegular, currency)}/mo + Bonus ${formatCurrency(Math.round(incomeSummary.last3MonthsBonus / incomeSummary.last3Months.length), currency)}/mo`);
   
   if (breakdown.incomeAmount !== incomeSummary.typicalMonthly) {
     const diff = Math.abs(breakdown.incomeAmount - incomeSummary.typicalMonthly);
     const diffPct = breakdown.incomeAmount > 0 ? (diff / breakdown.incomeAmount) * 100 : 0;
     errors.push(
-      `Card income (${formatCurrency(breakdown.incomeAmount, currency)}) does NOT match drawer income (${formatCurrency(incomeSummary.typicalMonthly, currency)}). ` +
+      `Card income (${formatCurrency(breakdown.incomeAmount, currency)}) does NOT match drawer/page income (${formatCurrency(incomeSummary.typicalMonthly, currency)}). ` +
       `Difference: ${formatCurrency(diff, currency)} (${diffPct.toFixed(1)}%)`
     );
     console.log(`   ❌ MISMATCH: ${formatCurrency(diff, currency)} difference (${diffPct.toFixed(1)}%)\n`);
   } else {
-    console.log(`   ✅ Match - both show regular + bonus income (unreviewed deposits counted)\n`);
+    console.log(`   ✅ Match - card, drawer, and Income page all show regular + bonus income\n`);
   }
   
   // Assert card income is reasonable (not wildly inflated by false positives)
