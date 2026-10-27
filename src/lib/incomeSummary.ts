@@ -173,6 +173,36 @@ function isLikelyTransfer(source: string, transactions: IncomeTransaction[]): bo
   return false;
 }
 
+/**
+ * Check if a transaction should be excluded from income calculations.
+ * Used consistently across month totals, averages, sourcesList, Income page and card.
+ * 
+ * Returns true if the transaction should be EXCLUDED (not counted as income).
+ */
+function shouldExcludeTransaction(
+  txn: IncomeTransaction,
+  source: IncomeSource | undefined,
+  classification: string | undefined
+): boolean {
+  // 1. User explicitly marked as 'not_income' - exclude
+  if (classification === 'not_income') {
+    return true;
+  }
+  
+  // 2. Transfer sources - NEVER income
+  if (source?.isTransfer) {
+    return true;
+  }
+  
+  // 3. Outgoing transfers by source name pattern - NEVER income
+  // SEND E-TFR, TFR-TO, TFR-FR are outgoing between own accounts
+  if (INCOME_TRANSFER_RE.test(txn.source)) {
+    return true;
+  }
+  
+  return false;
+}
+
 /** Cluster transactions by amount (±15% tolerance) for generic source names */
 function clusterByAmount(
   source: string,
@@ -478,6 +508,11 @@ export function buildIncomeSummary(
         const txId = txnWithId?.txId || '';
         const classification = incomeDepositReviews.get(txId);
         
+        // SHARED EXCLUSION LOGIC - skip if this transaction should be excluded
+        if (shouldExcludeTransaction(txn, source, classification)) {
+          continue;
+        }
+        
         // Check if this is a large refund that needs review
         const sourceLower = txn.source.toLowerCase();
         const isRefund = sourceLower.includes('refund') || sourceLower.includes('rebate') || sourceLower.includes('reversal');
@@ -514,10 +549,7 @@ export function buildIncomeSummary(
         
         if (isUnusual || isLargeRefund) {
           // Unusual deposit or large refund - check classification
-          if (classification === 'not_income') {
-            // Exclude completely
-            continue;
-          } else if (classification === 'regular_income') {
+          if (classification === 'regular_income') {
             // User marked as regular - treat as normal income
             regularTotal += txn.amount;
           } else if (classification === 'bonus') {
@@ -525,8 +557,9 @@ export function buildIncomeSummary(
             bonusTotal += txn.amount;
             if (txnWithId) bonusTransactions.push(txnWithId);
           } else {
-            // Unreviewed unusual deposit (NOT refund) - count as income (needs review)
-            if (!isLargeRefund) {
+            // Unreviewed unusual deposit (NOT refund)
+            // Only generate review card if ≥CA$500 AND from recurring source (≥3 txns)
+            if (!isLargeRefund && txn.amount >= 500 && source.transactions.length >= 3) {
               bonusTotal += txn.amount;
               
               // Add to unreviewed list (once per transaction, not per month)
@@ -549,6 +582,9 @@ export function buildIncomeSummary(
                   reason: 'unusual_amount'
                 });
               }
+            } else {
+              // Small unusual amount or non-recurring source: count as regular, no review
+              regularTotal += txn.amount;
             }
           }
         } else {

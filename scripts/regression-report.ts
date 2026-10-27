@@ -373,10 +373,14 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     const classification = incomeDepositReviews.get(txId);
     if (classification === 'not_income') continue;
     
-    // Skip transfers
+    // Find source info to check if it's a transfer
     const sourceInfo = [...incomeSummary.regularSources, ...incomeSummary.oneOffSources]
       .find(s => s.transactions.some(st => st.source === txn.source));
+    
+    // Skip transfers (both marked sources and transfer patterns)
     if (sourceInfo?.isTransfer) continue;
+    // Also skip if source name matches transfer pattern (TFR-TO, SEND E-TFR, etc.)
+    if (/\bTFR[-\s]?(TO|FR|FROM)\b|\bE[-\s]?TFR\b|\bETFR\b|\bXFER\b|\bTRANSFER\b/i.test(txn.source)) continue;
     
     if (!sourceGroups.has(txn.source)) {
       sourceGroups.set(txn.source, { source: txn.source, total: 0, transactions: [] });
