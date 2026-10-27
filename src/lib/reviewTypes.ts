@@ -5,8 +5,8 @@
 
 // Base review item (all review types extend this)
 export interface BaseReviewItem {
-  id: string; // Unique identifier (txFingerprint for debt, merchantSlug for subscription, generated for savings/income)
-  type: "debt_payment" | "savings_item" | "income_classification" | "subscription";
+  id: string; // Unique identifier (txFingerprint for debt, merchantSlug for subscription, txn id for income_deposit, generated for savings/income)
+  type: "debt_payment" | "savings_item" | "income_classification" | "subscription" | "income_deposit";
   accountSlug?: string;
   accountName?: string;
   date: string;
@@ -38,6 +38,14 @@ export interface IncomeClassificationReviewItem extends BaseReviewItem {
   suggestedCategory?: string;
 }
 
+// Income deposit review (unusual amount - is it regular, bonus, or not income?)
+export interface IncomeDepositReviewItem extends BaseReviewItem {
+  type: "income_deposit";
+  source: string;
+  usualAmount?: number;
+  reason: "unusual_amount"; // Detected as >1.5x median or >40% different
+}
+
 // Subscription confirmation review
 export interface SubscriptionReviewItem extends BaseReviewItem {
   type: "subscription";
@@ -49,14 +57,15 @@ export interface SubscriptionReviewItem extends BaseReviewItem {
 }
 
 // Union of all review types
-export type ReviewItem = DebtPaymentReviewItem | SavingsReviewItem | IncomeClassificationReviewItem | SubscriptionReviewItem;
+export type ReviewItem = DebtPaymentReviewItem | SavingsReviewItem | IncomeClassificationReviewItem | IncomeDepositReviewItem | SubscriptionReviewItem;
 
 // Classification options per review type
 export type DebtPaymentClassification = "extra_prepayment" | "new_regular_payment" | "ignore";
 export type SavingsClassification = "is_savings" | "not_savings" | "ignore";
 export type IncomeClassification = "is_income" | "is_transfer" | "is_refund" | "ignore";
+export type IncomeDepositClassification = "regular_income" | "bonus" | "not_income";
 export type SubscriptionClassification = "is_subscription" | "not_subscription" | "still_active" | "cancelled";
-export type ReviewClassification = DebtPaymentClassification | SavingsClassification | IncomeClassification | SubscriptionClassification;
+export type ReviewClassification = DebtPaymentClassification | SavingsClassification | IncomeClassification | IncomeDepositClassification | SubscriptionClassification;
 
 // Billing frequency options for subscriptions
 export type BillingFrequency = "weekly" | "monthly" | "quarterly" | "yearly";
@@ -64,7 +73,7 @@ export type BillingFrequency = "weekly" | "monthly" | "quarterly" | "yearly";
 // Persisted review record
 export interface ReviewRecord {
   id: string; // Same as review item ID
-  type: "debt_payment" | "savings_item" | "subscription";
+  type: "debt_payment" | "savings_item" | "subscription" | "income_deposit";
   classification: ReviewClassification;
   accountSlug?: string;
   merchantSlug?: string;

@@ -60,14 +60,16 @@ export interface IncomeSource {
 export interface MonthlyIncomeSummary {
   /** YYYY-MM */
   yearMonth: string;
-  /** Total income (all sources) */
+  /** Total income (regular + bonus, excluding not_income) */
   total: number;
-  /** Regular income (excluding one-offs) */
+  /** Regular income */
   regular: number;
-  /** One-off income */
+  /** One-off income (for backwards compatibility - same as bonus now) */
   oneOff: number;
+  /** Bonus income (unusual deposits classified as bonus or unreviewed) */
+  bonus: number;
   /** Per-source breakdown */
-  sources: { source: string; amount: number; isOneOff: boolean }[];
+  sources: { source: string; amount: number; isOneOff: boolean; isBonus?: boolean }[];
 }
 
 export interface IncomeComparison {
@@ -99,13 +101,17 @@ export interface IncomeSummary {
   currentMonthRegular: number;
   /** Current month one-off only */
   currentMonthOneOff: number;
+  /** Current month bonus only */
+  currentMonthBonus: number;
   
   /** Last 3 complete months */
   last3Months: string[];
-  /** Average per month (regular only, last 3 complete months) */
+  /** Average per month (regular + bonus, excluding not_income), last 3 complete months */
   typicalMonthly: number;
-  /** Total across last 3 complete months */
+  /** Total across last 3 complete months (regular + bonus) */
   last3MonthsTotal: number;
+  /** Bonus total across last 3 complete months */
+  last3MonthsBonus: number;
   
   /** All available months (sorted ascending) */
   allMonths: string[];
@@ -120,6 +126,16 @@ export interface IncomeSummary {
   oneOffSources: IncomeSource[];
   /** Regular recurring sources */
   regularSources: IncomeSource[];
+  /** Transactions classified as bonus */
+  bonusTransactions: IncomeTransaction[];
+  /** Unusual deposits needing review (included in totals by default) */
+  unreviewedDeposits: Array<{
+    txId: string;
+    source: string;
+    date: string;
+    amount: number;
+    usualAmount?: number;
+  }>;
   
   /** Year-over-year comparison (if available) */
   yoy?: IncomeComparison;
@@ -299,11 +315,16 @@ function computeMonthlyEquivalent(avgAmount: number, frequency: Frequency): numb
 /**
  * Build income summary from transactions.
  * This is the single source of truth for all income data in the app.
+ * 
+ * @param incomeDepositReviews - Map of transaction ID → classification for unusual deposits
+ *                                 Classifications: "regular_income", "bonus", "not_income"
+ *                                 Default behavior: unreviewed deposits COUNT as income (bonus)
  */
 export function buildIncomeSummary(
   incomeTxns: IncomeTxnRecord[],
   accountSnapshots: AccountSnapshot[],
-  currency: string = "USD"
+  currency: string = "USD",
+  incomeDepositReviews: Map<string, string> = new Map()
 ): IncomeSummary {
   const currentMonth = getCurrentMonth();
   
