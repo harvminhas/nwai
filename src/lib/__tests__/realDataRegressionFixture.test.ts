@@ -26,13 +26,24 @@ describe("Real Data Regression Fixture", () => {
       // Large refund (should be excluded from month total but generate review)
       { source: "Oakbay Refund", amount: 57780, date: "2026-04-10", category: "Other", accountSlug: "checking_1234" },
       
+      // Tiny rebates (should be counted as income, NO review card) - Issue #3
+      { source: "ACCT BAL REBATE", amount: 31, date: "2026-07-05", category: "Other", accountSlug: "checking_1234" },
+      { source: "ACCT BAL REBATE", amount: 31, date: "2026-08-05", category: "Other", accountSlug: "checking_1234" },
+      { source: "ACCT BAL REBATE", amount: 31, date: "2026-09-05", category: "Other", accountSlug: "checking_1234" },
+      { source: "TAX REFUND RIT", amount: 18, date: "2026-07-15", category: "Other", accountSlug: "checking_1234" },
+      
       // Regular payroll - MAM PAY (Aug, Sep, Oct)
       { source: "MAM PAY", amount: 4278, date: "2026-08-07", category: "Salary", accountSlug: "checking_1234" },
       { source: "MAM PAY", amount: 4278, date: "2026-08-21", category: "Salary", accountSlug: "checking_1234" },
       { source: "MAM PAY", amount: 4278, date: "2026-09-04", category: "Salary", accountSlug: "checking_1234" },
-      { source: "MAM PAY", amount: 24695, date: "2026-09-04", category: "Salary", accountSlug: "checking_1234" }, // BONUS on same day
+      { source: "MAM PAY", amount: 24695, date: "2026-09-04", category: "Salary", accountSlug: "checking_1234" }, // BONUS on same day - Issue #2
       { source: "MAM PAY", amount: 4278, date: "2026-09-18", category: "Salary", accountSlug: "checking_1234" },
       { source: "MAM PAY", amount: 4278, date: "2026-10-02", category: "Salary", accountSlug: "checking_1234" },
+      
+      // Additional income source to test Jul totals - Issue #4
+      { source: "MATHL PAY", amount: 1883, date: "2026-07-12", category: "Salary", accountSlug: "checking_1234" },
+      { source: "MATHL PAY", amount: 1883, date: "2026-08-12", category: "Salary", accountSlug: "checking_1234" },
+      { source: "MATHL PAY", amount: 1883, date: "2026-09-12", category: "Salary", accountSlug: "checking_1234" },
     ];
 
     const accountSnapshots: AccountSnapshot[] = [
@@ -89,6 +100,15 @@ describe("Real Data Regression Fixture", () => {
       const month = summary.monthlyHistory.find(m => m.yearMonth === ym);
       if (month) {
         console.log(`   ${ym}: Total CA$${month.total.toLocaleString()}, Regular CA$${month.regular.toLocaleString()}, Bonus CA$${month.bonus.toLocaleString()}`);
+        
+        // Debug: Print July transactions to diagnose Issue #4
+        if (ym === '2026-07') {
+          const julyTxns = incomeTxns.filter(t => t.date.startsWith('2026-07'));
+          console.log(`     July transactions (${julyTxns.length}):`);
+          julyTxns.forEach(t => {
+            console.log(`       - ${t.source}: CA$${t.amount.toLocaleString()} (${t.category || 'N/A'})`);
+          });
+        }
         
         // Check if any transfer sources are in this month's sources
         const transfersInMonth = month.sources?.filter(s => 
