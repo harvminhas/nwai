@@ -12,6 +12,7 @@
 import type { MonthlyHistoryEntry } from "./financialProfile";
 import type { IncomeTxnRecord } from "./extractTransactions";
 import { getLastCompleteMonth, getCurrentMonth } from "./monthAnchor";
+import { buildIncomeSummary } from "./incomeSummary";
 
 export type IncomeTimeWindow = "last3" | "12month" | "ytd";
 
@@ -400,14 +401,24 @@ export function computeDetailedIncomeMetrics(
  * Get income value to use for money coach calculations.
  * Returns current run-rate (recent 3 months) when available,
  * otherwise falls back to overall average.
+ * 
+ * Uses buildIncomeSummary to ensure consistency with Income page and drawers.
+ * Returns REGULAR income only (excludes one-offs like bonuses).
  */
-export function getMoneyCoachIncome(monthlyHistory: MonthlyHistoryEntry[]): {
+export function getMoneyCoachIncome(
+  monthlyHistory: MonthlyHistoryEntry[],
+  incomeTxns: IncomeTxnRecord[],
+  accountSnapshots: any[],
+  homeCurrency: string = "CAD"
+): {
   amount: number;
   basisLabel: string;
 } {
-  const metrics = computeIncomeMetrics(monthlyHistory, true);
+  // Use buildIncomeSummary (same as Income page and drawer) for consistency
+  const summary = buildIncomeSummary(incomeTxns, accountSnapshots, homeCurrency);
+  
   return {
-    amount: metrics.currentMonthly,
-    basisLabel: metrics.currentBasisLabel,
+    amount: summary.typicalMonthly,  // Regular income only, last 3 complete months average
+    basisLabel: summary.last3Months.length === 3 ? "last 3 months" : `${summary.last3Months.length}-month avg`,
   };
 }

@@ -34,7 +34,13 @@ export async function GET(req: NextRequest) {
       reviewedAt: doc.get("reviewedAt"),
     }));
 
-    const breakdown = computeMoneyCoachBreakdown(profile, userReviews);
+    const breakdown = computeMoneyCoachBreakdown(
+      profile, 
+      userReviews, 
+      profile.incomeTxns, 
+      profile.accountSnapshots, 
+      profile.homeCurrency || "CAD"
+    );
 
     return Response.json({
       ...breakdown,

@@ -87,7 +87,13 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   }));
   
   // Compute Money Coach breakdown (card values)
-  const breakdown = computeMoneyCoachBreakdown(profile, userReviews);
+  const breakdown = computeMoneyCoachBreakdown(
+    profile, 
+    userReviews,
+    profile.incomeTxns,
+    profile.accountSnapshots,
+    currency
+  );
   
   // Get last 3 complete months
   const now = new Date();
@@ -112,6 +118,23 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   console.log(`   One-off sources: ${incomeSummary.oneOffSources.length}`);
   console.log(`   Transfer sources: ${incomeSummary.transferSources.length}`);
   console.log(`   Last 3 months total: ${formatCurrency(incomeSummary.last3MonthsTotal, currency)}\n`);
+  
+  // Verify card income matches drawer income (single source of truth)
+  console.log(`🔍 Card vs Drawer Income Check:`);
+  console.log(`   Dashboard card income: ${formatCurrency(breakdown.incomeAmount, currency)} (${breakdown.incomeBasisLabel})`);
+  console.log(`   Income drawer typical: ${formatCurrency(incomeSummary.typicalMonthly, currency)} (last ${incomeSummary.last3Months.length} months)`);
+  
+  if (breakdown.incomeAmount !== incomeSummary.typicalMonthly) {
+    const diff = Math.abs(breakdown.incomeAmount - incomeSummary.typicalMonthly);
+    const diffPct = breakdown.incomeAmount > 0 ? (diff / breakdown.incomeAmount) * 100 : 0;
+    errors.push(
+      `Card income (${formatCurrency(breakdown.incomeAmount, currency)}) does NOT match drawer income (${formatCurrency(incomeSummary.typicalMonthly, currency)}). ` +
+      `Difference: ${formatCurrency(diff, currency)} (${diffPct.toFixed(1)}%)`
+    );
+    console.log(`   ❌ MISMATCH: ${formatCurrency(diff, currency)} difference (${diffPct.toFixed(1)}%)\n`);
+  } else {
+    console.log(`   ✅ Match - both show regular income only (excludes one-offs)\n`);
+  }
   
   // Test spending summary
   const spendingSummary = buildSpendingSummary(
