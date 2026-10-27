@@ -128,13 +128,14 @@ export interface IncomeSummary {
   regularSources: IncomeSource[];
   /** Transactions classified as bonus */
   bonusTransactions: IncomeTransaction[];
-  /** Unusual deposits needing review (included in totals by default) */
+  /** Unusual deposits needing review (unusual_amount: counted by default, large_refund: excluded by default) */
   unreviewedDeposits: Array<{
     txId: string;
     source: string;
     date: string;
     amount: number;
     usualAmount?: number;
+    reason?: "unusual_amount" | "large_refund";
   }>;
   
   /** Year-over-year comparison (if available) */
@@ -445,7 +446,7 @@ export function buildIncomeSummary(
   
   // Track bonus transactions and unreviewed deposits
   const bonusTransactions: IncomeTransaction[] = [];
-  const unreviewedDeposits: Array<{ txId: string; source: string; date: string; amount: number; usualAmount?: number }> = [];
+  const unreviewedDeposits: Array<{ txId: string; source: string; date: string; amount: number; usualAmount?: number; reason?: "unusual_amount" | "large_refund" }> = [];
   
   const monthlyHistory: MonthlyIncomeSummary[] = allMonths.map(ym => {
     const monthTxns = transactions.filter(t => t.date.startsWith(ym));
@@ -456,6 +457,11 @@ export function buildIncomeSummary(
     
     for (const source of allSources) {
       const sourceTxnsThisMonth = source.transactions.filter(t => t.date.startsWith(ym));
+      
+      // Skip transfers entirely - they should not be in month totals
+      if (source.isTransfer) {
+        continue;
+      }
       
       // Only check for unusual deposits in REGULAR income sources (not transfers, not one-offs)
       const shouldCheckForUnusual = !source.isTransfer && !source.isOneOff;
@@ -472,11 +478,32 @@ export function buildIncomeSummary(
         const txId = txnWithId?.txId || '';
         const classification = incomeDepositReviews.get(txId);
         
+        // Check if this is a large refund that needs review
+        const sourceLower = txn.source.toLowerCase();
+        const isRefund = sourceLower.includes('refund') || sourceLower.includes('rebate') || sourceLower.includes('reversal');
+        const isLargeRefund = isRefund && (txn.amount > 1000 || txn.amount > typicalMonthly * 0.5);
+        
         // Only flag as unusual if from a regular source AND detected as outlier
         const isUnusual = shouldCheckForUnusual && withinSourceOneOffs.has(txnKey);
         
-        if (isUnusual) {
-          // Unusual deposit - check classification
+        // Large refunds need review (default: NOT counted)
+        if (isLargeRefund && !classification) {
+          // Unreviewed large refund - add to review list, exclude from totals
+          if (!unreviewedDeposits.some(d => d.txId === txId)) {
+            unreviewedDeposits.push({
+              txId,
+              source: txn.source,
+              date: txn.date,
+              amount: txn.amount,
+              reason: 'large_refund'
+            });
+          }
+          // Don't count in totals until reviewed (opposite of unusual deposits)
+          continue;
+        }
+        
+        if (isUnusual || isLargeRefund) {
+          // Unusual deposit or large refund - check classification
           if (classification === 'not_income') {
             // Exclude completely
             continue;
@@ -488,31 +515,34 @@ export function buildIncomeSummary(
             bonusTotal += txn.amount;
             if (txnWithId) bonusTransactions.push(txnWithId);
           } else {
-            // Unreviewed - count as income (needs review)
-            bonusTotal += txn.amount;
-            
-            // Add to unreviewed list (once per transaction, not per month)
-            if (!unreviewedDeposits.some(d => d.txId === txId)) {
-              // Calculate usual amount (median of other transactions from this source)
-              const otherAmounts = source.transactions
-                .filter(t => !withinSourceOneOffs.has(`${t.date}:${t.amount}`))
-                .map(t => t.amount)
-                .sort((a, b) => a - b);
-              const usualAmount = otherAmounts.length > 0
-                ? otherAmounts[Math.floor(otherAmounts.length / 2)]
-                : undefined;
-                
-              unreviewedDeposits.push({
-                txId,
-                source: txn.source,
-                date: txn.date,
-                amount: txn.amount,
-                usualAmount
-              });
+            // Unreviewed unusual deposit (NOT refund) - count as income (needs review)
+            if (!isLargeRefund) {
+              bonusTotal += txn.amount;
+              
+              // Add to unreviewed list (once per transaction, not per month)
+              if (!unreviewedDeposits.some(d => d.txId === txId)) {
+                // Calculate usual amount (median of other transactions from this source)
+                const otherAmounts = source.transactions
+                  .filter(t => !withinSourceOneOffs.has(`${t.date}:${t.amount}`))
+                  .map(t => t.amount)
+                  .sort((a, b) => a - b);
+                const usualAmount = otherAmounts.length > 0
+                  ? otherAmounts[Math.floor(otherAmounts.length / 2)]
+                  : undefined;
+                  
+                unreviewedDeposits.push({
+                  txId,
+                  source: txn.source,
+                  date: txn.date,
+                  amount: txn.amount,
+                  usualAmount,
+                  reason: 'unusual_amount'
+                });
+              }
             }
           }
         } else {
-          // Normal transaction (or from transfer/one-off source)
+          // Normal transaction - add to regular total
           regularTotal += txn.amount;
         }
       }

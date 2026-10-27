@@ -159,21 +159,26 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   if (unusualMonths.length > 0) {
     console.log(`\n⚠️  Unusual High-Income Months Detected:`);
     for (const month of unusualMonths) {
-      console.log(`   ${month.yearMonth}: ${formatCurrency(month.total, currency)} (${month.total / incomeSummary.typicalMonthly}x typical)`);
+      console.log(`   ${month.yearMonth}: ${formatCurrency(month.total, currency)} (${(month.total / incomeSummary.typicalMonthly).toFixed(1)}x typical)`);
       
       // Get transactions for this month
       const monthTxns = profile.incomeTxns.filter(t => t.txMonth === month.yearMonth);
       console.log(`   Transactions (${monthTxns.length}):`);
       
       // Group by source and show totals
-      const sourceMap = new Map<string, { total: number; count: number; isTransfer: boolean }>();
+      const sourceMap = new Map<string, { total: number; count: number; isTransfer: boolean; isRefund: boolean }>();
       for (const txn of monthTxns) {
-        const existing = sourceMap.get(txn.source || 'Unknown') || { total: 0, count: 0, isTransfer: false };
+        const existing = sourceMap.get(txn.source || 'Unknown') || { total: 0, count: 0, isTransfer: false, isRefund: false };
         existing.total += txn.amount;
         existing.count += 1;
         // Check if it's a transfer based on category or source name
         if (txn.category === 'Transfer' || (txn.source || '').toLowerCase().includes('transfer')) {
           existing.isTransfer = true;
+        }
+        // Check if it's a refund
+        const sourceLower = (txn.source || '').toLowerCase();
+        if (sourceLower.includes('refund') || sourceLower.includes('rebate') || sourceLower.includes('reversal')) {
+          existing.isRefund = true;
         }
         sourceMap.set(txn.source || 'Unknown', existing);
       }
@@ -182,11 +187,65 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       const sorted = Array.from(sourceMap.entries()).sort((a, b) => b[1].total - a[1].total);
       for (const [source, data] of sorted) {
         const transferTag = data.isTransfer ? ' [TRANSFER - should be excluded]' : '';
-        console.log(`     ${source}: ${formatCurrency(data.total, currency)} (${data.count} txn)${transferTag}`);
+        const refundTag = data.isRefund ? ' [REFUND - check if counted]' : '';
+        console.log(`     ${source}: ${formatCurrency(data.total, currency)} (${data.count} txn)${transferTag}${refundTag}`);
       }
     }
     console.log('');
   }
+  
+  // Assert: No large refund (>$1,000) is counted without a review answer
+  console.log(`\n🔍 Refund Detection Check:`);
+  const largeRefunds = profile.incomeTxns.filter(t => {
+    const sourceLower = (t.source || '').toLowerCase();
+    const isRefund = sourceLower.includes('refund') || sourceLower.includes('rebate') || sourceLower.includes('reversal');
+    return isRefund && t.amount > 1000;
+  });
+  
+  if (largeRefunds.length > 0) {
+    console.log(`   Found ${largeRefunds.length} large refund(s) >$1,000:`);
+    for (const refund of largeRefunds) {
+      const txId = `${refund.date}:${refund.source}:${refund.amount}:${refund.accountSlug || 'unknown'}`;
+      const classification = incomeDepositReviews.get(txId);
+      const isUnreviewed = !classification;
+      const isCounted = !isUnreviewed || classification === 'regular_income' || classification === 'bonus';
+      
+      if (isUnreviewed) {
+        console.log(`     ⚠️  ${refund.date} ${refund.source}: ${formatCurrency(refund.amount, currency)} - UNREVIEWED (correctly excluded)`);
+      } else if (isCounted) {
+        errors.push(`Large refund counted as income: ${refund.source} ${formatCurrency(refund.amount, currency)} on ${refund.date}. Classification: ${classification}`);
+        console.log(`     ❌ ${refund.date} ${refund.source}: ${formatCurrency(refund.amount, currency)} - COUNTED (classification: ${classification})`);
+      } else {
+        console.log(`     ✅ ${refund.date} ${refund.source}: ${formatCurrency(refund.amount, currency)} - Excluded (classification: ${classification})`);
+      }
+    }
+  } else {
+    console.log(`   ✅ No large refunds found`);
+  }
+  
+  // Assert: Month totals exclude tagged transfers
+  console.log(`\n🔍 Transfer Exclusion Check:`);
+  const transferSources = incomeSummary.transferSources.map(s => s.canonicalName);
+  let transferViolations = 0;
+  
+  for (const month of incomeSummary.monthlyHistory) {
+    // Check if any transfer transactions are in this month's sources
+    const monthSources = month.sources.map(s => s.source);
+    const transfersInMonth = transferSources.filter(ts => 
+      monthSources.some(ms => ms.includes(ts) || ts.includes(ms))
+    );
+    
+    if (transfersInMonth.length > 0) {
+      transferViolations++;
+      errors.push(`Month ${month.yearMonth} includes transfer sources in totals: ${transfersInMonth.join(', ')}`);
+      console.log(`   ❌ ${month.yearMonth}: Includes transfers: ${transfersInMonth.join(', ')}`);
+    }
+  }
+  
+  if (transferViolations === 0) {
+    console.log(`   ✅ All months exclude transfer sources from totals`);
+  }
+  console.log('');
   
   // Unreviewed deposits section
   console.log(`\n📋 Unreviewed Income Deposits: ${incomeSummary.unreviewedDeposits.length}`);

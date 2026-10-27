@@ -522,6 +522,8 @@ function IncomeDepositReviewCard({
     year: "numeric" 
   });
   
+  const isRefund = item.reason === 'large_refund';
+  
   const comparisonText = item.usualAmount
     ? `CA$${item.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} vs usual CA$${item.usualAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     : `CA$${item.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -541,6 +543,11 @@ function IncomeDepositReviewCard({
           <span className="text-gray-400">•</span>
           <span className="text-orange-600 font-medium">{comparisonText}</span>
         </div>
+        {isRefund && (
+          <div className="mt-2 text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded inline-block">
+            Not counted as income (pending review)
+          </div>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-2">

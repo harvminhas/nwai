@@ -43,7 +43,7 @@ export interface IncomeDepositReviewItem extends BaseReviewItem {
   type: "income_deposit";
   source: string;
   usualAmount?: number;
-  reason: "unusual_amount"; // Detected as >1.5x median or >40% different
+  reason: "unusual_amount" | "large_refund"; // unusual_amount: >1.5x median; large_refund: refund/rebate/reversal >$1K
 }
 
 // Subscription confirmation review

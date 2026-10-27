@@ -129,7 +129,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           amount: d.amount,
           usualAmount: d.usualAmount,
           txMonth: d.date.slice(0, 7),
-          reason: "unusual_amount" as const
+          reason: (d.reason || "unusual_amount") as "unusual_amount" | "large_refund"
         })) as IncomeDepositReviewItem[];
     } else if (reviewType === "subscription") {
       // Get subscription candidates needing confirmation
