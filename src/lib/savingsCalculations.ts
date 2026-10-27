@@ -165,6 +165,41 @@ export interface AccountBalanceDetail {
 }
 
 /**
+ * Per-month savings breakdown with component reconciliation.
+ */
+export interface MonthSavingsBreakdown {
+  month: string;
+  netCashChange: number;
+  netDebtChange: number;
+  contributionsToOutside: number;
+  total: number;
+  /** For negative months, identify the main driver */
+  driver?: string;
+}
+
+/**
+ * Window-period savings result with per-month reconciliation.
+ */
+export interface WindowSavingsResult {
+  /** Per-month breakdown (each row sums: cash + debt + contributions = total) */
+  monthlyBreakdown: MonthSavingsBreakdown[];
+  /** Monthly average of each component */
+  monthlyAverage: {
+    netCashChange: number;
+    netDebtChange: number;
+    contributionsToOutside: number;
+    total: number;
+  };
+  /** Per-account changes over the entire window */
+  windowPeriodAccounts: {
+    cashAccounts: AccountBalanceDetail[];
+    debtAccounts: AccountBalanceDetail[];
+  };
+  /** Items needing confirmation */
+  needsConfirmation: SavingsConfirmation[];
+}
+
+/**
  * Result of monthly savings calculation with detailed breakdown.
  */
 export interface MonthlySavingsResult {
@@ -429,4 +464,138 @@ export function computeAverageSavings(
 
   const total = savingsByMonth.reduce((sum, s) => sum + s, 0);
   return total / months.length;
+}
+
+/**
+ * Compute savings for a window of months with per-month reconciliation.
+ * 
+ * Returns:
+ * - Per-month breakdown where components sum to total
+ * - Per-account changes over the entire window period
+ * - Monthly averages matching the header
+ */
+export function computeWindowSavings(
+  monthlyHistory: MonthlyHistoryEntry[],
+  accountBalanceHistory: AccountBalanceHistory[],
+  expenseTxns: ExpenseTxnRecord[],
+  months: string[],
+  confirmedItems: Map<string, boolean> = new Map()
+): WindowSavingsResult {
+  if (months.length === 0) {
+    return {
+      monthlyBreakdown: [],
+      monthlyAverage: { netCashChange: 0, netDebtChange: 0, contributionsToOutside: 0, total: 0 },
+      windowPeriodAccounts: { cashAccounts: [], debtAccounts: [] },
+      needsConfirmation: [],
+    };
+  }
+
+  // Compute per-month savings
+  const monthlyBreakdown: MonthSavingsBreakdown[] = [];
+  const allConfirmations = new Set<string>();
+  
+  for (const month of months) {
+    const result = computeMonthlySavings(monthlyHistory, accountBalanceHistory, expenseTxns, month, confirmedItems);
+    
+    // Identify driver for negative months
+    let driver: string | undefined;
+    if (result.total < 0) {
+      // Find account with largest negative impact
+      const cashLosses = result.details.cashAccounts
+        .filter(a => a.change < 0)
+        .sort((a, b) => a.change - b.change); // Most negative first
+      
+      const debtIncreases = result.details.debtAccounts
+        .filter(a => a.change < 0) // Negative change = more debt = bad
+        .sort((a, b) => a.change - b.change);
+      
+      if (debtIncreases.length > 0 && cashLosses.length > 0) {
+        const largestDebtIncrease = Math.abs(debtIncreases[0].change);
+        const largestCashLoss = Math.abs(cashLosses[0].change);
+        
+        if (largestDebtIncrease > largestCashLoss) {
+          driver = `New borrowing on ${debtIncreases[0].accountLabel}`;
+        } else {
+          driver = `Cash spent down from ${cashLosses[0].accountLabel}`;
+        }
+      } else if (debtIncreases.length > 0) {
+        driver = `New borrowing on ${debtIncreases[0].accountLabel}`;
+      } else if (cashLosses.length > 0) {
+        driver = `Cash spent down from ${cashLosses[0].accountLabel}`;
+      }
+    }
+    
+    monthlyBreakdown.push({
+      month,
+      netCashChange: result.netCashChange,
+      netDebtChange: result.netDebtChange,
+      contributionsToOutside: result.contributionsToOutside,
+      total: result.total,
+      driver,
+    });
+    
+    result.needsConfirmation.forEach(c => allConfirmations.add(c.id));
+  }
+
+  // Compute monthly averages
+  const monthlyAverage = {
+    netCashChange: monthlyBreakdown.reduce((sum, m) => sum + m.netCashChange, 0) / months.length,
+    netDebtChange: monthlyBreakdown.reduce((sum, m) => sum + m.netDebtChange, 0) / months.length,
+    contributionsToOutside: monthlyBreakdown.reduce((sum, m) => sum + m.contributionsToOutside, 0) / months.length,
+    total: monthlyBreakdown.reduce((sum, m) => sum + m.total, 0) / months.length,
+  };
+
+  // Compute window-period account changes
+  // Start balance = month-end balance of the month before the window (or most recent prior)
+  // End balance = month-end balance of the last month in the window
+  const firstMonth = months[0];
+  const lastMonth = months[months.length - 1];
+  const priorMonth = findPriorMonth(monthlyHistory, firstMonth);
+  
+  const cashAccounts: AccountBalanceDetail[] = [];
+  const debtAccounts: AccountBalanceDetail[] = [];
+  
+  for (const account of accountBalanceHistory) {
+    const isCash = isCashAccount(account.accountType);
+    const isDebt = isDebtAccount(account.accountType);
+    
+    if (!isCash && !isDebt) continue;
+    
+    const endResult = getBalanceForMonth(account, lastMonth);
+    const startResult = priorMonth ? getBalanceForMonth(account, priorMonth.yearMonth) : null;
+    
+    if (!endResult || !startResult) continue;
+    
+    const change = endResult.balance - startResult.balance;
+    
+    const detail: AccountBalanceDetail = {
+      accountLabel: account.label,
+      slug: account.slug,
+      accountType: account.accountType,
+      priorBalance: startResult.balance,
+      currentBalance: endResult.balance,
+      priorCarriedForward: startResult.carriedForward,
+      currentCarriedForward: endResult.carriedForward,
+      change,
+    };
+    
+    if (isCash) {
+      cashAccounts.push(detail);
+    } else {
+      debtAccounts.push(detail);
+    }
+  }
+
+  return {
+    monthlyBreakdown,
+    monthlyAverage,
+    windowPeriodAccounts: { cashAccounts, debtAccounts },
+    needsConfirmation: Array.from(allConfirmations).map(id => ({
+      id,
+      merchant: '',
+      category: '',
+      amount: 0,
+      date: '',
+    })),
+  };
 }

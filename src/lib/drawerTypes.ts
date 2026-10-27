@@ -5,7 +5,7 @@
 
 import type { BucketDetailedBreakdown } from "./bucketBreakdown";
 import type { DetailedIncomeMetrics } from "./incomeMetrics";
-import type { MonthlySavingsResult, AccountBalanceDetail, SavingsConfirmation } from "./savingsCalculations";
+import type { WindowSavingsResult, SavingsConfirmation } from "./savingsCalculations";
 
 export type DrawerTimeWindow = "last3" | "12month" | "ytd";
 
@@ -40,21 +40,8 @@ export interface BucketDrawerData {
 export interface SavingsDrawerData {
   type: "savings";
   window: DrawerTimeWindow;
-  monthlyBreakdown: {
-    month: string;
-    total: number;
-    netCashChange: number;
-    netDebtChange: number;
-    contributionsToOutside: number;
-    isInWindow: boolean;
-  }[];
-  periodBreakdown: {
-    cashAccounts: AccountBalanceDetail[];
-    debtAccounts: AccountBalanceDetail[];
-    contributions: Array<{ merchant: string; amount: number; category: string; needsConfirmation: boolean }>;
-  };
-  monthlyAverage: number;
-  needsConfirmation: SavingsConfirmation[];
+  /** Window-period reconciliation with per-month breakdown */
+  windowSavings: WindowSavingsResult;
   homeCurrency: string;
   basisLabel: string;
 }

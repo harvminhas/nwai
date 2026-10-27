@@ -3,7 +3,7 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { buildIncomeSummary } from "@/lib/incomeSummary";
 import { computeBucketBreakdown, compute3MonthTrend, getMonthsForWindow as getBucketMonths, type TimeWindow } from "@/lib/bucketBreakdown";
-import { computeMonthlySavings, computeAverageSavings } from "@/lib/savingsCalculations";
+import { computeWindowSavings } from "@/lib/savingsCalculations";
 import { formatMonthYear } from "@/lib/dateFormatting";
 import type { MoneyCoachBucket } from "@/lib/moneyCoachBuckets";
 import type { IncomeDrawerData, BucketDrawerData, SavingsDrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
@@ -170,48 +170,18 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
         return NextResponse.json({ error: "No complete months available for selected window" }, { status: 404 });
       }
       
-      // Compute savings for each month
-      const monthlyResults = completeMonths.map(month => {
-        const result = computeMonthlySavings(
-          profile.monthlyHistory,
-          profile.accountBalanceHistory,
-          profile.expenseTxns,
-          month
-        );
-        return {
-          month,
-          total: result.total,
-          netCashChange: result.netCashChange,
-          netDebtChange: result.netDebtChange,
-          contributionsToOutside: result.contributionsToOutside,
-          isInWindow: true,
-        };
-      });
-      
-      // Compute average savings for the period
-      const avgSavings = computeAverageSavings(
+      // Compute window savings with per-month reconciliation
+      const windowSavings = computeWindowSavings(
         profile.monthlyHistory,
         profile.accountBalanceHistory,
         profile.expenseTxns,
         completeMonths
       );
       
-      // Get detailed breakdown for the entire period (aggregate all accounts)
-      const lastMonthResult = monthlyResults[monthlyResults.length - 1];
-      const lastMonthFull = computeMonthlySavings(
-        profile.monthlyHistory,
-        profile.accountBalanceHistory,
-        profile.expenseTxns,
-        lastMonthResult.month
-      );
-      
       const response: SavingsDrawerData = {
         type: "savings",
         window,
-        monthlyBreakdown: monthlyResults,
-        periodBreakdown: lastMonthFull.details,
-        monthlyAverage: avgSavings,
-        needsConfirmation: lastMonthFull.needsConfirmation,
+        windowSavings,
         homeCurrency: profile.homeCurrency,
         basisLabel: completeMonths.length > 0
           ? `Monthly average, ${formatMonthYear(completeMonths[0]).split(' ')[0]}–${formatMonthYear(completeMonths[completeMonths.length - 1])}`
