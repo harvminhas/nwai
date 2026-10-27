@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from "recharts";
 import type { SpendingSummary } from "@/lib/spendingSummary";
-import { formatMonth, formatMonthYear, formatDate } from "@/lib/dateFormatting";
+import { formatMonth, formatMonthYear } from "@/lib/dateFormatting";
 import { formatCurrency, getCurrencySymbol } from "@/lib/currencyUtils";
 import { getSignColor } from "@/lib/colorHelpers";
 
@@ -37,42 +37,11 @@ export function TrendsTab({ summary }: TrendsTabProps) {
   // Get selected month data
   const selectedData = selectedMonth ? monthlyHistory.find(m => m.yearMonth === selectedMonth) : null;
 
-  // Category sparklines with 3-month comparison
-  const categorySparklines = selectedMonth
-    ? (() => {
-        const selectedIdx = monthlyHistory.findIndex(m => m.yearMonth === selectedMonth);
-        const last3Before = monthlyHistory.slice(Math.max(0, selectedIdx - 3), selectedIdx);
-        
-        const categoryMap = new Map<string, { amounts: number[]; lastMonth: number; prior3Avg: number }>();
-        
-        // Gather all categories from selected month
-        if (selectedData) {
-          selectedData.categories.forEach(c => {
-            const prior3 = last3Before.map(m => {
-              const cat = m.categories.find(mc => mc.category === c.category);
-              return cat?.amount || 0;
-            });
-            const prior3Avg = prior3.length > 0 ? prior3.reduce((s, a) => s + a, 0) / prior3.length : 0;
-            
-            categoryMap.set(c.category, {
-              amounts: [...prior3, c.amount],
-              lastMonth: c.amount,
-              prior3Avg,
-            });
-          });
-        }
-        
-        return Array.from(categoryMap.entries())
-          .map(([category, data]) => ({
-            category,
-            lastMonth: data.lastMonth,
-            prior3Avg: data.prior3Avg,
-            change: data.prior3Avg > 0 ? ((data.lastMonth - data.prior3Avg) / data.prior3Avg) * 100 : 0,
-            sparkline: data.amounts,
-          }))
-          .sort((a, b) => b.lastMonth - a.lastMonth);
-      })()
-    : [];
+  // Handle bar click
+  const handleBarClick = (data: any) => {
+    const month = data.yearMonth;
+    setSelectedMonth(month === selectedMonth ? null : month);
+  };
 
   return (
     <div className="space-y-6">
@@ -85,6 +54,7 @@ export function TrendsTab({ summary }: TrendsTabProps) {
             <BarChart
               data={chartData}
               margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+              onClick={handleBarClick}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
               <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
@@ -104,19 +74,19 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                   );
                 }}
               />
-              <Bar dataKey="fixed" stackId="a" fill="#7c3aed" radius={[0, 0, 0, 0]}>
+              <Bar dataKey="fixed" stackId="a" fill="#7c3aed" radius={[0, 0, 0, 0]} cursor="pointer">
                 {chartData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} opacity={selectedMonth && entry.yearMonth !== selectedMonth ? 0.4 : 1} />
+                  <Cell key={`cell-fixed-${index}`} opacity={selectedMonth && entry.yearMonth !== selectedMonth ? 0.3 : 1} />
                 ))}
               </Bar>
-              <Bar dataKey="essentials" stackId="a" fill="#2563eb" radius={[0, 0, 0, 0]}>
+              <Bar dataKey="essentials" stackId="a" fill="#2563eb" radius={[0, 0, 0, 0]} cursor="pointer">
                 {chartData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} opacity={selectedMonth && entry.yearMonth !== selectedMonth ? 0.4 : 1} />
+                  <Cell key={`cell-ess-${index}`} opacity={selectedMonth && entry.yearMonth !== selectedMonth ? 0.3 : 1} />
                 ))}
               </Bar>
-              <Bar dataKey="flexible" stackId="a" fill="#16a34a" radius={[4, 4, 0, 0]}>
+              <Bar dataKey="flexible" stackId="a" fill="#16a34a" radius={[4, 4, 0, 0]} cursor="pointer">
                 {chartData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} opacity={selectedMonth && entry.yearMonth !== selectedMonth ? 0.4 : 1} />
+                  <Cell key={`cell-flex-${index}`} opacity={selectedMonth && entry.yearMonth !== selectedMonth ? 0.3 : 1} />
                 ))}
               </Bar>
             </BarChart>
@@ -137,94 +107,134 @@ export function TrendsTab({ summary }: TrendsTabProps) {
             <span className="text-gray-600">Flexible</span>
           </div>
         </div>
-
-        {/* Clickable month rows */}
-        <div className="mt-4 border-t border-gray-100 pt-4">
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-            {chartData.slice().reverse().map(month => (
-              <button
-                key={month.yearMonth}
-                onClick={() => setSelectedMonth(month.yearMonth === selectedMonth ? null : month.yearMonth)}
-                className={`px-3 py-2 text-xs rounded-lg text-left transition-colors ${
-                  selectedMonth === month.yearMonth
-                    ? "bg-purple-100 text-purple-900 font-medium"
-                    : "bg-gray-50 text-gray-700 hover:bg-gray-100"
-                }`}
-              >
-                <div className="font-medium">{formatMonthYear(month.yearMonth)}</div>
-                <div className="text-gray-600">{formatCurrency(month.total, currency, undefined, true)}</div>
-              </button>
-            ))}
-          </div>
-        </div>
       </div>
 
       {/* Month detail drawer */}
       {selectedMonth && selectedData && (
-        <div className="bg-purple-50 border border-purple-200 rounded-xl p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-base font-semibold text-gray-900">{formatMonthYear(selectedMonth)}</h3>
-            <button
-              onClick={() => setSelectedMonth(null)}
-              className="text-sm text-purple-600 hover:text-purple-700 font-medium"
-            >
-              Close
-            </button>
-          </div>
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm"
+            onClick={() => setSelectedMonth(null)}
+          />
 
-          <div className="mb-6">
-            <div className="text-2xl font-semibold text-gray-900 mb-2">
-              {formatCurrency(selectedData.total, currency)}
+          {/* Drawer */}
+          <div className="fixed right-0 top-0 z-50 h-full w-full max-w-2xl overflow-y-auto bg-white shadow-2xl sm:w-[640px]">
+            {/* Header */}
+            <div className="sticky top-0 border-b border-gray-200 bg-white px-6 py-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-bold text-gray-900">{formatMonthYear(selectedMonth)}</h2>
+                <button
+                  onClick={() => setSelectedMonth(null)}
+                  className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                >
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             </div>
-            <div className="flex gap-3 text-sm">
-              <span className="text-purple-700">Fixed: {formatCurrency(selectedData.fixed, currency)}</span>
-              <span className="text-blue-700">Essentials: {formatCurrency(selectedData.essentials, currency)}</span>
-              <span className="text-green-700">Flexible: {formatCurrency(selectedData.flexible, currency)}</span>
-            </div>
-          </div>
 
-          {/* Category breakdown */}
-          <div>
-            <h4 className="text-sm font-semibold text-gray-900 mb-3">By category</h4>
-            <div className="space-y-3">
-              {categorySparklines.map(cat => (
-                <div key={cat.category}>
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="text-sm font-medium text-gray-900">{cat.category}</div>
+            {/* Content */}
+            <div className="p-6 space-y-6">
+              {/* Total vs typical */}
+              <div>
+                <div className="text-3xl font-bold text-gray-900 mb-2">
+                  {formatCurrency(selectedData.total, currency)}
+                </div>
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-gray-600">vs typical</span>
+                  <span className="font-medium text-gray-900">{formatCurrency(summary.typicalMonthly, currency)}</span>
+                  {(() => {
+                    const diff = selectedData.total - summary.typicalMonthly;
+                    const pct = summary.typicalMonthly > 0 ? (diff / summary.typicalMonthly) * 100 : 0;
+                    if (Math.abs(pct) < 5) return null;
+                    return (
+                      <span className={`text-xs font-semibold ${getSignColor(diff)}`}>
+                        {diff > 0 ? "+" : ""}{pct.toFixed(0)}%
+                      </span>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* Bucket breakdown */}
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900 mb-3">By bucket</h3>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <div className="text-sm text-gray-900">
-                        {formatCurrency(cat.lastMonth, currency)}
-                      </div>
-                      {Math.abs(cat.change) >= 5 && (
-                        <div className={`text-xs ${getSignColor(cat.change)}`}>
-                          {cat.change > 0 ? "+" : ""}
-                          {cat.change.toFixed(0)}%
-                        </div>
-                      )}
+                      <div className="w-3 h-3 bg-purple-600 rounded"></div>
+                      <span className="text-sm font-medium text-gray-900">Fixed</span>
                     </div>
+                    <span className="text-sm font-semibold text-gray-900">{formatCurrency(selectedData.fixed, currency)}</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 relative h-2 bg-gray-200 rounded overflow-hidden">
-                      <div
-                        className="absolute h-full bg-purple-600 rounded"
-                        style={{
-                          width: `${Math.min(100, (cat.lastMonth / selectedData.total) * 100)}%`,
-                        }}
-                      />
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 bg-blue-600 rounded"></div>
+                      <span className="text-sm font-medium text-gray-900">Essentials</span>
                     </div>
-                    <div className="w-16 h-6">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={cat.sparkline.map((v, i) => ({ v, i }))} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
-                          <Bar dataKey="v" fill="#9ca3af" radius={[1, 1, 0, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
+                    <span className="text-sm font-semibold text-gray-900">{formatCurrency(selectedData.essentials, currency)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 bg-green-600 rounded"></div>
+                      <span className="text-sm font-medium text-gray-900">Flexible</span>
                     </div>
+                    <span className="text-sm font-semibold text-gray-900">{formatCurrency(selectedData.flexible, currency)}</span>
                   </div>
                 </div>
-              ))}
+              </div>
+
+              {/* Categories with transactions */}
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900 mb-3">By category</h3>
+                <div className="space-y-1">
+                  {selectedData.categories.sort((a, b) => b.amount - a.amount).map(cat => {
+                    const categoryMerchants = summary.merchants.filter(m => m.category === cat.category);
+                    const [expanded, setExpanded] = useState(false);
+                    
+                    return (
+                      <div key={cat.category} className="border-b border-gray-100 last:border-0">
+                        <button
+                          onClick={() => setExpanded(!expanded)}
+                          className="w-full flex items-center justify-between py-3 hover:bg-gray-50 transition-colors"
+                        >
+                          <span className="text-sm font-medium text-gray-900">{cat.category}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold text-gray-900">{formatCurrency(cat.amount, currency)}</span>
+                            <svg className={`h-4 w-4 text-gray-400 transition-transform ${expanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </div>
+                        </button>
+                        
+                        {expanded && categoryMerchants.length > 0 && (
+                          <div className="pl-4 pb-3 space-y-2">
+                            {categoryMerchants.map(merchant => {
+                              const monthTxns = merchant.transactions.filter(t => t.txMonth === selectedMonth);
+                              if (monthTxns.length === 0) return null;
+                              const monthTotal = monthTxns.reduce((s, t) => s + t.amount, 0);
+                              
+                              return (
+                                <div key={merchant.merchantSlug} className="text-xs">
+                                  <div className="flex items-center justify-between text-gray-700">
+                                    <span>{merchant.merchant}</span>
+                                    <span className="font-medium">{formatCurrency(monthTotal, currency)}</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* Category list with sparklines */}

@@ -14,6 +14,7 @@ interface OverviewTabProps {
 
 export function OverviewTab({ summary, token }: OverviewTabProps) {
   const [subscriptions, setSubscriptions] = useState<SubscriptionSummary | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -135,7 +136,11 @@ export function OverviewTab({ summary, token }: OverviewTabProps) {
             const changePct = priorAvg > 0 ? (change / priorAvg) * 100 : 0;
 
             return (
-              <div key={cat.category}>
+              <button
+                key={cat.category}
+                onClick={() => setSelectedCategory(cat.category)}
+                className="w-full text-left hover:bg-gray-50 rounded-lg p-2 -m-2 transition-colors"
+              >
                 <div className="flex items-center justify-between mb-1">
                   <div className="text-sm font-medium text-neutral-900">{cat.category}</div>
                   <div className="flex items-center gap-2">
@@ -156,7 +161,7 @@ export function OverviewTab({ summary, token }: OverviewTabProps) {
                     style={{ width: `${Math.min(100, (cat.share * 100))}%` }}
                   />
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
@@ -246,6 +251,134 @@ export function OverviewTab({ summary, token }: OverviewTabProps) {
           />
         </div>
       )}
+
+      {/* Category detail drawer */}
+      {selectedCategory && (() => {
+        const catData = summary.categories.find(c => c.category === selectedCategory);
+        if (!catData) return null;
+
+        // Get 12-month history for sparkline
+        const monthlyAmounts = summary.monthlyHistory.slice(-12).map(m => {
+          const cat = m.categories.find(c => c.category === selectedCategory);
+          return cat?.amount || 0;
+        });
+
+        // Calculate typical (avg of last 3 months)
+        const last3Avg = monthlyAmounts.slice(-3).reduce((s, a) => s + a, 0) / 3;
+        const lastMonthCat = lastMonthData.categories.find(c => c.category === selectedCategory);
+        const lastMonthAmt = lastMonthCat?.amount || 0;
+        const vsTypical = lastMonthAmt - last3Avg;
+        const vsTypicalPct = last3Avg > 0 ? (vsTypical / last3Avg) * 100 : 0;
+
+        return (
+          <>
+            {/* Backdrop */}
+            <div
+              className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm"
+              onClick={() => setSelectedCategory(null)}
+            />
+
+            {/* Drawer */}
+            <div className="fixed right-0 top-0 z-50 h-full w-full max-w-2xl overflow-y-auto bg-white shadow-2xl sm:w-[640px]">
+              {/* Header */}
+              <div className="sticky top-0 border-b border-gray-200 bg-white px-6 py-4">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xl font-bold text-gray-900">{selectedCategory}</h2>
+                  <button
+                    onClick={() => setSelectedCategory(null)}
+                    className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                  >
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              {/* Content */}
+              <div className="p-6 space-y-6">
+                {/* Total vs typical */}
+                <div>
+                  <div className="text-3xl font-bold text-gray-900 mb-2">
+                    {formatCurrency(lastMonthAmt, summary.currency)}
+                  </div>
+                  <div className="flex items-center gap-2 text-sm mb-4">
+                    <span className="text-gray-600">vs typical</span>
+                    <span className="font-medium text-gray-900">{formatCurrency(last3Avg, summary.currency)}</span>
+                    {Math.abs(vsTypicalPct) >= 5 && (
+                      <span className={`text-xs font-semibold ${getSignColor(vsTypical)}`}>
+                        {vsTypical > 0 ? "+" : ""}{vsTypicalPct.toFixed(0)}%
+                      </span>
+                    )}
+                  </div>
+
+                  {/* 12-month sparkline */}
+                  <div className="h-16 bg-gray-50 rounded-lg p-2">
+                    <div className="flex items-end justify-between h-full gap-1">
+                      {monthlyAmounts.map((amt, idx) => {
+                        const max = Math.max(...monthlyAmounts, 1);
+                        const height = (amt / max) * 100;
+                        return (
+                          <div
+                            key={idx}
+                            className="flex-1 bg-purple-600 rounded-t"
+                            style={{ height: `${height}%` }}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Merchants */}
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900 mb-3">By merchant</h3>
+                  <div className="space-y-1">
+                    {catData.merchants.sort((a, b) => b.total - a.total).map(merchant => {
+                      const monthTxns = merchant.transactions.filter(t => t.txMonth === lastMonth);
+                      const [expanded, setExpanded] = useState(false);
+                      
+                      if (monthTxns.length === 0) return null;
+                      const monthTotal = monthTxns.reduce((s, t) => s + t.amount, 0);
+                      
+                      return (
+                        <div key={merchant.merchantSlug} className="border-b border-gray-100 last:border-0">
+                          <button
+                            onClick={() => setExpanded(!expanded)}
+                            className="w-full flex items-center justify-between py-3 hover:bg-gray-50 transition-colors"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-gray-900">{merchant.merchant}</span>
+                              <span className="text-xs text-gray-500">({monthTxns.length})</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold text-gray-900">{formatCurrency(monthTotal, summary.currency)}</span>
+                              <svg className={`h-4 w-4 text-gray-400 transition-transform ${expanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </div>
+                          </button>
+                          
+                          {expanded && (
+                            <div className="pl-4 pb-3 space-y-1">
+                              {monthTxns.map((txn, idx) => (
+                                <div key={idx} className="flex items-center justify-between text-xs text-gray-600">
+                                  <span>{new Date(txn.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                                  <span className="font-medium">{formatCurrency(txn.amount, summary.currency)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }
