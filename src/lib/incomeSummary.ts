@@ -603,6 +603,7 @@ export function buildIncomeSummary(
       oneOff: bonusTotal, // For backwards compatibility
       bonus: bonusTotal,
       sources: allSources
+        .filter(s => !s.isTransfer) // Exclude transfers from month sources
         .filter(s => s.transactions.some(t => t.date.startsWith(ym)))
         .map(s => {
           const sourceTxnsThisMonth = s.transactions.filter(t => t.date.startsWith(ym));
