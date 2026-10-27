@@ -78,7 +78,7 @@ export async function GET(req: NextRequest) {
     // Get scheduled payment info for this account
     const scheduledPayments = computeScheduledDebtPayments(
       profile.accountSnapshots,
-      profile.expenseTxns,
+      profile.debtPaymentHistory,
       userReviews,
       fxRates,
       profile.homeCurrency

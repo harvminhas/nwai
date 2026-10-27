@@ -102,12 +102,62 @@ function MerchantRow({
 function MerchantDrawer({ 
   merchant, 
   onClose,
-  onMerge
+  onMerge,
+  token
 }: { 
   merchant: MerchantSummary | null; 
   onClose: () => void;
   onMerge: (slug: string) => void;
+  token: string;
 }) {
+  const [cadence, setCadence] = useState<string>("monthly");
+  const [cadenceLoading, setCadenceLoading] = useState(true);
+  const [savingCadence, setSavingCadence] = useState(false);
+  
+  useEffect(() => {
+    if (!merchant || !token) return;
+    
+    setCadenceLoading(true);
+    fetch(`/api/user/spending/merchant-cadence?slug=${encodeURIComponent(merchant.slug)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.cadence?.frequency) {
+          setCadence(data.cadence.frequency);
+        }
+      })
+      .catch(console.error)
+      .finally(() => setCadenceLoading(false));
+  }, [merchant, token]);
+  
+  const handleCadenceChange = async (newCadence: string) => {
+    if (!merchant || !token) return;
+    setCadence(newCadence);
+    setSavingCadence(true);
+    
+    try {
+      await fetch('/api/user/spending/merchant-cadence', {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          slug: merchant.slug,
+          frequency: newCadence,
+          merchantName: merchant.displayName || merchant.name,
+          amount: merchant.avgAmount,
+          lastSeenDate: merchant.lastDate,
+        }),
+      });
+    } catch (error) {
+      console.error('Failed to save cadence:', error);
+    } finally {
+      setSavingCadence(false);
+    }
+  };
+  
   if (!merchant) return null;
   
   const color = merchant.slug.charCodeAt(0) % 360;
@@ -182,8 +232,16 @@ function MerchantDrawer({
                 <div key={i} className="flex items-center justify-between border-b border-gray-100 pb-2">
                   <div>
                     <div className="text-sm font-medium text-gray-900">{txn.merchant}</div>
-                    <div className="text-xs text-gray-500">
-                      {txn.date ? new Date(txn.date).toLocaleDateString() : txn.ym}
+                    <div className="flex items-center gap-2 text-xs text-gray-500">
+                      <span>{txn.date ? new Date(txn.date).toLocaleDateString() : txn.ym}</span>
+                      {txn.accountLabel && (
+                        <>
+                          <span>·</span>
+                          <span className="truncate max-w-[150px]" title={txn.accountLabel}>
+                            {txn.accountLabel}
+                          </span>
+                        </>
+                      )}
                     </div>
                   </div>
                   <div className="text-right">
@@ -196,7 +254,28 @@ function MerchantDrawer({
             </div>
           </div>
           
-          <div className="mt-6 flex gap-2">
+          <div className="mt-6 space-y-2">
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Billing frequency
+              </label>
+              <select
+                value={cadence}
+                onChange={(e) => handleCadenceChange(e.target.value)}
+                disabled={savingCadence || cadenceLoading}
+                className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm disabled:opacity-50"
+              >
+                <option value="weekly">Weekly</option>
+                <option value="biweekly">Every 2 weeks</option>
+                <option value="monthly">Monthly</option>
+                <option value="quarterly">Quarterly</option>
+                <option value="yearly">Yearly</option>
+                <option value="oneoff">One-time</option>
+              </select>
+            </div>
+          </div>
+          
+          <div className="mt-4 flex gap-2">
             <button 
               onClick={() => onMerge(merchant.slug)}
               className="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
@@ -480,6 +559,7 @@ export default function MerchantsTab({ token }: MerchantsTabProps) {
           merchant={selectedMerchant}
           onClose={() => setSelectedMerchant(null)}
           onMerge={handleMergeClick}
+          token={token}
         />
       )}
       

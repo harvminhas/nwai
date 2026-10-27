@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 import type { DrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
+import { formatMonthYear } from "@/lib/dateFormatting";
+import { getSignColor, getSignBgColor } from "@/lib/colorHelpers";
+import { ReviewList } from "./ReviewList";
 
 export type DrawerType = "income" | "fixed" | "essentials" | "flexible" | "savings";
 
@@ -90,7 +93,7 @@ export function Drawer({ type, isOpen, onClose, token, currency }: DrawerProps) 
               {type === "fixed" && "Fixed costs"}
               {type === "essentials" && "Essentials"}
               {type === "flexible" && "Flexible spending"}
-              {type === "savings" && "Savings & debt"}
+              {type === "savings" && "Net savings"}
             </h2>
             <button
               onClick={onClose}
@@ -157,6 +160,28 @@ export function Drawer({ type, isOpen, onClose, token, currency }: DrawerProps) 
 
           {!loading && !error && data && data.type === "bucket" && (
             <BucketDrawerContent data={data} currency={currency} type={type} />
+          )}
+
+          {!loading && !error && data && data.type === "savings" && (
+            <SavingsDrawerContent 
+              data={data} 
+              currency={currency} 
+              token={token}
+              onRefresh={() => {
+                setError(null);
+                setData(null);
+                // Trigger refetch
+                fetch(`/api/user/dashboard-drawers?window=${window}&bucket=${type}`, {
+                  headers: { Authorization: `Bearer ${token}` },
+                })
+                  .then(async (res) => {
+                    if (res.ok) {
+                      setData(await res.json());
+                    }
+                  })
+                  .catch(console.error);
+              }}
+            />
           )}
         </div>
       </div>
@@ -352,7 +377,6 @@ function BucketDrawerContent({
   type: DrawerType;
 }) {
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
-  const [selectedDebtAccount, setSelectedDebtAccount] = useState<string | null>(null);
 
   const fmt = (amount: number) =>
     new Intl.NumberFormat("en-US", {
@@ -389,7 +413,7 @@ function BucketDrawerContent({
           <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
             Last 3 months
           </h3>
-          <div className="flex items-end gap-2">
+          <div className="flex items-end gap-1.5">
             {trend.values.map((value, idx) => {
               const maxValue = Math.max(...trend.values);
               const heightPct = maxValue > 0 ? (value / maxValue) * 100 : 0;
@@ -397,15 +421,15 @@ function BucketDrawerContent({
               return (
                 <div key={idx} className="flex-1">
                   <div
-                    className="w-full rounded-t bg-purple-500"
-                    style={{ height: `${Math.max(4, heightPct)}px` }}
+                    className="w-full rounded-full bg-purple-500"
+                    style={{ height: `${Math.max(8, heightPct * 0.6)}px` }}
                   />
                   <p className="mt-1 text-center text-xs text-gray-500">
                     {trend.months[idx] ? new Date(trend.months[idx] + "-15").toLocaleDateString("en-US", {
                       month: "short",
                     }) : "—"}
                   </p>
-                  <p className="text-center text-xs font-medium text-gray-900">{fmt(value)}</p>
+                  <p className="text-center text-xs font-medium text-gray-900 whitespace-nowrap">{fmt(value)}</p>
                 </div>
               );
             })}
@@ -474,45 +498,20 @@ function BucketDrawerContent({
                   {isExpanded && category.merchants && category.merchants.length > 0 && (
                     <div className="border-t border-gray-200 bg-gray-50 px-4 py-3">
                       <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                        {category.isScheduled ? "Debt accounts" : "Top merchants"}
+                        Top merchants
                       </p>
                       <div className="space-y-1">
-                        {category.merchants.map((merchant, mIdx) => {
-                          const isDebtAccount = !!merchant.method;
-                          const Component = isDebtAccount ? "button" : "div";
-                          
-                          return (
-                            <Component
-                              key={mIdx}
-                              {...(isDebtAccount ? {
-                                onClick: () => setSelectedDebtAccount(merchant.accountSlug || null),
-                                className: "w-full flex items-center justify-between text-xs hover:bg-gray-100 rounded p-1 -mx-1 transition"
-                              } : {
-                                className: "flex items-center justify-between text-xs"
-                              })}
-                            >
-                              <div className="flex items-center gap-2 flex-1 min-w-0">
-                                <span className="text-gray-700 truncate">{merchant.merchant}</span>
-                                {merchant.method && (
-                                  <span 
-                                    className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-700 whitespace-nowrap"
-                                    style={{ fontFamily: "Inter, sans-serif" }}
-                                  >
-                                    {merchant.method}
-                                  </span>
-                                )}
-                              </div>
-                              <span className="font-medium text-gray-900 ml-2">
-                                {fmt(merchant.amount)}
-                              </span>
-                              {isDebtAccount && (
-                                <svg className="ml-1 h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                                </svg>
-                              )}
-                            </Component>
-                          );
-                        })}
+                        {category.merchants.map((merchant, mIdx) => (
+                          <div
+                            key={mIdx}
+                            className="flex items-center justify-between text-xs"
+                          >
+                            <span className="text-gray-700">{merchant.merchant}</span>
+                            <span className="font-medium text-gray-900">
+                              {fmt(merchant.amount)}
+                            </span>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   )}
@@ -562,35 +561,24 @@ function BucketDrawerContent({
           {type === "savings" && "This includes investments, extra debt payments beyond minimums, and savings contributions."}
         </p>
       </div>
-
-      {/* Debt Detail Drawer */}
-      {selectedDebtAccount && (
-        <DebtDetailDrawer
-          accountSlug={selectedDebtAccount}
-          window={data.window}
-          currency={currency}
-          onClose={() => setSelectedDebtAccount(null)}
-        />
-      )}
     </div>
   );
 }
 
-function DebtDetailDrawer({
-  accountSlug,
-  window,
+function SavingsDrawerContent({
+  data,
   currency,
-  onClose,
+  token,
+  onRefresh,
 }: {
-  accountSlug: string;
-  window: string;
+  data: import("@/lib/drawerTypes").SavingsDrawerData;
   currency: string;
-  onClose: () => void;
+  token: string | null;
+  onRefresh: () => void;
 }) {
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [details, setDetails] = useState<any>(null);
-
+  const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
+  const [expandedCategories, setExpandedCategories] = useState<Record<string, Set<string>>>({});
+  
   const fmt = (amount: number) =>
     new Intl.NumberFormat("en-US", {
       style: "currency",
@@ -598,171 +586,436 @@ function DebtDetailDrawer({
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     }).format(amount);
+  
+  const fmtChange = (amount: number) => {
+    if (amount === 0) {
+      return fmt(0).replace(/^[+-]/, ''); // Remove any sign for zero
+    }
+    const formatted = fmt(amount);
+    return amount > 0 ? `+${formatted}` : formatted;
+  };
 
-  useEffect(() => {
-    const loadDetails = async () => {
-      setLoading(true);
-      setError(null);
-
-      try {
-        // Get token from active profile context - simplified for now
-        const token = localStorage.getItem("firebaseToken");
-        if (!token) {
-          throw new Error("Not authenticated");
-        }
-
-        const res = await fetch(
-          `/api/user/debt-account-details?accountSlug=${encodeURIComponent(accountSlug)}&window=${window}`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-          }
-        );
-
-        if (!res.ok) {
-          throw new Error("Failed to load details");
-        }
-
-        const data = await res.json();
-        setDetails(data);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load");
-      } finally {
-        setLoading(false);
+  const { windowSavings, basisLabel } = data;
+  const { monthlyBreakdown, monthlyAverage, windowPeriodAccounts } = windowSavings;
+  
+  const toggleMonth = (month: string) => {
+    setExpandedMonth(expandedMonth === month ? null : month);
+  };
+  
+  const toggleCategory = (month: string, category: string) => {
+    setExpandedCategories(prev => {
+      const monthCategories = prev[month] || new Set<string>();
+      const newMonthCategories = new Set(monthCategories);
+      
+      if (newMonthCategories.has(category)) {
+        newMonthCategories.delete(category);
+      } else {
+        newMonthCategories.add(category);
       }
-    };
-
-    loadDetails();
-  }, [accountSlug, window]);
+      
+      return {
+        ...prev,
+        [month]: newMonthCategories
+      };
+    });
+  };
+  
+  const isCategoryExpanded = (month: string, category: string) => {
+    return expandedCategories[month]?.has(category) || false;
+  };
 
   return (
-    <>
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm"
-        onClick={onClose}
+    <div className="space-y-6">
+      {/* Savings Reviews */}
+      <ReviewList 
+        token={token} 
+        reviewType="savings_item"
+        onReviewComplete={onRefresh}
       />
-
-      {/* Drawer */}
-      <div className="fixed right-0 top-0 z-50 h-full w-full max-w-xl overflow-y-auto bg-white shadow-2xl sm:w-[540px]">
-        {/* Header */}
-        <div className="sticky top-0 border-b border-gray-200 bg-white px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-bold text-gray-900" style={{ fontFamily: "Inter, sans-serif" }}>
-                {details?.accountName || accountSlug}
-              </h3>
-              {details?.method && (
-                <span 
-                  className="mt-1 inline-block rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-medium text-violet-700"
-                  style={{ fontFamily: "Inter, sans-serif" }}
-                >
-                  {details.method}
-                </span>
-              )}
-            </div>
-            <button
-              onClick={onClose}
-              className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-            >
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
+      
+      {/* Monthly Average Summary */}
+      <div className="rounded-xl border border-gray-200 bg-white p-6">
+        <div className="text-center">
+          <p className="text-sm font-medium uppercase tracking-wide text-gray-500">
+            Monthly average
+          </p>
+          <p className={`mt-2 text-4xl font-bold ${getSignColor(monthlyAverage.total)}`}>
+            {fmt(monthlyAverage.total)}
+          </p>
+          <p className="mt-1 text-xs text-gray-500">{basisLabel}</p>
         </div>
+      </div>
 
-        {/* Content */}
-        <div className="px-6 py-6">
-          {loading && (
-            <div className="flex items-center justify-center py-12">
-              <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-violet-600" />
-            </div>
-          )}
-
-          {error && (
-            <div className="rounded-xl border border-red-200 bg-red-50 p-6">
-              <p className="text-sm font-semibold text-red-900">Unable to load details</p>
-              <p className="mt-1 text-sm text-red-700">{error}</p>
-            </div>
-          )}
-
-          {!loading && !error && details && (
-            <div className="space-y-6">
-              {/* Scheduled Amount */}
-              <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-                <p className="text-sm font-medium text-gray-600">Regular payment</p>
-                <p className="mt-1 text-2xl font-bold text-gray-900">{fmt(details.scheduledAmount)}/mo</p>
-              </div>
-
-              {/* Counted as Fixed */}
-              <div>
-                <h4 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
-                  Counted as fixed ({fmt(details.countedAsFixed.total)})
-                </h4>
-                {details.countedAsFixed.transactions.length === 0 ? (
-                  <p className="text-sm text-gray-600">No transactions</p>
-                ) : (
-                  <div className="space-y-2">
-                    {details.countedAsFixed.transactions.map((tx: any, idx: number) => (
-                      <div
-                        key={idx}
-                        className="rounded-lg border border-gray-200 bg-white px-4 py-3"
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium text-gray-900">{tx.description}</span>
-                              {tx.isReviewed && (
-                                <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-900">
-                                  reviewed
-                                </span>
-                              )}
-                            </div>
-                            <p className="mt-0.5 text-xs text-gray-500">{tx.date}</p>
+      {/* Per-Month Bars */}
+      <div>
+        <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
+          Monthly breakdown
+        </h3>
+        <div className="space-y-1.5">
+          {monthlyBreakdown.map((month) => {
+            const isExpanded = expandedMonth === month.month;
+            
+            return (
+              <div key={month.month}>
+                <button
+                  onClick={() => toggleMonth(month.month)}
+                  className="w-full text-left hover:bg-gray-50 rounded p-1.5 -mx-1.5 transition flex items-center gap-2"
+                >
+                  <span className="w-12 text-xs font-medium text-gray-700">
+                    {formatMonthYear(month.month).split(' ')[0]}
+                  </span>
+                  <div className="flex-1">
+                    <div className="relative h-2 rounded-full bg-gray-100">
+                      {month.total !== 0 && (
+                        <div
+                          className={`absolute top-0 h-full rounded-full ${getSignBgColor(month.total)}`}
+                          style={{
+                            width: `${Math.min(Math.abs(month.total) / Math.max(...monthlyBreakdown.map(m => Math.abs(m.total)), 1) * 100, 100)}%`,
+                            left: month.total >= 0 ? '0' : 'auto',
+                            right: month.total < 0 ? '0' : 'auto',
+                          }}
+                        />
+                      )}
+                    </div>
+                  </div>
+                  <span className={`w-20 text-right text-xs font-semibold whitespace-nowrap ${getSignColor(month.total)}`}>
+                    {fmt(month.total)}
+                  </span>
+                  <svg
+                    className={`w-3.5 h-3.5 text-gray-400 transition-transform flex-shrink-0 ${isExpanded ? 'rotate-180' : ''}`}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                
+                {/* Expanded per-account detail */}
+                {isExpanded && (
+                  <div className="mt-2 ml-2 p-4 bg-gray-50 rounded-lg border border-gray-200 space-y-3">
+                    {/* Cash & Savings accounts */}
+                    {month.accounts.cashAccounts.length > 0 && (
+                      <div>
+                        {/* Category Header - Collapsible */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleCategory(month.month, 'cash');
+                          }}
+                          className="w-full flex items-center justify-between py-2 rounded hover:bg-gray-50 transition"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-base">💵</span>
+                            <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">
+                              Cash & Savings
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              ({month.accounts.cashAccounts.length})
+                            </span>
+                            <svg
+                              className={`w-3 h-3 text-gray-400 transition-transform ${
+                                isCategoryExpanded(month.month, 'cash') ? 'rotate-180' : ''
+                              }`}
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
                           </div>
-                          <span className="text-sm font-semibold text-gray-900">{fmt(tx.amount)}</span>
-                        </div>
+                          <span className={`text-sm font-bold whitespace-nowrap ${getSignColor(month.netCashChange)}`}>
+                            {fmtChange(month.netCashChange)}
+                          </span>
+                        </button>
+                        
+                        {/* Account Cards - Expandable */}
+                        {isCategoryExpanded(month.month, 'cash') && (
+                          <div className="space-y-2 mt-2">
+                            {month.accounts.cashAccounts.map((acc) => {
+                              // Determine which month is missing
+                              const missingMonth = acc.priorCarriedForward 
+                                ? formatMonthYear(month.month).split(' ')[0] // Prior month missing
+                                : acc.currentCarriedForward
+                                  ? formatMonthYear(month.month).split(' ')[0] // Current month missing
+                                  : null;
+                              
+                              return (
+                                <div key={acc.slug} className="bg-white rounded p-2 text-xs border border-gray-200">
+                                  <div className="flex items-start justify-between mb-1">
+                                    <div>
+                                      <span className="font-medium text-gray-900">{acc.accountLabel.split(' (')[0]}</span>
+                                      <span className="text-gray-500 ml-1">(...{acc.accountLast4})</span>
+                                      {missingMonth && (
+                                        <span 
+                                          className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600" 
+                                          title="No statement uploaded for this month, so the last known balance is used. Upload it to include this account's change."
+                                        >
+                                          No {missingMonth} statement
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span className={`font-semibold whitespace-nowrap ${getSignColor(acc.change)}`}>
+                                      {fmtChange(acc.change)}
+                                    </span>
+                                  </div>
+                                  <div className="flex gap-4 text-gray-600">
+                                    <span>Prior: {fmt(acc.priorBalance)}</span>
+                                    <span>→</span>
+                                    <span>Current: {fmt(acc.currentBalance)}</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
-                    ))}
+                    )}
+                    
+                    {/* Debt accounts */}
+                    {month.accounts.debtAccounts.length > 0 && (
+                      <div>
+                        {/* Category Header - Collapsible */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleCategory(month.month, 'debt');
+                          }}
+                          className="w-full flex items-center justify-between py-2 rounded hover:bg-gray-50 transition"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-base">💳</span>
+                            <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">
+                              Debt
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              ({month.accounts.debtAccounts.length})
+                            </span>
+                            <svg
+                              className={`w-3 h-3 text-gray-400 transition-transform ${
+                                isCategoryExpanded(month.month, 'debt') ? 'rotate-180' : ''
+                              }`}
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </div>
+                          <span className={`text-sm font-bold whitespace-nowrap ${getSignColor(month.netDebtChange)}`}>
+                            {fmtChange(month.netDebtChange)}
+                          </span>
+                        </button>
+                        
+                        {/* Account Cards - Expandable */}
+                        {isCategoryExpanded(month.month, 'debt') && (
+                          <div className="space-y-2 mt-2">
+                            {month.accounts.debtAccounts.map((acc) => {
+                              const isPaidDown = acc.change > 0;
+                              const isBorrowing = acc.change < 0;
+                              
+                              // Determine which month is missing
+                              const missingMonth = acc.priorCarriedForward 
+                                ? formatMonthYear(month.month).split(' ')[0] // Prior month missing
+                                : acc.currentCarriedForward
+                                  ? formatMonthYear(month.month).split(' ')[0] // Current month missing
+                                  : null;
+                              
+                              return (
+                                <div key={acc.slug} className="bg-white rounded p-2 text-xs border border-gray-200">
+                                  <div className="flex items-start justify-between mb-1">
+                                    <div>
+                                      <span className="font-medium text-gray-900">{acc.accountLabel.split(' (')[0]}</span>
+                                      <span className="text-gray-500 ml-1">(...{acc.accountLast4})</span>
+                                      {missingMonth && (
+                                        <span 
+                                          className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600" 
+                                          title="No statement uploaded for this month, so the last known balance is used. Upload it to include this account's change."
+                                        >
+                                          No {missingMonth} statement
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="text-right">
+                                      <div className={`font-semibold whitespace-nowrap ${getSignColor(acc.change)}`}>
+                                        {fmtChange(acc.change)}
+                                      </div>
+                                      <div className="text-xs text-gray-500">
+                                        {isPaidDown ? 'Paid down' : isBorrowing ? 'New borrowing' : 'No change'}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-4 text-gray-600">
+                                    <span>Prior: {fmt(acc.priorBalance)}</span>
+                                    <span>→</span>
+                                    <span>Current: {fmt(acc.currentBalance)}</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* Outside contributions */}
+                    {month.accounts.contributions.length > 0 && (
+                      <div>
+                        {/* Category Header - Collapsible */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleCategory(month.month, 'contributions');
+                          }}
+                          className="w-full flex items-center justify-between py-2 rounded hover:bg-gray-50 transition"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-base">🏦</span>
+                            <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">
+                              Outside Contributions
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              ({month.accounts.contributions.length})
+                            </span>
+                            <svg
+                              className={`w-3 h-3 text-gray-400 transition-transform ${
+                                isCategoryExpanded(month.month, 'contributions') ? 'rotate-180' : ''
+                              }`}
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </div>
+                          <span className={`text-sm font-bold whitespace-nowrap ${getSignColor(month.contributionsToOutside)}`}>
+                            {fmtChange(month.contributionsToOutside)}
+                          </span>
+                        </button>
+                        
+                        {/* Contribution Cards - Expandable */}
+                        {isCategoryExpanded(month.month, 'contributions') && (
+                          <div className="space-y-2 mt-2">
+                            {month.accounts.contributions.map((contrib, idx) => (
+                              <div key={idx} className="bg-white rounded p-2 text-xs border border-gray-200">
+                                <div className="flex items-start justify-between">
+                                  <div>
+                                    <span className="font-medium text-gray-900">{contrib.merchant}</span>
+                                    <div className="text-gray-500">{contrib.category}</div>
+                                    {contrib.needsConfirmation && (
+                                      <span className="text-orange-600 font-semibold">⚠️ Needs confirmation</span>
+                                    )}
+                                  </div>
+                                  <span className="font-semibold text-gray-900 whitespace-nowrap">
+                                    {fmt(contrib.amount)}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-
-              {/* Extra Paydown */}
-              {details.extraPaydown.total > 0 && (
-                <div>
-                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
-                    Extra paydown → Savings & debt ({fmt(details.extraPaydown.total)})
-                  </h4>
-                  <div className="space-y-2">
-                    {details.extraPaydown.transactions.map((tx: any, idx: number) => (
-                      <div
-                        key={idx}
-                        className="rounded-lg border border-green-200 bg-green-50 px-4 py-3"
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium text-gray-900">{tx.description}</span>
-                              {tx.isReviewed && (
-                                <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-900">
-                                  reviewed
-                                </span>
-                              )}
-                            </div>
-                            <p className="mt-0.5 text-xs text-gray-500">{tx.date}</p>
-                          </div>
-                          <span className="text-sm font-semibold text-green-900">{fmt(tx.amount)}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+            );
+          })}
         </div>
       </div>
-    </>
+
+      {/* Reconciliation Table */}
+      <div>
+        <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-gray-500">
+          How the numbers add up
+        </h3>
+        <p className="mb-3 text-xs text-gray-500">Tap a month to see accounts</p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="border-b border-gray-300">
+                <th className="text-left py-2 pr-2 font-semibold text-gray-700 w-12">
+                  <div className="flex items-center gap-1">
+                    Month
+                    <svg className="w-3 h-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
+                </th>
+                <th className="text-right py-2 px-2 font-semibold text-gray-700">Cash</th>
+                <th className="text-right py-2 px-2 font-semibold text-gray-700">Debt</th>
+                <th className="text-right py-2 px-2 font-semibold text-gray-700">Contrib</th>
+                <th className="text-right py-2 pl-2 font-semibold text-gray-700">Net</th>
+              </tr>
+            </thead>
+            <tbody>
+              {monthlyBreakdown.map((month) => (
+                <tr
+                  key={month.month}
+                  onClick={() => toggleMonth(month.month)}
+                  className={`border-b border-gray-200 cursor-pointer hover:bg-gray-50 transition ${
+                    expandedMonth === month.month ? 'bg-gray-50' : ''
+                  }`}
+                >
+                  <td className="py-2 pr-2 text-gray-900">
+                    <div className="flex items-center gap-1">
+                      {formatMonthYear(month.month).split(' ')[0]}
+                      <svg
+                        className={`w-3 h-3 text-gray-400 transition-transform ${
+                          expandedMonth === month.month ? 'rotate-180' : ''
+                        }`}
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                  </td>
+                  <td className={`text-right py-2 px-2 whitespace-nowrap ${getSignColor(month.netCashChange)}`}>
+                    {fmt(month.netCashChange)}
+                  </td>
+                  <td className={`text-right py-2 px-2 whitespace-nowrap ${getSignColor(month.netDebtChange)}`}>
+                    {fmt(month.netDebtChange)}
+                  </td>
+                  <td className="text-right py-2 px-2 text-gray-900 whitespace-nowrap">
+                    {fmt(month.contributionsToOutside)}
+                  </td>
+                  <td className={`text-right py-2 pl-2 font-semibold whitespace-nowrap ${getSignColor(month.total)}`}>
+                    {fmt(month.total)}
+                  </td>
+                </tr>
+              ))}
+              {/* Monthly average row */}
+              <tr className="border-t-2 border-gray-400 bg-gray-50 font-semibold">
+                <td className="py-2 pr-2 text-gray-900">Avg</td>
+                <td className={`text-right py-2 px-2 whitespace-nowrap ${getSignColor(monthlyAverage.netCashChange)}`}>
+                  {fmt(monthlyAverage.netCashChange)}
+                </td>
+                <td className={`text-right py-2 px-2 whitespace-nowrap ${getSignColor(monthlyAverage.netDebtChange)}`}>
+                  {fmt(monthlyAverage.netDebtChange)}
+                </td>
+                <td className="text-right py-2 px-2 text-gray-900 whitespace-nowrap">
+                  {fmt(monthlyAverage.contributionsToOutside)}
+                </td>
+                <td className={`text-right py-2 pl-2 whitespace-nowrap ${getSignColor(monthlyAverage.total)}`}>
+                  {fmt(monthlyAverage.total)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Coach Note */}
+      <div className="rounded-xl border border-purple-200 bg-purple-50 p-4">
+        <p className="text-sm leading-relaxed text-purple-900">
+          <strong>💡 Coach:</strong> This shows your NET savings using month-end balances.
+          Savings = (cash account changes) + (debt paid down) + (outside contributions).
+          Debt transfers (like paying off a credit card with a line of credit) net to zero.
+          Negative months mean you spent more than you saved.
+        </p>
+      </div>
+    </div>
   );
 }

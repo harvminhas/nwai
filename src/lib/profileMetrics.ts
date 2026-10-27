@@ -15,6 +15,8 @@
  */
 
 import type { FinancialProfileCache } from "./financialProfile";
+import { computeScheduledDebtPayments } from "./debtPayments";
+import { getHomeCurrency, toHome as toHomeCurrency, type ProfileForCurrency } from "./currencyUtils";
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
@@ -142,7 +144,7 @@ export function getNetWorth(
 
   // ── FX helper: convert a balance in any currency to home currency ────────
   const fxRates = profile.fxRates ?? {};
-  const home = (profile.homeCurrency ?? "CAD").toUpperCase();
+  const home = getHomeCurrency(profile);
   // Track which foreign currencies were actually encountered during conversion
   const fxRatesApplied: Record<string, number> = {};
   function toHome(amount: number, currency?: string): number {
@@ -286,7 +288,7 @@ export function getLiquidAssetsHome(
   profile: FinancialProfileCache,
   accountSlugFilter?: string | null,
 ): number {
-  const home = (profile.homeCurrency ?? "USD").toUpperCase();
+  const home = getHomeCurrency(profile);
   const fx = profile.fxRates ?? {};
   function toHome(amount: number, currency?: string | null): number {
     const cur = (currency ?? home).toUpperCase();

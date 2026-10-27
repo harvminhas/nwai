@@ -5,6 +5,7 @@
 
 import type { BucketDetailedBreakdown } from "./bucketBreakdown";
 import type { DetailedIncomeMetrics } from "./incomeMetrics";
+import type { WindowSavingsResult, SavingsConfirmation } from "./savingsCalculations";
 
 export type DrawerTimeWindow = "last3" | "12month" | "ytd";
 
@@ -36,7 +37,16 @@ export interface BucketDrawerData {
   basisLabel: string;
 }
 
-export type DrawerData = IncomeDrawerData | BucketDrawerData;
+export interface SavingsDrawerData {
+  type: "savings";
+  window: DrawerTimeWindow;
+  /** Window-period reconciliation with per-month breakdown */
+  windowSavings: WindowSavingsResult;
+  homeCurrency: string;
+  basisLabel: string;
+}
+
+export type DrawerData = IncomeDrawerData | BucketDrawerData | SavingsDrawerData;
 
 export interface DrawerErrorResponse {
   error: string;

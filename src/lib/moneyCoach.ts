@@ -13,7 +13,7 @@
  * otherwise overall average) to ensure consistent percentages.
  */
 
-import type { FinancialProfileCache } from "./financialProfile";
+import type { FinancialProfileCache, MonthlyHistoryEntry } from "./financialProfile";
 import type { ExpenseTxnRecord } from "./extractTransactions";
 import type { DebtPaymentReview } from "./types";
 import { getCategoryBucket, getBucketAdvice, BUCKET_METADATA, type MoneyCoachBucket } from "./moneyCoachBuckets";
@@ -21,6 +21,7 @@ import { isCoreExcluded } from "./spendingMetrics";
 import { computeScheduledDebtPayments, type ScheduledDebtPayment } from "./debtPayments";
 import { getParentCategory } from "./categoryTaxonomy";
 import { getMoneyCoachIncome } from "./incomeMetrics";
+import { computeAverageSavings } from "./savingsCalculations";
 
 export interface MoneyCoachBucketSummary {
   bucket: MoneyCoachBucket;
@@ -75,7 +76,7 @@ export function computeMoneyCoachBreakdown(
   profile: FinancialProfileCache,
   userReviews: DebtPaymentReview[] = []
 ): MoneyCoachBreakdown {
-  const { monthlyHistory, expenseTxns, coverage, accountSnapshots, fxRates, homeCurrency } = profile;
+  const { monthlyHistory, expenseTxns, coverage, accountSnapshots, accountBalanceHistory, fxRates, homeCurrency } = profile;
 
   // Compute income using shared function (matches Income page logic)
   const { amount: incomeAmount, basisLabel: incomeBasisLabel } = getMoneyCoachIncome(monthlyHistory);
@@ -95,7 +96,7 @@ export function computeMoneyCoachBreakdown(
   // Compute scheduled debt payments (fixed costs)
   const scheduledPayments = computeScheduledDebtPayments(
     accountSnapshots, 
-    expenseTxns, 
+    profile.debtPaymentHistory, 
     userReviews,
     fxRates ?? {},
     homeCurrency ?? "CAD"
@@ -121,19 +122,13 @@ export function computeMoneyCoachBreakdown(
     // Get transactions for this month
     const monthTxns = expenseTxns.filter(t => t.txMonth === ym);
 
-    // Track debt payments made this month (for extra paydown calculation)
-    const debtPaymentsMade = new Map<string, number>();
-
     for (const txn of monthTxns) {
       // Skip transfers and other excluded categories
       if (isCoreExcluded(txn.category)) continue;
 
-      // Skip Card Servicing entirely - purchases already counted in their own categories
+      // Skip Debt payments entirely - handled by NET balance approach in savings calculation
       const parentCategory = getParentCategory(txn.category);
       if (parentCategory === "Debt") {
-        // Track actual debt payments for extra paydown calculation
-        const current = debtPaymentsMade.get(txn.accountSlug) ?? 0;
-        debtPaymentsMade.set(txn.accountSlug, current + Math.abs(txn.amount));
         continue; // Don't add to any bucket
       }
 
@@ -142,28 +137,19 @@ export function computeMoneyCoachBreakdown(
       buckets[bucket] += amount;
     }
 
-    // Calculate extra debt paydown (payments above scheduled)
-    let extraPaydown = 0;
-    for (const [accountSlug, paid] of debtPaymentsMade) {
-      const scheduled = scheduledByAccount.get(accountSlug);
-      if (scheduled) {
-        extraPaydown += Math.max(0, paid - scheduled.amount);
-      } else {
-        // No scheduled payment found - treat all as extra paydown
-        extraPaydown += paid;
-      }
-    }
-
-    buckets.savings += extraPaydown;
+    // Note: savings bucket is NOT calculated here - uses NET balance approach below
     bucketsByMonth.set(ym, buckets);
   }
 
   // Compute average for each bucket (same window as income)
+  // Savings uses shared calculation function (actual contributions + debt paydown)
+  const averageSavings = computeAverageSavings(monthlyHistory, accountBalanceHistory, expenseTxns, spendingMonths);
+
   const bucketAverages: Record<MoneyCoachBucket, number> = {
     fixed: average([...bucketsByMonth.values()].map(b => b.fixed)),
     essentials: average([...bucketsByMonth.values()].map(b => b.essentials)),
     flexible: average([...bucketsByMonth.values()].map(b => b.flexible)),
-    savings: average([...bucketsByMonth.values()].map(b => b.savings)),
+    savings: averageSavings, // From shared data layer
     uncategorized: average([...bucketsByMonth.values()].map(b => b.uncategorized)),
   };
 

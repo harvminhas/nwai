@@ -11,6 +11,7 @@
 
 import type { MonthlyHistoryEntry } from "./financialProfile";
 import type { IncomeTxnRecord } from "./extractTransactions";
+import { getLastCompleteMonth, getCurrentMonth } from "./monthAnchor";
 
 export type IncomeTimeWindow = "last3" | "12month" | "ytd";
 
@@ -101,7 +102,7 @@ function isOneOffDeposit(
 
 /**
  * Get months for a specific time window.
- * Excludes the current month (incomplete data) for "last3" and "12month" windows.
+ * Uses the shared anchor (last complete month = previous calendar month).
  */
 export function getMonthsForWindow(
   monthlyHistory: MonthlyHistoryEntry[],
@@ -109,6 +110,7 @@ export function getMonthsForWindow(
   currentYear: number,
   currentYearMonth?: string
 ): string[] {
+  const lastComplete = getLastCompleteMonth();
   const monthsWithIncome = monthlyHistory
     .filter(h => h.incomeTotal > 0)
     .map(h => h.yearMonth)
@@ -117,10 +119,10 @@ export function getMonthsForWindow(
   if (monthsWithIncome.length === 0) return [];
 
   // Exclude current month for historical windows (last3, 12month)
-  // YTD includes all months up to today, including partial current month
-  const historicalMonths = currentYearMonth && window !== "ytd"
-    ? monthsWithIncome.filter(ym => ym < currentYearMonth)
-    : monthsWithIncome;
+  // YTD includes all months up to and including last complete month
+  const historicalMonths = window !== "ytd"
+    ? monthsWithIncome.filter(ym => ym <= lastComplete)
+    : monthsWithIncome.filter(ym => ym <= lastComplete);
 
   switch (window) {
     case "last3":
@@ -131,7 +133,7 @@ export function getMonthsForWindow(
     
     case "ytd": {
       const ytdStart = `${currentYear}-01`;
-      return monthsWithIncome.filter(ym => ym >= ytdStart);
+      return historicalMonths.filter(ym => ym >= ytdStart);
     }
     
     default:

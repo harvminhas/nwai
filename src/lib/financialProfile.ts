@@ -28,7 +28,7 @@ import { occurrencesInMonth } from "./cashIncome";
 import type { CashCommitment } from "@/app/api/user/cash-commitments/route";
 import { commitmentOccurrencesInMonth } from "@/app/api/user/cash-commitments/route";
 import { merchantSlug, isIncomeCategory, txnKey } from "./applyRules";
-import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
+import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot, DebtPaymentHistoryEntry } from "./extractTransactions";
 import { txFingerprint } from "./txFingerprint";
 import type { TypicalSpend } from "./spendingMetrics";
 import { resolveTxnCurrencyFromSnapshots } from "./currencyUtils";
@@ -59,7 +59,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "53"; // added coverage metrics for AI home page
+const SCHEMA_VERSION = "59"; // Unified income data layer + income summary
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -207,6 +207,18 @@ export interface FinancialProfileCache {
    */
   confirmedSubscriptions: SubscriptionRecord[];
   /**
+   * Merchant cadence map: merchantSlug → frequency (user's chosen billing cycle).
+   * Primary source of truth for how often the user actually spends at each merchant.
+   * Overrides subscription frequency for display and bucket breakdowns.
+   */
+  merchantCadence?: Record<string, string>;
+  /**
+   * Debt payment history: all paymentsMade values across all debt account statements.
+   * Used to compute recurring payment amounts (median of non-zero payments).
+   * Deduped by accountSlug + statementMonth.
+   */
+  debtPaymentHistory: DebtPaymentHistoryEntry[];
+  /**
    * Manual cash commitment entries already loaded during build — exposed here so
    * consumers (AI brief, etc.) don't need a separate Firestore read.
    */
@@ -328,7 +340,7 @@ export async function buildAndCacheFinancialProfile(
   db: Firestore.Firestore,
 ): Promise<FinancialProfileCache> {
   // Fetch all data sources in parallel — same collections the assets page uses.
-  const [txData, rulesSnap, txnOverridesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap, backfillsSnap, cashCommitmentsSnap, manualLiabSnap, accountRatesSnap, goalsSnap, allSubsSnap, userDocSnap] =
+  const [txData, rulesSnap, txnOverridesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap, backfillsSnap, cashCommitmentsSnap, manualLiabSnap, accountRatesSnap, goalsSnap, allSubsSnap, merchantCadenceSnap, userDocSnap] =
     await Promise.all([
       extractAllTransactions(uid, db),
       db.collection(`users/${uid}/categoryRules`).get(),
@@ -347,6 +359,7 @@ export async function buildAndCacheFinancialProfile(
       db.collection(`users/${uid}/accountRates`).get(),
       db.collection(`users/${uid}/goals`).get(),
       db.collection(`users/${uid}/subscriptions`).get(),
+      db.collection(`users/${uid}/merchantCadence`).get(),
       db.collection("users").doc(uid).get(),
     ]);
   // Split all subscriptions into confirmed (for Upcoming/profile) vs all (for category mapping).
@@ -376,6 +389,62 @@ export async function buildAndCacheFinancialProfile(
   }
 
   const { accountSnapshots, latestTxMonth, allTxMonths } = txData;
+
+  // ── Build debt payment history from all statements ──────────────────────────
+  // For computing recurring debt payment amounts, we need ALL paymentsMade values
+  // across all statements, not just the latest snapshot per account.
+  const debtPaymentHistory: DebtPaymentHistoryEntry[] = [];
+  const seenPaymentKeys = new Set<string>(); // for deduplication: accountSlug+statementMonth
+
+  for (const doc of completedSnap.docs) {
+    const d = doc.data();
+    const parsed = d.parsedData as ParsedStatementData | undefined;
+    if (!parsed) continue;
+
+    const accountType = (parsed.accountType ?? "").toLowerCase();
+    const isDebtAccount = ["credit", "loan", "mortgage", "line_of_credit"].includes(accountType);
+    if (!isDebtAccount) continue;
+
+    const paymentsMade = parsed.paymentsMade as number | undefined;
+    if (!paymentsMade || paymentsMade <= 0) continue;
+
+    // Get statement month
+    let stmtYm = parsed.statementDate ? getYearMonth(parsed.statementDate) : "";
+    if (!stmtYm) {
+      const raw = d.uploadedAt?.toDate?.() ?? d.uploadedAt;
+      if (raw instanceof Date) {
+        stmtYm = `${raw.getFullYear()}-${String(raw.getMonth() + 1).padStart(2, "0")}`;
+      }
+    }
+    if (!stmtYm) continue;
+
+    // Build account slug (same logic as extractTransactions)
+    const slug = buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
+    
+    // Dedupe by slug + month (handle duplicate uploads)
+    const key = `${slug}:${stmtYm}`;
+    if (seenPaymentKeys.has(key)) continue;
+    seenPaymentKeys.add(key);
+
+    debtPaymentHistory.push({
+      accountSlug: slug,
+      statementMonth: stmtYm,
+      paymentsMade,
+      currency: inferCurrencyFromBankName(parsed.bankName, parsed.currency),
+    });
+  }
+
+  // Helper to infer currency from bank name (same as extractTransactions)
+  function inferCurrencyFromBankName(bankName?: string, explicitCurrency?: string): string {
+    if (explicitCurrency) return explicitCurrency.toUpperCase();
+    const bank = (bankName ?? "").toLowerCase();
+    if (/td|rbc|bmo|cibc|scotiabank|tangerine|simplii|desjardins|eq bank/i.test(bank)) return "CAD";
+    return "CAD"; // default
+  }
+  function getYearMonth(dateStr: string): string {
+    const match = /^(\d{4})-(\d{2})/.exec(dateStr);
+    return match ? `${match[1]}-${match[2]}` : "";
+  }
 
   // User-marked transfer sources — deposits that should NOT count as income
   const userTransferSources = new Set<string>(
@@ -665,7 +734,12 @@ export async function buildAndCacheFinancialProfile(
   // Maps label+type → the first non-real-account-number slug seen (canonical)
   const slugByLabelKey = new Map<string, string>();
 
-  const balanceHistoryMap = new Map<string, { label: string; accountType: string; entries: Map<string, number> }>();
+  const balanceHistoryMap = new Map<string, { 
+    label: string; 
+    accountType: string; 
+    entries: Map<string, number>;
+    latestDateByMonth: Map<string, string>; // Track latest statement date per month for deduplication
+  }>();
   for (const doc of confirmedDocs) {
     const d = doc.data();
     const parsed = d.parsedData as ParsedStatementData | undefined;
@@ -703,12 +777,19 @@ export async function buildAndCacheFinancialProfile(
         label:       parsed.accountName ?? parsed.bankName ?? slug,
         accountType: parsed.accountType ?? "other",
         entries:     new Map(),
+        latestDateByMonth: new Map(),
       });
     }
     // Keep the highest-date entry per yearMonth (handles multiple uploads same month)
     const entry = balanceHistoryMap.get(slug)!;
-    const existingUploadedAt = entry.entries.get(ym);
-    if (existingUploadedAt == null) entry.entries.set(ym, parsed.netWorth);
+    const stmtDate = parsed.statementDate ?? "";
+    const latestDateByMonth = entry.latestDateByMonth;
+    
+    // Overwrite if this is the first entry for this month OR this statement is newer
+    if (!entry.entries.has(ym) || stmtDate > (latestDateByMonth.get(ym) ?? "")) {
+      entry.entries.set(ym, parsed.netWorth);
+      latestDateByMonth.set(ym, stmtDate);
+    }
   }
   // Apply synthetic backfill entries — each doc is one pre-computed monthly record.
   // Real statement data (loaded above) takes priority: only fill months with no real data.
@@ -958,6 +1039,13 @@ export async function buildAndCacheFinancialProfile(
     (d) => d.data() as SubscriptionRecord,
   );
 
+  // Merchant cadence map: merchantSlug → frequency (user's chosen billing cycle)
+  const merchantCadenceMap: Record<string, string> = {};
+  for (const doc of merchantCadenceSnap.docs) {
+    const d = doc.data() as { frequency?: string };
+    if (d.frequency) merchantCadenceMap[doc.id] = d.frequency;
+  }
+
   const profile: FinancialProfileCache = {
     updatedAt: now.toISOString(),
     sourceVersion,
@@ -980,6 +1068,8 @@ export async function buildAndCacheFinancialProfile(
     accountRates,
     goals,
     confirmedSubscriptions,
+    merchantCadence: merchantCadenceMap,
+    debtPaymentHistory,
     cashCommitmentEntries,
   };
 

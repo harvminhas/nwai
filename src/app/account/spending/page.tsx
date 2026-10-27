@@ -500,6 +500,7 @@ function SpendingPageInner() {
         setNeedsRefresh(json.needsRefresh ?? false);
         if (json.homeCurrency) setHomeCurrency(json.homeCurrency);
         if (json.fxRates) setFxRates(json.fxRates);
+        if (json.scheduledDebtPayments) setScheduledDebtPayments(json.scheduledDebtPayments);
         const expSugg = json.expenseSuggestions ?? [];
         setExpenseSuggestions(expSugg);
         const defaultDecisions: Record<string, "confirmed" | "rejected"> = {};
@@ -1347,9 +1348,18 @@ function SpendingPageInner() {
     "Transfers", "Transfer Out", "Transfers & Payments",
     "Interest", "Investments & Savings",
   ]);
+  
+  // Fetch scheduled debt payments for accurate loan/mortgage amounts
+  const [scheduledDebtPayments, setScheduledDebtPayments] = useState<Array<{
+    accountSlug: string;
+    accountName: string | null;
+    amount: number;
+    debtType: "loan" | "credit";
+  }> | null>(null);
 
   const categoryRows = (() => {
     if (!allTimeMerchants) return [];
+    
     // Roll every merchant's category up to its parent before grouping
     const byCategory = new Map<string, MerchantSummaryItem[]>();
     for (const m of allTimeMerchants) {
@@ -1357,8 +1367,56 @@ function SpendingPageInner() {
       if (!byCategory.has(key)) byCategory.set(key, []);
       byCategory.get(key)!.push(m);
     }
+    
     return Array.from(byCategory.entries()).map(([name, merchants]) => {
-      // Aggregate monthly data across all merchants in this category
+      // SPECIAL HANDLING FOR DEBT CATEGORY: Use scheduled payments instead of raw sums
+      if (name === "Debt" && scheduledDebtPayments) {
+        const loanPayments = scheduledDebtPayments.filter(p => p.debtType === "loan");
+        const monthlyTotal = loanPayments.reduce((s, p) => s + p.amount, 0);
+        
+        // Determine months count based on filter
+        const allMonths = new Set(
+          merchants.flatMap(m => m.monthly.map(mo => mo.ym))
+        ).size;
+        const filterMonths = catTimeFilter === "all" ? allMonths : 
+                            catTimeFilter === "3mo" ? 3 :
+                            catTimeFilter === "6mo" ? 6 : 12;
+        
+        const total = monthlyTotal * filterMonths;
+        
+        // Build top merchants list from scheduled payments
+        const topMerchants = loanPayments.map(p => ({
+          name: p.accountName || p.accountSlug,
+          slug: p.accountSlug,
+          displayName: p.accountName ?? undefined,
+          category: "Debt",
+          categories: ["Debt"],
+          currency: homeCurrency,
+          total: p.amount * filterMonths,
+          count: filterMonths,
+          avgAmount: p.amount,
+          lastDate: null,
+          firstDate: null,
+          monthly: [],
+          transactions: [],
+        })).sort((a, b) => b.avgAmount - a.avgAmount);
+        
+        return {
+          name: "Loan payments",
+          color: categoryColor("Debt"),
+          total,
+          count: loanPayments.length * filterMonths,
+          avgAmount: monthlyTotal,
+          monthly: [], // TODO: could build synthetic monthly data
+          topMerchants,
+          recentTotal: monthlyTotal * 3,
+          priorTotal: monthlyTotal * 3,
+          trendPct: 0, // scheduled payments are stable
+          filterTrendPct: 0,
+        };
+      }
+      
+      // Regular category: aggregate monthly data across all merchants
       const monthlyMap = new Map<string, { total: number; count: number }>();
       for (const m of merchants) {
         for (const mo of m.monthly) {

@@ -252,7 +252,7 @@ List every individual money-IN transaction as a separate entry. Rules:
 List every individual money-OUT transaction. Rules:
   - Every debit must appear. Zero omissions. Include repeated merchants on different dates as separate entries.
   - merchant: clean human-readable name. "AMZN MKTP CA 12345" → "Amazon". "TH #1234 BRAMPTON" → "Tim Hortons".
-  - amount: positive number.
+  - amount: positive number. **CRITICAL FOR FOREIGN CURRENCY CHARGES:** The amount is the amount actually billed in the statement currency (e.g., CA$164), NOT the foreign original amount (e.g., USD 99). Credit card statements often show both: "OTTER.AI  CA$164.00  (USD 99.00 @ 1.6566)" — extract CA$164.00, which is the debited amount. Do NOT extract USD 99 or multiply USD 99 by the FX rate yourself. Copy the statement-currency amount exactly as printed in the transaction amount column.
   - date: full YYYY-MM-DD. Derive the 4-digit year from the statement period header — never guess or use today's date.
   - category: the most specific category or subtype name from Step 3 (e.g. "Gas" not "Transportation" when the merchant is clearly a gas station).
   - recurring: include ONLY when confident the charge repeats on a fixed schedule. Use exactly: "weekly", "biweekly", "monthly", "quarterly", "annual". Omit entirely for one-off charges.

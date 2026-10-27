@@ -11,6 +11,7 @@
 import type { FinancialProfileCache } from "@/lib/financialProfile";
 import { getNetWorth, buildEmergencyFundSnapshot } from "@/lib/profileMetrics";
 import { buildCategoryPromptLines } from "@/lib/categoryTaxonomy";
+import { getHomeCurrency, toHome as toHomeCurrency } from "@/lib/currencyUtils";
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -24,22 +25,10 @@ function makeFmt(currency: string) {
     }).format(v);
 }
 
-function toHome(
-  amount: number,
-  currency: string | undefined,
-  home: string,
-  fxRates: Record<string, number>,
-): number {
-  const cur = (currency ?? home).toUpperCase();
-  if (cur === home) return amount;
-  const rate = fxRates[cur];
-  return rate ? amount * rate : amount;
-}
-
 // ── builder ──────────────────────────────────────────────────────────────────
 
 export function buildChatContext(profile: FinancialProfileCache): string {
-  const home    = (profile.homeCurrency ?? "USD").toUpperCase();
+  const home = getHomeCurrency(profile);
   const fxRates = profile.fxRates ?? {};
   const fmt     = makeFmt(home);
 
@@ -61,7 +50,7 @@ export function buildChatContext(profile: FinancialProfileCache): string {
     const acctCcy = (a.currency ?? home).toUpperCase();
     const native  = makeFmt(acctCcy)(a.balance);
     const homeEq  = acctCcy !== home
-      ? ` (≈ ${fmt(toHome(a.balance, acctCcy, home, fxRates))} ${home})`
+      ? ` (≈ ${fmt(toHomeCurrency(a.balance, acctCcy, profile))} ${home})`
       : "";
     const apr     = rateMap.get(a.slug);
     const aprStr  = apr != null ? ` at ${apr}% APR` : "";
@@ -88,7 +77,7 @@ export function buildChatContext(profile: FinancialProfileCache): string {
 
   // ── subscriptions ─────────────────────────────────────────────────────────
   const subLines = profile.confirmedSubscriptions.map((s) => {
-    const amt  = toHome(s.amount ?? s.suggestedAmount ?? 0, s.currency, home, fxRates);
+    const amt  = toHomeCurrency(s.amount ?? s.suggestedAmount ?? 0, s.currency, profile);
     const freq = s.frequency ?? s.suggestedFrequency ?? "monthly";
     return `  ${s.name}: ${fmt(amt)}/${freq}`;
   });

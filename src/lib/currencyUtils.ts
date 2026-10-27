@@ -13,30 +13,111 @@
  * country is unknown or not yet confirmed).
  */
 
-/** Default when no home currency is known yet. */
+/** 
+ * Default when no home currency is known yet.
+ * @deprecated Use getHomeCurrency() instead - it infers from bank names
+ */
 export const HOME_CURRENCY = "USD";
 
 const CA_BANK_RE = /\b(td|rbc|bmo|cibc|scotiabank|desjardins|national bank|tangerine|simplii|hsbc canada|laurentian|coast capital|meridian|atb|wealthsimple|questrade|eq bank|manulife|sun life|great.west|industrial alliance|ia financial|ci financial|empire life|canada life|ivari|rbc direct|td direct|bmo investorline|qtrade|virtual brokers|credential|aviso|servus|alterna|motusbank|oaken|nbc|bnc|canadian western|cwb|envision|first west|khalsa credit|libro credit|nexbank|prospera|valley first|interior savings|island savings|gulf and fraser)\b/i;
 const US_BANK_RE = /\b(bank of america|chase|wells fargo|citibank|citi|capital one|us bank|pnc|suntrust|bb&t|truist|regions|fifth third|ally|discover|american express|amex|usaa|navy federal|td bank|fidelity|schwab|vanguard|merrill|etrade|e.trade|robinhood|sofi|marcus|synchrony|barclays us|citizens bank|key bank|huntington|m&t bank)\b/i;
+
+/** Minimal account snapshot shape needed for home currency inference. */
+export interface AccountForCurrencyInference {
+  bankName?: string | null;
+  accountName?: string | null;
+  currency?: string | null;
+}
+
+/** Minimal profile shape needed for home currency resolution. */
+export interface ProfileForCurrency {
+  homeCurrency?: string | null;
+  accountSnapshots?: AccountForCurrencyInference[];
+  fxRates?: Record<string, number>;
+}
+
+/**
+ * THE SINGLE SOURCE OF TRUTH for determining a user's home currency.
+ * 
+ * Priority:
+ *   1. profile.homeCurrency if explicitly set
+ *   2. Infer from bank names in accountSnapshots (Canadian banks → CAD, US banks → USD)
+ *   3. Fall back to CAD (not USD!) for unrecognized accounts
+ * 
+ * Rationale: Most unrecognized banks are likely Canadian (app started in Canada),
+ * and defaulting to CAD prevents the 1142 → 858 conversion bug.
+ */
+export function getHomeCurrency(profile: ProfileForCurrency | null | undefined): string {
+  if (profile?.homeCurrency) return profile.homeCurrency.toUpperCase();
+  
+  // Auto-detect from bank names
+  if (profile?.accountSnapshots && profile.accountSnapshots.length > 0) {
+    const bankText = profile.accountSnapshots
+      .flatMap(a => [a.bankName ?? "", a.accountName ?? ""])
+      .join(" ");
+    
+    if (CA_BANK_RE.test(bankText)) return "CAD";
+    if (US_BANK_RE.test(bankText)) return "USD";
+  }
+  
+  // Fall back to CAD (not USD) for unrecognized accounts
+  return "CAD";
+}
+
+/**
+ * THE SINGLE SHARED toHome() FUNCTION for all currency conversions.
+ * 
+ * Converts an amount from its native currency to the user's home currency.
+ * Uses profile.fxRates for conversion; if no rate is available, returns amount unchanged.
+ * 
+ * @param amount The amount in native currency
+ * @param currency The native currency code (e.g., "USD", "CAD")
+ * @param profile The user's financial profile (for homeCurrency and fxRates)
+ * @returns Amount converted to home currency
+ */
+export function toHome(
+  amount: number,
+  currency: string | null | undefined,
+  profile: ProfileForCurrency | null | undefined
+): number {
+  if (!currency || !profile) return amount;
+  
+  const home = getHomeCurrency(profile);
+  const cur = currency.toUpperCase();
+  
+  if (cur === home) return amount;
+  
+  const rate = profile.fxRates?.[cur];
+  if (!rate || !Number.isFinite(rate)) return amount;
+  
+  return amount * rate;
+}
 
 /**
  * Infer the ISO 4217 currency for a statement given the bank name and any
  * explicit currency the AI already extracted.
  *
  * Priority:
- *   1. `explicitCurrency` — AI-extracted (always trusted when present)
- *   2. Bank-name heuristic — CA banks → CAD, US banks → USD
+ *   1. Bank-name heuristic — CA banks → CAD, US banks → USD (prevents parser errors)
+ *   2. `explicitCurrency` — AI-extracted (used only when bank is unrecognized)
  *   3. `fallback` — caller's home currency (last resort)
+ *
+ * Rationale: The AI parser sometimes sees foreign-exchange notes (e.g. "USD 99.00")
+ * on Canadian bank statements and incorrectly sets the statement currency to USD.
+ * A TD/RBC/BMO statement is ALWAYS in CAD unless the user explicitly marks that
+ * specific account as foreign currency via accountCurrencies override.
  */
 export function inferCurrencyFromBankName(
   bankName: string | null | undefined,
   explicitCurrency: string | null | undefined,
   fallback = HOME_CURRENCY,
 ): string {
-  if (explicitCurrency) return explicitCurrency.toUpperCase();
   const name = bankName ?? "";
+  // Check bank name FIRST - this prevents parser errors from foreign exchange notes
   if (CA_BANK_RE.test(name)) return "CAD";
   if (US_BANK_RE.test(name)) return "USD";
+  // Only trust explicit currency if bank is unrecognized
+  if (explicitCurrency) return explicitCurrency.toUpperCase();
   return fallback.toUpperCase();
 }
 

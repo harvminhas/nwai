@@ -6,6 +6,7 @@ import { applyRulesAndRecalculate, merchantSlug } from "@/lib/applyRules";
 import { buildAccountSlug } from "@/lib/accountSlug";
 import { docYearMonth, carryForwardStatements } from "@/lib/spendHistory";
 import { getFinancialProfile } from "@/lib/financialProfile";
+import { computeScheduledDebtPayments } from "@/lib/debtPayments";
 import {
   buildEmergencyFundSnapshot,
   getNetWorth,
@@ -20,7 +21,7 @@ import { buildSuggestions, resolveCanonical } from "@/lib/sourceMappings";
 import type { SourceMapping } from "@/lib/sourceMappings";
 import { occurrencesInMonth, datesInMonth } from "@/lib/cashIncome";
 import type { CashIncomeEntry } from "@/lib/cashIncome";
-import { resolveTxnCurrencyFromSnapshots } from "@/lib/currencyUtils";
+import { resolveTxnCurrencyFromSnapshots, getHomeCurrency } from "@/lib/currencyUtils";
 
 /** Human-readable label for a statement's account, e.g. "TD ••••7780" */
 function accountDisplayLabel(parsed: ParsedStatementData): string {
@@ -697,7 +698,7 @@ export async function GET(request: NextRequest) {
       const snapshots = profile.accountSnapshots ?? [];
       // Convert each transaction to home currency before summing
       function txToHome(amount: number, currency?: string | null): number {
-        if (!currency || currency.toUpperCase() === (profile.homeCurrency ?? "USD").toUpperCase()) return amount;
+        if (!currency || currency.toUpperCase() === (getHomeCurrency(profile)).toUpperCase()) return amount;
         const rate = (profile.fxRates ?? {})[currency.toUpperCase()];
         return rate != null ? amount * rate : amount;
       }
@@ -864,7 +865,7 @@ export async function GET(request: NextRequest) {
       /** FX rates used for net worth: currency → home-currency rate (e.g. { "CAD": 0.72 } for a USD user) */
       fxRates: profile.fxRates ?? {},
       /** ISO-4217 home currency code for this user (e.g. "USD" or "CAD") */
-      homeCurrency: profile.homeCurrency ?? "USD",
+      homeCurrency: getHomeCurrency(profile),
       /**
        * Latest balance snapshot per account — pre-processed with currency overrides,
        * balance-snapshot overrides, and FX metadata. Use instead of /api/user/statements.
@@ -875,6 +876,17 @@ export async function GET(request: NextRequest) {
        * Use instead of /api/user/statements for sparklines / monthly series.
        */
       accountBalanceHistory: profile.accountBalanceHistory ?? [],
+      /**
+       * Scheduled debt payments (learned regular monthly amounts for loans/mortgages).
+       * Used by spending page to show correct monthly payment instead of averaged raw transactions.
+       */
+      scheduledDebtPayments: computeScheduledDebtPayments(
+        profile.accountSnapshots, 
+        profile.debtPaymentHistory, 
+        [],  // userReviews - not loaded here
+        profile.fxRates ?? {}, 
+        profile.homeCurrency
+      ),
       /**
        * Number of accounts where backfillPromptNeeded or accountConfirmNeeded is true.
        * Used by the Today page to show a "set up accounts" nudge.

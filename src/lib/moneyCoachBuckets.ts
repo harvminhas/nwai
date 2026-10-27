@@ -88,7 +88,7 @@ export const BUCKET_METADATA: Record<MoneyCoachBucket, BucketMetadata> = {
   },
   savings: {
     id: "savings",
-    label: "Savings & debt",
+    label: "Net savings",
     description: "Savings contributions, debt paydown beyond minimums",
     emoji: "💰",
     targetPct: 20, // Savings and debt paydown

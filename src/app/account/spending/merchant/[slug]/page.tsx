@@ -464,9 +464,9 @@ export default function MerchantDetailPage() {
   const annualRounded = Math.round(annualPace / 50) * 50;
   const insightText =
     annualDiff !== null && Math.abs(annualDiff) > 50
-      ? `At your current pace, you'll spend ~${formatCurrency(annualRounded, homeCurrency, undefined, true)} at ${displayedName} this year — about ${formatCurrency(Math.abs(Math.round(annualDiff / 50) * 50), homeCurrency, undefined, true)} ${annualDiff > 0 ? "more" : "less"} than last year's run rate.`
+      ? `At your current pace, you'll spend ~${formatCurrency(annualRounded, homeCurrency, merchant.currency, true)} at ${displayedName} this year — about ${formatCurrency(Math.abs(Math.round(annualDiff / 50) * 50), homeCurrency, merchant.currency, true)} ${annualDiff > 0 ? "more" : "less"} than last year's run rate.`
       : annualPace > 50
-      ? `At your current pace, you'll spend ~${formatCurrency(annualRounded, homeCurrency, undefined, true)} at ${displayedName} this year.`
+      ? `At your current pace, you'll spend ~${formatCurrency(annualRounded, homeCurrency, merchant.currency, true)} at ${displayedName} this year.`
       : null;
 
   // Trip size distribution
@@ -755,7 +755,7 @@ export default function MerchantDetailPage() {
             </div>
           )}
           <p className="mt-1 text-sm text-gray-400">
-            {formatCurrency(monthlyAvg, homeCurrency, undefined, true)}/mo avg · {activeMonths} active month{activeMonths !== 1 ? "s" : ""}
+            {formatCurrency(monthlyAvg, homeCurrency, merchant.currency, true)}/mo avg · {activeMonths} active month{activeMonths !== 1 ? "s" : ""}
           </p>
           {/* Inline controls — cadence + status only; category lives on transactions */}
           <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -809,8 +809,8 @@ export default function MerchantDetailPage() {
             <p className="text-[11px] text-gray-400">{vocab.tripLabel}</p>
             <p className="mt-0.5 text-base font-bold text-gray-900 tabular-nums">
               {showRange
-                ? `${formatCurrency(Math.round(tripLow / 5) * 5, homeCurrency, undefined, true)}–${formatCurrency(Math.round(tripHigh / 5) * 5, homeCurrency, undefined, true)}`
-                : formatCurrency(merchant.avgAmount, homeCurrency, undefined, true)}
+                ? `${formatCurrency(Math.round(tripLow / 5) * 5, homeCurrency, merchant.currency, true)}–${formatCurrency(Math.round(tripHigh / 5) * 5, homeCurrency, merchant.currency, true)}`
+                : formatCurrency(merchant.avgAmount, homeCurrency, merchant.currency, true)}
             </p>
             <p className="text-[11px] text-gray-400">avg {fmtDec(merchant.avgAmount, homeCurrency)}</p>
           </div>
@@ -972,9 +972,9 @@ export default function MerchantDetailPage() {
         {annualDiff !== null && Math.abs(annualDiff) > 50 && (
           <InsightCard icon="info">
             At your current pace, you&apos;ll spend{" "}
-            <span className="font-semibold">~{formatCurrency(annualRounded, homeCurrency, undefined, true)}</span>{" "}
+            <span className="font-semibold">~{formatCurrency(annualRounded, homeCurrency, merchant.currency, true)}</span>{" "}
             at {displayedName} this year — about{" "}
-            <span className="font-semibold">{formatCurrency(Math.abs(Math.round(annualDiff / 50) * 50), homeCurrency, undefined, true)}</span>{" "}
+            <span className="font-semibold">{formatCurrency(Math.abs(Math.round(annualDiff / 50) * 50), homeCurrency, merchant.currency, true)}</span>{" "}
             {annualDiff > 0 ? "more" : "less"} than last year&apos;s run rate.
           </InsightCard>
         )}

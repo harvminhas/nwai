@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
-import { computeDetailedIncomeMetrics, getMonthsForWindow, type IncomeTimeWindow } from "@/lib/incomeMetrics";
+import { buildIncomeSummary } from "@/lib/incomeSummary";
 import { computeBucketBreakdown, compute3MonthTrend, getMonthsForWindow as getBucketMonths, type TimeWindow } from "@/lib/bucketBreakdown";
+import { computeWindowSavings } from "@/lib/savingsCalculations";
+import { formatMonthYear } from "@/lib/dateFormatting";
 import type { MoneyCoachBucket } from "@/lib/moneyCoachBuckets";
-import type { IncomeDrawerData, BucketDrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
+import type { IncomeDrawerData, BucketDrawerData, SavingsDrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
 import type { DebtPaymentReview } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +15,7 @@ export const dynamic = "force-dynamic";
  * GET /api/user/dashboard-drawers?window=last3&bucket=fixed
  * Returns detailed drawer data for income or a specific bucket.
  */
-export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerData | BucketDrawerData | DrawerErrorResponse>> {
+export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerData | BucketDrawerData | SavingsDrawerData | DrawerErrorResponse>> {
   try {
     const token = req.headers.get("authorization")?.replace("Bearer ", "");
     if (!token) {
@@ -47,23 +49,15 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
 
     // Income drawer data
     if (bucket === "income") {
-      const incomeWindow = window as IncomeTimeWindow;
-      
-      // Get current year-month to exclude from historical calculations
-      const now = new Date();
-      const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      
-      const detailedMetrics = computeDetailedIncomeMetrics(
-        profile.monthlyHistory,
+      // Build income summary using unified data layer
+      const summary = buildIncomeSummary(
         profile.incomeTxns,
-        incomeWindow,
-        currentYear,
-        true, // core only
-        currentYearMonth // exclude current month from last3/12month
+        profile.accountSnapshots,
+        profile.homeCurrency
       );
-
-      // Get 12-month history for chart
-      // Generate all 12 calendar months, newest first, including missing months
+      
+      // Map to drawer data format
+      const now = new Date();
       const allMonths: string[] = [];
       
       for (let i = 0; i < 12; i++) {
@@ -72,30 +66,72 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
         allMonths.push(ym);
       }
       
-      // Create a map of actual data
-      const incomeByMonth = new Map(
-        profile.monthlyHistory.map(h => [h.yearMonth, h.incomeTotal])
-      );
+      // Get window months based on drawer window parameter
+      let windowMonths: string[];
+      if (window === "last3") {
+        windowMonths = summary.last3Months;
+      } else if (window === "ytd") {
+        const ytdMonths = summary.monthlyHistory
+          .filter(m => m.yearMonth >= `${currentYear}-01` && m.yearMonth < summary.currentMonth)
+          .map(m => m.yearMonth);
+        windowMonths = ytdMonths;
+      } else { // 12month
+        const complete = summary.monthlyHistory.filter(m => m.yearMonth < summary.currentMonth);
+        windowMonths = complete.slice(-12).map(m => m.yearMonth);
+      }
       
       const last12Months = allMonths.map(ym => {
-        const hasData = incomeByMonth.has(ym);
-        const income = incomeByMonth.get(ym) || 0;
-        const isCurrent = ym === currentYearMonth;
+        const monthData = summary.monthlyHistory.find(m => m.yearMonth === ym);
+        const hasData = monthData !== undefined;
+        const isCurrent = ym === summary.currentMonth;
         
         return {
           month: ym,
-          regularIncome: income,
-          oneOffIncome: 0, // TODO: detect one-offs from transactions
-          isInWindow: detailedMetrics.windowMonths.includes(ym),
+          regularIncome: monthData?.regular || 0,
+          oneOffIncome: monthData?.oneOff || 0,
+          isInWindow: windowMonths.includes(ym),
           isCurrentMonth: isCurrent,
-          hasData: hasData && income > 0,
+          hasData: hasData && (monthData?.total || 0) > 0,
         };
       });
+      
+      // Build metrics compatible with existing drawer format
+      const windowTotal = windowMonths.reduce((sum, ym) => {
+        const monthData = summary.monthlyHistory.find(m => m.yearMonth === ym);
+        return sum + (monthData?.regular || 0);
+      }, 0);
+      
+      const metrics = {
+        averageMonthly: summary.typicalMonthly,
+        currentMonthly: summary.typicalMonthly,
+        monthsTracked: windowMonths.length,
+        currentMonthsTracked: windowMonths.length,
+        currentBasisLabel: `last ${windowMonths.length} months`,
+        currentDiffersFromAverage: false,
+        windowAmount: Math.round(windowTotal / windowMonths.length),
+        windowLabel: window === "last3" ? "last 3 months" : window === "ytd" ? "year-to-date" : "12-month avg",
+        windowMonths,
+        regularSources: summary.regularSources.map(s => ({ 
+          source: s.description, 
+          category: s.category, 
+          amount: s.monthlyEquivalent 
+        })),
+        oneOffSources: summary.oneOffSources.map(s => ({ 
+          source: s.description, 
+          category: s.category, 
+          amount: s.total, 
+          isOneOff: true 
+        })),
+        ytdTotal: 0,
+        ytdRegular: 0,
+        ytdOneOff: 0,
+        projectedFullYear: 0,
+      };
 
       const response: IncomeDrawerData = {
         type: "income",
         window,
-        metrics: detailedMetrics,
+        metrics,
         chartData: last12Months,
         homeCurrency: profile.homeCurrency,
       };
@@ -103,7 +139,73 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       return NextResponse.json(response);
     }
 
-    // Bucket drawer data
+    // Savings drawer data (special handling with NET balance approach)
+    if (bucket === "savings") {
+      // Get complete months for the window (exclude current incomplete month)
+      const now = new Date();
+      const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+      
+      let completeMonths: string[];
+      
+      if (window === "last3") {
+        completeMonths = profile.monthlyHistory
+          .filter(h => h.yearMonth < currentMonth)
+          .slice(-3)
+          .map(h => h.yearMonth);
+      } else if (window === "12month") {
+        completeMonths = profile.monthlyHistory
+          .filter(h => h.yearMonth < currentMonth)
+          .slice(-12)
+          .map(h => h.yearMonth);
+      } else { // ytd
+        completeMonths = profile.monthlyHistory
+          .filter(h => 
+            h.yearMonth.startsWith(String(currentYear)) && 
+            h.yearMonth < currentMonth
+          )
+          .map(h => h.yearMonth);
+      }
+      
+      if (completeMonths.length === 0) {
+        return NextResponse.json({ error: "No complete months available for selected window" }, { status: 404 });
+      }
+      
+      // Load savings confirmations
+      const savingsReviewsSnap = await db
+        .collection(`users/${decoded.uid}/reviews`)
+        .where("type", "==", "savings_item")
+        .get();
+      
+      const confirmedItems = new Map<string, boolean>();
+      savingsReviewsSnap.docs.forEach(doc => {
+        const classification = doc.get("classification");
+        // "is_savings" → true (count it), anything else → false (exclude it)
+        confirmedItems.set(doc.id, classification === "is_savings");
+      });
+      
+      // Compute window savings with per-month reconciliation
+      const windowSavings = computeWindowSavings(
+        profile.monthlyHistory,
+        profile.accountBalanceHistory,
+        profile.expenseTxns,
+        completeMonths,
+        confirmedItems
+      );
+      
+      const response: SavingsDrawerData = {
+        type: "savings",
+        window,
+        windowSavings,
+        homeCurrency: profile.homeCurrency,
+        basisLabel: completeMonths.length > 0
+          ? `Monthly average, ${formatMonthYear(completeMonths[0]).split(' ')[0]}–${formatMonthYear(completeMonths[completeMonths.length - 1])}`
+          : "No data",
+      };
+      
+      return NextResponse.json(response);
+    }
+
+    // Bucket drawer data (for non-savings buckets)
     const months = getBucketMonths(profile.monthlyHistory, window, currentYear);
     
     if (months.length === 0) {
@@ -114,20 +216,26 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       bucket,
       profile.expenseTxns,
       profile.accountSnapshots,
+      profile.debtPaymentHistory,
       months,
       profile.homeCurrency,
       userReviews,
-      profile.fxRates ?? {}
+      profile.fxRates ?? {},
+      profile.merchantCadence,
+      profile.confirmedSubscriptions
     );
 
     const trend = compute3MonthTrend(
       bucket,
       profile.expenseTxns,
       profile.accountSnapshots,
+      profile.debtPaymentHistory,
       profile.monthlyHistory,
+      profile.homeCurrency,
       userReviews,
       profile.fxRates ?? {},
-      profile.homeCurrency
+      profile.merchantCadence,
+      profile.confirmedSubscriptions
     );
 
     const response: BucketDrawerData = {
@@ -138,7 +246,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       trend,
       homeCurrency: profile.homeCurrency,
       basisLabel: months.length > 0 
-        ? `Monthly average, ${months[0]} to ${months[months.length - 1]}` 
+        ? `Monthly average, ${formatMonthYear(months[0]).split(' ')[0]}–${formatMonthYear(months[months.length - 1])}` 
         : "No data",
     };
 
