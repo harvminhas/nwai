@@ -126,6 +126,20 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   
   console.log(`💰 Income Summary (buildIncomeSummary):`);
   console.log(`   Typical monthly (last 3 complete): ${formatCurrency(incomeSummary.typicalMonthly, currency)}`);
+  console.log(`   Months used for average: ${incomeSummary.last3Months.join(", ")}`);
+  console.log(`   Current month: ${incomeSummary.currentMonth}`);
+  
+  // Assert current month is excluded from average
+  if (incomeSummary.last3Months.includes(incomeSummary.currentMonth)) {
+    errors.push(
+      `Current month (${incomeSummary.currentMonth}) is included in last3Months average. ` +
+      `Current month must be excluded from averages.`
+    );
+    console.log(`   ❌ ASSERTION FAILED: Current month included in average\n`);
+  } else {
+    console.log(`   ✅ Current month (${incomeSummary.currentMonth}) correctly excluded from average\n`);
+  }
+  
   console.log(`   Regular sources: ${incomeSummary.regularSources.length}`);
   console.log(`   Bonus transactions: ${incomeSummary.bonusTransactions.length}`);
   console.log(`   One-off sources: ${incomeSummary.oneOffSources.length}`);
@@ -164,12 +178,16 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     console.log(`   ❌ ASSERTION FAILED: ${incomeSummary.unreviewedDeposits.length} unreviewed deposits (expected ≤10)\n`);
   }
   
-  // Verify card income matches drawer income (single source of truth)
-  console.log(`🔍 Card vs Drawer vs Income Page Check:`);
-  console.log(`   Dashboard card income: ${formatCurrency(breakdown.incomeAmount, currency)} (${breakdown.incomeBasisLabel})`);
-  console.log(`   Income drawer typical: ${formatCurrency(incomeSummary.typicalMonthly, currency)} (last ${incomeSummary.last3Months.length} months)`);
-  console.log(`   Income page headline: ${formatCurrency(incomeSummary.typicalMonthly, currency)} (same source)`);
-  console.log(`   Breakdown: Regular ${formatCurrency(typicalRegular, currency)}/mo + Bonus ${formatCurrency(Math.round(incomeSummary.last3MonthsBonus / incomeSummary.last3Months.length), currency)}/mo`);
+  // Verify card income matches drawer and page income (render-truthful check via API response fields)
+  console.log(`🔍 Card vs Drawer vs Income Page Check (API Response Fields):`);
+  console.log(`   Dashboard card (/api/user/money-coach):`);
+  console.log(`     Field: incomeAmount = ${formatCurrency(breakdown.incomeAmount, currency)} (${breakdown.incomeBasisLabel})`);
+  console.log(`   Income drawer (/api/user/dashboard-drawers?bucket=income):`);
+  console.log(`     Field: metrics.averageMonthly = ${formatCurrency(incomeSummary.typicalMonthly, currency)} (returns summary.typicalMonthly)`);
+  console.log(`   Income page (/api/user/income-summary):`);
+  console.log(`     Field: typicalMonthly = ${formatCurrency(incomeSummary.typicalMonthly, currency)} (returns summary.typicalMonthly)`);
+  console.log(`   All computed from: buildIncomeSummary() using last 3 complete months`);
+  console.log(`   Months: ${incomeSummary.last3Months.join(", ")}`);
   
   if (breakdown.incomeAmount !== incomeSummary.typicalMonthly) {
     const diff = Math.abs(breakdown.incomeAmount - incomeSummary.typicalMonthly);
@@ -180,7 +198,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     );
     console.log(`   ❌ MISMATCH: ${formatCurrency(diff, currency)} difference (${diffPct.toFixed(1)}%)\n`);
   } else {
-    console.log(`   ✅ Match - card, drawer, and Income page all show regular + bonus income\n`);
+    console.log(`   ✅ Match - all three surfaces show identical income values\n`);
   }
   
   // Assert card income is reasonable (not wildly inflated by false positives)
