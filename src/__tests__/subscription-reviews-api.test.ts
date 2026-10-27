@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { buildSubscriptionSummary } from "@/lib/subscriptionEngine";
+import { merchantSlug } from "@/lib/applyRules";
 
 /**
  * Integration test: POST review → GET subscriptions moves item
@@ -142,5 +143,66 @@ describe("Subscription Review API Integration", () => {
     expect(afterSummary.candidates.length).toBe(0);
     expect(afterSummary.subscriptions.length).toBe(0);
     expect(afterSummary.inactive.length).toBe(0);
+  });
+  
+  it("POST billing frequency override then GET reflects it", async () => {
+    const testExpenseTxns = [
+      {
+        date: "2024-01-15",
+        merchant: "TestQuarterlySub",
+        category: "Subscriptions",
+        amount: -120,
+        accountSlug: "test-account",
+        currency: "CAD",
+      },
+      {
+        date: "2024-02-15",
+        merchant: "TestQuarterlySub",
+        category: "Subscriptions",
+        amount: -120,
+        accountSlug: "test-account",
+        currency: "CAD",
+      },
+      {
+        date: "2024-03-15",
+        merchant: "TestQuarterlySub",
+        category: "Subscriptions",
+        amount: -120,
+        accountSlug: "test-account",
+        currency: "CAD",
+      },
+    ];
+    
+    // Get the actual merchant slug
+    const actualSlug = merchantSlug("TestQuarterlySub");
+    
+    // Default: detected as monthly (detected cadence)
+    const beforeSummary = buildSubscriptionSummary(testExpenseTxns, "CAD", 1000, [actualSlug]);
+    const beforeMonthly = beforeSummary.monthlyTotal;
+    expect(beforeSummary.subscriptions.length).toBeGreaterThan(0);
+    const beforeSub = beforeSummary.subscriptions[0];
+    
+    // Override to quarterly
+    const overrides = new Map<string, import("@/lib/reviewTypes").BillingFrequency>();
+    overrides.set(actualSlug, "quarterly");
+    
+    const afterSummary = buildSubscriptionSummary(testExpenseTxns, "CAD", 1000, [actualSlug], overrides);
+    expect(afterSummary.subscriptions.length).toBeGreaterThan(0);
+    const afterSub = afterSummary.subscriptions[0];
+    const afterMonthly = afterSummary.monthlyTotal;
+    
+    // Verify billing frequency changed
+    expect(afterSub.billingFrequency).toBe("quarterly");
+    
+    // Verify monthly total changed (quarterly = 4x/year, so monthly = amount*4/12)
+    expect(afterMonthly).toBe((120 * 4) / 12);
+    // Before was detected as monthly, so beforeMonthly = 120
+    expect(beforeMonthly).toBe(120);
+    expect(afterMonthly).not.toBe(beforeMonthly);
+    
+    // Verify next expected date changed (quarterly = 3 months)
+    const expectedNextDate = new Date("2024-03-15");
+    expectedNextDate.setMonth(expectedNextDate.getMonth() + 3);
+    expect(afterSub.nextDate).toBe(expectedNextDate.toISOString().slice(0, 10));
   });
 });

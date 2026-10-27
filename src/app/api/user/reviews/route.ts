@@ -121,7 +121,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
     const decoded = await auth.verifyIdToken(token);
 
     const body = await req.json();
-    const { id, type, classification, accountSlug, merchantSlug, date, amount } = body;
+    const { id, type, classification, accountSlug, merchantSlug, date, amount, billingFrequency } = body;
 
     if (!id || !type || !classification) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
@@ -132,18 +132,25 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
     }
 
     // Save review to unified collection
+    const reviewData: any = {
+      type,
+      classification,
+      accountSlug: accountSlug || null,
+      merchantSlug: merchantSlug || null,
+      date,
+      amount,
+      reviewedAt: new Date().toISOString(),
+    };
+    
+    // Add billingFrequency if provided (for subscriptions)
+    if (billingFrequency && type === "subscription") {
+      reviewData.billingFrequency = billingFrequency;
+    }
+    
     await db
       .collection(`users/${decoded.uid}/reviews`)
       .doc(id)
-      .set({
-        type,
-        classification,
-        accountSlug: accountSlug || null,
-        merchantSlug: merchantSlug || null,
-        date,
-        amount,
-        reviewedAt: new Date().toISOString(),
-      });
+      .set(reviewData);
 
     // For backward compatibility, also write to old debt payment reviews collection
     if (type === "debt_payment") {

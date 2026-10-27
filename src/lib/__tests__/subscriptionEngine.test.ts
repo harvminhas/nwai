@@ -425,4 +425,72 @@ describe("subscriptionEngine", () => {
       expect(Array.isArray(summary.cancelled)).toBe(true);
     });
   });
+
+  describe("Billing frequency overrides", () => {
+    it("should honor weekly billing frequency override", () => {
+      const now = new Date();
+      const txns: ExpenseTxnRecord[] = [
+        createTxn("TEST SUB", "Subscriptions", 10, new Date(now.getFullYear(), now.getMonth() - 2, 1).toISOString()),
+        createTxn("TEST SUB", "Subscriptions", 10, new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString()),
+        createTxn("TEST SUB", "Subscriptions", 10, new Date(now.getFullYear(), now.getMonth(), 1).toISOString()),
+      ];
+
+      const overrides = new Map<string, import("@/lib/reviewTypes").BillingFrequency>();
+      overrides.set("test-sub", "weekly");
+      
+      const summary = buildSubscriptionSummary(txns, "CAD", undefined, ["test-sub"], overrides);
+      
+      const sub = summary.subscriptions[0];
+      expect(sub.billingFrequency).toBe("weekly");
+      
+      // Weekly: 52 weeks/year, monthly = (10 * 52) / 12 = 43.33
+      expect(summary.monthlyTotal).toBeCloseTo((10 * 52) / 12, 2);
+      // Yearly: 10 * 52 = 520
+      expect(summary.yearlyTotal).toBe(10 * 52);
+    });
+
+    it("should honor quarterly billing frequency override", () => {
+      const now = new Date();
+      const txns: ExpenseTxnRecord[] = [
+        createTxn("TEST SUB", "Subscriptions", 30, new Date(now.getFullYear(), now.getMonth() - 2, 1).toISOString()),
+        createTxn("TEST SUB", "Subscriptions", 30, new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString()),
+        createTxn("TEST SUB", "Subscriptions", 30, new Date(now.getFullYear(), now.getMonth(), 1).toISOString()),
+      ];
+
+      const overrides = new Map<string, import("@/lib/reviewTypes").BillingFrequency>();
+      overrides.set("test-sub", "quarterly");
+      
+      const summary = buildSubscriptionSummary(txns, "CAD", undefined, ["test-sub"], overrides);
+      
+      const sub = summary.subscriptions[0];
+      expect(sub.billingFrequency).toBe("quarterly");
+      
+      // Quarterly: 4 times/year, monthly = (30 * 4) / 12 = 10
+      expect(summary.monthlyTotal).toBe((30 * 4) / 12);
+      // Yearly: 30 * 4 = 120
+      expect(summary.yearlyTotal).toBe(30 * 4);
+    });
+
+    it("should update next expected date based on override", () => {
+      const now = new Date();
+      const lastDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+      
+      const txns: ExpenseTxnRecord[] = [
+        createTxn("TEST SUB", "Subscriptions", 30, lastDate),
+      ];
+
+      const overrides = new Map<string, import("@/lib/reviewTypes").BillingFrequency>();
+      overrides.set("test-sub", "quarterly");
+      
+      const summary = buildSubscriptionSummary(txns, "CAD", undefined, ["test-sub"], overrides);
+      
+      const sub = summary.subscriptions[0];
+      
+      // Next date should be 3 months after last date
+      const expectedNextDate = new Date(lastDate);
+      expectedNextDate.setMonth(expectedNextDate.getMonth() + 3);
+      
+      expect(sub.nextDate).toBe(expectedNextDate.toISOString().slice(0, 10));
+    });
+  });
 });

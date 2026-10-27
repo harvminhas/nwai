@@ -29,6 +29,7 @@
 import type { ExpenseTxnRecord } from "./extractTransactions";
 import { getParentCategory } from "./categoryTaxonomy";
 import { merchantSlug } from "./applyRules";
+import type { BillingFrequency } from "./reviewTypes";
 
 export type SubscriptionCadence = "monthly" | "yearly" | "ambiguous";
 export type SubscriptionStatus = "active" | "inactive";
@@ -40,6 +41,7 @@ export interface DetectedSubscription {
   category: string;
   amount: number;
   cadence: SubscriptionCadence;
+  billingFrequency?: BillingFrequency; // User override for billing frequency
   lastDate: string;
   nextDate: string | null;
   chargeCount: number;
@@ -316,15 +318,21 @@ function normalizeSubscriptionMerchant(merchantSlugValue: string): string {
 function determineStatus(
   lastDate: string,
   cadence: SubscriptionCadence,
-  latestTxnDate: string
+  latestTxnDate: string,
+  billingFrequency?: BillingFrequency
 ): SubscriptionStatus {
+  // Use billing frequency override if provided
+  const effectiveCadence = billingFrequency 
+    ? (billingFrequency === "yearly" ? "yearly" : "monthly")
+    : cadence;
+  
   // Use latest transaction date, NOT today
   const daysSinceLast = daysBetween(lastDate, latestTxnDate);
   
-  if (cadence === "monthly") {
-    // Monthly: active if charged within 45 days of latest txn date
+  if (effectiveCadence === "monthly" || billingFrequency === "weekly" || billingFrequency === "quarterly") {
+    // Monthly/weekly/quarterly: active if charged within 45 days
     return daysSinceLast <= 45 ? "active" : "inactive";
-  } else if (cadence === "yearly") {
+  } else if (effectiveCadence === "yearly") {
     // Yearly: active if charged within 400 days of latest txn date
     return daysSinceLast <= 400 ? "active" : "inactive";
   }
@@ -343,7 +351,8 @@ interface MerchantPattern {
 function detectSubscription(
   pattern: MerchantPattern,
   userConfirmed: Set<string>,
-  latestTxnDate: string
+  latestTxnDate: string,
+  billingFrequencyOverride?: BillingFrequency
 ): DetectedSubscription | null {
   const { merchant, merchantSlug, category, transactions } = pattern;
   
@@ -421,16 +430,32 @@ function detectSubscription(
   const lastDate = lastTxn.date;
   const amount = lastTxn.amount;
   
-  // Estimate next date
+  // Estimate next date (use override if provided)
   let nextDate: string | null = null;
-  if (cadence === "monthly") {
-    nextDate = addMonths(lastDate, 1);
-  } else if (cadence === "yearly") {
-    nextDate = addMonths(lastDate, 12);
+  if (billingFrequencyOverride) {
+    if (billingFrequencyOverride === "weekly") {
+      nextDate = addMonths(lastDate, 0); // Add 7 days via different logic
+      const d = new Date(lastDate);
+      d.setDate(d.getDate() + 7);
+      nextDate = d.toISOString().slice(0, 10);
+    } else if (billingFrequencyOverride === "monthly") {
+      nextDate = addMonths(lastDate, 1);
+    } else if (billingFrequencyOverride === "quarterly") {
+      nextDate = addMonths(lastDate, 3);
+    } else if (billingFrequencyOverride === "yearly") {
+      nextDate = addMonths(lastDate, 12);
+    }
+  } else {
+    // Use detected cadence
+    if (cadence === "monthly") {
+      nextDate = addMonths(lastDate, 1);
+    } else if (cadence === "yearly") {
+      nextDate = addMonths(lastDate, 12);
+    }
   }
   
-  // Determine status: active or inactive (relative to latest txn date)
-  const status = determineStatus(lastDate, cadence, latestTxnDate);
+  // Determine status: active or inactive (relative to latest txn date, honor override)
+  const status = determineStatus(lastDate, cadence, latestTxnDate, billingFrequencyOverride);
   
   // Check if new (first charge in last 60 days relative to latest txn date)
   const firstDate = sorted[0].date;
@@ -459,6 +484,7 @@ function detectSubscription(
     category,
     amount,
     cadence,
+    billingFrequency: billingFrequencyOverride,
     lastDate,
     nextDate,
     chargeCount: transactions.length,
@@ -476,7 +502,8 @@ export function buildSubscriptionSummary(
   expenseTxns: ExpenseTxnRecord[],
   currency: string = "CAD",
   totalSpending?: number,
-  userConfirmedSlugs: string[] = []
+  userConfirmedSlugs: string[] = [],
+  billingFrequencyOverrides: Map<string, BillingFrequency> = new Map()
 ): SubscriptionSummary {
   const userConfirmed = new Set(userConfirmedSlugs);
   
@@ -513,7 +540,8 @@ export function buildSubscriptionSummary(
   // Detect subscriptions
   const allDetected: DetectedSubscription[] = [];
   merchantMap.forEach(pattern => {
-    const sub = detectSubscription(pattern, userConfirmed, latestTxnDate);
+    const frequencyOverride = billingFrequencyOverrides.get(pattern.merchantSlug);
+    const sub = detectSubscription(pattern, userConfirmed, latestTxnDate, frequencyOverride);
     if (sub) {
       allDetected.push(sub);
     }
@@ -529,15 +557,25 @@ export function buildSubscriptionSummary(
   candidates.sort((a, b) => b.amount - a.amount);
   inactive.sort((a, b) => b.amount - a.amount);
   
-  // Calculate totals (confirmed active only)
+  // Calculate totals (confirmed active only, honor billing frequency overrides)
   let monthlyTotal = 0;
   let yearlyTotal = 0;
   
   confirmedActive.forEach(sub => {
-    if (sub.cadence === "monthly") {
+    const frequency = sub.billingFrequency;
+    
+    if (frequency === "weekly") {
+      // Weekly: 52 weeks/year, divide by 12 for monthly
+      monthlyTotal += (sub.amount * 52) / 12;
+      yearlyTotal += sub.amount * 52;
+    } else if (frequency === "monthly" || (!frequency && sub.cadence === "monthly")) {
       monthlyTotal += sub.amount;
       yearlyTotal += sub.amount * 12;
-    } else if (sub.cadence === "yearly") {
+    } else if (frequency === "quarterly") {
+      // Quarterly: 4 times/year, divide by 12 for monthly
+      monthlyTotal += (sub.amount * 4) / 12;
+      yearlyTotal += sub.amount * 4;
+    } else if (frequency === "yearly" || (!frequency && sub.cadence === "yearly")) {
       monthlyTotal += sub.amount / 12;
       yearlyTotal += sub.amount;
     }

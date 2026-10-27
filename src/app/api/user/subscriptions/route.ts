@@ -39,15 +39,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       .where("type", "==", "subscription")
       .get();
     
-    // Process reviews: build sets for different actions
+    // Process reviews: build sets for different actions and billing frequency overrides
     const userConfirmedSlugs: string[] = [];
     const excludedSlugs = new Set<string>();
     const stillActiveSlugs = new Set<string>();
     const cancelledSlugs = new Set<string>();
+    const billingFrequencyOverrides = new Map<string, import("@/lib/reviewTypes").BillingFrequency>();
     
     subReviewsSnap.docs.forEach(doc => {
       const classification = doc.get("classification");
       const merchantSlug = doc.get("merchantSlug") || doc.id;
+      const billingFrequency = doc.get("billingFrequency");
       
       if (classification === "is_subscription") {
         userConfirmedSlugs.push(merchantSlug);
@@ -58,6 +60,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         stillActiveSlugs.add(merchantSlug);
       } else if (classification === "cancelled") {
         cancelledSlugs.add(merchantSlug);
+      }
+      
+      // Store billing frequency override if present
+      if (billingFrequency) {
+        billingFrequencyOverrides.set(merchantSlug, billingFrequency);
       }
     });
     
@@ -81,7 +88,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       filteredExpenseTxns, // Use filtered transactions (excluded merchants removed)
       profile.homeCurrency,
       spendingSummary.typicalMonthly,
-      userConfirmedSlugs
+      userConfirmedSlugs,
+      billingFrequencyOverrides
     );
     
     // Post-process: handle cancelled subscriptions

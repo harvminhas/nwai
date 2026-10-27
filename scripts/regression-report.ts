@@ -266,6 +266,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     .get();
   
   const userConfirmedSlugs: string[] = [];
+  const billingFrequencyOverrides = new Map<string, import("../src/lib/reviewTypes").BillingFrequency>();
   const reviewDecisions = {
     is_subscription: 0,
     not_subscription: 0,
@@ -276,6 +277,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   subReviewsSnap.docs.forEach(doc => {
     const classification = doc.get("classification");
     const merchantSlug = doc.get("merchantSlug") || doc.id;
+    const billingFrequency = doc.get("billingFrequency");
     
     if (classification === "is_subscription") {
       userConfirmedSlugs.push(merchantSlug);
@@ -288,6 +290,11 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     } else if (classification === "cancelled") {
       reviewDecisions.cancelled++;
     }
+    
+    // Track billing frequency overrides
+    if (billingFrequency) {
+      billingFrequencyOverrides.set(merchantSlug, billingFrequency);
+    }
   });
   
   console.log(`\n🔄 Subscriptions (buildSubscriptionSummary):`);
@@ -297,11 +304,19 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   console.log(`     • still_active: ${reviewDecisions.still_active}`);
   console.log(`     • cancelled: ${reviewDecisions.cancelled}`);
   
+  if (billingFrequencyOverrides.size > 0) {
+    console.log(`   Billing frequency overrides: ${billingFrequencyOverrides.size}`);
+    billingFrequencyOverrides.forEach((freq, slug) => {
+      console.log(`     • ${slug}: ${freq}`);
+    });
+  }
+  
   const subscriptionSummary = buildSubscriptionSummary(
     profile.expenseTxns,
     currency,
     spendingSummary.typicalMonthly,
-    userConfirmedSlugs
+    userConfirmedSlugs,
+    billingFrequencyOverrides
   );
   
   console.log(`   Active confirmed: ${subscriptionSummary.activeCount}`);

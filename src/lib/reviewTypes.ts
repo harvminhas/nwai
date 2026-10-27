@@ -58,6 +58,9 @@ export type IncomeClassification = "is_income" | "is_transfer" | "is_refund" | "
 export type SubscriptionClassification = "is_subscription" | "not_subscription" | "still_active" | "cancelled";
 export type ReviewClassification = DebtPaymentClassification | SavingsClassification | IncomeClassification | SubscriptionClassification;
 
+// Billing frequency options for subscriptions
+export type BillingFrequency = "weekly" | "monthly" | "quarterly" | "yearly";
+
 // Persisted review record
 export interface ReviewRecord {
   id: string; // Same as review item ID
@@ -68,4 +71,5 @@ export interface ReviewRecord {
   date: string;
   amount: number;
   reviewedAt: string; // ISO timestamp
+  billingFrequency?: BillingFrequency; // User override for subscription billing frequency
 }

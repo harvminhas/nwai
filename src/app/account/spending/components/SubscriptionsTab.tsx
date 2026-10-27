@@ -113,6 +113,59 @@ export function SubscriptionsTab({ token }: SubscriptionsTabProps) {
       console.error("Failed to undo:", err);
     }
   };
+  
+  const handleBillingFrequencyChange = async (
+    item: DetectedSubscription,
+    frequency: string
+  ) => {
+    if (!token || submitting) return;
+
+    setSubmitting(true);
+
+    try {
+      const res = await fetch("/api/user/reviews", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: item.merchantSlug,
+          type: "subscription",
+          classification: "is_subscription", // Ensure it's confirmed
+          merchantSlug: item.merchantSlug,
+          date: item.lastDate,
+          amount: item.amount,
+          billingFrequency: frequency,
+        }),
+      });
+
+      if (res.ok) {
+        // Silent refresh
+        await loadSubscriptions();
+        
+        const frequencyLabels: Record<string, string> = {
+          weekly: "Weekly",
+          monthly: "Monthly",
+          quarterly: "Every 3 months",
+          yearly: "Yearly",
+        };
+        
+        setToast({ 
+          message: `${item.merchant} billing changed to ${frequencyLabels[frequency]}`,
+          undoId: item.merchantSlug,
+        });
+        
+        setTimeout(() => setToast(null), 5000);
+      } else {
+        console.error("Failed to save billing frequency", await res.text());
+      }
+    } catch (err) {
+      console.error("Error saving billing frequency:", err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -241,6 +294,7 @@ export function SubscriptionsTab({ token }: SubscriptionsTabProps) {
           onClassify={handleClassify}
           submitting={submitting}
           showActions="active"
+          onBillingFrequencyChange={handleBillingFrequencyChange}
         />
       </div>
 
@@ -261,6 +315,7 @@ export function SubscriptionsTab({ token }: SubscriptionsTabProps) {
             onClassify={handleClassify}
             submitting={submitting}
             showActions="candidate"
+            onBillingFrequencyChange={handleBillingFrequencyChange}
           />
         </div>
       )}
@@ -293,6 +348,7 @@ export function SubscriptionsTab({ token }: SubscriptionsTabProps) {
               onClassify={handleClassify}
               submitting={submitting}
               showActions="inactive"
+              onBillingFrequencyChange={handleBillingFrequencyChange}
             />
           )}
         </div>
@@ -307,14 +363,39 @@ function SubscriptionTable({
   onClassify,
   submitting,
   showActions,
+  onBillingFrequencyChange,
 }: {
   subscriptions: DetectedSubscription[];
   currency: string;
   onClassify: (item: DetectedSubscription, classification: any) => void;
   submitting: boolean;
   showActions?: "active" | "candidate" | "inactive";
+  onBillingFrequencyChange?: (item: DetectedSubscription, frequency: string) => void;
 }) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [openFrequencyMenu, setOpenFrequencyMenu] = useState<string | null>(null);
+  
+  const getBillingLabel = (sub: DetectedSubscription): string => {
+    const freq = sub.billingFrequency;
+    if (freq === "weekly") return "Weekly";
+    if (freq === "monthly") return "Monthly";
+    if (freq === "quarterly") return "Every 3 months";
+    if (freq === "yearly") return "Yearly";
+    
+    // Fallback to cadence
+    if (sub.cadence === "monthly") return "Monthly";
+    if (sub.cadence === "yearly") return "Yearly";
+    return "Recurring";
+  };
+  
+  const getBillingColor = (sub: DetectedSubscription): string => {
+    const freq = sub.billingFrequency || sub.cadence;
+    if (freq === "weekly") return "bg-green-100 text-green-800";
+    if (freq === "monthly") return "bg-purple-100 text-purple-800";
+    if (freq === "quarterly") return "bg-orange-100 text-orange-800";
+    if (freq === "yearly") return "bg-blue-100 text-blue-800";
+    return "bg-gray-100 text-gray-800";
+  };
 
   return (
     <div className="overflow-x-auto">
@@ -322,7 +403,7 @@ function SubscriptionTable({
         <thead className="bg-gray-50 border-b border-gray-200">
           <tr>
             <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700">Name</th>
-            <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700">Cadence</th>
+            <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700">Billed</th>
             <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700">Last charge</th>
             <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700">
               {showActions === "inactive" ? "Last expected" : "Next expected"}
@@ -351,17 +432,60 @@ function SubscriptionTable({
                   <div className="text-xs text-gray-500">{sub.category}</div>
                 </td>
                 <td className="px-6 py-4">
-                  <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${
-                    sub.cadence === "monthly"
-                      ? "bg-purple-100 text-purple-800"
-                      : sub.cadence === "yearly"
-                        ? "bg-blue-100 text-blue-800"
-                        : "bg-gray-100 text-gray-800"
-                  }`}>
-                    {sub.cadence === "monthly" && "Monthly"}
-                    {sub.cadence === "yearly" && "Yearly"}
-                    {sub.cadence === "ambiguous" && "Recurring"}
-                  </span>
+                  <div className="relative">
+                    <button
+                      onClick={() => setOpenFrequencyMenu(openFrequencyMenu === sub.merchantSlug ? null : sub.merchantSlug)}
+                      disabled={!onBillingFrequencyChange}
+                      className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${getBillingColor(sub)} ${onBillingFrequencyChange ? 'cursor-pointer hover:opacity-80' : ''} transition`}
+                    >
+                      {getBillingLabel(sub)}
+                      {onBillingFrequencyChange && (
+                        <svg className="w-3 h-3 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      )}
+                    </button>
+                    {onBillingFrequencyChange && openFrequencyMenu === sub.merchantSlug && (
+                      <div className="absolute left-0 top-8 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-20 w-40">
+                        <button
+                          onClick={() => {
+                            setOpenFrequencyMenu(null);
+                            onBillingFrequencyChange(sub, "weekly");
+                          }}
+                          className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"
+                        >
+                          Weekly
+                        </button>
+                        <button
+                          onClick={() => {
+                            setOpenFrequencyMenu(null);
+                            onBillingFrequencyChange(sub, "monthly");
+                          }}
+                          className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"
+                        >
+                          Monthly
+                        </button>
+                        <button
+                          onClick={() => {
+                            setOpenFrequencyMenu(null);
+                            onBillingFrequencyChange(sub, "quarterly");
+                          }}
+                          className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"
+                        >
+                          Every 3 months
+                        </button>
+                        <button
+                          onClick={() => {
+                            setOpenFrequencyMenu(null);
+                            onBillingFrequencyChange(sub, "yearly");
+                          }}
+                          className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50"
+                        >
+                          Yearly
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </td>
                 <td className="px-6 py-4 text-sm text-gray-600">
                   {formatDate(sub.lastDate)}
@@ -373,7 +497,7 @@ function SubscriptionTable({
                   <div className="text-sm font-semibold text-gray-900">
                     {formatCurrency(sub.amount, currency)}
                   </div>
-                  {sub.cadence === "yearly" && (
+                  {(sub.billingFrequency === "yearly" || (!sub.billingFrequency && sub.cadence === "yearly")) && (
                     <div className="text-xs text-gray-500">
                       {formatCurrency(sub.amount / 12, currency)}/mo
                     </div>
