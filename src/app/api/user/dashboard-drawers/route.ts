@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
-import { buildIncomeSummary } from "@/lib/incomeSummary";
+import { buildIncomeSummary, makeIncomeTxnId } from "@/lib/incomeSummary";
 import { computeBucketBreakdown, compute3MonthTrend, getMonthsForWindow as getBucketMonths, type TimeWindow } from "@/lib/bucketBreakdown";
 import { computeWindowSavings } from "@/lib/savingsCalculations";
 import { formatMonthYear } from "@/lib/dateFormatting";
@@ -115,7 +115,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       // Build transaction-level source groups for the selected window
       // Include ALL counted income (bonus included), exclude 'not_income' and transfers
       const bonusTxnIds = new Set(summary.bonusTransactions.map(t => 
-        `${t.date}:${t.source}:${t.amount}:${t.accountSlug || 'unknown'}`
+        makeIncomeTxnId(t.date, t.source, t.amount, t.accountSlug)
       ));
       const unreviewedTxnIds = new Set(summary.unreviewedDeposits.map(d => d.txId));
       
@@ -139,7 +139,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       }>();
       
       for (const txn of windowTxns) {
-        const txId = `${txn.date}:${txn.source}:${txn.amount}:${txn.accountSlug || 'unknown'}`;
+        const txId = makeIncomeTxnId(txn.date, txn.source, txn.amount, txn.accountSlug);
         const isBonus = bonusTxnIds.has(txId);
         const needsReview = unreviewedTxnIds.has(txId);
         
