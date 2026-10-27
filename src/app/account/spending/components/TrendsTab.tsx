@@ -13,6 +13,7 @@ interface TrendsTabProps {
 
 export function TrendsTab({ summary }: TrendsTabProps) {
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const { monthlyHistory, currency } = summary;
 
   // Chart data
@@ -39,8 +40,14 @@ export function TrendsTab({ summary }: TrendsTabProps) {
 
   // Handle bar click
   const handleBarClick = (data: any) => {
-    const month = data.yearMonth;
-    setSelectedMonth(month === selectedMonth ? null : month);
+    if (!data || !data.activePayload || !data.activePayload[0]) return;
+    const month = data.activePayload[0].payload.yearMonth;
+    if (month === selectedMonth) {
+      setSelectedMonth(null);
+    } else {
+      setSelectedMonth(month);
+      setExpandedCategories(new Set()); // Reset expanded state when changing months
+    }
   };
 
   return (
@@ -192,12 +199,20 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                 <div className="space-y-1">
                   {selectedData.categories.sort((a, b) => b.amount - a.amount).map(cat => {
                     const categoryMerchants = summary.merchants.filter(m => m.category === cat.category);
-                    const [expanded, setExpanded] = useState(false);
+                    const expanded = expandedCategories.has(cat.category);
                     
                     return (
                       <div key={cat.category} className="border-b border-gray-100 last:border-0">
                         <button
-                          onClick={() => setExpanded(!expanded)}
+                          onClick={() => {
+                            const newExpanded = new Set(expandedCategories);
+                            if (expanded) {
+                              newExpanded.delete(cat.category);
+                            } else {
+                              newExpanded.add(cat.category);
+                            }
+                            setExpandedCategories(newExpanded);
+                          }}
                           className="w-full flex items-center justify-between py-3 hover:bg-gray-50 transition-colors"
                         >
                           <span className="text-sm font-medium text-gray-900">{cat.category}</span>

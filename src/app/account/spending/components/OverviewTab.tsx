@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import type { SpendingSummary } from "@/lib/spendingSummary";
 import type { SubscriptionSummary } from "@/lib/subscriptionEngine";
-import { formatMonthYear, formatMonth } from "@/lib/dateFormatting";
+import { formatMonthYear } from "@/lib/dateFormatting";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { getSignColor } from "@/lib/colorHelpers";
 import { ReviewList } from "@/components/ReviewList";
@@ -15,6 +15,7 @@ interface OverviewTabProps {
 export function OverviewTab({ summary, token }: OverviewTabProps) {
   const [subscriptions, setSubscriptions] = useState<SubscriptionSummary | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [expandedMerchants, setExpandedMerchants] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!token) return;
@@ -138,7 +139,10 @@ export function OverviewTab({ summary, token }: OverviewTabProps) {
             return (
               <button
                 key={cat.category}
-                onClick={() => setSelectedCategory(cat.category)}
+                onClick={() => {
+                  setSelectedCategory(cat.category);
+                  setExpandedMerchants(new Set()); // Reset expanded state when changing category
+                }}
                 className="w-full text-left hover:bg-gray-50 rounded-lg p-2 -m-2 transition-colors"
               >
                 <div className="flex items-center justify-between mb-1">
@@ -336,7 +340,7 @@ export function OverviewTab({ summary, token }: OverviewTabProps) {
                   <div className="space-y-1">
                     {catData.merchants.sort((a, b) => b.total - a.total).map(merchant => {
                       const monthTxns = merchant.transactions.filter(t => t.txMonth === lastMonth);
-                      const [expanded, setExpanded] = useState(false);
+                      const expanded = expandedMerchants.has(merchant.merchantSlug);
                       
                       if (monthTxns.length === 0) return null;
                       const monthTotal = monthTxns.reduce((s, t) => s + t.amount, 0);
@@ -344,7 +348,15 @@ export function OverviewTab({ summary, token }: OverviewTabProps) {
                       return (
                         <div key={merchant.merchantSlug} className="border-b border-gray-100 last:border-0">
                           <button
-                            onClick={() => setExpanded(!expanded)}
+                            onClick={() => {
+                              const newExpanded = new Set(expandedMerchants);
+                              if (expanded) {
+                                newExpanded.delete(merchant.merchantSlug);
+                              } else {
+                                newExpanded.add(merchant.merchantSlug);
+                              }
+                              setExpandedMerchants(newExpanded);
+                            }}
                             className="w-full flex items-center justify-between py-3 hover:bg-gray-50 transition-colors"
                           >
                             <div className="flex items-center gap-2">
