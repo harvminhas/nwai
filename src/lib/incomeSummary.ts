@@ -456,7 +456,10 @@ export function buildIncomeSummary(
     
     for (const source of allSources) {
       const sourceTxnsThisMonth = source.transactions.filter(t => t.date.startsWith(ym));
-      const withinSourceOneOffs = detectWithinSourceOneOffs(source.transactions);
+      
+      // Only check for unusual deposits in REGULAR income sources (not transfers, not one-offs)
+      const shouldCheckForUnusual = !source.isTransfer && !source.isOneOff;
+      const withinSourceOneOffs = shouldCheckForUnusual ? detectWithinSourceOneOffs(source.transactions) : new Set<string>();
       
       for (const txn of sourceTxnsThisMonth) {
         const txnKey = `${txn.date}:${txn.amount}`;
@@ -469,7 +472,8 @@ export function buildIncomeSummary(
         const txId = txnWithId?.txId || '';
         const classification = incomeDepositReviews.get(txId);
         
-        const isUnusual = source.isOneOff || withinSourceOneOffs.has(txnKey);
+        // Only flag as unusual if from a regular source AND detected as outlier
+        const isUnusual = shouldCheckForUnusual && withinSourceOneOffs.has(txnKey);
         
         if (isUnusual) {
           // Unusual deposit - check classification
@@ -508,7 +512,7 @@ export function buildIncomeSummary(
             }
           }
         } else {
-          // Normal transaction
+          // Normal transaction (or from transfer/one-off source)
           regularTotal += txn.amount;
         }
       }
@@ -526,12 +530,13 @@ export function buildIncomeSummary(
         .filter(s => s.transactions.some(t => t.date.startsWith(ym)))
         .map(s => {
           const sourceTxnsThisMonth = s.transactions.filter(t => t.date.startsWith(ym));
-          const withinSourceOneOffs = detectWithinSourceOneOffs(s.transactions);
+          const shouldCheckForUnusual = !s.isTransfer && !s.isOneOff;
+          const withinSourceOneOffs = shouldCheckForUnusual ? detectWithinSourceOneOffs(s.transactions) : new Set<string>();
           const amount = sourceTxnsThisMonth.reduce((sum, t) => sum + t.amount, 0);
-          const hasOneOff = sourceTxnsThisMonth.some(t => withinSourceOneOffs.has(`${t.date}:${t.amount}`));
+          const hasOneOff = shouldCheckForUnusual && sourceTxnsThisMonth.some(t => withinSourceOneOffs.has(`${t.date}:${t.amount}`));
           
-          // Check if any transactions are bonus
-          const hasBonus = sourceTxnsThisMonth.some(t => {
+          // Check if any transactions are bonus (only for regular sources)
+          const hasBonus = shouldCheckForUnusual && sourceTxnsThisMonth.some(t => {
             const txnWithId = transactions.find(tx => 
               tx.date === t.date && 
               tx.source === t.source && 

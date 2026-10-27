@@ -130,14 +130,45 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   console.log(`   Bonus transactions: ${incomeSummary.bonusTransactions.length}`);
   console.log(`   One-off sources: ${incomeSummary.oneOffSources.length}`);
   console.log(`   Transfer sources: ${incomeSummary.transferSources.length}`);
-  console.log(`   Unreviewed deposits: ${incomeSummary.unreviewedDeposits.length}`);
   console.log(`   Last 3 months total: ${formatCurrency(incomeSummary.last3MonthsTotal, currency)}`);
-  console.log(`   Last 3 months bonus: ${formatCurrency(incomeSummary.last3MonthsBonus, currency)}\n`);
+  console.log(`   Last 3 months bonus: ${formatCurrency(incomeSummary.last3MonthsBonus, currency)}`);
+  
+  // Calculate regular (non-bonus) income
+  const last3MonthsRegular = incomeSummary.last3MonthsTotal - incomeSummary.last3MonthsBonus;
+  const typicalRegular = incomeSummary.last3Months.length > 0 
+    ? Math.round(last3MonthsRegular / incomeSummary.last3Months.length) 
+    : 0;
+  console.log(`   Last 3 months regular: ${formatCurrency(last3MonthsRegular, currency)} (avg ${formatCurrency(typicalRegular, currency)}/mo)`);
+  
+  // Unreviewed deposits section
+  console.log(`\n📋 Unreviewed Income Deposits: ${incomeSummary.unreviewedDeposits.length}`);
+  if (incomeSummary.unreviewedDeposits.length > 0) {
+    console.log(`   (Counted as income by default - user should review):`);
+    // Sort by amount descending
+    const sorted = [...incomeSummary.unreviewedDeposits].sort((a, b) => b.amount - a.amount);
+    for (const deposit of sorted) {
+      const usualStr = deposit.usualAmount 
+        ? ` vs usual ${formatCurrency(deposit.usualAmount, currency)}`
+        : '';
+      console.log(`   • ${deposit.date} — ${deposit.source}: ${formatCurrency(deposit.amount, currency)}${usualStr}`);
+    }
+  }
+  console.log('');
+  
+  // Assert unreviewed deposits count is reasonable
+  if (incomeSummary.unreviewedDeposits.length > 10) {
+    errors.push(
+      `Too many unreviewed deposits (${incomeSummary.unreviewedDeposits.length}). Expected ≤10 genuinely ambiguous items. ` +
+      `The detector may be flagging transfers, refunds, or normal variation as unusual.`
+    );
+    console.log(`   ❌ ASSERTION FAILED: ${incomeSummary.unreviewedDeposits.length} unreviewed deposits (expected ≤10)\n`);
+  }
   
   // Verify card income matches drawer income (single source of truth)
   console.log(`🔍 Card vs Drawer Income Check:`);
   console.log(`   Dashboard card income: ${formatCurrency(breakdown.incomeAmount, currency)} (${breakdown.incomeBasisLabel})`);
   console.log(`   Income drawer typical: ${formatCurrency(incomeSummary.typicalMonthly, currency)} (last ${incomeSummary.last3Months.length} months)`);
+  console.log(`   Breakdown: Regular ${formatCurrency(typicalRegular, currency)}/mo + Bonus ${formatCurrency(Math.round(incomeSummary.last3MonthsBonus / incomeSummary.last3Months.length), currency)}/mo`);
   
   if (breakdown.incomeAmount !== incomeSummary.typicalMonthly) {
     const diff = Math.abs(breakdown.incomeAmount - incomeSummary.typicalMonthly);
@@ -148,7 +179,19 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     );
     console.log(`   ❌ MISMATCH: ${formatCurrency(diff, currency)} difference (${diffPct.toFixed(1)}%)\n`);
   } else {
-    console.log(`   ✅ Match - both show regular income only (excludes one-offs)\n`);
+    console.log(`   ✅ Match - both show regular + bonus income (unreviewed deposits counted)\n`);
+  }
+  
+  // Assert card income is reasonable (not wildly inflated by false positives)
+  if (typicalRegular > 0) {
+    const inflationRatio = breakdown.incomeAmount / typicalRegular;
+    if (inflationRatio > 2.0) {
+      errors.push(
+        `Card income (${formatCurrency(breakdown.incomeAmount, currency)}) is ${inflationRatio.toFixed(1)}x regular income (${formatCurrency(typicalRegular, currency)}). ` +
+        `This suggests the detector is flagging too many non-income deposits as bonuses.`
+      );
+      console.log(`   ❌ ASSERTION FAILED: Income inflated ${inflationRatio.toFixed(1)}x above regular\n`);
+    }
   }
   
   // Test spending summary

@@ -24,7 +24,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const { auth, db } = getFirebaseAdmin();
     const decoded = await auth.verifyIdToken(token);
     const { searchParams } = new URL(req.url);
-    const reviewType = searchParams.get("type") as "debt_payment" | "savings_item" | "income_classification" | "subscription" | null;
+    const reviewType = searchParams.get("type") as "debt_payment" | "savings_item" | "income_classification" | "subscription" | "income_deposit" | null;
 
     if (!reviewType || !["debt_payment", "savings_item", "income_classification", "subscription", "income_deposit"].includes(reviewType)) {
       return NextResponse.json({ error: "Invalid review type" }, { status: 400 });

@@ -5,7 +5,7 @@ import type { ReviewItem, ReviewClassification } from "@/lib/reviewTypes";
 
 interface ReviewListProps {
   token: string | null;
-  reviewType: "debt_payment" | "savings_item" | "income_classification" | "subscription";
+  reviewType: "debt_payment" | "savings_item" | "income_classification" | "subscription" | "income_deposit";
   onReviewComplete?: () => void;
 }
 

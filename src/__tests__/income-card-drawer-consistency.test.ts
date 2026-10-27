@@ -7,7 +7,7 @@ import type { IncomeTxnRecord, AccountSnapshot } from "@/lib/extractTransactions
  * Unit test: Dashboard Income card value === Income drawer default value
  * 
  * Ensures both use the same data source (buildIncomeSummary) and show
- * regular income only (excludes one-offs like bonuses).
+ * regular + bonus income (unreviewed unusual deposits counted by default).
  */
 describe("Income Card vs Drawer Consistency", () => {
   it("card income matches drawer default (last 3 months regular + bonus income)", () => {
@@ -175,11 +175,21 @@ describe("Income Card vs Drawer Consistency", () => {
   
   it("classified 'not_income' deposits are excluded from totals", () => {
     const incomeTxns: IncomeTxnRecord[] = [
-      // Regular salary - need >=3 for detection
+      // Need >=4 transactions to establish clear baseline before unusual
+      {
+        txMonth: "2024-06",
+        date: "2024-06-15",
+        source: "ACME CORP",
+        category: "Employment",
+        amount: 5000,
+        accountSlug: "checking-1234",
+        accountLabel: "Checking ••1234",
+        currency: "CAD",
+      },
       {
         txMonth: "2024-07",
         date: "2024-07-15",
-        source: "SALARY",
+        source: "ACME CORP",
         category: "Employment",
         amount: 5000,
         accountSlug: "checking-1234",
@@ -189,7 +199,7 @@ describe("Income Card vs Drawer Consistency", () => {
       {
         txMonth: "2024-08",
         date: "2024-08-15",
-        source: "SALARY",
+        source: "ACME CORP",
         category: "Employment",
         amount: 5000,
         accountSlug: "checking-1234",
@@ -199,7 +209,7 @@ describe("Income Card vs Drawer Consistency", () => {
       {
         txMonth: "2024-09",
         date: "2024-09-15",
-        source: "SALARY",
+        source: "ACME CORP",
         category: "Employment",
         amount: 5000,
         accountSlug: "checking-1234",
@@ -209,7 +219,7 @@ describe("Income Card vs Drawer Consistency", () => {
       {
         txMonth: "2024-09",
         date: "2024-09-20",
-        source: "SALARY",
+        source: "ACME CORP",
         category: "Other",
         amount: 10000, // Unusual amount (2x median)
         accountSlug: "checking-1234",
@@ -223,23 +233,33 @@ describe("Income Card vs Drawer Consistency", () => {
     
     // User reviewed and marked as "not_income" (refund/transfer)
     const reviews = new Map<string, string>();
-    reviews.set("2024-09-20:SALARY:10000:checking-1234", "not_income");
+    reviews.set("2024-09-20:ACME CORP:10000:checking-1234", "not_income");
 
     const summary = buildIncomeSummary(incomeTxns, accountSnapshots, "CAD", reviews);
 
     // Only regular 5000/month should count, unusual 10000 excluded
-    // (5000 + 5000 + 5000) / 3 = 5000
+    // Last 3 months: (5000 + 5000 + 5000) / 3 = 5000
     expect(summary.typicalMonthly).toBe(5000);
     expect(summary.last3MonthsTotal).toBe(15000);
   });
 
   it("classified 'bonus' deposits are included and tracked separately", () => {
     const incomeTxns: IncomeTxnRecord[] = [
-      // Regular salary - need >=3 for detection
+      // Need >=4 transactions to establish clear baseline
+      {
+        txMonth: "2024-06",
+        date: "2024-06-15",
+        source: "ACME CORP",
+        category: "Employment",
+        amount: 5000,
+        accountSlug: "checking-1234",
+        accountLabel: "Checking ••1234",
+        currency: "CAD",
+      },
       {
         txMonth: "2024-07",
         date: "2024-07-15",
-        source: "SALARY",
+        source: "ACME CORP",
         category: "Employment",
         amount: 5000,
         accountSlug: "checking-1234",
@@ -249,7 +269,7 @@ describe("Income Card vs Drawer Consistency", () => {
       {
         txMonth: "2024-08",
         date: "2024-08-15",
-        source: "SALARY",
+        source: "ACME CORP",
         category: "Employment",
         amount: 5000,
         accountSlug: "checking-1234",
@@ -259,7 +279,7 @@ describe("Income Card vs Drawer Consistency", () => {
       {
         txMonth: "2024-09",
         date: "2024-09-15",
-        source: "SALARY",
+        source: "ACME CORP",
         category: "Employment",
         amount: 5000,
         accountSlug: "checking-1234",
@@ -269,7 +289,7 @@ describe("Income Card vs Drawer Consistency", () => {
       {
         txMonth: "2024-09",
         date: "2024-09-20",
-        source: "SALARY",
+        source: "ACME CORP",
         category: "Employment",
         amount: 10000, // Unusual amount (2x median)
         accountSlug: "checking-1234",
@@ -283,11 +303,11 @@ describe("Income Card vs Drawer Consistency", () => {
     
     // User reviewed and marked as "bonus"
     const reviews = new Map<string, string>();
-    reviews.set("2024-09-20:SALARY:10000:checking-1234", "bonus");
+    reviews.set("2024-09-20:ACME CORP:10000:checking-1234", "bonus");
 
     const summary = buildIncomeSummary(incomeTxns, accountSnapshots, "CAD", reviews);
 
-    // Both should count: (5000 + 5000 + 15000) / 3 = 8333
+    // Both should count: Last 3 months (Jul 5000 + Aug 5000 + Sep 15000) / 3 = 8333
     expect(summary.typicalMonthly).toBe(8333);
     expect(summary.last3MonthsTotal).toBe(25000);
     expect(summary.last3MonthsBonus).toBe(10000);
