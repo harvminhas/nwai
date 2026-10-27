@@ -112,6 +112,69 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
         return sum + (monthData?.total || 0); // Use total (regular + bonus + pending, excluding 'not_income')
       }, 0);
       
+      // Build transaction-level source groups for the selected window
+      // Include ALL counted income (bonus included), exclude 'not_income' and transfers
+      const bonusTxnIds = new Set(summary.bonusTransactions.map(t => 
+        `${t.date}:${t.source}:${t.amount}:${t.accountSlug || 'unknown'}`
+      ));
+      const unreviewedTxnIds = new Set(summary.unreviewedDeposits.map(d => d.txId));
+      
+      // Filter transactions to window months
+      const windowTxns = profile.incomeTxns.filter(t => {
+        const txMonth = t.date.substring(0, 7); // "YYYY-MM"
+        return windowMonths.includes(txMonth);
+      });
+      
+      // Group by source
+      const sourceGroups = new Map<string, { 
+        source: string; 
+        total: number; 
+        transactions: Array<{
+          date: string;
+          amount: number;
+          accountSlug: string;
+          isBonus: boolean;
+          needsReview: boolean;
+        }>
+      }>();
+      
+      for (const txn of windowTxns) {
+        const txId = `${txn.date}:${txn.source}:${txn.amount}:${txn.accountSlug || 'unknown'}`;
+        const isBonus = bonusTxnIds.has(txId);
+        const needsReview = unreviewedTxnIds.has(txId);
+        
+        // Check if this transaction is classified as 'not_income'
+        const classification = incomeDepositReviews.get(txId);
+        if (classification === 'not_income') continue;
+        
+        // Skip transfers
+        const sourceInfo = [...summary.regularSources, ...summary.oneOffSources]
+          .find(s => s.transactions.some(st => st.source === txn.source));
+        if (sourceInfo?.isTransfer) continue;
+        
+        if (!sourceGroups.has(txn.source)) {
+          sourceGroups.set(txn.source, {
+            source: txn.source,
+            total: 0,
+            transactions: []
+          });
+        }
+        
+        const group = sourceGroups.get(txn.source)!;
+        group.total += txn.amount;
+        group.transactions.push({
+          date: txn.date,
+          amount: txn.amount,
+          accountSlug: txn.accountSlug || 'unknown',
+          isBonus,
+          needsReview
+        });
+      }
+      
+      // Convert to array and sort by total amount descending
+      const sourcesList = Array.from(sourceGroups.values())
+        .sort((a, b) => b.total - a.total);
+      
       const metrics = {
         averageMonthly: summary.typicalMonthly,
         currentMonthly: summary.typicalMonthly,
@@ -122,6 +185,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
         windowAmount: Math.round(windowTotal / windowMonths.length),
         windowLabel: window === "last3" ? "last 3 months" : window === "ytd" ? "year-to-date" : "12-month avg",
         windowMonths,
+        sourcesList, // New: transaction-level source groups for the window
         regularSources: summary.regularSources.map(s => ({ 
           source: s.description, 
           category: s.category, 

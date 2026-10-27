@@ -86,7 +86,7 @@ export function Drawer({ type, isOpen, onClose, token, currency }: DrawerProps) 
       {/* Drawer */}
       <div className="fixed right-0 top-0 z-50 h-full w-full max-w-2xl overflow-y-auto bg-white shadow-2xl sm:w-[640px]">
         {/* Header */}
-        <div className="sticky top-0 border-b border-gray-200 bg-white px-6 py-4">
+        <div className="sticky top-0 z-10 border-b border-gray-200 bg-white px-6 py-4">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-bold text-gray-900">
               {type === "income" && "Income"}
@@ -190,6 +190,8 @@ export function Drawer({ type, isOpen, onClose, token, currency }: DrawerProps) 
 }
 
 function IncomeDrawerContent({ data, currency }: { data: import("@/lib/drawerTypes").IncomeDrawerData; currency: string }) {
+  const [expandedSources, setExpandedSources] = useState<Set<number>>(new Set());
+  
   const fmt = (amount: number) =>
     new Intl.NumberFormat("en-US", {
       style: "currency",
@@ -287,7 +289,96 @@ function IncomeDrawerContent({ data, currency }: { data: import("@/lib/drawerTyp
       </div>
 
       {/* Income Sources */}
-      {metrics.regularSources && metrics.regularSources.length > 0 && (
+      {metrics.sourcesList && metrics.sourcesList.length > 0 && (
+        <div>
+          <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
+            Included sources
+          </h3>
+          <div className="space-y-2">
+            {metrics.sourcesList.map((sourceGroup, idx) => {
+              const isExpanded = expandedSources.has(idx);
+              const toggleExpanded = () => {
+                setExpandedSources(prev => {
+                  const next = new Set(prev);
+                  if (next.has(idx)) {
+                    next.delete(idx);
+                  } else {
+                    next.add(idx);
+                  }
+                  return next;
+                });
+              };
+              
+              return (
+                <div
+                  key={idx}
+                  className="overflow-hidden rounded-lg border border-gray-200 bg-white"
+                >
+                  {/* Source header - clickable to expand */}
+                  <button
+                    onClick={toggleExpanded}
+                    className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-gray-900">{sourceGroup.source}</span>
+                      <span className="text-xs text-gray-500">({sourceGroup.transactions.length})</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm font-semibold text-gray-900">
+                        {fmt(sourceGroup.total)}
+                      </span>
+                      <svg
+                        className={`h-4 w-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                  </button>
+                  
+                  {/* Transaction details - shown when expanded */}
+                  {isExpanded && (
+                    <div className="border-t border-gray-200 bg-gray-50 px-4 py-2">
+                      <div className="space-y-1">
+                        {sourceGroup.transactions.map((txn, txIdx) => (
+                          <div
+                            key={txIdx}
+                            className="flex items-center justify-between py-1.5"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-gray-600">
+                                {new Date(txn.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                              </span>
+                              {txn.isBonus && (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-amber-50 text-amber-700 uppercase tracking-wide">
+                                  Bonus
+                                </span>
+                              )}
+                              {txn.needsReview && (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-orange-50 text-orange-700 uppercase tracking-wide">
+                                  Needs review
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-xs font-medium text-gray-900">
+                              {fmt(txn.amount)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      
+      {/* Legacy fallback - only show if sourcesList not available */}
+      {!metrics.sourcesList && metrics.regularSources && metrics.regularSources.length > 0 && (
         <div>
           <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
             Included sources

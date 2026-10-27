@@ -347,6 +347,81 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     console.log(`\n   ❌ MISMATCHES FOUND - see errors above\n`);
   }
   
+  // Validate sourcesList totals match sum of month rows
+  console.log(`📋 Source List Validation (Drawer sourcesList):`);
+  
+  // Build sourcesList same way drawer API does
+  const bonusTxnIds = new Set(incomeSummary.bonusTransactions.map(t => 
+    `${t.date}:${t.source}:${t.amount}:${t.accountSlug || 'unknown'}`
+  ));
+  const unreviewedTxnIds = new Set(incomeSummary.unreviewedDeposits.map(d => d.txId));
+  
+  // Filter transactions to window months (last 3)
+  const windowTxns = profile.incomeTxns.filter(t => {
+    const txMonth = t.date.substring(0, 7); // "YYYY-MM"
+    return drawerWindowMonths.includes(txMonth);
+  });
+  
+  // Group by source
+  const sourceGroups = new Map<string, { source: string; total: number; transactions: any[] }>();
+  for (const txn of windowTxns) {
+    const txId = `${txn.date}:${txn.source}:${txn.amount}:${txn.accountSlug || 'unknown'}`;
+    const isBonus = bonusTxnIds.has(txId);
+    const needsReview = unreviewedTxnIds.has(txId);
+    
+    // Check if classified as 'not_income'
+    const classification = incomeDepositReviews.get(txId);
+    if (classification === 'not_income') continue;
+    
+    // Skip transfers
+    const sourceInfo = [...incomeSummary.regularSources, ...incomeSummary.oneOffSources]
+      .find(s => s.transactions.some(st => st.source === txn.source));
+    if (sourceInfo?.isTransfer) continue;
+    
+    if (!sourceGroups.has(txn.source)) {
+      sourceGroups.set(txn.source, { source: txn.source, total: 0, transactions: [] });
+    }
+    
+    const group = sourceGroups.get(txn.source)!;
+    group.total += txn.amount;
+    group.transactions.push({ ...txn, isBonus, needsReview });
+  }
+  
+  const sourcesList = Array.from(sourceGroups.values()).sort((a, b) => b.total - a.total);
+  const sourcesListTotal = sourcesList.reduce((sum, s) => sum + s.total, 0);
+  
+  console.log(`   Window months: ${drawerWindowMonths.join(", ")}`);
+  console.log(`   Sum of month rows: ${formatCurrency(drawerWindowTotal, currency)}`);
+  console.log(`   Sum of sourcesList: ${formatCurrency(sourcesListTotal, currency)}`);
+  
+  if (Math.abs(sourcesListTotal - drawerWindowTotal) > 1) {
+    errors.push(
+      `SourcesList total (${formatCurrency(sourcesListTotal, currency)}) does NOT match sum of month rows (${formatCurrency(drawerWindowTotal, currency)})`
+    );
+    console.log(`   ❌ MISMATCH: sourcesList total != month rows total`);
+  } else {
+    console.log(`   ✅ Match - sourcesList total == sum of month rows`);
+  }
+  
+  // Check for MAM PAY Sep 2026 bonus
+  const mamPaySource = sourcesList.find(s => s.source === 'MAM PAY');
+  const sep2026Bonus = mamPaySource?.transactions.find(t => 
+    t.date.startsWith('2026-09') && t.isBonus
+  );
+  
+  if (mamPaySource) {
+    console.log(`\n   MAM PAY source found: ${formatCurrency(mamPaySource.total, currency)} (${mamPaySource.transactions.length} transactions)`);
+    if (sep2026Bonus) {
+      console.log(`   ✅ Sep 2026 bonus appears: ${sep2026Bonus.date}, ${formatCurrency(sep2026Bonus.amount, currency)}`);
+    } else {
+      errors.push(`MAM PAY Sep 2026 bonus NOT found in sourcesList`);
+      console.log(`   ❌ Sep 2026 bonus NOT found`);
+    }
+  } else {
+    console.log(`   ⚠️  MAM PAY source not found in window months`);
+  }
+  console.log('');
+  
   // Assert card income is reasonable (not wildly inflated by false positives)
   if (typicalRegular > 0) {
     const inflationRatio = breakdown.incomeAmount / typicalRegular;
