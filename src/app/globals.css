@@ -51,7 +51,23 @@ body {
 }
 
 /* Recharts SVG gets browser focus after a bar/area click — suppress the ring globally */
+.recharts-wrapper:focus,
+.recharts-wrapper *:focus,
 .recharts-wrapper svg:focus,
-.recharts-wrapper svg:focus-visible {
-  outline: none;
+.recharts-wrapper svg:focus-visible,
+.recharts-surface:focus,
+.recharts-surface:focus-visible,
+.recharts-layer:focus,
+.recharts-layer:focus-visible {
+  outline: none !important;
+}
+
+/* Dim unselected bars when a selection is active (income trends) */
+.recharts-wrapper.has-selection .recharts-bar-rectangle {
+  opacity: 0.4;
+  transition: opacity 0.2s ease;
+}
+
+.recharts-wrapper.has-selection .recharts-bar-rectangle:hover {
+  opacity: 0.6;
 }
