@@ -104,17 +104,17 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                   );
                 }}
               />
-              <Bar dataKey="fixed" stackId="a" fill="#7c3aed" radius={[0, 0, 0, 0]} cursor="pointer" onClick={(data) => setSelectedMonth(data.yearMonth)}>
+              <Bar dataKey="fixed" stackId="a" fill="#7c3aed" radius={[0, 0, 0, 0]}>
                 {chartData.map((entry, index) => (
                   <Cell key={`cell-${index}`} opacity={selectedMonth && entry.yearMonth !== selectedMonth ? 0.4 : 1} />
                 ))}
               </Bar>
-              <Bar dataKey="essentials" stackId="a" fill="#2563eb" radius={[0, 0, 0, 0]} cursor="pointer" onClick={(data) => setSelectedMonth(data.yearMonth)}>
+              <Bar dataKey="essentials" stackId="a" fill="#2563eb" radius={[0, 0, 0, 0]}>
                 {chartData.map((entry, index) => (
                   <Cell key={`cell-${index}`} opacity={selectedMonth && entry.yearMonth !== selectedMonth ? 0.4 : 1} />
                 ))}
               </Bar>
-              <Bar dataKey="flexible" stackId="a" fill="#16a34a" radius={[4, 4, 0, 0]} cursor="pointer" onClick={(data) => setSelectedMonth(data.yearMonth)}>
+              <Bar dataKey="flexible" stackId="a" fill="#16a34a" radius={[4, 4, 0, 0]}>
                 {chartData.map((entry, index) => (
                   <Cell key={`cell-${index}`} opacity={selectedMonth && entry.yearMonth !== selectedMonth ? 0.4 : 1} />
                 ))}
@@ -135,6 +135,26 @@ export function TrendsTab({ summary }: TrendsTabProps) {
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 bg-green-600 rounded"></div>
             <span className="text-gray-600">Flexible</span>
+          </div>
+        </div>
+
+        {/* Clickable month rows */}
+        <div className="mt-4 border-t border-gray-100 pt-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+            {chartData.slice().reverse().map(month => (
+              <button
+                key={month.yearMonth}
+                onClick={() => setSelectedMonth(month.yearMonth === selectedMonth ? null : month.yearMonth)}
+                className={`px-3 py-2 text-xs rounded-lg text-left transition-colors ${
+                  selectedMonth === month.yearMonth
+                    ? "bg-purple-100 text-purple-900 font-medium"
+                    : "bg-gray-50 text-gray-700 hover:bg-gray-100"
+                }`}
+              >
+                <div className="font-medium">{formatMonthYear(month.yearMonth)}</div>
+                <div className="text-gray-600">{formatCurrency(month.total, currency, undefined, true)}</div>
+              </button>
+            ))}
           </div>
         </div>
       </div>
