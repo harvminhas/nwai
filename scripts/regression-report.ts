@@ -1036,7 +1036,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       
       // Validate category sum equals bucket total
       const sumMatch = Math.abs(categorySum - report.drawerTotal) < 1; // Allow $1 rounding
-      const pctMatch = Math.abs(percentSum - 100) < 1; // Allow 1% total rounding error
+      // Only validate percentages if bucket total is non-zero
+      const pctMatch = Math.abs(report.drawerTotal) < 0.01 || Math.abs(percentSum - 100) < 1; // Allow 1% total rounding error
       
       console.log(`     ${"─".repeat(50)}`);
       console.log(`     ${"TOTAL".padEnd(30)} ${formatCurrency(categorySum, currency).padEnd(12)} (${percentSum.toFixed(1)}%)`);
@@ -1045,7 +1046,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         console.log(`     ⚠️  Category sum mismatch: ${formatCurrency(categorySum, currency)} ≠ ${formatCurrency(report.drawerTotal, currency)}`);
         errors.push(`${report.bucket}: Category amounts sum to ${formatCurrency(categorySum, currency)} but bucket total is ${formatCurrency(report.drawerTotal, currency)}`);
       }
-      if (!pctMatch) {
+      // Only check percentages if bucket total is meaningful (not near zero)
+      if (!pctMatch && Math.abs(report.drawerTotal) >= 0.01) {
         console.log(`     ⚠️  Percentage sum: ${percentSum.toFixed(1)}% (expected ~100%)`);
         errors.push(`${report.bucket}: Category percentages sum to ${percentSum.toFixed(1)}% instead of ~100%`);
       }
@@ -1673,65 +1675,31 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   
   let drawerErrors = 0;
   
-  // Test Assets (reuse assetsSummary from above)
-  console.log(`Assets Accounts: ${assetsSummary.totalAccounts}`);
-  for (const group of assetsSummary.groups) {
-    for (const account of group.accounts) {
-      const history = account.balanceHistory || [];
-      
-      // Check non-empty
-      if (history.length === 0) {
-        console.log(`  ❌ FAIL: ${account.label} (${account.bankName}) - empty balance history`);
-        drawerErrors++;
-        errors.push(`Account drawer: ${account.label} has empty balance history`);
-        continue;
-      }
-      
-      // Check chronological order (oldest first)
-      const months = history.map(h => h.month);
-      const sortedMonths = [...months].sort();
-      const isChronological = months.every((m, i) => m === sortedMonths[i]);
-      
-      if (!isChronological) {
-        console.log(`  ❌ FAIL: ${account.label} (${account.bankName}) - balance history not chronological`);
-        console.log(`    Expected: ${sortedMonths.join(", ")}`);
-        console.log(`    Got:      ${months.join(", ")}`);
-        drawerErrors++;
-        errors.push(`Account drawer: ${account.label} balance history not chronological`);
-      } else {
-        console.log(`  ✓ ${account.label} (${account.bankName}): ${history.length} months, chronological`);
-      }
-    }
-  }
+  // Test all account balance histories (source data for both assets and debts drawers)
+  console.log(`Total accounts with balance history: ${profile.accountBalanceHistory.length}`);
   
-  // Test Debts (reuse debtsSummary from above)
-  console.log(`\nDebt Accounts: ${debtsSummary.totalAccounts}`);
-  for (const group of debtsSummary.groups) {
-    for (const debt of group.debts) {
-      const history = debt.balanceHistory || [];
-      
-      // Check non-empty
-      if (history.length === 0) {
-        console.log(`  ❌ FAIL: ${debt.label} (${debt.bankName}) - empty balance history`);
-        drawerErrors++;
-        errors.push(`Account drawer: ${debt.label} has empty balance history`);
-        continue;
-      }
-      
-      // Check chronological order (oldest first)
-      const months = history.map(h => h.month);
-      const sortedMonths = [...months].sort();
-      const isChronological = months.every((m, i) => m === sortedMonths[i]);
-      
-      if (!isChronological) {
-        console.log(`  ❌ FAIL: ${debt.label} (${debt.bankName}) - balance history not chronological`);
-        console.log(`    Expected: ${sortedMonths.join(", ")}`);
-        console.log(`    Got:      ${months.join(", ")}`);
-        drawerErrors++;
-        errors.push(`Account drawer: ${debt.label} balance history not chronological`);
-      } else {
-        console.log(`  ✓ ${debt.label} (${debt.bankName}): ${history.length} months, chronological`);
-      }
+  for (const history of profile.accountBalanceHistory) {
+    // Check non-empty
+    if (history.entries.length === 0) {
+      console.log(`  ❌ FAIL: ${history.label} - empty balance history`);
+      drawerErrors++;
+      errors.push(`Account drawer: ${history.label} has empty balance history`);
+      continue;
+    }
+    
+    // Check chronological order (oldest first)
+    const months = history.entries.map(e => e.yearMonth);
+    const sortedMonths = [...months].sort();
+    const isChronological = months.every((m, i) => m === sortedMonths[i]);
+    
+    if (!isChronological) {
+      console.log(`  ❌ FAIL: ${history.label} - balance history not chronological`);
+      console.log(`    Expected: ${sortedMonths.join(", ")}`);
+      console.log(`    Got:      ${months.join(", ")}`);
+      drawerErrors++;
+      errors.push(`Account drawer: ${history.label} balance history not chronological`);
+    } else {
+      console.log(`  ✓ ${history.label} (${history.accountType}): ${history.entries.length} months, chronological`);
     }
   }
   
