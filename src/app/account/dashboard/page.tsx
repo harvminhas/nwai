@@ -149,7 +149,7 @@ function renderMarkdown(text: string): React.ReactNode[] {
 
     flushTable();
 
-    if (trimmed.startsWith("- ") || trimmed.startsWith("• ")) {
+    if (trimmed.startsWith("- ") || trimmed.startsWith("• ") || trimmed.startsWith("* ")) {
       inList = true;
       listItems.push(trimmed.slice(2));
     } else if (trimmed.match(/^\d+\.\s/)) {

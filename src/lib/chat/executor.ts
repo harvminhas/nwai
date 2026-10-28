@@ -45,13 +45,17 @@ function fuzzyMatch(needle: string, haystack: string): boolean {
 }
 
 function makeFmt(currency: string) {
-  return (v: number) =>
-    new Intl.NumberFormat("en-US", {
+  return (v: number) => {
+    const absValue = Math.abs(v);
+    // Round to whole dollars for amounts >= $100
+    const fractionDigits = absValue >= 100 ? 0 : 2;
+    return new Intl.NumberFormat("en-US", {
       style: "currency",
       currency,
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
     }).format(v);
+  };
 }
 
 /** Expand YYYY-MM to a date range [YYYY-MM-01, YYYY-MM-31] for comparison. */

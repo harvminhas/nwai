@@ -87,4 +87,51 @@ describe("cleanAIAnswer", () => {
       expect(output).not.toContain(toolName);
     }
   });
+
+  test("preserves newlines in multi-line markdown lists", () => {
+    const input = `Top spending areas:
+* **Shopping**: CA$450/month
+* **Dining**: CA$320/month
+* **Transportation**: CA$215/month
+
+Consider reducing discretionary spending.`;
+    
+    const output = cleanAIAnswer(input);
+    
+    // Verify newlines are preserved
+    expect(output).toContain("\n");
+    const lines = output.split("\n");
+    expect(lines.length).toBeGreaterThan(3);
+    
+    // Verify bullets are on separate lines
+    expect(output).toContain("* **Shopping**");
+    expect(output).toContain("* **Dining**");
+    expect(output).toContain("* **Transportation**");
+    
+    // Verify structure is intact
+    expect(lines[0]).toContain("Top spending");
+    expect(lines[1]).toContain("* **Shopping**");
+    expect(lines[2]).toContain("* **Dining**");
+  });
+
+  test("preserves newlines while still cleaning attribution", () => {
+    const input = `From get_spending_summary (same as Spending page):
+
+* **Flexible**: CA$1,234
+* **Fixed**: CA$890
+
+Total spending CA$2,124`;
+    
+    const output = cleanAIAnswer(input);
+    
+    // Attribution should be gone
+    expect(output).not.toContain("get_spending_summary");
+    expect(output).not.toContain("same as");
+    
+    // But newlines should remain
+    const lines = output.split("\n");
+    expect(lines.length).toBeGreaterThan(3);
+    expect(output).toContain("* **Flexible**");
+    expect(output).toContain("* **Fixed**");
+  });
 });

@@ -34,12 +34,13 @@ export function cleanAIAnswer(text: string): string {
   cleaned = cleaned.replace(ATTRIBUTION_PATTERN, " ");
 
   // Clean up extra whitespace and punctuation
-  cleaned = cleaned.replace(/\s+/g, " ");
+  // IMPORTANT: Preserve newlines - only collapse spaces/tabs within lines
+  cleaned = cleaned.replace(/[ \t]+/g, " "); // Collapse spaces/tabs only
   cleaned = cleaned.replace(/\s+([.,;:])/g, "$1");
   cleaned = cleaned.replace(/\(\s*\)/g, ""); // Empty parens
   cleaned = cleaned.replace(/\(\s*(?:from|uses?)\s*\)/gi, ""); // "(from )" or "(uses )"
   cleaned = cleaned.replace(/:\s+([.,;])/g, "$1"); // ": ," → ","
-  cleaned = cleaned.replace(/\s+\./g, "."); // " ." → "."
+  cleaned = cleaned.replace(/[ \t]+\./g, "."); // " ." → "." (spaces/tabs only)
   cleaned = cleaned.replace(/^\s*(?:from|uses?)\s*:\s*/i, ""); // Leading "From:"
   cleaned = cleaned.trim();
 

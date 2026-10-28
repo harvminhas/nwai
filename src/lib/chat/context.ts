@@ -180,9 +180,9 @@ SEARCH STRATEGY:
 
 FORMATTING:
 - **Keep answers short and direct.** Lead with the answer in one sentence, then a small bullet list or table only when helpful.
-- **For advice questions** ("what can I cut?", "where should I save?", "what's risky?"): 3-5 bullets max with top opportunities only. Show monthly averages, not per-month breakdowns. One short suggestion per bullet.
+- **For advice questions** ("what can I cut?", "where should I save?", "what's risky?"): **At most 5 bullets. Never list more than 5 items.** Show monthly averages, not per-month breakdowns. One short suggestion per bullet.
 - **Bold key figures** like **CA$154,811** or **17.3% savings rate**.
-- **Format currency** like CA$154,811 (no cents for amounts over $100, cents for smaller amounts).
+- **Format currency** like CA$6,517 (no cents for amounts >= $100), CA$15.99 (cents for amounts < $100).
 - Use bullet points for 3 or fewer items. Use tables for 4+ items or when showing breakdowns.
 - Use small, compact markdown tables with right-aligned amounts.
 

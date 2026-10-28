@@ -1807,7 +1807,22 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     console.log("❌ FAIL: Attribution text still present in cleaned output");
     errors.push("Post-processor did not remove attribution text");
   } else {
-    console.log("✅ Post-processor correctly removed tool names and attribution\n");
+    console.log("✅ Post-processor correctly removed tool names and attribution");
+  }
+  
+  // Test newline preservation
+  const multiLineInput = `Top areas:
+* **Shopping**: CA$450
+* **Dining**: CA$320`;
+  const multiLineCleaned = cleanAIAnswer(multiLineInput);
+  const hasNewlines = multiLineCleaned.includes("\n");
+  const lines = multiLineCleaned.split("\n");
+  
+  if (!hasNewlines || lines.length < 3) {
+    console.log("❌ FAIL: Post-processor collapsed newlines in multi-line list");
+    errors.push("Post-processor collapsed newlines");
+  } else {
+    console.log("✅ Post-processor preserved newlines in multi-line list\n");
   }
   
   // ── AI CHAT TOOLS ────────────────────────────────────────────────────────────
