@@ -1887,18 +1887,23 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       
       // Sum all per-source totals
       const perSourceSum = bySource.reduce((sum: number, s: any) => sum + parseCurrency(s.total), 0);
-      const rangeTotal = parseCurrency(toolIncome) * rangeMonths.length;
+      
+      // Compute range total from Income page data
+      const rangeMonthsData = incomeSummary.monthlyHistory.filter((m: any) => 
+        rangeMonths.includes(m.yearMonth)
+      );
+      const rangeTotal = rangeMonthsData.reduce((sum: number, m: any) => sum + m.total, 0);
       
       console.log(`  Sum of per-source totals: ${formatCurrency(perSourceSum, currency)}`);
-      console.log(`  Expected range total: ${formatCurrency(rangeTotal, currency)}`);
+      console.log(`  Income page range total: ${formatCurrency(rangeTotal, currency)}`);
       
-      // Per-source sum should be <= range total (allowing small rounding)
-      if (perSourceSum > rangeTotal + 1) {
-        console.log(`  ❌ FAIL: Per-source totals exceed range total`);
-        errors.push(`Income per-source sum (${formatCurrency(perSourceSum, currency)}) > range total (${formatCurrency(rangeTotal, currency)})`);
+      // Per-source sum must match range total exactly (±$1 for rounding)
+      if (Math.abs(perSourceSum - rangeTotal) > 1) {
+        console.log(`  ❌ FAIL: Per-source totals don't match Income page total`);
+        errors.push(`Income per-source sum (${formatCurrency(perSourceSum, currency)}) ≠ Income page total (${formatCurrency(rangeTotal, currency)}), diff: ${formatCurrency(Math.abs(perSourceSum - rangeTotal), currency)}`);
         chatToolErrors++;
       } else {
-        console.log(`  ✓ Per-source totals valid`);
+        console.log(`  ✓ Per-source totals match Income page (within ±$1)`);
       }
       
       // Verify period label matches requested range

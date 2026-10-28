@@ -549,27 +549,39 @@ export function executeGetIncomeSummary(
     rangeMonths,
   );
   
-  // Filter each source's transactions to only include the requested range
-  const bySource = summary.sources
-    .map((s: any) => {
-      // Filter transactions to only those in the requested range
-      const rangeTxns = s.transactions.filter((t: any) => {
-        const txMonth = t.date.slice(0, 7);
-        return rangeMonths.includes(txMonth);
-      });
-      
-      if (rangeTxns.length === 0) return null; // Skip sources with no transactions in range
-      
-      const rangeTotal = rangeTxns.reduce((sum: number, t: any) => sum + t.amount, 0);
-      
-      return {
-        source: s.description || s.canonicalName,
-        total: fmt(rangeTotal),
-        monthly_average: fmt(rangeTotal / rangeMonths.length),
-        transaction_count: rangeTxns.length,
-      };
-    })
-    .filter((s: any) => s !== null);
+  // Aggregate per-source totals from monthlyHistory (which already has correct exclusions)
+  // This matches the Income page calculation exactly
+  const sourceMap = new Map<string, { total: number; txCount: number }>();
+  
+  for (const month of summary.monthlyHistory) {
+    if (!rangeMonths.includes(month.yearMonth)) continue;
+    
+    for (const sourceEntry of month.sources) {
+      const existing = sourceMap.get(sourceEntry.source) || { total: 0, txCount: 0 };
+      existing.total += sourceEntry.amount;
+      // Count transactions for this source in this month
+      const source = summary.sources.find((s: any) => s.description === sourceEntry.source);
+      if (source) {
+        const monthTxns = source.transactions.filter((t: any) => t.date.startsWith(month.yearMonth));
+        existing.txCount += monthTxns.length;
+      }
+      sourceMap.set(sourceEntry.source, existing);
+    }
+  }
+  
+  // Convert to array and sort by total descending
+  const bySource = Array.from(sourceMap.entries())
+    .map(([source, data]) => ({
+      source,
+      total: fmt(data.total),
+      monthly_average: fmt(data.total / rangeMonths.length),
+      transaction_count: data.txCount,
+    }))
+    .sort((a, b) => {
+      const aTotal = parseFloat(a.total.replace(/[^\d.-]/g, ""));
+      const bTotal = parseFloat(b.total.replace(/[^\d.-]/g, ""));
+      return bTotal - aTotal;
+    });
   
   const bonuses = summary.bonusTransactions
     .filter((b: any) => {
