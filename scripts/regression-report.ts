@@ -1639,7 +1639,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     (allErrors ? errors.length : 0) +
     (hasMismatches ? totalMismatches : 0) +
     (hasIncomeBarMismatches ? incomeBarMismatches : 0) +
-    (hasBaselineChanges ? baselineComparison.significantChanges : 0) +
+    (hasBaselineChanges ? (baselineComparison?.significantChanges || 0) : 0) +
     rangeErrors;
   
   if (totalFailures > 0) {
@@ -1652,7 +1652,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     }
     if (hasMismatches) console.log(`Card/Drawer mismatches: ${totalMismatches}`);
     if (hasIncomeBarMismatches) console.log(`Income bar mismatches: ${incomeBarMismatches}`);
-    if (hasBaselineChanges) console.log(`Significant baseline changes: ${baselineComparison.significantChanges}`);
+    if (hasBaselineChanges && baselineComparison) console.log(`Significant baseline changes: ${baselineComparison.significantChanges}`);
     if (rangeErrors > 0) console.log(`Range test failures: ${rangeErrors}`);
     
     console.log();
