@@ -1673,13 +1673,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   
   let drawerErrors = 0;
   
-  // Test Assets
-  const assetsSummary = buildAssetsSummary(
-    profile.accountSnapshots,
-    profile.homeCurrency || "CAD",
-    profile.fxRates || {}
-  );
-  
+  // Test Assets (reuse assetsSummary from above)
   console.log(`Assets Accounts: ${assetsSummary.totalAccounts}`);
   for (const group of assetsSummary.groups) {
     for (const account of group.accounts) {
@@ -1710,13 +1704,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     }
   }
   
-  // Test Debts
-  const debtsSummary = buildDebtsSummary(
-    profile.accountSnapshots,
-    profile.homeCurrency || "CAD",
-    profile.fxRates || {}
-  );
-  
+  // Test Debts (reuse debtsSummary from above)
   console.log(`\nDebt Accounts: ${debtsSummary.totalAccounts}`);
   for (const group of debtsSummary.groups) {
     for (const debt of group.debts) {
