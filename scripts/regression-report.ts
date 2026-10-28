@@ -100,6 +100,17 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     incomeDepositReviews.set(doc.id, doc.get("classification"));
   });
   
+  // Load savings confirmations
+  const savingsReviewsSnap = await db
+    .collection(`users/${uid}/reviews`)
+    .where("type", "==", "savings_item")
+    .get();
+  const savingsConfirmedItems = new Map<string, boolean>();
+  savingsReviewsSnap.docs.forEach(doc => {
+    const classification = doc.get("classification");
+    savingsConfirmedItems.set(doc.id, classification === "is_savings");
+  });
+  
   // Compute Money Coach breakdown (card values)
   const breakdown = computeMoneyCoachBreakdown(
     profile, 
@@ -107,7 +118,9 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     profile.incomeTxns,
     profile.accountSnapshots,
     currency,
-    incomeDepositReviews
+    incomeDepositReviews,
+    undefined,
+    savingsConfirmedItems
   );
   
   // Get last 3 complete months
@@ -826,13 +839,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     console.log(`   ❌ ${incomeBarMismatches} month(s) have mismatches between bar and source totals\n`);
   }
   
-  // Check for pending savings reviews
-  const savingsReviewsSnap = await db
-    .collection(`users/${uid}/reviews`)
-    .where("type", "==", "savings_item")
-    .get();
-  
-  const reviewedSavingsIds = new Set(savingsReviewsSnap.docs.map(doc => doc.id));
+  // Check for pending savings reviews (reuse already-loaded data)
+  const reviewedSavingsIds = new Set([...savingsConfirmedItems.keys()]);
   
   // Compute savings for each complete month to get pending confirmations
   const allSavingsConfirmations: any[] = [];
@@ -1554,7 +1562,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         profile.accountSnapshots,
         profile.homeCurrency || "CAD",
         incomeDepositReviews,
-        rangeMonths
+        rangeMonths,
+        savingsConfirmedItems
       );
       
       const cardIncome = breakdown.incomeAmount;
@@ -1782,13 +1791,16 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   
   let chatToolErrors = 0;
   
-  // Import chat executors and review context loader
+  // Import chat executors
   const { executeTool } = await import("../src/lib/chat/executor");
-  const { loadUserReviewContext } = await import("../src/lib/userReviewContext");
   
-  // Load user review context (same as chat API route does)
-  const reviewContext = await loadUserReviewContext(uid, db);
-  console.log(`Reviews loaded: income=${reviewContext.incomeDepositReviews.size} debt=${reviewContext.debtPaymentReviews.length} savings=${reviewContext.savingsConfirmedItems.size}\n`);
+  // Build review context from already-loaded variables (no need to reload from Firestore)
+  const reviewContext = {
+    incomeDepositReviews,
+    debtPaymentReviews: userReviews,
+    savingsConfirmedItems,
+  };
+  console.log(`Using reviews: income=${reviewContext.incomeDepositReviews.size} debt=${reviewContext.debtPaymentReviews.length} savings=${reviewContext.savingsConfirmedItems.size}\n`);
   
   // Helper: parse currency string to number
   function parseCurrency(str: string): number {
@@ -1858,8 +1870,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     chatToolErrors++;
   }
   
-  // Test 3: get_savings_summary matches Savings drawer
-  console.log("\nTest 3: get_savings_summary (3mo) matches Savings drawer");
+  // Test 3: get_savings_summary matches Money Coach card (dashboard)
+  console.log("\nTest 3: get_savings_summary (3mo) matches Money Coach card");
   try {
     const savingsToolResult = executeTool("get_savings_summary", { range: "3mo" }, profile, reviewContext);
     if (!savingsToolResult.ok) {
@@ -1875,38 +1887,30 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         errors.push(`get_savings_summary returned NaN`);
         chatToolErrors++;
       } else {
-        // Compute savings drawer value using same logic as dashboard-drawers route
-        const now = new Date();
-        const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-        const completeMonths = profile.monthlyHistory
-          .filter(h => h.yearMonth < currentMonth)
-          .slice(-3)
-          .map(h => h.yearMonth);
-        
-        const drawerSavings = computeWindowSavings(
-          profile.monthlyHistory,
-          profile.accountBalanceHistory ?? [],
-          profile.expenseTxns,
-          completeMonths,
-          reviewContext.savingsConfirmedItems
-        );
-        
-        const drawerSavingsFormatted = formatCurrency(drawerSavings.monthlyAverage.total, currency);
-        
-        // Check for NaN in expected value (must fail)
-        if (drawerSavingsFormatted.includes('NaN')) {
-          console.log(`  ❌ FAIL: Expected value is NaN`);
-          errors.push(`Savings drawer calculation returned NaN`);
+        // Use Money Coach breakdown savings value (same as dashboard card/drawer)
+        const savingsBucket = breakdown.buckets.find((b: any) => b.bucket === "savings");
+        if (!savingsBucket) {
+          console.log(`  ❌ FAIL: No savings bucket in money coach breakdown`);
+          errors.push(`Money coach breakdown missing savings bucket`);
           chatToolErrors++;
         } else {
-          console.log(`  Tool (get_savings_summary): ${toolSavings}`);
-          console.log(`  Drawer (Savings): ${drawerSavingsFormatted}`);
-          if (currenciesMatch(toolSavings, drawerSavingsFormatted)) {
-            console.log(`  ✓ Match (within ±$1)`);
-          } else {
-            console.log(`  ❌ FAIL: Mismatch`);
-            errors.push(`Savings tool vs drawer mismatch: ${toolSavings} !== ${drawerSavingsFormatted}`);
+          const cardSavingsFormatted = formatCurrency(savingsBucket.monthlyAverage, currency);
+          
+          // Check for NaN in expected value (must fail)
+          if (cardSavingsFormatted.includes('NaN')) {
+            console.log(`  ❌ FAIL: Expected value is NaN`);
+            errors.push(`Money coach savings calculation returned NaN`);
             chatToolErrors++;
+          } else {
+            console.log(`  Tool (get_savings_summary): ${toolSavings}`);
+            console.log(`  Card (Money Coach): ${cardSavingsFormatted}`);
+            if (currenciesMatch(toolSavings, cardSavingsFormatted)) {
+              console.log(`  ✓ Match (within ±$1)`);
+            } else {
+              console.log(`  ❌ FAIL: Mismatch`);
+              errors.push(`Savings tool vs card mismatch: ${toolSavings} !== ${cardSavingsFormatted}`);
+              chatToolErrors++;
+            }
           }
         }
       }

@@ -88,7 +88,8 @@ export function computeMoneyCoachBreakdown(
   accountSnapshots: any[] = [],
   homeCurrency: string = "CAD",
   incomeDepositReviews: Map<string, string> = new Map(),
-  rangeMonths?: string[]
+  rangeMonths?: string[],
+  savingsConfirmedItems: Map<string, boolean> = new Map()
 ): MoneyCoachBreakdown {
   const { monthlyHistory, expenseTxns, coverage, debtPaymentHistory, accountBalanceHistory, fxRates } = profile;
 
@@ -165,7 +166,7 @@ export function computeMoneyCoachBreakdown(
   }
   
   // Savings uses the app's definition: cash change + debt change + contributions (same as drawer)
-  const averageSavings = computeAverageSavings(monthlyHistory, accountBalanceHistory, expenseTxns, spendingMonths);
+  const averageSavings = computeAverageSavings(monthlyHistory, accountBalanceHistory, expenseTxns, spendingMonths, savingsConfirmedItems);
   bucketAverages.savings = averageSavings;
   
   const savingsRate = incomeAmount > 0 ? averageSavings / incomeAmount : 0;
