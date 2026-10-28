@@ -1,12 +1,32 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { onAuthStateChanged } from "firebase/auth";
+import { getFirebaseClient } from "@/lib/firebase";
 import type { DebtsSummary } from "@/lib/debtsSummary";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { formatChange, getChangeColor } from "@/lib/colorHelpers";
+import { ReviewList } from "@/components/ReviewList";
 
 interface OverviewTabProps {
   summary: DebtsSummary;
 }
 
 export function OverviewTab({ summary }: OverviewTabProps) {
+  const [token, setToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    const { auth } = getFirebaseClient();
+    return onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        const tok = await user.getIdToken();
+        setToken(tok);
+      } else {
+        setToken(null);
+      }
+    });
+  }, []);
+
   const {
     totalDebt,
     currency,
@@ -147,6 +167,12 @@ export function OverviewTab({ summary }: OverviewTabProps) {
           })}
         </div>
       </div>
+
+      {/* Debt Payment Reviews */}
+      <ReviewList 
+        token={token}
+        reviewType="debt_payment"
+      />
     </div>
   );
 }
