@@ -1640,13 +1640,101 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     console.log(`✅ All range tests passed\n`);
   }
   
+  // ── ACCOUNT DRAWER BALANCE HISTORY TESTS ──────────────────────────────────────
+  console.log("📈 ACCOUNT DRAWER BALANCE HISTORY");
+  console.log("=".repeat(80) + "\n");
+  
+  let drawerErrors = 0;
+  
+  // Test Assets
+  const assetsSummary = buildAssetsSummary(
+    profile.accountSnapshots,
+    profile.homeCurrency || "CAD",
+    profile.fxRates || {}
+  );
+  
+  console.log(`Assets Accounts: ${assetsSummary.totalAccounts}`);
+  for (const group of assetsSummary.groups) {
+    for (const account of group.accounts) {
+      const history = account.balanceHistory || [];
+      
+      // Check non-empty
+      if (history.length === 0) {
+        console.log(`  ❌ FAIL: ${account.label} (${account.bankName}) - empty balance history`);
+        drawerErrors++;
+        errors.push(`Account drawer: ${account.label} has empty balance history`);
+        continue;
+      }
+      
+      // Check chronological order (oldest first)
+      const months = history.map(h => h.month);
+      const sortedMonths = [...months].sort();
+      const isChronological = months.every((m, i) => m === sortedMonths[i]);
+      
+      if (!isChronological) {
+        console.log(`  ❌ FAIL: ${account.label} (${account.bankName}) - balance history not chronological`);
+        console.log(`    Expected: ${sortedMonths.join(", ")}`);
+        console.log(`    Got:      ${months.join(", ")}`);
+        drawerErrors++;
+        errors.push(`Account drawer: ${account.label} balance history not chronological`);
+      } else {
+        console.log(`  ✓ ${account.label} (${account.bankName}): ${history.length} months, chronological`);
+      }
+    }
+  }
+  
+  // Test Debts
+  const debtsSummary = buildDebtsSummary(
+    profile.accountSnapshots,
+    profile.homeCurrency || "CAD",
+    profile.fxRates || {}
+  );
+  
+  console.log(`\nDebt Accounts: ${debtsSummary.totalAccounts}`);
+  for (const group of debtsSummary.groups) {
+    for (const debt of group.debts) {
+      const history = debt.balanceHistory || [];
+      
+      // Check non-empty
+      if (history.length === 0) {
+        console.log(`  ❌ FAIL: ${debt.label} (${debt.bankName}) - empty balance history`);
+        drawerErrors++;
+        errors.push(`Account drawer: ${debt.label} has empty balance history`);
+        continue;
+      }
+      
+      // Check chronological order (oldest first)
+      const months = history.map(h => h.month);
+      const sortedMonths = [...months].sort();
+      const isChronological = months.every((m, i) => m === sortedMonths[i]);
+      
+      if (!isChronological) {
+        console.log(`  ❌ FAIL: ${debt.label} (${debt.bankName}) - balance history not chronological`);
+        console.log(`    Expected: ${sortedMonths.join(", ")}`);
+        console.log(`    Got:      ${months.join(", ")}`);
+        drawerErrors++;
+        errors.push(`Account drawer: ${debt.label} balance history not chronological`);
+      } else {
+        console.log(`  ✓ ${debt.label} (${debt.bankName}): ${history.length} months, chronological`);
+      }
+    }
+  }
+  
+  console.log();
+  if (drawerErrors > 0) {
+    console.log(`❌ ${drawerErrors} account drawer test(s) failed\n`);
+  } else {
+    console.log(`✅ All account drawer tests passed\n`);
+  }
+  
   // Final summary - check ALL error conditions
   const totalFailures = 
     (allErrors ? errors.length : 0) +
     (hasMismatches ? totalMismatches : 0) +
     (hasIncomeBarMismatches ? incomeBarMismatches : 0) +
     (hasBaselineChanges ? (baselineComparison?.significantChanges || 0) : 0) +
-    rangeErrors;
+    rangeErrors +
+    drawerErrors;
   
   if (totalFailures > 0) {
     console.log("=".repeat(80));
@@ -1660,6 +1748,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     if (hasIncomeBarMismatches) console.log(`Income bar mismatches: ${incomeBarMismatches}`);
     if (hasBaselineChanges && baselineComparison) console.log(`Significant baseline changes: ${baselineComparison.significantChanges}`);
     if (rangeErrors > 0) console.log(`Range test failures: ${rangeErrors}`);
+    if (drawerErrors > 0) console.log(`Account drawer test failures: ${drawerErrors}`);
     
     console.log();
     process.exit(1);
