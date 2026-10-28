@@ -891,20 +891,16 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     
     if (bucket === "savings") {
       // Savings drawer uses NET balance calculation, not category breakdown
-      drawerTotal = computeAverageSavings(
-        profile.monthlyHistory,
-        profile.accountBalanceHistory,
-        profile.expenseTxns,
-        completeMonths
-      );
-      
-      // Get window reconciliation breakdown
+      // Compute with confirmations to match dashboard card
       const windowSavings = computeWindowSavings(
         profile.monthlyHistory,
         profile.accountBalanceHistory,
         profile.expenseTxns,
-        completeMonths
+        completeMonths,
+        savingsConfirmedItems
       );
+      
+      drawerTotal = windowSavings.monthlyAverage.total;
       
       // Verify reconciliation: components sum to total for each month
       let hasReconciliationError = false;
@@ -1070,12 +1066,13 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         console.log(`     Month      Cash Change   Debt Change   Contributions   Net Savings`);
         console.log(`     ${"─".repeat(75)}`);
         
-        // Get the window data again for display
+        // Get the window data again for display (with confirmations)
         const windowSavings = computeWindowSavings(
           profile.monthlyHistory,
           profile.accountBalanceHistory,
           profile.expenseTxns,
-          completeMonths
+          completeMonths,
+          savingsConfirmedItems
         );
         
         for (const month of windowSavings.monthlyBreakdown) {

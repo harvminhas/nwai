@@ -126,7 +126,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
         const needsReview = unreviewedTxnIds.has(txId);
         
         // Check if this transaction is classified as 'not_income'
-        const classification = incomeDepositReviews.get(txId);
+        const classification = reviewContext.incomeDepositReviews.get(txId);
         if (classification === 'not_income') continue;
         
         // Find source info to check if it's a transfer
