@@ -5,9 +5,10 @@
  * and payoff date estimates. Used by the Liabilities/Debts page and dashboard cards.
  */
 
-import type { AccountSnapshot, DebtPaymentHistoryEntry, AccountBalanceHistory } from "./extractTransactions";
+import type { AccountSnapshot, DebtPaymentHistoryEntry } from "./extractTransactions";
+import type { AccountBalanceHistory } from "./financialProfile";
 import type { ManualLiability, DebtPaymentReview } from "./types";
-import { convertToHomeCurrency } from "./currencyUtils";
+import { fmtCompact } from "./currencyUtils";
 
 export interface DebtAccount {
   slug: string;
@@ -88,6 +89,13 @@ function formatMonthLabel(ym: string): string {
   return `${monthNames[parseInt(month) - 1]} ${year}`;
 }
 
+function convertToHome(amount: number, currency: string, fxRates: Record<string, number>, homeCurrency: string): number {
+  if (currency === homeCurrency) return amount;
+  const rate = fxRates[currency];
+  if (!rate || !Number.isFinite(rate)) return amount;
+  return amount * rate;
+}
+
 function estimateMonthlyPayment(
   accountSlug: string,
   paymentHistory: DebtPaymentHistoryEntry[]
@@ -147,7 +155,7 @@ export function buildDebtsSummary(
 
   // Build debt account list
   const accounts: DebtAccount[] = debtAccounts.map(acc => {
-    const balanceInHome = Math.abs(convertToHomeCurrency(acc.balance, acc.currency || homeCurrency, fxRates, homeCurrency));
+    const balanceInHome = Math.abs(convertToHome(acc.balance, acc.currency || homeCurrency, fxRates, homeCurrency));
     const monthlyPayment = estimateMonthlyPayment(acc.slug, paymentHistory);
     
     // Get minPayment from latest statement's paymentsMade
@@ -227,11 +235,11 @@ export function buildDebtsSummary(
   const getDebtAtMonth = (month: string): number => {
     let total = 0;
     for (const history of balanceHistory) {
-      const entry = history.entries.find(e => e.yearMonth === month);
+      const entry = history.entries.find((e: { yearMonth: string; balance: number }) => e.yearMonth === month);
       if (entry) {
         const acc = debtAccounts.find(a => a.slug === history.slug);
         if (acc && acc.balance < 0) {
-          total += Math.abs(convertToHomeCurrency(entry.balance, history.currency, fxRates, homeCurrency));
+          total += Math.abs(convertToHome(entry.balance, history.currency, fxRates, homeCurrency));
         }
       }
     }
@@ -322,12 +330,12 @@ export function buildDebtsSummary(
     let monthPayments = 0;
 
     for (const history of balanceHistory) {
-      const entry = history.entries.find(e => e.yearMonth === month);
+      const entry = history.entries.find((e: { yearMonth: string; balance: number }) => e.yearMonth === month);
       if (entry) {
         const acc = debtAccounts.find(a => a.slug === history.slug);
         if (acc && acc.balance < 0) {
           const type = debtGroup(acc.accountType);
-          const balance = Math.abs(convertToHomeCurrency(entry.balance, history.currency, fxRates, homeCurrency));
+          const balance = Math.abs(convertToHome(entry.balance, history.currency, fxRates, homeCurrency));
           groupTotals.set(type, (groupTotals.get(type) || 0) + balance);
           monthDebt += balance;
         }
@@ -337,7 +345,7 @@ export function buildDebtsSummary(
     // Get payments for this month
     const monthPaymentEntries = paymentHistory.filter(p => p.statementMonth === month);
     for (const p of monthPaymentEntries) {
-      monthPayments += convertToHomeCurrency(p.paymentsMade, p.currency, fxRates, homeCurrency);
+      monthPayments += convertToHome(p.paymentsMade, p.currency, fxRates, homeCurrency);
     }
 
     // Add manual liabilities to month total

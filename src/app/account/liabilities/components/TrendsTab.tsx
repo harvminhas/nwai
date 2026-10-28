@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { DebtsSummary } from "@/lib/debtsSummary";
-import { formatCurrency } from "@/lib/currencyUtils";
+import { formatCurrency, fmtCompact } from "@/lib/currencyUtils";
 
 interface TrendsTabProps {
   summary: DebtsSummary;
@@ -61,7 +61,7 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                     />
                   </div>
                   <span className="w-24 text-sm font-medium text-gray-900 text-right tabular-nums shrink-0">
-                    {formatCurrency(month.totalDebt, currency, { compact: true })}
+                    {fmtCompact(month.totalDebt, currency)}
                   </span>
                 </div>
               </button>

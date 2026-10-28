@@ -5,9 +5,10 @@
  * Used by the Assets page and dashboard cards.
  */
 
-import type { AccountSnapshot, AccountBalanceHistory } from "./extractTransactions";
+import type { AccountSnapshot } from "./extractTransactions";
+import type { AccountBalanceHistory } from "./financialProfile";
 import type { ManualAsset } from "./types";
-import { convertToHomeCurrency } from "./currencyUtils";
+import { fmtCompact } from "./currencyUtils";
 
 export interface AssetAccount {
   slug: string;
@@ -81,6 +82,13 @@ function formatMonthLabel(ym: string): string {
   return `${monthNames[parseInt(month) - 1]} ${year}`;
 }
 
+function convertToHome(amount: number, currency: string, fxRates: Record<string, number>, homeCurrency: string): number {
+  if (currency === homeCurrency) return amount;
+  const rate = fxRates[currency];
+  if (!rate || !Number.isFinite(rate)) return amount;
+  return amount * rate;
+}
+
 export function buildAssetsSummary(
   accountSnapshots: AccountSnapshot[],
   balanceHistory: AccountBalanceHistory[],
@@ -101,7 +109,7 @@ export function buildAssetsSummary(
       bankName: acc.bankName,
       accountName: acc.accountName,
       accountType: acc.accountType,
-      balance: convertToHomeCurrency(acc.balance, acc.currency || homeCurrency, fxRates, homeCurrency),
+      balance: convertToHome(acc.balance, acc.currency || homeCurrency, fxRates, homeCurrency),
       currency: homeCurrency,
       statementMonth: acc.statementMonth,
       isStale: stale,
@@ -182,11 +190,11 @@ export function buildAssetsSummary(
   const getTotalAtMonth = (month: string): number => {
     let total = 0;
     for (const history of balanceHistory) {
-      const entry = history.entries.find(e => e.yearMonth === month);
+      const entry = history.entries.find((e: { yearMonth: string; balance: number }) => e.yearMonth === month);
       if (entry) {
         const acc = assetAccounts.find(a => a.slug === history.slug);
         if (acc && acc.balance >= 0) {
-          total += convertToHomeCurrency(entry.balance, history.currency, fxRates, homeCurrency);
+          total += convertToHome(entry.balance, history.currency, fxRates, homeCurrency);
         }
       }
     }
@@ -216,12 +224,12 @@ export function buildAssetsSummary(
     let monthTotal = 0;
 
     for (const history of balanceHistory) {
-      const entry = history.entries.find(e => e.yearMonth === month);
+      const entry = history.entries.find((e: { yearMonth: string; balance: number }) => e.yearMonth === month);
       if (entry) {
         const acc = assetAccounts.find(a => a.slug === history.slug);
         if (acc && acc.balance >= 0) {
           const type = accountGroup(acc.accountType);
-          const balance = convertToHomeCurrency(entry.balance, history.currency, fxRates, homeCurrency);
+          const balance = convertToHome(entry.balance, history.currency, fxRates, homeCurrency);
           groupTotals.set(type, (groupTotals.get(type) || 0) + balance);
           monthTotal += balance;
         }
