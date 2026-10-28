@@ -22,6 +22,7 @@ import { computeScheduledDebtPayments, type ScheduledDebtPayment } from "./debtP
 import { getParentCategory } from "./categoryTaxonomy";
 import { getMoneyCoachIncome } from "./incomeMetrics";
 import { computeAverageSavings } from "./savingsCalculations";
+import { buildSpendingSummary } from "./spendingSummary";
 
 export interface MoneyCoachBucketSummary {
   bucket: MoneyCoachBucket;
@@ -121,7 +122,31 @@ export function computeMoneyCoachBreakdown(
       : completeMonthsWithIncome.map(h => h.yearMonth);
   }
 
-  // Compute scheduled debt payments (fixed costs)
+  // SINGLE SOURCE OF TRUTH: Use buildSpendingSummary for spending calculation
+  // This ensures card and page use identical logic
+  const spendingSummary = buildSpendingSummary(
+    expenseTxns,
+    accountSnapshots,
+    profile.debtPaymentHistory,
+    userReviews,
+    fxRates ?? {},
+    homeCurrency ?? "CAD",
+    spendingMonths
+  );
+  
+  // Total spending from the shared function - this is the single source of truth
+  const totalSpending = spendingSummary.typicalMonthly;
+  
+  // Get per-bucket averages for display from the computed monthlyHistory
+  const bucketAverages: Record<MoneyCoachBucket, number> = {
+    fixed: 0,
+    essentials: 0,
+    flexible: 0,
+    savings: 0,
+    uncategorized: 0,
+  };
+  
+  // Check if there's estimated debt for the hasEstimates flag
   const scheduledPayments = computeScheduledDebtPayments(
     accountSnapshots, 
     profile.debtPaymentHistory, 
@@ -129,63 +154,21 @@ export function computeMoneyCoachBreakdown(
     fxRates ?? {},
     homeCurrency ?? "CAD"
   );
-  const scheduledByAccount = new Map(scheduledPayments.map(p => [p.accountSlug, p]));
   const hasEstimatedDebt = scheduledPayments.some(p => p.isEstimated);
-
-  // Total scheduled debt payments per month
-  const totalScheduledDebt = scheduledPayments.reduce((sum, p) => sum + p.amount, 0);
-
-  // Group expenses by bucket for each month in the spending window
-  const bucketsByMonth = new Map<string, Record<MoneyCoachBucket, number>>();
-
-  for (const ym of spendingMonths) {
-    const buckets: Record<MoneyCoachBucket, number> = {
-      fixed: totalScheduledDebt, // Start with scheduled debt payments
-      essentials: 0,
-      flexible: 0,
-      savings: 0,
-      uncategorized: 0,
-    };
-
-    // Get transactions for this month
-    const monthTxns = expenseTxns.filter(t => t.txMonth === ym);
-
-    for (const txn of monthTxns) {
-      // Skip transfers and other excluded categories
-      if (isCoreExcluded(txn.category)) continue;
-
-      // Skip Debt payments entirely - handled by NET balance approach in savings calculation
-      const parentCategory = getParentCategory(txn.category);
-      if (parentCategory === "Debt") {
-        continue; // Don't add to any bucket
-      }
-
-      const bucket = getCategoryBucket(txn.category);
-      const amount = Math.abs(txn.amount);
-      buckets[bucket] += amount;
-    }
-
-    // Note: savings bucket is NOT calculated here - uses NET balance approach below
-    bucketsByMonth.set(ym, buckets);
+  
+  // Average bucket values across the spending months
+  const relevantMonths = spendingSummary.monthlyHistory.filter(m => spendingMonths.includes(m.yearMonth));
+  if (relevantMonths.length > 0) {
+    bucketAverages.fixed = relevantMonths.reduce((sum, m) => sum + m.fixed, 0) / relevantMonths.length;
+    bucketAverages.essentials = relevantMonths.reduce((sum, m) => sum + m.essentials, 0) / relevantMonths.length;
+    bucketAverages.flexible = relevantMonths.reduce((sum, m) => sum + m.flexible, 0) / relevantMonths.length;
   }
-
-  // Compute average for each bucket (same window as income)
-  const bucketAverages: Record<MoneyCoachBucket, number> = {
-    fixed: average([...bucketsByMonth.values()].map(b => b.fixed)),
-    essentials: average([...bucketsByMonth.values()].map(b => b.essentials)),
-    flexible: average([...bucketsByMonth.values()].map(b => b.flexible)),
-    savings: 0, // Computed below as Income - Spending
-    uncategorized: average([...bucketsByMonth.values()].map(b => b.uncategorized)),
-  };
-
-  // Total spending = fixed + essentials + flexible (+ uncategorized if significant)
-  // Savings is NOT spending - it's income minus spending
-  const totalSpending = bucketAverages.fixed + bucketAverages.essentials + bucketAverages.flexible + bucketAverages.uncategorized;
   
-  // Savings = Income - Spending (explicit formula used everywhere)
-  bucketAverages.savings = incomeAmount - totalSpending;
+  // Savings uses the app's definition: cash change + debt change + contributions (same as drawer)
+  const averageSavings = computeAverageSavings(monthlyHistory, accountBalanceHistory, expenseTxns, spendingMonths);
+  bucketAverages.savings = averageSavings;
   
-  const savingsRate = incomeAmount > 0 ? bucketAverages.savings / incomeAmount : 0;
+  const savingsRate = incomeAmount > 0 ? averageSavings / incomeAmount : 0;
 
   // Build bucket summaries with advice
   const bucketSummaries: MoneyCoachBucketSummary[] = (

@@ -655,8 +655,8 @@ export function buildIncomeSummary(
   const monthsWithData = calculationMonthsData.filter(m => m.total > 0);
   const excludedMonths = calculationMonths.filter(m => !monthsWithData.find(d => d.yearMonth === m));
   
-  const calculationMonthsRegularTotal = calculationMonthsData.reduce((s, m) => s + m.regular, 0);
-  const calculationMonthsBonusTotal = calculationMonthsData.reduce((s, m) => s + m.bonus, 0);
+  const calculationMonthsRegularTotal = monthsWithData.reduce((s, m) => s + m.regular, 0);
+  const calculationMonthsBonusTotal = monthsWithData.reduce((s, m) => s + m.bonus, 0);
   const calculationMonthsTotal = calculationMonthsRegularTotal + calculationMonthsBonusTotal;
   
   // Divide by months with data, not all requested months

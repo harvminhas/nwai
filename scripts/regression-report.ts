@@ -1463,28 +1463,12 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   }
   
   // Exit with error code if any errors were collected
-  if (errors.length > 0) {
-    console.error(`\n❌ Test failed with ${errors.length} error(s):`);
-    errors.forEach((e, i) => console.error(`   ${i + 1}. ${e}`));
-    console.error();
-    process.exit(1);
-  }
+  const allErrors = errors.length > 0;
+  const hasMismatches = totalMismatches > 0;
+  const hasIncomeBarMismatches = incomeBarMismatches > 0;
+  const hasBaselineChanges = baselineComparison && baselineComparison.significantChanges > 0;
   
-  // Exit with error code if mismatches found
-  if (totalMismatches > 0) {
-    console.error(`❌ Test failed: ${totalMismatches} card/drawer mismatch(es)\n`);
-    process.exit(1);
-  }
-  
-  if (incomeBarMismatches > 0) {
-    console.error(`❌ Test failed: ${incomeBarMismatches} income bar/source mismatch(es)\n`);
-    process.exit(1);
-  }
-  
-  if (baselineComparison && baselineComparison.significantChanges > 0) {
-    console.error(`❌ Test failed: ${baselineComparison.significantChanges} significant change(s) from baseline\n`);
-    process.exit(1);
-  }
+  // Continue to range tests even if earlier tests failed
   
   // ========== Dashboard Range Tests ==========
   console.log("\n" + "=".repeat(80));
@@ -1515,8 +1499,23 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
       });
       
-      console.log(`Months used (${rangeMonths.length}): ${monthNames.join(", ")}`);
+      // Check which months have no income data
+      const monthsWithIncomeData = rangeMonths.filter(m => {
+        const monthData = profile.monthlyHistory.find(h => h.yearMonth === m);
+        return monthData && monthData.incomeTotal > 0;
+      });
+      const excludedIncomeMonths = rangeMonths.filter(m => !monthsWithIncomeData.includes(m));
       
+      console.log(`Months requested (${rangeMonths.length}): ${monthNames.join(", ")}`);
+      if (excludedIncomeMonths.length > 0) {
+        const excludedNames = excludedIncomeMonths.map(m => {
+          const [year, month] = m.split("-");
+          const date = new Date(parseInt(year), parseInt(month) - 1);
+          return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+        });
+        console.log(`  ⚠️  Excluded from income avg (no data): ${excludedNames.join(", ")}`);
+        console.log(`  ✓ Income averaged over ${monthsWithIncomeData.length} months with data`);
+      }
       // Compute card values (via MoneyCoach breakdown - same as API route)
       const breakdown = computeMoneyCoachBreakdown(
         profile,
@@ -1635,9 +1634,28 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     console.log(`✅ All range tests passed\n`);
   }
   
-  // Final summary
-  if (errors.length > 0 || totalMismatches > 0 || incomeBarMismatches > 0 || rangeErrors > 0) {
-    console.log("❌ TEST FAILED - See errors above\n");
+  // Final summary - check ALL error conditions
+  const totalFailures = 
+    (allErrors ? errors.length : 0) +
+    (hasMismatches ? totalMismatches : 0) +
+    (hasIncomeBarMismatches ? incomeBarMismatches : 0) +
+    (hasBaselineChanges ? baselineComparison.significantChanges : 0) +
+    rangeErrors;
+  
+  if (totalFailures > 0) {
+    console.log("=".repeat(80));
+    console.log("❌ TEST FAILED\n");
+    
+    if (allErrors) {
+      console.log(`Errors: ${errors.length}`);
+      errors.forEach((e, i) => console.log(`  ${i + 1}. ${e}`));
+    }
+    if (hasMismatches) console.log(`Card/Drawer mismatches: ${totalMismatches}`);
+    if (hasIncomeBarMismatches) console.log(`Income bar mismatches: ${incomeBarMismatches}`);
+    if (hasBaselineChanges) console.log(`Significant baseline changes: ${baselineComparison.significantChanges}`);
+    if (rangeErrors > 0) console.log(`Range test failures: ${rangeErrors}`);
+    
+    console.log();
     process.exit(1);
   }
 
