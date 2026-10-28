@@ -25,6 +25,9 @@ export function TrendsTab({ summary }: TrendsTabProps) {
   const selectedData = selectedMonth 
     ? monthlyHistory.find(m => m.month === selectedMonth)
     : null;
+  
+  // Show most recent month at the top
+  const sortedHistory = [...monthlyHistory].reverse();
 
   return (
     <div className="space-y-6">
@@ -34,9 +37,16 @@ export function TrendsTab({ summary }: TrendsTabProps) {
           Total Debt by Month
         </h2>
         <div className="space-y-2">
-          {monthlyHistory.map((month) => {
+          {sortedHistory.map((month, idx) => {
             const heightPct = maxDebt > 0 ? (month.totalDebt / maxDebt) * 100 : 0;
             const isSelected = selectedMonth === month.month;
+            
+            // Determine color: green if debt decreased, red if increased
+            const prevMonth = sortedHistory[idx + 1]; // Next item is previous chronologically (since reversed)
+            const debtDecreased = prevMonth && month.totalDebt < prevMonth.totalDebt;
+            const barColor = debtDecreased 
+              ? (isSelected ? "bg-green-600" : "bg-green-500 group-hover:bg-green-600")
+              : (isSelected ? "bg-red-600" : "bg-red-500 group-hover:bg-red-600");
             
             return (
               <button
@@ -52,11 +62,7 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                   </span>
                   <div className="flex-1 h-8 bg-gray-100 rounded relative overflow-hidden">
                     <div
-                      className={`h-full transition-all ${
-                        isSelected
-                          ? "bg-red-600"
-                          : "bg-red-500 group-hover:bg-red-600"
-                      }`}
+                      className={`h-full transition-all ${barColor}`}
                       style={{ width: `${heightPct}%` }}
                     />
                   </div>

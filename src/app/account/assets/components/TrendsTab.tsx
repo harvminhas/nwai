@@ -25,6 +25,9 @@ export function TrendsTab({ summary }: TrendsTabProps) {
   const selectedData = selectedMonth 
     ? monthlyHistory.find(m => m.month === selectedMonth)
     : null;
+  
+  // Show most recent month at the top
+  const sortedHistory = [...monthlyHistory].reverse();
 
   return (
     <div className="space-y-6">
@@ -34,7 +37,7 @@ export function TrendsTab({ summary }: TrendsTabProps) {
           Total Assets by Month
         </h2>
         <div className="space-y-2">
-          {monthlyHistory.map((month) => {
+          {sortedHistory.map((month) => {
             const heightPct = maxTotal > 0 ? (month.total / maxTotal) * 100 : 0;
             const isSelected = selectedMonth === month.month;
             
