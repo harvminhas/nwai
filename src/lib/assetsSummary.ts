@@ -50,10 +50,29 @@ export interface AssetsSummary {
 
 const REGISTERED_TYPES = new Set(["rrsp", "tfsa", "fhsa", "401k", "ira", "roth_ira", "lira", "resp"]);
 
-function accountGroup(accountType: string): AssetGroup["type"] {
+// Keywords to detect registered accounts by name
+const REGISTERED_NAME_KEYWORDS = [
+  "rrsp", "tfsa", "fhsa", "lira", "resp",
+  "401(k)", "401k", "ira", "roth ira",
+  "registered retirement", "tax-free savings",
+  "retirement savings plan"
+];
+
+function accountGroup(accountType: string, accountName?: string): AssetGroup["type"] {
   if (accountType === "checking" || accountType === "savings") return "cash";
-  if (accountType === "investment") return "investments";
   if (REGISTERED_TYPES.has(accountType)) return "registered";
+  
+  // Check account name for registered account keywords
+  if (accountName) {
+    const nameLower = accountName.toLowerCase();
+    for (const keyword of REGISTERED_NAME_KEYWORDS) {
+      if (nameLower.includes(keyword.toLowerCase())) {
+        return "registered";
+      }
+    }
+  }
+  
+  if (accountType === "investment") return "investments";
   return "other";
 }
 
@@ -122,7 +141,7 @@ export function buildAssetsSummary(
   const groupMap = new Map<AssetGroup["type"], AssetGroup>();
   
   for (const acc of accounts) {
-    const type = accountGroup(acc.accountType);
+    const type = accountGroup(acc.accountType, acc.accountName);
     if (!groupMap.has(type)) {
       groupMap.set(type, {
         type,
@@ -239,7 +258,7 @@ export function buildAssetsSummary(
         }
         
         if (balance > 0) {
-          const type = accountGroup(acc.accountType);
+          const type = accountGroup(acc.accountType, acc.accountName);
           groupTotals.set(type, (groupTotals.get(type) || 0) + balance);
         }
       }

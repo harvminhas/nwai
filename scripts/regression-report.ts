@@ -1201,7 +1201,34 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   assetsSummary.groups.forEach(g => {
     const accountCount = g.accounts.length + g.manualAssets.length;
     console.log(`     - ${g.label}: ${formatCurrency(g.total, currency)} (${accountCount} accounts)`);
+    // Print each account with its classification
+    g.accounts.forEach(acc => {
+      console.log(`       • ${acc.accountName || acc.accountType} (${acc.accountType} → ${g.type}): ${formatCurrency(acc.balance, currency)}`);
+    });
   });
+  
+  // Check registered account classification
+  console.log(`\n✓ Check: Registered accounts properly grouped`);
+  const registeredKeywords = ['rrsp', 'tfsa', 'fhsa', 'lira', 'resp', '401(k)', '401k', 'ira', 'registered retirement', 'retirement savings'];
+  const registeredGroup = assetsSummary.groups.find(g => g.type === 'registered');
+  let registeredErrors = 0;
+  
+  for (const group of assetsSummary.groups) {
+    for (const acc of group.accounts) {
+      const nameLower = (acc.accountName || '').toLowerCase();
+      const hasKeyword = registeredKeywords.some(kw => nameLower.includes(kw.toLowerCase()));
+      
+      if (hasKeyword && group.type !== 'registered') {
+        errors.push(`Account "${acc.accountName}" contains registered keyword but is in ${group.label} group`);
+        console.log(`   ❌ ${acc.accountName} should be in Registered, but is in ${group.label}`);
+        registeredErrors++;
+      }
+    }
+  }
+  
+  if (registeredErrors === 0) {
+    console.log(`   ✅ All registered accounts correctly grouped`);
+  }
   
   console.log(`\n💳 Debts Summary:`);
   console.log(`   Total Debt: ${formatCurrency(debtsSummary.totalDebt, currency)}`);
