@@ -529,11 +529,15 @@ export function executeGetIncomeSummary(
     rangeMonths = rangeParam.split(",").map(m => m.trim()).filter(Boolean);
   }
   
+  // Build incomeDepositReviews as a Map (same as pages do)
+  // Note: These aren't in profile cache, so we use empty Map
+  const incomeDepositReviews = new Map<string, string>();
+  
   const summary = buildIncomeSummary(
     profile.incomeTxns,
     profile.accountSnapshots,
     home,
-    [], // incomeDepositReviews not in profile cache
+    incomeDepositReviews,
     rangeMonths,
   );
   

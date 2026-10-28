@@ -1787,170 +1787,212 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   
   // Test 1: get_income_summary 3mo matches Income page
   console.log("Test 1: get_income_summary (3mo) matches Income page");
-  const incomeToolResult = executeTool("get_income_summary", { range: "3mo" }, profile);
-  if (!incomeToolResult.ok) {
-    console.log(`  ❌ FAIL: Tool execution failed: ${incomeToolResult.error}`);
-    errors.push(`get_income_summary failed: ${incomeToolResult.error}`);
-    chatToolErrors++;
-  } else {
-    const toolIncome = incomeToolResult.data.typical_monthly;
-    const pageIncome = formatCurrency(incomeSummary.typicalMonthly, currency);
-    console.log(`  Tool (get_income_summary): ${toolIncome}`);
-    console.log(`  Page (Income): ${pageIncome}`);
-    if (toolIncome === pageIncome) {
-      console.log(`  ✓ Match`);
-    } else {
-      console.log(`  ❌ FAIL: Mismatch`);
-      errors.push(`Income tool vs page mismatch: ${toolIncome} !== ${pageIncome}`);
+  try {
+    const incomeToolResult = executeTool("get_income_summary", { range: "3mo" }, profile);
+    if (!incomeToolResult.ok) {
+      console.log(`  ❌ FAIL: Tool execution failed: ${incomeToolResult.error}`);
+      errors.push(`get_income_summary failed: ${incomeToolResult.error}`);
       chatToolErrors++;
+    } else {
+      const toolIncome = incomeToolResult.data.typical_monthly;
+      const pageIncome = formatCurrency(incomeSummary.typicalMonthly, currency);
+      console.log(`  Tool (get_income_summary): ${toolIncome}`);
+      console.log(`  Page (Income): ${pageIncome}`);
+      if (toolIncome === pageIncome) {
+        console.log(`  ✓ Match`);
+      } else {
+        console.log(`  ❌ FAIL: Mismatch`);
+        errors.push(`Income tool vs page mismatch: ${toolIncome} !== ${pageIncome}`);
+        chatToolErrors++;
+      }
     }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Exception: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push(`get_income_summary threw exception: ${err instanceof Error ? err.message : String(err)}`);
+    chatToolErrors++;
   }
   
   // Test 2: get_spending_summary 3mo matches Spending card
   console.log("\nTest 2: get_spending_summary (3mo) matches Spending card");
-  const spendingToolResult = executeTool("get_spending_summary", { range: "3mo" }, profile);
-  if (!spendingToolResult.ok) {
-    console.log(`  ❌ FAIL: Tool execution failed: ${spendingToolResult.error}`);
-    errors.push(`get_spending_summary failed: ${spendingToolResult.error}`);
-    chatToolErrors++;
-  } else {
-    const toolSpending = spendingToolResult.data.typical_monthly;
-    // Get spending card value (from earlier calculation)
-    const cardSpending = formatCurrency(spendingSummary.typicalMonthly, currency);
-    console.log(`  Tool (get_spending_summary): ${toolSpending}`);
-    console.log(`  Card (Spending): ${cardSpending}`);
-    if (toolSpending === cardSpending) {
-      console.log(`  ✓ Match`);
-    } else {
-      console.log(`  ❌ FAIL: Mismatch`);
-      errors.push(`Spending tool vs card mismatch: ${toolSpending} !== ${cardSpending}`);
+  try {
+    const spendingToolResult = executeTool("get_spending_summary", { range: "3mo" }, profile);
+    if (!spendingToolResult.ok) {
+      console.log(`  ❌ FAIL: Tool execution failed: ${spendingToolResult.error}`);
+      errors.push(`get_spending_summary failed: ${spendingToolResult.error}`);
       chatToolErrors++;
+    } else {
+      const toolSpending = spendingToolResult.data.typical_monthly;
+      // Get spending card value (from earlier calculation)
+      const cardSpending = formatCurrency(spendingSummary.typicalMonthly, currency);
+      console.log(`  Tool (get_spending_summary): ${toolSpending}`);
+      console.log(`  Card (Spending): ${cardSpending}`);
+      if (toolSpending === cardSpending) {
+        console.log(`  ✓ Match`);
+      } else {
+        console.log(`  ❌ FAIL: Mismatch`);
+        errors.push(`Spending tool vs card mismatch: ${toolSpending} !== ${cardSpending}`);
+        chatToolErrors++;
+      }
     }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Exception: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push(`get_spending_summary threw exception: ${err instanceof Error ? err.message : String(err)}`);
+    chatToolErrors++;
   }
   
   // Test 3: get_savings_summary matches Savings drawer
   console.log("\nTest 3: get_savings_summary (3mo) matches Savings drawer");
-  const savingsToolResult = executeTool("get_savings_summary", { range: "3mo" }, profile);
-  if (!savingsToolResult.ok) {
-    console.log(`  ❌ FAIL: Tool execution failed: ${savingsToolResult.error}`);
-    errors.push(`get_savings_summary failed: ${savingsToolResult.error}`);
-    chatToolErrors++;
-  } else {
-    const toolSavings = savingsToolResult.data.typical_monthly;
-    // Compute savings drawer value (same as earlier)
-    const rangeMonths3mo = getRangeMonths("3mo" as TimeRange, profile.allTxMonths.sort());
-    const drawerSavings = computeWindowSavings(
-      profile.monthlyHistory,
-      profile.accountBalanceHistory ?? [],
-      profile.expenseTxns,
-      rangeMonths3mo
-    );
-    const drawerSavingsFormatted = formatCurrency(drawerSavings.typicalMonthly, currency);
-    console.log(`  Tool (get_savings_summary): ${toolSavings}`);
-    console.log(`  Drawer (Savings): ${drawerSavingsFormatted}`);
-    if (toolSavings === drawerSavingsFormatted) {
-      console.log(`  ✓ Match`);
-    } else {
-      console.log(`  ❌ FAIL: Mismatch`);
-      errors.push(`Savings tool vs drawer mismatch: ${toolSavings} !== ${drawerSavingsFormatted}`);
+  try {
+    const savingsToolResult = executeTool("get_savings_summary", { range: "3mo" }, profile);
+    if (!savingsToolResult.ok) {
+      console.log(`  ❌ FAIL: Tool execution failed: ${savingsToolResult.error}`);
+      errors.push(`get_savings_summary failed: ${savingsToolResult.error}`);
       chatToolErrors++;
+    } else {
+      const toolSavings = savingsToolResult.data.typical_monthly;
+      // Compute savings drawer value (same as earlier)
+      const rangeMonths3mo = getRangeMonths("3mo" as TimeRange, profile.allTxMonths.sort());
+      const drawerSavings = computeWindowSavings(
+        profile.monthlyHistory,
+        profile.accountBalanceHistory ?? [],
+        profile.expenseTxns,
+        rangeMonths3mo
+      );
+      const drawerSavingsFormatted = formatCurrency(drawerSavings.typicalMonthly, currency);
+      console.log(`  Tool (get_savings_summary): ${toolSavings}`);
+      console.log(`  Drawer (Savings): ${drawerSavingsFormatted}`);
+      if (toolSavings === drawerSavingsFormatted) {
+        console.log(`  ✓ Match`);
+      } else {
+        console.log(`  ❌ FAIL: Mismatch`);
+        errors.push(`Savings tool vs drawer mismatch: ${toolSavings} !== ${drawerSavingsFormatted}`);
+        chatToolErrors++;
+      }
     }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Exception: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push(`get_savings_summary threw exception: ${err instanceof Error ? err.message : String(err)}`);
+    chatToolErrors++;
   }
   
   // Test 4: get_net_worth matches dashboard card
   console.log("\nTest 4: get_net_worth matches dashboard card");
-  const netWorthToolResult = executeTool("get_net_worth", {}, profile);
-  if (!netWorthToolResult.ok) {
-    console.log(`  ❌ FAIL: Tool execution failed: ${netWorthToolResult.error}`);
-    errors.push(`get_net_worth failed: ${netWorthToolResult.error}`);
-    chatToolErrors++;
-  } else {
-    const toolNetWorth = netWorthToolResult.data.net_worth;
-    const { getNetWorth } = await import("../src/lib/profileMetrics");
-    const month = profile.latestTxMonth ?? "";
-    const nw = getNetWorth(profile, month);
-    const dashboardNetWorth = formatCurrency(nw.total, currency);
-    console.log(`  Tool (get_net_worth): ${toolNetWorth}`);
-    console.log(`  Dashboard: ${dashboardNetWorth}`);
-    if (toolNetWorth === dashboardNetWorth) {
-      console.log(`  ✓ Match`);
-    } else {
-      console.log(`  ❌ FAIL: Mismatch`);
-      errors.push(`Net worth tool vs dashboard mismatch: ${toolNetWorth} !== ${dashboardNetWorth}`);
+  try {
+    const netWorthToolResult = executeTool("get_net_worth", {}, profile);
+    if (!netWorthToolResult.ok) {
+      console.log(`  ❌ FAIL: Tool execution failed: ${netWorthToolResult.error}`);
+      errors.push(`get_net_worth failed: ${netWorthToolResult.error}`);
       chatToolErrors++;
+    } else {
+      const toolNetWorth = netWorthToolResult.data.net_worth;
+      const { getNetWorth } = await import("../src/lib/profileMetrics");
+      const month = profile.latestTxMonth ?? "";
+      const nw = getNetWorth(profile, month);
+      const dashboardNetWorth = formatCurrency(nw.total, currency);
+      console.log(`  Tool (get_net_worth): ${toolNetWorth}`);
+      console.log(`  Dashboard: ${dashboardNetWorth}`);
+      if (toolNetWorth === dashboardNetWorth) {
+        console.log(`  ✓ Match`);
+      } else {
+        console.log(`  ❌ FAIL: Mismatch`);
+        errors.push(`Net worth tool vs dashboard mismatch: ${toolNetWorth} !== ${dashboardNetWorth}`);
+        chatToolErrors++;
+      }
     }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Exception: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push(`get_net_worth threw exception: ${err instanceof Error ? err.message : String(err)}`);
+    chatToolErrors++;
   }
   
   // Test 5: list_cash_expenses monthly total matches Cash tab
   console.log("\nTest 5: list_cash_expenses monthly total matches Cash tab");
-  const cashToolResult = executeTool("list_cash_expenses", {}, profile);
-  if (!cashToolResult.ok) {
-    console.log(`  ❌ FAIL: Tool execution failed: ${cashToolResult.error}`);
-    errors.push(`list_cash_expenses failed: ${cashToolResult.error}`);
-    chatToolErrors++;
-  } else {
-    const toolTotal = cashToolResult.data.total_monthly;
-    // Compute expected total from profile
-    const { FREQ_MONTHLY } = await import("../src/app/api/user/cash-commitments/route");
-    const expectedTotal = profile.cashCommitmentEntries
-      .filter((c: any) => c.status !== "paused" && c.frequency !== "once")
-      .reduce((sum: number, c: any) => sum + c.amount * FREQ_MONTHLY[c.frequency], 0);
-    const expectedFormatted = formatCurrency(expectedTotal, currency);
-    console.log(`  Tool (list_cash_expenses): ${toolTotal}`);
-    console.log(`  Expected (Cash tab): ${expectedFormatted}`);
-    if (toolTotal === expectedFormatted) {
-      console.log(`  ✓ Match`);
-    } else {
-      console.log(`  ❌ FAIL: Mismatch`);
-      errors.push(`Cash expenses tool vs tab mismatch: ${toolTotal} !== ${expectedFormatted}`);
+  try {
+    const cashToolResult = executeTool("list_cash_expenses", {}, profile);
+    if (!cashToolResult.ok) {
+      console.log(`  ❌ FAIL: Tool execution failed: ${cashToolResult.error}`);
+      errors.push(`list_cash_expenses failed: ${cashToolResult.error}`);
       chatToolErrors++;
+    } else {
+      const toolTotal = cashToolResult.data.total_monthly;
+      // Compute expected total from profile
+      const { FREQ_MONTHLY } = await import("../src/app/api/user/cash-commitments/route");
+      const expectedTotal = profile.cashCommitmentEntries
+        .filter((c: any) => c.status !== "paused" && c.frequency !== "once")
+        .reduce((sum: number, c: any) => sum + c.amount * FREQ_MONTHLY[c.frequency], 0);
+      const expectedFormatted = formatCurrency(expectedTotal, currency);
+      console.log(`  Tool (list_cash_expenses): ${toolTotal}`);
+      console.log(`  Expected (Cash tab): ${expectedFormatted}`);
+      if (toolTotal === expectedFormatted) {
+        console.log(`  ✓ Match`);
+      } else {
+        console.log(`  ❌ FAIL: Mismatch`);
+        errors.push(`Cash expenses tool vs tab mismatch: ${toolTotal} !== ${expectedFormatted}`);
+        chatToolErrors++;
+      }
     }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Exception: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push(`list_cash_expenses threw exception: ${err instanceof Error ? err.message : String(err)}`);
+    chatToolErrors++;
   }
   
   // Test 6: list_subscriptions returns confirmed subscriptions only
   console.log("\nTest 6: list_subscriptions returns confirmed subscriptions only");
-  const subsToolResult = executeTool("list_subscriptions", {}, profile);
-  if (!subsToolResult.ok) {
-    console.log(`  ❌ FAIL: Tool execution failed: ${subsToolResult.error}`);
-    errors.push(`list_subscriptions failed: ${subsToolResult.error}`);
-    chatToolErrors++;
-  } else {
-    const toolCount = subsToolResult.data.count;
-    const expectedCount = profile.confirmedSubscriptions.length;
-    console.log(`  Tool (list_subscriptions): ${toolCount} subscriptions`);
-    console.log(`  Expected (Subscriptions tab): ${expectedCount} subscriptions`);
-    if (toolCount === expectedCount) {
-      console.log(`  ✓ Match`);
-    } else {
-      console.log(`  ❌ FAIL: Mismatch`);
-      errors.push(`Subscriptions tool vs tab mismatch: ${toolCount} !== ${expectedCount}`);
+  try {
+    const subsToolResult = executeTool("list_subscriptions", {}, profile);
+    if (!subsToolResult.ok) {
+      console.log(`  ❌ FAIL: Tool execution failed: ${subsToolResult.error}`);
+      errors.push(`list_subscriptions failed: ${subsToolResult.error}`);
       chatToolErrors++;
+    } else {
+      const toolCount = subsToolResult.data.count;
+      const expectedCount = profile.confirmedSubscriptions.length;
+      console.log(`  Tool (list_subscriptions): ${toolCount} subscriptions`);
+      console.log(`  Expected (Subscriptions tab): ${expectedCount} subscriptions`);
+      if (toolCount === expectedCount) {
+        console.log(`  ✓ Match`);
+      } else {
+        console.log(`  ❌ FAIL: Mismatch`);
+        errors.push(`Subscriptions tool vs tab mismatch: ${toolCount} !== ${expectedCount}`);
+        chatToolErrors++;
+      }
     }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Exception: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push(`list_subscriptions threw exception: ${err instanceof Error ? err.message : String(err)}`);
+    chatToolErrors++;
   }
   
   // Test 7: Fuzzy source lookup for 'MAM' returns non-empty results
   console.log("\nTest 7: Fuzzy lookup 'MAM' on get_income_summary returns non-empty");
-  const mamToolResult = executeTool("get_income_summary", { range: "12mo" }, profile);
-  if (!mamToolResult.ok) {
-    console.log(`  ❌ FAIL: Tool execution failed: ${mamToolResult.error}`);
-    errors.push(`get_income_summary (MAM test) failed: ${mamToolResult.error}`);
-    chatToolErrors++;
-  } else {
-    // Check if any source fuzzy matches "MAM"
-    const sources = mamToolResult.data.by_source || [];
-    const mamSources = sources.filter((s: any) => 
-      s.source.toLowerCase().includes("mam") ||
-      "mam".includes(s.source.toLowerCase().slice(0, 3))
-    );
-    console.log(`  Total income sources: ${sources.length}`);
-    console.log(`  Sources matching 'MAM': ${mamSources.length}`);
-    if (mamSources.length > 0) {
-      console.log(`  ✓ Found MAM-related sources:`);
-      mamSources.forEach((s: any) => console.log(`    - ${s.source}: ${s.total}`));
+  try {
+    const mamToolResult = executeTool("get_income_summary", { range: "12mo" }, profile);
+    if (!mamToolResult.ok) {
+      console.log(`  ❌ FAIL: Tool execution failed: ${mamToolResult.error}`);
+      errors.push(`get_income_summary (MAM test) failed: ${mamToolResult.error}`);
+      chatToolErrors++;
     } else {
-      console.log(`  ⚠ No MAM sources found (may be expected if user has no MAM income)`);
-      // Don't fail this test - it's acceptable if user genuinely has no MAM income
+      // Check if any source fuzzy matches "MAM"
+      const sources = mamToolResult.data.by_source || [];
+      const mamSources = sources.filter((s: any) => 
+        s.source.toLowerCase().includes("mam") ||
+        "mam".includes(s.source.toLowerCase().slice(0, 3))
+      );
+      console.log(`  Total income sources: ${sources.length}`);
+      console.log(`  Sources matching 'MAM': ${mamSources.length}`);
+      if (mamSources.length > 0) {
+        console.log(`  ✓ Found MAM-related sources:`);
+        mamSources.forEach((s: any) => console.log(`    - ${s.source}: ${s.total}`));
+      } else {
+        console.log(`  ⚠ No MAM sources found (may be expected if user has no MAM income)`);
+        // Don't fail this test - it's acceptable if user genuinely has no MAM income
+      }
     }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Exception: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push(`get_income_summary (MAM test) threw exception: ${err instanceof Error ? err.message : String(err)}`);
+    chatToolErrors++;
   }
   
   if (chatToolErrors > 0) {
