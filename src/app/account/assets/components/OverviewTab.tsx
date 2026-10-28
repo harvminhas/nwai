@@ -1,12 +1,32 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { onAuthStateChanged } from "firebase/auth";
+import { getFirebaseClient } from "@/lib/firebase";
 import type { AssetsSummary } from "@/lib/assetsSummary";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { formatChange, getChangeColor } from "@/lib/colorHelpers";
+import { ReviewList } from "@/components/ReviewList";
 
 interface OverviewTabProps {
   summary: AssetsSummary;
 }
 
 export function OverviewTab({ summary }: OverviewTabProps) {
+  const [token, setToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    const { auth } = getFirebaseClient();
+    return onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        const tok = await user.getIdToken();
+        setToken(tok);
+      } else {
+        setToken(null);
+      }
+    });
+  }, []);
+
   const {
     totalAssets,
     currency,
@@ -75,30 +95,12 @@ export function OverviewTab({ summary }: OverviewTabProps) {
         </div>
       </div>
 
-      {/* Stale Accounts Warning */}
+      {/* Stale Accounts Review */}
       {summary.staleAccounts.length > 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-          <h3 className="text-sm font-semibold text-amber-900 mb-2">
-            ⚠️ Stale Accounts ({summary.staleAccounts.length})
-          </h3>
-          <p className="text-sm text-amber-800 mb-3">
-            These accounts haven't had a statement in over 45 days. 
-            Consider uploading a new statement or marking them as closed.
-          </p>
-          <div className="space-y-2">
-            {summary.staleAccounts.map((acc) => (
-              <div key={acc.slug} className="flex items-center justify-between text-sm">
-                <div>
-                  <span className="font-medium text-amber-900">{acc.bankName}</span>
-                  {acc.accountName && (
-                    <span className="text-amber-700"> · {acc.accountName}</span>
-                  )}
-                </div>
-                <span className="text-amber-600">{acc.daysOld} days old</span>
-              </div>
-            ))}
-          </div>
-        </div>
+        <ReviewList 
+          token={token}
+          reviewType="stale_account"
+        />
       )}
     </div>
   );
