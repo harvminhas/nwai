@@ -1,14 +1,20 @@
 import { NextRequest } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
+import { loadUserReviewContext } from "@/lib/userReviewContext";
 import { answerQuestion, getSuggestedQuestions } from "@/lib/questionTemplates";
+import { queryLLMWithTools } from "@/lib/chat/llmQuery";
 
 export const dynamic = "force-dynamic";
 
 /**
  * POST /api/user/ai-ask
- * Answers user questions about their finances using template-based responses
- * grounded in FinancialProfileCache data.
+ * Answers user questions about their finances.
+ * 
+ * Flow:
+ *   1. Try template-based response first (fast path)
+ *   2. If no template matches, fall through to LLM with tool calling
+ *   3. Never return "not enough information" - tools can answer most questions
  *
  * Body: { question: string }
  * Returns: { answer: string, suggestedFollowUps?: string[] }
@@ -31,17 +37,31 @@ export async function POST(req: NextRequest) {
     }
 
     const profile = await getFinancialProfile(decoded.uid, db);
-    const answer = answerQuestion(question, profile);
+    
+    // Fast path: try template matching first
+    const templateAnswer = answerQuestion(question, profile);
 
-    if (!answer) {
+    if (templateAnswer) {
+      return Response.json({
+        answer: templateAnswer,
+        suggestedFollowUps: getSuggestedQuestions().slice(0, 3),
+      });
+    }
+
+    // Fall through: use LLM with tool calling
+    const apiKey = process.env.GEMINI_API_KEY?.trim();
+    if (!apiKey) {
       return Response.json({
         answer: "I don't have enough information to answer that question yet. Try asking about your spending, savings rate, or subscriptions, or upload more statements for better insights.",
         suggestedFollowUps: getSuggestedQuestions().slice(0, 3),
       });
     }
 
+    const reviewContext = await loadUserReviewContext(decoded.uid, db);
+    const llmAnswer = await queryLLMWithTools(apiKey, question, profile, reviewContext);
+
     return Response.json({
-      answer,
+      answer: llmAnswer,
       suggestedFollowUps: getSuggestedQuestions().slice(0, 3),
     });
   } catch (error) {
