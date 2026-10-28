@@ -66,7 +66,7 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                 onClick={() => setSelectedMonth(
                   selectedMonth === month.month ? null : month.month
                 )}
-                className="flex-1 flex flex-col items-center group relative"
+                className="flex-1 h-full flex flex-col items-center justify-end group relative"
               >
                 {/* Change label (+/-) */}
                 {change !== null && (
