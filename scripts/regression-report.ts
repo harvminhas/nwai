@@ -1711,6 +1711,71 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     console.log(`✅ All account drawer tests passed\n`);
   }
   
+  // ── CASH COMMITMENTS & PLANNER TESTS ──────────────────────────────────────────
+  console.log("💰 CASH COMMITMENTS & PLANNER");
+  console.log("=".repeat(80) + "\n");
+  
+  let cashPlannerErrors = 0;
+  
+  // Test 1: Cash commitments only count up to today
+  console.log(`Current month: ${currentMonth}`);
+  console.log(`Cash commitments in profile: ${profile.cashCommitmentEntries.length}`);
+  
+  for (const entry of profile.cashCommitmentEntries) {
+    const floor = entry.startDate?.slice(0, 7) ?? entry.createdAt?.slice(0, 7);
+    console.log(`  - ${entry.name}: ${entry.frequency}, floor=${floor || 'none'}`);
+    
+    // Check that no future months are counted
+    const futureMonth = new Date();
+    futureMonth.setMonth(futureMonth.getMonth() + 1);
+    const futureYM = `${futureMonth.getFullYear()}-${String(futureMonth.getMonth() + 1).padStart(2, '0')}`;
+    
+    const { commitmentOccurrencesInMonth } = await import("../src/app/api/user/cash-commitments/route");
+    const futureOccurrences = commitmentOccurrencesInMonth(entry, futureYM);
+    
+    if (futureOccurrences > 0) {
+      console.log(`    ❌ FAIL: Future occurrences detected (${futureYM}: ${futureOccurrences})`);
+      cashPlannerErrors++;
+      errors.push(`Cash commitment ${entry.name} has occurrences in future month ${futureYM}`);
+    } else {
+      console.log(`    ✓ No future occurrences`);
+    }
+  }
+  
+  // Test 2: Plans calculation (spent = linked + cash)
+  const plansSnap = await db.collection(`users/${uid}/plans`).get();
+  const plans = plansSnap.docs.map(d => d.data());
+  
+  console.log(`\nPlans in profile: ${plans.length}`);
+  for (const plan of plans) {
+    const linkedTotal = (plan.linkedTransactions || []).reduce((sum: number, tx: any) => sum + (tx.amount || 0), 0);
+    const cashTotal = (plan.cashEntries || []).reduce((sum: number, entry: any) => sum + (entry.amount || 0), 0);
+    const expectedSpent = linkedTotal + cashTotal;
+    
+    console.log(`  - ${plan.name}:`);
+    console.log(`    Linked txns: ${formatCurrency(linkedTotal, currency)}`);
+    console.log(`    Cash entries: ${formatCurrency(cashTotal, currency)}`);
+    console.log(`    Total spent: ${formatCurrency(expectedSpent, currency)}`);
+    console.log(`    Budget: ${formatCurrency(plan.budget, currency)}`);
+    
+    // Validate calculation is correct
+    const calculatedSpent = linkedTotal + cashTotal;
+    if (Math.abs(calculatedSpent - expectedSpent) > 0.01) {
+      console.log(`    ❌ FAIL: Spent calculation mismatch`);
+      cashPlannerErrors++;
+      errors.push(`Plan ${plan.name} spent calculation error: ${calculatedSpent} !== ${expectedSpent}`);
+    } else {
+      console.log(`    ✓ Spent calculation correct`);
+    }
+  }
+  
+  console.log();
+  if (cashPlannerErrors > 0) {
+    console.log(`❌ ${cashPlannerErrors} cash/planner test(s) failed\n`);
+  } else {
+    console.log(`✅ All cash/planner tests passed\n`);
+  }
+  
   // Final summary - check ALL error conditions
   const totalFailures = 
     (allErrors ? errors.length : 0) +
@@ -1718,7 +1783,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     (hasIncomeBarMismatches ? incomeBarMismatches : 0) +
     (hasBaselineChanges ? (baselineComparison?.significantChanges || 0) : 0) +
     rangeErrors +
-    drawerErrors;
+    drawerErrors +
+    cashPlannerErrors;
   
   if (totalFailures > 0) {
     console.log("=".repeat(80));
@@ -1733,6 +1799,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     if (hasBaselineChanges && baselineComparison) console.log(`Significant baseline changes: ${baselineComparison.significantChanges}`);
     if (rangeErrors > 0) console.log(`Range test failures: ${rangeErrors}`);
     if (drawerErrors > 0) console.log(`Account drawer test failures: ${drawerErrors}`);
+    if (cashPlannerErrors > 0) console.log(`Cash/Planner test failures: ${cashPlannerErrors}`);
     
     console.log();
     process.exit(1);

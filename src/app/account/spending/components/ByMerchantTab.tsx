@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import type { SpendingSummary, MerchantSummary } from "@/lib/spendingSummary";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { formatDate, formatMonthYear } from "@/lib/dateFormatting";
+import type { Plan } from "@/app/api/user/plans/route";
 
 type SortMode = "total" | "frequency" | "recent";
 
@@ -15,6 +16,30 @@ export function ByMerchantTab({ summary }: ByMerchantTabProps) {
   const [search, setSearch] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("total");
   const [expandedMerchants, setExpandedMerchants] = useState<Set<string>>(new Set());
+  const [planMap, setPlanMap] = useState<Map<string, string>>(new Map());
+
+  // Load plans to show tags on linked transactions
+  useEffect(() => {
+    async function loadPlans() {
+      try {
+        const res = await fetch("/api/user/plans");
+        if (res.ok) {
+          const data = await res.json();
+          const plans = data.plans || [];
+          const map = new Map<string, string>();
+          plans.forEach((plan: Plan) => {
+            plan.linkedTransactions.forEach((tx) => {
+              map.set(tx.txFingerprint, plan.name);
+            });
+          });
+          setPlanMap(map);
+        }
+      } catch (error) {
+        console.error("Failed to load plans:", error);
+      }
+    }
+    loadPlans();
+  }, []);
 
   // Filter and sort merchants
   const filteredMerchants = useMemo(() => {
@@ -166,17 +191,36 @@ export function ByMerchantTab({ summary }: ByMerchantTabProps) {
 
                           {/* Transactions for this month */}
                           <div className="divide-y divide-gray-100">
-                            {group.transactions.map((txn, idx) => (
-                              <div
-                                key={idx}
-                                className="px-12 py-2 flex items-center justify-between text-xs"
-                              >
-                                <div className="text-gray-600">{formatDate(txn.date)}</div>
-                                <div className="text-gray-900 font-medium">
-                                  {formatCurrency(txn.amount, summary.currency)}
+                            {group.transactions.map((txn, idx) => {
+                              // Compute transaction fingerprint to check for plan tag
+                              const { txFingerprint } = require("@/lib/txFingerprint");
+                              const fingerprint = txFingerprint(
+                                txn.accountSlug || "",
+                                txn.date,
+                                txn.amount,
+                                txn.merchant
+                              );
+                              const planName = planMap.get(fingerprint);
+
+                              return (
+                                <div
+                                  key={idx}
+                                  className="px-12 py-2 flex items-center justify-between text-xs"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-gray-600">{formatDate(txn.date)}</span>
+                                    {planName && (
+                                      <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-700">
+                                        {planName}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-gray-900 font-medium">
+                                    {formatCurrency(txn.amount, summary.currency)}
+                                  </div>
                                 </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </div>
                       ))}

@@ -14,7 +14,7 @@ async function getUid(req: NextRequest): Promise<string | null> {
   } catch { return null; }
 }
 
-export type CashFrequency = "weekly" | "biweekly" | "monthly" | "quarterly" | "once";
+export type CashFrequency = "weekly" | "biweekly" | "monthly" | "quarterly" | "yearly" | "once";
 
 export interface CashCommitment {
   id: string;
@@ -25,6 +25,8 @@ export interface CashCommitment {
   notes?: string;
   nextDate?: string;  // ISO date string, e.g. "2026-03-28"
   startDate?: string; // ISO year-month or date, e.g. "2026-01" — backfill floor
+  status?: "active" | "paused";  // default: active
+  skippedMonths?: string[];  // Array of YYYY-MM strings to skip
   createdAt: string;
   updatedAt: string;
 }
@@ -35,6 +37,7 @@ export const FREQ_MONTHLY: Record<CashFrequency, number> = {
   biweekly:  26 / 12,
   monthly:   1,
   quarterly: 1 / 3,
+  yearly:    1 / 12,
   once:      0,
 };
 
@@ -45,6 +48,14 @@ export const FREQ_MONTHLY: Record<CashFrequency, number> = {
  */
 export function commitmentOccurrencesInMonth(entry: CashCommitment, yearMonth: string): number {
   if (entry.frequency === "once") return 0;
+  if (entry.status === "paused") return 0;
+  if (entry.skippedMonths?.includes(yearMonth)) return 0;
+  
+  // Check if month is in the future
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  if (yearMonth > currentMonth) return 0;
+  
   const floor = entry.startDate?.slice(0, 7) ?? entry.createdAt?.slice(0, 7);
   if (floor && yearMonth < floor) return 0;
   switch (entry.frequency) {
@@ -52,6 +63,7 @@ export function commitmentOccurrencesInMonth(entry: CashCommitment, yearMonth: s
     case "biweekly":  return 26 / 12;
     case "monthly":   return 1;
     case "quarterly": return 1 / 3;
+    case "yearly":    return 1 / 12;
     default:          return 0;
   }
 }
@@ -95,11 +107,11 @@ export async function PUT(req: NextRequest) {
   const uid = await getUid(req);
   if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = await req.json().catch(() => ({}));
-  const { id, name, amount, frequency, category, notes, nextDate, startDate } = body as Partial<CashCommitment>;
+  const { id, name, amount, frequency, category, notes, nextDate, startDate, status, skippedMonths } = body as Partial<CashCommitment>;
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
   const { db } = getFirebaseAdmin();
   const now = new Date().toISOString();
-  const update = stripUndefined({ name, amount, frequency, category, notes, nextDate, startDate, updatedAt: now });
+  const update = stripUndefined({ name, amount, frequency, category, notes, nextDate, startDate, status, skippedMonths, updatedAt: now });
   await db.doc(`users/${uid}/cashCommitments/${id}`).update(update);
   return NextResponse.json({ ok: true });
 }

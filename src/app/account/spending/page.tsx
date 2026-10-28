@@ -12,6 +12,7 @@ import { TrendsTab } from "./components/TrendsTab";
 import { WhereItGoesTab } from "./components/WhereItGoesTab";
 import { ByMerchantTab } from "./components/ByMerchantTab";
 import { SubscriptionsTab } from "./components/SubscriptionsTab";
+import { CashTab } from "./components/CashTab";
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -19,6 +20,7 @@ const TABS = [
   { id: "where", label: "Where it goes" },
   { id: "merchants", label: "By merchant" },
   { id: "subscriptions", label: "Subscriptions" },
+  { id: "cash", label: "Cash" },
 ] as const;
 type TabId = typeof TABS[number]["id"];
 
@@ -141,6 +143,7 @@ function SpendingPageContent() {
         {activeTab === "where" && <WhereItGoesTab summary={summary} />}
         {activeTab === "merchants" && <ByMerchantTab summary={summary} />}
         {activeTab === "subscriptions" && <SubscriptionsTab token={token} />}
+        {activeTab === "cash" && <CashTab token={token} />}
       </div>
     </div>
   );
