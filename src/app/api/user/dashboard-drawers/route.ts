@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
+import { loadUserReviewContext } from "@/lib/userReviewContext";
 import { buildIncomeSummary } from "@/lib/incomeSummary";
 import { computeBucketBreakdown, compute3MonthTrend, getMonthsForWindow as getBucketMonths, type TimeWindow } from "@/lib/bucketBreakdown";
 import { computeWindowSavings } from "@/lib/savingsCalculations";
 import { formatMonthYear } from "@/lib/dateFormatting";
 import type { MoneyCoachBucket } from "@/lib/moneyCoachBuckets";
 import type { IncomeDrawerData, BucketDrawerData, SavingsDrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
-import type { DebtPaymentReview } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -36,26 +36,8 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
     const profile = await getFinancialProfile(decoded.uid, db);
     const currentYear = new Date().getFullYear();
 
-    // Load user debt payment reviews
-    const reviewsSnap = await db.collection(`users/${decoded.uid}/debtPaymentReviews`).get();
-    const userReviews: DebtPaymentReview[] = reviewsSnap.docs.map((doc) => ({
-      txFingerprint: doc.id,
-      accountSlug: doc.get("accountSlug"),
-      classification: doc.get("classification"),
-      date: doc.get("date"),
-      amount: doc.get("amount"),
-      reviewedAt: doc.get("reviewedAt"),
-    }));
-    
-    // Load income deposit reviews
-    const incomeReviewsSnap = await db
-      .collection(`users/${decoded.uid}/reviews`)
-      .where("type", "==", "income_deposit")
-      .get();
-    const incomeDepositReviews = new Map<string, string>();
-    incomeReviewsSnap.docs.forEach(doc => {
-      incomeDepositReviews.set(doc.id, doc.get("classification"));
-    });
+    // Load all user review context (income, debt, savings)
+    const reviewContext = await loadUserReviewContext(decoded.uid, db);
 
     // Income drawer data
     if (bucket === "income") {
@@ -64,7 +46,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
         profile.incomeTxns,
         profile.accountSnapshots,
         profile.homeCurrency,
-        incomeDepositReviews
+        reviewContext.incomeDepositReviews
       );
       
       // Map to drawer data format
@@ -249,26 +231,13 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
         return NextResponse.json({ error: "No complete months available for selected window" }, { status: 404 });
       }
       
-      // Load savings confirmations
-      const savingsReviewsSnap = await db
-        .collection(`users/${decoded.uid}/reviews`)
-        .where("type", "==", "savings_item")
-        .get();
-      
-      const confirmedItems = new Map<string, boolean>();
-      savingsReviewsSnap.docs.forEach(doc => {
-        const classification = doc.get("classification");
-        // "is_savings" → true (count it), anything else → false (exclude it)
-        confirmedItems.set(doc.id, classification === "is_savings");
-      });
-      
-      // Compute window savings with per-month reconciliation
+      // Compute window savings with per-month reconciliation (using shared review context)
       const windowSavings = computeWindowSavings(
         profile.monthlyHistory,
         profile.accountBalanceHistory,
         profile.expenseTxns,
         completeMonths,
-        confirmedItems
+        reviewContext.savingsConfirmedItems
       );
       
       const response: SavingsDrawerData = {
@@ -298,7 +267,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       profile.debtPaymentHistory,
       months,
       profile.homeCurrency,
-      userReviews,
+      reviewContext.debtPaymentReviews,
       profile.fxRates ?? {},
       profile.merchantCadence,
       profile.confirmedSubscriptions
@@ -311,7 +280,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       profile.debtPaymentHistory,
       profile.monthlyHistory,
       profile.homeCurrency,
-      userReviews,
+      reviewContext.debtPaymentReviews,
       profile.fxRates ?? {},
       profile.merchantCadence,
       profile.confirmedSubscriptions

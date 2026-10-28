@@ -57,13 +57,25 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const reviewContext = await loadUserReviewContext(decoded.uid, db);
-    const llmAnswer = await queryLLMWithTools(apiKey, question, profile, reviewContext);
+    try {
+      const reviewContext = await loadUserReviewContext(decoded.uid, db);
+      const llmAnswer = await queryLLMWithTools(apiKey, question, profile, reviewContext);
 
-    return Response.json({
-      answer: llmAnswer,
-      suggestedFollowUps: getSuggestedQuestions().slice(0, 3),
-    });
+      return Response.json({
+        answer: llmAnswer,
+        suggestedFollowUps: getSuggestedQuestions().slice(0, 3),
+      });
+    } catch (llmError: any) {
+      // Handle LLM-specific errors gracefully
+      const status = llmError?.status || llmError?.response?.status;
+      console.error(`[ai-ask] LLM error (status=${status}):`, llmError.message || llmError);
+      
+      // Return user-friendly error instead of canned "not enough information"
+      return Response.json({
+        answer: "The AI assistant is unavailable right now. Please try again later, or ask in the Chat page for more detailed help.",
+        suggestedFollowUps: getSuggestedQuestions().slice(0, 3),
+      });
+    }
   } catch (error) {
     console.error("AI ask error:", error);
     return Response.json(
