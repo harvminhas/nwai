@@ -13,44 +13,47 @@ describe('Bucket Breakdown', () => {
   // Realistic expense transactions for Jul-Sep 2026
   const expenseTxns: ExpenseTxnRecord[] = [
     // July 2026 - Dining
-    { txKey: 'tx1', merchant: 'Starbucks', description: 'Coffee', amount: 5.50, category: 'Dining', date: '2026-07-03', txMonth: '2026-07', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
-    { txKey: 'tx2', merchant: 'McDonalds', description: 'Lunch', amount: 12.00, category: 'Dining', date: '2026-07-05', txMonth: '2026-07', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
+    { merchant: 'Starbucks', amount: 5.50, category: 'Dining', date: '2026-07-03', txMonth: '2026-07', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
+    { merchant: 'McDonalds', amount: 12.00, category: 'Dining', date: '2026-07-05', txMonth: '2026-07', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
     
     // July 2026 - Groceries
-    { txKey: 'tx3', merchant: 'Loblaws', description: 'Groceries', amount: 150.00, category: 'Groceries', date: '2026-07-10', txMonth: '2026-07', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
-    { txKey: 'tx4', merchant: 'Walmart', description: 'Groceries', amount: 85.00, category: 'Groceries', date: '2026-07-20', txMonth: '2026-07', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
+    { merchant: 'Loblaws', amount: 150.00, category: 'Groceries', date: '2026-07-10', txMonth: '2026-07', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
+    { merchant: 'Walmart', amount: 85.00, category: 'Groceries', date: '2026-07-20', txMonth: '2026-07', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
     
     // July 2026 - Shopping
-    { txKey: 'tx5', merchant: 'Amazon', description: 'Electronics', amount: 200.00, category: 'Shopping', date: '2026-07-15', txMonth: '2026-07', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
+    { merchant: 'Amazon', amount: 200.00, category: 'Shopping', date: '2026-07-15', txMonth: '2026-07', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
     
     // July 2026 - Transportation
-    { txKey: 'tx6', merchant: 'Esso', description: 'Gas', amount: 60.00, category: 'Transportation', date: '2026-07-08', txMonth: '2026-07', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
+    { merchant: 'Esso', amount: 60.00, category: 'Transportation', date: '2026-07-08', txMonth: '2026-07', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
     
     // July 2026 - Subscriptions
-    { txKey: 'tx7', merchant: 'Netflix', description: 'Subscription', amount: 16.99, category: 'Subscriptions', date: '2026-07-01', txMonth: '2026-07', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
+    { merchant: 'Netflix', amount: 16.99, category: 'Subscriptions', date: '2026-07-01', txMonth: '2026-07', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
     
     // August 2026 - Similar mix
-    { txKey: 'tx8', merchant: 'Starbucks', description: 'Coffee', amount: 6.00, category: 'Dining', date: '2026-08-02', txMonth: '2026-08', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
-    { txKey: 'tx9', merchant: 'Loblaws', description: 'Groceries', amount: 145.00, category: 'Groceries', date: '2026-08-12', txMonth: '2026-08', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
-    { txKey: 'tx10', merchant: 'Amazon', description: 'Books', amount: 50.00, category: 'Shopping', date: '2026-08-18', txMonth: '2026-08', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
-    { txKey: 'tx11', merchant: 'Esso', description: 'Gas', amount: 65.00, category: 'Transportation', date: '2026-08-10', txMonth: '2026-08', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
-    { txKey: 'tx12', merchant: 'Netflix', description: 'Subscription', amount: 16.99, category: 'Subscriptions', date: '2026-08-01', txMonth: '2026-08', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
+    { merchant: 'Starbucks', amount: 6.00, category: 'Dining', date: '2026-08-02', txMonth: '2026-08', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
+    { merchant: 'Loblaws', amount: 145.00, category: 'Groceries', date: '2026-08-12', txMonth: '2026-08', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
+    { merchant: 'Amazon', amount: 50.00, category: 'Shopping', date: '2026-08-18', txMonth: '2026-08', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
+    { merchant: 'Esso', amount: 65.00, category: 'Transportation', date: '2026-08-10', txMonth: '2026-08', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
+    { merchant: 'Netflix', amount: 16.99, category: 'Subscriptions', date: '2026-08-01', txMonth: '2026-08', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
     
     // September 2026 - Similar mix
-    { txKey: 'tx13', merchant: 'Starbucks', description: 'Coffee', amount: 5.75, category: 'Dining', date: '2026-09-04', txMonth: '2026-09', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
-    { txKey: 'tx14', merchant: 'Loblaws', description: 'Groceries', amount: 160.00, category: 'Groceries', date: '2026-09-15', txMonth: '2026-09', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
-    { txKey: 'tx15', merchant: 'Amazon', description: 'Clothing', amount: 75.00, category: 'Shopping', date: '2026-09-20', txMonth: '2026-09', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
-    { txKey: 'tx16', merchant: 'Esso', description: 'Gas', amount: 70.00, category: 'Transportation', date: '2026-09-12', txMonth: '2026-09', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
-    { txKey: 'tx17', merchant: 'Netflix', description: 'Subscription', amount: 16.99, category: 'Subscriptions', date: '2026-09-01', txMonth: '2026-09', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
+    { merchant: 'Starbucks', amount: 5.75, category: 'Dining', date: '2026-09-04', txMonth: '2026-09', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
+    { merchant: 'Loblaws', amount: 160.00, category: 'Groceries', date: '2026-09-15', txMonth: '2026-09', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
+    { merchant: 'Amazon', amount: 75.00, category: 'Shopping', date: '2026-09-20', txMonth: '2026-09', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
+    { merchant: 'Esso', amount: 70.00, category: 'Transportation', date: '2026-09-12', txMonth: '2026-09', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
+    { merchant: 'Netflix', amount: 16.99, category: 'Subscriptions', date: '2026-09-01', txMonth: '2026-09', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
   ];
 
   const accountSnapshots: AccountSnapshot[] = [
     {
       slug: 'td-1234',
       bankName: 'TD',
+      accountId: '1234',
       accountName: 'TD Chequing',
       accountType: 'checking',
       balance: 5000,
+      statementMonth: '2026-09',
+      interestRate: null,
       currency: 'CAD',
     },
   ];

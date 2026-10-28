@@ -164,6 +164,14 @@ function isGenericSourceName(name: string): boolean {
   return GENERIC_SOURCE_NAMES.some(g => normalized === g);
 }
 
+/**
+ * Create a stable transaction ID for matching across review items and sourcesList.
+ * Used everywhere to ensure consistency.
+ */
+export function makeIncomeTxnId(date: string, source: string, amount: number, accountSlug?: string): string {
+  return `${date}:${source}:${amount}:${accountSlug || 'unknown'}`;
+}
+
 /** Detect if a source is likely a transfer */
 function isLikelyTransfer(source: string, transactions: IncomeTransaction[]): boolean {
   if (INCOME_TRANSFER_RE.test(source)) return true;
@@ -505,7 +513,8 @@ export function buildIncomeSummary(
           t.amount === txn.amount &&
           t.accountSlug === txn.accountSlug
         );
-        const txId = txnWithId?.txId || '';
+        // Use existing txId from profile transaction if available, otherwise construct it
+        const txId = txnWithId?.txId || makeIncomeTxnId(txn.date, txn.source, txn.amount, txn.accountSlug);
         const classification = incomeDepositReviews.get(txId);
         
         // SHARED EXCLUSION LOGIC - skip if this transaction should be excluded
@@ -621,7 +630,8 @@ export function buildIncomeSummary(
               tx.amount === t.amount &&
               tx.accountSlug === t.accountSlug
             );
-            const txId = txnWithId?.txId || '';
+            // Use existing txId from profile transaction if available, otherwise construct it
+            const txId = txnWithId?.txId || makeIncomeTxnId(t.date, t.source, t.amount, t.accountSlug);
             return incomeDepositReviews.get(txId) === 'bonus' || 
                    (withinSourceOneOffs.has(`${t.date}:${t.amount}`) && !incomeDepositReviews.has(txId));
           });

@@ -18,7 +18,7 @@ import { getFinancialProfile } from "../src/lib/financialProfile";
 import { computeMoneyCoachBreakdown } from "../src/lib/moneyCoach";
 import { computeBucketBreakdown } from "../src/lib/bucketBreakdown";
 import { computeAverageSavings, computeMonthlySavings, computeWindowSavings } from "../src/lib/savingsCalculations";
-import { buildIncomeSummary } from "../src/lib/incomeSummary";
+import { buildIncomeSummary, makeIncomeTxnId } from "../src/lib/incomeSummary";
 import { buildSpendingSummary } from "../src/lib/spendingSummary";
 import { buildSubscriptionSummary } from "../src/lib/subscriptionEngine";
 import { computeMonthlyBuckets } from "../src/lib/monthlyBucketComputation";
@@ -415,11 +415,40 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   
   if (mamPaySource) {
     console.log(`\n   MAM PAY source found: ${formatCurrency(mamPaySource.total, currency)} (${mamPaySource.transactions.length} transactions)`);
-    if (sep2026Bonus) {
-      console.log(`   ✅ Sep 2026 bonus appears: ${sep2026Bonus.date}, ${formatCurrency(sep2026Bonus.amount, currency)}`);
+    
+    // Print all Sep 2026 transactions with their IDs and flags
+    const sep2026Txns = mamPaySource.transactions.filter(t => t.date.startsWith('2026-09'));
+    console.log(`\n   MAM PAY Sep 2026 transactions in sourcesList (${sep2026Txns.length}):`);
+    for (const t of sep2026Txns) {
+      const txId = makeIncomeTxnId(t.date, 'MAM PAY', t.amount, t.accountSlug);
+      console.log(`     ${t.date} | ${formatCurrency(t.amount, currency)} | ${t.accountSlug || 'unknown'} | isBonus=${t.isBonus} | needsReview=${t.needsReview}`);
+      console.log(`       txId: ${txId}`);
+    }
+    
+    // Find the review item for the ~CA$24,695 bonus
+    const bonusReviewItem = incomeSummary.bonusTransactions.find(b => 
+      b.source === 'MAM PAY' && 
+      b.date.startsWith('2026-09') &&
+      Math.abs(b.amount - 24695) <= 1
+    );
+    if (bonusReviewItem) {
+      console.log(`\n   Bonus review item (~CA$24,695):`);
+      console.log(`     ${bonusReviewItem.date} | ${formatCurrency(bonusReviewItem.amount, currency)} | ${bonusReviewItem.accountSlug || 'unknown'}`);
+      const reviewTxId = makeIncomeTxnId(bonusReviewItem.date, bonusReviewItem.source, bonusReviewItem.amount, bonusReviewItem.accountSlug);
+      console.log(`     txId: ${reviewTxId}`);
+    }
+    
+    // Tolerant check: match by date + amount within CA$1
+    const sep2026BonusTolerant = mamPaySource.transactions.find(t => 
+      t.date.startsWith('2026-09') && 
+      Math.abs(t.amount - 24695) <= 1
+    );
+    
+    if (sep2026BonusTolerant?.isBonus) {
+      console.log(`\n   ✅ Sep 2026 bonus appears: ${sep2026BonusTolerant.date}, ${formatCurrency(sep2026BonusTolerant.amount, currency)}`);
     } else {
       errors.push(`MAM PAY Sep 2026 bonus NOT found in sourcesList`);
-      console.log(`   ❌ Sep 2026 bonus NOT found`);
+      console.log(`\n   ❌ Sep 2026 bonus NOT found (no Sep 2026 transaction ~CA$24,695 with isBonus=true)`);
     }
   } else {
     console.log(`   ⚠️  MAM PAY source not found in window months`);
