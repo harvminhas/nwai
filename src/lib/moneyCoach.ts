@@ -44,6 +44,8 @@ export interface MoneyCoachBreakdown {
   incomeAmount: number;
   /** Income basis label: "last 3 months" or "10-month avg" */
   incomeBasisLabel: string;
+  /** Range label for cards: "avg · Last 3 months", "avg · 12-month", "avg · This year" */
+  rangeLabel: string;
   /** Spending buckets */
   buckets: MoneyCoachBucketSummary[];
   /** Total spending (sum of all bucket averages) */
@@ -235,9 +237,29 @@ export function computeMoneyCoachBreakdown(
     );
   }
 
+  // Compute range label for cards
+  let rangeLabel = "avg · Last 3 months"; // Default
+  if (rangeMonths) {
+    const count = rangeMonths.length;
+    if (count === 12) {
+      rangeLabel = "avg · 12-month";
+    } else {
+      // Check if it's YTD (starts with Jan of current year)
+      const now = new Date();
+      const currentYear = now.getFullYear();
+      const firstMonth = rangeMonths[0];
+      if (firstMonth === `${currentYear}-01`) {
+        rangeLabel = "avg · This year";
+      } else {
+        rangeLabel = `avg · Last ${count} months`;
+      }
+    }
+  }
+  
   return {
     incomeAmount,
     incomeBasisLabel,
+    rangeLabel,
     buckets: bucketSummaries,
     totalSpending,
     savingsRate,

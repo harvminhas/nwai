@@ -29,6 +29,7 @@ interface MoneyCoachBucket {
 interface MoneyCoachBreakdown {
   incomeAmount: number;
   incomeBasisLabel: string;
+  rangeLabel: string;
   buckets: MoneyCoachBucket[];
   totalSpending: number;
   savingsRate: number;
@@ -142,7 +143,7 @@ function WhereMoneyGoes({
   onOpenDrawer: (type: DrawerType) => void;
   unreviewedCount: number;
 }) {
-  const { coverage, incomeAmount, incomeBasisLabel, buckets } = breakdown;
+  const { coverage, incomeAmount, incomeBasisLabel, rangeLabel, buckets } = breakdown;
   
   // Calculate bucket percentages
   const fixedBucket = buckets.find(b => b.bucket === "fixed");
@@ -193,7 +194,7 @@ function WhereMoneyGoes({
                 {fmt(incomeAmount, currency)}
                 <span className="text-sm font-medium text-gray-400">/mo</span>
               </p>
-              <p className="mt-1 text-xs text-gray-500">{incomeBasisLabel} · take-home</p>
+              <p className="mt-1 text-xs text-gray-500">{rangeLabel} · take-home</p>
               
               <div className="mt-4 h-2 w-full rounded-full bg-gray-100">
                 <div className="h-full w-full rounded-full bg-purple-600" />
@@ -327,7 +328,7 @@ function WhereMoneyGoes({
                     <span className="text-sm font-medium text-gray-400">/mo</span>
                   </p>
                   <p className="mt-1 text-xs text-gray-500">
-                    {Math.round(bucket.pctOfIncome)}% of take-home
+                    {rangeLabel} · {Math.round(bucket.pctOfIncome)}% of take-home
                     {bucket.bucket === "savings" && ` · target ${bucket.targetPct}%`}
                   </p>
                   
