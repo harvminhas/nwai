@@ -344,6 +344,14 @@ function computeMonthlyEquivalent(avgAmount: number, frequency: Frequency): numb
 }
 
 /**
+ * Generate a consistent transaction ID for income transactions.
+ * Used for matching reviews and linking transactions across summaries.
+ */
+export function makeIncomeTxnId(date: string, source: string, amount: number, accountSlug?: string): string {
+  return `${date}:${source}:${amount}:${accountSlug || 'unknown'}`;
+}
+
+/**
  * Build income summary from transactions.
  * This is the single source of truth for all income data in the app.
  * 

@@ -24,6 +24,7 @@ import { buildSubscriptionSummary } from "../src/lib/subscriptionEngine";
 import { computeMonthlyBuckets } from "../src/lib/monthlyBucketComputation";
 import { buildAssetsSummary } from "../src/lib/assetsSummary";
 import { buildDebtsSummary } from "../src/lib/debtsSummary";
+import { calculatePayoffInsight, type DebtForPayoff } from "../src/lib/payoffInsight";
 import type { MoneyCoachBucket } from "../src/lib/moneyCoachBuckets";
 import type { DebtPaymentReview } from "../src/lib/types";
 import { getParentCategory } from "../src/lib/categoryTaxonomy";
@@ -1314,6 +1315,45 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     console.log(`   ✅ All ${assetsHistoryMonths.length} months consistent`);
   } else {
     errors.push(`${historyErrors} month(s) have inconsistent net worth in history`);
+  }
+  
+  // Payoff insight
+  console.log(`\n📊 Payoff Insight:`);
+  const debtsForPayoff: DebtForPayoff[] = debtsSummary.groups.flatMap(g =>
+    g.accounts.map(acc => ({
+      accountSlug: acc.slug,
+      accountName: acc.accountName,
+      balance: acc.balance,
+      interestRate: acc.interestRate,
+      monthlyPayment: acc.monthlyPayment,
+    }))
+  );
+  
+  const payoffInsight = calculatePayoffInsight(debtsForPayoff, 200);
+  
+  if (payoffInsight.hasInsight) {
+    console.log(`   Highest-rate debt: ${payoffInsight.highestRateAccount?.accountName || payoffInsight.highestRateAccount?.accountSlug} at ${payoffInsight.highestRateAccount?.rate.toFixed(2)}%`);
+    console.log(`   Suggestion: Add CA$200/mo extra to highest-rate debt\n`);
+    
+    for (const scenario of payoffInsight.scenarios) {
+      const payoffDate = new Date();
+      payoffDate.setMonth(payoffDate.getMonth() + scenario.currentMonths);
+      const acceleratedDate = new Date();
+      acceleratedDate.setMonth(acceleratedDate.getMonth() + scenario.acceleratedMonths);
+      
+      console.log(`   ${scenario.accountName || scenario.accountSlug}:`);
+      console.log(`     Balance: ${formatCurrency(scenario.balance, currency)} @ ${scenario.rate.toFixed(2)}%`);
+      console.log(`     Current: ${formatCurrency(scenario.currentPayment, currency)}/mo → ${scenario.currentMonths} months (${payoffDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}) → ${formatCurrency(scenario.currentInterestPaid, currency)} interest`);
+      if (scenario.extraPayment > 0) {
+        console.log(`     With +${formatCurrency(scenario.extraPayment, currency)}/mo: ${scenario.acceleratedMonths} months (${acceleratedDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}) → ${formatCurrency(scenario.acceleratedInterestPaid, currency)} interest`);
+        console.log(`     💰 Saves ${scenario.monthsSaved} months and ${formatCurrency(scenario.interestSaved, currency)} interest`);
+      } else {
+        console.log(`     (No extra payment on this account)`);
+      }
+      console.log();
+    }
+  } else {
+    console.log(`   No debts with known rate and payment`);
   }
   
   // Print stale accounts
