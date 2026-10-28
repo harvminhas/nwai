@@ -6,7 +6,8 @@ import { generateIncomeReviews } from "@/lib/incomeReviews";
 import { generateSavingsReviews } from "@/lib/savingsReviews";
 import { buildSubscriptionSummary } from "@/lib/subscriptionEngine";
 import { buildIncomeSummary } from "@/lib/incomeSummary";
-import type { ReviewItem, ReviewClassification, DebtPaymentReviewItem, SavingsReviewItem, IncomeClassificationReviewItem, SubscriptionReviewItem, IncomeDepositReviewItem } from "@/lib/reviewTypes";
+import type { ReviewItem, ReviewClassification, DebtPaymentReviewItem, SavingsReviewItem, IncomeClassificationReviewItem, SubscriptionReviewItem, IncomeDepositReviewItem, StaleAccountReviewItem } from "@/lib/reviewTypes";
+import { buildAssetsSummary } from "@/lib/assetsSummary";
 
 export const dynamic = "force-dynamic";
 
@@ -24,9 +25,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const { auth, db } = getFirebaseAdmin();
     const decoded = await auth.verifyIdToken(token);
     const { searchParams } = new URL(req.url);
-    const reviewType = searchParams.get("type") as "debt_payment" | "savings_item" | "income_classification" | "subscription" | "income_deposit" | null;
+    const reviewType = searchParams.get("type") as "debt_payment" | "savings_item" | "income_classification" | "subscription" | "income_deposit" | "stale_account" | null;
 
-    if (!reviewType || !["debt_payment", "savings_item", "income_classification", "subscription", "income_deposit"].includes(reviewType)) {
+    if (!reviewType || !["debt_payment", "savings_item", "income_classification", "subscription", "income_deposit", "stale_account"].includes(reviewType)) {
       return NextResponse.json({ error: "Invalid review type" }, { status: 400 });
     }
 
@@ -154,6 +155,33 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           amount: c.amount,
           txMonth: c.lastDate.slice(0, 7), // YYYY-MM
         })) as SubscriptionReviewItem[];
+    } else if (reviewType === "stale_account") {
+      // Get stale accounts (no statement for >45 days)
+      const assetsSummary = buildAssetsSummary(
+        profile.accountSnapshots,
+        profile.accountBalanceHistory,
+        profile.manualAssets,
+        profile.fxRates ?? {},
+        profile.homeCurrency,
+        profile.monthlyHistory
+      );
+      
+      items = assetsSummary.staleAccounts
+        .filter(acc => !reviewedIds.has(acc.slug))
+        .map(acc => ({
+          id: acc.slug,
+          type: "stale_account" as const,
+          accountSlug: acc.slug,
+          accountName: acc.accountName || acc.accountType,
+          bankName: acc.bankName,
+          accountType: acc.accountType,
+          balance: acc.balance,
+          daysOld: acc.daysOld,
+          lastStatementMonth: acc.statementMonth,
+          date: `${acc.statementMonth}-15`, // Mid-month
+          amount: acc.balance,
+          txMonth: acc.statementMonth,
+        })) as StaleAccountReviewItem[];
     }
 
     return NextResponse.json({ items });
@@ -187,7 +215,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    if (!["debt_payment", "savings_item", "income_classification", "subscription", "income_deposit"].includes(type)) {
+    if (!["debt_payment", "savings_item", "income_classification", "subscription", "income_deposit", "stale_account"].includes(type)) {
       return NextResponse.json({ error: "Invalid review type" }, { status: 400 });
     }
 

@@ -10,10 +10,12 @@ describe("subscriptionEngine", () => {
     date: string
   ): ExpenseTxnRecord => ({
     date,
+    txMonth: date.slice(0, 7), // YYYY-MM
     merchant,
     category,
     amount: -Math.abs(amount), // expenses are negative
     accountSlug: "test-account",
+    accountLabel: "Test Account",
     currency: "CAD",
   });
 

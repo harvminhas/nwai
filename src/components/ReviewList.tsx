@@ -5,7 +5,7 @@ import type { ReviewItem, ReviewClassification } from "@/lib/reviewTypes";
 
 interface ReviewListProps {
   token: string | null;
-  reviewType: "debt_payment" | "savings_item" | "income_classification" | "subscription" | "income_deposit";
+  reviewType: "debt_payment" | "savings_item" | "income_classification" | "subscription" | "income_deposit" | "stale_account";
   onReviewComplete?: () => void;
 }
 
@@ -204,6 +204,15 @@ export function ReviewList({ token, reviewType, onReviewComplete }: ReviewListPr
       
       {currentItem.type === "subscription" && (
         <SubscriptionReviewCard
+          item={currentItem as any}
+          animatingOut={animatingOut}
+          submitting={submitting}
+          onClassify={handleClassify}
+        />
+      )}
+      
+      {currentItem.type === "stale_account" && (
+        <StaleAccountReviewCard
           item={currentItem as any}
           animatingOut={animatingOut}
           submitting={submitting}
@@ -574,6 +583,77 @@ function IncomeDepositReviewCard({
           style={{ fontFamily: "Inter, sans-serif" }}
         >
           Not income
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Stale account review card
+function StaleAccountReviewCard({
+  item,
+  animatingOut,
+  submitting,
+  onClassify,
+}: {
+  item: any;
+  animatingOut: boolean;
+  submitting: boolean;
+  onClassify: (item: any, classification: ReviewClassification) => void;
+}) {
+  const monthDisplay = (() => {
+    const match = item.lastStatementMonth?.match(/^(\d{4})-(\d{2})$/);
+    if (match) {
+      const [, year, month] = match;
+      const date = new Date(parseInt(year), parseInt(month) - 1);
+      return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+    }
+    return item.lastStatementMonth || "Unknown";
+  })();
+
+  return (
+    <div
+      className={`rounded-lg border border-gray-200 bg-white p-4 transition-all duration-300 ${
+        animatingOut ? "opacity-0 scale-95" : "opacity-100 scale-100"
+      }`}
+    >
+      <div className="mb-3">
+        <div className="font-semibold text-gray-900" style={{ fontFamily: "Inter, sans-serif" }}>
+          {item.bankName} {item.accountName}
+        </div>
+        <div className="flex items-center gap-2 mt-1 text-sm text-gray-600">
+          <span>{item.accountType}</span>
+          <span className="text-gray-400">•</span>
+          <span className="text-orange-600 font-medium">
+            No statement since {monthDisplay} ({item.daysOld} days)
+          </span>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => onClassify(item, "still_open")}
+          disabled={submitting}
+          className="text-xs font-medium px-3 py-1.5 rounded-md border border-violet-600 bg-white text-violet-700 hover:bg-violet-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          style={{ fontFamily: "Inter, sans-serif" }}
+        >
+          Still open — upload statement
+        </button>
+        <button
+          onClick={() => onClassify(item, "closed")}
+          disabled={submitting}
+          className="text-xs font-medium px-3 py-1.5 rounded-md bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          style={{ fontFamily: "Inter, sans-serif" }}
+        >
+          Closed
+        </button>
+        <button
+          onClick={() => onClassify(item, "ignore")}
+          disabled={submitting}
+          className="text-xs font-medium px-3 py-1.5 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          style={{ fontFamily: "Inter, sans-serif" }}
+        >
+          Ignore
         </button>
       </div>
     </div>

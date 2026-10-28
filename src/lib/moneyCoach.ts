@@ -22,6 +22,7 @@ import { computeScheduledDebtPayments, type ScheduledDebtPayment } from "./debtP
 import { getParentCategory } from "./categoryTaxonomy";
 import { getMoneyCoachIncome } from "./incomeMetrics";
 import { computeAverageSavings } from "./savingsCalculations";
+import { buildSpendingSummary } from "./spendingSummary";
 
 export interface MoneyCoachBucketSummary {
   bucket: MoneyCoachBucket;
@@ -44,6 +45,8 @@ export interface MoneyCoachBreakdown {
   incomeAmount: number;
   /** Income basis label: "last 3 months" or "10-month avg" */
   incomeBasisLabel: string;
+  /** Range label for cards: "avg · Last 3 months", "avg · 12-month", "avg · This year" */
+  rangeLabel: string;
   /** Spending buckets */
   buckets: MoneyCoachBucketSummary[];
   /** Total spending (sum of all bucket averages) */
@@ -72,13 +75,20 @@ function average(values: number[]): number {
  * Uses average (not median) across the same window as income calculation
  * to ensure consistent percentages.
  */
+/**
+ * Compute Money Coach breakdown with spending buckets and advice.
+ * 
+ * @param rangeMonths - Optional: specific months to use for calculations (YYYY-MM format, oldest first)
+ *                      If not provided, uses last 3 complete months with income
+ */
 export function computeMoneyCoachBreakdown(
   profile: FinancialProfileCache,
   userReviews: DebtPaymentReview[] = [],
   incomeTxns: any[] = [],
   accountSnapshots: any[] = [],
   homeCurrency: string = "CAD",
-  incomeDepositReviews: Map<string, string> = new Map()
+  incomeDepositReviews: Map<string, string> = new Map(),
+  rangeMonths?: string[]
 ): MoneyCoachBreakdown {
   const { monthlyHistory, expenseTxns, coverage, debtPaymentHistory, accountBalanceHistory, fxRates } = profile;
 
@@ -89,22 +99,54 @@ export function computeMoneyCoachBreakdown(
     incomeTxns,
     accountSnapshots,
     homeCurrency,
-    incomeDepositReviews
+    incomeDepositReviews,
+    rangeMonths
   );
 
-  // Determine which months to use for spending (same window as income)
-  // Exclude current incomplete month (matches incomeMetrics.ts and bucketBreakdown.ts logic)
-  const now = new Date();
-  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  // Determine which months to use for spending
+  // If rangeMonths provided, use those; otherwise default to last 3 complete months with income
+  let spendingMonths: string[];
   
-  const completeMonthsWithIncome = monthlyHistory.filter(h => 
-    h.incomeTotal > 0 && h.yearMonth < currentMonth
-  );
-  const spendingMonths = completeMonthsWithIncome.length >= 3 
-    ? completeMonthsWithIncome.slice(-3).map(h => h.yearMonth)  // Use last 3 complete months
-    : completeMonthsWithIncome.map(h => h.yearMonth);          // Use all available complete months
+  if (rangeMonths && rangeMonths.length > 0) {
+    spendingMonths = rangeMonths;
+  } else {
+    // Exclude current incomplete month (matches incomeMetrics.ts and bucketBreakdown.ts logic)
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    
+    const completeMonthsWithIncome = monthlyHistory.filter(h => 
+      h.incomeTotal > 0 && h.yearMonth < currentMonth
+    );
+    spendingMonths = completeMonthsWithIncome.length >= 3 
+      ? completeMonthsWithIncome.slice(-3).map(h => h.yearMonth)  // Use last 3 complete months
+      : completeMonthsWithIncome.map(h => h.yearMonth);
+  }
 
-  // Compute scheduled debt payments (fixed costs)
+  // SINGLE SOURCE OF TRUTH: Use buildSpendingSummary for spending calculation
+  // This ensures card and page use identical logic
+  const spendingSummary = buildSpendingSummary(
+    expenseTxns,
+    accountSnapshots,
+    profile.debtPaymentHistory,
+    userReviews,
+    fxRates ?? {},
+    homeCurrency ?? "CAD",
+    spendingMonths
+  );
+  
+  // Total spending from the shared function - this is the single source of truth
+  const totalSpending = spendingSummary.typicalMonthly;
+  
+  // Get per-bucket averages for display from the computed monthlyHistory
+  const bucketAverages: Record<MoneyCoachBucket, number> = {
+    fixed: 0,
+    essentials: 0,
+    flexible: 0,
+    savings: 0,
+    uncategorized: 0,
+  };
+  
+  // Check if there's estimated debt for the hasEstimates flag
   const scheduledPayments = computeScheduledDebtPayments(
     accountSnapshots, 
     profile.debtPaymentHistory, 
@@ -112,60 +154,21 @@ export function computeMoneyCoachBreakdown(
     fxRates ?? {},
     homeCurrency ?? "CAD"
   );
-  const scheduledByAccount = new Map(scheduledPayments.map(p => [p.accountSlug, p]));
   const hasEstimatedDebt = scheduledPayments.some(p => p.isEstimated);
-
-  // Total scheduled debt payments per month
-  const totalScheduledDebt = scheduledPayments.reduce((sum, p) => sum + p.amount, 0);
-
-  // Group expenses by bucket for each month in the spending window
-  const bucketsByMonth = new Map<string, Record<MoneyCoachBucket, number>>();
-
-  for (const ym of spendingMonths) {
-    const buckets: Record<MoneyCoachBucket, number> = {
-      fixed: totalScheduledDebt, // Start with scheduled debt payments
-      essentials: 0,
-      flexible: 0,
-      savings: 0,
-      uncategorized: 0,
-    };
-
-    // Get transactions for this month
-    const monthTxns = expenseTxns.filter(t => t.txMonth === ym);
-
-    for (const txn of monthTxns) {
-      // Skip transfers and other excluded categories
-      if (isCoreExcluded(txn.category)) continue;
-
-      // Skip Debt payments entirely - handled by NET balance approach in savings calculation
-      const parentCategory = getParentCategory(txn.category);
-      if (parentCategory === "Debt") {
-        continue; // Don't add to any bucket
-      }
-
-      const bucket = getCategoryBucket(txn.category);
-      const amount = Math.abs(txn.amount);
-      buckets[bucket] += amount;
-    }
-
-    // Note: savings bucket is NOT calculated here - uses NET balance approach below
-    bucketsByMonth.set(ym, buckets);
+  
+  // Average bucket values across the spending months
+  const relevantMonths = spendingSummary.monthlyHistory.filter(m => spendingMonths.includes(m.yearMonth));
+  if (relevantMonths.length > 0) {
+    bucketAverages.fixed = relevantMonths.reduce((sum, m) => sum + m.fixed, 0) / relevantMonths.length;
+    bucketAverages.essentials = relevantMonths.reduce((sum, m) => sum + m.essentials, 0) / relevantMonths.length;
+    bucketAverages.flexible = relevantMonths.reduce((sum, m) => sum + m.flexible, 0) / relevantMonths.length;
   }
-
-  // Compute average for each bucket (same window as income)
-  // Savings uses shared calculation function (actual contributions + debt paydown)
+  
+  // Savings uses the app's definition: cash change + debt change + contributions (same as drawer)
   const averageSavings = computeAverageSavings(monthlyHistory, accountBalanceHistory, expenseTxns, spendingMonths);
-
-  const bucketAverages: Record<MoneyCoachBucket, number> = {
-    fixed: average([...bucketsByMonth.values()].map(b => b.fixed)),
-    essentials: average([...bucketsByMonth.values()].map(b => b.essentials)),
-    flexible: average([...bucketsByMonth.values()].map(b => b.flexible)),
-    savings: averageSavings, // From shared data layer
-    uncategorized: average([...bucketsByMonth.values()].map(b => b.uncategorized)),
-  };
-
-  const totalSpending = Object.values(bucketAverages).reduce((sum, v) => sum + v, 0);
-  const savingsRate = incomeAmount > 0 ? (incomeAmount - totalSpending) / incomeAmount : 0;
+  bucketAverages.savings = averageSavings;
+  
+  const savingsRate = incomeAmount > 0 ? averageSavings / incomeAmount : 0;
 
   // Build bucket summaries with advice
   const bucketSummaries: MoneyCoachBucketSummary[] = (
@@ -219,9 +222,29 @@ export function computeMoneyCoachBreakdown(
     );
   }
 
+  // Compute range label for cards
+  let rangeLabel = "avg · Last 3 months"; // Default
+  if (rangeMonths) {
+    const count = rangeMonths.length;
+    if (count === 12) {
+      rangeLabel = "avg · 12-month";
+    } else {
+      // Check if it's YTD (starts with Jan of current year)
+      const now = new Date();
+      const currentYear = now.getFullYear();
+      const firstMonth = rangeMonths[0];
+      if (firstMonth === `${currentYear}-01`) {
+        rangeLabel = "avg · This year";
+      } else {
+        rangeLabel = `avg · Last ${count} months`;
+      }
+    }
+  }
+  
   return {
     incomeAmount,
     incomeBasisLabel,
+    rangeLabel,
     buckets: bucketSummaries,
     totalSpending,
     savingsRate,

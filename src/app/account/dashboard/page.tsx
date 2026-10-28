@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { useActiveProfile } from "@/contexts/ActiveProfileContext";
@@ -10,6 +10,17 @@ import { fmt } from "@/lib/currencyUtils";
 import { getSignColor } from "@/lib/colorHelpers";
 import { Drawer, type DrawerType } from "@/components/Drawer";
 import { ReviewList } from "@/components/ReviewList";
+import { RangeSwitch } from "@/components/RangeSwitch";
+import type { TimeRange } from "@/lib/rangeUtils";
+
+// Convert TimeRange to Drawer's TimeWindow format
+function rangeToWindow(range: TimeRange): "last3" | "12month" | "ytd" {
+  switch (range) {
+    case "3mo": return "last3";
+    case "12mo": return "12month";
+    case "ytd": return "ytd";
+  }
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -27,6 +38,7 @@ interface MoneyCoachBucket {
 interface MoneyCoachBreakdown {
   incomeAmount: number;
   incomeBasisLabel: string;
+  rangeLabel: string;
   buckets: MoneyCoachBucket[];
   totalSpending: number;
   savingsRate: number;
@@ -133,14 +145,20 @@ function WhereMoneyGoes({
   breakdown, 
   currency, 
   onOpenDrawer,
-  unreviewedCount
+  unreviewedCount,
+  range,
+  onRangeChange,
+  rangeLoading
 }: { 
   breakdown: MoneyCoachBreakdown; 
   currency: string;
   onOpenDrawer: (type: DrawerType) => void;
   unreviewedCount: number;
+  range: TimeRange;
+  onRangeChange: (range: TimeRange) => void;
+  rangeLoading: boolean;
 }) {
-  const { coverage, incomeAmount, incomeBasisLabel, buckets } = breakdown;
+  const { coverage, incomeAmount, incomeBasisLabel, rangeLabel, buckets } = breakdown;
   
   // Calculate bucket percentages
   const fixedBucket = buckets.find(b => b.bucket === "fixed");
@@ -157,6 +175,12 @@ function WhereMoneyGoes({
 
   return (
     <section className="mt-10">
+      {/* Section Header with Range Switch */}
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold text-gray-900">Where Your Money Goes</h2>
+        <RangeSwitch value={range} onChange={onRangeChange} />
+      </div>
+      
       {/* Coverage Note */}
       {coverage.coveragePct < 90 && (
         <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900">
@@ -173,8 +197,8 @@ function WhereMoneyGoes({
         </div>
       )}
 
-      {/* Five Bucket Cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      {/* Five Bucket Cards - with subtle loading state */}
+      <div className={`grid gap-4 sm:grid-cols-2 lg:grid-cols-5 transition-opacity ${rangeLoading ? 'opacity-60' : 'opacity-100'}`}>
             {/* Income Card */}
             <button
               onClick={() => onOpenDrawer("income")}
@@ -191,7 +215,7 @@ function WhereMoneyGoes({
                 {fmt(incomeAmount, currency)}
                 <span className="text-sm font-medium text-gray-400">/mo</span>
               </p>
-              <p className="mt-1 text-xs text-gray-500">{incomeBasisLabel} · take-home</p>
+              <p className="mt-1 text-xs text-gray-500">{rangeLabel} · take-home</p>
               
               <div className="mt-4 h-2 w-full rounded-full bg-gray-100">
                 <div className="h-full w-full rounded-full bg-purple-600" />
@@ -325,7 +349,7 @@ function WhereMoneyGoes({
                     <span className="text-sm font-medium text-gray-400">/mo</span>
                   </p>
                   <p className="mt-1 text-xs text-gray-500">
-                    {Math.round(bucket.pctOfIncome)}% of take-home
+                    {rangeLabel} · {Math.round(bucket.pctOfIncome)}% of take-home
                     {bucket.bucket === "savings" && ` · target ${bucket.targetPct}%`}
                   </p>
                   
@@ -372,6 +396,7 @@ function WhereMoneyGoes({
 
 export default function DashboardPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { buildHeaders } = useActiveProfile();
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -382,6 +407,14 @@ export default function DashboardPage() {
   const [currency, setCurrency] = useState("USD");
   const [activeDrawer, setActiveDrawer] = useState<DrawerType | null>(null);
   const [unreviewedCount, setUnreviewedCount] = useState(0);
+  
+  // Range state - default to 3mo, sync with URL
+  const [range, setRange] = useState<TimeRange>(() => {
+    const param = searchParams.get("range");
+    if (param === "12mo" || param === "ytd") return param;
+    return "3mo";
+  });
+  const [rangeLoading, setRangeLoading] = useState(false);
 
   // Handle URL hash for drawer state
   useEffect(() => {
@@ -419,13 +452,13 @@ export default function DashboardPage() {
     });
   }, [router]);
 
-  const loadData = useCallback(async (tok: string, options?: { silent?: boolean }) => {
+  const loadData = useCallback(async (tok: string, selectedRange: TimeRange, options?: { silent?: boolean }) => {
     if (!options?.silent) {
       setLoading(true);
     }
     try {
       const [coachRes, suggestionsRes, anomaliesRes] = await Promise.all([
-        fetch("/api/user/money-coach", { headers: buildHeaders(tok) }),
+        fetch(`/api/user/money-coach?range=${selectedRange}`, { headers: buildHeaders(tok) }),
         fetch("/api/user/ai-ask", { headers: buildHeaders(tok) }),
         fetch("/api/user/debt-payment-anomalies", { headers: buildHeaders(tok) }),
       ]);
@@ -456,9 +489,42 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (token) {
-      loadData(token);
+      loadData(token, range);
     }
-  }, [token, loadData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]); // Only reload on token change; range changes are handled by handleRangeChange
+  
+  const handleRangeChange = async (newRange: TimeRange) => {
+    if (!token) return;
+    
+    // Keep previous values visible with loading state
+    setRangeLoading(true);
+    
+    try {
+      // Fetch only the money-coach data for the new range
+      const coachRes = await fetch(`/api/user/money-coach?range=${newRange}`, { 
+        headers: buildHeaders(token) 
+      });
+      
+      if (coachRes.ok) {
+        const data = await coachRes.json();
+        setBreakdown(data);
+        setCurrency(data.homeCurrency || "USD");
+      }
+      
+      // Update URL without navigation
+      const params = new URLSearchParams(window.location.search);
+      params.set("range", newRange);
+      window.history.replaceState({}, '', `?${params.toString()}`);
+      
+      // Update range state
+      setRange(newRange);
+    } catch (error) {
+      console.error("Failed to update range:", error);
+    } finally {
+      setRangeLoading(false);
+    }
+  };
 
   const handleAsk = async (question: string) => {
     if (!token) return;
@@ -546,7 +612,7 @@ export default function DashboardPage() {
               onReviewComplete={() => {
                 // Silent background refresh - keep current UI, swap in new numbers
                 if (token) {
-                  loadData(token, { silent: true });
+                  loadData(token, range, { silent: true });
                 }
               }} 
             />
@@ -555,7 +621,15 @@ export default function DashboardPage() {
 
         {/* Where Money Goes */}
         {breakdown && breakdown.coverage.monthsCovered > 0 ? (
-          <WhereMoneyGoes breakdown={breakdown} currency={currency} onOpenDrawer={openDrawer} unreviewedCount={unreviewedCount} />
+          <WhereMoneyGoes 
+            breakdown={breakdown} 
+            currency={currency} 
+            onOpenDrawer={openDrawer} 
+            unreviewedCount={unreviewedCount}
+            range={range}
+            onRangeChange={handleRangeChange}
+            rangeLoading={rangeLoading}
+          />
         ) : (
           <div className="mx-auto mt-16 max-w-2xl rounded-2xl border-2 border-dashed border-purple-200 bg-purple-50/30 p-12 text-center">
             <p className="mb-3 text-lg font-semibold text-gray-600">
@@ -581,6 +655,7 @@ export default function DashboardPage() {
         onClose={closeDrawer}
         token={token}
         currency={currency}
+        initialWindow={rangeToWindow(range)}
       />
     </div>
   );

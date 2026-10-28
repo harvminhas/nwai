@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import type { DrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
 import { formatMonthYear } from "@/lib/dateFormatting";
 import { getSignColor, getSignBgColor } from "@/lib/colorHelpers";
@@ -14,6 +15,7 @@ interface DrawerProps {
   onClose: () => void;
   token: string | null;
   currency: string;
+  initialWindow?: TimeWindow; // Sync with dashboard range
 }
 
 type TimeWindow = "last3" | "12month" | "ytd";
@@ -24,8 +26,24 @@ const WINDOW_LABELS: Record<TimeWindow, string> = {
   ytd: "This year",
 };
 
-export function Drawer({ type, isOpen, onClose, token, currency }: DrawerProps) {
-  const [window, setWindow] = useState<TimeWindow>("last3");
+// Convert TimeWindow to URL range parameter
+function windowToRange(window: TimeWindow): string {
+  switch (window) {
+    case "last3": return "3mo";
+    case "12month": return "12mo";
+    case "ytd": return "ytd";
+  }
+}
+
+export function Drawer({ type, isOpen, onClose, token, currency, initialWindow }: DrawerProps) {
+  const [window, setWindow] = useState<TimeWindow>(initialWindow || "last3");
+  
+  // Reset window when initialWindow changes
+  useEffect(() => {
+    if (initialWindow) {
+      setWindow(initialWindow);
+    }
+  }, [initialWindow]);
   const [data, setData] = useState<DrawerData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -122,6 +140,21 @@ export function Drawer({ type, isOpen, onClose, token, currency }: DrawerProps) 
               </button>
             ))}
           </div>
+          
+          {/* Link to full page */}
+          {(type === "income" || ["fixed", "essentials", "flexible"].includes(type)) && (
+            <div className="mt-3">
+              <Link
+                href={type === "income" 
+                  ? `/account/income?range=${windowToRange(window)}`
+                  : `/account/spending?range=${windowToRange(window)}`
+                }
+                className="text-sm font-medium text-purple-600 hover:text-purple-700 hover:underline"
+              >
+                View full details →
+              </Link>
+            </div>
+          )}
         </div>
 
         {/* Content */}
@@ -531,7 +564,7 @@ function BucketDrawerContent({
       {/* Category Breakdown */}
       <div>
         <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
-          Breakdown by category
+          Avg. monthly by category ({data.basisLabel.toLowerCase()})
         </h3>
         {breakdown.categories.length === 0 ? (
           <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-center">
@@ -579,7 +612,7 @@ function BucketDrawerContent({
                           {fmt(category.amount)}
                         </p>
                         <p className="text-xs text-gray-500">
-                          {Math.round(category.pctOfBucket)}%
+                          avg/mo · {Math.round(category.pctOfBucket)}%
                         </p>
                       </div>
                     </div>

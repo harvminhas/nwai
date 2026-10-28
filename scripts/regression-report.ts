@@ -18,13 +18,17 @@ import { getFinancialProfile } from "../src/lib/financialProfile";
 import { computeMoneyCoachBreakdown } from "../src/lib/moneyCoach";
 import { computeBucketBreakdown } from "../src/lib/bucketBreakdown";
 import { computeAverageSavings, computeMonthlySavings, computeWindowSavings } from "../src/lib/savingsCalculations";
-import { buildIncomeSummary } from "../src/lib/incomeSummary";
+import { buildIncomeSummary, makeIncomeTxnId } from "../src/lib/incomeSummary";
 import { buildSpendingSummary } from "../src/lib/spendingSummary";
 import { buildSubscriptionSummary } from "../src/lib/subscriptionEngine";
 import { computeMonthlyBuckets } from "../src/lib/monthlyBucketComputation";
+import { buildAssetsSummary } from "../src/lib/assetsSummary";
+import { buildDebtsSummary } from "../src/lib/debtsSummary";
+import { calculatePayoffInsight, type DebtForPayoff } from "../src/lib/payoffInsight";
 import type { MoneyCoachBucket } from "../src/lib/moneyCoachBuckets";
 import type { DebtPaymentReview } from "../src/lib/types";
 import { getParentCategory } from "../src/lib/categoryTaxonomy";
+import { getRangeMonths, getCurrentMonth, type TimeRange } from "../src/lib/rangeUtils";
 
 const BASELINE_PATH = path.join(__dirname, "regression-baseline.json");
 
@@ -415,11 +419,41 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   
   if (mamPaySource) {
     console.log(`\n   MAM PAY source found: ${formatCurrency(mamPaySource.total, currency)} (${mamPaySource.transactions.length} transactions)`);
-    if (sep2026Bonus) {
-      console.log(`   ✅ Sep 2026 bonus appears: ${sep2026Bonus.date}, ${formatCurrency(sep2026Bonus.amount, currency)}`);
+    
+    // Print all Sep 2026 transactions with their IDs and flags
+    const sep2026Txns = mamPaySource.transactions.filter(t => t.date.startsWith('2026-09'));
+    console.log(`\n   MAM PAY Sep 2026 transactions in sourcesList (${sep2026Txns.length}):`);
+    for (const t of sep2026Txns) {
+      const txId = makeIncomeTxnId(t.date, 'MAM PAY', t.amount, t.accountSlug);
+      console.log(`     ${t.date} | ${formatCurrency(t.amount, currency)} | ${t.accountSlug || 'unknown'} | isBonus=${t.isBonus} | needsReview=${t.needsReview}`);
+      console.log(`       txId: ${txId}`);
+    }
+    
+    // Find the review item for the ~CA$24,695 bonus
+    const bonusReviewItem = incomeSummary.bonusTransactions.find(b => 
+      b.source === 'MAM PAY' && 
+      b.date.startsWith('2026-09') &&
+      Math.abs(b.amount - 24695) <= 1
+    );
+    if (bonusReviewItem) {
+      console.log(`\n   Bonus review item (~CA$24,695):`);
+      console.log(`     ${bonusReviewItem.date} | ${formatCurrency(bonusReviewItem.amount, currency)} | ${bonusReviewItem.accountSlug || 'unknown'}`);
+      const reviewTxId = makeIncomeTxnId(bonusReviewItem.date, bonusReviewItem.source, bonusReviewItem.amount, bonusReviewItem.accountSlug);
+      console.log(`     txId: ${reviewTxId}`);
+    }
+    
+    // Tolerant check: match by date + amount within CA$1
+    const sep2026BonusTolerant = mamPaySource.transactions.find(t => 
+      t.date.startsWith('2026-09') && 
+      Math.abs(t.amount - 24695) <= 1
+    );
+    
+    // Pass if isBonus OR needsReview (unreviewed deposits become isBonus once classified)
+    if (sep2026BonusTolerant?.isBonus || sep2026BonusTolerant?.needsReview) {
+      console.log(`\n   ✅ Sep 2026 bonus appears: ${sep2026BonusTolerant.date}, ${formatCurrency(sep2026BonusTolerant.amount, currency)} (isBonus=${sep2026BonusTolerant.isBonus}, needsReview=${sep2026BonusTolerant.needsReview})`);
     } else {
       errors.push(`MAM PAY Sep 2026 bonus NOT found in sourcesList`);
-      console.log(`   ❌ Sep 2026 bonus NOT found`);
+      console.log(`\n   ❌ Sep 2026 bonus NOT found (no Sep 2026 transaction ~CA$24,695 with isBonus=true OR needsReview=true)`);
     }
   } else {
     console.log(`   ⚠️  MAM PAY source not found in window months`);
@@ -988,8 +1022,38 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     
     if (report.categories && report.categories.length > 0) {
       console.log(`\n   Monthly Average Components:`);
+      const categorySum = report.categories.reduce((sum, cat) => sum + cat.amount, 0);
+      const percentSum = report.categories.reduce((sum, cat) => {
+        // Calculate percentage as (category / bucket total) * 100
+        const pct = report.drawerTotal > 0 ? (cat.amount / report.drawerTotal) * 100 : 0;
+        return sum + pct;
+      }, 0);
+      
       for (const cat of report.categories) {
-        console.log(`     ${cat.name.padEnd(30)} ${formatCurrency(cat.amount, currency)}`);
+        const pct = report.drawerTotal > 0 ? ((cat.amount / report.drawerTotal) * 100).toFixed(1) : '0.0';
+        console.log(`     ${cat.name.padEnd(30)} ${formatCurrency(cat.amount, currency).padEnd(12)} (${pct}%)`);
+      }
+      
+      // Validate category sum equals bucket total
+      const sumMatch = Math.abs(categorySum - report.drawerTotal) < 1; // Allow $1 rounding
+      // Skip percentage check for Savings (mixed signs make percentages meaningless)
+      const skipPercentCheck = report.bucket === "savings" || Math.abs(report.drawerTotal) < 0.01;
+      const pctMatch = skipPercentCheck || Math.abs(percentSum - 100) < 1; // Allow 1% total rounding error
+      
+      console.log(`     ${"─".repeat(50)}`);
+      console.log(`     ${"TOTAL".padEnd(30)} ${formatCurrency(categorySum, currency).padEnd(12)} (${percentSum.toFixed(1)}%)`);
+      
+      if (!sumMatch) {
+        console.log(`     ⚠️  Category sum mismatch: ${formatCurrency(categorySum, currency)} ≠ ${formatCurrency(report.drawerTotal, currency)}`);
+        errors.push(`${report.bucket}: Category amounts sum to ${formatCurrency(categorySum, currency)} but bucket total is ${formatCurrency(report.drawerTotal, currency)}`);
+      }
+      // Only check percentages for non-savings buckets with meaningful totals
+      if (!pctMatch && !skipPercentCheck) {
+        console.log(`     ⚠️  Percentage sum: ${percentSum.toFixed(1)}% (expected ~100%)`);
+        errors.push(`${report.bucket}: Category percentages sum to ${percentSum.toFixed(1)}% instead of ~100%`);
+      }
+      if (sumMatch && pctMatch) {
+        console.log(`     ✓ Categories sum correctly`);
       }
       
       // For savings, also print the reconciliation table
@@ -1139,6 +1203,229 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   
   console.log("=".repeat(80) + "\n");
   
+  // ========== Assets & Debts Regression Checks ==========
+  console.log("🏦 ASSETS & DEBTS REGRESSION CHECKS\n");
+  
+  // Build summaries
+  const assetsSummary = buildAssetsSummary(
+    profile.accountSnapshots,
+    profile.accountBalanceHistory,
+    profile.manualAssets,
+    profile.fxRates,
+    profile.homeCurrency,
+    profile.monthlyHistory // Pass profile monthly history for correct carry-forward
+  );
+  
+  const debtsSummary = buildDebtsSummary(
+    profile.accountSnapshots,
+    profile.accountBalanceHistory,
+    profile.debtPaymentHistory,
+    profile.manualLiabilities,
+    profile.fxRates,
+    profile.homeCurrency,
+    profile.monthlyHistory // Pass profile monthly history for correct carry-forward
+  );
+  
+  console.log(`📈 Assets Summary:`);
+  console.log(`   Total Assets: ${formatCurrency(assetsSummary.totalAssets, currency)}`);
+  console.log(`   Groups: ${assetsSummary.groups.length}`);
+  assetsSummary.groups.forEach(g => {
+    const accountCount = g.accounts.length + g.manualAssets.length;
+    console.log(`     - ${g.label}: ${formatCurrency(g.total, currency)} (${accountCount} accounts)`);
+    // Print each account with its classification
+    g.accounts.forEach(acc => {
+      console.log(`       • ${acc.accountName || acc.accountType} (${acc.accountType} → ${g.type}): ${formatCurrency(acc.balance, currency)}`);
+    });
+  });
+  
+  // Check registered account classification
+  console.log(`\n✓ Check: Registered accounts properly grouped`);
+  const registeredKeywords = ['rrsp', 'tfsa', 'fhsa', 'lira', 'resp', '401(k)', '401k', 'ira', 'registered retirement', 'retirement savings'];
+  const registeredGroup = assetsSummary.groups.find(g => g.type === 'registered');
+  let registeredErrors = 0;
+  
+  for (const group of assetsSummary.groups) {
+    for (const acc of group.accounts) {
+      const nameLower = (acc.accountName || '').toLowerCase();
+      const hasKeyword = registeredKeywords.some(kw => nameLower.includes(kw.toLowerCase()));
+      
+      if (hasKeyword && group.type !== 'registered') {
+        errors.push(`Account "${acc.accountName}" contains registered keyword but is in ${group.label} group`);
+        console.log(`   ❌ ${acc.accountName} should be in Registered, but is in ${group.label}`);
+        registeredErrors++;
+      }
+    }
+  }
+  
+  if (registeredErrors === 0) {
+    console.log(`   ✅ All registered accounts correctly grouped`);
+  }
+  
+  console.log(`\n💳 Debts Summary:`);
+  console.log(`   Total Debt: ${formatCurrency(debtsSummary.totalDebt, currency)}`);
+  console.log(`   Monthly Payments: ${formatCurrency(debtsSummary.monthlyPayments, currency)}`);
+  console.log(`   Weighted Avg Rate: ${debtsSummary.weightedAvgRate ? debtsSummary.weightedAvgRate.toFixed(2) + '%' : 'N/A'}`);
+  console.log(`   Groups: ${debtsSummary.groups.length}`);
+  debtsSummary.groups.forEach(g => {
+    const accountCount = g.accounts.length + g.manualLiabilities.length;
+    console.log(`     - ${g.label}: ${formatCurrency(g.totalBalance, currency)} (${accountCount} accounts)`);
+    // Print each account with its classification
+    g.accounts.forEach(acc => {
+      console.log(`       • ${acc.accountName || acc.accountType} (${acc.accountType} → ${g.type}): ${formatCurrency(acc.balance, currency)}`);
+    });
+  });
+  
+  // Print per-account payment details (Diagnostic for issue A)
+  if (debtsSummary.scheduledPayments && debtsSummary.scheduledPayments.length > 0) {
+    console.log(`\n   Scheduled Payments (per account):`);
+    for (const payment of debtsSummary.scheduledPayments) {
+      console.log(`     - ${payment.accountName || payment.accountSlug}: ${formatCurrency(payment.amount, currency)} (${payment.method}, ${payment.debtType})`);
+    }
+  }
+  
+  // Check 1: Assets + Debts should equal Net Worth from dashboard
+  console.log(`\n✓ Check 1: Assets - Debts = Net Worth from dashboard`);
+  const netWorthFromAssets = assetsSummary.totalAssets - debtsSummary.totalDebt;
+  const latestMonth = profile.monthlyHistory[profile.monthlyHistory.length - 1];
+  const netWorthFromDashboard = latestMonth?.netWorth || 0;
+  const nwDiff = Math.abs(netWorthFromAssets - netWorthFromDashboard);
+  
+  console.log(`   Assets - Debts: ${formatCurrency(netWorthFromAssets, currency)}`);
+  console.log(`   Dashboard Net Worth: ${formatCurrency(netWorthFromDashboard, currency)}`);
+  console.log(`   Difference: ${formatCurrency(nwDiff, currency)}`);
+  
+  if (nwDiff > 1) { // Allow $1 rounding difference
+    errors.push(`Assets-Debts (${formatCurrency(netWorthFromAssets, currency)}) != Dashboard Net Worth (${formatCurrency(netWorthFromDashboard, currency)})`);
+    console.log(`   ❌ MISMATCH: Difference ${formatCurrency(nwDiff, currency)}`);
+  } else {
+    console.log(`   ✅ Match`);
+  }
+  
+  // Check 2: Account sums should equal totals
+  console.log(`\n✓ Check 2: Sum of asset accounts = Total Assets`);
+  const assetAccountSum = assetsSummary.groups.reduce((sum, g) => sum + g.total, 0);
+  const assetDiff = Math.abs(assetAccountSum - assetsSummary.totalAssets);
+  console.log(`   Sum of groups: ${formatCurrency(assetAccountSum, currency)}`);
+  console.log(`   Total Assets: ${formatCurrency(assetsSummary.totalAssets, currency)}`);
+  if (assetDiff > 0.01) {
+    errors.push(`Asset account sum (${formatCurrency(assetAccountSum, currency)}) != Total Assets (${formatCurrency(assetsSummary.totalAssets, currency)})`);
+    console.log(`   ❌ MISMATCH`);
+  } else {
+    console.log(`   ✅ Match`);
+  }
+  
+  console.log(`\n✓ Check 3: Sum of debt accounts = Total Debt`);
+  const debtAccountSum = debtsSummary.groups.reduce((sum, g) => sum + g.totalBalance, 0);
+  const debtDiff = Math.abs(debtAccountSum - debtsSummary.totalDebt);
+  console.log(`   Sum of groups: ${formatCurrency(debtAccountSum, currency)}`);
+  console.log(`   Total Debt: ${formatCurrency(debtsSummary.totalDebt, currency)}`);
+  if (debtDiff > 0.01) {
+    errors.push(`Debt account sum (${formatCurrency(debtAccountSum, currency)}) != Total Debt (${formatCurrency(debtsSummary.totalDebt, currency)})`);
+    console.log(`   ❌ MISMATCH`);
+  } else {
+    console.log(`   ✅ Match`);
+  }
+  
+  // Check 4: Debt payments should match Fixed 'Loan payments' from bucket breakdown
+  console.log(`\n✓ Check 4: Monthly debt payments = Fixed 'Loan payments' bucket`);
+  const fixedBucket = reports.find(r => r.bucket === "fixed");
+  const loanPaymentsCategory = fixedBucket?.categories?.find(c => c.name.toLowerCase().includes("loan"));
+  const loanPaymentsFromBuckets = loanPaymentsCategory?.amount || 0;
+  const paymentsDiff = Math.abs(debtsSummary.monthlyPayments - loanPaymentsFromBuckets);
+  console.log(`   Debt payments: ${formatCurrency(debtsSummary.monthlyPayments, currency)}`);
+  console.log(`   Fixed 'Loan payments': ${formatCurrency(loanPaymentsFromBuckets, currency)}`);
+  if (paymentsDiff > 10) { // Allow $10 difference for rounding/estimation
+    errors.push(`Debt payments (${formatCurrency(debtsSummary.monthlyPayments, currency)}) != Fixed Loan payments (${formatCurrency(loanPaymentsFromBuckets, currency)})`);
+    console.log(`   ❌ MISMATCH (diff: ${formatCurrency(paymentsDiff, currency)})`);
+  } else {
+    console.log(`   ✅ Match (within $10)`);
+  }
+  
+  // Check 5: Monthly history consistency
+  console.log(`\n✓ Check 5: Last 12 months history consistency`);
+  const assetsHistoryMonths = assetsSummary.monthlyHistory.slice(-12);
+  const debtsHistoryMonths = debtsSummary.monthlyHistory.slice(-12);
+  console.log(`   Assets history: ${assetsHistoryMonths.length} months`);
+  console.log(`   Debts history: ${debtsHistoryMonths.length} months`);
+  
+  // Verify each month's net worth
+  let historyErrors = 0;
+  for (const assetMonth of assetsHistoryMonths) {
+    const debtMonth = debtsHistoryMonths.find(d => d.month === assetMonth.month);
+    const profileMonth = profile.monthlyHistory.find(m => m.yearMonth === assetMonth.month);
+    
+    if (debtMonth && profileMonth) {
+      const nwFromHistory = assetMonth.total - debtMonth.totalDebt;
+      const nwFromProfile = profileMonth.netWorth;
+      const diff = Math.abs(nwFromHistory - nwFromProfile);
+      
+      if (diff > 1) { // Allow $1 rounding
+        console.log(`   ❌ ${assetMonth.monthLabel}:`);
+        console.log(`      Summary: Assets ${formatCurrency(assetMonth.total, currency)} - Debts ${formatCurrency(debtMonth.totalDebt, currency)} = ${formatCurrency(nwFromHistory, currency)}`);
+        console.log(`      Profile: Assets ${formatCurrency(profileMonth.totalAssets, currency)} - Debts ${formatCurrency(profileMonth.totalDebts, currency)} = ${formatCurrency(nwFromProfile, currency)}`);
+        console.log(`      Diff: ${formatCurrency(diff, currency)} (Assets diff: ${formatCurrency(Math.abs(assetMonth.total - profileMonth.totalAssets), currency)}, Debts diff: ${formatCurrency(Math.abs(debtMonth.totalDebt - profileMonth.totalDebts), currency)})`);
+        historyErrors++;
+      }
+    }
+  }
+  
+  if (historyErrors === 0) {
+    console.log(`   ✅ All ${assetsHistoryMonths.length} months consistent`);
+  } else {
+    errors.push(`${historyErrors} month(s) have inconsistent net worth in history`);
+  }
+  
+  // Payoff insight
+  console.log(`\n📊 Payoff Insight:`);
+  const debtsForPayoff: DebtForPayoff[] = debtsSummary.groups.flatMap(g =>
+    g.accounts.map(acc => ({
+      accountSlug: acc.slug,
+      accountName: acc.accountName,
+      balance: acc.balance,
+      interestRate: acc.interestRate,
+      monthlyPayment: acc.monthlyPayment,
+    }))
+  );
+  
+  const payoffInsight = calculatePayoffInsight(debtsForPayoff, 200);
+  
+  if (payoffInsight.hasInsight) {
+    console.log(`   Highest-rate debt: ${payoffInsight.highestRateAccount?.accountName || payoffInsight.highestRateAccount?.accountSlug} at ${payoffInsight.highestRateAccount?.rate.toFixed(2)}%`);
+    console.log(`   Suggestion: Add CA$200/mo extra to highest-rate debt\n`);
+    
+    for (const scenario of payoffInsight.scenarios) {
+      const payoffDate = new Date();
+      payoffDate.setMonth(payoffDate.getMonth() + scenario.currentMonths);
+      const acceleratedDate = new Date();
+      acceleratedDate.setMonth(acceleratedDate.getMonth() + scenario.acceleratedMonths);
+      
+      console.log(`   ${scenario.accountName || scenario.accountSlug}:`);
+      console.log(`     Balance: ${formatCurrency(scenario.balance, currency)} @ ${scenario.rate.toFixed(2)}%`);
+      console.log(`     Current: ${formatCurrency(scenario.currentPayment, currency)}/mo → ${scenario.currentMonths} months (${payoffDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}) → ${formatCurrency(scenario.currentInterestPaid, currency)} interest`);
+      if (scenario.extraPayment > 0) {
+        console.log(`     With +${formatCurrency(scenario.extraPayment, currency)}/mo: ${scenario.acceleratedMonths} months (${acceleratedDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}) → ${formatCurrency(scenario.acceleratedInterestPaid, currency)} interest`);
+        console.log(`     💰 Saves ${scenario.monthsSaved} months and ${formatCurrency(scenario.interestSaved, currency)} interest`);
+      } else {
+        console.log(`     (No extra payment on this account)`);
+      }
+      console.log();
+    }
+  } else {
+    console.log(`   No debts with known rate and payment`);
+  }
+  
+  // Print stale accounts
+  if (assetsSummary.staleAccounts.length > 0) {
+    console.log(`\n⚠️  Stale Accounts (${assetsSummary.staleAccounts.length}):`);
+    assetsSummary.staleAccounts.forEach(acc => {
+      console.log(`   - ${acc.bankName} ${acc.accountName || ''} (${acc.accountType}): ${acc.daysOld} days since ${acc.statementMonth}`);
+    });
+  } else {
+    console.log(`\n✅ No stale accounts`);
+  }
+  
+  console.log("\n" + "=".repeat(80) + "\n");
+  
   // Compare against baseline
   let baselineComparison;
   if (fs.existsSync(BASELINE_PATH)) {
@@ -1206,29 +1493,251 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   }
   
   // Exit with error code if any errors were collected
-  if (errors.length > 0) {
-    console.error(`\n❌ Test failed with ${errors.length} error(s):`);
-    errors.forEach((e, i) => console.error(`   ${i + 1}. ${e}`));
-    console.error();
-    process.exit(1);
+  const allErrors = errors.length > 0;
+  const hasMismatches = totalMismatches > 0;
+  const hasIncomeBarMismatches = incomeBarMismatches > 0;
+  const hasBaselineChanges = baselineComparison && baselineComparison.significantChanges > 0;
+  
+  // Continue to range tests even if earlier tests failed
+  
+  // ========== Dashboard Range Tests ==========
+  console.log("\n" + "=".repeat(80));
+  console.log("📊 DASHBOARD RANGE TESTS");
+  console.log("=".repeat(80) + "\n");
+  
+  const ranges: TimeRange[] = ["3mo", "12mo", "ytd"];
+  let rangeErrors = 0;
+  
+  for (const range of ranges) {
+    const rangeTitle = range === "3mo" ? "3-MONTH" : 
+                      range === "12mo" ? "12-MONTH" : 
+                      "YEAR-TO-DATE";
+    
+    console.log(`${rangeTitle} (${range})`);
+    console.log("-".repeat(80));
+    
+    try {
+      // Get months for this range
+      const availableMonths = profile.monthlyHistory.map(m => m.yearMonth).sort();
+      const rangeMonths = getRangeMonths(range, availableMonths);
+      const currentMonth = getCurrentMonth();
+      
+      // Format month names
+      const monthNames = rangeMonths.map(m => {
+        const [year, month] = m.split("-");
+        const date = new Date(parseInt(year), parseInt(month) - 1);
+        return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+      });
+      
+      // Check which months have no income data
+      const monthsWithIncomeData = rangeMonths.filter(m => {
+        const monthData = profile.monthlyHistory.find(h => h.yearMonth === m);
+        return monthData && monthData.incomeTotal > 0;
+      });
+      const excludedIncomeMonths = rangeMonths.filter(m => !monthsWithIncomeData.includes(m));
+      
+      console.log(`Months requested (${rangeMonths.length}): ${monthNames.join(", ")}`);
+      if (excludedIncomeMonths.length > 0) {
+        const excludedNames = excludedIncomeMonths.map(m => {
+          const [year, month] = m.split("-");
+          const date = new Date(parseInt(year), parseInt(month) - 1);
+          return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+        });
+        console.log(`  ⚠️  Excluded from income avg (no data): ${excludedNames.join(", ")}`);
+        console.log(`  ✓ Income averaged over ${monthsWithIncomeData.length} months with data`);
+      }
+      // Compute card values (via MoneyCoach breakdown - same as API route)
+      const breakdown = computeMoneyCoachBreakdown(
+        profile,
+        userReviews,
+        profile.incomeTxns,
+        profile.accountSnapshots,
+        profile.homeCurrency || "CAD",
+        incomeDepositReviews,
+        rangeMonths
+      );
+      
+      const cardIncome = breakdown.incomeAmount;
+      const cardSpending = breakdown.totalSpending;
+      const savingsBucket = breakdown.buckets.find(b => b.bucket === "savings");
+      const cardSavings = savingsBucket?.monthlyAverage || 0;
+      
+      // Compute page values (direct from summary functions)
+      const incomeSum = buildIncomeSummary(
+        profile.incomeTxns,
+        profile.accountSnapshots,
+        profile.homeCurrency || "CAD",
+        incomeDepositReviews,
+        rangeMonths
+      );
+      
+      const spendingSum = buildSpendingSummary(
+        profile.expenseTxns,
+        profile.accountSnapshots,
+        profile.debtPaymentHistory,
+        userReviews,
+        profile.fxRates,
+        profile.homeCurrency || "CAD",
+        rangeMonths
+      );
+      
+      const pageIncome = incomeSum.typicalMonthly;
+      const pageSpending = spendingSum.typicalMonthly;
+      
+      // Savings: use drawer's calculation (computeAverageSavings), not income - spending
+      const drawerSavings = computeAverageSavings(
+        profile.monthlyHistory,
+        profile.accountBalanceHistory,
+        profile.expenseTxns,
+        rangeMonths
+      );
+      
+      // Get bucket breakdown from card
+      const fixedBucket = breakdown.buckets.find(b => b.bucket === "fixed");
+      const essentialsBucket = breakdown.buckets.find(b => b.bucket === "essentials");
+      const flexibleBucket = breakdown.buckets.find(b => b.bucket === "flexible");
+      const savingsBucketCard = breakdown.buckets.find(b => b.bucket === "savings");
+      
+      console.log();
+      console.log("PER-BUCKET BREAKDOWN (Card):");
+      console.log(`  Fixed:      ${formatCurrency(fixedBucket?.monthlyAverage || 0, currency)}`);
+      console.log(`  Essentials: ${formatCurrency(essentialsBucket?.monthlyAverage || 0, currency)}`);
+      console.log(`  Flexible:   ${formatCurrency(flexibleBucket?.monthlyAverage || 0, currency)}`);
+      console.log(`  Savings:    ${formatCurrency(savingsBucketCard?.monthlyAverage || 0, currency)}`);
+      console.log(`  SUM (F+E+F): ${formatCurrency((fixedBucket?.monthlyAverage || 0) + (essentialsBucket?.monthlyAverage || 0) + (flexibleBucket?.monthlyAverage || 0), currency)}`);
+      console.log();
+      console.log(`Income   (avg/mo): ${formatCurrency(cardIncome, currency)} (card) vs ${formatCurrency(pageIncome, currency)} (page)`);
+      console.log(`Spending (avg/mo): ${formatCurrency(cardSpending, currency)} (card) vs ${formatCurrency(pageSpending, currency)} (page)`);
+      console.log(`Savings  (avg/mo): ${formatCurrency(cardSavings, currency)} (card) vs ${formatCurrency(drawerSavings, currency)} (drawer)`);
+      console.log();
+      
+      // Check for current month
+      const hasCurrentMonth = rangeMonths.includes(currentMonth);
+      if (hasCurrentMonth) {
+        const currentMonthName = (() => {
+          const [year, month] = currentMonth.split("-");
+          const date = new Date(parseInt(year), parseInt(month) - 1);
+          return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+        })();
+        console.log(`❌ FAIL: Current month ${currentMonthName} included in range`);
+        rangeErrors++;
+        errors.push(`${range}: Current month ${currentMonthName} included`);
+      } else {
+        console.log(`✅ PASS: Current month excluded`);
+      }
+      
+      // Check card == page/drawer
+      const incomeMatch = Math.abs(cardIncome - pageIncome) < 1;
+      const spendingMatch = Math.abs(cardSpending - pageSpending) < 1;
+      const savingsMatch = Math.abs(cardSavings - drawerSavings) < 1;
+      
+      if (!incomeMatch) {
+        console.log(`❌ FAIL: Income mismatch`);
+        rangeErrors++;
+        errors.push(`${range}: Income mismatch - card=${cardIncome.toFixed(2)}, page=${pageIncome.toFixed(2)}`);
+      } else {
+        console.log(`✅ PASS: Income card == page`);
+      }
+      
+      if (!spendingMatch) {
+        console.log(`❌ FAIL: Spending mismatch`);
+        rangeErrors++;
+        errors.push(`${range}: Spending mismatch - card=${cardSpending.toFixed(2)}, page=${pageSpending.toFixed(2)}`);
+      } else {
+        console.log(`✅ PASS: Spending card == page`);
+      }
+      
+      if (!savingsMatch) {
+        console.log(`❌ FAIL: Savings mismatch`);
+        rangeErrors++;
+        errors.push(`${range}: Savings mismatch - card=${cardSavings.toFixed(2)}, drawer=${drawerSavings.toFixed(2)}`);
+      } else {
+        console.log(`✅ PASS: Savings card == drawer`);
+      }
+      
+    } catch (error) {
+      console.log(`❌ ERROR: ${error}`);
+      rangeErrors++;
+      errors.push(`${range}: ${error}`);
+    }
+    
+    console.log();
   }
   
-  // Exit with error code if mismatches found
-  if (totalMismatches > 0) {
-    console.error(`❌ Test failed: ${totalMismatches} card/drawer mismatch(es)\n`);
-    process.exit(1);
+  if (rangeErrors > 0) {
+    console.log(`❌ ${rangeErrors} range test(s) failed\n`);
+  } else {
+    console.log(`✅ All range tests passed\n`);
   }
   
-  if (incomeBarMismatches > 0) {
-    console.error(`❌ Test failed: ${incomeBarMismatches} income bar/source mismatch(es)\n`);
-    process.exit(1);
+  // ── ACCOUNT DRAWER BALANCE HISTORY TESTS ──────────────────────────────────────
+  console.log("📈 ACCOUNT DRAWER BALANCE HISTORY");
+  console.log("=".repeat(80) + "\n");
+  
+  let drawerErrors = 0;
+  
+  // Test all account balance histories (source data for both assets and debts drawers)
+  console.log(`Total accounts with balance history: ${profile.accountBalanceHistory.length}`);
+  
+  for (const history of profile.accountBalanceHistory) {
+    // Check non-empty
+    if (history.entries.length === 0) {
+      console.log(`  ❌ FAIL: ${history.label} - empty balance history`);
+      drawerErrors++;
+      errors.push(`Account drawer: ${history.label} has empty balance history`);
+      continue;
+    }
+    
+    // Check chronological order (oldest first)
+    const months = history.entries.map(e => e.yearMonth);
+    const sortedMonths = [...months].sort();
+    const isChronological = months.every((m, i) => m === sortedMonths[i]);
+    
+    if (!isChronological) {
+      console.log(`  ❌ FAIL: ${history.label} - balance history not chronological`);
+      console.log(`    Expected: ${sortedMonths.join(", ")}`);
+      console.log(`    Got:      ${months.join(", ")}`);
+      drawerErrors++;
+      errors.push(`Account drawer: ${history.label} balance history not chronological`);
+    } else {
+      console.log(`  ✓ ${history.label} (${history.accountType}): ${history.entries.length} months, chronological`);
+    }
   }
   
-  if (baselineComparison && baselineComparison.significantChanges > 0) {
-    console.error(`❌ Test failed: ${baselineComparison.significantChanges} significant change(s) from baseline\n`);
-    process.exit(1);
+  console.log();
+  if (drawerErrors > 0) {
+    console.log(`❌ ${drawerErrors} account drawer test(s) failed\n`);
+  } else {
+    console.log(`✅ All account drawer tests passed\n`);
   }
   
+  // Final summary - check ALL error conditions
+  const totalFailures = 
+    (allErrors ? errors.length : 0) +
+    (hasMismatches ? totalMismatches : 0) +
+    (hasIncomeBarMismatches ? incomeBarMismatches : 0) +
+    (hasBaselineChanges ? (baselineComparison?.significantChanges || 0) : 0) +
+    rangeErrors +
+    drawerErrors;
+  
+  if (totalFailures > 0) {
+    console.log("=".repeat(80));
+    console.log("❌ TEST FAILED\n");
+    
+    if (allErrors) {
+      console.log(`Errors: ${errors.length}`);
+      errors.forEach((e, i) => console.log(`  ${i + 1}. ${e}`));
+    }
+    if (hasMismatches) console.log(`Card/Drawer mismatches: ${totalMismatches}`);
+    if (hasIncomeBarMismatches) console.log(`Income bar mismatches: ${incomeBarMismatches}`);
+    if (hasBaselineChanges && baselineComparison) console.log(`Significant baseline changes: ${baselineComparison.significantChanges}`);
+    if (rangeErrors > 0) console.log(`Range test failures: ${rangeErrors}`);
+    if (drawerErrors > 0) console.log(`Account drawer test failures: ${drawerErrors}`);
+    
+    console.log();
+    process.exit(1);
+  }
+
   console.log("✅ All tests passed\n");
 }
 
