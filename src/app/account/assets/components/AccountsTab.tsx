@@ -1,15 +1,41 @@
+"use client";
+
 import { useState } from "react";
 import type { AssetsSummary, AssetAccount } from "@/lib/assetsSummary";
 import type { ManualAsset } from "@/lib/types";
 import { formatCurrency } from "@/lib/currencyUtils";
+import { AccountDrawer, type AccountDrawerData } from "@/components/AccountDrawer";
 
 interface AccountsTabProps {
   summary: AssetsSummary;
 }
 
 export function AccountsTab({ summary }: AccountsTabProps) {
-  const { groups, currency } = summary;
+  const { groups, currency, monthlyHistory } = summary;
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+  const [drawerData, setDrawerData] = useState<AccountDrawerData | null>(null);
+
+  const handleAccountClick = (account: AssetAccount) => {
+    // Find balance history for this account
+    const balanceHistory = monthlyHistory
+      .slice(-12)
+      .map(m => ({
+        month: m.month,
+        monthLabel: m.monthLabel,
+        balance: account.balance, // Simplified - would need actual history per account
+      }));
+
+    setDrawerData({
+      accountName: account.accountName || account.accountType,
+      bankName: account.bankName,
+      accountType: account.accountType,
+      balance: account.balance,
+      currency,
+      statementMonth: account.statementMonth,
+      isDebt: false,
+      balanceHistory,
+    });
+  };
 
   if (groups.length === 0) {
     return (
@@ -70,7 +96,12 @@ export function AccountsTab({ summary }: AccountsTabProps) {
               <div className="border-t border-gray-200 p-6 space-y-4">
                 {/* Statement Accounts */}
                 {group.accounts.map((acc) => (
-                  <AccountRow key={acc.slug} account={acc} currency={currency} />
+                  <AccountRow 
+                    key={acc.slug} 
+                    account={acc} 
+                    currency={currency}
+                    onClick={() => handleAccountClick(acc)}
+                  />
                 ))}
 
                 {/* Manual Assets */}
@@ -88,13 +119,31 @@ export function AccountsTab({ summary }: AccountsTabProps) {
           </div>
         );
       })}
+      
+      {/* Account Drawer */}
+      <AccountDrawer
+        isOpen={drawerData !== null}
+        onClose={() => setDrawerData(null)}
+        data={drawerData}
+      />
     </div>
   );
 }
 
-function AccountRow({ account, currency }: { account: AssetAccount; currency: string }) {
+function AccountRow({ 
+  account, 
+  currency,
+  onClick
+}: { 
+  account: AssetAccount; 
+  currency: string;
+  onClick?: () => void;
+}) {
   return (
-    <div className="flex items-start justify-between py-3 border-b border-gray-100 last:border-0">
+    <button
+      onClick={onClick}
+      className="w-full flex items-start justify-between py-3 border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors rounded px-2 -mx-2 text-left"
+    >
       <div className="flex-1">
         <div className="flex items-center gap-2 mb-1">
           <span className="font-medium text-gray-900">{account.bankName}</span>
@@ -119,7 +168,7 @@ function AccountRow({ account, currency }: { account: AssetAccount; currency: st
           {account.accountType.replace("_", " ")}
         </p>
       </div>
-    </div>
+    </button>
   );
 }
 

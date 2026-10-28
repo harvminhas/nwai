@@ -1,15 +1,50 @@
+"use client";
+
 import { useState } from "react";
 import type { DebtsSummary, DebtAccount } from "@/lib/debtsSummary";
 import type { ManualLiability } from "@/lib/types";
 import { formatCurrency } from "@/lib/currencyUtils";
+import { AccountDrawer, type AccountDrawerData } from "@/components/AccountDrawer";
 
 interface AccountsTabProps {
   summary: DebtsSummary;
 }
 
 export function AccountsTab({ summary }: AccountsTabProps) {
-  const { groups, currency, payoffEstimates } = summary;
+  const { groups, currency, payoffEstimates, monthlyHistory } = summary;
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+  const [drawerData, setDrawerData] = useState<AccountDrawerData | null>(null);
+
+  const handleAccountClick = (account: DebtAccount) => {
+    const payoff = payoffEstimates.find(e => e.accountSlug === account.slug);
+    
+    // Find balance history for this account (simplified)
+    const balanceHistory = monthlyHistory
+      .slice(-12)
+      .map(m => ({
+        month: m.month,
+        monthLabel: m.monthLabel,
+        balance: -account.balance, // Negative for debts
+      }));
+
+    setDrawerData({
+      accountName: account.accountName || account.accountType,
+      bankName: account.bankName,
+      accountType: account.accountType,
+      balance: account.balance,
+      currency,
+      statementMonth: account.statementMonth,
+      isDebt: true,
+      interestRate: account.interestRate,
+      monthlyPayment: account.monthlyPayment,
+      balanceHistory,
+      payoffInfo: payoff?.payoffDate ? {
+        monthsToPayoff: payoff.monthsToPayoff || 0,
+        payoffDate: payoff.payoffDate,
+        totalInterest: 0, // Would need to calculate from payoff estimates
+      } : undefined,
+    });
+  };
 
   if (groups.length === 0) {
     return (
@@ -77,6 +112,7 @@ export function AccountsTab({ summary }: AccountsTabProps) {
                       account={acc} 
                       currency={currency}
                       payoff={payoff}
+                      onClick={() => handleAccountClick(acc)}
                     />
                   );
                 })}
@@ -100,6 +136,13 @@ export function AccountsTab({ summary }: AccountsTabProps) {
           </div>
         );
       })}
+      
+      {/* Account Drawer */}
+      <AccountDrawer
+        isOpen={drawerData !== null}
+        onClose={() => setDrawerData(null)}
+        data={drawerData}
+      />
     </div>
   );
 }
@@ -107,14 +150,19 @@ export function AccountsTab({ summary }: AccountsTabProps) {
 function DebtAccountRow({ 
   account, 
   currency, 
-  payoff 
+  payoff,
+  onClick
 }: { 
   account: DebtAccount; 
   currency: string;
   payoff?: { accountSlug: string; monthsToPayoff: number | null; payoffDate: string | null };
+  onClick?: () => void;
 }) {
   return (
-    <div className="flex items-start justify-between py-3 border-b border-gray-100 last:border-0">
+    <button
+      onClick={onClick}
+      className="w-full flex items-start justify-between py-3 border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors rounded px-2 -mx-2 text-left"
+    >
       <div className="flex-1">
         <div className="flex items-center gap-2 mb-1">
           <span className="font-medium text-gray-900">{account.bankName}</span>
@@ -144,7 +192,7 @@ function DebtAccountRow({
           {account.accountType.replace("_", " ")}
         </p>
       </div>
-    </div>
+    </button>
   );
 }
 
