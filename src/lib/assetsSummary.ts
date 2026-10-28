@@ -48,7 +48,7 @@ export interface AssetsSummary {
   staleAccounts: AssetAccount[];
 }
 
-const REGISTERED_TYPES = new Set(["rrsp", "tfsa", "fhsa", "401k", "ira", "roth_ira"]);
+const REGISTERED_TYPES = new Set(["rrsp", "tfsa", "fhsa", "401k", "ira", "roth_ira", "lira", "resp"]);
 
 function accountGroup(accountType: string): AssetGroup["type"] {
   if (accountType === "checking" || accountType === "savings") return "cash";
