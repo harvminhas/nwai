@@ -1863,23 +1863,47 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       chatToolErrors++;
     } else {
       const toolSavings = savingsToolResult.data.typical_monthly;
-      // Compute savings drawer value (same as earlier)
-      const rangeMonths3mo = getRangeMonths("3mo" as TimeRange, profile.allTxMonths.sort());
-      const drawerSavings = computeWindowSavings(
-        profile.monthlyHistory,
-        profile.accountBalanceHistory ?? [],
-        profile.expenseTxns,
-        rangeMonths3mo
-      );
-      const drawerSavingsFormatted = formatCurrency(drawerSavings.typicalMonthly, currency);
-      console.log(`  Tool (get_savings_summary): ${toolSavings}`);
-      console.log(`  Drawer (Savings): ${drawerSavingsFormatted}`);
-      if (currenciesMatch(toolSavings, drawerSavingsFormatted)) {
-        console.log(`  ✓ Match (within ±$1)`);
-      } else {
-        console.log(`  ❌ FAIL: Mismatch`);
-        errors.push(`Savings tool vs drawer mismatch: ${toolSavings} !== ${drawerSavingsFormatted}`);
+      
+      // Check for NaN (must fail)
+      if (toolSavings.includes('NaN')) {
+        console.log(`  ❌ FAIL: Tool returned NaN`);
+        errors.push(`get_savings_summary returned NaN`);
         chatToolErrors++;
+      } else {
+        // Compute savings drawer value using same logic as dashboard-drawers route
+        const now = new Date();
+        const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+        const completeMonths = profile.monthlyHistory
+          .filter(h => h.yearMonth < currentMonth)
+          .slice(-3)
+          .map(h => h.yearMonth);
+        
+        const drawerSavings = computeWindowSavings(
+          profile.monthlyHistory,
+          profile.accountBalanceHistory ?? [],
+          profile.expenseTxns,
+          completeMonths,
+          new Map() // confirmedItems - empty since not loading from Firestore
+        );
+        
+        const drawerSavingsFormatted = formatCurrency(drawerSavings.monthlyAverage.total, currency);
+        
+        // Check for NaN in expected value (must fail)
+        if (drawerSavingsFormatted.includes('NaN')) {
+          console.log(`  ❌ FAIL: Expected value is NaN`);
+          errors.push(`Savings drawer calculation returned NaN`);
+          chatToolErrors++;
+        } else {
+          console.log(`  Tool (get_savings_summary): ${toolSavings}`);
+          console.log(`  Drawer (Savings): ${drawerSavingsFormatted}`);
+          if (currenciesMatch(toolSavings, drawerSavingsFormatted)) {
+            console.log(`  ✓ Match (within ±$1)`);
+          } else {
+            console.log(`  ❌ FAIL: Mismatch`);
+            errors.push(`Savings tool vs drawer mismatch: ${toolSavings} !== ${drawerSavingsFormatted}`);
+            chatToolErrors++;
+          }
+        }
       }
     }
   } catch (err) {

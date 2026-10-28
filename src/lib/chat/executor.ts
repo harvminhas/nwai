@@ -724,18 +724,19 @@ export function executeGetSavingsSummary(
     profile.accountBalanceHistory ?? [],
     profile.expenseTxns,
     rangeMonths,
+    new Map() // confirmedItems - empty since not in profile cache
   );
   
   return {
     ok: true,
     data: {
-      typical_monthly: fmt(savings.typicalMonthly),
+      typical_monthly: fmt(savings.monthlyAverage.total),
       range_months: rangeMonths,
       currency: home,
       breakdown: {
-        cash_change: fmt(savings.cashChange),
-        debt_paydown: fmt(savings.debtPaydown),
-        contributions: fmt(savings.contributions),
+        cash_change: fmt(savings.monthlyAverage.netCashChange),
+        debt_paydown: fmt(savings.monthlyAverage.netDebtChange),
+        contributions: fmt(savings.monthlyAverage.contributionsToOutside),
       },
       note: "Uses computeWindowSavings (same as Savings drawer). Formula: cash change + debt paydown + investment/savings contributions.",
     },
