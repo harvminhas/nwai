@@ -18,10 +18,12 @@ import { getFinancialProfile } from "../src/lib/financialProfile";
 import { computeMoneyCoachBreakdown } from "../src/lib/moneyCoach";
 import { computeBucketBreakdown } from "../src/lib/bucketBreakdown";
 import { computeAverageSavings, computeMonthlySavings, computeWindowSavings } from "../src/lib/savingsCalculations";
-import { buildIncomeSummary } from "../src/lib/incomeSummary";
+import { buildIncomeSummary, makeIncomeTxnId } from "../src/lib/incomeSummary";
 import { buildSpendingSummary } from "../src/lib/spendingSummary";
 import { buildSubscriptionSummary } from "../src/lib/subscriptionEngine";
 import { computeMonthlyBuckets } from "../src/lib/monthlyBucketComputation";
+import { buildAssetsSummary } from "../src/lib/assetsSummary";
+import { buildDebtsSummary } from "../src/lib/debtsSummary";
 import type { MoneyCoachBucket } from "../src/lib/moneyCoachBuckets";
 import type { DebtPaymentReview } from "../src/lib/types";
 import { getParentCategory } from "../src/lib/categoryTaxonomy";
@@ -1138,6 +1140,146 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   }
   
   console.log("=".repeat(80) + "\n");
+  
+  // ========== Assets & Debts Regression Checks ==========
+  console.log("🏦 ASSETS & DEBTS REGRESSION CHECKS\n");
+  
+  // Build summaries
+  const assetsSummary = buildAssetsSummary(
+    profile.accountSnapshots,
+    profile.accountBalanceHistory,
+    profile.manualAssets,
+    profile.fxRates,
+    profile.homeCurrency
+  );
+  
+  const debtsSummary = buildDebtsSummary(
+    profile.accountSnapshots,
+    profile.accountBalanceHistory,
+    profile.debtPaymentHistory,
+    profile.manualLiabilities,
+    profile.fxRates,
+    profile.homeCurrency
+  );
+  
+  console.log(`📈 Assets Summary:`);
+  console.log(`   Total Assets: ${formatCurrency(assetsSummary.totalAssets, currency)}`);
+  console.log(`   Groups: ${assetsSummary.groups.length}`);
+  assetsSummary.groups.forEach(g => {
+    const accountCount = g.accounts.length + g.manualAssets.length;
+    console.log(`     - ${g.label}: ${formatCurrency(g.total, currency)} (${accountCount} accounts)`);
+  });
+  
+  console.log(`\n💳 Debts Summary:`);
+  console.log(`   Total Debt: ${formatCurrency(debtsSummary.totalDebt, currency)}`);
+  console.log(`   Monthly Payments: ${formatCurrency(debtsSummary.monthlyPayments, currency)}`);
+  console.log(`   Weighted Avg Rate: ${debtsSummary.weightedAvgRate ? debtsSummary.weightedAvgRate.toFixed(2) + '%' : 'N/A'}`);
+  console.log(`   Groups: ${debtsSummary.groups.length}`);
+  debtsSummary.groups.forEach(g => {
+    const accountCount = g.accounts.length + g.manualLiabilities.length;
+    console.log(`     - ${g.label}: ${formatCurrency(g.totalBalance, currency)} (${accountCount} accounts)`);
+  });
+  
+  // Check 1: Assets + Debts should equal Net Worth from dashboard
+  console.log(`\n✓ Check 1: Assets - Debts = Net Worth from dashboard`);
+  const netWorthFromAssets = assetsSummary.totalAssets - debtsSummary.totalDebt;
+  const latestMonth = profile.monthlyHistory[profile.monthlyHistory.length - 1];
+  const netWorthFromDashboard = latestMonth?.netWorth || 0;
+  const nwDiff = Math.abs(netWorthFromAssets - netWorthFromDashboard);
+  
+  console.log(`   Assets - Debts: ${formatCurrency(netWorthFromAssets, currency)}`);
+  console.log(`   Dashboard Net Worth: ${formatCurrency(netWorthFromDashboard, currency)}`);
+  console.log(`   Difference: ${formatCurrency(nwDiff, currency)}`);
+  
+  if (nwDiff > 1) { // Allow $1 rounding difference
+    errors.push(`Assets-Debts (${formatCurrency(netWorthFromAssets, currency)}) != Dashboard Net Worth (${formatCurrency(netWorthFromDashboard, currency)})`);
+    console.log(`   ❌ MISMATCH: Difference ${formatCurrency(nwDiff, currency)}`);
+  } else {
+    console.log(`   ✅ Match`);
+  }
+  
+  // Check 2: Account sums should equal totals
+  console.log(`\n✓ Check 2: Sum of asset accounts = Total Assets`);
+  const assetAccountSum = assetsSummary.groups.reduce((sum, g) => sum + g.total, 0);
+  const assetDiff = Math.abs(assetAccountSum - assetsSummary.totalAssets);
+  console.log(`   Sum of groups: ${formatCurrency(assetAccountSum, currency)}`);
+  console.log(`   Total Assets: ${formatCurrency(assetsSummary.totalAssets, currency)}`);
+  if (assetDiff > 0.01) {
+    errors.push(`Asset account sum (${formatCurrency(assetAccountSum, currency)}) != Total Assets (${formatCurrency(assetsSummary.totalAssets, currency)})`);
+    console.log(`   ❌ MISMATCH`);
+  } else {
+    console.log(`   ✅ Match`);
+  }
+  
+  console.log(`\n✓ Check 3: Sum of debt accounts = Total Debt`);
+  const debtAccountSum = debtsSummary.groups.reduce((sum, g) => sum + g.totalBalance, 0);
+  const debtDiff = Math.abs(debtAccountSum - debtsSummary.totalDebt);
+  console.log(`   Sum of groups: ${formatCurrency(debtAccountSum, currency)}`);
+  console.log(`   Total Debt: ${formatCurrency(debtsSummary.totalDebt, currency)}`);
+  if (debtDiff > 0.01) {
+    errors.push(`Debt account sum (${formatCurrency(debtAccountSum, currency)}) != Total Debt (${formatCurrency(debtsSummary.totalDebt, currency)})`);
+    console.log(`   ❌ MISMATCH`);
+  } else {
+    console.log(`   ✅ Match`);
+  }
+  
+  // Check 4: Debt payments should match Fixed 'Loan payments' from bucket breakdown
+  console.log(`\n✓ Check 4: Monthly debt payments = Fixed 'Loan payments' bucket`);
+  const fixedBucket = reports.find(r => r.bucket === "fixed");
+  const loanPaymentsCategory = fixedBucket?.categories?.find(c => c.name.toLowerCase().includes("loan"));
+  const loanPaymentsFromBuckets = loanPaymentsCategory?.amount || 0;
+  const paymentsDiff = Math.abs(debtsSummary.monthlyPayments - loanPaymentsFromBuckets);
+  console.log(`   Debt payments: ${formatCurrency(debtsSummary.monthlyPayments, currency)}`);
+  console.log(`   Fixed 'Loan payments': ${formatCurrency(loanPaymentsFromBuckets, currency)}`);
+  if (paymentsDiff > 10) { // Allow $10 difference for rounding/estimation
+    errors.push(`Debt payments (${formatCurrency(debtsSummary.monthlyPayments, currency)}) != Fixed Loan payments (${formatCurrency(loanPaymentsFromBuckets, currency)})`);
+    console.log(`   ❌ MISMATCH (diff: ${formatCurrency(paymentsDiff, currency)})`);
+  } else {
+    console.log(`   ✅ Match (within $10)`);
+  }
+  
+  // Check 5: Monthly history consistency
+  console.log(`\n✓ Check 5: Last 12 months history consistency`);
+  const assetsHistoryMonths = assetsSummary.monthlyHistory.slice(-12);
+  const debtsHistoryMonths = debtsSummary.monthlyHistory.slice(-12);
+  console.log(`   Assets history: ${assetsHistoryMonths.length} months`);
+  console.log(`   Debts history: ${debtsHistoryMonths.length} months`);
+  
+  // Verify each month's net worth
+  let historyErrors = 0;
+  for (const assetMonth of assetsHistoryMonths) {
+    const debtMonth = debtsHistoryMonths.find(d => d.month === assetMonth.month);
+    const profileMonth = profile.monthlyHistory.find(m => m.yearMonth === assetMonth.month);
+    
+    if (debtMonth && profileMonth) {
+      const nwFromHistory = assetMonth.total - debtMonth.totalDebt;
+      const nwFromProfile = profileMonth.netWorth;
+      const diff = Math.abs(nwFromHistory - nwFromProfile);
+      
+      if (diff > 1) { // Allow $1 rounding
+        console.log(`   ❌ ${assetMonth.monthLabel}: Assets ${formatCurrency(assetMonth.total, currency)} - Debts ${formatCurrency(debtMonth.totalDebt, currency)} = ${formatCurrency(nwFromHistory, currency)}, but profile shows ${formatCurrency(nwFromProfile, currency)} (diff ${formatCurrency(diff, currency)})`);
+        historyErrors++;
+      }
+    }
+  }
+  
+  if (historyErrors === 0) {
+    console.log(`   ✅ All ${assetsHistoryMonths.length} months consistent`);
+  } else {
+    errors.push(`${historyErrors} month(s) have inconsistent net worth in history`);
+  }
+  
+  // Print stale accounts
+  if (assetsSummary.staleAccounts.length > 0) {
+    console.log(`\n⚠️  Stale Accounts (${assetsSummary.staleAccounts.length}):`);
+    assetsSummary.staleAccounts.forEach(acc => {
+      console.log(`   - ${acc.bankName} ${acc.accountName || ''} (${acc.accountType}): ${acc.daysOld} days since ${acc.statementMonth}`);
+    });
+  } else {
+    console.log(`\n✅ No stale accounts`);
+  }
+  
+  console.log("\n" + "=".repeat(80) + "\n");
   
   // Compare against baseline
   let baselineComparison;
