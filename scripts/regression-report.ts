@@ -1553,7 +1553,14 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       
       const pageIncome = incomeSum.typicalMonthly;
       const pageSpending = spendingSum.typicalMonthly;
-      const pageSavings = pageIncome - pageSpending;
+      
+      // Savings: use drawer's calculation (computeAverageSavings), not income - spending
+      const drawerSavings = computeAverageSavings(
+        profile.monthlyHistory,
+        profile.accountBalanceHistory,
+        profile.expenseTxns,
+        rangeMonths
+      );
       
       // Get bucket breakdown from card
       const fixedBucket = breakdown.buckets.find(b => b.bucket === "fixed");
@@ -1571,8 +1578,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       console.log();
       console.log(`Income   (avg/mo): ${formatCurrency(cardIncome, currency)} (card) vs ${formatCurrency(pageIncome, currency)} (page)`);
       console.log(`Spending (avg/mo): ${formatCurrency(cardSpending, currency)} (card) vs ${formatCurrency(pageSpending, currency)} (page)`);
-      console.log(`Savings  (avg/mo): ${formatCurrency(cardSavings, currency)} (card) vs ${formatCurrency(pageSavings, currency)} (page)`);
-      console.log(`Savings formula check: ${formatCurrency(cardIncome, currency)} - ${formatCurrency(cardSpending, currency)} = ${formatCurrency(cardIncome - cardSpending, currency)} (should equal card savings)`);
+      console.log(`Savings  (avg/mo): ${formatCurrency(cardSavings, currency)} (card) vs ${formatCurrency(drawerSavings, currency)} (drawer)`);
       console.log();
       
       // Check for current month
@@ -1590,10 +1596,10 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         console.log(`✅ PASS: Current month excluded`);
       }
       
-      // Check card == page
+      // Check card == page/drawer
       const incomeMatch = Math.abs(cardIncome - pageIncome) < 1;
       const spendingMatch = Math.abs(cardSpending - pageSpending) < 1;
-      const savingsMatch = Math.abs(cardSavings - pageSavings) < 1;
+      const savingsMatch = Math.abs(cardSavings - drawerSavings) < 1;
       
       if (!incomeMatch) {
         console.log(`❌ FAIL: Income mismatch`);
@@ -1614,9 +1620,9 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       if (!savingsMatch) {
         console.log(`❌ FAIL: Savings mismatch`);
         rangeErrors++;
-        errors.push(`${range}: Savings mismatch - card=${cardSavings.toFixed(2)}, page=${pageSavings.toFixed(2)}`);
+        errors.push(`${range}: Savings mismatch - card=${cardSavings.toFixed(2)}, drawer=${drawerSavings.toFixed(2)}`);
       } else {
-        console.log(`✅ PASS: Savings card == page`);
+        console.log(`✅ PASS: Savings card == drawer`);
       }
       
     } catch (error) {
