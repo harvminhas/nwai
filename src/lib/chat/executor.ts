@@ -541,16 +541,14 @@ export function executeGetIncomeSummary(
     rangeMonths,
   );
   
-  const bySource = summary.bySource.map((s: any) => ({
-    source: s.source,
+  const bySource = summary.sources.map((s: any) => ({
+    source: s.description || s.canonicalName,
     total: fmt(s.total),
-    monthly_average: fmt(s.averageMonthly),
+    monthly_average: fmt(s.total / rangeMonths.length),
     transaction_count: s.count,
-    has_bonuses: s.bonusTxns.length > 0,
-    bonus_total: s.bonusTxns.length > 0 ? fmt(s.bonusTxns.reduce((sum: number, b: any) => sum + b.amount, 0)) : undefined,
   }));
   
-  const bonuses = summary.allBonuses.map((b: any) => ({
+  const bonuses = summary.bonusTransactions.map((b: any) => ({
     date: b.date,
     source: b.source,
     description: b.description,
@@ -602,35 +600,20 @@ export function executeGetSpendingSummary(
     rangeMonths,
   );
   
-  const buckets = {
-    fixed: {
-      total: fmt(summary.buckets.fixed.total),
-      monthly_average: fmt(summary.buckets.fixed.averageMonthly),
-      categories: summary.buckets.fixed.categories.map((c: any) => ({
+  // Convert buckets array to structured object
+  const bucketObj: Record<string, any> = {};
+  for (const bucket of summary.buckets) {
+    bucketObj[bucket.bucket] = {
+      label: bucket.label,
+      total: fmt(bucket.total),
+      monthly_average: fmt(bucket.averageMonthly),
+      categories: bucket.categories.map((c: any) => ({
         category: c.category,
         total: fmt(c.total),
         monthly_average: fmt(c.averageMonthly),
       })),
-    },
-    essentials: {
-      total: fmt(summary.buckets.essentials.total),
-      monthly_average: fmt(summary.buckets.essentials.averageMonthly),
-      categories: summary.buckets.essentials.categories.map((c: any) => ({
-        category: c.category,
-        total: fmt(c.total),
-        monthly_average: fmt(c.averageMonthly),
-      })),
-    },
-    flexible: {
-      total: fmt(summary.buckets.flexible.total),
-      monthly_average: fmt(summary.buckets.flexible.averageMonthly),
-      categories: summary.buckets.flexible.categories.map((c: any) => ({
-        category: c.category,
-        total: fmt(c.total),
-        monthly_average: fmt(c.averageMonthly),
-      })),
-    },
-  };
+    };
+  }
   
   return {
     ok: true,
@@ -638,7 +621,7 @@ export function executeGetSpendingSummary(
       typical_monthly: fmt(summary.typicalMonthly),
       range_months: rangeMonths,
       currency: home,
-      buckets,
+      buckets: bucketObj,
       note: "Uses buildSpendingSummary (same as Spending page). Includes cash commitments. Excludes transfers.",
     },
   };
@@ -720,7 +703,7 @@ export function executeGetSavingsSummary(
   profile: FinancialProfileCache,
   params: ToolParams,
 ): ToolResult {
-  const { computeWindowSavings } = require("@/lib/savings");
+  const { computeWindowSavings } = require("@/lib/savingsCalculations");
   const { getRangeMonths } = require("@/lib/rangeUtils");
   
   const home = getHomeCurrency(profile);

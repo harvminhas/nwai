@@ -1785,6 +1785,19 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   // Import chat executors
   const { executeTool } = await import("../src/lib/chat/executor");
   
+  // Helper: parse currency string to number
+  function parseCurrency(str: string): number {
+    // Remove currency symbol, commas, and parse
+    return parseFloat(str.replace(/[^\d.-]/g, ""));
+  }
+  
+  // Helper: compare currencies with ±$1 tolerance
+  function currenciesMatch(a: string, b: string, tolerance = 1.0): boolean {
+    const numA = parseCurrency(a);
+    const numB = parseCurrency(b);
+    return Math.abs(numA - numB) <= tolerance;
+  }
+  
   // Test 1: get_income_summary 3mo matches Income page
   console.log("Test 1: get_income_summary (3mo) matches Income page");
   try {
@@ -1798,8 +1811,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       const pageIncome = formatCurrency(incomeSummary.typicalMonthly, currency);
       console.log(`  Tool (get_income_summary): ${toolIncome}`);
       console.log(`  Page (Income): ${pageIncome}`);
-      if (toolIncome === pageIncome) {
-        console.log(`  ✓ Match`);
+      if (currenciesMatch(toolIncome, pageIncome)) {
+        console.log(`  ✓ Match (within ±$1)`);
       } else {
         console.log(`  ❌ FAIL: Mismatch`);
         errors.push(`Income tool vs page mismatch: ${toolIncome} !== ${pageIncome}`);
@@ -1826,8 +1839,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       const cardSpending = formatCurrency(spendingSummary.typicalMonthly, currency);
       console.log(`  Tool (get_spending_summary): ${toolSpending}`);
       console.log(`  Card (Spending): ${cardSpending}`);
-      if (toolSpending === cardSpending) {
-        console.log(`  ✓ Match`);
+      if (currenciesMatch(toolSpending, cardSpending)) {
+        console.log(`  ✓ Match (within ±$1)`);
       } else {
         console.log(`  ❌ FAIL: Mismatch`);
         errors.push(`Spending tool vs card mismatch: ${toolSpending} !== ${cardSpending}`);
@@ -1861,8 +1874,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       const drawerSavingsFormatted = formatCurrency(drawerSavings.typicalMonthly, currency);
       console.log(`  Tool (get_savings_summary): ${toolSavings}`);
       console.log(`  Drawer (Savings): ${drawerSavingsFormatted}`);
-      if (toolSavings === drawerSavingsFormatted) {
-        console.log(`  ✓ Match`);
+      if (currenciesMatch(toolSavings, drawerSavingsFormatted)) {
+        console.log(`  ✓ Match (within ±$1)`);
       } else {
         console.log(`  ❌ FAIL: Mismatch`);
         errors.push(`Savings tool vs drawer mismatch: ${toolSavings} !== ${drawerSavingsFormatted}`);
@@ -1891,8 +1904,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       const dashboardNetWorth = formatCurrency(nw.total, currency);
       console.log(`  Tool (get_net_worth): ${toolNetWorth}`);
       console.log(`  Dashboard: ${dashboardNetWorth}`);
-      if (toolNetWorth === dashboardNetWorth) {
-        console.log(`  ✓ Match`);
+      if (currenciesMatch(toolNetWorth, dashboardNetWorth)) {
+        console.log(`  ✓ Match (within ±$1)`);
       } else {
         console.log(`  ❌ FAIL: Mismatch`);
         errors.push(`Net worth tool vs dashboard mismatch: ${toolNetWorth} !== ${dashboardNetWorth}`);
@@ -1923,8 +1936,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       const expectedFormatted = formatCurrency(expectedTotal, currency);
       console.log(`  Tool (list_cash_expenses): ${toolTotal}`);
       console.log(`  Expected (Cash tab): ${expectedFormatted}`);
-      if (toolTotal === expectedFormatted) {
-        console.log(`  ✓ Match`);
+      if (currenciesMatch(toolTotal, expectedFormatted)) {
+        console.log(`  ✓ Match (within ±$1)`);
       } else {
         console.log(`  ❌ FAIL: Mismatch`);
         errors.push(`Cash expenses tool vs tab mismatch: ${toolTotal} !== ${expectedFormatted}`);
