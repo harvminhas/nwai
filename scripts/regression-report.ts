@@ -1036,8 +1036,9 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       
       // Validate category sum equals bucket total
       const sumMatch = Math.abs(categorySum - report.drawerTotal) < 1; // Allow $1 rounding
-      // Only validate percentages if bucket total is non-zero
-      const pctMatch = Math.abs(report.drawerTotal) < 0.01 || Math.abs(percentSum - 100) < 1; // Allow 1% total rounding error
+      // Skip percentage check for Savings (mixed signs make percentages meaningless)
+      const skipPercentCheck = report.bucket === "savings" || Math.abs(report.drawerTotal) < 0.01;
+      const pctMatch = skipPercentCheck || Math.abs(percentSum - 100) < 1; // Allow 1% total rounding error
       
       console.log(`     ${"─".repeat(50)}`);
       console.log(`     ${"TOTAL".padEnd(30)} ${formatCurrency(categorySum, currency).padEnd(12)} (${percentSum.toFixed(1)}%)`);
@@ -1046,8 +1047,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         console.log(`     ⚠️  Category sum mismatch: ${formatCurrency(categorySum, currency)} ≠ ${formatCurrency(report.drawerTotal, currency)}`);
         errors.push(`${report.bucket}: Category amounts sum to ${formatCurrency(categorySum, currency)} but bucket total is ${formatCurrency(report.drawerTotal, currency)}`);
       }
-      // Only check percentages if bucket total is meaningful (not near zero)
-      if (!pctMatch && Math.abs(report.drawerTotal) >= 0.01) {
+      // Only check percentages for non-savings buckets with meaningful totals
+      if (!pctMatch && !skipPercentCheck) {
         console.log(`     ⚠️  Percentage sum: ${percentSum.toFixed(1)}% (expected ~100%)`);
         errors.push(`${report.bucket}: Category percentages sum to ${percentSum.toFixed(1)}% instead of ~100%`);
       }
