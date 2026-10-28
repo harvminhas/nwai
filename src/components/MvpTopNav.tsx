@@ -96,12 +96,6 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
                   >
                     Spending
                   </Link>
-                  <Link
-                    href="/account/cash-flow/expenses"
-                    className="block rounded-xl px-3 py-2 text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-700"
-                  >
-                    Expenses
-                  </Link>
                 </div>
               </div>
 
@@ -318,13 +312,6 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
               className="block rounded-xl px-3 py-2 text-[15px] text-gray-700"
             >
               Spending
-            </Link>
-            <Link
-              href="/account/cash-flow/expenses"
-              onClick={() => setDrawerOpen(false)}
-              className="block rounded-xl px-3 py-2 text-[15px] text-gray-700"
-            >
-              Expenses
             </Link>
 
             <h6 className="mb-1 mt-4 px-3 text-[11px] font-bold uppercase tracking-wider text-gray-400">

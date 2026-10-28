@@ -1,73 +1,40 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { onAuthStateChanged } from "firebase/auth";
-import { getFirebaseClient } from "@/lib/firebase";
 import type { CashCommitment, CashFrequency } from "@/app/api/user/cash-commitments/route";
 import { formatCurrency } from "@/lib/currencyUtils";
 
-export default function CashFlowExpensesPage() {
-  const router = useRouter();
-  const [token, setToken] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+interface CashTabProps {
+  token: string | null;
+}
+
+export function CashTab({ token }: CashTabProps) {
   const [expenses, setExpenses] = useState<CashCommitment[]>([]);
+  const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingExpense, setEditingExpense] = useState<CashCommitment | null>(null);
 
   useEffect(() => {
-    const { auth } = getFirebaseClient();
-    return onAuthStateChanged(auth, async (user) => {
-      if (!user) {
-        router.push("/login");
-        return;
-      }
-      const tok = await user.getIdToken();
-      setToken(tok);
-      loadExpenses(tok);
-    });
-  }, [router]);
+    if (token) {
+      loadExpenses();
+    }
+  }, [token]);
 
-  async function loadExpenses(tok: string) {
+  async function loadExpenses() {
+    if (!token) return;
     setLoading(true);
     try {
       const res = await fetch("/api/user/cash-commitments", {
-        headers: { Authorization: `Bearer ${tok}` },
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
         const data = await res.json();
         setExpenses(data.items || []);
       }
     } catch (error) {
-      console.error("Failed to load expenses:", error);
+      console.error("Failed to load cash expenses:", error);
     } finally {
       setLoading(false);
-    }
-  }
-
-  function handleAdd() {
-    setEditingExpense(null);
-    setShowAddModal(true);
-  }
-
-  function handleEdit(expense: CashCommitment) {
-    setEditingExpense(expense);
-    setShowAddModal(true);
-  }
-
-  async function handleDelete(id: string) {
-    if (!token || !confirm("Delete this expense?")) return;
-    
-    try {
-      const res = await fetch(`/api/user/cash-commitments?id=${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        await loadExpenses(token);
-      }
-    } catch (error) {
-      console.error("Failed to delete expense:", error);
     }
   }
 
@@ -88,7 +55,7 @@ export default function CashFlowExpensesPage() {
         }),
       });
       if (res.ok) {
-        await loadExpenses(token);
+        await loadExpenses();
       }
     } catch (error) {
       console.error("Failed to toggle pause:", error);
@@ -122,11 +89,37 @@ export default function CashFlowExpensesPage() {
         }),
       });
       if (res.ok) {
-        await loadExpenses(token);
+        await loadExpenses();
       }
     } catch (error) {
       console.error("Failed to skip month:", error);
     }
+  }
+
+  async function handleDelete(id: string) {
+    if (!token || !confirm("Delete this expense?")) return;
+    
+    try {
+      const res = await fetch(`/api/user/cash-commitments?id=${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        await loadExpenses();
+      }
+    } catch (error) {
+      console.error("Failed to delete expense:", error);
+    }
+  }
+
+  function handleEdit(expense: CashCommitment) {
+    setEditingExpense(expense);
+    setShowAddModal(true);
+  }
+
+  function handleAdd() {
+    setEditingExpense(null);
+    setShowAddModal(true);
   }
 
   function handleCloseModal() {
@@ -135,8 +128,7 @@ export default function CashFlowExpensesPage() {
   }
 
   async function handleSave() {
-    if (!token) return;
-    await loadExpenses(token);
+    await loadExpenses();
     handleCloseModal();
   }
 
@@ -149,49 +141,103 @@ export default function CashFlowExpensesPage() {
     once: "One-time",
   };
 
+  const FREQ_MONTHLY: Record<CashFrequency, number> = {
+    weekly: 52 / 12,
+    biweekly: 26 / 12,
+    monthly: 1,
+    quarterly: 1 / 3,
+    yearly: 1 / 12,
+    once: 0,
+  };
+
+  function getMonthlyEquivalent(expense: CashCommitment): number {
+    if (expense.status === "paused") return 0;
+    return expense.amount * FREQ_MONTHLY[expense.frequency];
+  }
+
+  function getNextDue(expense: CashCommitment): string {
+    if (expense.status === "paused") return "Paused";
+    if (expense.frequency === "once") return "One-time";
+    
+    const today = new Date();
+    const floor = new Date(expense.startDate || expense.createdAt);
+    
+    // Simple next due calculation based on frequency
+    let next = new Date(floor);
+    while (next < today) {
+      switch (expense.frequency) {
+        case "weekly":
+          next.setDate(next.getDate() + 7);
+          break;
+        case "biweekly":
+          next.setDate(next.getDate() + 14);
+          break;
+        case "monthly":
+          next.setMonth(next.getMonth() + 1);
+          break;
+        case "quarterly":
+          next.setMonth(next.getMonth() + 3);
+          break;
+        case "yearly":
+          next.setFullYear(next.getFullYear() + 1);
+          break;
+      }
+    }
+    
+    const yearMonth = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
+    if (expense.skippedMonths?.includes(yearMonth)) {
+      return `${next.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} (skipped)`;
+    }
+    
+    return next.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  const totalMonthly = expenses
+    .filter(e => e.status !== "paused")
+    .reduce((sum, e) => sum + getMonthlyEquivalent(e), 0);
+
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <div className="flex items-center justify-center py-12">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-purple-600 border-t-transparent" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-12">
-      <div className="mx-auto max-w-4xl px-4 py-8">
-        {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold text-gray-900">Cash Flow</h1>
+    <div>
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900">Recurring Cash Spending</h2>
           <p className="mt-1 text-sm text-gray-600">
-            Track recurring expenses paid by cash or not captured in statements
+            Expenses paid by cash or not captured in statements · {formatCurrency(totalMonthly, "CAD")}/mo
           </p>
         </div>
+        <button
+          onClick={handleAdd}
+          className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700"
+        >
+          + Add Expense
+        </button>
+      </div>
 
-        {/* Add button */}
-        <div className="mb-6">
+      {expenses.length === 0 ? (
+        <div className="rounded-xl border-2 border-dashed border-gray-300 bg-white p-12 text-center">
+          <p className="text-gray-600">No recurring cash expenses yet</p>
           <button
             onClick={handleAdd}
-            className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700"
+            className="mt-4 text-sm font-medium text-purple-600 hover:text-purple-700"
           >
-            + Add Expense
+            Add your first expense →
           </button>
         </div>
+      ) : (
+        <div className="space-y-3">
+          {expenses.map((expense) => {
+            const monthlyEq = getMonthlyEquivalent(expense);
+            const nextDue = getNextDue(expense);
 
-        {/* Expenses list */}
-        {expenses.length === 0 ? (
-          <div className="rounded-xl border-2 border-dashed border-gray-300 bg-white p-12 text-center">
-            <p className="text-gray-600">No recurring cash expenses yet</p>
-            <button
-              onClick={handleAdd}
-              className="mt-4 text-sm font-medium text-purple-600 hover:text-purple-700"
-            >
-              Add your first expense →
-            </button>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {expenses.map((expense) => (
+            return (
               <div
                 key={expense.id}
                 className={`flex items-center justify-between rounded-lg border bg-white p-4 ${
@@ -216,12 +262,15 @@ export default function CashFlowExpensesPage() {
                     <span>{formatCurrency(expense.amount, "CAD")}</span>
                     <span>·</span>
                     <span>{frequencyLabels[expense.frequency]}</span>
+                    {expense.status !== "paused" && monthlyEq > 0 && (
+                      <>
+                        <span>·</span>
+                        <span>{formatCurrency(monthlyEq, "CAD")}/mo</span>
+                      </>
+                    )}
                     <span>·</span>
-                    <span>{expense.category}</span>
+                    <span>Next: {nextDue}</span>
                   </div>
-                  {expense.notes && (
-                    <p className="mt-1 text-xs text-gray-500">{expense.notes}</p>
-                  )}
                   {expense.skippedMonths && expense.skippedMonths.length > 0 && (
                     <p className="mt-1 text-xs text-gray-500">
                       Skipped: {expense.skippedMonths.join(", ")}
@@ -257,12 +306,11 @@ export default function CashFlowExpensesPage() {
                   </button>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
-      {/* Add/Edit Modal */}
       {showAddModal && (
         <ExpenseModal
           expense={editingExpense}
@@ -352,105 +400,95 @@ function ExpenseModal({
 
   return (
     <>
-      {/* Backdrop */}
       <div
-        className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm"
+        className="fixed inset-0 z-40 bg-gray-900/50 backdrop-blur-sm"
         onClick={onClose}
       />
-
-      {/* Modal */}
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
-          <h2 className="mb-4 text-xl font-semibold text-gray-900">
-            {expense ? "Edit Expense" : "Add Expense"}
+        <div className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-6 shadow-2xl">
+          <h2 className="mb-4 text-lg font-semibold text-gray-900">
+            {expense ? "Edit Expense" : "Add Cash Expense"}
           </h2>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                Name
-              </label>
+              <label className="block text-sm font-medium text-gray-700">Name</label>
               <input
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Lawn care"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none"
+                placeholder="e.g., Gym membership"
+                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
                 required
               />
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                Amount
-              </label>
+              <label className="block text-sm font-medium text-gray-700">Amount (CAD)</label>
               <input
                 type="number"
                 step="0.01"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 placeholder="0.00"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
                 required
               />
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                Frequency
-              </label>
+              <label className="block text-sm font-medium text-gray-700">Frequency</label>
               <select
                 value={frequency}
                 onChange={(e) => setFrequency(e.target.value as CashFrequency)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
               >
                 <option value="weekly">Weekly</option>
                 <option value="biweekly">Every 2 weeks</option>
                 <option value="monthly">Monthly</option>
                 <option value="quarterly">Every 3 months</option>
                 <option value="yearly">Yearly</option>
+                <option value="once">One-time</option>
               </select>
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                Category
-              </label>
+              <label className="block text-sm font-medium text-gray-700">Category</label>
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
               >
                 {categories.map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat}
-                  </option>
+                  <option key={cat} value={cat}>{cat}</option>
                 ))}
               </select>
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                Start Date (optional)
+              <label className="block text-sm font-medium text-gray-700">
+                Start date (optional)
               </label>
               <input
-                type="date"
+                type="month"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
               />
+              <p className="mt-1 text-xs text-gray-500">
+                When did this expense start? Leave empty if unsure.
+              </p>
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
+              <label className="block text-sm font-medium text-gray-700">
                 Notes (optional)
               </label>
               <textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                placeholder="Additional details..."
                 rows={2}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
               />
             </div>
 
