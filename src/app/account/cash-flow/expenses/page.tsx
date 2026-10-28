@@ -71,6 +71,64 @@ export default function CashFlowExpensesPage() {
     }
   }
 
+  async function handleTogglePause(expense: CashCommitment) {
+    if (!token) return;
+    const newStatus = expense.status === "paused" ? "active" : "paused";
+    
+    try {
+      const res = await fetch("/api/user/cash-commitments", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: expense.id,
+          status: newStatus,
+        }),
+      });
+      if (res.ok) {
+        await loadExpenses(token);
+      }
+    } catch (error) {
+      console.error("Failed to toggle pause:", error);
+    }
+  }
+
+  async function handleSkipMonth(expense: CashCommitment) {
+    if (!token) return;
+    const month = prompt("Enter month to skip (YYYY-MM):");
+    if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+      if (month !== null) alert("Invalid format. Use YYYY-MM (e.g., 2026-12)");
+      return;
+    }
+
+    const skippedMonths = expense.skippedMonths || [];
+    if (skippedMonths.includes(month)) {
+      alert("This month is already skipped");
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/user/cash-commitments", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: expense.id,
+          skippedMonths: [...skippedMonths, month],
+        }),
+      });
+      if (res.ok) {
+        await loadExpenses(token);
+      }
+    } catch (error) {
+      console.error("Failed to skip month:", error);
+    }
+  }
+
   function handleCloseModal() {
     setShowAddModal(false);
     setEditingExpense(null);
@@ -136,7 +194,11 @@ export default function CashFlowExpensesPage() {
             {expenses.map((expense) => (
               <div
                 key={expense.id}
-                className="flex items-center justify-between rounded-lg border border-gray-200 bg-white p-4 hover:border-gray-300"
+                className={`flex items-center justify-between rounded-lg border bg-white p-4 ${
+                  expense.status === "paused"
+                    ? "border-gray-300 opacity-60"
+                    : "border-gray-200 hover:border-gray-300"
+                }`}
               >
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
@@ -144,6 +206,11 @@ export default function CashFlowExpensesPage() {
                     <span className="rounded bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800">
                       Cash
                     </span>
+                    {expense.status === "paused" && (
+                      <span className="rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
+                        Paused
+                      </span>
+                    )}
                   </div>
                   <div className="mt-1 flex items-center gap-3 text-sm text-gray-600">
                     <span>{formatCurrency(expense.amount, "CAD")}</span>
@@ -155,8 +222,27 @@ export default function CashFlowExpensesPage() {
                   {expense.notes && (
                     <p className="mt-1 text-xs text-gray-500">{expense.notes}</p>
                   )}
+                  {expense.skippedMonths && expense.skippedMonths.length > 0 && (
+                    <p className="mt-1 text-xs text-gray-500">
+                      Skipped: {expense.skippedMonths.join(", ")}
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleTogglePause(expense)}
+                    className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100"
+                    title={expense.status === "paused" ? "Resume" : "Pause"}
+                  >
+                    {expense.status === "paused" ? "Resume" : "Pause"}
+                  </button>
+                  <button
+                    onClick={() => handleSkipMonth(expense)}
+                    className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100"
+                    title="Skip a specific month"
+                  >
+                    Skip
+                  </button>
                   <button
                     onClick={() => handleEdit(expense)}
                     className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100"

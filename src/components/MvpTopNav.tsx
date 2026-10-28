@@ -96,6 +96,12 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
                   >
                     Spending
                   </Link>
+                  <Link
+                    href="/account/cash-flow/expenses"
+                    className="block rounded-xl px-3 py-2 text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-700"
+                  >
+                    Expenses
+                  </Link>
                 </div>
               </div>
 
@@ -125,6 +131,30 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
                     className="block rounded-xl px-3 py-2 text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-700"
                   >
                     Debts
+                  </Link>
+                </div>
+              </div>
+
+              {/* Tools Dropdown */}
+              <div className="group relative">
+                <button
+                  className={`flex items-center gap-1 rounded-full px-3.5 py-2 text-sm font-medium transition-colors ${
+                    isActive("/account/tools")
+                      ? "bg-violet-50 text-violet-700"
+                      : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                  }`}
+                >
+                  Tools
+                  <svg className="h-3 w-3 transition-transform group-hover:rotate-180" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </button>
+                <div className="invisible absolute left-0 top-full mt-1.5 w-40 rounded-2xl border border-gray-200 bg-white p-2 opacity-0 shadow-xl shadow-gray-900/10 transition-all group-hover:visible group-hover:opacity-100">
+                  <Link
+                    href="/account/tools/planner"
+                    className="block rounded-xl px-3 py-2 text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-700"
+                  >
+                    Planner
                   </Link>
                 </div>
               </div>
@@ -288,6 +318,24 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
               className="block rounded-xl px-3 py-2 text-[15px] text-gray-700"
             >
               Spending
+            </Link>
+            <Link
+              href="/account/cash-flow/expenses"
+              onClick={() => setDrawerOpen(false)}
+              className="block rounded-xl px-3 py-2 text-[15px] text-gray-700"
+            >
+              Expenses
+            </Link>
+
+            <h6 className="mb-1 mt-4 px-3 text-[11px] font-bold uppercase tracking-wider text-gray-400">
+              Tools
+            </h6>
+            <Link
+              href="/account/tools/planner"
+              onClick={() => setDrawerOpen(false)}
+              className="block rounded-xl px-3 py-2 text-[15px] text-gray-700"
+            >
+              Planner
             </Link>
 
             <h6 className="mb-1 mt-4 px-3 text-[11px] font-bold uppercase tracking-wider text-gray-400">

@@ -1718,7 +1718,6 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   let cashPlannerErrors = 0;
   
   // Test 1: Cash commitments only count up to today
-  const currentMonth = new Date().toISOString().slice(0, 7);
   console.log(`Current month: ${currentMonth}`);
   console.log(`Cash commitments in profile: ${profile.cashCommitmentEntries.length}`);
   
@@ -1744,7 +1743,6 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   }
   
   // Test 2: Plans calculation (spent = linked + cash)
-  const { db } = getFirebaseAdmin();
   const plansSnap = await db.collection(`users/${uid}/plans`).get();
   const plans = plansSnap.docs.map(d => d.data());
   
