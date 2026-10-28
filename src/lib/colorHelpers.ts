@@ -37,9 +37,9 @@ export function getSignBgColor(value: number): string {
  * @returns Formatted string like "+$1,234" or "-$567"
  */
 export function formatChange(value: number, currency?: string): string {
-  if (value === 0) return formatCurrency(0, currency);
+  if (value === 0) return formatCurrency(0, currency || "CAD");
   const prefix = value > 0 ? "+" : "";
-  return prefix + formatCurrency(value, currency);
+  return prefix + formatCurrency(value, currency || "CAD");
 }
 
 /**
