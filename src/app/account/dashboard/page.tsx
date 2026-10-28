@@ -145,12 +145,18 @@ function WhereMoneyGoes({
   breakdown, 
   currency, 
   onOpenDrawer,
-  unreviewedCount
+  unreviewedCount,
+  range,
+  onRangeChange,
+  rangeLoading
 }: { 
   breakdown: MoneyCoachBreakdown; 
   currency: string;
   onOpenDrawer: (type: DrawerType) => void;
   unreviewedCount: number;
+  range: TimeRange;
+  onRangeChange: (range: TimeRange) => void;
+  rangeLoading: boolean;
 }) {
   const { coverage, incomeAmount, incomeBasisLabel, rangeLabel, buckets } = breakdown;
   
@@ -169,6 +175,12 @@ function WhereMoneyGoes({
 
   return (
     <section className="mt-10">
+      {/* Section Header with Range Switch */}
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold text-gray-900">Where Your Money Goes</h2>
+        <RangeSwitch value={range} onChange={onRangeChange} />
+      </div>
+      
       {/* Coverage Note */}
       {coverage.coveragePct < 90 && (
         <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900">
@@ -185,8 +197,8 @@ function WhereMoneyGoes({
         </div>
       )}
 
-      {/* Five Bucket Cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      {/* Five Bucket Cards - with subtle loading state */}
+      <div className={`grid gap-4 sm:grid-cols-2 lg:grid-cols-5 transition-opacity ${rangeLoading ? 'opacity-60' : 'opacity-100'}`}>
             {/* Income Card */}
             <button
               onClick={() => onOpenDrawer("income")}
@@ -402,6 +414,7 @@ export default function DashboardPage() {
     if (param === "12mo" || param === "ytd") return param;
     return "3mo";
   });
+  const [rangeLoading, setRangeLoading] = useState(false);
 
   // Handle URL hash for drawer state
   useEffect(() => {
@@ -478,14 +491,39 @@ export default function DashboardPage() {
     if (token) {
       loadData(token, range);
     }
-  }, [token, range, loadData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]); // Only reload on token change; range changes are handled by handleRangeChange
   
-  const handleRangeChange = (newRange: TimeRange) => {
-    setRange(newRange);
-    // Update URL
-    const params = new URLSearchParams(window.location.search);
-    params.set("range", newRange);
-    router.push(`?${params.toString()}`, { scroll: false });
+  const handleRangeChange = async (newRange: TimeRange) => {
+    if (!token) return;
+    
+    // Keep previous values visible with loading state
+    setRangeLoading(true);
+    
+    try {
+      // Fetch only the money-coach data for the new range
+      const coachRes = await fetch(`/api/user/money-coach?range=${newRange}`, { 
+        headers: buildHeaders(token) 
+      });
+      
+      if (coachRes.ok) {
+        const data = await coachRes.json();
+        setBreakdown(data);
+        setCurrency(data.homeCurrency || "USD");
+      }
+      
+      // Update URL without navigation
+      const params = new URLSearchParams(window.location.search);
+      params.set("range", newRange);
+      window.history.replaceState({}, '', `?${params.toString()}`);
+      
+      // Update range state
+      setRange(newRange);
+    } catch (error) {
+      console.error("Failed to update range:", error);
+    } finally {
+      setRangeLoading(false);
+    }
   };
 
   const handleAsk = async (question: string) => {
@@ -544,11 +582,6 @@ export default function DashboardPage() {
             Ask me anything about your spending, savings, or financial goals
           </p>
         </div>
-        
-        {/* Range Switch */}
-        <div className="mb-8 flex justify-center">
-          <RangeSwitch value={range} onChange={handleRangeChange} />
-        </div>
 
         {/* Question Box */}
         <div className="mb-8">
@@ -588,7 +621,15 @@ export default function DashboardPage() {
 
         {/* Where Money Goes */}
         {breakdown && breakdown.coverage.monthsCovered > 0 ? (
-          <WhereMoneyGoes breakdown={breakdown} currency={currency} onOpenDrawer={openDrawer} unreviewedCount={unreviewedCount} />
+          <WhereMoneyGoes 
+            breakdown={breakdown} 
+            currency={currency} 
+            onOpenDrawer={openDrawer} 
+            unreviewedCount={unreviewedCount}
+            range={range}
+            onRangeChange={handleRangeChange}
+            rangeLoading={rangeLoading}
+          />
         ) : (
           <div className="mx-auto mt-16 max-w-2xl rounded-2xl border-2 border-dashed border-purple-200 bg-purple-50/30 p-12 text-center">
             <p className="mb-3 text-lg font-semibold text-gray-600">

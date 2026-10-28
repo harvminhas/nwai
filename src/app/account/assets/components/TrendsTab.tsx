@@ -21,24 +21,43 @@ export function TrendsTab({ summary }: TrendsTabProps) {
     );
   }
 
-  const maxTotal = Math.max(...monthlyHistory.map(m => m.total));
+  // Show oldest on left to newest on right
+  const sortedHistory = [...monthlyHistory].sort((a, b) => a.month.localeCompare(b.month));
+  
+  // Calculate min and max for scaling (with 5% padding)
+  const values = sortedHistory.map(m => m.total);
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const range = maxValue - minValue;
+  const paddedMin = minValue - (range * 0.05);
+  const paddedMax = maxValue + (range * 0.05);
+  const effectiveRange = paddedMax - paddedMin;
+  
+  // Calculate month-over-month changes
+  const changes = sortedHistory.map((month, idx) => {
+    if (idx === 0) return null;
+    return month.total - sortedHistory[idx - 1].total;
+  });
+  
   const selectedData = selectedMonth 
     ? monthlyHistory.find(m => m.month === selectedMonth)
     : null;
-  
-  // Show most recent month at the top
-  const sortedHistory = [...monthlyHistory].reverse();
 
   return (
     <div className="space-y-6">
-      {/* Monthly Chart */}
+      {/* Timeline Chart - Vertical Columns */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">
           Total Assets by Month
         </h2>
-        <div className="space-y-2">
-          {sortedHistory.map((month) => {
-            const heightPct = maxTotal > 0 ? (month.total / maxTotal) * 100 : 0;
+        
+        {/* Compact timeline with vertical bars */}
+        <div className="h-48 flex items-end gap-1 mb-2">
+          {sortedHistory.map((month, idx) => {
+            const heightPct = effectiveRange > 0 
+              ? ((month.total - paddedMin) / effectiveRange) * 100 
+              : 50;
+            const change = changes[idx];
             const isSelected = selectedMonth === month.month;
             
             return (
@@ -47,29 +66,39 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                 onClick={() => setSelectedMonth(
                   selectedMonth === month.month ? null : month.month
                 )}
-                className="w-full group"
+                className="flex-1 flex flex-col items-center group relative"
               >
-                <div className="flex items-center gap-3">
-                  <span className="w-16 text-xs text-gray-600 text-right shrink-0">
-                    {month.monthLabel}
-                  </span>
-                  <div className="flex-1 h-8 bg-gray-100 rounded relative overflow-hidden">
-                    <div
-                      className={`h-full transition-all ${
-                        isSelected
-                          ? "bg-purple-600"
-                          : "bg-purple-500 group-hover:bg-purple-600"
-                      }`}
-                      style={{ width: `${heightPct}%` }}
-                    />
+                {/* Change label (+/-) */}
+                {change !== null && (
+                  <div className={`text-[10px] font-medium mb-1 ${
+                    change > 0 ? 'text-green-600' : change < 0 ? 'text-red-600' : 'text-gray-400'
+                  }`}>
+                    {change > 0 ? '+' : ''}{fmtCompact(change, currency)}
                   </div>
-                  <span className="w-24 text-sm font-medium text-gray-900 text-right tabular-nums shrink-0">
-                    {fmtCompact(month.total, currency)}
-                  </span>
+                )}
+                
+                {/* Vertical bar */}
+                <div className="w-full relative" style={{ height: `${Math.max(heightPct, 5)}%` }}>
+                  <div className={`absolute bottom-0 left-0 right-0 rounded-t transition-all ${
+                    isSelected
+                      ? "bg-purple-600"
+                      : "bg-purple-500 group-hover:bg-purple-600"
+                  }`} style={{ height: '100%' }} />
                 </div>
+                
+                {/* Month label */}
+                <span className="text-[10px] text-gray-600 mt-1 whitespace-nowrap">
+                  {month.monthLabel.split(' ')[0]}
+                </span>
               </button>
             );
           })}
+        </div>
+        
+        {/* Value range labels */}
+        <div className="flex justify-between text-xs text-gray-500 border-t pt-2">
+          <span>{fmtCompact(minValue, currency)}</span>
+          <span>{fmtCompact(maxValue, currency)}</span>
         </div>
       </div>
 
