@@ -163,8 +163,8 @@ export function buildSpendingSummary(
   });
   const allMonths = Array.from(monthSet).sort();
   
-  // Use provided range or default to last 12 months
-  const calculationMonths = rangeMonths || allMonths.slice(-12);
+  // Use provided range or default to last 3 months (original behavior)
+  const calculationMonths = rangeMonths || allMonths.slice(-3);
   const last12Months = allMonths.slice(-12); // Keep for backwards compatibility
   
   // Use shared bucket computation for each month

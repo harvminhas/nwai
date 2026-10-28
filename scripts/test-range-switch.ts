@@ -35,6 +35,12 @@ interface RangeResults {
   spending: number;
   savings: number;
   hasCurrentMonth: boolean;
+  incomeMatch: boolean;
+  spendingMatch: boolean;
+  savingsMatch: boolean;
+  pageIncome: number;
+  pageSpending: number;
+  pageSavings: number;
 }
 
 async function testRange(range: TimeRange): Promise<RangeResults> {
@@ -67,7 +73,7 @@ async function testRange(range: TimeRange): Promise<RangeResults> {
     incomeDepositReviews.set(doc.id, doc.get("classification"));
   });
   
-  // Compute card values (via MoneyCoach breakdown)
+  // Compute card values (via MoneyCoach breakdown - same as API route)
   const breakdown = computeMoneyCoachBreakdown(
     profile,
     userReviews,
@@ -111,22 +117,6 @@ async function testRange(range: TimeRange): Promise<RangeResults> {
   const spendingMatch = Math.abs(cardSpending - pageSpending) < 1;
   const savingsMatch = Math.abs(cardSavings - pageSavings) < 1;
   
-  if (!incomeMatch) {
-    console.error(`  ❌ Income mismatch: card=${cardIncome}, page=${pageIncome}`);
-  }
-  
-  if (!spendingMatch) {
-    console.error(`  ❌ Spending mismatch: card=${cardSpending}, page=${pageSpending}`);
-  }
-  
-  if (!savingsMatch) {
-    console.error(`  ❌ Savings mismatch: card=${cardSavings}, page=${pageSavings}`);
-  }
-  
-  if (hasCurrentMonth) {
-    console.error(`  ❌ Current month ${currentMonth} found in range months!`);
-  }
-  
   return {
     range,
     rangeLabel: breakdown.rangeLabel,
@@ -135,54 +125,109 @@ async function testRange(range: TimeRange): Promise<RangeResults> {
     spending: cardSpending,
     savings: cardSavings,
     hasCurrentMonth,
+    incomeMatch,
+    spendingMatch,
+    savingsMatch,
+    pageIncome,
+    pageSpending,
+    pageSavings,
   };
 }
 
+// Helper to format month names
+function formatMonth(yearMonth: string): string {
+  const [year, month] = yearMonth.split("-");
+  const date = new Date(parseInt(year), parseInt(month) - 1);
+  return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+}
+
 async function main() {
-  console.log("🧪 Testing dashboard range switch");
-  console.log(`Testing user: ${TEST_UID}\n`);
+  console.log("🧪 Dashboard Range Switch Regression Test");
+  console.log(`Testing user: ${TEST_UID}`);
+  console.log("=".repeat(80));
   
   const ranges: TimeRange[] = ["3mo", "12mo", "ytd"];
   let allPassed = true;
+  const results: RangeResults[] = [];
   
   for (const range of ranges) {
-    console.log(`\n📊 Testing range: ${range}`);
-    
     try {
       const result = await testRange(range);
-      
-      console.log(`  Range label: ${result.rangeLabel}`);
-      console.log(`  Months (${result.months.length}): ${result.months.join(", ")}`);
-      console.log(`  Income: $${result.income.toLocaleString()}/mo`);
-      console.log(`  Spending: $${result.spending.toLocaleString()}/mo`);
-      console.log(`  Savings: $${result.savings.toLocaleString()}/mo`);
-      
-      if (result.hasCurrentMonth) {
-        console.error(`  ❌ FAIL: Current month included in range`);
-        allPassed = false;
-      } else {
-        console.log(`  ✅ PASS: No current month in range`);
-      }
-      
-      // Note: card==drawer==page is verified within testRange
-      console.log(`  ✅ PASS: Card == Page calculations match`);
-      
+      results.push(result);
     } catch (error) {
-      console.error(`  ❌ FAIL: ${error}`);
+      console.error(`\n❌ FATAL ERROR testing ${range}:`, error);
       allPassed = false;
     }
   }
   
-  console.log("\n" + "=".repeat(60));
+  // Print Dashboard Range section
+  console.log("\n📊 DASHBOARD RANGE");
+  console.log("=".repeat(80));
+  
+  for (const result of results) {
+    const rangeTitle = result.range === "3mo" ? "3-MONTH" : 
+                      result.range === "12mo" ? "12-MONTH" : 
+                      "YEAR-TO-DATE";
+    
+    console.log(`\n${rangeTitle} (${result.range})`);
+    console.log("-".repeat(80));
+    
+    // Print months used (by name)
+    const monthNames = result.months.map(m => formatMonth(m));
+    console.log(`Months used (${result.months.length}): ${monthNames.join(", ")}`);
+    console.log(`Range label: ${result.rangeLabel}`);
+    console.log();
+    
+    // Print Income, Spending, Savings
+    const currency = "CAD";
+    console.log(`Income  (avg/mo): ${currency}$${result.income.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+    console.log(`Spending (avg/mo): ${currency}$${result.spending.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+    console.log(`Savings (avg/mo): ${currency}$${result.savings.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+    console.log();
+    
+    // Check for current month
+    const currentMonth = getCurrentMonth();
+    if (result.hasCurrentMonth) {
+      console.log(`❌ FAIL: Current month ${formatMonth(currentMonth)} included in range`);
+      allPassed = false;
+    } else {
+      console.log(`✅ PASS: Current month ${formatMonth(currentMonth)} excluded`);
+    }
+    
+    // Check card == page
+    if (!result.incomeMatch) {
+      console.log(`❌ FAIL: Income mismatch - card=${result.income.toFixed(2)}, page=${result.pageIncome.toFixed(2)}`);
+      allPassed = false;
+    } else {
+      console.log(`✅ PASS: Income card == page (${result.income.toFixed(2)})`);
+    }
+    
+    if (!result.spendingMatch) {
+      console.log(`❌ FAIL: Spending mismatch - card=${result.spending.toFixed(2)}, page=${result.pageSpending.toFixed(2)}`);
+      allPassed = false;
+    } else {
+      console.log(`✅ PASS: Spending card == page (${result.spending.toFixed(2)})`);
+    }
+    
+    if (!result.savingsMatch) {
+      console.log(`❌ FAIL: Savings mismatch - card=${result.savings.toFixed(2)}, page=${result.pageSavings.toFixed(2)}`);
+      allPassed = false;
+    } else {
+      console.log(`✅ PASS: Savings card == page (${result.savings.toFixed(2)})`);
+    }
+  }
+  
+  console.log("\n" + "=".repeat(80));
   if (allPassed) {
-    console.log("✅ All range tests PASSED");
+    console.log("✅ ALL DASHBOARD RANGE TESTS PASSED");
+    process.exit(0);
   } else {
-    console.log("❌ Some range tests FAILED");
+    console.log("❌ SOME DASHBOARD RANGE TESTS FAILED");
     process.exit(1);
   }
 }
 
 main().catch(err => {
-  console.error("Fatal error:", err);
+  console.error("\n❌ FATAL ERROR:", err);
   process.exit(1);
 });
