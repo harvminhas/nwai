@@ -242,6 +242,11 @@ ${goalLines.length > 0 ? `\n== GOALS (USER-NAMED TARGETS — INDEPENDENT OF APP 
 == TOOL GUIDANCE ==
 NEW comprehensive tools (use these first — they match page calculations exactly):
 - Income analysis / "how much did I make from X" → get_income_summary (buildIncomeSummary, same as Income page, fuzzy matches sources)
+  **When multiple sources match** (e.g. "MAM" matches "MAM PAY" and "MAM CONSTRUCTION"):
+    1. Lead with the COMBINED total across all matching sources
+    2. Then list each source individually if helpful
+    3. Example: "CA$154,810 from MAM across two sources over the last 3 months (July-September 2026): CA$132,217 from MAM PAY (6 transactions) and CA$22,593 from MAM CONSTRUCTION (23 transactions)."
+  **Period label**: Always mention the actual period from the tool result (period.label and period.start_month / end_month).
 - Spending analysis / "how much did I spend" → get_spending_summary (buildSpendingSummary, same as Spending page, includes cash)
 - Cash/manual expenses / "recurring cash expenses" → list_cash_expenses (name, amount, frequency, monthly equiv, next due)
 - Savings questions / "how much am I saving" → get_savings_summary (computeWindowSavings, same as Savings drawer)

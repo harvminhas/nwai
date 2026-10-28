@@ -1875,6 +1875,43 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         errors.push(`Income tool vs page mismatch: ${toolIncome} !== ${pageIncome}`);
         chatToolErrors++;
       }
+      
+      // Validate per-source totals
+      console.log(`\n  Validating per-source totals for range...`);
+      const period = incomeToolResult.data.period;
+      const bySource = incomeToolResult.data.by_source || [];
+      const rangeMonths = incomeToolResult.data.range_months || [];
+      
+      console.log(`  Period: ${period?.label || 'unknown'} (${period?.start_month} to ${period?.end_month})`);
+      console.log(`  Sources returned: ${bySource.length}`);
+      
+      // Sum all per-source totals
+      const perSourceSum = bySource.reduce((sum: number, s: any) => sum + parseCurrency(s.total), 0);
+      const rangeTotal = parseCurrency(toolIncome) * rangeMonths.length;
+      
+      console.log(`  Sum of per-source totals: ${formatCurrency(perSourceSum, currency)}`);
+      console.log(`  Expected range total: ${formatCurrency(rangeTotal, currency)}`);
+      
+      // Per-source sum should be <= range total (allowing small rounding)
+      if (perSourceSum > rangeTotal + 1) {
+        console.log(`  ❌ FAIL: Per-source totals exceed range total`);
+        errors.push(`Income per-source sum (${formatCurrency(perSourceSum, currency)}) > range total (${formatCurrency(rangeTotal, currency)})`);
+        chatToolErrors++;
+      } else {
+        console.log(`  ✓ Per-source totals valid`);
+      }
+      
+      // Verify period label matches requested range
+      const expectedLabel = rangeMonths.length === 12 ? "last 12 months" :
+                            rangeMonths.length === 3 ? "last 3 months" :
+                            `${rangeMonths.length} months`;
+      if (period?.label !== expectedLabel) {
+        console.log(`  ❌ FAIL: Period label mismatch: "${period?.label}" !== "${expectedLabel}"`);
+        errors.push(`Income period label mismatch: "${period?.label}" !== "${expectedLabel}"`);
+        chatToolErrors++;
+      } else {
+        console.log(`  ✓ Period label correct`);
+      }
     }
   } catch (err) {
     console.log(`  ❌ FAIL: Exception: ${err instanceof Error ? err.message : String(err)}`);

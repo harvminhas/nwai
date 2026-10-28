@@ -549,25 +549,58 @@ export function executeGetIncomeSummary(
     rangeMonths,
   );
   
-  const bySource = summary.sources.map((s: any) => ({
-    source: s.description || s.canonicalName,
-    total: fmt(s.total),
-    monthly_average: fmt(s.total / rangeMonths.length),
-    transaction_count: s.count,
-  }));
+  // Filter each source's transactions to only include the requested range
+  const bySource = summary.sources
+    .map((s: any) => {
+      // Filter transactions to only those in the requested range
+      const rangeTxns = s.transactions.filter((t: any) => {
+        const txMonth = t.date.slice(0, 7);
+        return rangeMonths.includes(txMonth);
+      });
+      
+      if (rangeTxns.length === 0) return null; // Skip sources with no transactions in range
+      
+      const rangeTotal = rangeTxns.reduce((sum: number, t: any) => sum + t.amount, 0);
+      
+      return {
+        source: s.description || s.canonicalName,
+        total: fmt(rangeTotal),
+        monthly_average: fmt(rangeTotal / rangeMonths.length),
+        transaction_count: rangeTxns.length,
+      };
+    })
+    .filter((s: any) => s !== null);
   
-  const bonuses = summary.bonusTransactions.map((b: any) => ({
-    date: b.date,
-    source: b.source,
-    description: b.description,
-    amount: fmt(b.amount),
-  }));
+  const bonuses = summary.bonusTransactions
+    .filter((b: any) => {
+      const txMonth = b.date.slice(0, 7);
+      return rangeMonths.includes(txMonth);
+    })
+    .map((b: any) => ({
+      date: b.date,
+      source: b.source,
+      description: b.description,
+      amount: fmt(b.amount),
+    }));
+  
+  // Add period metadata
+  const periodStart = rangeMonths[0];
+  const periodEnd = rangeMonths[rangeMonths.length - 1];
+  const periodLabel = rangeMonths.length === 12 ? "last 12 months" :
+                      rangeMonths.length === 3 ? "last 3 months" :
+                      `${rangeMonths.length} months`;
   
   return {
     ok: true,
     data: {
       typical_monthly: fmt(summary.typicalMonthly),
       range_months: rangeMonths,
+      period: {
+        start_month: periodStart,
+        end_month: periodEnd,
+        months_count: rangeMonths.length,
+        label: periodLabel,
+      },
       currency: home,
       by_source: bySource,
       bonuses: bonuses.length > 0 ? bonuses : undefined,
