@@ -27,6 +27,7 @@ import { CHAT_TOOLS } from "@/lib/chat/tools";
 import { executeTool } from "@/lib/chat/executor";
 import type { ToolParams } from "@/lib/chat/executor";
 import { buildChatContext } from "@/lib/chat/context";
+import { cleanAIAnswer } from "@/lib/chat/answerPostProcessor";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -181,10 +182,11 @@ export async function POST(req: NextRequest) {
 
   // ── 10. Stream the final answer back ──────────────────────────────────────
   // We have the full text from the non-streaming calls above.
+  // Clean it (remove tool names/attribution) before streaming.
   // Write it to a ReadableStream so the client-side streaming reader works
   // identically to the previous implementation.
   const encoder    = new TextEncoder();
-  const textToSend = finalText ?? "";
+  const textToSend = cleanAIAnswer(finalText ?? "");
 
   const stream = new ReadableStream({
     start(controller) {

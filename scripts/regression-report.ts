@@ -1782,6 +1782,34 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     console.log(`✅ All cash/planner tests passed\n`);
   }
   
+  // ── AI ANSWER POST-PROCESSOR TEST ───────────────────────────────────────────
+  console.log("🧹 AI ANSWER POST-PROCESSOR");
+  console.log("=".repeat(80) + "\n");
+  
+  // Import and test the post-processor
+  const { cleanAIAnswer } = await import("../src/lib/chat/answerPostProcessor");
+  
+  const sampleWithAttribution = "From get_income_summary (same as Income page): CA$5,234. Your typical monthly income is CA$5,234, which comes from 2 sources.";
+  const cleaned = cleanAIAnswer(sampleWithAttribution);
+  
+  console.log("Sample input:");
+  console.log(`  "${sampleWithAttribution}"\n`);
+  console.log("Post-processed output:");
+  console.log(`  "${cleaned}"\n`);
+  
+  const hasToolName = /\b(?:get|list|rollup|search|execute)_[a-z_]+\b/i.test(cleaned);
+  const hasAttribution = /\(?\s*(?:from|uses?)\s+[a-z_]+\s*\(?\s*same\s+as\s+[^)]*(?:page|drawer|card)\s*\)?\s*\)?/i.test(cleaned);
+  
+  if (hasToolName) {
+    console.log("❌ FAIL: Tool name still present in cleaned output");
+    errors.push("Post-processor did not remove tool names");
+  } else if (hasAttribution) {
+    console.log("❌ FAIL: Attribution text still present in cleaned output");
+    errors.push("Post-processor did not remove attribution text");
+  } else {
+    console.log("✅ Post-processor correctly removed tool names and attribution\n");
+  }
+  
   // ── AI CHAT TOOLS ────────────────────────────────────────────────────────────
   console.log("🤖 AI CHAT TOOLS");
   console.log("=".repeat(80) + "\n");
@@ -1962,7 +1990,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       const { FREQ_MONTHLY } = await import("../src/app/api/user/cash-commitments/route");
       const expectedTotal = profile.cashCommitmentEntries
         .filter((c: any) => c.status !== "paused" && c.frequency !== "once")
-        .reduce((sum: number, c: any) => sum + c.amount * FREQ_MONTHLY[c.frequency], 0);
+        .reduce((sum: number, c: any) => sum + c.amount * (FREQ_MONTHLY[c.frequency as keyof typeof FREQ_MONTHLY] || 12), 0);
       const expectedFormatted = formatCurrency(expectedTotal, currency);
       console.log(`  Tool (list_cash_expenses): ${toolTotal}`);
       console.log(`  Expected (Cash tab): ${expectedFormatted}`);

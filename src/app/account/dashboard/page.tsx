@@ -51,6 +51,132 @@ interface MoneyCoachBreakdown {
   homeCurrency?: string;
 }
 
+// ── markdown renderer (copied from chat page) ────────────────────────────────
+
+/** Split a GFM-style pipe row. Trailing `|` is optional. */
+function parsePipeTableRow(line: string): string[] | null {
+  const t = line.trim();
+  if (!t.startsWith("|")) return null;
+  const inner = t.endsWith("|") ? t.slice(1, -1) : t.slice(1);
+  const cells = inner.split("|").map((c) => c.trim());
+  if (cells.length === 0 || cells.every((c) => c === "")) return null;
+  return cells;
+}
+
+function isTableSeparatorRow(cells: string[]): boolean {
+  return cells.length > 0 && cells.every((c) => /^:?-{2,}:?$/.test(c.replace(/\s/g, "")));
+}
+
+function TableView({ rows }: { rows: string[][] }) {
+  if (rows.length === 0) return null;
+  const header = rows[0]!;
+  let dataStart = 1;
+  if (rows.length > 1 && isTableSeparatorRow(rows[1]!)) dataStart = 2;
+  const body = rows.slice(dataStart);
+  return (
+    <div className="my-2 -mx-1 max-w-full overflow-x-auto rounded-lg border border-gray-100 bg-gray-50/80">
+      <table className="w-full min-w-[320px] border-collapse text-left text-xs text-gray-800">
+        <thead>
+          <tr className="border-b border-gray-200 bg-gray-100/90">
+            {header.map((h, i) => (
+              <th key={i} className="whitespace-nowrap px-2 py-1.5 font-semibold text-gray-700">
+                <span dangerouslySetInnerHTML={{ __html: boldifyStatic(h) }} />
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {body.map((cells, ri) => (
+            <tr key={ri} className="border-b border-gray-100 last:border-0 hover:bg-white/80">
+              {cells.map((cell, ci) => (
+                <td key={ci} className="max-w-[200px] px-2 py-1.5 align-top text-gray-700 sm:max-w-[280px]">
+                  <span className="break-words" dangerouslySetInnerHTML={{ __html: boldifyStatic(cell) }} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function boldifyStatic(s: string) {
+  return s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+}
+
+function renderMarkdown(text: string): React.ReactNode[] {
+  const lines = text.split("\n");
+  const elements: React.ReactNode[] = [];
+  let inList = false;
+  let listItems: string[] = [];
+  let tableRows: string[][] | null = null;
+
+  function flushTable() {
+    if (tableRows && tableRows.length > 0) {
+      elements.push(<TableView key={`tbl-${elements.length}`} rows={tableRows} />);
+      tableRows = null;
+    }
+  }
+
+  function flushList() {
+    if (listItems.length > 0) {
+      elements.push(
+        <ul key={elements.length} className="my-1.5 space-y-0.5 pl-4">
+          {listItems.map((item, i) => (
+            <li key={i} className="flex items-start gap-1.5 text-sm">
+              <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-current opacity-40" />
+              <span dangerouslySetInnerHTML={{ __html: boldifyStatic(item) }} />
+            </li>
+          ))}
+        </ul>
+      );
+      listItems = [];
+      inList = false;
+    }
+  }
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const pipeRow = parsePipeTableRow(line);
+
+    if (pipeRow && pipeRow.length > 0) {
+      flushList();
+      if (tableRows === null) tableRows = [];
+      tableRows.push(pipeRow);
+      continue;
+    }
+
+    flushTable();
+
+    if (trimmed.startsWith("- ") || trimmed.startsWith("• ")) {
+      inList = true;
+      listItems.push(trimmed.slice(2));
+    } else if (trimmed.match(/^\d+\.\s/)) {
+      inList = true;
+      listItems.push(trimmed.replace(/^\d+\.\s/, ""));
+    } else {
+      flushList();
+      if (trimmed === "") {
+        elements.push(<div key={elements.length} className="h-2" />);
+      } else if (trimmed.startsWith("## ")) {
+        elements.push(
+          <p key={elements.length} className="mt-3 first:mt-0 font-semibold text-[13px] uppercase tracking-wide text-gray-800"
+            dangerouslySetInnerHTML={{ __html: boldifyStatic(trimmed.slice(3)) }} />
+        );
+      } else {
+        elements.push(
+          <p key={elements.length} className="text-sm leading-relaxed"
+            dangerouslySetInnerHTML={{ __html: boldifyStatic(trimmed) }} />
+        );
+      }
+    }
+  }
+  flushList();
+  flushTable();
+  return elements;
+}
+
 // ── Components ─────────────────────────────────────────────────────────────────
 
 function QuestionBox({ 
@@ -125,10 +251,9 @@ function AnswerCard({
         </div>
         <div className="min-w-0 flex-1">
           <h4 className="text-sm font-semibold text-purple-900">{question}</h4>
-          <p 
-            className="mt-2 text-sm leading-relaxed text-gray-700"
-            dangerouslySetInnerHTML={{ __html: answer.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') }}
-          />
+          <div className="mt-2 text-gray-700">
+            {renderMarkdown(answer)}
+          </div>
           <button
             onClick={onClear}
             className="mt-3 text-sm font-semibold text-purple-600 hover:text-purple-700"

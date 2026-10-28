@@ -4,6 +4,7 @@ import { getFinancialProfile } from "@/lib/financialProfile";
 import { loadUserReviewContext } from "@/lib/userReviewContext";
 import { answerQuestion, getSuggestedQuestions } from "@/lib/questionTemplates";
 import { queryLLMWithTools } from "@/lib/chat/llmQuery";
+import { cleanAIAnswer } from "@/lib/chat/answerPostProcessor";
 
 export const dynamic = "force-dynamic";
 
@@ -43,7 +44,7 @@ export async function POST(req: NextRequest) {
 
     if (templateAnswer) {
       return Response.json({
-        answer: templateAnswer,
+        answer: cleanAIAnswer(templateAnswer),
         suggestedFollowUps: getSuggestedQuestions().slice(0, 3),
       });
     }
@@ -62,7 +63,7 @@ export async function POST(req: NextRequest) {
       const llmAnswer = await queryLLMWithTools(apiKey, question, profile, reviewContext);
 
       return Response.json({
-        answer: llmAnswer,
+        answer: cleanAIAnswer(llmAnswer),
         suggestedFollowUps: getSuggestedQuestions().slice(0, 3),
       });
     } catch (llmError: any) {

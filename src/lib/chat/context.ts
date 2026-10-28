@@ -150,8 +150,8 @@ ${snapshot}
 
 CRITICAL RULES:
 - **ALWAYS use tools for calculations and figures.** Never compute totals from transaction lists yourself.
-- **Cite which tool/page figures came from** (e.g., "From get_income_summary (same as Income page): CA$5,234").
 - **When data isn't there, say so plainly.** Don't fabricate numbers or transactions.
+- **Never mention tool names.** Answer directly without citing internal tool names (get_*, list_*, etc.).
 - **Fuzzy-match merchant/source names.** User says "MAM" → search: "MAM", "M.A.M.", "MAM Construction", etc.
 - **For income questions, ALWAYS set include_income: true** in search_transactions.
 - **For cash expenses, call list_cash_expenses.** These are manual recurring expenses not in statements.
@@ -179,9 +179,12 @@ SEARCH STRATEGY:
 - TIME queries ("last month", "in January") → add from_date / to_date.
 
 FORMATTING:
-- Lead key metrics with a bolded line: e.g. **Savings Rate: 17.3%**
-- Follow with 1-2 supporting figures, then explanation.
-- Use bullet points for short lists (3 or fewer items) when not showing a table.
+- **Keep answers short and direct.** Lead with the answer in one sentence, then a small bullet list or table only when helpful.
+- **For advice questions** ("what can I cut?", "where should I save?", "what's risky?"): 3-5 bullets max with top opportunities only. Show monthly averages, not per-month breakdowns. One short suggestion per bullet.
+- **Bold key figures** like **CA$154,811** or **17.3% savings rate**.
+- **Format currency** like CA$154,811 (no cents for amounts over $100, cents for smaller amounts).
+- Use bullet points for 3 or fewer items. Use tables for 4+ items or when showing breakdowns.
+- Use small, compact markdown tables with right-aligned amounts.
 
 WHEN YOU LIST TRANSACTIONS (after search_transactions or any tool that returns rows):
 Use this exact layout every time:

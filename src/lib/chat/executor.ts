@@ -567,7 +567,6 @@ export function executeGetIncomeSummary(
       currency: home,
       by_source: bySource,
       bonuses: bonuses.length > 0 ? bonuses : undefined,
-      note: "Uses buildIncomeSummary (same as Income page). Typical monthly = average of months with income data.",
     },
   };
 }
@@ -628,7 +627,6 @@ export function executeGetSpendingSummary(
       range_months: rangeMonths,
       currency: home,
       buckets: bucketObj,
-      note: "Uses buildSpendingSummary (same as Spending page). Includes cash commitments. Excludes transfers.",
     },
   };
 }
@@ -746,7 +744,6 @@ export function executeGetSavingsSummary(
         debt_paydown: fmt(savings.monthlyAverage.netDebtChange),
         contributions: fmt(savings.monthlyAverage.contributionsToOutside),
       },
-      note: "Uses computeWindowSavings (same as Savings drawer). Formula: cash change + debt paydown + investment/savings contributions.",
     },
   };
 }
@@ -785,7 +782,6 @@ export function executeGetNetWorth(profile: FinancialProfileCache): ToolResult {
       monthly_change: fmt(monthlyChange),
       as_of_month: month,
       currency: home,
-      note: "Uses getNetWorth (same as dashboard card).",
     },
   };
 }
