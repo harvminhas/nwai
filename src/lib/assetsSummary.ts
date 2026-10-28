@@ -94,7 +94,8 @@ export function buildAssetsSummary(
   balanceHistory: AccountBalanceHistory[],
   manualAssets: ManualAsset[],
   fxRates: Record<string, number>,
-  homeCurrency: string
+  homeCurrency: string,
+  profileMonthlyHistory?: Array<{ yearMonth: string; totalAssets: number }> // From profile
 ): AssetsSummary {
   // Filter to asset accounts only (positive balance or asset types)
   const assetAccounts = accountSnapshots.filter(acc => 
@@ -209,46 +210,53 @@ export function buildAssetsSummary(
   const changeVsLastMonth = lastMonthTotal > 0 ? totalAssets - lastMonthTotal : 0;
   const changeVs12Months = month12Total > 0 ? totalAssets - month12Total : 0;
 
-  // Build monthly history (last 12 months)
+  // Build monthly history (last 12 months) - use profile's monthlyHistory for totals
   const monthlyHistory: AssetsSummary["monthlyHistory"] = [];
-  const allMonths = new Set<string>();
-  for (const history of balanceHistory) {
-    for (const entry of history.entries) {
-      allMonths.add(entry.yearMonth);
-    }
-  }
-  const sortedMonths = Array.from(allMonths).sort().reverse().slice(0, 12).reverse();
-
-  for (const month of sortedMonths) {
-    const groupTotals = new Map<string, number>();
-    let monthTotal = 0;
-
-    for (const history of balanceHistory) {
-      const entry = history.entries.find((e: { yearMonth: string; balance: number }) => e.yearMonth === month);
-      if (entry) {
-        const acc = assetAccounts.find(a => a.slug === history.slug);
-        if (acc && acc.balance >= 0) {
+  
+  if (profileMonthlyHistory && profileMonthlyHistory.length > 0) {
+    // Use profile's totalAssets which already has correct carry-forward logic
+    const last12Months = profileMonthlyHistory.slice(-12);
+    
+    for (const profileMonth of last12Months) {
+      const month = profileMonth.yearMonth;
+      
+      // Compute per-group breakdown with carry-forward
+      const groupTotals = new Map<string, number>();
+      
+      // For each asset account, find its balance at this month (with carry-forward)
+      for (const acc of assetAccounts) {
+        const history = balanceHistory.find(h => h.slug === acc.slug);
+        if (!history) continue;
+        
+        // Find balance at or before this month (carry-forward)
+        let balance = 0;
+        for (const entry of history.entries) {
+          if (entry.yearMonth <= month) {
+            balance = convertToHome(entry.balance, history.currency, fxRates, homeCurrency);
+          } else {
+            break;
+          }
+        }
+        
+        if (balance > 0) {
           const type = accountGroup(acc.accountType);
-          const balance = convertToHome(entry.balance, history.currency, fxRates, homeCurrency);
           groupTotals.set(type, (groupTotals.get(type) || 0) + balance);
-          monthTotal += balance;
         }
       }
+      
+      // Manual assets
+      const manualTotal = manualAssets.reduce((sum, a) => sum + a.value, 0);
+      if (manualTotal > 0) {
+        groupTotals.set("property", (groupTotals.get("property") || 0) + manualTotal);
+      }
+      
+      monthlyHistory.push({
+        month,
+        monthLabel: formatMonthLabel(month),
+        total: profileMonth.totalAssets, // Use profile's value which includes manual assets
+        groups: Array.from(groupTotals.entries()).map(([type, total]) => ({ type, total })),
+      });
     }
-
-    // Add manual assets to month total
-    const manualTotal = manualAssets.reduce((sum, a) => sum + a.value, 0);
-    monthTotal += manualTotal;
-    if (manualTotal > 0) {
-      groupTotals.set("property", (groupTotals.get("property") || 0) + manualTotal);
-    }
-
-    monthlyHistory.push({
-      month,
-      monthLabel: formatMonthLabel(month),
-      total: monthTotal,
-      groups: Array.from(groupTotals.entries()).map(([type, total]) => ({ type, total })),
-    });
   }
 
   const staleAccounts = accounts.filter(a => a.isStale);

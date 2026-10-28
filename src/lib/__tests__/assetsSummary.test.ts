@@ -131,7 +131,8 @@ describe("Assets Summary", () => {
       balanceHistory,
       manualAssets,
       fxRates,
-      homeCurrency
+      homeCurrency,
+      undefined
     );
 
     // Total Assets = 5000 + 15000 + 50000 + 30000 + 75000 + 1000 + 750000 + 25000 = 951,000
@@ -208,7 +209,8 @@ describe("Assets Summary", () => {
       balanceHistory,
       [],
       fxRates,
-      homeCurrency
+      homeCurrency,
+      undefined
     );
 
     // Change vs last month = 15000 - 14000 = +1000 (positive is good for assets)
@@ -216,7 +218,7 @@ describe("Assets Summary", () => {
   });
 
   test("should handle empty data gracefully", () => {
-    const summary = buildAssetsSummary([], [], [], fxRates, homeCurrency);
+    const summary = buildAssetsSummary([], [], [], fxRates, homeCurrency, undefined);
 
     expect(summary.totalAssets).toBe(0);
     expect(summary.groups.length).toBe(0);

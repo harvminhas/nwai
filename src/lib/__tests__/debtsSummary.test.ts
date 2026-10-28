@@ -143,7 +143,8 @@ describe("Debts Summary", () => {
       paymentHistory,
       manualLiabilities,
       fxRates,
-      homeCurrency
+      homeCurrency,
+      undefined // No profile monthly history in test
     );
 
     // Total Debt = 2500 + 1500 + 350000 + 10000 + 15000 + 20000 = 399,000
@@ -172,8 +173,9 @@ describe("Debts Summary", () => {
     expect(groupsByType.other.accounts.length).toBe(1);
     expect(groupsByType.other.manualLiabilities.length).toBe(1);
 
-    // Monthly Payments = 200 + 150 + 2000 + 300 + 450 = 3,100
-    expect(summary.monthlyPayments).toBe(3100);
+    // Monthly Payments = credit minimums (75 + 45) + 2000 + 300 + 450 = 2,870
+    // Note: Credit cards use estimated 3% minimum, not paymentsMade
+    expect(summary.monthlyPayments).toBe(2870);
 
     // Weighted Average Rate
     // (2500 * 19.99 + 1500 * 20.99 + 350000 * 5.5 + 10000 * 7.5 + 15000 * 4.5) / (2500 + 1500 + 350000 + 10000 + 15000)
@@ -231,7 +233,8 @@ describe("Debts Summary", () => {
       [],
       [],
       fxRates,
-      homeCurrency
+      homeCurrency,
+      undefined
     );
 
     // Change vs last month = 2500 - 3000 = -500 (negative is good for debt - paid down $500)
@@ -266,7 +269,8 @@ describe("Debts Summary", () => {
       paymentHistory,
       [],
       fxRates,
-      homeCurrency
+      homeCurrency,
+      undefined
     );
 
     const payoff = summary.payoffEstimates.find(e => e.accountSlug === "td-visa-1234");
@@ -281,7 +285,7 @@ describe("Debts Summary", () => {
   });
 
   test("should handle empty data gracefully", () => {
-    const summary = buildDebtsSummary([], [], [], [], fxRates, homeCurrency);
+    const summary = buildDebtsSummary([], [], [], [], fxRates, homeCurrency, undefined);
 
     expect(summary.totalDebt).toBe(0);
     expect(summary.groups.length).toBe(0);

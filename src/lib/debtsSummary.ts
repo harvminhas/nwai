@@ -8,6 +8,7 @@
 import type { AccountSnapshot, DebtPaymentHistoryEntry } from "./extractTransactions";
 import type { AccountBalanceHistory } from "./financialProfile";
 import type { ManualLiability, DebtPaymentReview } from "./types";
+import { computeScheduledDebtPayments, type ScheduledDebtPayment } from "./debtPayments";
 import { fmtCompact } from "./currencyUtils";
 
 export interface DebtAccount {
@@ -63,14 +64,23 @@ export interface DebtsSummary {
       balance: number;
     }>;
   }>;
+  scheduledPayments?: ScheduledDebtPayment[]; // For diagnostic output
 }
 
-const DEBT_TYPES = new Set(["mortgage", "credit_card", "loc", "line_of_credit", "auto_loan", "student_loan", "personal_loan", "other_debt"]);
+const DEBT_TYPES = new Set(["mortgage", "credit", "credit_card", "loc", "line_of_credit", "loan", "auto_loan", "student_loan", "personal_loan", "other_debt"]);
 
-function debtGroup(accountType: string): DebtGroup["type"] {
+function debtGroup(accountType: string, accountName?: string): DebtGroup["type"] {
+  // Use the actual account type from the snapshot
   if (accountType === "mortgage") return "mortgage";
-  if (accountType === "credit_card") return "credit_card";
-  if (accountType === "loc" || accountType === "line_of_credit") return "loc";
+  if (accountType === "line_of_credit" || accountType === "loc") return "loc";
+  if (accountType === "credit" || accountType === "credit_card") return "credit_card";
+  
+  // Check account name for HELOC/equity line indicators
+  const nameLower = (accountName || "").toLowerCase();
+  if (nameLower.includes("equity") || nameLower.includes("heloc") || nameLower.includes("flexline")) {
+    return "loc";
+  }
+  
   return "other";
 }
 
@@ -108,8 +118,6 @@ function estimateMonthlyPayment(
   const median = recentPayments[Math.floor(recentPayments.length / 2)];
   return median;
 }
-
-// Simplified payoff calculator - estimates months to pay off at current payment rate
 function estimatePayoffMonths(
   balance: number, // positive value
   apr: number, // annual %
@@ -146,9 +154,24 @@ export function buildDebtsSummary(
   paymentHistory: DebtPaymentHistoryEntry[],
   manualLiabilities: ManualLiability[],
   fxRates: Record<string, number>,
-  homeCurrency: string
+  homeCurrency: string,
+  profileMonthlyHistory?: Array<{ yearMonth: string; totalDebts: number; debtPaymentsTotal: number }> // From profile
 ): DebtsSummary {
-  // Filter to debt accounts only (negative balance or debt types)
+  // Compute scheduled debt payments using the same logic as computeMonthlyBuckets
+  const scheduledPayments = computeScheduledDebtPayments(
+    accountSnapshots,
+    paymentHistory,
+    [], // No user reviews for now
+    fxRates,
+    homeCurrency
+  );
+  
+  // Build a map of scheduled payments by account
+  const scheduledPaymentMap = new Map(
+    scheduledPayments.map(p => [p.accountSlug, p])
+  );
+  
+  // Filter to debt accounts only
   const debtAccounts = accountSnapshots.filter(acc => 
     acc.balance < 0 || DEBT_TYPES.has(acc.accountType)
   );
@@ -156,7 +179,10 @@ export function buildDebtsSummary(
   // Build debt account list
   const accounts: DebtAccount[] = debtAccounts.map(acc => {
     const balanceInHome = Math.abs(convertToHome(acc.balance, acc.currency || homeCurrency, fxRates, homeCurrency));
-    const monthlyPayment = estimateMonthlyPayment(acc.slug, paymentHistory);
+    
+    // Get scheduled payment from computeScheduledDebtPayments
+    const scheduled = scheduledPaymentMap.get(acc.slug);
+    const monthlyPayment = scheduled?.amount || null;
     
     // Get minPayment from latest statement's paymentsMade
     const latestPayment = paymentHistory
@@ -181,7 +207,7 @@ export function buildDebtsSummary(
   const groupMap = new Map<DebtGroup["type"], DebtGroup>();
   
   for (const acc of accounts) {
-    const type = debtGroup(acc.accountType);
+    const type = debtGroup(acc.accountType, acc.accountName);
     if (!groupMap.has(type)) {
       groupMap.set(type, {
         type,
@@ -220,6 +246,9 @@ export function buildDebtsSummary(
   const groups = Array.from(groupMap.values());
   const totalDebt = groups.reduce((sum, g) => sum + g.totalBalance, 0);
 
+  // Calculate total monthly payments from scheduled payments
+  const monthlyPayments = scheduledPayments.reduce((sum, p) => sum + p.amount, 0);
+
   // Calculate changes from balance history
   const now = new Date();
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -254,12 +283,6 @@ export function buildDebtsSummary(
   // For debt, increase is bad (positive change), decrease is good (negative change)
   const changeVsLastMonth = lastMonthDebt > 0 ? totalDebt - lastMonthDebt : 0;
   const changeVs12Months = month12Debt > 0 ? totalDebt - month12Debt : 0;
-
-  // Calculate total monthly payments
-  const monthlyPayments = accounts.reduce((sum, acc) => {
-    const payment = acc.minPayment || acc.monthlyPayment || 0;
-    return sum + payment;
-  }, 0);
 
   // Calculate weighted average rate
   let weightedRateSum = 0;
@@ -314,51 +337,49 @@ export function buildDebtsSummary(
       };
     });
 
-  // Build monthly history (last 12 months)
+  // Build monthly history (last 12 months) - use profile's monthlyHistory for totals
   const monthlyHistory: DebtsSummary["monthlyHistory"] = [];
-  const allMonths = new Set<string>();
-  for (const history of balanceHistory) {
-    for (const entry of history.entries) {
-      allMonths.add(entry.yearMonth);
-    }
-  }
-  const sortedMonths = Array.from(allMonths).sort().reverse().slice(0, 12).reverse();
-
-  for (const month of sortedMonths) {
-    const groupTotals = new Map<string, number>();
-    let monthDebt = 0;
-    let monthPayments = 0;
-
-    for (const history of balanceHistory) {
-      const entry = history.entries.find((e: { yearMonth: string; balance: number }) => e.yearMonth === month);
-      if (entry) {
-        const acc = debtAccounts.find(a => a.slug === history.slug);
-        if (acc && acc.balance < 0) {
-          const type = debtGroup(acc.accountType);
-          const balance = Math.abs(convertToHome(entry.balance, history.currency, fxRates, homeCurrency));
+  
+  if (profileMonthlyHistory && profileMonthlyHistory.length > 0) {
+    // Use profile's totalDebts which already has correct carry-forward logic
+    const last12Months = profileMonthlyHistory.slice(-12);
+    
+    for (const profileMonth of last12Months) {
+      const month = profileMonth.yearMonth;
+      
+      // Compute per-group breakdown with carry-forward
+      const groupTotals = new Map<string, number>();
+      const accountLastBalance = new Map<string, number>();
+      
+      // For each debt account, find its balance at this month (with carry-forward)
+      for (const acc of debtAccounts) {
+        const history = balanceHistory.find(h => h.slug === acc.slug);
+        if (!history) continue;
+        
+        // Find balance at or before this month (carry-forward)
+        let balance = 0;
+        for (const entry of history.entries) {
+          if (entry.yearMonth <= month) {
+            balance = Math.abs(convertToHome(entry.balance, history.currency, fxRates, homeCurrency));
+          } else {
+            break;
+          }
+        }
+        
+        if (balance > 0) {
+          const type = debtGroup(acc.accountType, acc.accountName);
           groupTotals.set(type, (groupTotals.get(type) || 0) + balance);
-          monthDebt += balance;
         }
       }
+      
+      monthlyHistory.push({
+        month,
+        monthLabel: formatMonthLabel(month),
+        totalDebt: profileMonth.totalDebts, // Use profile's value which includes manual assets
+        totalPayments: profileMonth.debtPaymentsTotal || 0,
+        groups: Array.from(groupTotals.entries()).map(([type, balance]) => ({ type, balance })),
+      });
     }
-
-    // Get payments for this month
-    const monthPaymentEntries = paymentHistory.filter(p => p.statementMonth === month);
-    for (const p of monthPaymentEntries) {
-      monthPayments += convertToHome(p.paymentsMade, p.currency, fxRates, homeCurrency);
-    }
-
-    // Add manual liabilities to month total
-    const manualTotal = manualLiabilities.reduce((sum, l) => sum + l.balance, 0);
-    monthDebt += manualTotal;
-
-    monthlyHistory.push({
-      month,
-      monthLabel: formatMonthLabel(month),
-      totalDebt: monthDebt,
-      totalPayments: monthPayments,
-      groups: Array.from(groupTotals.entries()).map(([type, balance]) => ({ type, balance })),
-    });
   }
 
   return {
@@ -373,5 +394,6 @@ export function buildDebtsSummary(
     groups,
     payoffEstimates,
     monthlyHistory,
+    scheduledPayments, // For diagnostic output
   };
 }

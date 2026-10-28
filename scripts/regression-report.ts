@@ -1150,7 +1150,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     profile.accountBalanceHistory,
     profile.manualAssets,
     profile.fxRates,
-    profile.homeCurrency
+    profile.homeCurrency,
+    profile.monthlyHistory // Pass profile monthly history for correct carry-forward
   );
   
   const debtsSummary = buildDebtsSummary(
@@ -1159,7 +1160,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     profile.debtPaymentHistory,
     profile.manualLiabilities,
     profile.fxRates,
-    profile.homeCurrency
+    profile.homeCurrency,
+    profile.monthlyHistory // Pass profile monthly history for correct carry-forward
   );
   
   console.log(`📈 Assets Summary:`);
@@ -1178,7 +1180,19 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   debtsSummary.groups.forEach(g => {
     const accountCount = g.accounts.length + g.manualLiabilities.length;
     console.log(`     - ${g.label}: ${formatCurrency(g.totalBalance, currency)} (${accountCount} accounts)`);
+    // Print each account with its classification
+    g.accounts.forEach(acc => {
+      console.log(`       • ${acc.accountName || acc.accountType} (${acc.accountType} → ${g.type}): ${formatCurrency(acc.balance, currency)}`);
+    });
   });
+  
+  // Print per-account payment details (Diagnostic for issue A)
+  if (debtsSummary.scheduledPayments && debtsSummary.scheduledPayments.length > 0) {
+    console.log(`\n   Scheduled Payments (per account):`);
+    for (const payment of debtsSummary.scheduledPayments) {
+      console.log(`     - ${payment.accountName || payment.accountSlug}: ${formatCurrency(payment.amount, currency)} (${payment.method}, ${payment.debtType})`);
+    }
+  }
   
   // Check 1: Assets + Debts should equal Net Worth from dashboard
   console.log(`\n✓ Check 1: Assets - Debts = Net Worth from dashboard`);
@@ -1257,7 +1271,10 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       const diff = Math.abs(nwFromHistory - nwFromProfile);
       
       if (diff > 1) { // Allow $1 rounding
-        console.log(`   ❌ ${assetMonth.monthLabel}: Assets ${formatCurrency(assetMonth.total, currency)} - Debts ${formatCurrency(debtMonth.totalDebt, currency)} = ${formatCurrency(nwFromHistory, currency)}, but profile shows ${formatCurrency(nwFromProfile, currency)} (diff ${formatCurrency(diff, currency)})`);
+        console.log(`   ❌ ${assetMonth.monthLabel}:`);
+        console.log(`      Summary: Assets ${formatCurrency(assetMonth.total, currency)} - Debts ${formatCurrency(debtMonth.totalDebt, currency)} = ${formatCurrency(nwFromHistory, currency)}`);
+        console.log(`      Profile: Assets ${formatCurrency(profileMonth.totalAssets, currency)} - Debts ${formatCurrency(profileMonth.totalDebts, currency)} = ${formatCurrency(nwFromProfile, currency)}`);
+        console.log(`      Diff: ${formatCurrency(diff, currency)} (Assets diff: ${formatCurrency(Math.abs(assetMonth.total - profileMonth.totalAssets), currency)}, Debts diff: ${formatCurrency(Math.abs(debtMonth.totalDebt - profileMonth.totalDebts), currency)})`);
         historyErrors++;
       }
     }

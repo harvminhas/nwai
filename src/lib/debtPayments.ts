@@ -276,8 +276,12 @@ export function computeScheduledDebtPayments(
   const debtAccounts = accountSnapshots.filter(
     (a) =>
       a.accountType === "credit" ||
+      a.accountType === "credit_card" ||
       a.accountType === "mortgage" ||
       a.accountType === "loan" ||
+      a.accountType === "auto_loan" ||
+      a.accountType === "student_loan" ||
+      a.accountType === "personal_loan" ||
       a.accountType === "line_of_credit"
   );
 
@@ -287,7 +291,7 @@ export function computeScheduledDebtPayments(
     const balance = toHome(Math.abs(account.balance), account.currency);
     const paymentMade = toHome(account.paymentsMade ?? 0, account.currency);
 
-    if (account.accountType === "credit") {
+    if (account.accountType === "credit" || account.accountType === "credit_card") {
       // Credit card: check if carrying balance
       if (isPaidInFull(balance, paymentMade)) {
         // Paid in full: no fixed cost

@@ -25,7 +25,8 @@ export async function GET(request: NextRequest) {
       profile.debtPaymentHistory,
       profile.manualLiabilities,
       profile.fxRates,
-      profile.homeCurrency
+      profile.homeCurrency,
+      profile.monthlyHistory
     );
 
     return NextResponse.json(summary);
