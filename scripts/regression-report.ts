@@ -1593,11 +1593,11 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       const pageIncome = incomeSum.typicalMonthly;
       const pageSpending = spendingSum.typicalMonthly;
       
-      // Savings: use drawer's calculation (computeAverageSavings), not income - spending
-      const drawerSavings = computeAverageSavings(
-        profile.monthlyHistory,
-        profile.accountBalanceHistory,
-        profile.expenseTxns,
+      // Savings: use shared computation (same as card, drawer, and AI tool)
+      const { computeSavingsForRange } = await import("../src/lib/savingsForRange");
+      const drawerSavings = computeSavingsForRange(
+        profile,
+        { incomeDepositReviews, debtPaymentReviews: userReviews, savingsConfirmedItems },
         rangeMonths
       );
       
