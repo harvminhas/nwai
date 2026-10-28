@@ -352,18 +352,21 @@ export function makeIncomeTxnId(date: string, source: string, amount: number, ac
 }
 
 /**
- * Build income summary from transactions.
- * This is the single source of truth for all income data in the app.
+ * Build complete income summary with all sources, typical monthly, and review flags.
  * 
+ * @param incomeTxns - All income transactions from financial profile
+ * @param accountSnapshots - Account snapshots for category inference
+ * @param currency - Home currency for formatting
  * @param incomeDepositReviews - Map of transaction ID → classification for unusual deposits
- *                                 Classifications: "regular_income", "bonus", "not_income"
- *                                 Default behavior: unreviewed deposits COUNT as income (bonus)
+ * @param rangeMonths - Optional: specific months to use for calculations (YYYY-MM format, oldest first)
+ *                      If not provided, uses last 3 complete months (excluding current month)
  */
 export function buildIncomeSummary(
   incomeTxns: IncomeTxnRecord[],
   accountSnapshots: AccountSnapshot[],
   currency: string = "USD",
-  incomeDepositReviews: Map<string, string> = new Map()
+  incomeDepositReviews: Map<string, string> = new Map(),
+  rangeMonths?: string[]
 ): IncomeSummary {
   const currentMonth = getCurrentMonth();
   
@@ -644,15 +647,21 @@ export function buildIncomeSummary(
     };
   });
 
-  // Compute last 3 complete months (regular + bonus)
+  // Compute range months for calculations (defaults to last 3 complete months)
+  const calculationMonths = rangeMonths || getLastCompleteMonths(allMonths, 3);
+  const calculationMonthsData = monthlyHistory.filter(m => calculationMonths.includes(m.yearMonth));
+  const calculationMonthsRegularTotal = calculationMonthsData.reduce((s, m) => s + m.regular, 0);
+  const calculationMonthsBonusTotal = calculationMonthsData.reduce((s, m) => s + m.bonus, 0);
+  const calculationMonthsTotal = calculationMonthsRegularTotal + calculationMonthsBonusTotal;
+  const typicalMonthly = calculationMonths.length > 0 
+    ? Math.round(calculationMonthsTotal / calculationMonths.length)
+    : 0;
+  
+  // For backwards compatibility, also keep last3Months fields
   const last3Months = getLastCompleteMonths(allMonths, 3);
   const last3MonthsData = monthlyHistory.filter(m => last3Months.includes(m.yearMonth));
-  const last3MonthsRegularTotal = last3MonthsData.reduce((s, m) => s + m.regular, 0);
-  const last3MonthsBonusTotal = last3MonthsData.reduce((s, m) => s + m.bonus, 0);
-  const last3MonthsTotal = last3MonthsRegularTotal + last3MonthsBonusTotal;
-  const typicalMonthly = last3Months.length > 0 
-    ? Math.round(last3MonthsTotal / last3Months.length)
-    : 0;
+  const last3MonthsTotal = last3MonthsData.reduce((s, m) => s + m.regular + m.bonus, 0);
+  const last3MonthsBonus = last3MonthsData.reduce((s, m) => s + m.bonus, 0);
 
   // Current month totals (including bonus)
   const currentMonthData = monthlyHistory.find(m => m.yearMonth === currentMonth);
