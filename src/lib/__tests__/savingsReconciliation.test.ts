@@ -8,6 +8,7 @@
  * 4. Dashboard card equals header
  */
 
+import { describe, test, expect } from 'vitest';
 import { computeWindowSavings } from '../savingsCalculations';
 import type { MonthlyHistoryEntry, AccountBalanceHistory } from '../financialProfile';
 import type { ExpenseTxnRecord } from '../extractTransactions';
