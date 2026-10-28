@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { useActiveProfile } from "@/contexts/ActiveProfileContext";
@@ -10,6 +10,8 @@ import { fmt } from "@/lib/currencyUtils";
 import { getSignColor } from "@/lib/colorHelpers";
 import { Drawer, type DrawerType } from "@/components/Drawer";
 import { ReviewList } from "@/components/ReviewList";
+import { RangeSwitch } from "@/components/RangeSwitch";
+import type { TimeRange } from "@/lib/rangeUtils";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -372,6 +374,7 @@ function WhereMoneyGoes({
 
 export default function DashboardPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { buildHeaders } = useActiveProfile();
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -382,6 +385,13 @@ export default function DashboardPage() {
   const [currency, setCurrency] = useState("USD");
   const [activeDrawer, setActiveDrawer] = useState<DrawerType | null>(null);
   const [unreviewedCount, setUnreviewedCount] = useState(0);
+  
+  // Range state - default to 3mo, sync with URL
+  const [range, setRange] = useState<TimeRange>(() => {
+    const param = searchParams.get("range");
+    if (param === "12mo" || param === "ytd") return param;
+    return "3mo";
+  });
 
   // Handle URL hash for drawer state
   useEffect(() => {
@@ -419,13 +429,13 @@ export default function DashboardPage() {
     });
   }, [router]);
 
-  const loadData = useCallback(async (tok: string, options?: { silent?: boolean }) => {
+  const loadData = useCallback(async (tok: string, selectedRange: TimeRange, options?: { silent?: boolean }) => {
     if (!options?.silent) {
       setLoading(true);
     }
     try {
       const [coachRes, suggestionsRes, anomaliesRes] = await Promise.all([
-        fetch("/api/user/money-coach", { headers: buildHeaders(tok) }),
+        fetch(`/api/user/money-coach?range=${selectedRange}`, { headers: buildHeaders(tok) }),
         fetch("/api/user/ai-ask", { headers: buildHeaders(tok) }),
         fetch("/api/user/debt-payment-anomalies", { headers: buildHeaders(tok) }),
       ]);
@@ -456,9 +466,17 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (token) {
-      loadData(token);
+      loadData(token, range);
     }
-  }, [token, loadData]);
+  }, [token, range, loadData]);
+  
+  const handleRangeChange = (newRange: TimeRange) => {
+    setRange(newRange);
+    // Update URL
+    const params = new URLSearchParams(window.location.search);
+    params.set("range", newRange);
+    router.push(`?${params.toString()}`, { scroll: false });
+  };
 
   const handleAsk = async (question: string) => {
     if (!token) return;
@@ -516,6 +534,11 @@ export default function DashboardPage() {
             Ask me anything about your spending, savings, or financial goals
           </p>
         </div>
+        
+        {/* Range Switch */}
+        <div className="mb-8 flex justify-center">
+          <RangeSwitch value={range} onChange={handleRangeChange} />
+        </div>
 
         {/* Question Box */}
         <div className="mb-8">
@@ -546,9 +569,9 @@ export default function DashboardPage() {
               onReviewComplete={() => {
                 // Silent background refresh - keep current UI, swap in new numbers
                 if (token) {
-                  loadData(token, { silent: true });
+                  loadData(token, range, { silent: true });
                 }
-              }} 
+              }}} 
             />
           </div>
         )}

@@ -2,12 +2,13 @@ import { NextRequest } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { computeMoneyCoachBreakdown } from "@/lib/moneyCoach";
+import { getRangeMonths, type TimeRange } from "@/lib/rangeUtils";
 import type { DebtPaymentReview } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/user/money-coach
+ * GET /api/user/money-coach?range=3mo|12mo|ytd
  * Returns money coach breakdown: Fixed, Essentials, Discretionary, Savings buckets
  * with median monthly amounts, % of income, and plain-language advice.
  */
@@ -17,9 +18,22 @@ export async function GET(req: NextRequest) {
     if (!token) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
+    
+    // Get range parameter
+    const url = new URL(req.url);
+    const rangeParam = url.searchParams.get("range") as TimeRange | null;
+    const range: TimeRange = rangeParam && ["3mo", "12mo", "ytd"].includes(rangeParam)
+      ? rangeParam
+      : "3mo";
 
     const { auth, db } = getFirebaseAdmin();
     const decoded = await auth.verifyIdToken(token);
+
+    const profile = await getFinancialProfile(decoded.uid, db);
+    
+    // Get available months from profile
+    const availableMonths = profile.monthlyHistory.map(m => m.yearMonth).sort();
+    const rangeMonths = getRangeMonths(range, availableMonths);
 
     const profile = await getFinancialProfile(decoded.uid, db);
 
@@ -50,7 +64,8 @@ export async function GET(req: NextRequest) {
       profile.incomeTxns, 
       profile.accountSnapshots, 
       profile.homeCurrency || "CAD",
-      incomeDepositReviews
+      incomeDepositReviews,
+      rangeMonths
     );
 
     return Response.json({

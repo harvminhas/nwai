@@ -417,23 +417,33 @@ export function computeDetailedIncomeMetrics(
  * Uses buildIncomeSummary to ensure consistency with Income page and drawers.
  * Returns REGULAR + BONUS income (excludes only "not_income" classifications).
  */
+/**
+ * Get income for Money Coach calculations.
+ * Uses buildIncomeSummary for consistency with Income page and drawer.
+ * 
+ * @param rangeMonths - Optional: specific months to use for calculations
+ */
 export function getMoneyCoachIncome(
   monthlyHistory: MonthlyHistoryEntry[],
   incomeTxns: IncomeTxnRecord[],
   accountSnapshots: any[],
   homeCurrency: string = "CAD",
-  incomeDepositReviews: Map<string, string> = new Map()
+  incomeDepositReviews: Map<string, string> = new Map(),
+  rangeMonths?: string[]
 ): {
   amount: number;
   basisLabel: string;
   bonusAmount: number;
 } {
   // Use buildIncomeSummary (same as Income page and drawer) for consistency
-  const summary = buildIncomeSummary(incomeTxns, accountSnapshots, homeCurrency, incomeDepositReviews);
+  const summary = buildIncomeSummary(incomeTxns, accountSnapshots, homeCurrency, incomeDepositReviews, rangeMonths);
+  
+  const monthCount = rangeMonths?.length || summary.last3Months.length;
+  const rangeName = rangeMonths?.length === 12 ? "12-month" : rangeMonths?.length === 3 ? "last 3 months" : `${monthCount}-month avg`;
   
   return {
-    amount: summary.typicalMonthly,  // Regular + bonus income, last 3 complete months average
-    basisLabel: summary.last3Months.length === 3 ? "last 3 months" : `${summary.last3Months.length}-month avg`,
-    bonusAmount: summary.last3MonthsBonus,
+    amount: summary.typicalMonthly,  // Regular + bonus income, average over range
+    basisLabel: monthCount === 3 ? "last 3 months" : rangeName,
+    bonusAmount: summary.last3MonthsBonus, // Keep for backwards compat
   };
 }

@@ -72,13 +72,20 @@ function average(values: number[]): number {
  * Uses average (not median) across the same window as income calculation
  * to ensure consistent percentages.
  */
+/**
+ * Compute Money Coach breakdown with spending buckets and advice.
+ * 
+ * @param rangeMonths - Optional: specific months to use for calculations (YYYY-MM format, oldest first)
+ *                      If not provided, uses last 3 complete months with income
+ */
 export function computeMoneyCoachBreakdown(
   profile: FinancialProfileCache,
   userReviews: DebtPaymentReview[] = [],
   incomeTxns: any[] = [],
   accountSnapshots: any[] = [],
   homeCurrency: string = "CAD",
-  incomeDepositReviews: Map<string, string> = new Map()
+  incomeDepositReviews: Map<string, string> = new Map(),
+  rangeMonths?: string[]
 ): MoneyCoachBreakdown {
   const { monthlyHistory, expenseTxns, coverage, debtPaymentHistory, accountBalanceHistory, fxRates } = profile;
 
@@ -89,19 +96,28 @@ export function computeMoneyCoachBreakdown(
     incomeTxns,
     accountSnapshots,
     homeCurrency,
-    incomeDepositReviews
+    incomeDepositReviews,
+    rangeMonths
   );
 
-  // Determine which months to use for spending (same window as income)
-  // Exclude current incomplete month (matches incomeMetrics.ts and bucketBreakdown.ts logic)
-  const now = new Date();
-  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  // Determine which months to use for spending
+  // If rangeMonths provided, use those; otherwise default to last 3 complete months with income
+  let spendingMonths: string[];
   
-  const completeMonthsWithIncome = monthlyHistory.filter(h => 
-    h.incomeTotal > 0 && h.yearMonth < currentMonth
-  );
-  const spendingMonths = completeMonthsWithIncome.length >= 3 
-    ? completeMonthsWithIncome.slice(-3).map(h => h.yearMonth)  // Use last 3 complete months
+  if (rangeMonths && rangeMonths.length > 0) {
+    spendingMonths = rangeMonths;
+  } else {
+    // Exclude current incomplete month (matches incomeMetrics.ts and bucketBreakdown.ts logic)
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    
+    const completeMonthsWithIncome = monthlyHistory.filter(h => 
+      h.incomeTotal > 0 && h.yearMonth < currentMonth
+    );
+    spendingMonths = completeMonthsWithIncome.length >= 3 
+      ? completeMonthsWithIncome.slice(-3).map(h => h.yearMonth)  // Use last 3 complete months
+      : completeMonthsWithIncome.map(h => h.yearMonth);
+  }
     : completeMonthsWithIncome.map(h => h.yearMonth);          // Use all available complete months
 
   // Compute scheduled debt payments (fixed costs)
