@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import type { DrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
 import { formatMonthYear } from "@/lib/dateFormatting";
 import { getSignColor, getSignBgColor } from "@/lib/colorHelpers";
@@ -24,6 +25,15 @@ const WINDOW_LABELS: Record<TimeWindow, string> = {
   "12month": "12-month avg",
   ytd: "This year",
 };
+
+// Convert TimeWindow to URL range parameter
+function windowToRange(window: TimeWindow): string {
+  switch (window) {
+    case "last3": return "3mo";
+    case "12month": return "12mo";
+    case "ytd": return "ytd";
+  }
+}
 
 export function Drawer({ type, isOpen, onClose, token, currency, initialWindow }: DrawerProps) {
   const [window, setWindow] = useState<TimeWindow>(initialWindow || "last3");
@@ -130,6 +140,21 @@ export function Drawer({ type, isOpen, onClose, token, currency, initialWindow }
               </button>
             ))}
           </div>
+          
+          {/* Link to full page */}
+          {(type === "income" || ["fixed", "essentials", "flexible"].includes(type)) && (
+            <div className="mt-3">
+              <Link
+                href={type === "income" 
+                  ? `/account/income?range=${windowToRange(window)}`
+                  : `/account/spending?range=${windowToRange(window)}`
+                }
+                className="text-sm font-medium text-purple-600 hover:text-purple-700 hover:underline"
+              >
+                View full details →
+              </Link>
+            </div>
+          )}
         </div>
 
         {/* Content */}
