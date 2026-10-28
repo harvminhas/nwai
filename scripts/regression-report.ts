@@ -1022,8 +1022,35 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     
     if (report.categories && report.categories.length > 0) {
       console.log(`\n   Monthly Average Components:`);
+      const categorySum = report.categories.reduce((sum, cat) => sum + cat.amount, 0);
+      const percentSum = report.categories.reduce((sum, cat) => {
+        // Calculate percentage as (category / bucket total) * 100
+        const pct = report.drawerTotal > 0 ? (cat.amount / report.drawerTotal) * 100 : 0;
+        return sum + pct;
+      }, 0);
+      
       for (const cat of report.categories) {
-        console.log(`     ${cat.name.padEnd(30)} ${formatCurrency(cat.amount, currency)}`);
+        const pct = report.drawerTotal > 0 ? ((cat.amount / report.drawerTotal) * 100).toFixed(1) : '0.0';
+        console.log(`     ${cat.name.padEnd(30)} ${formatCurrency(cat.amount, currency).padEnd(12)} (${pct}%)`);
+      }
+      
+      // Validate category sum equals bucket total
+      const sumMatch = Math.abs(categorySum - report.drawerTotal) < 1; // Allow $1 rounding
+      const pctMatch = Math.abs(percentSum - 100) < 1; // Allow 1% total rounding error
+      
+      console.log(`     ${"─".repeat(50)}`);
+      console.log(`     ${"TOTAL".padEnd(30)} ${formatCurrency(categorySum, currency).padEnd(12)} (${percentSum.toFixed(1)}%)`);
+      
+      if (!sumMatch) {
+        console.log(`     ⚠️  Category sum mismatch: ${formatCurrency(categorySum, currency)} ≠ ${formatCurrency(report.drawerTotal, currency)}`);
+        errors.push(`${report.bucket}: Category amounts sum to ${formatCurrency(categorySum, currency)} but bucket total is ${formatCurrency(report.drawerTotal, currency)}`);
+      }
+      if (!pctMatch) {
+        console.log(`     ⚠️  Percentage sum: ${percentSum.toFixed(1)}% (expected ~100%)`);
+        errors.push(`${report.bucket}: Category percentages sum to ${percentSum.toFixed(1)}% instead of ~100%`);
+      }
+      if (sumMatch && pctMatch) {
+        console.log(`     ✓ Categories sum correctly`);
       }
       
       // For savings, also print the reconciliation table

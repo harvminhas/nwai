@@ -564,7 +564,7 @@ function BucketDrawerContent({
       {/* Category Breakdown */}
       <div>
         <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
-          Breakdown by category
+          Avg. monthly by category ({data.basisLabel.toLowerCase()})
         </h3>
         {breakdown.categories.length === 0 ? (
           <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-center">
@@ -612,7 +612,7 @@ function BucketDrawerContent({
                           {fmt(category.amount)}
                         </p>
                         <p className="text-xs text-gray-500">
-                          {Math.round(category.pctOfBucket)}%
+                          avg/mo · {Math.round(category.pctOfBucket)}%
                         </p>
                       </div>
                     </div>
