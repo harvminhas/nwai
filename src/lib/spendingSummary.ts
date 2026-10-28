@@ -138,13 +138,20 @@ function computeInsights(
   return insights.slice(0, 2);
 }
 
+/**
+ * Build complete spending summary with categories, buckets, and trends.
+ * 
+ * @param rangeMonths - Optional: specific months to use for calculations (YYYY-MM format, oldest first)
+ *                      If not provided, uses last 12 complete months
+ */
 export function buildSpendingSummary(
   expenseTxns: ExpenseTxnRecord[],
   accountSnapshots: AccountSnapshot[],
   debtPaymentHistory: DebtPaymentHistoryEntry[],
   userReviews: DebtPaymentReview[],
   fxRates: Record<string, number>,
-  currency: string = "CAD"
+  currency: string = "CAD",
+  rangeMonths?: string[]
 ): SpendingSummary {
   const currentMonth = new Date().toISOString().slice(0, 7);
   const lastCompleteMonth = getLastCompleteMonth();
@@ -155,7 +162,10 @@ export function buildSpendingSummary(
     if (t.txMonth < currentMonth) monthSet.add(t.txMonth);
   });
   const allMonths = Array.from(monthSet).sort();
-  const last12Months = allMonths.slice(-12);
+  
+  // Use provided range or default to last 12 months
+  const calculationMonths = rangeMonths || allMonths.slice(-12);
+  const last12Months = allMonths.slice(-12); // Keep for backwards compatibility
   
   // Use shared bucket computation for each month
   const monthlyHistory: MonthlySpendingSummary[] = last12Months.map(yearMonth => {
@@ -184,13 +194,16 @@ export function buildSpendingSummary(
     };
   });
   
+  // Calculate typical monthly based on range
+  const calculationData = monthlyHistory.filter(m => calculationMonths.includes(m.yearMonth));
+  const calculationTotals = calculationData.map(m => m.total);
+  const typicalMonthly = calculationTotals.length > 0
+    ? calculationTotals.reduce((a, b) => a + b, 0) / calculationTotals.length
+    : 0;
+  
+  // Keep last 3 months for backwards compatibility
   const last3Months = last12Months.slice(-3);
   const last3Data = monthlyHistory.slice(-3);
-  
-  const last3Totals = last3Data.map(m => m.total);
-  const typicalMonthly = last3Totals.length > 0
-    ? last3Totals.reduce((a, b) => a + b, 0) / last3Totals.length
-    : 0;
   
   const lastMonthData = monthlyHistory.find(m => m.yearMonth === lastCompleteMonth);
   const lastMonthTotal = lastMonthData?.total || 0;
