@@ -14,6 +14,7 @@ interface DrawerProps {
   onClose: () => void;
   token: string | null;
   currency: string;
+  initialWindow?: TimeWindow; // Sync with dashboard range
 }
 
 type TimeWindow = "last3" | "12month" | "ytd";
@@ -24,8 +25,15 @@ const WINDOW_LABELS: Record<TimeWindow, string> = {
   ytd: "This year",
 };
 
-export function Drawer({ type, isOpen, onClose, token, currency }: DrawerProps) {
-  const [window, setWindow] = useState<TimeWindow>("last3");
+export function Drawer({ type, isOpen, onClose, token, currency, initialWindow }: DrawerProps) {
+  const [window, setWindow] = useState<TimeWindow>(initialWindow || "last3");
+  
+  // Reset window when initialWindow changes
+  useEffect(() => {
+    if (initialWindow) {
+      setWindow(initialWindow);
+    }
+  }, [initialWindow]);
   const [data, setData] = useState<DrawerData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);

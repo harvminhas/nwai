@@ -13,6 +13,15 @@ import { ReviewList } from "@/components/ReviewList";
 import { RangeSwitch } from "@/components/RangeSwitch";
 import type { TimeRange } from "@/lib/rangeUtils";
 
+// Convert TimeRange to Drawer's TimeWindow format
+function rangeToWindow(range: TimeRange): "last3" | "12month" | "ytd" {
+  switch (range) {
+    case "3mo": return "last3";
+    case "12mo": return "12month";
+    case "ytd": return "ytd";
+  }
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 interface MoneyCoachBucket {
@@ -605,6 +614,7 @@ export default function DashboardPage() {
         onClose={closeDrawer}
         token={token}
         currency={currency}
+        initialWindow={rangeToWindow(range)}
       />
     </div>
   );
