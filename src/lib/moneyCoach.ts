@@ -181,7 +181,9 @@ export function computeMoneyCoachBreakdown(
     uncategorized: average([...bucketsByMonth.values()].map(b => b.uncategorized)),
   };
 
-  const totalSpending = Object.values(bucketAverages).reduce((sum, v) => sum + v, 0);
+  // Total spending = fixed + essentials + flexible (+ uncategorized if significant)
+  // Savings is NOT spending - it's income minus spending
+  const totalSpending = bucketAverages.fixed + bucketAverages.essentials + bucketAverages.flexible + bucketAverages.uncategorized;
   const savingsRate = incomeAmount > 0 ? (incomeAmount - totalSpending) / incomeAmount : 0;
 
   // Build bucket summaries with advice

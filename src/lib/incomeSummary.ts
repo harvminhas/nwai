@@ -650,11 +650,18 @@ export function buildIncomeSummary(
   // Compute range months for calculations (defaults to last 3 complete months)
   const calculationMonths = rangeMonths || getLastCompleteMonths(allMonths, 3);
   const calculationMonthsData = monthlyHistory.filter(m => calculationMonths.includes(m.yearMonth));
+  
+  // Only count months with actual income data (exclude months with no statements)
+  const monthsWithData = calculationMonthsData.filter(m => m.total > 0);
+  const excludedMonths = calculationMonths.filter(m => !monthsWithData.find(d => d.yearMonth === m));
+  
   const calculationMonthsRegularTotal = calculationMonthsData.reduce((s, m) => s + m.regular, 0);
   const calculationMonthsBonusTotal = calculationMonthsData.reduce((s, m) => s + m.bonus, 0);
   const calculationMonthsTotal = calculationMonthsRegularTotal + calculationMonthsBonusTotal;
-  const typicalMonthly = calculationMonths.length > 0 
-    ? Math.round(calculationMonthsTotal / calculationMonths.length)
+  
+  // Divide by months with data, not all requested months
+  const typicalMonthly = monthsWithData.length > 0 
+    ? Math.round(calculationMonthsTotal / monthsWithData.length)
     : 0;
   
   // For backwards compatibility, also keep last3Months fields

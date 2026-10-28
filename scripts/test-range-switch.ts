@@ -20,10 +20,12 @@ import type { DebtPaymentReview } from "../src/lib/types";
 
 config({ path: ".env.local" });
 
-const TEST_UID = process.env.TEST_UID;
+// Accept UID from command line (like regression-report.ts) or from TEST_UID env var
+const TEST_UID = process.argv[2] || process.env.TEST_UID;
 
 if (!TEST_UID) {
-  console.error("❌ TEST_UID not set in .env.local");
+  console.error("❌ Usage: npx tsx --env-file=.env.local scripts/test-range-switch.ts <uid>");
+  console.error("   or set TEST_UID environment variable");
   process.exit(1);
 }
 

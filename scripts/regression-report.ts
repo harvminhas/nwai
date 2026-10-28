@@ -28,6 +28,7 @@ import { calculatePayoffInsight, type DebtForPayoff } from "../src/lib/payoffIns
 import type { MoneyCoachBucket } from "../src/lib/moneyCoachBuckets";
 import type { DebtPaymentReview } from "../src/lib/types";
 import { getParentCategory } from "../src/lib/categoryTaxonomy";
+import { getRangeMonths, getCurrentMonth, type TimeRange } from "../src/lib/rangeUtils";
 
 const BASELINE_PATH = path.join(__dirname, "regression-baseline.json");
 
@@ -1485,6 +1486,141 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     process.exit(1);
   }
   
+  // ========== Dashboard Range Tests ==========
+  console.log("\n" + "=".repeat(80));
+  console.log("📊 DASHBOARD RANGE TESTS");
+  console.log("=".repeat(80) + "\n");
+  
+  const ranges: TimeRange[] = ["3mo", "12mo", "ytd"];
+  let rangeErrors = 0;
+  
+  for (const range of ranges) {
+    const rangeTitle = range === "3mo" ? "3-MONTH" : 
+                      range === "12mo" ? "12-MONTH" : 
+                      "YEAR-TO-DATE";
+    
+    console.log(`${rangeTitle} (${range})`);
+    console.log("-".repeat(80));
+    
+    try {
+      // Get months for this range
+      const availableMonths = profile.monthlyHistory.map(m => m.yearMonth).sort();
+      const rangeMonths = getRangeMonths(range, availableMonths);
+      const currentMonth = getCurrentMonth();
+      
+      // Format month names
+      const monthNames = rangeMonths.map(m => {
+        const [year, month] = m.split("-");
+        const date = new Date(parseInt(year), parseInt(month) - 1);
+        return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+      });
+      
+      console.log(`Months used (${rangeMonths.length}): ${monthNames.join(", ")}`);
+      
+      // Compute card values (via MoneyCoach breakdown - same as API route)
+      const breakdown = computeMoneyCoachBreakdown(
+        profile,
+        userReviews,
+        profile.incomeTxns,
+        profile.accountSnapshots,
+        profile.homeCurrency || "CAD",
+        incomeDepositReviews,
+        rangeMonths
+      );
+      
+      const cardIncome = breakdown.incomeAmount;
+      const cardSpending = breakdown.totalSpending;
+      const savingsBucket = breakdown.buckets.find(b => b.bucket === "savings");
+      const cardSavings = savingsBucket?.monthlyAverage || 0;
+      
+      // Compute page values (direct from summary functions)
+      const incomeSum = buildIncomeSummary(
+        profile.incomeTxns,
+        profile.accountSnapshots,
+        profile.homeCurrency || "CAD",
+        incomeDepositReviews,
+        rangeMonths
+      );
+      
+      const spendingSum = buildSpendingSummary(
+        profile.expenseTxns,
+        profile.accountSnapshots,
+        profile.debtPaymentHistory,
+        userReviews,
+        profile.fxRates,
+        profile.homeCurrency || "CAD",
+        rangeMonths
+      );
+      
+      const pageIncome = incomeSum.typicalMonthly;
+      const pageSpending = spendingSum.typicalMonthly;
+      const pageSavings = pageIncome - pageSpending;
+      
+      console.log();
+      console.log(`Income   (avg/mo): ${formatCurrency(cardIncome, currency)} (card) vs ${formatCurrency(pageIncome, currency)} (page)`);
+      console.log(`Spending (avg/mo): ${formatCurrency(cardSpending, currency)} (card) vs ${formatCurrency(pageSpending, currency)} (page)`);
+      console.log(`Savings  (avg/mo): ${formatCurrency(cardSavings, currency)} (card) vs ${formatCurrency(pageSavings, currency)} (page)`);
+      console.log();
+      
+      // Check for current month
+      const hasCurrentMonth = rangeMonths.includes(currentMonth);
+      if (hasCurrentMonth) {
+        const currentMonthName = (() => {
+          const [year, month] = currentMonth.split("-");
+          const date = new Date(parseInt(year), parseInt(month) - 1);
+          return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+        })();
+        console.log(`❌ FAIL: Current month ${currentMonthName} included in range`);
+        rangeErrors++;
+        errors.push(`${range}: Current month ${currentMonthName} included`);
+      } else {
+        console.log(`✅ PASS: Current month excluded`);
+      }
+      
+      // Check card == page
+      const incomeMatch = Math.abs(cardIncome - pageIncome) < 1;
+      const spendingMatch = Math.abs(cardSpending - pageSpending) < 1;
+      const savingsMatch = Math.abs(cardSavings - pageSavings) < 1;
+      
+      if (!incomeMatch) {
+        console.log(`❌ FAIL: Income mismatch`);
+        rangeErrors++;
+        errors.push(`${range}: Income mismatch - card=${cardIncome.toFixed(2)}, page=${pageIncome.toFixed(2)}`);
+      } else {
+        console.log(`✅ PASS: Income card == page`);
+      }
+      
+      if (!spendingMatch) {
+        console.log(`❌ FAIL: Spending mismatch`);
+        rangeErrors++;
+        errors.push(`${range}: Spending mismatch - card=${cardSpending.toFixed(2)}, page=${pageSpending.toFixed(2)}`);
+      } else {
+        console.log(`✅ PASS: Spending card == page`);
+      }
+      
+      if (!savingsMatch) {
+        console.log(`❌ FAIL: Savings mismatch`);
+        rangeErrors++;
+        errors.push(`${range}: Savings mismatch - card=${cardSavings.toFixed(2)}, page=${pageSavings.toFixed(2)}`);
+      } else {
+        console.log(`✅ PASS: Savings card == page`);
+      }
+      
+    } catch (error) {
+      console.log(`❌ ERROR: ${error}`);
+      rangeErrors++;
+      errors.push(`${range}: ${error}`);
+    }
+    
+    console.log();
+  }
+  
+  if (rangeErrors > 0) {
+    console.log(`❌ ${rangeErrors} range test(s) failed\n`);
+  } else {
+    console.log(`✅ All range tests passed\n`);
+  }
+
   console.log("✅ All tests passed\n");
 }
 
