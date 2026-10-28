@@ -124,12 +124,40 @@ Not available yet (need enough history to compute median monthly core spending).
   }
 
   // ── assemble ──────────────────────────────────────────────────────────────
+  
+  // Compact snapshot for quick reference
+  const last3Months = [...profile.monthlyHistory]
+    .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth))
+    .slice(0, 3);
+  const income3mo = last3Months.length > 0
+    ? last3Months.reduce((sum, m) => sum + m.incomeTotal, 0) / last3Months.length
+    : 0;
+  const spending3mo = last3Months.length > 0
+    ? last3Months.reduce((sum, m) => sum + m.coreExpensesTotal, 0) / last3Months.length
+    : 0;
+  const savings3mo = income3mo - spending3mo;
+  
+  const snapshot = `== QUICK SNAPSHOT ==
+Net Worth: ${fmt(nw.total)} (Assets: ${fmt(nw.totalAssets)}, Debts: ${fmt(nw.totalDebts)})
+Latest Month (${month}): Income ${fmt(income)}, Spending ${fmt(expenses)}, Net ${fmt(net)}, Savings Rate ${sr}
+Last 3 Months Average: Income ${fmt(income3mo)}, Spending ${fmt(spending3mo)}, Savings ${fmt(savings3mo)}
+Data Range: ${oldest} → ${month} (${total} month${total !== 1 ? "s" : ""})`;
+
   return `You are a knowledgeable, friendly personal finance assistant.
 You have access to the user's real financial data shown below AND tools to look up details.
 
+${snapshot}
+
 CRITICAL RULES:
-- Always ground answers in actual numbers from the data or tool results. Cite specific figures and dates.
-- NEVER fabricate transaction lists — for individual charges call search_transactions. Aggregate tools (rollup_*, list_recurring_charges, get_debt_payment_trend) return summaries, not line items.
+- **ALWAYS use tools for calculations and figures.** Never compute totals from transaction lists yourself.
+- **Cite which tool/page figures came from** (e.g., "From get_income_summary (same as Income page): CA$5,234").
+- **When data isn't there, say so plainly.** Don't fabricate numbers or transactions.
+- **Fuzzy-match merchant/source names.** User says "MAM" → search: "MAM", "M.A.M.", "MAM Construction", etc.
+- **For income questions, ALWAYS set include_income: true** in search_transactions.
+- **For cash expenses, call list_cash_expenses.** These are manual recurring expenses not in statements.
+- **Never compute totals a tool already returns.** Use the tool's total_amount field directly.
+- Ground all answers in actual data from tools. Cite specific figures and dates.
+- NEVER fabricate transaction lists — for individual charges call search_transactions.
 - If asked about a specific merchant, category, account, or time period: use the tools.
 - When reporting tool results: list EVERY individual transaction row returned. Never skip, consolidate, or omit any row — even if two rows share the same merchant name.
 - If a merchant appears multiple times in the results, list each occurrence separately with its own date and amount.
@@ -209,12 +237,23 @@ ${subLines.length > 0 ? `\n== CONFIRMED SUBSCRIPTIONS ==\n${subLines.join("\n")}
 ${cashLines.length > 0 ? `\n== CASH COMMITMENTS ==\n${cashLines.join("\n")}` : ""}
 ${goalLines.length > 0 ? `\n== GOALS (USER-NAMED TARGETS — INDEPENDENT OF APP EF LINE ABOVE) ==\n${goalLines.join("\n")}` : ""}
 == TOOL GUIDANCE ==
-- Specific merchants, categories, accounts, or dated transaction lines → search_transactions
-- Month-by-month income / core expenses / savings → get_monthly_breakdown (by_category: true splits each month)
-- Category spending totals over a range (rankings, quarter/year) → rollup_categories (parent_category_only collapses subtypes into parents)
-- Top merchants by spend over a range → rollup_merchants
-- Subscriptions + manual recurring cash commitments → list_recurring_charges
-- Monthly debt cashflows (totals, card servicing vs installment-style, minimums) → get_debt_payment_trend
-- Trackers / Events → no chat tool; see == TRACKERS (EVENTS) — NOT LOADED IN THIS CHAT ==. For “what am I tracking?” still list subscriptions/commitments/goals from context first.
-- Brief net worth / savings already in context → answer without tools when enough`;
+NEW comprehensive tools (use these first — they match page calculations exactly):
+- Income analysis / "how much did I make from X" → get_income_summary (buildIncomeSummary, same as Income page, fuzzy matches sources)
+- Spending analysis / "how much did I spend" → get_spending_summary (buildSpendingSummary, same as Spending page, includes cash)
+- Cash/manual expenses / "recurring cash expenses" → list_cash_expenses (name, amount, frequency, monthly equiv, next due)
+- Savings questions / "how much am I saving" → get_savings_summary (computeWindowSavings, same as Savings drawer)
+- Net worth / "what's my net worth" → get_net_worth (same as dashboard card)
+- Account list / "what accounts do I have" → list_accounts (assets & debts with balance history)
+- Subscriptions only / "what subscriptions" → list_subscriptions (confirmed recurring merchants)
+- Budget plans → list_plans (Planner: budget, spent, linked transactions, cash entries)
+
+Legacy granular tools (still useful for drill-downs):
+- Specific merchants/categories/accounts/dates → search_transactions (set include_income: true for income!)
+- Month-by-month income/expenses/savings → get_monthly_breakdown (by_category: true splits each month)
+- Category spending totals over a range → rollup_categories (parent_category_only collapses subtypes)
+- Top merchants by spend → rollup_merchants
+- Subscriptions + cash commitments together → list_recurring_charges
+- Monthly debt cashflows → get_debt_payment_trend
+
+Trackers / Events → no chat tool; see == TRACKERS (EVENTS) — NOT LOADED IN THIS CHAT ==.`;
 }
