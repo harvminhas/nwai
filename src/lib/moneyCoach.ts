@@ -170,21 +170,22 @@ export function computeMoneyCoachBreakdown(
   }
 
   // Compute average for each bucket (same window as income)
-  // Savings uses shared calculation function (actual contributions + debt paydown)
-  const averageSavings = computeAverageSavings(monthlyHistory, accountBalanceHistory, expenseTxns, spendingMonths);
-
   const bucketAverages: Record<MoneyCoachBucket, number> = {
     fixed: average([...bucketsByMonth.values()].map(b => b.fixed)),
     essentials: average([...bucketsByMonth.values()].map(b => b.essentials)),
     flexible: average([...bucketsByMonth.values()].map(b => b.flexible)),
-    savings: averageSavings, // From shared data layer
+    savings: 0, // Computed below as Income - Spending
     uncategorized: average([...bucketsByMonth.values()].map(b => b.uncategorized)),
   };
 
   // Total spending = fixed + essentials + flexible (+ uncategorized if significant)
   // Savings is NOT spending - it's income minus spending
   const totalSpending = bucketAverages.fixed + bucketAverages.essentials + bucketAverages.flexible + bucketAverages.uncategorized;
-  const savingsRate = incomeAmount > 0 ? (incomeAmount - totalSpending) / incomeAmount : 0;
+  
+  // Savings = Income - Spending (explicit formula used everywhere)
+  bucketAverages.savings = incomeAmount - totalSpending;
+  
+  const savingsRate = incomeAmount > 0 ? bucketAverages.savings / incomeAmount : 0;
 
   // Build bucket summaries with advice
   const bucketSummaries: MoneyCoachBucketSummary[] = (

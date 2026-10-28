@@ -1556,10 +1556,24 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       const pageSpending = spendingSum.typicalMonthly;
       const pageSavings = pageIncome - pageSpending;
       
+      // Get bucket breakdown from card
+      const fixedBucket = breakdown.buckets.find(b => b.bucket === "fixed");
+      const essentialsBucket = breakdown.buckets.find(b => b.bucket === "essentials");
+      const flexibleBucket = breakdown.buckets.find(b => b.bucket === "flexible");
+      const savingsBucketCard = breakdown.buckets.find(b => b.bucket === "savings");
+      
+      console.log();
+      console.log("PER-BUCKET BREAKDOWN (Card):");
+      console.log(`  Fixed:      ${formatCurrency(fixedBucket?.monthlyAverage || 0, currency)}`);
+      console.log(`  Essentials: ${formatCurrency(essentialsBucket?.monthlyAverage || 0, currency)}`);
+      console.log(`  Flexible:   ${formatCurrency(flexibleBucket?.monthlyAverage || 0, currency)}`);
+      console.log(`  Savings:    ${formatCurrency(savingsBucketCard?.monthlyAverage || 0, currency)}`);
+      console.log(`  SUM (F+E+F): ${formatCurrency((fixedBucket?.monthlyAverage || 0) + (essentialsBucket?.monthlyAverage || 0) + (flexibleBucket?.monthlyAverage || 0), currency)}`);
       console.log();
       console.log(`Income   (avg/mo): ${formatCurrency(cardIncome, currency)} (card) vs ${formatCurrency(pageIncome, currency)} (page)`);
       console.log(`Spending (avg/mo): ${formatCurrency(cardSpending, currency)} (card) vs ${formatCurrency(pageSpending, currency)} (page)`);
       console.log(`Savings  (avg/mo): ${formatCurrency(cardSavings, currency)} (card) vs ${formatCurrency(pageSavings, currency)} (page)`);
+      console.log(`Savings formula check: ${formatCurrency(cardIncome, currency)} - ${formatCurrency(cardSpending, currency)} = ${formatCurrency(cardIncome - cardSpending, currency)} (should equal card savings)`);
       console.log();
       
       // Check for current month
@@ -1619,6 +1633,12 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     console.log(`❌ ${rangeErrors} range test(s) failed\n`);
   } else {
     console.log(`✅ All range tests passed\n`);
+  }
+  
+  // Final summary
+  if (errors.length > 0 || totalMismatches > 0 || incomeBarMismatches > 0 || rangeErrors > 0) {
+    console.log("❌ TEST FAILED - See errors above\n");
+    process.exit(1);
   }
 
   console.log("✅ All tests passed\n");
