@@ -14,7 +14,7 @@ async function getUid(req: NextRequest): Promise<string | null> {
   } catch { return null; }
 }
 
-export type CashFrequency = "weekly" | "biweekly" | "monthly" | "quarterly" | "once";
+export type CashFrequency = "weekly" | "biweekly" | "monthly" | "quarterly" | "yearly" | "once";
 
 export interface CashCommitment {
   id: string;
@@ -35,6 +35,7 @@ export const FREQ_MONTHLY: Record<CashFrequency, number> = {
   biweekly:  26 / 12,
   monthly:   1,
   quarterly: 1 / 3,
+  yearly:    1 / 12,
   once:      0,
 };
 
@@ -45,6 +46,12 @@ export const FREQ_MONTHLY: Record<CashFrequency, number> = {
  */
 export function commitmentOccurrencesInMonth(entry: CashCommitment, yearMonth: string): number {
   if (entry.frequency === "once") return 0;
+  
+  // Check if month is in the future
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  if (yearMonth > currentMonth) return 0;
+  
   const floor = entry.startDate?.slice(0, 7) ?? entry.createdAt?.slice(0, 7);
   if (floor && yearMonth < floor) return 0;
   switch (entry.frequency) {
@@ -52,6 +59,7 @@ export function commitmentOccurrencesInMonth(entry: CashCommitment, yearMonth: s
     case "biweekly":  return 26 / 12;
     case "monthly":   return 1;
     case "quarterly": return 1 / 3;
+    case "yearly":    return 1 / 12;
     default:          return 0;
   }
 }
