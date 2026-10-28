@@ -35,8 +35,6 @@ export async function GET(req: NextRequest) {
     const availableMonths = profile.monthlyHistory.map(m => m.yearMonth).sort();
     const rangeMonths = getRangeMonths(range, availableMonths);
 
-    const profile = await getFinancialProfile(decoded.uid, db);
-
     // Load user debt payment reviews
     const reviewsSnap = await db.collection(`users/${decoded.uid}/debtPaymentReviews`).get();
     const userReviews: DebtPaymentReview[] = reviewsSnap.docs.map((doc) => ({

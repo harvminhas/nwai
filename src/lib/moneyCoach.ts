@@ -120,7 +120,6 @@ export function computeMoneyCoachBreakdown(
       ? completeMonthsWithIncome.slice(-3).map(h => h.yearMonth)  // Use last 3 complete months
       : completeMonthsWithIncome.map(h => h.yearMonth);
   }
-    : completeMonthsWithIncome.map(h => h.yearMonth);          // Use all available complete months
 
   // Compute scheduled debt payments (fixed costs)
   const scheduledPayments = computeScheduledDebtPayments(

@@ -660,8 +660,10 @@ export function buildIncomeSummary(
   // For backwards compatibility, also keep last3Months fields
   const last3Months = getLastCompleteMonths(allMonths, 3);
   const last3MonthsData = monthlyHistory.filter(m => last3Months.includes(m.yearMonth));
-  const last3MonthsTotal = last3MonthsData.reduce((s, m) => s + m.regular + m.bonus, 0);
-  const last3MonthsBonus = last3MonthsData.reduce((s, m) => s + m.bonus, 0);
+  const last3MonthsRegularTotal = last3MonthsData.reduce((s, m) => s + m.regular, 0);
+  const last3MonthsBonusTotal = last3MonthsData.reduce((s, m) => s + m.bonus, 0);
+  const last3MonthsTotal = last3MonthsRegularTotal + last3MonthsBonusTotal;
+  const last3MonthsBonus = last3MonthsBonusTotal; // Alias for consistency
 
   // Current month totals (including bonus)
   const currentMonthData = monthlyHistory.find(m => m.yearMonth === currentMonth);

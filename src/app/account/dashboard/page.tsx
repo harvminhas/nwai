@@ -572,7 +572,7 @@ export default function DashboardPage() {
                 if (token) {
                   loadData(token, range, { silent: true });
                 }
-              }}} 
+              }} 
             />
           </div>
         )}

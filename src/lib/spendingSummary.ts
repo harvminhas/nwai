@@ -204,6 +204,7 @@ export function buildSpendingSummary(
   // Keep last 3 months for backwards compatibility
   const last3Months = last12Months.slice(-3);
   const last3Data = monthlyHistory.slice(-3);
+  const last3Totals = last3Data.map(m => m.total);
   
   const lastMonthData = monthlyHistory.find(m => m.yearMonth === lastCompleteMonth);
   const lastMonthTotal = lastMonthData?.total || 0;
