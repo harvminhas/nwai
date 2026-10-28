@@ -7,6 +7,7 @@ import type { DebtsSummary } from "@/lib/debtsSummary";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { formatChange, getChangeColor } from "@/lib/colorHelpers";
 import { ReviewList } from "@/components/ReviewList";
+import { calculatePayoffInsight, type DebtForPayoff } from "@/lib/payoffInsight";
 
 interface OverviewTabProps {
   summary: DebtsSummary;
@@ -39,6 +40,18 @@ export function OverviewTab({ summary }: OverviewTabProps) {
     groups,
     payoffEstimates,
   } = summary;
+
+  // Calculate payoff insight
+  const debtsForPayoff: DebtForPayoff[] = groups.flatMap(g =>
+    g.accounts.map(acc => ({
+      accountSlug: acc.slug,
+      accountName: acc.accountName,
+      balance: acc.balance,
+      interestRate: acc.interestRate,
+      monthlyPayment: acc.monthlyPayment,
+    }))
+  );
+  const payoffInsight = calculatePayoffInsight(debtsForPayoff, 200);
 
   // Earliest payoff date across all accounts
   const earliestPayoff = payoffEstimates
@@ -114,6 +127,74 @@ export function OverviewTab({ summary }: OverviewTabProps) {
           </div>
         )}
       </div>
+
+      {/* Payoff Insight */}
+      {payoffInsight.hasInsight && payoffInsight.highestRateAccount && (
+        <div className="bg-violet-50 border border-violet-200 rounded-lg p-5">
+          <h3 className="text-sm font-semibold text-violet-900 mb-2">
+            💡 Payoff Insight
+          </h3>
+          <p className="text-sm text-violet-800 mb-4">
+            Accelerate payoff by adding <strong>{formatCurrency(200, currency)}/mo</strong> extra to your highest-rate debt 
+            ({payoffInsight.highestRateAccount.accountName || "Account"} at {payoffInsight.highestRateAccount.rate.toFixed(2)}%).
+          </p>
+          
+          <div className="space-y-4">
+            {payoffInsight.scenarios.map(scenario => {
+              const payoffDate = new Date();
+              payoffDate.setMonth(payoffDate.getMonth() + scenario.currentMonths);
+              const acceleratedDate = new Date();
+              acceleratedDate.setMonth(acceleratedDate.getMonth() + scenario.acceleratedMonths);
+              
+              return (
+                <div key={scenario.accountSlug} className="bg-white rounded-lg p-4 border border-violet-100">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <p className="font-medium text-gray-900">{scenario.accountName || "Account"}</p>
+                      <p className="text-sm text-gray-600">
+                        {formatCurrency(scenario.balance, currency)} @ {scenario.rate.toFixed(2)}%
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="text-gray-600 mb-1">Current Payment</p>
+                      <p className="font-semibold text-gray-900">
+                        {formatCurrency(scenario.currentPayment, currency)}/mo
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {scenario.currentMonths} months → {payoffDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {formatCurrency(scenario.currentInterestPaid, currency)} interest
+                      </p>
+                    </div>
+                    
+                    {scenario.extraPayment > 0 && (
+                      <div className="border-l border-violet-200 pl-4">
+                        <p className="text-gray-600 mb-1">With +{formatCurrency(scenario.extraPayment, currency)}/mo</p>
+                        <p className="font-semibold text-violet-700">
+                          {formatCurrency(scenario.currentPayment + scenario.extraPayment, currency)}/mo
+                        </p>
+                        <p className="text-xs text-violet-600 mt-1">
+                          {scenario.acceleratedMonths} months → {acceleratedDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                        </p>
+                        <p className="text-xs text-violet-600">
+                          {formatCurrency(scenario.acceleratedInterestPaid, currency)} interest
+                        </p>
+                        <p className="text-xs font-semibold text-green-600 mt-2">
+                          💰 Save {scenario.monthsSaved} months & {formatCurrency(scenario.interestSaved, currency)}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Interest by Year */}
       {interestPaidByYear.length > 0 && (
