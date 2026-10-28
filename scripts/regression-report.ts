@@ -1782,8 +1782,13 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   
   let chatToolErrors = 0;
   
-  // Import chat executors
+  // Import chat executors and review context loader
   const { executeTool } = await import("../src/lib/chat/executor");
+  const { loadUserReviewContext } = await import("../src/lib/userReviewContext");
+  
+  // Load user review context (same as chat API route does)
+  const reviewContext = await loadUserReviewContext(uid, db);
+  console.log(`Reviews loaded: income=${reviewContext.incomeDepositReviews.size} debt=${reviewContext.debtPaymentReviews.length} savings=${reviewContext.savingsConfirmedItems.size}\n`);
   
   // Helper: parse currency string to number
   function parseCurrency(str: string): number {
@@ -1801,7 +1806,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   // Test 1: get_income_summary 3mo matches Income page
   console.log("Test 1: get_income_summary (3mo) matches Income page");
   try {
-    const incomeToolResult = executeTool("get_income_summary", { range: "3mo" }, profile);
+    const incomeToolResult = executeTool("get_income_summary", { range: "3mo" }, profile, reviewContext);
     if (!incomeToolResult.ok) {
       console.log(`  ❌ FAIL: Tool execution failed: ${incomeToolResult.error}`);
       errors.push(`get_income_summary failed: ${incomeToolResult.error}`);
@@ -1828,7 +1833,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   // Test 2: get_spending_summary 3mo matches Spending card
   console.log("\nTest 2: get_spending_summary (3mo) matches Spending card");
   try {
-    const spendingToolResult = executeTool("get_spending_summary", { range: "3mo" }, profile);
+    const spendingToolResult = executeTool("get_spending_summary", { range: "3mo" }, profile, reviewContext);
     if (!spendingToolResult.ok) {
       console.log(`  ❌ FAIL: Tool execution failed: ${spendingToolResult.error}`);
       errors.push(`get_spending_summary failed: ${spendingToolResult.error}`);
@@ -1856,7 +1861,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   // Test 3: get_savings_summary matches Savings drawer
   console.log("\nTest 3: get_savings_summary (3mo) matches Savings drawer");
   try {
-    const savingsToolResult = executeTool("get_savings_summary", { range: "3mo" }, profile);
+    const savingsToolResult = executeTool("get_savings_summary", { range: "3mo" }, profile, reviewContext);
     if (!savingsToolResult.ok) {
       console.log(`  ❌ FAIL: Tool execution failed: ${savingsToolResult.error}`);
       errors.push(`get_savings_summary failed: ${savingsToolResult.error}`);
@@ -1883,7 +1888,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
           profile.accountBalanceHistory ?? [],
           profile.expenseTxns,
           completeMonths,
-          new Map() // confirmedItems - empty since not loading from Firestore
+          reviewContext.savingsConfirmedItems
         );
         
         const drawerSavingsFormatted = formatCurrency(drawerSavings.monthlyAverage.total, currency);
@@ -1915,7 +1920,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   // Test 4: get_net_worth matches dashboard card
   console.log("\nTest 4: get_net_worth matches dashboard card");
   try {
-    const netWorthToolResult = executeTool("get_net_worth", {}, profile);
+    const netWorthToolResult = executeTool("get_net_worth", {}, profile, reviewContext);
     if (!netWorthToolResult.ok) {
       console.log(`  ❌ FAIL: Tool execution failed: ${netWorthToolResult.error}`);
       errors.push(`get_net_worth failed: ${netWorthToolResult.error}`);
@@ -1945,7 +1950,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   // Test 5: list_cash_expenses monthly total matches Cash tab
   console.log("\nTest 5: list_cash_expenses monthly total matches Cash tab");
   try {
-    const cashToolResult = executeTool("list_cash_expenses", {}, profile);
+    const cashToolResult = executeTool("list_cash_expenses", {}, profile, reviewContext);
     if (!cashToolResult.ok) {
       console.log(`  ❌ FAIL: Tool execution failed: ${cashToolResult.error}`);
       errors.push(`list_cash_expenses failed: ${cashToolResult.error}`);
@@ -1977,7 +1982,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   // Test 6: list_subscriptions returns confirmed subscriptions only
   console.log("\nTest 6: list_subscriptions returns confirmed subscriptions only");
   try {
-    const subsToolResult = executeTool("list_subscriptions", {}, profile);
+    const subsToolResult = executeTool("list_subscriptions", {}, profile, reviewContext);
     if (!subsToolResult.ok) {
       console.log(`  ❌ FAIL: Tool execution failed: ${subsToolResult.error}`);
       errors.push(`list_subscriptions failed: ${subsToolResult.error}`);
@@ -2004,7 +2009,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   // Test 7: Fuzzy source lookup for 'MAM' returns non-empty results
   console.log("\nTest 7: Fuzzy lookup 'MAM' on get_income_summary returns non-empty");
   try {
-    const mamToolResult = executeTool("get_income_summary", { range: "12mo" }, profile);
+    const mamToolResult = executeTool("get_income_summary", { range: "12mo" }, profile, reviewContext);
     if (!mamToolResult.ok) {
       console.log(`  ❌ FAIL: Tool execution failed: ${mamToolResult.error}`);
       errors.push(`get_income_summary (MAM test) failed: ${mamToolResult.error}`);

@@ -5,6 +5,14 @@
 
 import { executeTool } from "../src/lib/chat/executor";
 import type { FinancialProfileCache } from "../src/lib/financialProfile";
+import type { UserReviewContext } from "../src/lib/userReviewContext";
+
+// Create empty review context for testing
+const emptyContext: UserReviewContext = {
+  incomeDepositReviews: new Map(),
+  debtPaymentReviews: [],
+  savingsConfirmedItems: new Map(),
+};
 
 // Create synthetic profile for testing
 const syntheticProfile: FinancialProfileCache = {
@@ -128,7 +136,7 @@ let failCount = 0;
 function testTool(name: string, params: Record<string, unknown>) {
   try {
     console.log(`Testing: ${name}`);
-    const result = executeTool(name, params, syntheticProfile);
+    const result = executeTool(name, params, syntheticProfile, emptyContext);
     
     if (!result.ok) {
       console.log(`  ❌ FAIL: ${result.error}`);

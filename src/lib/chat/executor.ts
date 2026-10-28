@@ -9,6 +9,7 @@
  */
 
 import type { FinancialProfileCache } from "@/lib/financialProfile";
+import type { UserReviewContext } from "@/lib/userReviewContext";
 import { FREQ_MONTHLY } from "@/app/api/user/cash-commitments/route";
 import { isCoreExcluded } from "@/lib/spendingMetrics";
 import { getParentCategory } from "@/lib/categoryTaxonomy";
@@ -75,6 +76,7 @@ export type ToolParams = Record<string, unknown>;
 export function executeSearchTransactions(
   profile: FinancialProfileCache,
   params: ToolParams,
+  context: UserReviewContext,
 ): ToolResult {
   const home = getHomeCurrency(profile);
   const fxRates = profile.fxRates ?? {};
@@ -209,6 +211,7 @@ export function executeSearchTransactions(
 export function executeGetMonthlyBreakdown(
   profile: FinancialProfileCache,
   params: ToolParams,
+  context: UserReviewContext,
 ): ToolResult {
   const home = getHomeCurrency(profile);
   const fxRates = profile.fxRates ?? {};
@@ -280,6 +283,7 @@ export function executeGetMonthlyBreakdown(
 export function executeRollupCategories(
   profile: FinancialProfileCache,
   params: ToolParams,
+  context: UserReviewContext,
 ): ToolResult {
   const home = getHomeCurrency(profile);
   const fxRates = profile.fxRates ?? {};
@@ -355,6 +359,7 @@ export function executeRollupCategories(
 export function executeRollupMerchants(
   profile: FinancialProfileCache,
   params: ToolParams,
+  context: UserReviewContext,
 ): ToolResult {
   const home = getHomeCurrency(profile);
   const fxRates = profile.fxRates ?? {};
@@ -473,6 +478,7 @@ export function executeListRecurringCharges(profile: FinancialProfileCache): Too
 export function executeGetDebtPaymentTrend(
   profile: FinancialProfileCache,
   params: ToolParams,
+  context: UserReviewContext,
 ): ToolResult {
   const home = getHomeCurrency(profile);
   const fmt = makeFmt(home);
@@ -512,6 +518,7 @@ export function executeGetDebtPaymentTrend(
 export function executeGetIncomeSummary(
   profile: FinancialProfileCache,
   params: ToolParams,
+  context: UserReviewContext,
 ): ToolResult {
   const { buildIncomeSummary } = require("@/lib/incomeSummary");
   const { getRangeMonths } = require("@/lib/rangeUtils");
@@ -529,15 +536,12 @@ export function executeGetIncomeSummary(
     rangeMonths = rangeParam.split(",").map(m => m.trim()).filter(Boolean);
   }
   
-  // Build incomeDepositReviews as a Map (same as pages do)
-  // Note: These aren't in profile cache, so we use empty Map
-  const incomeDepositReviews = new Map<string, string>();
-  
+  // Use incomeDepositReviews from context (loaded from Firestore by caller)
   const summary = buildIncomeSummary(
     profile.incomeTxns,
     profile.accountSnapshots,
     home,
-    incomeDepositReviews,
+    context.incomeDepositReviews,
     rangeMonths,
   );
   
@@ -573,6 +577,7 @@ export function executeGetIncomeSummary(
 export function executeGetSpendingSummary(
   profile: FinancialProfileCache,
   params: ToolParams,
+  context: UserReviewContext,
 ): ToolResult {
   const { buildSpendingSummary } = require("@/lib/spendingSummary");
   const { getRangeMonths } = require("@/lib/rangeUtils");
@@ -590,11 +595,12 @@ export function executeGetSpendingSummary(
     rangeMonths = rangeParam.split(",").map(m => m.trim()).filter(Boolean);
   }
   
+  // Use debtPaymentReviews from context (loaded from Firestore by caller)
   const summary = buildSpendingSummary(
     profile.expenseTxns,
     profile.accountSnapshots,
     profile.debtPaymentHistory ?? [],
-    [], // debtPaymentReviews not in profile cache
+    context.debtPaymentReviews,
     profile.fxRates ?? {},
     home,
     rangeMonths,
@@ -702,6 +708,7 @@ export function executeListCashExpenses(profile: FinancialProfileCache): ToolRes
 export function executeGetSavingsSummary(
   profile: FinancialProfileCache,
   params: ToolParams,
+  context: UserReviewContext,
 ): ToolResult {
   const { computeWindowSavings } = require("@/lib/savingsCalculations");
   const { getRangeMonths } = require("@/lib/rangeUtils");
@@ -719,12 +726,13 @@ export function executeGetSavingsSummary(
     rangeMonths = rangeParam.split(",").map(m => m.trim()).filter(Boolean);
   }
   
+  // Use savingsConfirmedItems from context (loaded from Firestore by caller)
   const savings = computeWindowSavings(
     profile.monthlyHistory,
     profile.accountBalanceHistory ?? [],
     profile.expenseTxns,
     rangeMonths,
-    new Map() // confirmedItems - empty since not in profile cache
+    context.savingsConfirmedItems,
   );
   
   return {
@@ -940,23 +948,27 @@ export function executeListPlans(profile: FinancialProfileCache): ToolResult {
 
 // ── dispatcher (handlers keyed by ToolName — compile-time sync with tools.ts) ─
 
-type ToolHandler = (profile: FinancialProfileCache, params: ToolParams) => ToolResult;
+type ToolHandler = (
+  profile: FinancialProfileCache,
+  params: ToolParams,
+  context: UserReviewContext,
+) => ToolResult;
 
 const TOOL_HANDLERS = {
   search_transactions:    executeSearchTransactions,
   get_monthly_breakdown:  executeGetMonthlyBreakdown,
   rollup_categories:      executeRollupCategories,
   rollup_merchants:       executeRollupMerchants,
-  list_recurring_charges: (profile, _params) => executeListRecurringCharges(profile),
+  list_recurring_charges: (profile, _params, ctx) => executeListRecurringCharges(profile),
   get_debt_payment_trend: executeGetDebtPaymentTrend,
   get_income_summary:     executeGetIncomeSummary,
   get_spending_summary:   executeGetSpendingSummary,
-  list_cash_expenses:     (profile, _params) => executeListCashExpenses(profile),
+  list_cash_expenses:     (profile, _params, ctx) => executeListCashExpenses(profile),
   get_savings_summary:    executeGetSavingsSummary,
-  get_net_worth:          (profile, _params) => executeGetNetWorth(profile),
-  list_accounts:          (profile, _params) => executeListAccounts(profile),
-  list_subscriptions:     (profile, _params) => executeListSubscriptions(profile),
-  list_plans:             (profile, _params) => executeListPlans(profile),
+  get_net_worth:          (profile, _params, ctx) => executeGetNetWorth(profile),
+  list_accounts:          (profile, _params, ctx) => executeListAccounts(profile),
+  list_subscriptions:     (profile, _params, ctx) => executeListSubscriptions(profile),
+  list_plans:             (profile, _params, ctx) => executeListPlans(profile),
 } satisfies Record<ToolName, ToolHandler>;
 
 function isToolName(name: string): name is ToolName {
@@ -967,9 +979,10 @@ export function executeTool(
   name: string,
   params: ToolParams,
   profile: FinancialProfileCache,
+  context: UserReviewContext,
 ): ToolResult {
   if (!isToolName(name)) {
     return { ok: false, error: `Unknown tool: ${name}` };
   }
-  return TOOL_HANDLERS[name](profile, params);
+  return TOOL_HANDLERS[name](profile, params, context);
 }
