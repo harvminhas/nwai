@@ -59,6 +59,7 @@ async function main() {
     id: string;
     originalAccountId: string;
     maskedAccountId: string;
+    computedSlug: string;
     slug: string;
     userId: string;
   }> = [];

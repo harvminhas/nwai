@@ -33,12 +33,19 @@ import type { DebtPaymentReview } from "../src/lib/types";
 import { getParentCategory } from "../src/lib/categoryTaxonomy";
 import { getRangeMonths, getCurrentMonth, type TimeRange } from "../src/lib/rangeUtils";
 import { buildAccountSlug, getAccountSlug } from "../src/lib/accountSlug";
+import { maskAccountNumber } from "../src/lib/accountMasking";
 
 const BASELINE_PATH = path.join(__dirname, "regression-baseline.json");
 
 /**
- * Check slug stability: simulate the migration (mask accountId, keep stored slug)
- * and verify that every consumer-facing slug matches the current slug (pre-migration).
+ * Check slug stability: simulate the ACTUAL migration (using the same logic as
+ * scripts/mask-account-numbers.ts) and verify that every consumer-facing slug
+ * remains stable.
+ * 
+ * Migration steps (must match mask-account-numbers.ts exactly):
+ * 1. For statements without accountSlug: set accountSlug = buildAccountSlug(original accountId)
+ * 2. Mask accountId using maskAccountNumber()
+ * 3. Consumers use getAccountSlug() which prefers stored accountSlug
  */
 async function checkSlugStability(uid: string, db: FirebaseFirestore.Firestore): Promise<string[]> {
   const errors: string[] = [];
@@ -70,30 +77,40 @@ async function checkSlugStability(uid: string, db: FirebaseFirestore.Firestore):
       parsedData.accountType
     );
     
-    // Simulate migration: mask accountId, keep accountSlug
-    const maskedAccountId = parsedData.accountId && parsedData.accountId.length > 4
-      ? parsedData.accountId.slice(-4)
-      : parsedData.accountId;
+    // SIMULATE MIGRATION EXACTLY as mask-account-numbers.ts does:
     
-    // After migration: stored slug takes precedence
-    const postMigrationSlug = storedSlug || buildAccountSlug(
+    // Step 1: If no stored slug, compute it from ORIGINAL unmasked accountId
+    // (this is what the migration script writes BEFORE masking)
+    const slugAfterMigration = storedSlug || buildAccountSlug(
       parsedData.bankName,
-      maskedAccountId,
+      parsedData.accountId,
       parsedData.accountName,
       parsedData.accountType
     );
+    
+    // Step 2: Mask accountId (same function the migration uses)
+    const maskedAccountId = maskAccountNumber(parsedData.accountId);
+    
+    // Step 3: Consumer reads via getAccountSlug() which prefers stored slug
+    const simulatedParsedData = {
+      ...parsedData,
+      accountId: maskedAccountId,
+      accountSlug: slugAfterMigration,
+    };
+    const consumerSlug = getAccountSlug(simulatedParsedData);
     
     if (!storedSlug) {
       legacyCount++;
     }
     
     // Verify consumer-facing slug stays the same
-    if (currentSlug !== postMigrationSlug) {
+    if (currentSlug !== consumerSlug) {
       errors.push(
         `Statement ${doc.id} slug WOULD CHANGE after migration: ` +
-        `"${currentSlug}" → "${postMigrationSlug}" ` +
+        `"${currentSlug}" → "${consumerSlug}" ` +
         `(accountId: "${parsedData.accountId}" → "${maskedAccountId}", ` +
-        `storedSlug: ${storedSlug || "missing"})`
+        `storedSlug: ${storedSlug || "missing"}, ` +
+        `bank: ${parsedData.bankName})`
       );
     } else {
       stableCount++;
@@ -107,10 +124,8 @@ async function checkSlugStability(uid: string, db: FirebaseFirestore.Firestore):
     console.log(`   ✅ All slugs remain stable after simulated migration\n`);
   } else {
     console.log(`   ❌ ${errors.length} slugs would change:\n`);
-    errors.slice(0, 10).forEach(err => console.log(`      ${err}`));
-    if (errors.length > 10) {
-      console.log(`      ... and ${errors.length - 10} more\n`);
-    }
+    errors.forEach(err => console.log(`      ${err}`));
+    console.log();
   }
   
   return errors;

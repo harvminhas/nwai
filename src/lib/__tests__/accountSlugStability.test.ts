@@ -67,7 +67,7 @@ describe("Account slug stability with masking", () => {
       expect(slugBefore).toBe("hq6mk8xn6cad"); // alphanumeric, normalized to lowercase
       
       const masked = maskAccountNumber("HQ6MK8XN6CAD");
-      expect(masked).toBe("6CAD");
+      expect(masked).toBe("6cad"); // lowercase because masking normalizes to lowercase
       
       const parsedData = {
         bankName,
