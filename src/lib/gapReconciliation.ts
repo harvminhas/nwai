@@ -1,17 +1,14 @@
 /**
  * Gap Reconciliation - "How this adds up"
  * 
- * Reconciles the gap between:
- *   Net Savings (Y) vs. Income - Fixed - Essentials - Flexible (X)
+ * Identity: Net Savings (balance-based) = Income - Fixed - Essentials - Flexible + Adjustments
  * 
- * Breaks the gap into components:
- * - Borrowing (LOC/FlexLine draws, credit advances)
- * - Debt principal paid
- * - Transfers to savings/investments
- * - Cash & ATM withdrawals
- * - Uncategorized expenses
- * - Investment value changes
- * - Unexplained remainder
+ * Where adjustments account for:
+ * - Borrowing (new debt = cash available but not income)
+ * - Non-transaction balance changes (investment gains/losses, manual adjustments)
+ * 
+ * NOTE: Debt payments are ALREADY in Fixed costs, so they are NOT a gap component.
+ * Only account for new borrowing (which increases available cash without being income).
  * 
  * Used by dashboard UI and regression tests.
  */
@@ -82,10 +79,16 @@ export function computeGapReconciliation(
   
   const components: GapComponent[] = [];
   
-  // Identify debt accounts
+  // Identify debt accounts and asset/investment accounts
   const debtAccountSlugs = new Set(
     accountSnapshots
       .filter(a => a.balance < 0 || ["credit", "credit_card", "loc", "line_of_credit", "loan", "mortgage"].includes(a.accountType))
+      .map(a => a.slug)
+  );
+  
+  const investmentAccountSlugs = new Set(
+    accountSnapshots
+      .filter(a => ["investment", "tfsa", "rrsp", "resp"].includes(a.accountType))
       .map(a => a.slug)
   );
   
@@ -107,42 +110,32 @@ export function computeGapReconciliation(
   }
   
   // 1. Borrowing (increases in debt balances = new draws/charges)
-  // For each debt account, sum balance increases across range months
+  // This is cash that became available but is NOT counted in Income
+  // Note: Debt payments are already in Fixed costs, so we only count NEW borrowing
   let totalBorrowingAllMonths = 0;
   
   for (const slug of debtAccountSlugs) {
-    const history = accountBalanceHistory.find(h => h.slug === slug);
-    if (!history) continue;
-    
     for (let i = 0; i < rangeMonths.length; i++) {
       const month = rangeMonths[i];
-      const priorMonth = i > 0 ? rangeMonths[i - 1] : null;
       
-      if (!priorMonth) {
-        // First month - compare to month before range start
+      // Get prior month (either previous month in range, or month before range)
+      let priorMonth: string;
+      if (i > 0) {
+        priorMonth = rangeMonths[i - 1];
+      } else {
         const [y, m] = month.split('-').map(Number);
         const prevMonthDate = new Date(y, m - 2, 1); // m-2 because m is 1-indexed
-        const prevMonth = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, '0')}`;
-        
-        const prevBalance = getBalanceForMonth(slug, prevMonth);
-        const currentBalance = getBalanceForMonth(slug, month);
-        
-        if (prevBalance !== null && currentBalance !== null) {
-          // Debt balances are negative, so increase in debt = more negative = borrowed more
-          const debtIncrease = Math.abs(currentBalance) - Math.abs(prevBalance);
-          if (debtIncrease > 0) {
-            totalBorrowingAllMonths += debtIncrease;
-          }
-        }
-      } else {
-        const prevBalance = getBalanceForMonth(slug, priorMonth);
-        const currentBalance = getBalanceForMonth(slug, month);
-        
-        if (prevBalance !== null && currentBalance !== null) {
-          const debtIncrease = Math.abs(currentBalance) - Math.abs(prevBalance);
-          if (debtIncrease > 0) {
-            totalBorrowingAllMonths += debtIncrease;
-          }
+        priorMonth = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, '0')}`;
+      }
+      
+      const prevBalance = getBalanceForMonth(slug, priorMonth);
+      const currentBalance = getBalanceForMonth(slug, month);
+      
+      if (prevBalance !== null && currentBalance !== null) {
+        // Debt balances are negative, so increase in debt = more negative = borrowed more
+        const debtIncrease = Math.abs(currentBalance) - Math.abs(prevBalance);
+        if (debtIncrease > 0) {
+          totalBorrowingAllMonths += debtIncrease;
         }
       }
     }
@@ -154,80 +147,68 @@ export function computeGapReconciliation(
     components.push({
       name: "Borrowing",
       amount: borrowingMonthly,
-      description: "LOC/FlexLine draws, credit card spending (monthly avg)",
+      description: "New debt (LOC draws, card spending not yet paid)",
     });
   }
   
-  // 2. Debt principal paid (decreases in debt balances = net debt reduction)
-  let totalDebtPrincipalPaidAllMonths = 0;
+  // 2. Investment balance changes NOT from contributions
+  // Investment accounts can grow/shrink from market changes, not just contributions
+  // Contributions are already tracked as expenses in "Investments & Savings" category
+  let totalInvestmentGainsAllMonths = 0;
   
-  for (const slug of debtAccountSlugs) {
-    const history = accountBalanceHistory.find(h => h.slug === slug);
-    if (!history) continue;
-    
+  // Get total investment contributions from transactions (already in expense buckets)
+  const investmentContributions = rangeExpenses.filter(t => {
+    const cat = (t.category || "").toLowerCase();
+    return cat === "investments & savings";
+  }).reduce((sum, t) => sum + Math.abs(t.amount), 0);
+  
+  const investmentContributionsMonthly = investmentContributions / numMonths;
+  
+  // Get balance changes for investment accounts
+  for (const slug of investmentAccountSlugs) {
     for (let i = 0; i < rangeMonths.length; i++) {
       const month = rangeMonths[i];
-      const priorMonth = i > 0 ? rangeMonths[i - 1] : null;
       
-      if (!priorMonth) {
+      let priorMonth: string;
+      if (i > 0) {
+        priorMonth = rangeMonths[i - 1];
+      } else {
         const [y, m] = month.split('-').map(Number);
         const prevMonthDate = new Date(y, m - 2, 1);
-        const prevMonth = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, '0')}`;
-        
-        const prevBalance = getBalanceForMonth(slug, prevMonth);
-        const currentBalance = getBalanceForMonth(slug, month);
-        
-        if (prevBalance !== null && currentBalance !== null) {
-          // Debt decrease = less owed = paid down
-          const debtDecrease = Math.abs(prevBalance) - Math.abs(currentBalance);
-          if (debtDecrease > 0) {
-            totalDebtPrincipalPaidAllMonths += debtDecrease;
-          }
-        }
-      } else {
-        const prevBalance = getBalanceForMonth(slug, priorMonth);
-        const currentBalance = getBalanceForMonth(slug, month);
-        
-        if (prevBalance !== null && currentBalance !== null) {
-          const debtDecrease = Math.abs(prevBalance) - Math.abs(currentBalance);
-          if (debtDecrease > 0) {
-            totalDebtPrincipalPaidAllMonths += debtDecrease;
-          }
-        }
+        priorMonth = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, '0')}`;
+      }
+      
+      const prevBalance = getBalanceForMonth(slug, priorMonth);
+      const currentBalance = getBalanceForMonth(slug, month);
+      
+      if (prevBalance !== null && currentBalance !== null) {
+        // Investment growth (positive = account grew)
+        const growth = currentBalance - prevBalance;
+        totalInvestmentGainsAllMonths += growth;
       }
     }
   }
   
-  const debtPrincipalPaidMonthly = totalDebtPrincipalPaidAllMonths / numMonths;
+  const investmentBalanceChangeMonthly = totalInvestmentGainsAllMonths / numMonths;
   
-  if (debtPrincipalPaidMonthly > 0.01) {
+  // Investment gains = balance change minus contributions
+  // If balance grew more than contributions, that's market gains (adds to net worth without reducing cash)
+  // If balance grew less than contributions, that's market losses (but contributions still left cash)
+  const investmentGainsMonthly = investmentBalanceChangeMonthly - investmentContributionsMonthly;
+  
+  if (Math.abs(investmentGainsMonthly) > 0.01) {
     components.push({
-      name: "Debt principal paid",
-      amount: -debtPrincipalPaidMonthly, // Negative because it reduces available cash
-      description: "Net debt reduction from balance changes (monthly avg)",
+      name: investmentGainsMonthly > 0 ? "Investment gains" : "Investment losses",
+      amount: investmentGainsMonthly,
+      description: investmentGainsMonthly > 0 
+        ? "Market appreciation on investments"
+        : "Market depreciation on investments",
     });
   }
   
-  // 3. Transfers to savings/investments
-  const savingsTransfersTxns = rangeExpenses.filter(t => {
-    const cat = (t.category || "").toLowerCase();
-    return cat === "investments & savings";
-  });
-  
-  const savingsTransfersTotal = savingsTransfersTxns.reduce((sum, t) => sum + Math.abs(t.amount), 0);
-  const savingsTransfersMonthly = savingsTransfersTotal / numMonths;
-  
-  if (savingsTransfersMonthly > 0.01) {
-    components.push({
-      name: "Transfers to savings/investments",
-      amount: -savingsTransfersMonthly, // Negative because money leaves checking
-      description: "RRSP, TFSA, investment contributions (monthly avg)",
-    });
-  }
-  
-  // NOTE: Cash & ATM and Uncategorized are NOT included here because they are
-  // already counted in the Flexible/Essentials buckets. Including them would
-  // double-count these transactions.
+  // NOTE: Debt payments are ALREADY in Fixed costs, so we don't subtract them again.
+  // NOTE: Cash & ATM and Uncategorized are ALREADY in Flexible/Essentials buckets.
+  // NOTE: Investment contributions are ALREADY in expense buckets.
   
   // Calculate unexplained
   const componentsTotal = components.reduce((sum, c) => sum + c.amount, 0);

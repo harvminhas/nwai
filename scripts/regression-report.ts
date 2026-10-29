@@ -1955,26 +1955,29 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       
       // Check 1: currentActualMonth must equal month being viewed when entry exists
       if (hasExactEntry && acc.currentActualMonth !== monthData.month) {
-        console.log(`      ❌ FAIL: Entry exists for ${monthData.month} but currentActualMonth is ${acc.currentActualMonth}`);
+        const failMsg = `DRAWER FAIL: ${acc.accountLabel} ${monthData.month} has entry but currentActualMonth is ${acc.currentActualMonth}`;
+        console.log(`      ❌ ${failMsg}`);
         monthLabelErrors++;
         drawerErrors++;
-        errors.push(`Drawer month: ${acc.accountLabel} ${monthData.month} has entry but shows wrong current month`);
+        errors.push(failMsg);
       }
       
       // Check 2: No mixed derived + carriedForward flags
       if (acc.currentDerived && acc.currentCarriedForward) {
-        console.log(`      ❌ FAIL: Has both derived AND carriedForward flags`);
+        const failMsg = `DRAWER FAIL: ${acc.accountLabel} ${monthData.month} has both derived AND carriedForward flags`;
+        console.log(`      ❌ ${failMsg}`);
         badgeErrors++;
         drawerErrors++;
-        errors.push(`Drawer badge: ${acc.accountLabel} ${monthData.month} has conflicting flags`);
+        errors.push(failMsg);
       }
       
       // Check 3: Derived entries must have sourceStatement
       if (acc.currentDerived && !acc.currentSourceStatement) {
-        console.log(`      ❌ FAIL: Derived but no sourceStatement`);
+        const failMsg = `DRAWER FAIL: ${acc.accountLabel} ${monthData.month} derived but no sourceStatement`;
+        console.log(`      ❌ ${failMsg}`);
         badgeErrors++;
         drawerErrors++;
-        errors.push(`Drawer badge: ${acc.accountLabel} ${monthData.month} derived without sourceStatement`);
+        errors.push(failMsg);
       }
     }
   }
