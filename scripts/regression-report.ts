@@ -74,23 +74,47 @@ async function runCashReconciliationDiagnostic(
   profile: any,
   currency: string,
   incomeDepositReviews: Map<string, string>
-): Promise<void> {
+): Promise<boolean> {
   console.log("=".repeat(80));
   console.log("💰 CASH RECONCILIATION DIAGNOSTIC: Jul-Sep 2026");
   console.log("=".repeat(80) + "\n");
   
   const targetMonths = ["2026-07", "2026-08", "2026-09"];
   
-  // Get all cash account transactions for the period
-  const cashAccounts = profile.accountSnapshots.filter((a: any) => a.accountType === "cash");
+  // Use same account type check as savingsCalculations.ts
+  const isCashAccount = (accountType: string): boolean => {
+    const type = accountType.toLowerCase();
+    return type === "checking" || type === "savings" || type === "chequing";
+  };
+  
+  // Get cash accounts from accountBalanceHistory (same as computeAverageSavings)
+  const cashAccounts = (profile.accountBalanceHistory || []).filter((a: any) => 
+    isCashAccount(a.accountType)
+  );
+  
+  // Get all transactions for cash accounts in the period
   const allCashTxns = profile.expenseTxns.filter((t: any) => 
     targetMonths.includes(t.yearMonth) &&
     cashAccounts.some((a: any) => a.accountSlug === t.accountSlug)
   );
   
   console.log(`📊 Period: ${targetMonths.join(", ")}`);
-  console.log(`💳 Cash accounts: ${cashAccounts.length}`);
+  console.log(`💳 Cash accounts (checking/savings): ${cashAccounts.length}`);
+  if (cashAccounts.length > 0) {
+    cashAccounts.forEach((a: any) => {
+      console.log(`   - ${a.accountLabel} (${a.accountType})`);
+    });
+  }
   console.log(`📝 Total cash transactions: ${allCashTxns.length}\n`);
+  
+  // HARD CHECK: Fail if no data loaded
+  if (cashAccounts.length === 0 || allCashTxns.length === 0) {
+    console.error("❌ DIAGNOSTIC FAILED: No data loaded");
+    console.error(`   Cash accounts: ${cashAccounts.length}`);
+    console.error(`   Transactions: ${allCashTxns.length}`);
+    console.error(`   This means the diagnostic is not using the correct data source.\n`);
+    return false; // Return failure
+  }
   
   // Categorization buckets (renamed to avoid conflict)
   const txnBuckets = {
@@ -110,7 +134,18 @@ async function runCashReconciliationDiagnostic(
     uncategorized: { total: 0, txns: [] as typeof allCashTxns },
   };
   
-  // Process each transaction
+  // Track credit card spending separately to check for double-counting
+  const creditCardSpending = profile.expenseTxns.filter((t: any) => 
+    targetMonths.includes(t.yearMonth) &&
+    (profile.accountBalanceHistory || []).some((a: any) => 
+      a.accountSlug === t.accountSlug && 
+      a.accountType.toLowerCase() === "credit"
+    )
+  );
+  
+  const totalCCSpending = creditCardSpending.reduce((sum: number, t: any) => sum + Math.abs(t.amount), 0);
+  
+  // Process each cash transaction
   for (const txn of allCashTxns) {
     const amt = txn.amount;
     const cat = txn.category || "Other";
@@ -132,8 +167,8 @@ async function runCashReconciliationDiagnostic(
       // Check if it's a transfer
       else if (cat === "Transfers" || cat === "Transfers & Payments") {
         // Try to determine if transfer goes to a tracked account
-        const toAccount = profile.accountSnapshots.find((a: any) => 
-          txn.merchant?.toLowerCase().includes(a.accountName.toLowerCase())
+        const toAccount = (profile.accountBalanceHistory || []).find((a: any) => 
+          txn.merchant?.toLowerCase().includes(a.accountLabel?.toLowerCase())
         );
         if (toAccount) {
           txnBuckets.transfersToTracked.total += absAmt;
@@ -183,22 +218,28 @@ async function runCashReconciliationDiagnostic(
     }
   }
   
-  // Get statement balances for cash accounts to detect discrepancies
-  const statementsSnap = await db.collection(`users/${uid}/statements`)
-    .where("status", "==", "completed")
-    .get();
-  
-  const statementsByMonth = new Map<string, any[]>();
-  statementsSnap.docs.forEach((doc: any) => {
-    const data = doc.data();
-    const month = data.yearMonth;
-    if (targetMonths.includes(month)) {
-      if (!statementsByMonth.has(month)) {
-        statementsByMonth.set(month, []);
-      }
-      statementsByMonth.get(month)!.push(data);
+  // Calculate actual cash balance changes from statements (same as savingsCalculations.ts)
+  let actualCashChange = 0;
+  for (const month of targetMonths) {
+    for (const account of cashAccounts) {
+      const priorMonth = targetMonths[targetMonths.indexOf(month) - 1] || 
+        (month === "2026-07" ? "2026-06" : "2026-07");
+      
+      const getBalance = (m: string) => {
+        const entry = account.entries.find((e: any) => e.yearMonth === m);
+        if (entry) return entry.balance;
+        // Carry forward most recent prior
+        const priors = account.entries
+          .filter((e: any) => e.yearMonth < m)
+          .sort((a: any, b: any) => b.yearMonth.localeCompare(a.yearMonth));
+        return priors[0]?.balance || 0;
+      };
+      
+      const priorBal = getBalance(priorMonth);
+      const currentBal = getBalance(month);
+      actualCashChange += (currentBal - priorBal);
     }
-  });
+  }
   
   // Print summary
   console.log("📈 INFLOWS:");
@@ -223,32 +264,43 @@ async function runCashReconciliationDiagnostic(
   
   // Calculate net from transactions
   const netFromTxns = (txnBuckets.countedIncome.total + txnBuckets.excludedDeposits.total + txnBuckets.refunds.total) - totalOutflows;
-  console.log(`💵 NET CASH CHANGE (from transactions): ${formatCurrency(netFromTxns, currency)}\n`);
+  console.log(`💵 NET CASH CHANGE (from transactions): ${formatCurrency(netFromTxns, currency)}`);
+  console.log(`💵 NET CASH CHANGE (from balances): ${formatCurrency(actualCashChange, currency)}`);
+  console.log(`   Difference: ${formatCurrency(actualCashChange - netFromTxns, currency)}\n`);
+  
+  // Check for double-counting: CC spending + CC payment
+  console.log("🔍 CREDIT CARD DOUBLE-COUNTING CHECK:");
+  console.log(`   CC spending (on credit cards): ${formatCurrency(totalCCSpending, currency)} (${creditCardSpending.length} txns)`);
+  console.log(`   CC payments (from cash accounts): ${formatCurrency(txnBuckets.debtPayments.total, currency)} (${txnBuckets.debtPayments.txns.length} txns)`);
+  console.log(`   Note: CC spending is in Spending cards, CC payment reduces cash.`);
+  console.log(`         This is CORRECT if debt paydown adds the CC payment back.\n`);
   
   // Calculate expected vs actual gap
   console.log("🔍 RECONCILIATION:");
   
-  // From dashboard cards (user reported):
-  const dashboardIncome = 24439 * 3; // 3 months
-  const dashboardSpending = 21091 * 3; // 3 months
-  const dashboardNetSavings = -3490 * 3; // 3 months
+  // From dashboard cards (user reported - CORRECTED TOTALS):
+  const dashboardIncome = 73317; // 3 months total
+  const dashboardSpending = 63273; // 3 months total
+  const dashboardNetSavings = -10470; // 3 months total
+  const gap = (dashboardIncome - dashboardSpending) - dashboardNetSavings;
   
-  console.log(`   Dashboard Income (3mo): ${formatCurrency(dashboardIncome, currency)}`);
-  console.log(`   Dashboard Spending (3mo): ${formatCurrency(dashboardSpending, currency)}`);
+  console.log(`   Dashboard Income (3mo total): ${formatCurrency(dashboardIncome, currency)}`);
+  console.log(`   Dashboard Spending (3mo total): ${formatCurrency(dashboardSpending, currency)}`);
   console.log(`   Expected (Income - Spending): ${formatCurrency(dashboardIncome - dashboardSpending, currency)}`);
   console.log(`   Actual Net Savings card: ${formatCurrency(dashboardNetSavings, currency)}`);
-  console.log(`   Gap: ${formatCurrency((dashboardIncome - dashboardSpending) - dashboardNetSavings, currency)}\n`);
+  console.log(`   Gap: ${formatCurrency(gap, currency)} over 3 months`);
+  console.log(`   Gap per month: ${formatCurrency(gap / 3, currency)}\n`);
   
   // Show top unexplained items
   console.log("🔎 TOP 15 UNEXPLAINED ITEMS:\n");
   
   const unexplainedItems = [
-    ...txnBuckets.excludedDeposits.txns.slice(0, 5).map((t: any) => ({
+    ...txnBuckets.excludedDeposits.txns.slice(0, 10).map((t: any) => ({
       ...t,
       type: "Excluded deposit",
       absAmt: t.amount,
     })),
-    ...txnBuckets.transfersToUnknown.txns.slice(0, 5).map((t: any) => ({
+    ...txnBuckets.transfersToUnknown.txns.slice(0, 10).map((t: any) => ({
       ...t,
       type: "Transfer to unknown",
       absAmt: Math.abs(t.amount),
@@ -270,6 +322,8 @@ async function runCashReconciliationDiagnostic(
     });
   
   console.log("\n");
+  
+  return true; // Success
 }
 
 async function generateReport(uid: string, saveBaseline: boolean): Promise<void> {
@@ -2337,7 +2391,12 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   // CASH RECONCILIATION DIAGNOSTIC (Jul-Sep 2026)
   // ══════════════════════════════════════════════════════════════════════════
   
-  await runCashReconciliationDiagnostic(uid, db, profile, currency, incomeDepositReviews);
+  const diagnosticSuccess = await runCashReconciliationDiagnostic(uid, db, profile, currency, incomeDepositReviews);
+  const diagnosticErrors = diagnosticSuccess ? 0 : 1;
+  
+  if (!diagnosticSuccess) {
+    errors.push("Cash reconciliation diagnostic failed to load data");
+  }
   
   // Final summary - check ALL error conditions
   const totalFailures = 
@@ -2348,7 +2407,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     rangeErrors +
     drawerErrors +
     cashPlannerErrors +
-    chatToolErrors;
+    chatToolErrors +
+    diagnosticErrors;
   
   if (totalFailures > 0) {
     console.log("=".repeat(80));
@@ -2365,6 +2425,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     if (drawerErrors > 0) console.log(`Account drawer test failures: ${drawerErrors}`);
     if (cashPlannerErrors > 0) console.log(`Cash/Planner test failures: ${cashPlannerErrors}`);
     if (chatToolErrors > 0) console.log(`AI chat tool test failures: ${chatToolErrors}`);
+    if (diagnosticErrors > 0) console.log(`Reconciliation diagnostic failures: ${diagnosticErrors}`);
     
     console.log();
     process.exit(1);
