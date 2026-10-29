@@ -138,6 +138,7 @@ export function computeGapReconciliation(
     gap: number;
     uncategorizedTxns: Array<{ date: string; merchant: string; amount: number; category: string }>;
     transfersToUntracked: Array<{ date: string; merchant: string; amount: number; destination: string }>;
+    transfersFromUntracked: Array<{ date: string; source: string; amount: number; origin: string }>;
     interestAndFees: number;
   }> = [];
   
@@ -150,24 +151,16 @@ export function computeGapReconciliation(
   let totalContributions = 0;
   let totalNetSavings = 0;
   let totalTransfersToUntracked = 0;
+  let totalTransfersFromUntracked = 0;
   let totalInterestAndFees = 0;
   
   // Get monthly bucket values from spendingSummary
   const monthlyBuckets = spendingSummary.monthlyHistory;
   
   for (const month of rangeMonths) {
-    // Income for this month (using same filtering as buildIncomeSummary - exclude "not_income")
-    const monthIncome = profile.incomeTxns
-      .filter(t => t.txMonth === month)
-      .filter(t => {
-        const cat = (t.category || "").toLowerCase();
-        // Exclude "not_income" deposits (same as buildIncomeSummary)
-        if (cat === "not_income") return false;
-        // Exclude transfers (same as INCOME_TRANSFER_RE logic)
-        if (cat === "transfer in" || cat === "other") return false;
-        return true;
-      })
-      .reduce((sum, t) => sum + t.amount, 0);
+    // Income for this month - use buildIncomeSummary's monthlyHistory directly (same as Income page)
+    const incomeMonthData = incomeSummary.monthlyHistory.find(m => m.yearMonth === month);
+    const monthIncome = incomeMonthData ? incomeMonthData.total : 0;
     
     // Buckets for this month (from spending summary, same as cards)
     const bucketData = monthlyBuckets.find(m => m.yearMonth === month);
@@ -207,8 +200,8 @@ export function computeGapReconciliation(
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 5); // Top 5
     
-    // Find transfers to untracked accounts
-    const transferTxns = monthTxns
+    // Find transfers to untracked accounts (outflows)
+    const transferExpenseTxns = monthTxns
       .filter(t => {
         const cat = (t.category || "").toLowerCase();
         return cat === "transfers";
@@ -217,7 +210,7 @@ export function computeGapReconciliation(
     const transfersToUntracked: Array<{ date: string; merchant: string; amount: number; destination: string }> = [];
     let monthTransfersToUntrackedTotal = 0;
     
-    for (const txn of transferTxns) {
+    for (const txn of transferExpenseTxns) {
       const merchant = txn.merchant || '';
       // Extract account number from merchant (e.g. "TFR-TO 4002808")
       const accountMatch = merchant.match(/\d{4,}/);
@@ -234,6 +227,35 @@ export function computeGapReconciliation(
             destination: last4,
           });
           monthTransfersToUntrackedTotal += Math.abs(txn.amount);
+        }
+      }
+    }
+    
+    // Find transfers FROM untracked accounts (inflows)
+    const transferIncomeTxns = profile.incomeTxns.filter(t => t.txMonth === month);
+    const transfersFromUntracked: Array<{ date: string; source: string; amount: number; origin: string }> = [];
+    let monthTransfersFromUntrackedTotal = 0;
+    
+    for (const txn of transferIncomeTxns) {
+      const source = txn.source || '';
+      const cat = (txn.category || "").toLowerCase();
+      
+      // Look for transfer in or deposits from untracked accounts
+      if (cat === "transfer in" || source.toLowerCase().includes("tfr") || source.toLowerCase().includes("transfer")) {
+        const accountMatch = source.match(/\d{4,}/);
+        if (accountMatch) {
+          const accountNum = accountMatch[0];
+          const last4 = accountNum.slice(-4);
+          
+          if (!trackedAccountSuffixes.has(last4)) {
+            transfersFromUntracked.push({
+              date: txn.date || '',
+              source,
+              amount: txn.amount,
+              origin: last4,
+            });
+            monthTransfersFromUntrackedTotal += txn.amount;
+          }
         }
       }
     }
@@ -259,6 +281,7 @@ export function computeGapReconciliation(
       gap,
       uncategorizedTxns,
       transfersToUntracked,
+      transfersFromUntracked,
       interestAndFees,
     });
     
@@ -271,6 +294,7 @@ export function computeGapReconciliation(
     totalContributions += contributionsToOutside;
     totalNetSavings += netSavings;
     totalTransfersToUntracked += monthTransfersToUntrackedTotal;
+    totalTransfersFromUntracked += monthTransfersFromUntrackedTotal;
     totalInterestAndFees += interestAndFees;
   }
   
@@ -314,9 +338,17 @@ export function computeGapReconciliation(
     
     // Print transfers to untracked accounts if any
     if (data.transfersToUntracked.length > 0) {
-      console.log(`    Transfers to untracked accounts in ${data.month}:`);
+      console.log(`    Transfers TO untracked accounts in ${data.month}:`);
       for (const txn of data.transfersToUntracked) {
         console.log(`      ${txn.date} ${txn.merchant.slice(0, 40).padEnd(40)} $${txn.amount.toFixed(2).padStart(10)} [dest: ${txn.destination}]`);
+      }
+    }
+    
+    // Print transfers from untracked accounts if any
+    if (data.transfersFromUntracked.length > 0) {
+      console.log(`    Transfers FROM untracked accounts in ${data.month}:`);
+      for (const txn of data.transfersFromUntracked) {
+        console.log(`      ${txn.date} ${txn.source.slice(0, 40).padEnd(40)} $${txn.amount.toFixed(2).padStart(10)} [origin: ${txn.origin}]`);
       }
     }
   }
@@ -330,6 +362,7 @@ export function computeGapReconciliation(
   const avgContributions = totalContributions / numMonths;
   const avgNetSavings = totalNetSavings / numMonths;
   const avgTransfersToUntracked = totalTransfersToUntracked / numMonths;
+  const avgTransfersFromUntracked = totalTransfersFromUntracked / numMonths;
   const avgInterestAndFees = totalInterestAndFees / numMonths;
   
   console.log("=".repeat(110));
@@ -358,16 +391,25 @@ export function computeGapReconciliation(
   // Build components from monthly data
   const components: GapComponent[] = [];
   
-  // Component 1: Transfers to untracked accounts
+  // Component 1: Transfers to untracked accounts (outflows)
   if (avgTransfersToUntracked > 1) {
     components.push({
       name: "Transfers to untracked accounts",
       amount: -avgTransfersToUntracked,
-      description: "Transfers to accounts not tracked in the app",
+      description: "Money sent to accounts not tracked in the app",
     });
   }
   
-  // Component 2: Interest & fees on debt
+  // Component 2: Transfers from untracked accounts (inflows)
+  if (avgTransfersFromUntracked > 1) {
+    components.push({
+      name: "Transfers from untracked accounts",
+      amount: avgTransfersFromUntracked,
+      description: "Money received from accounts not tracked in the app",
+    });
+  }
+  
+  // Component 3: Interest & fees on debt
   if (avgInterestAndFees > 1) {
     components.push({
       name: "Interest & fees on debt",
@@ -376,7 +418,7 @@ export function computeGapReconciliation(
     });
   }
   
-  // Component 3: Investment gains (market changes beyond contributions)
+  // Component 4: Investment gains (market changes beyond contributions)
   const investmentContributionsTxns = profile.expenseTxns.filter(t => {
     const cat = (t.category || "").toLowerCase();
     return cat === "investments & savings" && rangeMonths.includes(t.txMonth);
@@ -398,10 +440,11 @@ export function computeGapReconciliation(
   
   // Print per-month component breakdown
   console.log("\nPER-MONTH COMPONENT BREAKDOWN:");
-  console.log("Month".padEnd(12) + "Transfers".padStart(12) + "Int&Fees".padStart(12) + "InvGains".padStart(12));
-  console.log("=".repeat(50));
+  console.log("Month".padEnd(12) + "TfrOut".padStart(12) + "TfrIn".padStart(12) + "Int&Fees".padStart(12) + "InvGains".padStart(12));
+  console.log("=".repeat(60));
   for (const data of perMonthData) {
-    const monthTransfers = data.transfersToUntracked.reduce((sum, t) => sum + t.amount, 0);
+    const monthTransfersOut = data.transfersToUntracked.reduce((sum, t) => sum + t.amount, 0);
+    const monthTransfersIn = data.transfersFromUntracked.reduce((sum, t) => sum + t.amount, 0);
     const monthInvGains = data.contributionsToOutside - 
       (profile.expenseTxns
         .filter(t => t.txMonth === data.month && (t.category || "").toLowerCase() === "investments & savings")
@@ -409,7 +452,8 @@ export function computeGapReconciliation(
     
     console.log(
       data.month.padEnd(12) +
-      (-monthTransfers).toFixed(0).padStart(12) +
+      (-monthTransfersOut).toFixed(0).padStart(12) +
+      monthTransfersIn.toFixed(0).padStart(12) +
       (-data.interestAndFees).toFixed(0).padStart(12) +
       monthInvGains.toFixed(0).padStart(12)
     );
