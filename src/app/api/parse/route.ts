@@ -343,6 +343,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Delete the original file from Storage after successful parse
+    try {
+      await bucket.file(fileUrl).delete();
+      console.log(`[parse] Deleted file from Storage: ${fileUrl}`);
+    } catch (deleteErr) {
+      console.error(`[parse] Failed to delete file ${fileUrl}:`, deleteErr);
+      // Continue - file deletion failure shouldn't block the parse
+    }
+
     await statementRef.update({
       parsedData,
       status: "completed",
@@ -350,6 +359,8 @@ export async function POST(request: NextRequest) {
       accountSlug: slug,
       yearMonth: yearMonth ?? null,
       slugIsAccountNumber,
+      fileUrl: "",  // Clear fileUrl after deletion
+      fileDeletedAt: new Date().toISOString(),
       // Included in this same write so the onSnapshot fires with all fields set:
       ...(accountConfirmNeeded && {
         accountConfirmNeeded: true,
@@ -462,9 +473,13 @@ export async function POST(request: NextRequest) {
           if (isRetryable) {
             await ref.update({ status: "error", errorMessage: friendlyMessage });
           } else {
+            // Set file expiry to 24 hours from now - cron will clean up failed parses
+            const expiresAt = new Date();
+            expiresAt.setHours(expiresAt.getHours() + 24);
             await ref.update({
               status: "needs_review",
               parseError: friendlyMessage,
+              fileExpiresAt: expiresAt.toISOString(),
               ...(partialParsedData ? { partialParsedData } : {}),
             });
           }
