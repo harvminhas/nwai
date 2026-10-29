@@ -12,6 +12,7 @@ import { Drawer, type DrawerType } from "@/components/Drawer";
 import { ReviewList } from "@/components/ReviewList";
 import { RangeSwitch } from "@/components/RangeSwitch";
 import type { TimeRange } from "@/lib/rangeUtils";
+import type { GapReconciliation } from "@/lib/gapReconciliation";
 
 // Convert TimeRange to Drawer's TimeWindow format
 function rangeToWindow(range: TimeRange): "last3" | "12month" | "ytd" {
@@ -49,6 +50,7 @@ interface MoneyCoachBreakdown {
     missingMonths: string[];
   };
   homeCurrency?: string;
+  gapReconciliation?: GapReconciliation;
 }
 
 // ── markdown renderer (copied from chat page) ────────────────────────────────
@@ -183,10 +185,14 @@ function QuestionBox({
   onAsk, 
   loading,
   suggestions,
+  usageStats,
+  savedAnswersCount,
 }: { 
   onAsk: (q: string) => void; 
   loading: boolean;
   suggestions: string[];
+  usageStats?: { remaining: number; limit: number } | null;
+  savedAnswersCount: number;
 }) {
   const [query, setQuery] = useState("");
 
@@ -217,6 +223,13 @@ function QuestionBox({
         </button>
       </div>
       
+      {/* Usage stats for free users */}
+      {usageStats && usageStats.limit > 0 && (
+        <div className="text-center text-xs text-gray-500">
+          {usageStats.remaining} of {usageStats.limit} AI answers left this month
+        </div>
+      )}
+      
       <div className="flex flex-wrap items-center justify-center gap-2">
         <span className="text-sm text-gray-500">Try asking:</span>
         {suggestions.slice(0, 3).map((q) => (
@@ -230,38 +243,172 @@ function QuestionBox({
           </button>
         ))}
       </div>
+      
+      {/* Saved answers link */}
+      {savedAnswersCount > 0 && (
+        <div className="text-center">
+          <Link
+            href="/account/saved-answers"
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-purple-600 hover:text-purple-700 transition"
+          >
+            <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/>
+            </svg>
+            <span>Saved answers ({savedAnswersCount})</span>
+          </Link>
+        </div>
+      )}
     </div>
   );
 }
 
+// Feature flag - set to true to show "Open in Chat" link in answer cards
+const SHOW_OPEN_IN_CHAT = false;
+
 function AnswerCard({ 
   question, 
   answer, 
-  onClear 
+  onClear,
+  token,
 }: { 
   question: string; 
   answer: string; 
   onClear: () => void;
+  token: string | null;
 }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  
+  // Handle Escape key
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClear();
+      }
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [onClear]);
+  
+  const handleSave = async () => {
+    if (!token || saving || saved) return;
+    
+    setSaving(true);
+    try {
+      const res = await fetch("/api/user/saved-answers", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ question, answer }),
+      });
+      
+      if (res.ok) {
+        setSaved(true);
+      }
+    } catch (error) {
+      console.error("Failed to save answer:", error);
+    } finally {
+      setSaving(false);
+    }
+  };
+  
   return (
-    <div className="mx-auto max-w-3xl rounded-2xl border-2 border-purple-100 bg-purple-50/30 p-6 shadow-sm">
-      <div className="flex gap-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-purple-600 text-sm font-bold text-white">
+    <div className="mx-auto max-w-3xl rounded-2xl border-2 border-purple-100 bg-purple-50/30 shadow-sm">
+      {/* Sticky Header */}
+      <div className="sticky top-0 z-10 flex items-start gap-3 border-b border-purple-100 bg-purple-50/90 p-4 backdrop-blur">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-purple-600 text-xs font-bold text-white">
           ?
         </div>
         <div className="min-w-0 flex-1">
           <h4 className="text-sm font-semibold text-purple-900">{question}</h4>
-          <div className="mt-2 text-gray-700">
-            {renderMarkdown(answer)}
-          </div>
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <button
+            onClick={handleSave}
+            disabled={saving || saved}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-purple-600 hover:bg-purple-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label={saved ? "Saved" : "Save answer"}
+            title={saved ? "Saved" : "Save answer"}
+          >
+            {saved ? (
+              <svg className="h-4 w-4 fill-current" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/>
+              </svg>
+            ) : (
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
+              </svg>
+            )}
+          </button>
+          <button
+            onClick={() => setCollapsed(!collapsed)}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-purple-600 hover:bg-purple-100 transition"
+            aria-label={collapsed ? "Show answer" : "Minimize"}
+          >
+            {collapsed ? (
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            ) : (
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+              </svg>
+            )}
+          </button>
           <button
             onClick={onClear}
-            className="mt-3 text-sm font-semibold text-purple-600 hover:text-purple-700"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-purple-600 hover:bg-purple-100 transition"
+            aria-label="Close"
           >
-            Ask another question ↗
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
           </button>
         </div>
       </div>
+      
+      {/* Answer Content */}
+      {!collapsed && (
+        <div className="max-h-[320px] overflow-y-auto p-4">
+          <div className="text-gray-700">
+            {renderMarkdown(answer)}
+          </div>
+          <div className="mt-4 flex items-center gap-3 border-t border-purple-100 pt-3">
+            {SHOW_OPEN_IN_CHAT && (
+              <Link
+                href={`/account/chat?q=${encodeURIComponent(question)}`}
+                className="text-sm font-semibold text-purple-600 hover:text-purple-700 flex items-center gap-1"
+              >
+                Open in Chat
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                </svg>
+              </Link>
+            )}
+            <button
+              onClick={onClear}
+              className="text-sm font-medium text-gray-600 hover:text-gray-700"
+            >
+              Ask another question
+            </button>
+          </div>
+        </div>
+      )}
+      
+      {/* Collapsed state */}
+      {collapsed && (
+        <div className="p-4">
+          <button
+            onClick={() => setCollapsed(false)}
+            className="text-sm font-medium text-purple-600 hover:text-purple-700"
+          >
+            Show answer
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -273,7 +420,7 @@ function WhereMoneyGoes({
   unreviewedCount,
   range,
   onRangeChange,
-  rangeLoading
+  rangeLoading,
 }: { 
   breakdown: MoneyCoachBreakdown; 
   currency: string;
@@ -284,6 +431,7 @@ function WhereMoneyGoes({
   rangeLoading: boolean;
 }) {
   const { coverage, incomeAmount, incomeBasisLabel, rangeLabel, buckets } = breakdown;
+  const [showExternalAccountsPopover, setShowExternalAccountsPopover] = useState(false);
   
   // Calculate bucket percentages
   const fixedBucket = buckets.find(b => b.bucket === "fixed");
@@ -469,10 +617,66 @@ function WhereMoneyGoes({
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>
                   </div>
-                  <p className={`text-2xl font-bold tracking-tight ${bucket.bucket === 'savings' ? getSignColor(bucket.monthlyAverage) : 'text-gray-900'}`}>
-                    {fmt(bucket.monthlyAverage, currency)}
-                    <span className="text-sm font-medium text-gray-400">/mo</span>
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <p className={`text-2xl font-bold tracking-tight whitespace-nowrap ${bucket.bucket === 'savings' ? getSignColor(bucket.monthlyAverage) : 'text-gray-900'}`}>
+                        {fmt(bucket.monthlyAverage, currency)}
+                        <span className="text-sm font-medium text-gray-400">/mo</span>
+                      </p>
+                      {bucket.bucket === "savings" && breakdown.gapReconciliation?.flaggedTransfers && breakdown.gapReconciliation.flaggedTransfers.length > 0 && (
+                        <div className="relative flex-shrink-0">
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onMouseEnter={() => setShowExternalAccountsPopover(true)}
+                            onMouseLeave={() => setShowExternalAccountsPopover(false)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setShowExternalAccountsPopover(!showExternalAccountsPopover);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                setShowExternalAccountsPopover(!showExternalAccountsPopover);
+                              }
+                            }}
+                            className="flex h-4 w-4 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600 cursor-pointer"
+                          >
+                            <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                            </svg>
+                          </span>
+                          {showExternalAccountsPopover && (
+                            <div className="absolute right-0 top-full z-[100] mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-gray-200 bg-white p-3 shadow-xl">
+                              <div className="text-xs font-semibold text-gray-900 break-words">Includes transfers to accounts not in the app</div>
+                              <div className="mt-3 space-y-2.5">
+                                {breakdown.gapReconciliation.flaggedTransfers.map((transfer, idx) => (
+                                  <div key={idx} className="text-xs">
+                                    <div className="flex items-baseline justify-between gap-2">
+                                      <div className="font-medium text-gray-900">{transfer.date}</div>
+                                      <div className="font-mono font-semibold text-gray-900 tabular-nums whitespace-nowrap">
+                                        {fmt(transfer.amount, currency)}
+                                      </div>
+                                    </div>
+                                    <div className="text-gray-600 break-words mt-0.5">
+                                      From {transfer.fromAccount} to account ending in {transfer.destinationNumber?.slice(-4) || transfer.destinationNumber || "unknown"}
+                                    </div>
+                                  </div>
+                                ))}
+                                <div className="flex items-center justify-between border-t border-gray-200 pt-2 text-xs font-semibold">
+                                  <span className="text-gray-700">Total</span>
+                                  <span className="font-mono text-gray-900 tabular-nums whitespace-nowrap">
+                                    {fmt(breakdown.gapReconciliation.flaggedTransfers.reduce((sum, t) => sum + t.amount, 0), currency)}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                   <p className="mt-1 text-xs text-gray-500">
                     {rangeLabel} · {Math.round(bucket.pctOfIncome)}% of take-home
                     {bucket.bucket === "savings" && ` · target ${bucket.targetPct}%`}
@@ -529,6 +733,8 @@ export default function DashboardPage() {
   const [currentAnswer, setCurrentAnswer] = useState<{ question: string; answer: string } | null>(null);
   const [breakdown, setBreakdown] = useState<MoneyCoachBreakdown | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [usageStats, setUsageStats] = useState<{ remaining: number; limit: number } | null>(null);
+  const [savedAnswersCount, setSavedAnswersCount] = useState<number>(0);
   const [currency, setCurrency] = useState("USD");
   const [activeDrawer, setActiveDrawer] = useState<DrawerType | null>(null);
   const [unreviewedCount, setUnreviewedCount] = useState(0);
@@ -582,10 +788,11 @@ export default function DashboardPage() {
       setLoading(true);
     }
     try {
-      const [coachRes, suggestionsRes, anomaliesRes] = await Promise.all([
+      const [coachRes, suggestionsRes, anomaliesRes, savedAnswersRes] = await Promise.all([
         fetch(`/api/user/money-coach?range=${selectedRange}`, { headers: buildHeaders(tok) }),
         fetch("/api/user/ai-ask", { headers: buildHeaders(tok) }),
         fetch("/api/user/debt-payment-anomalies", { headers: buildHeaders(tok) }),
+        fetch("/api/user/saved-answers", { headers: buildHeaders(tok) }),
       ]);
       
       if (coachRes.ok) {
@@ -597,11 +804,20 @@ export default function DashboardPage() {
       if (suggestionsRes.ok) {
         const data = await suggestionsRes.json();
         setSuggestions(data.suggestions || []);
+        // Set usage stats (limit -1 means paid plan / unlimited)
+        if (data.limit !== undefined && data.remaining !== undefined) {
+          setUsageStats({ remaining: data.remaining, limit: data.limit });
+        }
       }
 
       if (anomaliesRes.ok) {
         const data = await anomaliesRes.json();
         setUnreviewedCount(data.anomalies?.length || 0);
+      }
+      
+      if (savedAnswersRes.ok) {
+        const data = await savedAnswersRes.json();
+        setSavedAnswersCount(data.savedAnswers?.length || 0);
       }
     } catch (error) {
       console.error("Failed to load dashboard data:", error);
@@ -668,6 +884,11 @@ export default function DashboardPage() {
       const data = await res.json();
       setCurrentAnswer({ question, answer: data.answer });
       
+      // Update usage stats if returned
+      if (data.remaining !== undefined && data.limit !== undefined) {
+        setUsageStats({ remaining: data.remaining, limit: data.limit });
+      }
+      
       setTimeout(() => {
         document.getElementById("answer-card")?.scrollIntoView({ 
           behavior: "smooth", 
@@ -714,6 +935,8 @@ export default function DashboardPage() {
             onAsk={handleAsk} 
             loading={askLoading}
             suggestions={suggestions}
+            usageStats={usageStats}
+            savedAnswersCount={savedAnswersCount}
           />
         </div>
 
@@ -724,6 +947,7 @@ export default function DashboardPage() {
               question={currentAnswer.question}
               answer={currentAnswer.answer}
               onClear={clearAnswer}
+              token={token}
             />
           </div>
         )}

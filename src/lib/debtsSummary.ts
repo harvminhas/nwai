@@ -65,6 +65,27 @@ export interface DebtsSummary {
     }>;
   }>;
   scheduledPayments?: ScheduledDebtPayment[]; // For diagnostic output
+  /** Per-account balance history from profile.accountBalanceHistory */
+  accountBalanceHistory: Array<{
+    slug: string;
+    label: string;
+    entries: Array<{ yearMonth: string; balance: number; derived?: boolean; sourceStatement?: string }>;
+  }>;
+  /** Transactions for month-detail view */
+  expenseTxns: Array<{
+    date: string;
+    txMonth: string;
+    amount: number;
+    merchant: string;
+    accountSlug: string;
+  }>;
+  incomeTxns: Array<{
+    date: string;
+    txMonth: string;
+    amount: number;
+    source: string;
+    accountSlug: string;
+  }>;
 }
 
 const DEBT_TYPES = new Set(["mortgage", "credit", "credit_card", "loc", "line_of_credit", "loan", "auto_loan", "student_loan", "personal_loan", "other_debt"]);
@@ -155,7 +176,9 @@ export function buildDebtsSummary(
   manualLiabilities: ManualLiability[],
   fxRates: Record<string, number>,
   homeCurrency: string,
-  profileMonthlyHistory?: Array<{ yearMonth: string; totalDebts: number; debtPaymentsTotal: number }> // From profile
+  profileMonthlyHistory?: Array<{ yearMonth: string; totalDebts: number; debtPaymentsTotal: number }>, // From profile
+  expenseTxns?: Array<{ date: string; txMonth: string; amount: number; merchant: string; accountSlug: string }>,
+  incomeTxns?: Array<{ date: string; txMonth: string; amount: number; source: string; accountSlug: string }>
 ): DebtsSummary {
   // Compute scheduled debt payments using the same logic as computeMonthlyBuckets
   const scheduledPayments = computeScheduledDebtPayments(
@@ -381,6 +404,11 @@ export function buildDebtsSummary(
       });
     }
   }
+  
+  // Filter transactions to only those belonging to debt accounts
+  const debtAccountSlugs = new Set(debtAccounts.map(a => a.slug));
+  const filteredExpenseTxns = (expenseTxns || []).filter(t => debtAccountSlugs.has(t.accountSlug));
+  const filteredIncomeTxns = (incomeTxns || []).filter(t => debtAccountSlugs.has(t.accountSlug));
 
   return {
     totalDebt,
@@ -394,6 +422,15 @@ export function buildDebtsSummary(
     groups,
     payoffEstimates,
     monthlyHistory,
-    scheduledPayments, // For diagnostic output
+    scheduledPayments, // For diagnostic output,
+    accountBalanceHistory: balanceHistory
+      .filter(h => debtAccountSlugs.has(h.slug))
+      .map(h => ({
+        slug: h.slug,
+        label: h.label,
+        entries: h.entries,
+      })),
+    expenseTxns: filteredExpenseTxns,
+    incomeTxns: filteredIncomeTxns,
   };
 }

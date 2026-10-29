@@ -46,6 +46,27 @@ export interface AssetsSummary {
     }>;
   }>;
   staleAccounts: AssetAccount[];
+  /** Per-account balance history from profile.accountBalanceHistory */
+  accountBalanceHistory: Array<{
+    slug: string;
+    label: string;
+    entries: Array<{ yearMonth: string; balance: number; derived?: boolean; sourceStatement?: string }>;
+  }>;
+  /** Transactions for month-detail view */
+  expenseTxns: Array<{
+    date: string;
+    txMonth: string;
+    amount: number;
+    merchant: string;
+    accountSlug: string;
+  }>;
+  incomeTxns: Array<{
+    date: string;
+    txMonth: string;
+    amount: number;
+    source: string;
+    accountSlug: string;
+  }>;
 }
 
 const REGISTERED_TYPES = new Set(["rrsp", "tfsa", "fhsa", "401k", "ira", "roth_ira", "lira", "resp"]);
@@ -114,7 +135,9 @@ export function buildAssetsSummary(
   manualAssets: ManualAsset[],
   fxRates: Record<string, number>,
   homeCurrency: string,
-  profileMonthlyHistory?: Array<{ yearMonth: string; totalAssets: number }> // From profile
+  profileMonthlyHistory?: Array<{ yearMonth: string; totalAssets: number }>, // From profile
+  expenseTxns?: Array<{ date: string; txMonth: string; amount: number; merchant: string; accountSlug: string }>,
+  incomeTxns?: Array<{ date: string; txMonth: string; amount: number; source: string; accountSlug: string }>
 ): AssetsSummary {
   // Filter to asset accounts only (positive balance or asset types)
   const assetAccounts = accountSnapshots.filter(acc => 
@@ -279,6 +302,11 @@ export function buildAssetsSummary(
   }
 
   const staleAccounts = accounts.filter(a => a.isStale);
+  
+  // Filter transactions to only those belonging to asset accounts
+  const assetAccountSlugs = new Set(assetAccounts.map(a => a.slug));
+  const filteredExpenseTxns = (expenseTxns || []).filter(t => assetAccountSlugs.has(t.accountSlug));
+  const filteredIncomeTxns = (incomeTxns || []).filter(t => assetAccountSlugs.has(t.accountSlug));
 
   return {
     totalAssets,
@@ -288,5 +316,14 @@ export function buildAssetsSummary(
     groups,
     monthlyHistory,
     staleAccounts,
+    accountBalanceHistory: balanceHistory
+      .filter(h => assetAccountSlugs.has(h.slug))
+      .map(h => ({
+        slug: h.slug,
+        label: h.label,
+        entries: h.entries,
+      })),
+    expenseTxns: filteredExpenseTxns,
+    incomeTxns: filteredIncomeTxns,
   };
 }

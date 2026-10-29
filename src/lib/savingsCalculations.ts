@@ -121,11 +121,17 @@ function findPriorMonth(
 function getBalanceForMonth(
   account: AccountBalanceHistory,
   month: string
-): { balance: number; carriedForward: boolean } | null {
+): { balance: number; carriedForward: boolean; derived?: boolean; sourceStatement?: string; actualMonth: string } | null {
   // Try exact month first
   const exact = account.entries.find(e => e.yearMonth === month);
   if (exact) {
-    return { balance: exact.balance, carriedForward: false };
+    return { 
+      balance: exact.balance, 
+      carriedForward: false,
+      derived: exact.derived,
+      sourceStatement: exact.sourceStatement,
+      actualMonth: month
+    };
   }
   
   // Find most recent prior balance
@@ -134,7 +140,14 @@ function getBalanceForMonth(
     .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth));
   
   if (priors.length > 0) {
-    return { balance: priors[0].balance, carriedForward: true };
+    const prior = priors[0];
+    return { 
+      balance: prior.balance, 
+      carriedForward: true,
+      derived: prior.derived,
+      sourceStatement: prior.sourceStatement,
+      actualMonth: prior.yearMonth
+    };
   }
   
   // No balance at or before this month
@@ -185,6 +198,12 @@ export interface MonthAccountDetail {
   change: number;
   priorCarriedForward: boolean;
   currentCarriedForward: boolean;
+  priorDerived?: boolean;
+  currentDerived?: boolean;
+  priorSourceStatement?: string;
+  currentSourceStatement?: string;
+  priorActualMonth: string;
+  currentActualMonth: string;
 }
 
 /**
@@ -236,6 +255,8 @@ export interface MonthlySavingsResult {
   netCashChange: number;
   netDebtChange: number;
   contributionsToOutside: number;
+  /** Prior month used for balance comparison */
+  priorMonth: string;
   /** Transactions that need user confirmation */
   needsConfirmation: SavingsConfirmation[];
   /** Detailed breakdown by component */
@@ -334,6 +355,7 @@ export function computeMonthlySavings(
       netCashChange: 0,
       netDebtChange: 0,
       contributionsToOutside: 0,
+      priorMonth: '',
       needsConfirmation: [],
       details: { cashAccounts: [], debtAccounts: [], contributions: [] },
     };
@@ -483,6 +505,7 @@ export function computeMonthlySavings(
     netCashChange: normalize(netCashChange),
     netDebtChange: normalize(netDebtChange),
     contributionsToOutside: normalize(contributionsToOutside),
+    priorMonth: prior.yearMonth,
     needsConfirmation: needsConfirmationList,
     details: {
       cashAccounts: cashDetails.map(d => ({ ...d, change: normalize(d.change) })),
@@ -550,22 +573,10 @@ export function computeWindowSavings(
       const last4Match = acc.accountLabel.match(/\(\.\.\.(\d{4})\)/);
       const last4 = last4Match ? last4Match[1] : acc.slug.slice(-4);
       
-      return {
-        accountLabel: acc.accountLabel,
-        accountLast4: last4,
-        slug: acc.slug,
-        accountType: acc.accountType,
-        priorBalance: acc.priorBalance,
-        currentBalance: acc.currentBalance,
-        change: acc.change,
-        priorCarriedForward: acc.priorCarriedForward,
-        currentCarriedForward: acc.currentCarriedForward,
-      };
-    }).sort((a, b) => Math.abs(b.change) - Math.abs(a.change)); // Sort by absolute impact
-    
-    const monthDebtAccounts: MonthAccountDetail[] = result.details.debtAccounts.map(acc => {
-      const last4Match = acc.accountLabel.match(/\(\.\.\.(\d{4})\)/);
-      const last4 = last4Match ? last4Match[1] : acc.slug.slice(-4);
+      // Get the actual balance entries to extract month info
+      const accountHistory = accountBalanceHistory.find(a => a.slug === acc.slug);
+      const priorResult = accountHistory ? getBalanceForMonth(accountHistory, result.priorMonth) : null;
+      const currentResult = accountHistory ? getBalanceForMonth(accountHistory, month) : null;
       
       return {
         accountLabel: acc.accountLabel,
@@ -577,6 +588,40 @@ export function computeWindowSavings(
         change: acc.change,
         priorCarriedForward: acc.priorCarriedForward,
         currentCarriedForward: acc.currentCarriedForward,
+        priorDerived: priorResult?.derived,
+        currentDerived: currentResult?.derived,
+        priorSourceStatement: priorResult?.sourceStatement,
+        currentSourceStatement: currentResult?.sourceStatement,
+        priorActualMonth: priorResult?.actualMonth || '',
+        currentActualMonth: currentResult?.actualMonth || month,
+      };
+    }).sort((a, b) => Math.abs(b.change) - Math.abs(a.change)); // Sort by absolute impact
+    
+    const monthDebtAccounts: MonthAccountDetail[] = result.details.debtAccounts.map(acc => {
+      const last4Match = acc.accountLabel.match(/\(\.\.\.(\d{4})\)/);
+      const last4 = last4Match ? last4Match[1] : acc.slug.slice(-4);
+      
+      // Get the actual balance entries to extract month info
+      const accountHistory = accountBalanceHistory.find(a => a.slug === acc.slug);
+      const priorResult = accountHistory ? getBalanceForMonth(accountHistory, result.priorMonth) : null;
+      const currentResult = accountHistory ? getBalanceForMonth(accountHistory, month) : null;
+      
+      return {
+        accountLabel: acc.accountLabel,
+        accountLast4: last4,
+        slug: acc.slug,
+        accountType: acc.accountType,
+        priorBalance: acc.priorBalance,
+        currentBalance: acc.currentBalance,
+        change: acc.change,
+        priorCarriedForward: acc.priorCarriedForward,
+        currentCarriedForward: acc.currentCarriedForward,
+        priorDerived: priorResult?.derived,
+        currentDerived: currentResult?.derived,
+        priorSourceStatement: priorResult?.sourceStatement,
+        currentSourceStatement: currentResult?.sourceStatement,
+        priorActualMonth: priorResult?.actualMonth || '',
+        currentActualMonth: currentResult?.actualMonth || month,
       };
     }).sort((a, b) => Math.abs(b.change) - Math.abs(a.change)); // Sort by absolute impact
     

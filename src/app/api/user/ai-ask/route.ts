@@ -5,6 +5,8 @@ import { loadUserReviewContext } from "@/lib/userReviewContext";
 import { answerQuestion, getSuggestedQuestions } from "@/lib/questionTemplates";
 import { queryLLMWithTools } from "@/lib/chat/llmQuery";
 import { cleanAIAnswer } from "@/lib/chat/answerPostProcessor";
+import { checkAIUsageLimit, incrementAIUsage, getLimitReachedMessage } from "@/lib/aiUsageLimit";
+import { resolvePlan } from "../plan/route";
 
 export const dynamic = "force-dynamic";
 
@@ -39,13 +41,32 @@ export async function POST(req: NextRequest) {
 
     const profile = await getFinancialProfile(decoded.uid, db);
     
-    // Fast path: try template matching first
+    // Get user's plan
+    const userDoc = await db.collection("users").doc(decoded.uid).get();
+    const userData = userDoc.exists ? userDoc.data() : undefined;
+    const plan = resolvePlan(userData as Record<string, unknown> | undefined) ?? "free";
+    
+    // Fast path: try template matching first (doesn't count against limit)
     const templateAnswer = answerQuestion(question, profile);
 
     if (templateAnswer) {
       return Response.json({
         answer: cleanAIAnswer(templateAnswer),
         suggestedFollowUps: getSuggestedQuestions().slice(0, 3),
+        usedAI: false,
+      });
+    }
+
+    // Check AI usage limit before calling LLM
+    const usageCheck = await checkAIUsageLimit(decoded.uid, db, plan);
+    
+    if (!usageCheck.allowed) {
+      return Response.json({
+        answer: getLimitReachedMessage(),
+        suggestedFollowUps: [],
+        limitReached: true,
+        remaining: 0,
+        limit: usageCheck.limit,
       });
     }
 
@@ -62,9 +83,16 @@ export async function POST(req: NextRequest) {
       const reviewContext = await loadUserReviewContext(decoded.uid, db);
       const llmAnswer = await queryLLMWithTools(apiKey, question, profile, reviewContext);
 
+      // Increment usage counter after successful LLM response
+      const newCount = await incrementAIUsage(decoded.uid, db);
+      const remaining = Math.max(0, usageCheck.limit - newCount);
+
       return Response.json({
         answer: cleanAIAnswer(llmAnswer),
         suggestedFollowUps: getSuggestedQuestions().slice(0, 3),
+        usedAI: true,
+        remaining: plan === "free" ? remaining : -1,
+        limit: plan === "free" ? usageCheck.limit : -1,
       });
     } catch (llmError: any) {
       // Handle LLM-specific errors gracefully
@@ -88,7 +116,7 @@ export async function POST(req: NextRequest) {
 
 /**
  * GET /api/user/ai-ask
- * Returns suggested questions for the UI.
+ * Returns suggested questions and usage stats for the UI.
  */
 export async function GET(req: NextRequest) {
   try {
@@ -97,8 +125,20 @@ export async function GET(req: NextRequest) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const { auth, db } = getFirebaseAdmin();
+    const decoded = await auth.verifyIdToken(token);
+    
+    // Get user's plan and usage
+    const userDoc = await db.collection("users").doc(decoded.uid).get();
+    const userData = userDoc.exists ? userDoc.data() : undefined;
+    const plan = resolvePlan(userData as Record<string, unknown> | undefined) ?? "free";
+    
+    const usageCheck = await checkAIUsageLimit(decoded.uid, db, plan);
+
     return Response.json({
       suggestions: getSuggestedQuestions(),
+      remaining: plan === "free" ? usageCheck.remaining : -1,
+      limit: plan === "free" ? usageCheck.limit : -1,
     });
   } catch (error) {
     console.error("AI ask suggestions error:", error);

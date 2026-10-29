@@ -15,7 +15,10 @@ import * as fs from "fs";
 import * as path from "path";
 import { getFirebaseAdmin } from "../src/lib/firebase-admin";
 import { getFinancialProfile } from "../src/lib/financialProfile";
+import { loadUserReviewContext } from "../src/lib/userReviewContext";
+import { validateDerivedBalances } from "../src/lib/types";
 import { computeMoneyCoachBreakdown } from "../src/lib/moneyCoach";
+import { computeGapReconciliation } from "../src/lib/gapReconciliation";
 import { computeBucketBreakdown } from "../src/lib/bucketBreakdown";
 import { computeAverageSavings, computeMonthlySavings, computeWindowSavings } from "../src/lib/savingsCalculations";
 import { buildIncomeSummary, makeIncomeTxnId } from "../src/lib/incomeSummary";
@@ -1218,7 +1221,9 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     profile.manualAssets,
     profile.fxRates,
     profile.homeCurrency,
-    profile.monthlyHistory // Pass profile monthly history for correct carry-forward
+    profile.monthlyHistory, // Pass profile monthly history for correct carry-forward
+    profile.expenseTxns, // For month-detail drawer
+    profile.incomeTxns // For month-detail drawer
   );
   
   const debtsSummary = buildDebtsSummary(
@@ -1228,7 +1233,9 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     profile.manualLiabilities,
     profile.fxRates,
     profile.homeCurrency,
-    profile.monthlyHistory // Pass profile monthly history for correct carry-forward
+    profile.monthlyHistory, // Pass profile monthly history for correct carry-forward
+    profile.expenseTxns, // For month-detail drawer
+    profile.incomeTxns // For month-detail drawer
   );
   
   console.log(`📈 Assets Summary:`);
@@ -1711,10 +1718,446 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   }
   
   console.log();
-  if (drawerErrors > 0) {
-    console.log(`❌ ${drawerErrors} account drawer test(s) failed\n`);
+  
+  // ── DRAWER SERIES AND TRANSACTIONS VALIDATION ─────────────────────────────────
+  console.log("📊 DRAWER SERIES & MONTH-DETAIL VALIDATION");
+  console.log("=".repeat(80) + "\n");
+  
+  // Reuse assetsSummary and debtsSummary already built above
+  
+  // Test 1: Verify drawer series equals accountBalanceHistory for every account
+  console.log("Test 1: Drawer series matches profile.accountBalanceHistory");
+  for (const summaryHistory of assetsSummary.accountBalanceHistory) {
+    const profileHistory = profile.accountBalanceHistory.find(h => h.slug === summaryHistory.slug);
+    if (!profileHistory) {
+      console.log(`  ❌ FAIL: Assets summary has ${summaryHistory.slug} but profile doesn't`);
+      drawerErrors++;
+      errors.push(`Drawer data: ${summaryHistory.slug} in assets summary but not in profile`);
+      continue;
+    }
+    
+    // Check entries match exactly
+    if (summaryHistory.entries.length !== profileHistory.entries.length) {
+      console.log(`  ❌ FAIL: ${summaryHistory.label} entry count mismatch: summary=${summaryHistory.entries.length}, profile=${profileHistory.entries.length}`);
+      drawerErrors++;
+      errors.push(`Drawer data: ${summaryHistory.label} entry count mismatch`);
+      continue;
+    }
+    
+    let mismatch = false;
+    for (let i = 0; i < summaryHistory.entries.length; i++) {
+      const se = summaryHistory.entries[i];
+      const pe = profileHistory.entries[i];
+      if (se.yearMonth !== pe.yearMonth || se.balance !== pe.balance || se.derived !== pe.derived) {
+        console.log(`  ❌ FAIL: ${summaryHistory.label} entry ${i} mismatch`);
+        console.log(`    Summary: ${se.yearMonth} ${se.balance} derived=${se.derived}`);
+        console.log(`    Profile: ${pe.yearMonth} ${pe.balance} derived=${pe.derived}`);
+        drawerErrors++;
+        errors.push(`Drawer data: ${summaryHistory.label} entry mismatch at ${se.yearMonth}`);
+        mismatch = true;
+        break;
+      }
+    }
+    
+    if (!mismatch) {
+      console.log(`  ✓ ${summaryHistory.label}: ${summaryHistory.entries.length} entries match exactly`);
+    }
+  }
+  
+  // Same for debts
+  for (const summaryHistory of debtsSummary.accountBalanceHistory) {
+    const profileHistory = profile.accountBalanceHistory.find(h => h.slug === summaryHistory.slug);
+    if (!profileHistory) {
+      console.log(`  ❌ FAIL: Debts summary has ${summaryHistory.slug} but profile doesn't`);
+      drawerErrors++;
+      errors.push(`Drawer data: ${summaryHistory.slug} in debts summary but not in profile`);
+      continue;
+    }
+    
+    if (summaryHistory.entries.length !== profileHistory.entries.length) {
+      console.log(`  ❌ FAIL: ${summaryHistory.label} (debt) entry count mismatch`);
+      drawerErrors++;
+      errors.push(`Drawer data: ${summaryHistory.label} debt entry count mismatch`);
+      continue;
+    }
+    
+    let mismatch = false;
+    for (let i = 0; i < summaryHistory.entries.length; i++) {
+      const se = summaryHistory.entries[i];
+      const pe = profileHistory.entries[i];
+      if (se.yearMonth !== pe.yearMonth || se.balance !== pe.balance || se.derived !== pe.derived) {
+        console.log(`  ❌ FAIL: ${summaryHistory.label} (debt) entry ${i} mismatch`);
+        drawerErrors++;
+        errors.push(`Drawer data: ${summaryHistory.label} debt entry mismatch at ${se.yearMonth}`);
+        mismatch = true;
+        break;
+      }
+    }
+    
+    if (!mismatch) {
+      console.log(`  ✓ ${summaryHistory.label} (debt): ${summaryHistory.entries.length} entries match exactly`);
+    }
+  }
+  
+  console.log();
+  
+  // Test 2: Verify no constant series when balance varies
+  console.log("Test 2: No constant series when balance history varies");
+  for (const history of profile.accountBalanceHistory) {
+    const balances = history.entries.map(e => e.balance);
+    const uniqueBalances = new Set(balances);
+    
+    // If all balances are identical
+    if (uniqueBalances.size === 1 && balances.length > 1) {
+      console.log(`  ⚠️  WARNING: ${history.label} has constant balance ${balances[0]} across ${balances.length} months`);
+      // This is OK if it's really constant (e.g., a dormant account)
+    } else {
+      console.log(`  ✓ ${history.label}: ${uniqueBalances.size} unique balance values across ${balances.length} months`);
+    }
+  }
+  
+  console.log();
+  
+  // Test 3: Verify month-detail transaction totals match expenseTxns/incomeTxns
+  console.log("Test 3: Month-detail transaction totals match profile txns");
+  
+  // Build a map of account slug -> month -> {inflow, outflow}
+  const accountMonthTotals = new Map<string, Map<string, { inflow: number; outflow: number }>>();
+  
+  for (const txn of profile.expenseTxns) {
+    if (!accountMonthTotals.has(txn.accountSlug)) {
+      accountMonthTotals.set(txn.accountSlug, new Map());
+    }
+    const monthMap = accountMonthTotals.get(txn.accountSlug)!;
+    if (!monthMap.has(txn.txMonth)) {
+      monthMap.set(txn.txMonth, { inflow: 0, outflow: 0 });
+    }
+    const totals = monthMap.get(txn.txMonth)!;
+    totals.outflow += Math.abs(txn.amount);
+  }
+  
+  for (const txn of profile.incomeTxns) {
+    if (!accountMonthTotals.has(txn.accountSlug)) {
+      accountMonthTotals.set(txn.accountSlug, new Map());
+    }
+    const monthMap = accountMonthTotals.get(txn.accountSlug)!;
+    if (!monthMap.has(txn.txMonth)) {
+      monthMap.set(txn.txMonth, { inflow: 0, outflow: 0 });
+    }
+    const totals = monthMap.get(txn.txMonth)!;
+    totals.inflow += txn.amount;
+  }
+  
+  // Verify summaries have matching transactions
+  const assetsExpenseTxns = assetsSummary.expenseTxns;
+  const assetsIncomeTxns = assetsSummary.incomeTxns;
+  const debtsExpenseTxns = debtsSummary.expenseTxns;
+  const debtsIncomeTxns = debtsSummary.incomeTxns;
+  
+  // Count should match
+  if (assetsExpenseTxns.length + debtsExpenseTxns.length !== profile.expenseTxns.length) {
+    console.log(`  ❌ FAIL: Summary expense txn count mismatch: assets=${assetsExpenseTxns.length}, debts=${debtsExpenseTxns.length}, profile=${profile.expenseTxns.length}`);
+    drawerErrors++;
+    errors.push(`Drawer data: expense transaction count mismatch`);
   } else {
-    console.log(`✅ All account drawer tests passed\n`);
+    console.log(`  ✓ Expense transactions: ${profile.expenseTxns.length} total (${assetsExpenseTxns.length} assets, ${debtsExpenseTxns.length} debts)`);
+  }
+  
+  if (assetsIncomeTxns.length + debtsIncomeTxns.length !== profile.incomeTxns.length) {
+    console.log(`  ❌ FAIL: Summary income txn count mismatch: assets=${assetsIncomeTxns.length}, debts=${debtsIncomeTxns.length}, profile=${profile.incomeTxns.length}`);
+    drawerErrors++;
+    errors.push(`Drawer data: income transaction count mismatch`);
+  } else {
+    console.log(`  ✓ Income transactions: ${profile.incomeTxns.length} total (${assetsIncomeTxns.length} assets, ${debtsIncomeTxns.length} debts)`);
+  }
+  
+  // Verify totals by account/month
+  let txnAccountsTested = 0;
+  for (const [slug, monthMap] of accountMonthTotals.entries()) {
+    const history = profile.accountBalanceHistory.find(h => h.slug === slug);
+    if (!history) continue;
+    
+    txnAccountsTested++;
+    let accountErrors = 0;
+    
+    for (const [month, totals] of monthMap.entries()) {
+      // Recompute from summaries
+      const summaryExpenses = [...assetsExpenseTxns, ...debtsExpenseTxns].filter(t => t.accountSlug === slug && t.txMonth === month);
+      const summaryIncome = [...assetsIncomeTxns, ...debtsIncomeTxns].filter(t => t.accountSlug === slug && t.txMonth === month);
+      
+      const summaryOutflow = summaryExpenses.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+      const summaryInflow = summaryIncome.reduce((sum, t) => sum + t.amount, 0);
+      
+      if (Math.abs(summaryOutflow - totals.outflow) > 0.01) {
+        console.log(`  ❌ FAIL: ${history.label} ${month} outflow mismatch: profile=${totals.outflow.toFixed(2)}, summary=${summaryOutflow.toFixed(2)}`);
+        drawerErrors++;
+        errors.push(`Drawer data: ${history.label} ${month} outflow mismatch`);
+        accountErrors++;
+      }
+      
+      if (Math.abs(summaryInflow - totals.inflow) > 0.01) {
+        console.log(`  ❌ FAIL: ${history.label} ${month} inflow mismatch: profile=${totals.inflow.toFixed(2)}, summary=${summaryInflow.toFixed(2)}`);
+        drawerErrors++;
+        errors.push(`Drawer data: ${history.label} ${month} inflow mismatch`);
+        accountErrors++;
+      }
+    }
+    
+    if (accountErrors === 0) {
+      console.log(`  ✓ ${history.label}: ${monthMap.size} months, all transaction totals match`);
+    }
+  }
+  
+  console.log(`\n  Summary: ${txnAccountsTested} accounts tested for transaction totals\n`);
+  
+  // Test 4: Net Savings drawer badge and month label validation
+  console.log("Test 4: Net Savings drawer - badge and month label validation");
+  
+  // Get the last 3 months of data
+  const availableMonths = profile.monthlyHistory.map(m => m.yearMonth).sort();
+  const last3Months = availableMonths.slice(-3);
+  
+  // Compute window savings to get the monthly breakdown
+  const { monthlyBreakdown } = computeWindowSavings(
+    profile.monthlyHistory,
+    profile.accountBalanceHistory,
+    profile.expenseTxns,
+    last3Months,
+    new Map() // No confirmed items needed for regression check
+  );
+  
+  let badgeErrors = 0;
+  let monthLabelErrors = 0;
+  
+  for (const monthData of monthlyBreakdown) {
+    console.log(`\n  Month: ${monthData.month}`);
+    
+    const allAccounts = [
+      ...monthData.accounts.cashAccounts,
+      ...monthData.accounts.debtAccounts
+    ];
+    
+    for (const acc of allAccounts) {
+      // Find the account's balance history to check if entry exists for this month
+      const accountHistory = profile.accountBalanceHistory.find(h => h.slug === acc.slug);
+      const hasExactEntry = accountHistory?.entries.some(e => e.yearMonth === monthData.month);
+      
+      // Build badge description
+      let badgeDesc = 'none';
+      if (acc.currentDerived && acc.currentSourceStatement) {
+        badgeDesc = `derived from ${acc.currentSourceStatement}`;
+      } else if (acc.currentCarriedForward) {
+        badgeDesc = 'carried forward (no statement)';
+      }
+      
+      console.log(`    ${acc.accountLabel}`);
+      console.log(`      Prior: ${acc.priorActualMonth || 'unknown'} | Current: ${acc.currentActualMonth || 'unknown'} | Badge: ${badgeDesc}`);
+      
+      // Check 1: currentActualMonth must equal month being viewed when entry exists
+      if (hasExactEntry && acc.currentActualMonth !== monthData.month) {
+        const failMsg = `DRAWER FAIL: ${acc.accountLabel} ${monthData.month} has entry but currentActualMonth is ${acc.currentActualMonth}`;
+        console.log(`      ❌ ${failMsg}`);
+        monthLabelErrors++;
+        drawerErrors++;
+        errors.push(failMsg);
+      }
+      
+      // Check 2: No mixed derived + carriedForward flags
+      if (acc.currentDerived && acc.currentCarriedForward) {
+        const failMsg = `DRAWER FAIL: ${acc.accountLabel} ${monthData.month} has both derived AND carriedForward flags`;
+        console.log(`      ❌ ${failMsg}`);
+        badgeErrors++;
+        drawerErrors++;
+        errors.push(failMsg);
+      }
+      
+      // Check 3: Derived entries must have sourceStatement
+      if (acc.currentDerived && !acc.currentSourceStatement) {
+        const failMsg = `DRAWER FAIL: ${acc.accountLabel} ${monthData.month} derived but no sourceStatement`;
+        console.log(`      ❌ ${failMsg}`);
+        badgeErrors++;
+        drawerErrors++;
+        errors.push(failMsg);
+      }
+    }
+  }
+  
+  console.log();
+  
+  if (badgeErrors === 0 && monthLabelErrors === 0) {
+    console.log(`  ✅ All accounts checked: badges and month labels correct`);
+  } else {
+    console.log(`  ❌ Found ${badgeErrors} badge errors and ${monthLabelErrors} month label errors`);
+  }
+  
+  console.log();
+  
+  // Note: drawerErrors is cumulative across all drawer tests, so don't print here
+  // Final count printed at end of all tests
+  
+  // Helper function for month difference calculation
+  function getMonthsBetweenYM(startYM: string, endYM: string): number {
+    const [startYear, startMonth] = startYM.split('-').map(Number);
+    const [endYear, endMonth] = endYM.split('-').map(Number);
+    return (endYear - startYear) * 12 + (endMonth - startMonth);
+  }
+  
+  // ── MONEY COACH API END-TO-END TESTS ───────────────────────────────────────────
+  console.log("💼 MONEY COACH API END-TO-END");
+  console.log("=".repeat(80) + "\n");
+  
+  let moneyCoachErrors = 0;
+  
+  // Test money-coach route for all ranges to catch crashes
+  const testRanges: Array<{ range: TimeRange; label: string }> = [
+    { range: "3mo", label: "Last 3 months" },
+    { range: "12mo", label: "Last 12 months" },
+    { range: "ytd", label: "Year to date" }
+  ];
+  
+  for (const { range, label } of testRanges) {
+    try {
+      console.log(`Testing ${label} (${range})...`);
+      
+      // Get available months and range months
+      const availableMonths = profile.monthlyHistory.map(m => m.yearMonth).sort();
+      const rangeMonths = getRangeMonths(range, availableMonths);
+      
+      // Load review context (same as route does)
+      const reviewContext = await loadUserReviewContext(uid, db);
+      
+      // Call computeMoneyCoachBreakdown same way the API does
+      const breakdown = computeMoneyCoachBreakdown(
+        profile,
+        reviewContext.debtPaymentReviews,
+        profile.incomeTxns,
+        profile.accountSnapshots,
+        profile.homeCurrency || "CAD",
+        reviewContext.incomeDepositReviews,
+        rangeMonths,
+        reviewContext.savingsConfirmedItems
+      );
+      
+      // Call computeGapReconciliation same way the API does
+      const gapReconciliation = computeGapReconciliation(
+        range,
+        profile,
+        reviewContext.debtPaymentReviews,
+        reviewContext.incomeDepositReviews,
+        [], // No external account labels in test
+        {
+          income: breakdown.incomeAmount,
+          fixed: breakdown.buckets.find(b => b.bucket === "fixed")?.monthlyAverage || 0,
+          essentials: breakdown.buckets.find(b => b.bucket === "essentials")?.monthlyAverage || 0,
+          flexible: breakdown.buckets.find(b => b.bucket === "flexible")?.monthlyAverage || 0,
+          netSavings: breakdown.buckets.find(b => b.bucket === "savings")?.monthlyAverage || 0,
+        }
+      );
+      
+      // Verify gap reconciliation math
+      const expectedSavings = gapReconciliation.expectedSavings;
+      const actualSavings = gapReconciliation.actualSavings;
+      const gap = gapReconciliation.gap;
+      const componentsTotal = gapReconciliation.componentsTotal;
+      const unexplained = gapReconciliation.unexplained;
+      
+      // Check: components + unexplained must sum to gap within $1
+      const componentsPlusUnexplained = componentsTotal + unexplained;
+      if (Math.abs(componentsPlusUnexplained - gap) > 1) {
+        console.log(`  ❌ FAIL: Components don't sum to gap`);
+        console.log(`    Gap: ${gap.toFixed(2)}`);
+        console.log(`    Components total: ${componentsTotal.toFixed(2)}`);
+        console.log(`    Unexplained: ${unexplained.toFixed(2)}`);
+        console.log(`    Components + Unexplained: ${componentsPlusUnexplained.toFixed(2)}`);
+        console.log(`    Difference: ${Math.abs(componentsPlusUnexplained - gap).toFixed(2)}`);
+        moneyCoachErrors++;
+        drawerErrors++;
+        errors.push(`Money coach ${range}: gap reconciliation math error`);
+      }
+      
+      // Check: unexplained must be reasonable
+      // Fail if |Unexplained| > 10% of |Gap| or > $500/mo
+      const unexplainedPct = Math.abs(gap) > 0 ? (Math.abs(unexplained) / Math.abs(gap)) * 100 : 0;
+      const unexplainedThreshold = 500;
+      const unexplainedPctThreshold = 10;
+      
+      if (Math.abs(unexplained) > unexplainedThreshold || unexplainedPct > unexplainedPctThreshold) {
+        console.log(`  ❌ FAIL: Unexplained amount too large`);
+        console.log(`    Gap: ${gap.toFixed(2)}`);
+        console.log(`    Unexplained: ${unexplained.toFixed(2)}`);
+        console.log(`    Unexplained as % of gap: ${unexplainedPct.toFixed(1)}%`);
+        console.log(`    Threshold: $${unexplainedThreshold}/mo or ${unexplainedPctThreshold}% of gap`);
+        moneyCoachErrors++;
+        drawerErrors++;
+        errors.push(`Money coach ${range}: unexplained ${Math.abs(unexplained).toFixed(2)} exceeds threshold`);
+      }
+      
+      // Print breakdown
+      console.log(`  Income: ${breakdown.incomeAmount.toFixed(2)}`);
+      console.log(`  Fixed: ${gapReconciliation.fixed.toFixed(2)}`);
+      console.log(`  Essentials: ${gapReconciliation.essentials.toFixed(2)}`);
+      console.log(`  Flexible: ${gapReconciliation.flexible.toFixed(2)}`);
+      console.log(`  Expected savings: ${expectedSavings.toFixed(2)}`);
+      console.log(`  Actual savings: ${actualSavings.toFixed(2)}`);
+      console.log(`  Gap: ${gap.toFixed(2)}`);
+      console.log(`  Components:`);
+      gapReconciliation.components.forEach(c => {
+        console.log(`    ${c.name}: ${c.amount > 0 ? '+' : ''}${c.amount.toFixed(2)}`);
+      });
+      console.log(`  Components total: ${componentsTotal.toFixed(2)}`);
+      console.log(`  Unexplained: ${unexplained.toFixed(2)} (${unexplainedPct.toFixed(1)}% of gap)`);
+      console.log(`  Reconciles: ${gapReconciliation.reconciles ? '✓' : '✗'}`);
+      
+      // Check flagged transfers
+      console.log(`\n  Flagged transfers: ${gapReconciliation.flaggedTransfers.length}`);
+      
+      // Regression check: every flagged transfer must have non-empty destinationNumber
+      for (const flagged of gapReconciliation.flaggedTransfers) {
+        if (!flagged.destinationNumber || flagged.destinationNumber.trim() === "") {
+          console.log(`  ❌ FAIL: Flagged transfer has empty destinationNumber`);
+          console.log(`    Date: ${flagged.date}, From: ${flagged.fromAccount}`);
+          moneyCoachErrors++;
+          errors.push(
+            `Money coach ${range}: Flagged transfer on ${flagged.date} from ${flagged.fromAccount} has empty destinationNumber`
+          );
+        }
+      }
+      
+      if (gapReconciliation.flaggedTransfers.length > 0) {
+        console.log(`  Transfers to untracked accounts detected (should surface for review):`);
+        for (const flagged of gapReconciliation.flaggedTransfers) {
+          console.log(`    ${flagged.date} ${flagged.destinationNumber.padEnd(8)} $${flagged.amount.toFixed(2).padStart(10)} [${flagged.reason}]`);
+        }
+        
+        // Print what the Net Savings info icon popover would show
+        const total = gapReconciliation.flaggedTransfers.reduce((sum, t) => sum + t.amount, 0);
+        console.log(`\n  Net Savings info icon would show:`);
+        console.log(`    "Includes transfers to accounts not in the app"`);
+        for (const transfer of gapReconciliation.flaggedTransfers) {
+          const last4 = transfer.destinationNumber?.slice(-4) || transfer.destinationNumber || "unknown";
+          console.log(`    ${transfer.date} · ${transfer.fromAccount} → Account ending in ${last4} · $${transfer.amount.toFixed(2)}`);
+        }
+        console.log(`    Total: $${total.toFixed(2)}`);
+      }
+      
+      if (gapReconciliation.reconciles && Math.abs(unexplained) <= unexplainedThreshold && unexplainedPct <= unexplainedPctThreshold) {
+        console.log(`  ✅ ${label} passed\n`);
+      } else {
+        console.log(`  ⚠️  ${label} has issues (see errors above)\n`);
+      }
+      
+    } catch (err) {
+      console.log(`  ❌ FAIL: Exception thrown`);
+      console.log(`    ${err instanceof Error ? err.message : String(err)}`);
+      moneyCoachErrors++;
+      errors.push(`Money coach ${range}: crashed with ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  
+  if (moneyCoachErrors > 0) {
+    console.log(`❌ ${moneyCoachErrors} money coach test(s) failed\n`);
+  } else {
+    console.log(`✅ All money coach tests passed\n`);
   }
   
   // ── CASH COMMITMENTS & PLANNER TESTS ──────────────────────────────────────────
@@ -2129,6 +2572,362 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     console.log(`\n✅ All AI chat tool tests passed\n`);
   }
   
+  // ── DASHBOARD & AI-ASK SMOKE TESTS ──────────────────────────────────────────
+  console.log("=".repeat(80));
+  console.log("DASHBOARD & AI-ASK SMOKE TESTS");
+  console.log("=".repeat(80) + "\n");
+  
+  let smokeTestErrors = 0;
+  
+  // Test that cleanAIAnswer works (used by ai-ask route)
+  console.log("Test: cleanAIAnswer post-processor");
+  try {
+    const { cleanAIAnswer } = await import("../src/lib/chat/answerPostProcessor");
+    const testInput = "From get_income_summary: CA$5,234";
+    const cleaned = cleanAIAnswer(testInput);
+    
+    if (cleaned.includes("get_income_summary")) {
+      console.log("  ❌ FAIL: cleanAIAnswer did not remove tool name");
+      errors.push("cleanAIAnswer regression: tool name not removed");
+      smokeTestErrors++;
+    } else {
+      console.log("  ✓ cleanAIAnswer removes tool names");
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Exception: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push(`cleanAIAnswer threw exception: ${err instanceof Error ? err.message : String(err)}`);
+    smokeTestErrors++;
+  }
+  
+  // Test AI usage limit constants and logic
+  console.log("\nTest: AI usage limit configuration");
+  try {
+    const { AI_USAGE_LIMIT_FREE, checkAIUsageLimit } = await import("../src/lib/aiUsageLimit");
+    
+    if (AI_USAGE_LIMIT_FREE !== 50) {
+      console.log(`  ❌ FAIL: AI_USAGE_LIMIT_FREE is ${AI_USAGE_LIMIT_FREE}, expected 50`);
+      errors.push(`AI usage limit wrong: ${AI_USAGE_LIMIT_FREE} !== 50`);
+      smokeTestErrors++;
+    } else {
+      console.log("  ✓ AI_USAGE_LIMIT_FREE is 50");
+    }
+    
+    // Test logic with mock data
+    // For paid plan, should always allow
+    const paidResult = await checkAIUsageLimit("test-uid", db, "pro");
+    if (!paidResult.allowed || paidResult.limit !== -1) {
+      console.log("  ❌ FAIL: Paid plan should have unlimited access");
+      errors.push("AI usage limit: paid plan not unlimited");
+      smokeTestErrors++;
+    } else {
+      console.log("  ✓ Paid plan has unlimited access");
+    }
+    
+  } catch (err) {
+    console.log(`  ❌ FAIL: Exception: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push(`AI usage limit test threw exception: ${err instanceof Error ? err.message : String(err)}`);
+    smokeTestErrors++;
+  }
+  
+  // Test saved answers API shape
+  console.log("\nTest: Saved answers API structure");
+  try {
+    // Check the route file exists and exports expected methods
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    const routePath = path.join(process.cwd(), "src/app/api/user/saved-answers/route.ts");
+    const routeContent = await fs.readFile(routePath, "utf-8");
+    
+    if (!routeContent.includes("export async function GET") ||
+        !routeContent.includes("export async function POST") ||
+        !routeContent.includes("export async function DELETE")) {
+      console.log("  ❌ FAIL: Saved answers route missing expected exports");
+      errors.push("Saved answers route: missing GET/POST/DELETE exports");
+      smokeTestErrors++;
+    } else {
+      console.log("  ✓ Saved answers route has GET/POST/DELETE methods");
+    }
+    
+    // Verify SavedAnswer interface shape
+    if (!routeContent.includes("question:") ||
+        !routeContent.includes("answer:") ||
+        !routeContent.includes("createdAt:")) {
+      console.log("  ❌ FAIL: SavedAnswer interface missing expected fields");
+      errors.push("SavedAnswer: missing question/answer/createdAt fields");
+      smokeTestErrors++;
+    } else {
+      console.log("  ✓ SavedAnswer has expected shape");
+    }
+    
+  } catch (err) {
+    console.log(`  ❌ FAIL: Exception: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push(`Saved answers API test failed: ${err instanceof Error ? err.message : String(err)}`);
+    smokeTestErrors++;
+  }
+  
+  // Test that dashboard page component exports exist
+  console.log("\nTest: Dashboard page exports");
+  try {
+    // Verify SHOW_OPEN_IN_CHAT feature flag is set to false
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    const dashboardPath = path.join(process.cwd(), "src/app/account/dashboard/page.tsx");
+    const dashboardContent = await fs.readFile(dashboardPath, "utf-8");
+    
+    if (!dashboardContent.includes("const SHOW_OPEN_IN_CHAT = false")) {
+      console.log("  ⚠️  WARNING: SHOW_OPEN_IN_CHAT is not set to false (expected hidden)");
+    } else {
+      console.log("  ✓ 'Open in Chat' link is hidden (SHOW_OPEN_IN_CHAT = false)");
+    }
+    
+    // Verify saved answers link exists
+    if (!dashboardContent.includes("Saved answers") || !dashboardContent.includes("/account/saved-answers")) {
+      console.log("  ❌ FAIL: Dashboard missing 'Saved answers' link");
+      errors.push("Dashboard: missing saved answers link");
+      smokeTestErrors++;
+    } else {
+      console.log("  ✓ Dashboard has 'Saved answers' link");
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Exception: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push(`Dashboard page import failed: ${err instanceof Error ? err.message : String(err)}`);
+    smokeTestErrors++;
+  }
+  
+  // Test chart point scaling for all accounts
+  console.log("\nTest: Chart point scaling (NaN prevention)");
+  try {
+    const { scaleBalancePoints } = await import("../src/lib/chartScaling");
+    
+    const dimensions = {
+      chartWidth: 400,
+      chartHeight: 200,
+      padding: { top: 20, right: 20, bottom: 30, left: 50 },
+    };
+    
+    let accountsTested = 0;
+    let pointsTested = 0;
+    
+    // Test every account in accountBalanceHistory
+    for (const account of profile.accountBalanceHistory || []) {
+      const history = account.entries.map((e: any) => ({
+        month: e.yearMonth,
+        monthLabel: e.yearMonth,
+        balance: e.balance,
+      }));
+      
+      const points = scaleBalancePoints(history, dimensions, account.accountType === "credit");
+      
+      accountsTested++;
+      pointsTested += points.length;
+      
+      // Assert all points have finite coordinates
+      for (const point of points) {
+        if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+          console.log(`  ❌ FAIL: Non-finite chart point for ${account.label}`);
+          console.log(`     Account: ${account.label} (${account.accountType})`);
+          console.log(`     Entries: ${history.length}`);
+          console.log(`     Point: x=${point.x}, y=${point.y}`);
+          errors.push(`Chart scaling produced NaN for ${account.label}`);
+          smokeTestErrors++;
+        }
+      }
+    }
+    
+    console.log(`  ✓ Chart scaling: ${accountsTested} accounts, ${pointsTested} points, all finite`);
+  } catch (err) {
+    console.log(`  ❌ FAIL: Exception: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push(`Chart scaling test failed: ${err instanceof Error ? err.message : String(err)}`);
+    smokeTestErrors++;
+  }
+  
+  // Test multi-month balance reconstruction
+  console.log("\nTest: Multi-month balance reconstruction");
+  try {
+    // Fetch all completed statements to verify per-statement reconciliation
+    const statementsSnap = await db
+      .collection("statements")
+      .where("userId", "==", uid)
+      .where("status", "==", "completed")
+      .get();
+    
+    const statements = statementsSnap.docs.map(doc => ({
+      id: doc.id,
+      yearMonth: doc.get("yearMonth"),
+      parsedData: doc.get("parsedData"),
+      accountSlug: doc.get("accountSlug"),
+    }));
+    
+    console.log(`  Fetched ${statements.length} completed statements`);
+    
+    let accountsTested = 0;
+    let statementsChecked = 0;
+    let derivedEntriesChecked = 0;
+    let reconciliationErrors = 0;
+    let negativeErrors = 0;
+    let boundaryErrors = 0;
+    let overwriteErrors = 0;
+    
+    // Map statement months to their statements for lookup
+    const statementsByAccountMonth = new Map<string, any>();
+    for (const stmt of statements) {
+      const key = `${stmt.accountSlug}:${stmt.yearMonth}`;
+      statementsByAccountMonth.set(key, stmt);
+    }
+    
+    // For each account with derived entries, verify per-statement
+    for (const account of profile.accountBalanceHistory || []) {
+      const derivedEntries = account.entries.filter((e: any) => e.derived);
+      if (derivedEntries.length === 0) continue;
+      
+      accountsTested++;
+      
+      console.log(`\n  📊 ${account.label} (${account.slug}): ${derivedEntries.length} derived entries`);
+      
+      const accountType = account.accountType?.toLowerCase() || "";
+      const isSavingsOrChecking = ["savings", "checking", "chequing"].includes(accountType);
+      
+      // Get real (non-derived) balance months for this account
+      const realBalanceMonths = new Set(
+        account.entries.filter((e: any) => !e.derived).map((e: any) => e.yearMonth)
+      );
+      
+      // Group derived entries by which statement produced them (use sourceStatement)
+      const derivedByStatement = new Map<string, any[]>();
+      
+      for (const derived of derivedEntries) {
+        // Use the sourceStatement field instead of guessing
+        const statementMonth = derived.sourceStatement;
+        
+        if (!statementMonth) {
+          console.log(`    ⚠️  ${derived.yearMonth}: no sourceStatement field`);
+          continue;
+        }
+        
+        if (!derivedByStatement.has(statementMonth)) {
+          derivedByStatement.set(statementMonth, []);
+        }
+        derivedByStatement.get(statementMonth)!.push(derived);
+      }
+      
+      // For each statement that produced derived entries, verify
+      for (const [statementMonth, derivedList] of derivedByStatement.entries()) {
+        const stmtKey = `${account.slug}:${statementMonth}`;
+        const stmt = statementsByAccountMonth.get(stmtKey);
+        
+        if (!stmt || !stmt.parsedData) {
+          console.log(`    ⚠️  Statement ${statementMonth}: not found or no parsed data`);
+          continue;
+        }
+        
+        statementsChecked++;
+        
+        const parsed = stmt.parsedData;
+        const closingBalance = parsed.netWorth;
+        
+        // Get statement's own transactions
+        const stmtExpenses = parsed.expenses?.transactions ?? [];
+        const stmtIncome = parsed.income?.transactions ?? [];
+        
+        // Build transaction net flows by month
+        const txnsByMonth = new Map<string, number>();
+        
+        for (const exp of stmtExpenses) {
+          if (!exp.date) continue;
+          const month = exp.date.slice(0, 7);
+          const current = txnsByMonth.get(month) || 0;
+          txnsByMonth.set(month, current - exp.amount);
+        }
+        
+        for (const inc of stmtIncome) {
+          if (!inc.date) continue;
+          const month = inc.date.slice(0, 7);
+          const current = txnsByMonth.get(month) || 0;
+          txnsByMonth.set(month, current + inc.amount);
+        }
+        
+        const txnMonths = Array.from(txnsByMonth.keys()).sort();
+        const firstTxnMonth = txnMonths[0];
+        const lastTxnMonth = txnMonths[txnMonths.length - 1];
+        
+        console.log(`    Statement ${statementMonth}: txns ${firstTxnMonth}-${lastTxnMonth}, ${derivedList.length} derived`);
+        
+        // Build derivedBalances map for validation
+        const derivedBalancesMap = new Map<string, number>();
+        for (const d of derivedList) {
+          derivedBalancesMap.set(d.yearMonth, d.balance);
+        }
+        
+        // Use shared validation function (same as production)
+        const accountType = account.accountType?.toLowerCase() || "";
+        const isDebt = ["credit", "loan", "mortgage", "loc"].includes(accountType);
+        
+        const validation = validateDerivedBalances(
+          statementMonth,
+          closingBalance,
+          parsed,
+          derivedBalancesMap,
+          isDebt
+        );
+        
+        if (validation.valid) {
+          for (const d of derivedList) {
+            derivedEntriesChecked++;
+            console.log(`      ✓ ${d.yearMonth}: ${d.balance.toFixed(2)} reconciles`);
+          }
+        } else {
+          // Report errors
+          for (const error of validation.errors) {
+            const parts = error.split(':');
+            const month = parts[0];
+            const msg = parts.slice(1).join(':').trim();
+            
+            derivedEntriesChecked++;
+            
+            if (msg.includes('outside txn range')) {
+              boundaryErrors++;
+              console.log(`      ❌ ${month}: OUTSIDE ${msg}`);
+              errors.push(`${account.label} ${month}: ${msg}`);
+              smokeTestErrors++;
+            } else if (msg.includes('negative balance')) {
+              negativeErrors++;
+              console.log(`      ❌ ${month}: NEGATIVE ${msg}`);
+              errors.push(`${account.label} ${month}: ${msg}`);
+              smokeTestErrors++;
+            } else if (msg.includes('vs recomputed')) {
+              reconciliationErrors++;
+              console.log(`      ❌ ${month}: ${msg}`);
+              errors.push(`${account.label} ${month}: reconciliation error`);
+              smokeTestErrors++;
+            } else {
+              console.log(`      ❌ ${month}: ${msg}`);
+              errors.push(`${account.label} ${month}: ${msg}`);
+              smokeTestErrors++;
+            }
+          }
+        }
+      }
+    }
+    
+    console.log(`\n  Summary: ${accountsTested} accounts, ${statementsChecked} statements, ${derivedEntriesChecked} derived entries checked`);
+    
+    if (reconciliationErrors > 0 || negativeErrors > 0 || boundaryErrors > 0 || overwriteErrors > 0) {
+      console.log(`  ❌ ERRORS: ${reconciliationErrors} reconciliation, ${negativeErrors} negative, ${boundaryErrors} boundary, ${overwriteErrors} overwrite`);
+    } else {
+      console.log(`  ✅ All derived entries reconcile correctly`);
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Exception: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push(`Multi-month balance test failed: ${err instanceof Error ? err.message : String(err)}`);
+    smokeTestErrors++;
+  }
+  
+  if (smokeTestErrors > 0) {
+    console.log(`\n❌ ${smokeTestErrors} smoke test(s) failed\n`);
+  } else {
+    console.log(`\n✅ All smoke tests passed\n`);
+  }
+  
   // Final summary - check ALL error conditions
   const totalFailures = 
     (allErrors ? errors.length : 0) +
@@ -2138,7 +2937,9 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     rangeErrors +
     drawerErrors +
     cashPlannerErrors +
-    chatToolErrors;
+    chatToolErrors +
+    moneyCoachErrors +
+    smokeTestErrors;
   
   if (totalFailures > 0) {
     console.log("=".repeat(80));
@@ -2155,6 +2956,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     if (drawerErrors > 0) console.log(`Account drawer test failures: ${drawerErrors}`);
     if (cashPlannerErrors > 0) console.log(`Cash/Planner test failures: ${cashPlannerErrors}`);
     if (chatToolErrors > 0) console.log(`AI chat tool test failures: ${chatToolErrors}`);
+    if (moneyCoachErrors > 0) console.log(`Money coach API test failures: ${moneyCoachErrors}`);
+    if (smokeTestErrors > 0) console.log(`Smoke test failures: ${smokeTestErrors}`);
     
     console.log();
     process.exit(1);

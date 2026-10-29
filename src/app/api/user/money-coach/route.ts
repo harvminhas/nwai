@@ -4,6 +4,7 @@ import { getFinancialProfile } from "@/lib/financialProfile";
 import { loadUserReviewContext } from "@/lib/userReviewContext";
 import { computeMoneyCoachBreakdown } from "@/lib/moneyCoach";
 import { getRangeMonths, type TimeRange } from "@/lib/rangeUtils";
+import { computeGapReconciliation } from "@/lib/gapReconciliation";
 
 export const dynamic = "force-dynamic";
 
@@ -48,10 +49,27 @@ export async function GET(req: NextRequest) {
       rangeMonths,
       reviewContext.savingsConfirmedItems
     );
+    
+    // Compute gap reconciliation
+    const gapReconciliation = computeGapReconciliation(
+      range,
+      profile,
+      reviewContext.debtPaymentReviews,
+      reviewContext.incomeDepositReviews,
+      profile.externalAccountLabels || [],
+      {
+        income: breakdown.incomeAmount,
+        fixed: breakdown.buckets.find(b => b.bucket === "fixed")?.monthlyAverage || 0,
+        essentials: breakdown.buckets.find(b => b.bucket === "essentials")?.monthlyAverage || 0,
+        flexible: breakdown.buckets.find(b => b.bucket === "flexible")?.monthlyAverage || 0,
+        netSavings: breakdown.buckets.find(b => b.bucket === "savings")?.monthlyAverage || 0,
+      }
+    );
 
     return Response.json({
       ...breakdown,
       homeCurrency: profile.homeCurrency,
+      gapReconciliation,
     });
   } catch (error) {
     console.error("Money coach error:", error);

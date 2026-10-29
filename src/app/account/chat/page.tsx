@@ -187,6 +187,7 @@ export default function ChatPage() {
   const [sessionId,    setSessionId]    = useState<string | null>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [recentSessions, setRecentSessions] = useState<SessionSummary[]>([]);
+  const [usageStats,   setUsageStats]    = useState<{ remaining: number; limit: number } | null>(null);
   const bottomRef  = useRef<HTMLDivElement>(null);
   const inputRef   = useRef<HTMLTextAreaElement>(null);
   const abortRef   = useRef<AbortController | null>(null);
@@ -215,10 +216,19 @@ export default function ChatPage() {
       fetch("/api/user/statements/consolidated", { headers: { Authorization: `Bearer ${token}` } })
         .then((r) => r.json())
         .catch(() => ({})),
-    ]).then(([sessionJson, consolidatedJson]) => {
+      fetch("/api/user/ai-ask", { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => r.json())
+        .catch(() => ({})),
+    ]).then(([sessionJson, consolidatedJson, usageJson]) => {
       if (consolidatedJson.yearMonth) setDataMonth(consolidatedJson.yearMonth);
       const sessions: SessionSummary[] = sessionJson.sessions ?? [];
       setRecentSessions(sessions);
+      
+      // Set usage stats (limit -1 means paid plan / unlimited)
+      if (usageJson.limit !== undefined && usageJson.remaining !== undefined) {
+        setUsageStats({ remaining: usageJson.remaining, limit: usageJson.limit });
+      }
+      
       setSessionLoading(false);
     }).catch(() => setSessionLoading(false));
   }, [token]);
@@ -419,6 +429,13 @@ export default function ChatPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          {usageStats && usageStats.limit > 0 && (
+            <div className="hidden items-center gap-1.5 rounded-full border border-gray-100 bg-gray-50 px-2.5 py-1 sm:flex">
+              <span className="text-[11px] text-gray-500">
+                {usageStats.remaining} of {usageStats.limit} answers left
+              </span>
+            </div>
+          )}
           {dataMonth && (
             <div className="hidden items-center gap-1.5 rounded-full border border-gray-100 bg-gray-50 px-2.5 py-1 sm:flex">
               <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
@@ -431,6 +448,12 @@ export default function ChatPage() {
               <span className="text-[11px] text-gray-400">Saved</span>
             </div>
           )}
+          <a
+            href="/account/saved-answers"
+            className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition"
+          >
+            Saved
+          </a>
           <button
             onClick={newChat}
             className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition"
@@ -516,36 +539,102 @@ export default function ChatPage() {
           </div>
         ) : (
           <div className="mx-auto max-w-2xl space-y-4 px-4 py-6 sm:px-6">
-            {messages.map((msg) => (
-              <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                {/* Bubble — no avatar icons, alignment conveys sender */}
-                <div className={`max-w-[88%] rounded-2xl px-4 py-3 ${
-                  msg.role === "user"
-                    ? "bg-purple-600 text-white rounded-tr-sm"
-                    : "bg-white border border-gray-100 text-gray-700 shadow-sm rounded-tl-sm"
-                }`}>
-                  {msg.role === "user" ? (
-                    <p className="text-sm leading-relaxed">{msg.content}</p>
-                  ) : msg.content ? (
-                    <div className="space-y-0.5 text-gray-700">{renderContent(msg.content)}</div>
-                  ) : (
-                    /* Streaming dots */
-                    <div className="flex items-center gap-1 py-1">
-                      {[0, 150, 300].map((delay) => (
-                        <span
-                          key={delay}
-                          className="h-1.5 w-1.5 rounded-full bg-gray-300 animate-bounce"
-                          style={{ animationDelay: `${delay}ms` }}
-                        />
-                      ))}
-                    </div>
-                  )}
-                  {msg.streaming && msg.content && (
-                    <span className="ml-1 inline-block h-3 w-0.5 animate-pulse bg-purple-400 align-middle" />
-                  )}
+            {messages.map((msg) => {
+              // Track save state per message
+              const [saving, setSaving] = useState(false);
+              const [saved, setSaved] = useState(false);
+              
+              const handleSave = async () => {
+                if (!token || saving || saved || msg.role !== "assistant" || !msg.content) return;
+                
+                // Find the preceding user message as the question
+                const msgIndex = messages.findIndex(m => m.id === msg.id);
+                const userMsg = msgIndex > 0 ? messages[msgIndex - 1] : null;
+                const question = userMsg?.role === "user" ? userMsg.content : "Question";
+                
+                setSaving(true);
+                try {
+                  const res = await fetch("/api/user/saved-answers", {
+                    method: "POST",
+                    headers: {
+                      "Authorization": `Bearer ${token}`,
+                      "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ question, answer: msg.content }),
+                  });
+                  
+                  if (res.ok) {
+                    setSaved(true);
+                  }
+                } catch (error) {
+                  console.error("Failed to save answer:", error);
+                } finally {
+                  setSaving(false);
+                }
+              };
+              
+              return (
+                <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                  {/* Bubble — no avatar icons, alignment conveys sender */}
+                  <div className={`max-w-[88%] ${
+                    msg.role === "user"
+                      ? "rounded-2xl px-4 py-3 bg-purple-600 text-white rounded-tr-sm"
+                      : ""
+                  }`}>
+                    {msg.role === "user" ? (
+                      <p className="text-sm leading-relaxed">{msg.content}</p>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 text-gray-700 shadow-sm rounded-tl-sm">
+                          {msg.content ? (
+                            <div className="space-y-0.5 text-gray-700">{renderContent(msg.content)}</div>
+                          ) : (
+                            /* Streaming dots */
+                            <div className="flex items-center gap-1 py-1">
+                              {[0, 150, 300].map((delay) => (
+                                <span
+                                  key={delay}
+                                  className="h-1.5 w-1.5 rounded-full bg-gray-300 animate-bounce"
+                                  style={{ animationDelay: `${delay}ms` }}
+                                />
+                              ))}
+                            </div>
+                          )}
+                          {msg.streaming && msg.content && (
+                            <span className="ml-1 inline-block h-3 w-0.5 animate-pulse bg-purple-400 align-middle" />
+                          )}
+                        </div>
+                        {/* Save button for assistant messages */}
+                        {msg.content && !msg.streaming && (
+                          <button
+                            onClick={handleSave}
+                            disabled={saving || saved}
+                            className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                            title={saved ? "Saved" : "Save answer"}
+                          >
+                            {saved ? (
+                              <>
+                                <svg className="h-3.5 w-3.5 fill-current" fill="currentColor" viewBox="0 0 24 24">
+                                  <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/>
+                                </svg>
+                                <span>Saved</span>
+                              </>
+                            ) : (
+                              <>
+                                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
+                                </svg>
+                                <span>Save</span>
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {error && (
               <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
                 {error}

@@ -33,10 +33,12 @@ import { txFingerprint } from "./txFingerprint";
 import type { TypicalSpend } from "./spendingMetrics";
 import { resolveTxnCurrencyFromSnapshots } from "./currencyUtils";
 import type { ManualAsset, ManualLiability, InvestmentHolding, ParsedStatementData } from "./types";
+import { validateDerivedBalances } from "./types";
 import { buildAccountSlug, normalizeAccountId } from "./accountSlug";
 import { getFxRatesForCurrencies } from "./fxRates";
 import { splitDebtPayments } from "./debtUtils";
 import type { SubscriptionRecord } from "./insights/types";
+import type { ExternalAccountLabel } from "./externalAccounts";
 
 // ── Balance snapshot shape (mirrors /api/user/balance-snapshots) ──────────────
 export interface BalanceSnapshot {
@@ -59,7 +61,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "59"; // Unified income data layer + income summary
+const SCHEMA_VERSION = "65"; // Added external account labels for fraud detection
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -73,8 +75,8 @@ export interface AccountBalanceHistory {
   accountType: string;
   /** ISO 4217 currency code — native to this account (after user override applied) */
   currency:    string;
-  /** One entry per uploaded statement month, sorted ascending */
-  entries:     { yearMonth: string; balance: number }[];
+  /** One entry per uploaded statement month, sorted ascending. May include derived month-end balances for multi-month statements. */
+  entries:     { yearMonth: string; balance: number; derived?: boolean; sourceStatement?: string }[];
 }
 
 // ── types ──────────────────────────────────────────────────────────────────────
@@ -223,6 +225,11 @@ export interface FinancialProfileCache {
    * consumers (AI brief, etc.) don't need a separate Firestore read.
    */
   cashCommitmentEntries: CashCommitment[];
+  /**
+   * User-labeled external account destinations for transfers.
+   * Loaded from users/{uid}/externalAccounts for fraud review.
+   */
+  externalAccountLabels: ExternalAccountLabel[];
 }
 
 /** Stored APR / payment-frequency override for a single account. */
@@ -340,7 +347,7 @@ export async function buildAndCacheFinancialProfile(
   db: Firestore.Firestore,
 ): Promise<FinancialProfileCache> {
   // Fetch all data sources in parallel — same collections the assets page uses.
-  const [txData, rulesSnap, txnOverridesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap, backfillsSnap, cashCommitmentsSnap, manualLiabSnap, accountRatesSnap, goalsSnap, allSubsSnap, merchantCadenceSnap, userDocSnap] =
+  const [txData, rulesSnap, txnOverridesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap, backfillsSnap, cashCommitmentsSnap, manualLiabSnap, accountRatesSnap, goalsSnap, allSubsSnap, merchantCadenceSnap, externalAccountsSnap, userDocSnap] =
     await Promise.all([
       extractAllTransactions(uid, db),
       db.collection(`users/${uid}/categoryRules`).get(),
@@ -360,6 +367,7 @@ export async function buildAndCacheFinancialProfile(
       db.collection(`users/${uid}/goals`).get(),
       db.collection(`users/${uid}/subscriptions`).get(),
       db.collection(`users/${uid}/merchantCadence`).get(),
+      db.collection(`users/${uid}/externalAccounts`).get(),
       db.collection("users").doc(uid).get(),
     ]);
   // Split all subscriptions into confirmed (for Upcoming/profile) vs all (for category mapping).
@@ -739,7 +747,203 @@ export async function buildAndCacheFinancialProfile(
     accountType: string; 
     entries: Map<string, number>;
     latestDateByMonth: Map<string, string>; // Track latest statement date per month for deduplication
+    derivedEntries: Set<string>; // Track which month-end balances were derived (vs real statement balances)
+    derivedSources: Map<string, string>; // Track which statement produced each derived entry (month -> statementMonth)
   }>();
+  
+  /**
+   * Reconstruct month-end balances for multi-month statements.
+   * 
+   * When a statement spans multiple months (e.g., 90-day statement), transactions
+   * are bucketed by txMonth but we only have one balance point at statementMonth.
+   * This creates gaps in accountBalanceHistory causing flat carry-forward and
+   * incorrect cash-change calculations.
+   * 
+   * Solution: Walk backward from closing balance using account transactions to
+   * derive month-end balances for each month in the statement period.
+   * 
+   * For debt accounts (mortgage, loan, credit card, LOC):
+   * - Payments (negative amounts) reduce the debt balance
+   * - Interest/fees/draws (positive amounts) increase the debt balance
+   * - Debt balances may be stored as negative or positive
+   * 
+   * Reconciliation: If statement has opening balance, verify derived balances
+   * reconcile to within $5 or 0.1% tolerance. If not (e.g., mortgage without
+   * itemized interest), skip derived entries and keep only real statement balance.
+   */
+  /**
+   * Reconstruct month-end balances for multi-month statements.
+   * 
+   * Uses ONLY this statement's own transactions (from parsed.income/expenses.transactions)
+   * to derive balances within the statement's period. Never crosses statement boundaries
+   * or overwrites real balances.
+   */
+  function addDerivedMonthEndBalances(
+    slug: string,
+    statementMonth: string,
+    closingBalance: number,
+    parsed: ParsedStatementData,
+    isDebtAccount: boolean
+  ): { derived: number; skipped: boolean; reason?: string; firstTxnMonth?: string; lastTxnMonth?: string } {
+    if (!balanceHistoryMap.has(slug)) {
+      return { derived: 0, skipped: true, reason: "account not in map" };
+    }
+    
+    const entry = balanceHistoryMap.get(slug)!;
+    
+    // Get transactions from THIS STATEMENT ONLY
+    const stmtExpenses = parsed.expenses?.transactions ?? [];
+    const stmtIncome = parsed.income?.transactions ?? [];
+    
+    // Combine into net cash flow by month:
+    // - Expenses are outflows (negative)
+    // - Income is inflows (positive)
+    const txnsByMonth = new Map<string, number>();
+    
+    for (const exp of stmtExpenses) {
+      if (!exp.date) continue;
+      const month = exp.date.slice(0, 7);
+      const current = txnsByMonth.get(month) || 0;
+      txnsByMonth.set(month, current - exp.amount); // Outflow = negative
+    }
+    
+    for (const inc of stmtIncome) {
+      if (!inc.date) continue;
+      const month = inc.date.slice(0, 7);
+      const current = txnsByMonth.get(month) || 0;
+      txnsByMonth.set(month, current + inc.amount); // Inflow = positive
+    }
+    
+    const allMonths = Array.from(txnsByMonth.keys()).sort();
+    if (allMonths.length === 0) {
+      return { derived: 0, skipped: true, reason: "no transactions" };
+    }
+    
+    const firstTxnMonth = allMonths[0];
+    const lastTxnMonth = allMonths[allMonths.length - 1];
+    
+    if (firstTxnMonth === lastTxnMonth) {
+      return { derived: 0, skipped: false, firstTxnMonth, lastTxnMonth };
+    }
+    
+    // Build months list from statement month back to first transaction month
+    const months: string[] = [];
+    let currentMonth = statementMonth;
+    
+    while (currentMonth >= firstTxnMonth) {
+      months.push(currentMonth);
+      const [year, month] = currentMonth.split('-').map(Number);
+      const prevMonth = month === 1 
+        ? `${year - 1}-12`
+        : `${year}-${String(month - 1).padStart(2, '0')}`;
+      currentMonth = prevMonth;
+    }
+    
+    // Walk backward deriving month-end balances
+    let runningBalance = closingBalance;
+    const derivedBalances = new Map<string, number>();
+    
+    for (let i = 0; i < months.length; i++) {
+      const month = months[i];
+      
+      // NEVER touch months with real statement balances
+      const hasRealBalance = entry.entries.has(month) && !entry.derivedEntries.has(month);
+      if (hasRealBalance) {
+        // Hit a real balance - check reconciliation
+        const realBalance = entry.entries.get(month)!;
+        if (derivedBalances.size > 0) {
+          const diff = Math.abs(runningBalance - realBalance);
+          const tolerance = Math.max(5, Math.abs(realBalance) * 0.001);
+          if (diff > tolerance) {
+            return {
+              derived: 0,
+              skipped: true,
+              reason: `hit real balance at ${month}: derived ${runningBalance.toFixed(2)} vs real ${realBalance.toFixed(2)}`
+            };
+          }
+        }
+        runningBalance = realBalance;
+      } else {
+        // Store derived balance (not the statement month itself)
+        if (month !== statementMonth && month >= firstTxnMonth && month <= lastTxnMonth) {
+          // Sanity: savings can't go negative
+          if (!isDebtAccount && runningBalance < 0) {
+            return {
+              derived: 0,
+              skipped: true,
+              reason: `savings would go negative at ${month}: ${runningBalance.toFixed(2)}`
+            };
+          }
+          derivedBalances.set(month, runningBalance);
+        }
+      }
+      
+      // Subtract current month's net flow to get previous month-end
+      if (i < months.length - 1) {
+        const netFlow = txnsByMonth.get(month) || 0;
+        runningBalance = runningBalance - netFlow;
+      }
+    }
+    
+    // If no derived balances, nothing to do
+    if (derivedBalances.size === 0) {
+      return { derived: 0, skipped: false, firstTxnMonth, lastTxnMonth };
+    }
+    
+    // Validate derived balances using shared validation logic
+    const validation = validateDerivedBalances(
+      statementMonth,
+      closingBalance,
+      parsed,
+      derivedBalances,
+      isDebtAccount
+    );
+    
+    if (!validation.valid) {
+      // Validation failed - skip this statement's derived entries
+      return {
+        derived: 0,
+        skipped: true,
+        reason: `validation failed: ${validation.errors[0]}`,
+        firstTxnMonth,
+        lastTxnMonth
+      };
+    }
+    
+    // Validation passed - add derived entries (never overwrite real balances)
+    let count = 0;
+    for (const [month, balance] of derivedBalances.entries()) {
+      const hasRealBalance = entry.entries.has(month) && !entry.derivedEntries.has(month);
+      
+      if (hasRealBalance) {
+        // Real balance exists - it must win, don't overwrite with derived
+        console.log(
+          `[derived] SKIPPED ${slug} ${month}: real balance exists (${entry.entries.get(month)?.toFixed(2)})`
+        );
+        continue;
+      }
+      
+      entry.entries.set(month, balance);
+      entry.derivedEntries.add(month);
+      entry.derivedSources.set(month, statementMonth); // Track source statement
+      console.log(
+        `[derived] ${slug} ${month}: ${balance.toFixed(2)} ` +
+        `(from statement ${statementMonth}, path: multi-month reconstruction)`
+      );
+      count++;
+    }
+    
+    return { derived: count, skipped: false, firstTxnMonth, lastTxnMonth };
+  }
+  
+  // Track reconstruction stats for logging
+  const reconstructionStats = {
+    processed: 0,
+    derived: 0,
+    skipped: 0,
+    reasons: new Map<string, number>(),
+  };
+  
   for (const doc of confirmedDocs) {
     const d = doc.data();
     const parsed = d.parsedData as ParsedStatementData | undefined;
@@ -778,6 +982,8 @@ export async function buildAndCacheFinancialProfile(
         accountType: parsed.accountType ?? "other",
         entries:     new Map(),
         latestDateByMonth: new Map(),
+        derivedEntries: new Set(),
+        derivedSources: new Map(),
       });
     }
     // Keep the highest-date entry per yearMonth (handles multiple uploads same month)
@@ -787,8 +993,66 @@ export async function buildAndCacheFinancialProfile(
     
     // Overwrite if this is the first entry for this month OR this statement is newer
     if (!entry.entries.has(ym) || stmtDate > (latestDateByMonth.get(ym) ?? "")) {
+      // If this month was previously derived, clear the derived flag (real wins)
+      if (entry.derivedEntries.has(ym)) {
+        console.log(
+          `[balance] ${slug} ${ym}: REAL balance ${parsed.netWorth.toFixed(2)} ` +
+          `REPLACES derived ${entry.entries.get(ym)?.toFixed(2)} ` +
+          `(derived flag cleared)`
+        );
+        entry.derivedEntries.delete(ym);
+        entry.derivedSources.delete(ym);
+      }
+      
       entry.entries.set(ym, parsed.netWorth);
       latestDateByMonth.set(ym, stmtDate);
+      
+      // Reconstruct month-end balances for multi-month statements
+      const accountType = parsed.accountType?.toLowerCase() || "";
+      const isDebt = ["credit", "loan", "mortgage", "loc"].includes(accountType);
+      
+      const result = addDerivedMonthEndBalances(
+        slug, 
+        ym, 
+        parsed.netWorth,
+        parsed, // Pass parsed data so function can access statement's own transactions
+        isDebt
+      );
+      
+      reconstructionStats.processed++;
+      if (result.skipped) {
+        reconstructionStats.skipped++;
+        if (result.reason) {
+          const count = reconstructionStats.reasons.get(result.reason) || 0;
+          reconstructionStats.reasons.set(result.reason, count + 1);
+        }
+      } else {
+        reconstructionStats.derived += result.derived;
+        
+        // Log details for debugging
+        if (result.derived > 0) {
+          console.log(
+            `[financialProfile] Derived ${result.derived} entries for ${entry.label} (${slug}) ` +
+            `statement ${ym}: txns span ${result.firstTxnMonth}-${result.lastTxnMonth}`
+          );
+        }
+      }
+    }
+  }
+  
+  // Log reconstruction stats
+  if (reconstructionStats.processed > 0) {
+    console.log(
+      `[financialProfile] Multi-month balance reconstruction: ` +
+      `processed=${reconstructionStats.processed} ` +
+      `derived=${reconstructionStats.derived} ` +
+      `skipped=${reconstructionStats.skipped}`
+    );
+    if (reconstructionStats.reasons.size > 0) {
+      console.log(`[financialProfile] Skip reasons:`);
+      for (const [reason, count] of reconstructionStats.reasons.entries()) {
+        console.log(`  ${count}x: ${reason}`);
+      }
     }
   }
   // Apply synthetic backfill entries — each doc is one pre-computed monthly record.
@@ -821,7 +1085,12 @@ export async function buildAndCacheFinancialProfile(
       accountType: e.accountType,
       currency:    currencyOverride ?? snapCurrency,
       entries:     Array.from(e.entries.entries())
-        .map(([yearMonth, balance]) => ({ yearMonth, balance }))
+        .map(([yearMonth, balance]) => ({ 
+          yearMonth, 
+          balance,
+          derived: e.derivedEntries.has(yearMonth) ? true : undefined,
+          sourceStatement: e.derivedSources.get(yearMonth), // Which statement produced this derived entry
+        }))
         .sort((a, b) => a.yearMonth.localeCompare(b.yearMonth)),
     };
   });
@@ -1035,6 +1304,10 @@ export async function buildAndCacheFinancialProfile(
     };
   });
 
+  const externalAccountLabels: ExternalAccountLabel[] = externalAccountsSnap.docs.map((d) => 
+    d.data() as ExternalAccountLabel
+  );
+
   const confirmedSubscriptions: SubscriptionRecord[] = confirmedSubsSnap.docs.map(
     (d) => d.data() as SubscriptionRecord,
   );
@@ -1071,6 +1344,7 @@ export async function buildAndCacheFinancialProfile(
     merchantCadence: merchantCadenceMap,
     debtPaymentHistory,
     cashCommitmentEntries,
+    externalAccountLabels,
   };
 
   // Persist — JSON round-trip strips `undefined` fields (Firestore rejects them).
