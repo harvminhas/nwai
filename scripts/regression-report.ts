@@ -2191,7 +2191,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   try {
     // Check the route file exists and exports expected methods
     const fs = await import("fs/promises");
-    const routePath = "../src/app/api/user/saved-answers/route.ts";
+    const path = await import("path");
+    const routePath = path.join(process.cwd(), "src/app/api/user/saved-answers/route.ts");
     const routeContent = await fs.readFile(routePath, "utf-8");
     
     if (!routeContent.includes("export async function GET") ||
