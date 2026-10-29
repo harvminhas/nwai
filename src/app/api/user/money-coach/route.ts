@@ -1,9 +1,9 @@
 import { NextRequest } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
+import { loadUserReviewContext } from "@/lib/userReviewContext";
 import { computeMoneyCoachBreakdown } from "@/lib/moneyCoach";
 import { getRangeMonths, type TimeRange } from "@/lib/rangeUtils";
-import type { DebtPaymentReview } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -35,35 +35,18 @@ export async function GET(req: NextRequest) {
     const availableMonths = profile.monthlyHistory.map(m => m.yearMonth).sort();
     const rangeMonths = getRangeMonths(range, availableMonths);
 
-    // Load user debt payment reviews
-    const reviewsSnap = await db.collection(`users/${decoded.uid}/debtPaymentReviews`).get();
-    const userReviews: DebtPaymentReview[] = reviewsSnap.docs.map((doc) => ({
-      txFingerprint: doc.id,
-      accountSlug: doc.get("accountSlug"),
-      classification: doc.get("classification"),
-      date: doc.get("date"),
-      amount: doc.get("amount"),
-      reviewedAt: doc.get("reviewedAt"),
-    }));
-
-    // Load income deposit reviews
-    const incomeReviewsSnap = await db
-      .collection(`users/${decoded.uid}/reviews`)
-      .where("type", "==", "income_deposit")
-      .get();
-    const incomeDepositReviews = new Map<string, string>();
-    incomeReviewsSnap.docs.forEach(doc => {
-      incomeDepositReviews.set(doc.id, doc.get("classification"));
-    });
+    // Load all user review context (income, debt, savings)
+    const reviewContext = await loadUserReviewContext(decoded.uid, db);
 
     const breakdown = computeMoneyCoachBreakdown(
       profile, 
-      userReviews, 
+      reviewContext.debtPaymentReviews, 
       profile.incomeTxns, 
       profile.accountSnapshots, 
       profile.homeCurrency || "CAD",
-      incomeDepositReviews,
-      rangeMonths
+      reviewContext.incomeDepositReviews,
+      rangeMonths,
+      reviewContext.savingsConfirmedItems
     );
 
     return Response.json({

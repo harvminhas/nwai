@@ -9,6 +9,7 @@
  */
 
 import type { FinancialProfileCache } from "@/lib/financialProfile";
+import type { UserReviewContext } from "@/lib/userReviewContext";
 import { FREQ_MONTHLY } from "@/app/api/user/cash-commitments/route";
 import { isCoreExcluded } from "@/lib/spendingMetrics";
 import { getParentCategory } from "@/lib/categoryTaxonomy";
@@ -44,13 +45,17 @@ function fuzzyMatch(needle: string, haystack: string): boolean {
 }
 
 function makeFmt(currency: string) {
-  return (v: number) =>
-    new Intl.NumberFormat("en-US", {
+  return (v: number) => {
+    const absValue = Math.abs(v);
+    // Round to whole dollars for amounts >= $100
+    const fractionDigits = absValue >= 100 ? 0 : 2;
+    return new Intl.NumberFormat("en-US", {
       style: "currency",
       currency,
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
     }).format(v);
+  };
 }
 
 /** Expand YYYY-MM to a date range [YYYY-MM-01, YYYY-MM-31] for comparison. */
@@ -75,6 +80,7 @@ export type ToolParams = Record<string, unknown>;
 export function executeSearchTransactions(
   profile: FinancialProfileCache,
   params: ToolParams,
+  context: UserReviewContext,
 ): ToolResult {
   const home = getHomeCurrency(profile);
   const fxRates = profile.fxRates ?? {};
@@ -209,6 +215,7 @@ export function executeSearchTransactions(
 export function executeGetMonthlyBreakdown(
   profile: FinancialProfileCache,
   params: ToolParams,
+  context: UserReviewContext,
 ): ToolResult {
   const home = getHomeCurrency(profile);
   const fxRates = profile.fxRates ?? {};
@@ -280,6 +287,7 @@ export function executeGetMonthlyBreakdown(
 export function executeRollupCategories(
   profile: FinancialProfileCache,
   params: ToolParams,
+  context: UserReviewContext,
 ): ToolResult {
   const home = getHomeCurrency(profile);
   const fxRates = profile.fxRates ?? {};
@@ -355,6 +363,7 @@ export function executeRollupCategories(
 export function executeRollupMerchants(
   profile: FinancialProfileCache,
   params: ToolParams,
+  context: UserReviewContext,
 ): ToolResult {
   const home = getHomeCurrency(profile);
   const fxRates = profile.fxRates ?? {};
@@ -473,6 +482,7 @@ export function executeListRecurringCharges(profile: FinancialProfileCache): Too
 export function executeGetDebtPaymentTrend(
   profile: FinancialProfileCache,
   params: ToolParams,
+  context: UserReviewContext,
 ): ToolResult {
   const home = getHomeCurrency(profile);
   const fmt = makeFmt(home);
@@ -507,17 +517,503 @@ export function executeGetDebtPaymentTrend(
   };
 }
 
+// ── get_income_summary ────────────────────────────────────────────────────────
+
+export function executeGetIncomeSummary(
+  profile: FinancialProfileCache,
+  params: ToolParams,
+  context: UserReviewContext,
+): ToolResult {
+  const { buildIncomeSummary } = require("@/lib/incomeSummary");
+  const { getRangeMonths } = require("@/lib/rangeUtils");
+  
+  const home = getHomeCurrency(profile);
+  const fmt = makeFmt(home);
+  
+  const rangeParam = (params.range as string | undefined) ?? "3mo";
+  let rangeMonths: string[];
+  
+  if (rangeParam === "3mo" || rangeParam === "12mo" || rangeParam === "ytd") {
+    const availableMonths = profile.allTxMonths.sort();
+    rangeMonths = getRangeMonths(rangeParam, availableMonths);
+  } else {
+    rangeMonths = rangeParam.split(",").map(m => m.trim()).filter(Boolean);
+  }
+  
+  // Use incomeDepositReviews from context (loaded from Firestore by caller)
+  const summary = buildIncomeSummary(
+    profile.incomeTxns,
+    profile.accountSnapshots,
+    home,
+    context.incomeDepositReviews,
+    rangeMonths,
+  );
+  
+  // Aggregate per-source totals from monthlyHistory (which already has correct exclusions)
+  // This matches the Income page calculation exactly
+  const sourceMap = new Map<string, { total: number; txCount: number }>();
+  
+  for (const month of summary.monthlyHistory) {
+    if (!rangeMonths.includes(month.yearMonth)) continue;
+    
+    for (const sourceEntry of month.sources) {
+      const existing = sourceMap.get(sourceEntry.source) || { total: 0, txCount: 0 };
+      existing.total += sourceEntry.amount;
+      // Count transactions for this source in this month
+      const source = summary.sources.find((s: any) => s.description === sourceEntry.source);
+      if (source) {
+        const monthTxns = source.transactions.filter((t: any) => t.date.startsWith(month.yearMonth));
+        existing.txCount += monthTxns.length;
+      }
+      sourceMap.set(sourceEntry.source, existing);
+    }
+  }
+  
+  // Convert to array and sort by total descending
+  const bySource = Array.from(sourceMap.entries())
+    .map(([source, data]) => ({
+      source,
+      total: fmt(data.total),
+      monthly_average: fmt(data.total / rangeMonths.length),
+      transaction_count: data.txCount,
+    }))
+    .sort((a, b) => {
+      const aTotal = parseFloat(a.total.replace(/[^\d.-]/g, ""));
+      const bTotal = parseFloat(b.total.replace(/[^\d.-]/g, ""));
+      return bTotal - aTotal;
+    });
+  
+  const bonuses = summary.bonusTransactions
+    .filter((b: any) => {
+      const txMonth = b.date.slice(0, 7);
+      return rangeMonths.includes(txMonth);
+    })
+    .map((b: any) => ({
+      date: b.date,
+      source: b.source,
+      description: b.description,
+      amount: fmt(b.amount),
+    }));
+  
+  // Add period metadata
+  const periodStart = rangeMonths[0];
+  const periodEnd = rangeMonths[rangeMonths.length - 1];
+  const periodLabel = rangeMonths.length === 12 ? "last 12 months" :
+                      rangeMonths.length === 3 ? "last 3 months" :
+                      `${rangeMonths.length} months`;
+  
+  return {
+    ok: true,
+    data: {
+      typical_monthly: fmt(summary.typicalMonthly),
+      range_months: rangeMonths,
+      period: {
+        start_month: periodStart,
+        end_month: periodEnd,
+        months_count: rangeMonths.length,
+        label: periodLabel,
+      },
+      currency: home,
+      by_source: bySource,
+      bonuses: bonuses.length > 0 ? bonuses : undefined,
+    },
+  };
+}
+
+// ── get_spending_summary ──────────────────────────────────────────────────────
+
+export function executeGetSpendingSummary(
+  profile: FinancialProfileCache,
+  params: ToolParams,
+  context: UserReviewContext,
+): ToolResult {
+  const { buildSpendingSummary } = require("@/lib/spendingSummary");
+  const { getRangeMonths } = require("@/lib/rangeUtils");
+  
+  const home = getHomeCurrency(profile);
+  const fmt = makeFmt(home);
+  
+  const rangeParam = (params.range as string | undefined) ?? "3mo";
+  let rangeMonths: string[];
+  
+  if (rangeParam === "3mo" || rangeParam === "12mo" || rangeParam === "ytd") {
+    const availableMonths = profile.allTxMonths.sort();
+    rangeMonths = getRangeMonths(rangeParam, availableMonths);
+  } else {
+    rangeMonths = rangeParam.split(",").map(m => m.trim()).filter(Boolean);
+  }
+  
+  // Use debtPaymentReviews from context (loaded from Firestore by caller)
+  const summary = buildSpendingSummary(
+    profile.expenseTxns,
+    profile.accountSnapshots,
+    profile.debtPaymentHistory ?? [],
+    context.debtPaymentReviews,
+    profile.fxRates ?? {},
+    home,
+    rangeMonths,
+  );
+  
+  // Convert buckets array to structured object
+  const bucketObj: Record<string, any> = {};
+  for (const bucket of summary.buckets) {
+    bucketObj[bucket.bucket] = {
+      label: bucket.label,
+      total: fmt(bucket.total),
+      monthly_average: fmt(bucket.averageMonthly),
+      categories: bucket.categories.map((c: any) => ({
+        category: c.category,
+        total: fmt(c.total),
+        monthly_average: fmt(c.averageMonthly),
+      })),
+    };
+  }
+  
+  return {
+    ok: true,
+    data: {
+      typical_monthly: fmt(summary.typicalMonthly),
+      range_months: rangeMonths,
+      currency: home,
+      buckets: bucketObj,
+    },
+  };
+}
+
+// ── list_cash_expenses ────────────────────────────────────────────────────────
+
+export function executeListCashExpenses(profile: FinancialProfileCache): ToolResult {
+  const home = getHomeCurrency(profile);
+  const fmt = makeFmt(home);
+  
+  if (!profile.cashCommitmentEntries || profile.cashCommitmentEntries.length === 0) {
+    return {
+      ok: true,
+      data: {
+        cash_expenses: [],
+        total_monthly: fmt(0),
+        currency: home,
+        message: "No recurring cash expenses found.",
+      },
+    };
+  }
+  
+  const now = new Date();
+  const expenses = profile.cashCommitmentEntries.map(c => {
+    const monthlyEquiv = c.frequency === "once" ? 0 : c.amount * FREQ_MONTHLY[c.frequency];
+    
+    // Simple next due calculation
+    let nextDue = "One-time";
+    if (c.status === "paused") {
+      nextDue = "Paused";
+    } else if (c.frequency !== "once") {
+      const floor = new Date(c.startDate || c.createdAt);
+      let next = new Date(floor);
+      while (next < now) {
+        switch (c.frequency) {
+          case "weekly": next.setDate(next.getDate() + 7); break;
+          case "biweekly": next.setDate(next.getDate() + 14); break;
+          case "monthly": next.setMonth(next.getMonth() + 1); break;
+          case "quarterly": next.setMonth(next.getMonth() + 3); break;
+          case "yearly": next.setFullYear(next.getFullYear() + 1); break;
+        }
+      }
+      nextDue = next.toISOString().slice(0, 10);
+    }
+    
+    return {
+      name: c.name,
+      amount: fmt(c.amount),
+      frequency: c.frequency,
+      monthly_equivalent: monthlyEquiv > 0 ? fmt(monthlyEquiv) : null,
+      next_due: nextDue,
+      category: c.category,
+      status: c.status || "active",
+      skipped_months: c.skippedMonths || [],
+      notes: c.notes,
+    };
+  });
+  
+  const totalMonthly = profile.cashCommitmentEntries
+    .filter(c => c.status !== "paused" && c.frequency !== "once")
+    .reduce((sum, c) => sum + c.amount * FREQ_MONTHLY[c.frequency], 0);
+  
+  return {
+    ok: true,
+    data: {
+      cash_expenses: expenses,
+      total_monthly: fmt(totalMonthly),
+      count: expenses.length,
+      currency: home,
+      note: "Recurring expenses paid by cash or not captured in bank statements. Monthly equivalent shown for recurring items.",
+    },
+  };
+}
+
+// ── get_savings_summary ───────────────────────────────────────────────────────
+
+export function executeGetSavingsSummary(
+  profile: FinancialProfileCache,
+  params: ToolParams,
+  context: UserReviewContext,
+): ToolResult {
+  const { computeWindowSavings } = require("@/lib/savingsCalculations");
+  const { getRangeMonths } = require("@/lib/rangeUtils");
+  
+  const home = getHomeCurrency(profile);
+  const fmt = makeFmt(home);
+  
+  const rangeParam = (params.range as string | undefined) ?? "3mo";
+  let rangeMonths: string[];
+  
+  if (rangeParam === "3mo" || rangeParam === "12mo" || rangeParam === "ytd") {
+    const availableMonths = profile.allTxMonths.sort();
+    rangeMonths = getRangeMonths(rangeParam, availableMonths);
+  } else {
+    rangeMonths = rangeParam.split(",").map(m => m.trim()).filter(Boolean);
+  }
+  
+  // Use savingsConfirmedItems from context (loaded from Firestore by caller)
+  const savings = computeWindowSavings(
+    profile.monthlyHistory,
+    profile.accountBalanceHistory ?? [],
+    profile.expenseTxns,
+    rangeMonths,
+    context.savingsConfirmedItems,
+  );
+  
+  return {
+    ok: true,
+    data: {
+      typical_monthly: fmt(savings.monthlyAverage.total),
+      range_months: rangeMonths,
+      currency: home,
+      breakdown: {
+        cash_change: fmt(savings.monthlyAverage.netCashChange),
+        debt_paydown: fmt(savings.monthlyAverage.netDebtChange),
+        contributions: fmt(savings.monthlyAverage.contributionsToOutside),
+      },
+    },
+  };
+}
+
+// ── get_net_worth ─────────────────────────────────────────────────────────────
+
+export function executeGetNetWorth(profile: FinancialProfileCache): ToolResult {
+  const { getNetWorth } = require("@/lib/profileMetrics");
+  
+  const home = getHomeCurrency(profile);
+  const fmt = makeFmt(home);
+  
+  const month = profile.latestTxMonth ?? "";
+  const nw = getNetWorth(profile, month);
+  
+  // Calculate monthly change
+  const sortedHistory = [...profile.monthlyHistory].sort((a, b) => 
+    b.yearMonth.localeCompare(a.yearMonth)
+  );
+  const currentMonthData = sortedHistory[0];
+  const lastMonthData = sortedHistory[1];
+  
+  let monthlyChange = 0;
+  if (currentMonthData && lastMonthData) {
+    const currentNW = currentMonthData.incomeTotal - currentMonthData.coreExpensesTotal;
+    const lastNW = lastMonthData.incomeTotal - lastMonthData.coreExpensesTotal;
+    monthlyChange = currentNW - lastNW;
+  }
+  
+  return {
+    ok: true,
+    data: {
+      net_worth: fmt(nw.total),
+      total_assets: fmt(nw.totalAssets),
+      total_debts: fmt(nw.totalDebts),
+      monthly_change: fmt(monthlyChange),
+      as_of_month: month,
+      currency: home,
+    },
+  };
+}
+
+// ── list_accounts ─────────────────────────────────────────────────────────────
+
+export function executeListAccounts(profile: FinancialProfileCache): ToolResult {
+  const home = getHomeCurrency(profile);
+  const fmt = makeFmt(home);
+  
+  const assets = profile.accountSnapshots
+    .filter(a => 
+      a.accountType === "checking" || 
+      a.accountType === "savings" ||
+      a.accountType === "investment" ||
+      a.accountType === "property"
+    )
+    .map(a => {
+      const acctCcy = (a.currency ?? home).toUpperCase();
+      const nativeFmt = makeFmt(acctCcy);
+      
+      // Get recent balance history
+      const history = (profile.accountBalanceHistory ?? [])
+        .find(h => h.slug === a.slug)
+        ?.entries
+        .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth))
+        .slice(0, 6)
+        .reverse()
+        .map(h => ({
+          month: h.yearMonth,
+          balance: nativeFmt(h.balance),
+        })) ?? [];
+      
+      return {
+        bank_name: a.bankName,
+        account_type: a.accountType,
+        balance: nativeFmt(a.balance),
+        balance_home: fmt(toHomeCurrency(a.balance, acctCcy, profile)),
+        currency: acctCcy,
+        last_4: a.accountId ? `••••${a.accountId.slice(-4)}` : undefined,
+        recent_history: history.length > 0 ? history : undefined,
+      };
+    });
+  
+  const debts = profile.accountSnapshots
+    .filter(a => 
+      a.accountType === "credit" || 
+      a.accountType === "credit_card" ||
+      a.accountType === "loan" ||
+      a.accountType === "mortgage"
+    )
+    .map(a => {
+      const acctCcy = (a.currency ?? home).toUpperCase();
+      const nativeFmt = makeFmt(acctCcy);
+      
+      const history = (profile.accountBalanceHistory ?? [])
+        .find(h => h.slug === a.slug)
+        ?.entries
+        .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth))
+        .slice(0, 6)
+        .reverse()
+        .map(h => ({
+          month: h.yearMonth,
+          balance: nativeFmt(h.balance),
+        })) ?? [];
+      
+      const rateInfo = profile.accountRates.find(r => r.accountKey === a.slug);
+      
+      return {
+        bank_name: a.bankName,
+        account_type: a.accountType,
+        balance: nativeFmt(a.balance),
+        balance_home: fmt(toHomeCurrency(a.balance, acctCcy, profile)),
+        currency: acctCcy,
+        apr: rateInfo?.rate,
+        last_4: a.accountId ? `••••${a.accountId.slice(-4)}` : undefined,
+        recent_history: history.length > 0 ? history : undefined,
+      };
+    });
+  
+  return {
+    ok: true,
+    data: {
+      currency: home,
+      assets: {
+        count: assets.length,
+        accounts: assets,
+      },
+      debts: {
+        count: debts.length,
+        accounts: debts,
+      },
+    },
+  };
+}
+
+// ── list_subscriptions ────────────────────────────────────────────────────────
+
+export function executeListSubscriptions(profile: FinancialProfileCache): ToolResult {
+  const home = getHomeCurrency(profile);
+  const fmt = makeFmt(home);
+  
+  if (!profile.confirmedSubscriptions || profile.confirmedSubscriptions.length === 0) {
+    return {
+      ok: true,
+      data: {
+        subscriptions: [],
+        count: 0,
+        currency: home,
+        message: "No confirmed subscriptions found.",
+      },
+    };
+  }
+  
+  const subscriptions = profile.confirmedSubscriptions.map(s => {
+    const raw = s.amount ?? s.suggestedAmount ?? 0;
+    const ccy = (s.currency ?? home).toUpperCase();
+    const amtHome = toHomeCurrency(raw, ccy, profile);
+    const freq = s.frequency ?? s.suggestedFrequency ?? "monthly";
+    
+    return {
+      name: s.name,
+      amount: fmt(amtHome),
+      frequency: freq,
+      status: s.status,
+      last_seen: s.lastSeenAt,
+      merchant_slug: s.merchantSlug,
+    };
+  });
+  
+  return {
+    ok: true,
+    data: {
+      subscriptions,
+      count: subscriptions.length,
+      currency: home,
+      note: "Confirmed subscriptions only (detected from recurring transactions).",
+    },
+  };
+}
+
+// ── list_plans ────────────────────────────────────────────────────────────────
+
+export function executeListPlans(profile: FinancialProfileCache): ToolResult {
+  const home = getHomeCurrency(profile);
+  const fmt = makeFmt(home);
+  
+  // Plans are not in the financialProfile cache yet, return empty for now
+  // This would need to be added to the profile builder if plans become part of the core data
+  return {
+    ok: true,
+    data: {
+      plans: [],
+      count: 0,
+      currency: home,
+      message: "Plans data not yet available in chat context. Check the Planner page.",
+    },
+  };
+}
+
 // ── dispatcher (handlers keyed by ToolName — compile-time sync with tools.ts) ─
 
-type ToolHandler = (profile: FinancialProfileCache, params: ToolParams) => ToolResult;
+type ToolHandler = (
+  profile: FinancialProfileCache,
+  params: ToolParams,
+  context: UserReviewContext,
+) => ToolResult;
 
 const TOOL_HANDLERS = {
   search_transactions:    executeSearchTransactions,
   get_monthly_breakdown:  executeGetMonthlyBreakdown,
   rollup_categories:      executeRollupCategories,
   rollup_merchants:       executeRollupMerchants,
-  list_recurring_charges: (profile, _params) => executeListRecurringCharges(profile),
+  list_recurring_charges: (profile, _params, ctx) => executeListRecurringCharges(profile),
   get_debt_payment_trend: executeGetDebtPaymentTrend,
+  get_income_summary:     executeGetIncomeSummary,
+  get_spending_summary:   executeGetSpendingSummary,
+  list_cash_expenses:     (profile, _params, ctx) => executeListCashExpenses(profile),
+  get_savings_summary:    executeGetSavingsSummary,
+  get_net_worth:          (profile, _params, ctx) => executeGetNetWorth(profile),
+  list_accounts:          (profile, _params, ctx) => executeListAccounts(profile),
+  list_subscriptions:     (profile, _params, ctx) => executeListSubscriptions(profile),
+  list_plans:             (profile, _params, ctx) => executeListPlans(profile),
 } satisfies Record<ToolName, ToolHandler>;
 
 function isToolName(name: string): name is ToolName {
@@ -528,9 +1024,10 @@ export function executeTool(
   name: string,
   params: ToolParams,
   profile: FinancialProfileCache,
+  context: UserReviewContext,
 ): ToolResult {
   if (!isToolName(name)) {
     return { ok: false, error: `Unknown tool: ${name}` };
   }
-  return TOOL_HANDLERS[name](profile, params);
+  return TOOL_HANDLERS[name](profile, params, context);
 }

@@ -1,14 +1,21 @@
 import { NextRequest } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
+import { loadUserReviewContext } from "@/lib/userReviewContext";
 import { answerQuestion, getSuggestedQuestions } from "@/lib/questionTemplates";
+import { queryLLMWithTools } from "@/lib/chat/llmQuery";
+import { cleanAIAnswer } from "@/lib/chat/answerPostProcessor";
 
 export const dynamic = "force-dynamic";
 
 /**
  * POST /api/user/ai-ask
- * Answers user questions about their finances using template-based responses
- * grounded in FinancialProfileCache data.
+ * Answers user questions about their finances.
+ * 
+ * Flow:
+ *   1. Try template-based response first (fast path)
+ *   2. If no template matches, fall through to LLM with tool calling
+ *   3. Never return "not enough information" - tools can answer most questions
  *
  * Body: { question: string }
  * Returns: { answer: string, suggestedFollowUps?: string[] }
@@ -31,19 +38,45 @@ export async function POST(req: NextRequest) {
     }
 
     const profile = await getFinancialProfile(decoded.uid, db);
-    const answer = answerQuestion(question, profile);
+    
+    // Fast path: try template matching first
+    const templateAnswer = answerQuestion(question, profile);
 
-    if (!answer) {
+    if (templateAnswer) {
+      return Response.json({
+        answer: cleanAIAnswer(templateAnswer),
+        suggestedFollowUps: getSuggestedQuestions().slice(0, 3),
+      });
+    }
+
+    // Fall through: use LLM with tool calling
+    const apiKey = process.env.GEMINI_API_KEY?.trim();
+    if (!apiKey) {
       return Response.json({
         answer: "I don't have enough information to answer that question yet. Try asking about your spending, savings rate, or subscriptions, or upload more statements for better insights.",
         suggestedFollowUps: getSuggestedQuestions().slice(0, 3),
       });
     }
 
-    return Response.json({
-      answer,
-      suggestedFollowUps: getSuggestedQuestions().slice(0, 3),
-    });
+    try {
+      const reviewContext = await loadUserReviewContext(decoded.uid, db);
+      const llmAnswer = await queryLLMWithTools(apiKey, question, profile, reviewContext);
+
+      return Response.json({
+        answer: cleanAIAnswer(llmAnswer),
+        suggestedFollowUps: getSuggestedQuestions().slice(0, 3),
+      });
+    } catch (llmError: any) {
+      // Handle LLM-specific errors gracefully
+      const status = llmError?.status || llmError?.response?.status;
+      console.error(`[ai-ask] LLM error (status=${status}):`, llmError.message || llmError);
+      
+      // Return user-friendly error instead of canned "not enough information"
+      return Response.json({
+        answer: "The AI assistant is unavailable right now. Please try again later, or ask in the Chat page for more detailed help.",
+        suggestedFollowUps: getSuggestedQuestions().slice(0, 3),
+      });
+    }
   } catch (error) {
     console.error("AI ask error:", error);
     return Response.json(

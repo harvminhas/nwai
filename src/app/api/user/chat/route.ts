@@ -20,12 +20,14 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import type { Part } from "@google/generative-ai";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
+import { loadUserReviewContext } from "@/lib/userReviewContext";
 import { resolvePlan } from "@/app/api/user/plan/route";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import { CHAT_TOOLS } from "@/lib/chat/tools";
 import { executeTool } from "@/lib/chat/executor";
 import type { ToolParams } from "@/lib/chat/executor";
 import { buildChatContext } from "@/lib/chat/context";
+import { cleanAIAnswer } from "@/lib/chat/answerPostProcessor";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -96,6 +98,10 @@ export async function POST(req: NextRequest) {
   const profile = await getFinancialProfile(targetUid, db);
   console.log(`[chat] profile loaded — expTxns=${profile.expenseTxns.length} months=${profile.allTxMonths.length} stale=${profile.cacheStale ?? false}`);
 
+  // ── 5b. Load user review context (classifications for income/spending/savings) ─
+  const reviewContext = await loadUserReviewContext(targetUid, db);
+  console.log(`[chat] reviews loaded — income=${reviewContext.incomeDepositReviews.size} debt=${reviewContext.debtPaymentReviews.length} savings=${reviewContext.savingsConfirmedItems.size}`);
+
   // ── 6. Build compact system context ───────────────────────────────────────
   const systemContext = buildChatContext(profile);
 
@@ -142,7 +148,7 @@ export async function POST(req: NextRequest) {
     console.log(`[chat] round=${round + 1} tools=${functionCalls.map((f) => `${f.name}(${JSON.stringify(f.args)})`).join(", ")}`);
     const functionResponseParts: Part[] = await Promise.all(
       functionCalls.map(async (fc) => {
-        const toolResult = executeTool(fc.name, fc.args as ToolParams, profile);
+        const toolResult = executeTool(fc.name, fc.args as ToolParams, profile, reviewContext);
         const rows = toolResult.data?.rows;
         console.log(`[chat] tool=${fc.name} rows=${Array.isArray(rows) ? rows.length : "n/a"}`);
         if (Array.isArray(rows)) {
@@ -176,10 +182,11 @@ export async function POST(req: NextRequest) {
 
   // ── 10. Stream the final answer back ──────────────────────────────────────
   // We have the full text from the non-streaming calls above.
+  // Clean it (remove tool names/attribution) before streaming.
   // Write it to a ReadableStream so the client-side streaming reader works
   // identically to the previous implementation.
   const encoder    = new TextEncoder();
-  const textToSend = finalText ?? "";
+  const textToSend = cleanAIAnswer(finalText ?? "");
 
   const stream = new ReadableStream({
     start(controller) {

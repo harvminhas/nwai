@@ -175,6 +175,114 @@ export const CHAT_TOOLS: Tool[] = [
           },
         },
       },
+      {
+        name: "get_income_summary",
+        description:
+          "Get income summary using THE SAME calculation as the Income page (buildIncomeSummary). " +
+          "Returns typical monthly income, breakdown by source, bonus transactions, and per-source totals. " +
+          "Use for income questions, earnings analysis, or 'how much did I make from X' queries. " +
+          "Fuzzy matches source names (e.g., 'MAM' will find 'MAM Construction'). " +
+          "Supports time ranges: 3mo, 12mo, ytd, or custom month list.",
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {
+            range: {
+              type: SchemaType.STRING,
+              description: "Time range: '3mo', '12mo', 'ytd', or comma-separated months 'YYYY-MM,YYYY-MM'. Default '3mo'.",
+            },
+          },
+        },
+      },
+      {
+        name: "get_spending_summary",
+        description:
+          "Get spending summary using THE SAME calculation as the Spending page (buildSpendingSummary). " +
+          "Returns typical monthly spending, bucket breakdown (fixed/essentials/flexible), " +
+          "category totals, and includes cash commitments. Use for spending analysis, " +
+          "budget questions, or 'how much do I spend on X' queries.",
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {
+            range: {
+              type: SchemaType.STRING,
+              description: "Time range: '3mo', '12mo', 'ytd', or comma-separated months. Default '3mo'.",
+            },
+          },
+        },
+      },
+      {
+        name: "list_cash_expenses",
+        description:
+          "List recurring cash expenses (manual expenses not in bank statements). " +
+          "Shows name, amount, frequency (weekly/biweekly/monthly/quarterly/yearly), " +
+          "monthly equivalent, next due date, and paused/skipped status. " +
+          "Use for 'cash expenses', 'manual expenses', or 'recurring payments not in statements'.",
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {},
+        },
+      },
+      {
+        name: "get_savings_summary",
+        description:
+          "Get savings calculation using THE SAME method as the Savings drawer " +
+          "(computeWindowSavings: cash change + debt paydown + investment contributions). " +
+          "Returns typical monthly savings and breakdown. Use for savings rate, " +
+          "savings questions, or 'how much am I saving' queries.",
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {
+            range: {
+              type: SchemaType.STRING,
+              description: "Time range: '3mo', '12mo', 'ytd', or comma-separated months. Default '3mo'.",
+            },
+          },
+        },
+      },
+      {
+        name: "get_net_worth",
+        description:
+          "Get current net worth summary: total assets, total debts, net worth, " +
+          "and monthly change. THE SAME calculation as the dashboard card. " +
+          "Use for net worth questions, wealth tracking, or balance summaries.",
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {},
+        },
+      },
+      {
+        name: "list_accounts",
+        description:
+          "List all accounts (assets and debts) with current balances, account types, " +
+          "and recent balance history. Use for 'what accounts do I have', " +
+          "'show my accounts', or balance tracking questions.",
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {},
+        },
+      },
+      {
+        name: "list_subscriptions",
+        description:
+          "List ONLY confirmed subscriptions (recurring merchants detected in transactions). " +
+          "Shows name, amount, frequency, and last seen date. " +
+          "Use for subscription audits or 'what subscriptions do I have'.",
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {},
+        },
+      },
+      {
+        name: "list_plans",
+        description:
+          "List budget plans from the Planner tool. Shows plan name, budget, amount spent, " +
+          "linked transactions, cash entries, and status (upcoming/active/completed). " +
+          "Use for budget questions, plan tracking, or 'what plans do I have'.",
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {},
+        },
+      },
     ],
   },
 ];
@@ -186,5 +294,13 @@ export const TOOL_NAMES = [
   "rollup_merchants",
   "list_recurring_charges",
   "get_debt_payment_trend",
+  "get_income_summary",
+  "get_spending_summary",
+  "list_cash_expenses",
+  "get_savings_summary",
+  "get_net_worth",
+  "list_accounts",
+  "list_subscriptions",
+  "list_plans",
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
