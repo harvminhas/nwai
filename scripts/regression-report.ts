@@ -2041,11 +2041,9 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       // Call computeGapReconciliation same way the API does
       const gapReconciliation = computeGapReconciliation(
         range,
-        profile.expenseTxns,
-        profile.incomeTxns,
-        profile.accountSnapshots,
-        profile.accountBalanceHistory,
-        profile.monthlyHistory,
+        profile,
+        reviewContext.debtPaymentReviews,
+        reviewContext.incomeDepositReviews,
         {
           income: breakdown.incomeAmount,
           fixed: breakdown.buckets.find(b => b.bucket === "fixed")?.monthlyAverage || 0,

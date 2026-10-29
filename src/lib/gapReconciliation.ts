@@ -12,8 +12,10 @@
 import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
 import type { TimeRange } from "./rangeUtils";
 import { getRangeMonths } from "./rangeUtils";
-import type { AccountBalanceHistory, MonthlyHistoryEntry } from "./financialProfile";
+import type { AccountBalanceHistory, MonthlyHistoryEntry, DebtPaymentReview, FinancialProfileCache } from "./financialProfile";
 import { computeMonthlySavings } from "./savingsCalculations";
+import { buildSpendingSummary } from "./spendingMetrics";
+import { computeIncomeMetrics } from "./incomeMetrics";
 
 export interface GapComponent {
   name: string;
@@ -62,11 +64,9 @@ export interface GapReconciliation {
  */
 export function computeGapReconciliation(
   range: TimeRange,
-  expenseTxns: ExpenseTxnRecord[],
-  incomeTxns: IncomeTxnRecord[],
-  accountSnapshots: AccountSnapshot[],
-  accountBalanceHistory: AccountBalanceHistory[],
-  monthlyHistory: MonthlyHistoryEntry[],
+  profile: FinancialProfileCache,
+  debtPaymentReviews: DebtPaymentReview[],
+  incomeDepositReviews: Map<string, string>,
   bucketTotals: {
     income: number;
     fixed: number;
@@ -75,7 +75,7 @@ export function computeGapReconciliation(
     netSavings: number;
   }
 ): GapReconciliation {
-  const rangeMonths = getRangeMonths(range, Array.from(new Set([...(expenseTxns ?? []), ...(incomeTxns ?? [])].map(t => t.txMonth))).sort());
+  const rangeMonths = getRangeMonths(range, Array.from(new Set([...(profile.expenseTxns ?? []), ...(profile.incomeTxns ?? [])].map(t => t.txMonth))).sort());
   const numMonths = rangeMonths.length || 1;
   
   console.log("\n=== NET SAVINGS COMPUTATION ===");
@@ -85,7 +85,28 @@ export function computeGapReconciliation(
   console.log("  contributionsToOutside = investment contributions");
   console.log();
   
-  // Compute per-month breakdown
+  // Use the SAME bucket calculation as the dashboard
+  const spendingSummary = buildSpendingSummary(
+    profile.expenseTxns,
+    profile.accountSnapshots,
+    profile.debtPaymentHistory,
+    debtPaymentReviews,
+    profile.fxRates ?? {},
+    profile.homeCurrency ?? "CAD",
+    rangeMonths
+  );
+  
+  // Use the SAME income calculation as the dashboard
+  const incomeMetrics = computeIncomeMetrics(
+    profile.monthlyHistory,
+    profile.incomeTxns,
+    profile.accountSnapshots,
+    profile.homeCurrency ?? "CAD",
+    incomeDepositReviews,
+    rangeMonths
+  );
+  
+  // Build per-month data using exact same sources as cards
   const perMonthData: Array<{
     month: string;
     income: number;
@@ -97,6 +118,7 @@ export function computeGapReconciliation(
     contributionsToOutside: number;
     netSavings: number;
     gap: number;
+    uncategorizedTxns: Array<{ date: string; merchant: string; amount: number; category: string }>;
   }> = [];
   
   let totalIncome = 0;
@@ -108,39 +130,25 @@ export function computeGapReconciliation(
   let totalContributions = 0;
   let totalNetSavings = 0;
   
+  // Get monthly bucket values from spendingSummary
+  const monthlyBuckets = spendingSummary.monthlyHistory;
+  
   for (const month of rangeMonths) {
-    // Income from transactions
-    const monthIncome = incomeTxns
-      .filter(t => t.txMonth === month)
-      .reduce((sum, t) => sum + t.amount, 0);
+    // Income for this month (from income metrics, same as cards)
+    const monthData = incomeMetrics.monthlyIncome.find(m => m.yearMonth === month);
+    const monthIncome = monthData ? monthData.total : 0;
     
-    // Expenses by category
-    const monthExpenses = expenseTxns.filter(t => t.txMonth === month);
-    
-    const fixed = monthExpenses.filter(t => {
-      const cat = (t.category || "").toLowerCase();
-      return cat === "debt payments" || cat === "subscriptions" || 
-             t.source?.toLowerCase().includes("mortgage") ||
-             t.source?.toLowerCase().includes("rent") ||
-             t.source?.toLowerCase().includes("insurance");
-    }).reduce((sum, t) => sum + Math.abs(t.amount), 0);
-    
-    const essentials = monthExpenses.filter(t => {
-      const cat = (t.category || "").toLowerCase();
-      return cat === "groceries" || cat === "healthcare" || cat === "fees";
-    }).reduce((sum, t) => sum + Math.abs(t.amount), 0);
-    
-    const flexible = monthExpenses.filter(t => {
-      const cat = (t.category || "").toLowerCase();
-      return cat === "dining" || cat === "shopping" || cat === "entertainment" || 
-             cat === "transportation" || cat === "cash & atm";
-    }).reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    // Buckets for this month (from spending summary, same as cards)
+    const bucketData = monthlyBuckets.find(m => m.yearMonth === month);
+    const fixed = bucketData ? bucketData.fixed : 0;
+    const essentials = bucketData ? bucketData.essentials : 0;
+    const flexible = bucketData ? bucketData.flexible : 0;
     
     // Get Net Savings components from computeMonthlySavings
     const monthlySavingsResult = computeMonthlySavings(
-      monthlyHistory,
-      accountBalanceHistory,
-      expenseTxns,
+      profile.monthlyHistory,
+      profile.accountBalanceHistory,
+      profile.expenseTxns,
       month,
       new Map()
     );
@@ -151,6 +159,22 @@ export function computeGapReconciliation(
     const netSavings = monthlySavingsResult.total;
     
     const gap = netSavings - (monthIncome - fixed - essentials - flexible);
+    
+    // Find uncategorized/transfer transactions not in buckets
+    const monthTxns = profile.expenseTxns.filter(t => t.txMonth === month);
+    const uncategorizedTxns = monthTxns
+      .filter(t => {
+        const cat = (t.category || "").toLowerCase();
+        return cat === "other" || cat === "uncategorized" || cat === "transfers" || !cat;
+      })
+      .map(t => ({
+        date: t.date || '',
+        merchant: t.source || t.merchant || '',
+        amount: Math.abs(t.amount),
+        category: t.category || 'uncategorized',
+      }))
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 5); // Top 5
     
     perMonthData.push({
       month,
@@ -163,6 +187,7 @@ export function computeGapReconciliation(
       contributionsToOutside,
       netSavings,
       gap,
+      uncategorizedTxns,
     });
     
     totalIncome += monthIncome;
@@ -176,7 +201,7 @@ export function computeGapReconciliation(
   }
   
   // Print per-month table
-  console.log("PER-MONTH BREAKDOWN:");
+  console.log("PER-MONTH BREAKDOWN (using exact card calculations):");
   console.log(
     "Month     ".padEnd(12) +
     "Income".padStart(10) +
@@ -204,6 +229,14 @@ export function computeGapReconciliation(
       data.netSavings.toFixed(0).padStart(10) +
       data.gap.toFixed(0).padStart(10)
     );
+    
+    // Print top uncategorized/transfer transactions if any
+    if (data.uncategorizedTxns.length > 0) {
+      console.log(`    Top uncategorized/transfer txns in ${data.month}:`);
+      for (const txn of data.uncategorizedTxns) {
+        console.log(`      ${txn.date} ${txn.merchant.slice(0, 40).padEnd(40)} $${txn.amount.toFixed(2).padStart(10)} [${txn.category}]`);
+      }
+    }
   }
   
   const avgIncome = totalIncome / numMonths;
@@ -228,8 +261,12 @@ export function computeGapReconciliation(
     avgNetSavings.toFixed(0).padStart(10)
   );
   console.log();
+  console.log(`Card values (for comparison):`);
+  console.log(`  Income: ${bucketTotals.income.toFixed(2)}, Fixed: ${bucketTotals.fixed.toFixed(2)}, Essentials: ${bucketTotals.essentials.toFixed(2)}, Flexible: ${bucketTotals.flexible.toFixed(2)}`);
+  console.log(`  Net Savings: ${bucketTotals.netSavings.toFixed(2)}`);
+  console.log();
   
-  // Expected vs actual savings (from bucketTotals, should match our computed averages)
+  // Expected vs actual savings (from bucketTotals)
   const expectedSavings = bucketTotals.income - bucketTotals.fixed - bucketTotals.essentials - bucketTotals.flexible;
   const actualSavings = bucketTotals.netSavings;
   const gap = actualSavings - expectedSavings;
@@ -237,26 +274,30 @@ export function computeGapReconciliation(
   // Build components from monthly data
   const components: GapComponent[] = [];
   
-  // Component 1: Debt payments in Fixed that increase net worth
-  // Fixed includes debt payments (cash out) but netDebtChange counts debt reduction (positive)
-  // So debt payments appear in both Fixed and netDebtChange, need to add back
-  const debtPaymentsTxns = expenseTxns.filter(t => {
-    const cat = (t.category || "").toLowerCase();
-    return cat === "debt payments" && rangeMonths.includes(t.txMonth);
-  });
-  const debtPaymentsTotal = debtPaymentsTxns.reduce((sum, t) => sum + Math.abs(t.amount), 0);
-  const debtPaymentsMonthly = debtPaymentsTotal / numMonths;
+  // Component 1: Debt payments in Fixed
+  // These are in Fixed (expense) but netDebtChange captures the paydown effect
+  // The principal portion is already counted in netDebtChange, so we don't need to add it back
+  // What we care about is: if netDebtChange is negative (new borrowing), that's cash source
   
-  if (debtPaymentsMonthly > 1) {
+  // Calculate total new borrowing (months where netDebtChange < 0)
+  let totalNewBorrowing = 0;
+  for (const monthData of perMonthData) {
+    if (monthData.netDebtChange < 0) {
+      totalNewBorrowing += Math.abs(monthData.netDebtChange);
+    }
+  }
+  const newBorrowingMonthly = totalNewBorrowing / numMonths;
+  
+  if (newBorrowingMonthly > 1) {
     components.push({
-      name: "Debt payments (in Fixed, raise net worth)",
-      amount: debtPaymentsMonthly,
-      description: "Counted as expense in Fixed but also reduce debt in netDebtChange",
+      name: "New borrowing (FlexLine draws, card charges)",
+      amount: newBorrowingMonthly,
+      description: "Debt increased (netDebtChange negative) - cash available but not income",
     });
   }
   
   // Component 2: Investment gains (market changes beyond contributions)
-  const investmentContributionsTxns = expenseTxns.filter(t => {
+  const investmentContributionsTxns = profile.expenseTxns.filter(t => {
     const cat = (t.category || "").toLowerCase();
     return cat === "investments & savings" && rangeMonths.includes(t.txMonth);
   });
@@ -301,6 +342,6 @@ export function computeGapReconciliation(
     componentsTotal,
     unexplained,
     reconciles: Math.abs(unexplained) < 1,
-    perMonthDiagnostic: perMonthData,
+    perMonthDiagnostic: perMonthData as any,
   };
 }
