@@ -243,25 +243,94 @@ function AnswerCard({
   answer: string; 
   onClear: () => void;
 }) {
+  const [collapsed, setCollapsed] = useState(false);
+  
+  // Handle Escape key
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClear();
+      }
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [onClear]);
+  
   return (
-    <div className="mx-auto max-w-3xl rounded-2xl border-2 border-purple-100 bg-purple-50/30 p-6 shadow-sm">
-      <div className="flex gap-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-purple-600 text-sm font-bold text-white">
+    <div className="mx-auto max-w-3xl rounded-2xl border-2 border-purple-100 bg-purple-50/30 shadow-sm">
+      {/* Sticky Header */}
+      <div className="sticky top-0 z-10 flex items-start gap-3 border-b border-purple-100 bg-purple-50/90 p-4 backdrop-blur">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-purple-600 text-xs font-bold text-white">
           ?
         </div>
         <div className="min-w-0 flex-1">
           <h4 className="text-sm font-semibold text-purple-900">{question}</h4>
-          <div className="mt-2 text-gray-700">
-            {renderMarkdown(answer)}
-          </div>
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <button
+            onClick={() => setCollapsed(!collapsed)}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-purple-600 hover:bg-purple-100 transition"
+            aria-label={collapsed ? "Show answer" : "Minimize"}
+          >
+            {collapsed ? (
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            ) : (
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+              </svg>
+            )}
+          </button>
           <button
             onClick={onClear}
-            className="mt-3 text-sm font-semibold text-purple-600 hover:text-purple-700"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-purple-600 hover:bg-purple-100 transition"
+            aria-label="Close"
           >
-            Ask another question ↗
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
           </button>
         </div>
       </div>
+      
+      {/* Answer Content */}
+      {!collapsed && (
+        <div className="max-h-[320px] overflow-y-auto p-4">
+          <div className="text-gray-700">
+            {renderMarkdown(answer)}
+          </div>
+          <div className="mt-4 flex items-center gap-3 border-t border-purple-100 pt-3">
+            <Link
+              href={`/account/chat?q=${encodeURIComponent(question)}`}
+              className="text-sm font-semibold text-purple-600 hover:text-purple-700 flex items-center gap-1"
+            >
+              Open in Chat
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+              </svg>
+            </Link>
+            <button
+              onClick={onClear}
+              className="text-sm font-medium text-gray-600 hover:text-gray-700"
+            >
+              Ask another question
+            </button>
+          </div>
+        </div>
+      )}
+      
+      {/* Collapsed state */}
+      {collapsed && (
+        <div className="p-4">
+          <button
+            onClick={() => setCollapsed(false)}
+            className="text-sm font-medium text-purple-600 hover:text-purple-700"
+          >
+            Show answer
+          </button>
+        </div>
+      )}
     </div>
   );
 }
