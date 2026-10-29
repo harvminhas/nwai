@@ -857,12 +857,33 @@ function SavingsDrawerContent({
                         {isCategoryExpanded(month.month, 'cash') && (
                           <div className="space-y-2 mt-2">
                             {month.accounts.cashAccounts.map((acc) => {
-                              // Determine which month is missing
-                              const missingMonth = acc.priorCarriedForward 
-                                ? formatMonthYear(month.month).split(' ')[0] // Prior month missing
-                                : acc.currentCarriedForward
-                                  ? formatMonthYear(month.month).split(' ')[0] // Current month missing
-                                  : null;
+                              // Helper to format month label
+                              const formatMonth = (ym: string) => {
+                                if (!ym) return '';
+                                const [year, monthNum] = ym.split('-');
+                                const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                                return `${monthNames[parseInt(monthNum) - 1]} ${year}`;
+                              };
+                              
+                              // Determine badge text based on derived status
+                              let badgeText = null;
+                              let badgeTitle = '';
+                              
+                              if (acc.currentDerived && acc.currentSourceStatement) {
+                                badgeText = `Calculated from ${formatMonth(acc.currentSourceStatement)} statement`;
+                                badgeTitle = 'This month\'s balance was calculated from a multi-month statement';
+                              } else if (acc.currentCarriedForward && !acc.currentDerived) {
+                                badgeText = `No ${formatMonthYear(month.month).split(' ')[0]} statement`;
+                                badgeTitle = 'No statement uploaded for this month, so the last known balance is used';
+                              }
+                              
+                              // Show actual months used for Prior and Current
+                              const priorLabel = acc.priorActualMonth === month.month.substring(0, 7)
+                                ? 'Prior'
+                                : `Prior (${formatMonth(acc.priorActualMonth)})`;
+                              const currentLabel = acc.currentActualMonth === month.month
+                                ? 'Current'
+                                : `Current (${formatMonth(acc.currentActualMonth)})`;
                               
                               return (
                                 <div key={acc.slug} className="bg-white rounded p-2 text-xs border border-gray-200">
@@ -870,12 +891,14 @@ function SavingsDrawerContent({
                                     <div>
                                       <span className="font-medium text-gray-900">{acc.accountLabel.split(' (')[0]}</span>
                                       <span className="text-gray-500 ml-1">(...{acc.accountLast4})</span>
-                                      {missingMonth && (
+                                      {badgeText && (
                                         <span 
-                                          className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600" 
-                                          title="No statement uploaded for this month, so the last known balance is used. Upload it to include this account's change."
+                                          className={`ml-2 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                                            acc.currentDerived ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
+                                          }`}
+                                          title={badgeTitle}
                                         >
-                                          No {missingMonth} statement
+                                          {badgeText}
                                         </span>
                                       )}
                                     </div>
@@ -884,9 +907,9 @@ function SavingsDrawerContent({
                                     </span>
                                   </div>
                                   <div className="flex gap-4 text-gray-600">
-                                    <span>Prior: {fmt(acc.priorBalance)}</span>
+                                    <span>{priorLabel}: {fmt(acc.priorBalance)}</span>
                                     <span>→</span>
-                                    <span>Current: {fmt(acc.currentBalance)}</span>
+                                    <span>{currentLabel}: {fmt(acc.currentBalance)}</span>
                                   </div>
                                 </div>
                               );
@@ -938,12 +961,33 @@ function SavingsDrawerContent({
                               const isPaidDown = acc.change > 0;
                               const isBorrowing = acc.change < 0;
                               
-                              // Determine which month is missing
-                              const missingMonth = acc.priorCarriedForward 
-                                ? formatMonthYear(month.month).split(' ')[0] // Prior month missing
-                                : acc.currentCarriedForward
-                                  ? formatMonthYear(month.month).split(' ')[0] // Current month missing
-                                  : null;
+                              // Helper to format month label
+                              const formatMonth = (ym: string) => {
+                                if (!ym) return '';
+                                const [year, monthNum] = ym.split('-');
+                                const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                                return `${monthNames[parseInt(monthNum) - 1]} ${year}`;
+                              };
+                              
+                              // Determine badge text based on derived status
+                              let badgeText = null;
+                              let badgeTitle = '';
+                              
+                              if (acc.currentDerived && acc.currentSourceStatement) {
+                                badgeText = `Calculated from ${formatMonth(acc.currentSourceStatement)} statement`;
+                                badgeTitle = 'This month\'s balance was calculated from a multi-month statement';
+                              } else if (acc.currentCarriedForward && !acc.currentDerived) {
+                                badgeText = `No ${formatMonthYear(month.month).split(' ')[0]} statement`;
+                                badgeTitle = 'No statement uploaded for this month, so the last known balance is used';
+                              }
+                              
+                              // Show actual months used for Prior and Current
+                              const priorLabel = acc.priorActualMonth === month.month.substring(0, 7)
+                                ? 'Prior'
+                                : `Prior (${formatMonth(acc.priorActualMonth)})`;
+                              const currentLabel = acc.currentActualMonth === month.month
+                                ? 'Current'
+                                : `Current (${formatMonth(acc.currentActualMonth)})`;
                               
                               return (
                                 <div key={acc.slug} className="bg-white rounded p-2 text-xs border border-gray-200">
@@ -951,12 +995,14 @@ function SavingsDrawerContent({
                                     <div>
                                       <span className="font-medium text-gray-900">{acc.accountLabel.split(' (')[0]}</span>
                                       <span className="text-gray-500 ml-1">(...{acc.accountLast4})</span>
-                                      {missingMonth && (
+                                      {badgeText && (
                                         <span 
-                                          className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600" 
-                                          title="No statement uploaded for this month, so the last known balance is used. Upload it to include this account's change."
+                                          className={`ml-2 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                                            acc.currentDerived ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
+                                          }`}
+                                          title={badgeTitle}
                                         >
-                                          No {missingMonth} statement
+                                          {badgeText}
                                         </span>
                                       )}
                                     </div>
@@ -970,9 +1016,9 @@ function SavingsDrawerContent({
                                     </div>
                                   </div>
                                   <div className="flex gap-4 text-gray-600">
-                                    <span>Prior: {fmt(acc.priorBalance)}</span>
+                                    <span>{priorLabel}: {fmt(acc.priorBalance)}</span>
                                     <span>→</span>
-                                    <span>Current: {fmt(acc.currentBalance)}</span>
+                                    <span>{currentLabel}: {fmt(acc.currentBalance)}</span>
                                   </div>
                                 </div>
                               );

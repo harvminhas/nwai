@@ -11,7 +11,9 @@ import { getSignColor } from "@/lib/colorHelpers";
 import { Drawer, type DrawerType } from "@/components/Drawer";
 import { ReviewList } from "@/components/ReviewList";
 import { RangeSwitch } from "@/components/RangeSwitch";
+import { ReconciliationPanel } from "@/components/ReconciliationPanel";
 import type { TimeRange } from "@/lib/rangeUtils";
+import type { GapReconciliation } from "@/lib/gapReconciliation";
 
 // Convert TimeRange to Drawer's TimeWindow format
 function rangeToWindow(range: TimeRange): "last3" | "12month" | "ytd" {
