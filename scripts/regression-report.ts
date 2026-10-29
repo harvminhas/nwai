@@ -2189,8 +2189,32 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   // Test saved answers API shape
   console.log("\nTest: Saved answers API structure");
   try {
-    // Just verify the route file exists and has expected exports
-    console.log("  ✓ Saved answers API structure validated");
+    // Check the route file exists and exports expected methods
+    const fs = await import("fs/promises");
+    const routePath = "../src/app/api/user/saved-answers/route.ts";
+    const routeContent = await fs.readFile(routePath, "utf-8");
+    
+    if (!routeContent.includes("export async function GET") ||
+        !routeContent.includes("export async function POST") ||
+        !routeContent.includes("export async function DELETE")) {
+      console.log("  ❌ FAIL: Saved answers route missing expected exports");
+      errors.push("Saved answers route: missing GET/POST/DELETE exports");
+      smokeTestErrors++;
+    } else {
+      console.log("  ✓ Saved answers route has GET/POST/DELETE methods");
+    }
+    
+    // Verify SavedAnswer interface shape
+    if (!routeContent.includes("question:") ||
+        !routeContent.includes("answer:") ||
+        !routeContent.includes("createdAt:")) {
+      console.log("  ❌ FAIL: SavedAnswer interface missing expected fields");
+      errors.push("SavedAnswer: missing question/answer/createdAt fields");
+      smokeTestErrors++;
+    } else {
+      console.log("  ✓ SavedAnswer has expected shape");
+    }
+    
   } catch (err) {
     console.log(`  ❌ FAIL: Exception: ${err instanceof Error ? err.message : String(err)}`);
     errors.push(`Saved answers API test failed: ${err instanceof Error ? err.message : String(err)}`);
