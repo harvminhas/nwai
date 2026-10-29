@@ -2301,74 +2301,182 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   // Test multi-month balance reconstruction
   console.log("\nTest: Multi-month balance reconstruction");
   try {
-    let accountsTested = 0;
-    let gapsFound = 0;
-    let negativeErrors = 0;
+    // Fetch all completed statements to verify per-statement reconciliation
+    const statementsSnap = await db
+      .collection("statements")
+      .where("userId", "==", uid)
+      .where("status", "==", "completed")
+      .get();
     
-    // For each account, check reconstruction properties
+    const statements = statementsSnap.docs.map(doc => ({
+      id: doc.id,
+      yearMonth: doc.get("yearMonth"),
+      parsedData: doc.get("parsedData"),
+      accountSlug: doc.get("accountSlug"),
+    }));
+    
+    console.log(`  Fetched ${statements.length} completed statements`);
+    
+    let accountsTested = 0;
+    let statementsChecked = 0;
+    let derivedEntriesChecked = 0;
+    let reconciliationErrors = 0;
+    let negativeErrors = 0;
+    let boundaryErrors = 0;
+    let overwriteErrors = 0;
+    
+    // Map statement months to their statements for lookup
+    const statementsByAccountMonth = new Map<string, any>();
+    for (const stmt of statements) {
+      const key = `${stmt.accountSlug}:${stmt.yearMonth}`;
+      statementsByAccountMonth.set(key, stmt);
+    }
+    
+    // For each account with derived entries, verify per-statement
     for (const account of profile.accountBalanceHistory || []) {
+      const derivedEntries = account.entries.filter((e: any) => e.derived);
+      if (derivedEntries.length === 0) continue;
+      
       accountsTested++;
       
-      // Get transactions for this account
-      const accountTxns = profile.expenseTxns.filter((t: any) => t.accountSlug === account.slug);
+      console.log(`\n  📊 ${account.label} (${account.slug}): ${derivedEntries.length} derived entries`);
       
-      if (accountTxns.length === 0) continue;
-      
-      // Get months with transactions
-      const txnMonths = new Set(accountTxns.map((t: any) => t.txMonth));
-      
-      // Get balance entry months
-      const balanceMonths = new Set(account.entries.map((e: any) => e.yearMonth));
-      
-      // Find gaps: months with transactions but no balance entry
-      for (const txnMonth of txnMonths) {
-        if (!balanceMonths.has(txnMonth)) {
-          // Check if this month is between two balance points (flat carry-forward)
-          const sortedBalanceMonths = Array.from(balanceMonths).sort();
-          const isInRange = sortedBalanceMonths.some((bm, idx) => {
-            if (idx === 0) return false;
-            const prevMonth = sortedBalanceMonths[idx - 1];
-            return txnMonth > prevMonth && txnMonth < bm;
-          });
-          
-          if (isInRange) {
-            gapsFound++;
-            console.log(`  ⚠️  Gap found: ${account.label} has transactions in ${txnMonth} but no balance entry`);
-            console.log(`     Balance entries: ${sortedBalanceMonths.join(", ")}`);
-            errors.push(`Multi-month balance gap in ${account.label} at ${txnMonth}`);
-            smokeTestErrors++;
-          }
-        }
-      }
-      
-      // Check derived balances for sanity
-      const derivedEntries = account.entries.filter((e: any) => e.derived);
       const accountType = account.accountType?.toLowerCase() || "";
       const isSavingsOrChecking = ["savings", "checking", "chequing"].includes(accountType);
       
+      // Get real (non-derived) balance months for this account
+      const realBalanceMonths = new Set(
+        account.entries.filter((e: any) => !e.derived).map((e: any) => e.yearMonth)
+      );
+      
+      // Group derived entries by which statement could have produced them
+      // (the statement at or after the derived month)
+      const derivedByStatement = new Map<string, any[]>();
+      
       for (const derived of derivedEntries) {
-        // Sanity: savings/checking can't be negative
-        if (isSavingsOrChecking && derived.balance < 0) {
-          negativeErrors++;
-          console.log(`  ❌ FAIL: ${account.label} (${accountType}) has negative derived balance`);
-          console.log(`     Month: ${derived.yearMonth}`);
-          console.log(`     Balance: ${derived.balance.toFixed(2)}`);
-          errors.push(`Negative derived balance for savings/checking ${account.label} at ${derived.yearMonth}`);
-          smokeTestErrors++;
+        // Find the statement that produced this derived entry
+        // It's the first statement month >= derived month for this account
+        let statementMonth = null;
+        const sortedStmtMonths = Array.from(realBalanceMonths).sort();
+        
+        for (const month of sortedStmtMonths) {
+          if (month >= derived.yearMonth) {
+            statementMonth = month;
+            break;
+          }
         }
+        
+        if (!statementMonth) continue;
+        
+        if (!derivedByStatement.has(statementMonth)) {
+          derivedByStatement.set(statementMonth, []);
+        }
+        derivedByStatement.get(statementMonth)!.push(derived);
       }
       
-      // Log derived entries for inspection
-      if (derivedEntries.length > 0) {
-        const months = derivedEntries.map((e: any) => e.yearMonth).sort().join(", ");
-        console.log(`  ℹ️  ${account.label} (${account.slug}): ${derivedEntries.length} derived entries at ${months}`);
+      // For each statement that produced derived entries, verify
+      for (const [statementMonth, derivedList] of derivedByStatement.entries()) {
+        const stmtKey = `${account.slug}:${statementMonth}`;
+        const stmt = statementsByAccountMonth.get(stmtKey);
+        
+        if (!stmt || !stmt.parsedData) {
+          console.log(`    ⚠️  Statement ${statementMonth}: not found or no parsed data`);
+          continue;
+        }
+        
+        statementsChecked++;
+        
+        const parsed = stmt.parsedData;
+        const closingBalance = parsed.netWorth;
+        
+        // Get statement's own transactions
+        const stmtExpenses = parsed.expenses?.transactions ?? [];
+        const stmtIncome = parsed.income?.transactions ?? [];
+        
+        // Build transaction net flows by month
+        const txnsByMonth = new Map<string, number>();
+        
+        for (const exp of stmtExpenses) {
+          if (!exp.date) continue;
+          const month = exp.date.slice(0, 7);
+          const current = txnsByMonth.get(month) || 0;
+          txnsByMonth.set(month, current - exp.amount);
+        }
+        
+        for (const inc of stmtIncome) {
+          if (!inc.date) continue;
+          const month = inc.date.slice(0, 7);
+          const current = txnsByMonth.get(month) || 0;
+          txnsByMonth.set(month, current + inc.amount);
+        }
+        
+        const txnMonths = Array.from(txnsByMonth.keys()).sort();
+        const firstTxnMonth = txnMonths[0];
+        const lastTxnMonth = txnMonths[txnMonths.length - 1];
+        
+        console.log(`    Statement ${statementMonth}: txns ${firstTxnMonth}-${lastTxnMonth}, ${derivedList.length} derived`);
+        
+        // Verify each derived entry from this statement
+        for (const derived of derivedList) {
+          derivedEntriesChecked++;
+          
+          // Check 1: Within statement's transaction range
+          if (derived.yearMonth < firstTxnMonth || derived.yearMonth > lastTxnMonth) {
+            boundaryErrors++;
+            console.log(`      ❌ ${derived.yearMonth}: OUTSIDE txn range [${firstTxnMonth}, ${lastTxnMonth}]`);
+            errors.push(`${account.label} ${derived.yearMonth}: outside statement txn range`);
+            smokeTestErrors++;
+            continue;
+          }
+          
+          // Check 2: Doesn't overwrite a real balance
+          if (realBalanceMonths.has(derived.yearMonth)) {
+            overwriteErrors++;
+            console.log(`      ❌ ${derived.yearMonth}: OVERWRITES real balance`);
+            errors.push(`${account.label} ${derived.yearMonth}: overwrites real balance`);
+            smokeTestErrors++;
+            continue;
+          }
+          
+          // Check 3: Savings/checking must be >= 0
+          if (isSavingsOrChecking && derived.balance < 0) {
+            negativeErrors++;
+            console.log(`      ❌ ${derived.yearMonth}: NEGATIVE ${derived.balance.toFixed(2)}`);
+            errors.push(`${account.label} ${derived.yearMonth}: negative savings/checking`);
+            smokeTestErrors++;
+            continue;
+          }
+          
+          // Check 4: Reconcile by walking backward from closing balance
+          // Sum all transaction months AFTER this derived month
+          let txnChangeAfter = 0;
+          for (const [month, netFlow] of txnsByMonth.entries()) {
+            if (month > derived.yearMonth && month <= statementMonth) {
+              txnChangeAfter += netFlow;
+            }
+          }
+          
+          const recomputed = closingBalance - txnChangeAfter;
+          const diff = Math.abs(recomputed - derived.balance);
+          
+          if (diff > 1) {
+            reconciliationErrors++;
+            console.log(`      ❌ ${derived.yearMonth}: derived ${derived.balance.toFixed(2)} vs recomputed ${recomputed.toFixed(2)} (diff ${diff.toFixed(2)})`);
+            errors.push(`${account.label} ${derived.yearMonth}: reconciliation error ${diff.toFixed(2)}`);
+            smokeTestErrors++;
+          } else {
+            console.log(`      ✓ ${derived.yearMonth}: ${derived.balance.toFixed(2)} reconciles`);
+          }
+        }
       }
     }
     
-    if (gapsFound > 0 || negativeErrors > 0) {
-      console.log(`  ⚠️  Multi-month balance: ${gapsFound} gaps, ${negativeErrors} negative errors`);
+    console.log(`\n  Summary: ${accountsTested} accounts, ${statementsChecked} statements, ${derivedEntriesChecked} derived entries checked`);
+    
+    if (reconciliationErrors > 0 || negativeErrors > 0 || boundaryErrors > 0 || overwriteErrors > 0) {
+      console.log(`  ❌ ERRORS: ${reconciliationErrors} reconciliation, ${negativeErrors} negative, ${boundaryErrors} boundary, ${overwriteErrors} overwrite`);
     } else {
-      console.log(`  ✓ Multi-month balance reconstruction: ${accountsTested} accounts checked, no issues`);
+      console.log(`  ✅ All derived entries reconcile correctly`);
     }
   } catch (err) {
     console.log(`  ❌ FAIL: Exception: ${err instanceof Error ? err.message : String(err)}`);
