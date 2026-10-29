@@ -2044,6 +2044,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         profile,
         reviewContext.debtPaymentReviews,
         reviewContext.incomeDepositReviews,
+        [], // No external account labels in test
         {
           income: breakdown.incomeAmount,
           fixed: breakdown.buckets.find(b => b.bucket === "fixed")?.monthlyAverage || 0,
@@ -2106,6 +2107,15 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       console.log(`  Components total: ${componentsTotal.toFixed(2)}`);
       console.log(`  Unexplained: ${unexplained.toFixed(2)} (${unexplainedPct.toFixed(1)}% of gap)`);
       console.log(`  Reconciles: ${gapReconciliation.reconciles ? '✓' : '✗'}`);
+      
+      // Check flagged transfers
+      console.log(`\n  Flagged transfers: ${gapReconciliation.flaggedTransfers.length}`);
+      if (gapReconciliation.flaggedTransfers.length > 0) {
+        console.log(`  Transfers to untracked accounts detected (should surface for review):`);
+        for (const flagged of gapReconciliation.flaggedTransfers) {
+          console.log(`    ${flagged.date} ${flagged.destinationNumber.padEnd(8)} $${flagged.amount.toFixed(2).padStart(10)} [${flagged.reason}]`);
+        }
+      }
       
       if (gapReconciliation.reconciles && Math.abs(unexplained) <= unexplainedThreshold && unexplainedPct <= unexplainedPctThreshold) {
         console.log(`  ✅ ${label} passed\n`);

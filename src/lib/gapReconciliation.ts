@@ -14,6 +14,7 @@ import type { TimeRange } from "./rangeUtils";
 import { getRangeMonths } from "./rangeUtils";
 import type { AccountBalanceHistory, MonthlyHistoryEntry, FinancialProfileCache } from "./financialProfile";
 import type { DebtPaymentReview } from "./types";
+import type { ExternalAccountLabel, FlaggedTransfer } from "./externalAccounts";
 import { computeMonthlySavings } from "./savingsCalculations";
 import { buildSpendingSummary } from "./spendingSummary";
 import { buildIncomeSummary } from "./incomeSummary";
@@ -45,6 +46,9 @@ export interface GapReconciliation {
   unexplained: number;
   reconciles: boolean; // abs(unexplained) < 1
   
+  // Flagged transfers for review
+  flaggedTransfers: FlaggedTransfer[];
+  
   // Diagnostic per-month data
   perMonthDiagnostic?: Array<{
     month: string;
@@ -68,6 +72,7 @@ export function computeGapReconciliation(
   profile: FinancialProfileCache,
   debtPaymentReviews: DebtPaymentReview[],
   incomeDepositReviews: Map<string, string>,
+  externalAccountLabels: ExternalAccountLabel[],
   bucketTotals: {
     income: number;
     fixed: number;
@@ -492,6 +497,56 @@ export function computeGapReconciliation(
     });
   }
   
+  // Build flagged transfers list
+  const flaggedTransfers: FlaggedTransfer[] = [];
+  const labelMap = new Map(externalAccountLabels.map(l => [l.accountNumber, l]));
+  
+  for (const data of perMonthData) {
+    for (const transfer of data.transfersToUntracked) {
+      const label = labelMap.get(transfer.destination);
+      
+      // Flag if: (1) new destination (no label), or (2) unusual amount (>3x typical)
+      let shouldFlag = false;
+      let reason: "new_destination" | "unusual_amount" = "new_destination";
+      let typicalAmount: number | undefined;
+      
+      if (!label || !label.confirmed) {
+        shouldFlag = true;
+        reason = "new_destination";
+      } else if (label.typicalAmount && transfer.amount > label.typicalAmount * 3) {
+        shouldFlag = true;
+        reason = "unusual_amount";
+        typicalAmount = label.typicalAmount;
+      }
+      
+      if (shouldFlag) {
+        // Find the source account
+        const sourceTxn = profile.expenseTxns.find(t => 
+          t.txMonth === data.month && 
+          (t.merchant || "").includes(transfer.destination)
+        );
+        
+        const fromAccount = sourceTxn 
+          ? profile.accountSnapshots.find(a => a.slug === sourceTxn.accountSlug)?.accountName || sourceTxn.accountSlug
+          : "Unknown";
+        
+        const fromAccountSlug = sourceTxn?.accountSlug || "";
+        
+        flaggedTransfers.push({
+          date: transfer.date,
+          amount: transfer.amount,
+          fromAccount,
+          fromAccountSlug,
+          destinationNumber: transfer.destination,
+          merchant: transfer.merchant,
+          month: data.month,
+          reason,
+          typicalAmount,
+        });
+      }
+    }
+  }
+  
   return {
     income: bucketTotals.income,
     fixed: bucketTotals.fixed,
@@ -505,6 +560,7 @@ export function computeGapReconciliation(
     componentsTotal,
     unexplained,
     reconciles: Math.abs(unexplained) < 1,
+    flaggedTransfers,
     perMonthDiagnostic: perMonthData as any,
   };
 }
