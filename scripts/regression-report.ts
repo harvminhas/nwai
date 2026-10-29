@@ -2074,8 +2074,28 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         errors.push(`Money coach ${range}: gap reconciliation math error`);
       }
       
+      // Check: unexplained must be reasonable
+      // Fail if |Unexplained| > 10% of |Gap| or > $500/mo
+      const unexplainedPct = Math.abs(gap) > 0 ? (Math.abs(unexplained) / Math.abs(gap)) * 100 : 0;
+      const unexplainedThreshold = 500;
+      const unexplainedPctThreshold = 10;
+      
+      if (Math.abs(unexplained) > unexplainedThreshold || unexplainedPct > unexplainedPctThreshold) {
+        console.log(`  ❌ FAIL: Unexplained amount too large`);
+        console.log(`    Gap: ${gap.toFixed(2)}`);
+        console.log(`    Unexplained: ${unexplained.toFixed(2)}`);
+        console.log(`    Unexplained as % of gap: ${unexplainedPct.toFixed(1)}%`);
+        console.log(`    Threshold: $${unexplainedThreshold}/mo or ${unexplainedPctThreshold}% of gap`);
+        moneyCoachErrors++;
+        drawerErrors++;
+        errors.push(`Money coach ${range}: unexplained ${Math.abs(unexplained).toFixed(2)} exceeds threshold`);
+      }
+      
       // Print breakdown
       console.log(`  Income: ${breakdown.incomeAmount.toFixed(2)}`);
+      console.log(`  Fixed: ${gapReconciliation.fixed.toFixed(2)}`);
+      console.log(`  Essentials: ${gapReconciliation.essentials.toFixed(2)}`);
+      console.log(`  Flexible: ${gapReconciliation.flexible.toFixed(2)}`);
       console.log(`  Expected savings: ${expectedSavings.toFixed(2)}`);
       console.log(`  Actual savings: ${actualSavings.toFixed(2)}`);
       console.log(`  Gap: ${gap.toFixed(2)}`);
@@ -2084,13 +2104,13 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         console.log(`    ${c.name}: ${c.amount > 0 ? '+' : ''}${c.amount.toFixed(2)}`);
       });
       console.log(`  Components total: ${componentsTotal.toFixed(2)}`);
-      console.log(`  Unexplained: ${unexplained.toFixed(2)}`);
+      console.log(`  Unexplained: ${unexplained.toFixed(2)} (${unexplainedPct.toFixed(1)}% of gap)`);
       console.log(`  Reconciles: ${gapReconciliation.reconciles ? '✓' : '✗'}`);
       
-      if (gapReconciliation.reconciles) {
-        console.log(`  ✅ ${label} passed: gap reconciles within $1\n`);
+      if (gapReconciliation.reconciles && Math.abs(unexplained) <= unexplainedThreshold && unexplainedPct <= unexplainedPctThreshold) {
+        console.log(`  ✅ ${label} passed\n`);
       } else {
-        console.log(`  ⚠️  ${label} warning: unexplained remainder > $1\n`);
+        console.log(`  ⚠️  ${label} has issues (see errors above)\n`);
       }
       
     } catch (err) {

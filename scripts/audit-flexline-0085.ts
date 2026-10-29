@@ -269,15 +269,15 @@ async function auditFlexLine(uid: string) {
     totalFees += data.fees;
     
     console.log(
-      data.month.padEnd(10) +
-      `$${data.openingBalance.toFixed(2)}`.padStart(12) +
-      `$${data.closingBalance.toFixed(2)}`.padStart(12) +
-      `$${data.paymentsIn.toFixed(2)}`.padStart(12) +
-      `$${data.draws.toFixed(2)}`.padStart(12) +
-      `$${data.interest.toFixed(2)}`.padStart(10) +
-      `$${data.fees.toFixed(2)}`.padStart(10) +
+      String(data.month ?? '-').padEnd(10) +
+      `$${(data.openingBalance ?? 0).toFixed(2)}`.padStart(12) +
+      `$${(data.closingBalance ?? 0).toFixed(2)}`.padStart(12) +
+      `$${(data.paymentsIn ?? 0).toFixed(2)}`.padStart(12) +
+      `$${(data.draws ?? 0).toFixed(2)}`.padStart(12) +
+      `$${(data.interest ?? 0).toFixed(2)}`.padStart(10) +
+      `$${(data.fees ?? 0).toFixed(2)}`.padStart(10) +
       (data.reconciles ? "✓" : "✗").padStart(8) +
-      `$${data.reconciliationError.toFixed(2)}`.padStart(10)
+      `$${(data.reconciliationError ?? 0).toFixed(2)}`.padStart(10)
     );
   }
   

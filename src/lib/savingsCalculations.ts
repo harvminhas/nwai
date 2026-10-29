@@ -255,6 +255,8 @@ export interface MonthlySavingsResult {
   netCashChange: number;
   netDebtChange: number;
   contributionsToOutside: number;
+  /** Prior month used for balance comparison */
+  priorMonth: string;
   /** Transactions that need user confirmation */
   needsConfirmation: SavingsConfirmation[];
   /** Detailed breakdown by component */
@@ -353,6 +355,7 @@ export function computeMonthlySavings(
       netCashChange: 0,
       netDebtChange: 0,
       contributionsToOutside: 0,
+      priorMonth: '',
       needsConfirmation: [],
       details: { cashAccounts: [], debtAccounts: [], contributions: [] },
     };
@@ -502,6 +505,7 @@ export function computeMonthlySavings(
     netCashChange: normalize(netCashChange),
     netDebtChange: normalize(netDebtChange),
     contributionsToOutside: normalize(contributionsToOutside),
+    priorMonth: prior.yearMonth,
     needsConfirmation: needsConfirmationList,
     details: {
       cashAccounts: cashDetails.map(d => ({ ...d, change: normalize(d.change) })),

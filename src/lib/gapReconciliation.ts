@@ -65,12 +65,13 @@ export function computeGapReconciliation(
   }
 ): GapReconciliation {
   const rangeMonths = getRangeMonths(range, Array.from(new Set([...(expenseTxns ?? []), ...(incomeTxns ?? [])].map(t => t.txMonth))).sort());
+  const numMonths = rangeMonths.length || 1;
   
   // Filter transactions to the range
   const rangeExpenses = expenseTxns.filter(t => rangeMonths.includes(t.txMonth));
   const rangeIncome = incomeTxns.filter(t => rangeMonths.includes(t.txMonth));
   
-  // Expected vs actual savings
+  // Expected vs actual savings (already monthly averages from bucketTotals)
   const expectedSavings = bucketTotals.income - bucketTotals.fixed - bucketTotals.essentials - bucketTotals.flexible;
   const actualSavings = bucketTotals.netSavings;
   const gap = actualSavings - expectedSavings;
@@ -101,77 +102,56 @@ export function computeGapReconciliation(
     );
   });
   
-  const borrowing = borrowingTxns.reduce((sum, t) => sum + t.amount, 0);
-  if (borrowing > 0.01) {
+  const borrowingTotal = borrowingTxns.reduce((sum, t) => sum + t.amount, 0);
+  const borrowingMonthly = borrowingTotal / numMonths;
+  
+  if (borrowingMonthly > 0.01) {
     components.push({
       name: "Borrowing",
-      amount: borrowing,
-      description: "LOC/FlexLine draws, credit advances",
+      amount: borrowingMonthly,
+      description: "LOC/FlexLine draws, credit advances (monthly avg)",
     });
   }
   
   // 2. Debt principal paid
   // Payments to debt accounts (paymentsMade) - already counted in expenses as "Debt Payments"
-  // but not reflected in bucket totals if excluded by CORE_EXCLUDE_RE
-  const debtPayments = rangeExpenses.filter(t => {
+  // but excluded from bucket totals by CORE_EXCLUDE_RE (transfers category)
+  const debtPaymentsTxns = rangeExpenses.filter(t => {
     const cat = (t.category || "").toLowerCase();
     return cat === "debt payments";
-  }).reduce((sum, t) => sum + Math.abs(t.amount), 0);
+  });
   
-  if (debtPayments > 0.01) {
+  const debtPaymentsTotal = debtPaymentsTxns.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+  const debtPaymentsMonthly = debtPaymentsTotal / numMonths;
+  
+  if (debtPaymentsMonthly > 0.01) {
     components.push({
       name: "Debt principal paid",
-      amount: -debtPayments, // Negative because it reduces available cash
-      description: "Credit card and loan payments",
+      amount: -debtPaymentsMonthly, // Negative because it reduces available cash
+      description: "Credit card and loan payments (monthly avg)",
     });
   }
   
   // 3. Transfers to savings/investments
-  const savingsTransfers = rangeExpenses.filter(t => {
+  const savingsTransfersTxns = rangeExpenses.filter(t => {
     const cat = (t.category || "").toLowerCase();
     return cat === "investments & savings";
-  }).reduce((sum, t) => sum + Math.abs(t.amount), 0);
+  });
   
-  if (savingsTransfers > 0.01) {
+  const savingsTransfersTotal = savingsTransfersTxns.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+  const savingsTransfersMonthly = savingsTransfersTotal / numMonths;
+  
+  if (savingsTransfersMonthly > 0.01) {
     components.push({
       name: "Transfers to savings/investments",
-      amount: -savingsTransfers, // Negative because money leaves checking
-      description: "RRSP, TFSA, investment contributions",
+      amount: -savingsTransfersMonthly, // Negative because money leaves checking
+      description: "RRSP, TFSA, investment contributions (monthly avg)",
     });
   }
   
-  // 4. Cash & ATM
-  const cashWithdrawals = rangeExpenses.filter(t => {
-    const cat = (t.category || "").toLowerCase();
-    return cat === "cash & atm";
-  }).reduce((sum, t) => sum + Math.abs(t.amount), 0);
-  
-  if (cashWithdrawals > 0.01) {
-    components.push({
-      name: "Cash & ATM",
-      amount: -cashWithdrawals, // Negative because cash leaves accounts
-      description: "Cash withdrawals and ATM fees",
-    });
-  }
-  
-  // 5. Uncategorized
-  const uncategorized = rangeExpenses.filter(t => {
-    const cat = (t.category || "").toLowerCase();
-    return cat === "other" || cat === "uncategorized" || !cat;
-  }).reduce((sum, t) => sum + Math.abs(t.amount), 0);
-  
-  if (uncategorized > 0.01) {
-    components.push({
-      name: "Uncategorized",
-      amount: -uncategorized, // Negative because it's spending
-      description: "Transactions without categories",
-    });
-  }
-  
-  // 6. Investment value changes
-  // This would require tracking investment account balance changes vs contributions
-  // For now, we'll compute this as a residual if we have investment accounts
-  // TODO: Implement proper investment value tracking
+  // NOTE: Cash & ATM and Uncategorized are NOT included here because they are
+  // already counted in the Flexible/Essentials buckets. Including them would
+  // double-count these transactions.
   
   // Calculate unexplained
   const componentsTotal = components.reduce((sum, c) => sum + c.amount, 0);
@@ -182,7 +162,7 @@ export function computeGapReconciliation(
     components.push({
       name: "Unexplained",
       amount: unexplained,
-      description: "Rounding, timing differences, or untracked changes",
+      description: "Account balance changes, timing differences, or untracked transactions",
     });
   }
   
