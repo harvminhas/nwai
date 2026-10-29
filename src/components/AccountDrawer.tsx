@@ -321,7 +321,7 @@ export function AccountDrawer({ isOpen, onClose, data }: AccountDrawerProps) {
       />
 
       {/* Drawer */}
-      <div className="fixed inset-y-0 right-0 w-full sm:w-[640px] lg:w-[760px] bg-white shadow-2xl z-50 overflow-y-auto">
+      <div className="fixed inset-y-0 right-0 w-full sm:w-[75vw] sm:max-w-[1100px] bg-white shadow-2xl z-50 overflow-y-auto">
         {/* Sticky Header */}
         <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 z-10">
           <div className="flex items-start justify-between gap-4">
