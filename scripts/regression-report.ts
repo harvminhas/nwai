@@ -15,6 +15,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { getFirebaseAdmin } from "../src/lib/firebase-admin";
 import { getFinancialProfile } from "../src/lib/financialProfile";
+import { loadUserReviewContext } from "../src/lib/userReviewContext";
 import { validateDerivedBalances } from "../src/lib/types";
 import { computeMoneyCoachBreakdown } from "../src/lib/moneyCoach";
 import { computeGapReconciliation } from "../src/lib/gapReconciliation";
@@ -1912,13 +1913,17 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   // Test 4: Net Savings drawer badge and month label validation
   console.log("Test 4: Net Savings drawer - badge and month label validation");
   
+  // Get the last 3 months of data
+  const availableMonths = profile.monthlyHistory.map(m => m.yearMonth).sort();
+  const last3Months = availableMonths.slice(-3);
+  
   // Compute window savings to get the monthly breakdown
   const { monthlyBreakdown } = computeWindowSavings(
     profile.monthlyHistory,
     profile.accountBalanceHistory,
     profile.expenseTxns,
-    "3mo",
-    [] // No confirmed items needed for regression check
+    last3Months,
+    new Map() // No confirmed items needed for regression check
   );
   
   let badgeErrors = 0;
@@ -2014,16 +2019,23 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     try {
       console.log(`Testing ${label} (${range})...`);
       
+      // Get available months and range months
+      const availableMonths = profile.monthlyHistory.map(m => m.yearMonth).sort();
+      const rangeMonths = getRangeMonths(range, availableMonths);
+      
+      // Load review context (same as route does)
+      const reviewContext = await loadUserReviewContext(uid, db);
+      
       // Call computeMoneyCoachBreakdown same way the API does
       const breakdown = computeMoneyCoachBreakdown(
         profile,
-        userReviews,
+        reviewContext.debtPaymentReviews,
         profile.incomeTxns,
         profile.accountSnapshots,
         profile.homeCurrency || "CAD",
-        incomeDepositReviews,
-        getRangeMonths(range, profile.monthlyHistory.map(m => m.yearMonth)),
-        [] // savings confirmations
+        reviewContext.incomeDepositReviews,
+        rangeMonths,
+        reviewContext.savingsConfirmedItems
       );
       
       // Call computeGapReconciliation same way the API does
@@ -2032,7 +2044,6 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         profile.expenseTxns,
         profile.incomeTxns,
         profile.accountSnapshots,
-        profile.monthlyHistory.map(m => m.yearMonth),
         {
           income: breakdown.incomeAmount,
           fixed: breakdown.buckets.find(b => b.bucket === "fixed")?.monthlyAverage || 0,

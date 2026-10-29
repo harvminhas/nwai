@@ -86,7 +86,7 @@ async function auditFlexLine(uid: string) {
       const aMonth = a.parsedData?.statementMonth || "";
       const bMonth = b.parsedData?.statementMonth || "";
       return aMonth.localeCompare(bMonth);
-    });
+    }) as Array<{ id: string; parsedData?: any; [key: string]: any }>;
 
   if (flexLineStatements.length === 0) {
     console.log("❌ No statements found for FlexLine account ending 0085");
@@ -123,7 +123,7 @@ async function auditFlexLine(uid: string) {
   const allStatements = statementsSnap.docs.map(doc => ({
     id: doc.id,
     ...doc.data(),
-  }));
+  })) as Array<{ id: string; parsedData?: any; [key: string]: any }>;
 
   // Analyze each month
   const monthlyData: MonthlyAnalysis[] = [];
@@ -141,8 +141,8 @@ async function auditFlexLine(uid: string) {
     const paymentsIn = parsed.paymentsMade || 0;
     
     // Draws are expenses (negative amounts on a debt account)
-    const expenses = parsed.expenses || [];
-    const draws = expenses
+    const expensesList = parsed.expenses?.transactions || [];
+    const draws = expensesList
       .filter((e: any) => {
         const cat = (e.category || "").toLowerCase();
         const desc = (e.merchant || "").toLowerCase();
@@ -158,7 +158,7 @@ async function auditFlexLine(uid: string) {
     const drawDescriptions = draws.map((d: any) => `${d.date}: ${d.merchant} $${Math.abs(d.amount).toFixed(2)}`);
     
     // Interest charges
-    const interest = expenses
+    const interest = expensesList
       .filter((e: any) => {
         const cat = (e.category || "").toLowerCase();
         const desc = (e.merchant || "").toLowerCase();
@@ -167,7 +167,7 @@ async function auditFlexLine(uid: string) {
       .reduce((sum: number, e: any) => sum + Math.abs(e.amount), 0);
     
     // Fees (excluding interest)
-    const fees = expenses
+    const fees = expensesList
       .filter((e: any) => {
         const cat = (e.category || "").toLowerCase();
         const desc = (e.merchant || "").toLowerCase();
@@ -196,7 +196,7 @@ async function auditFlexLine(uid: string) {
         if (!otherParsed || otherParsed.accountSlug === parsed.accountSlug) continue;
         
         // Check income (deposits)
-        const deposits = otherParsed.income || [];
+        const deposits = otherParsed.income?.transactions || [];
         for (const dep of deposits) {
           const depDate = dep.date;
           const depAmount = dep.amount;
