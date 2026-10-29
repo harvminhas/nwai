@@ -32,8 +32,66 @@ import type { MoneyCoachBucket } from "../src/lib/moneyCoachBuckets";
 import type { DebtPaymentReview } from "../src/lib/types";
 import { getParentCategory } from "../src/lib/categoryTaxonomy";
 import { getRangeMonths, getCurrentMonth, type TimeRange } from "../src/lib/rangeUtils";
+import { buildAccountSlug, getAccountSlug } from "../src/lib/accountSlug";
 
 const BASELINE_PATH = path.join(__dirname, "regression-baseline.json");
+
+/**
+ * Check slug stability: verify that stored accountSlug matches what would be
+ * computed from the stored (possibly masked) accountId. This ensures masking
+ * doesn't break account continuity.
+ */
+async function checkSlugStability(uid: string, db: FirebaseFirestore.Firestore): Promise<string[]> {
+  const errors: string[] = [];
+  
+  const statementsSnap = await db
+    .collection("statements")
+    .where("userId", "==", uid)
+    .where("status", "==", "completed")
+    .get();
+    
+  console.log(`🔍 Checking slug stability for ${statementsSnap.docs.length} statements...\n`);
+  
+  for (const doc of statementsSnap.docs) {
+    const data = doc.data();
+    const parsedData = data.parsedData as Record<string, any> | undefined;
+    
+    if (!parsedData) continue;
+    
+    const storedSlug = parsedData.accountSlug as string | undefined;
+    const recomputedSlug = buildAccountSlug(
+      parsedData.bankName,
+      parsedData.accountId,
+      parsedData.accountName,
+      parsedData.accountType
+    );
+    
+    // If accountSlug is stored, it should match what we'd compute
+    if (storedSlug && storedSlug !== recomputedSlug) {
+      errors.push(
+        `Statement ${doc.id} slug mismatch: stored="${storedSlug}" vs computed="${recomputedSlug}" ` +
+        `(accountId="${parsedData.accountId}", bank="${parsedData.bankName}")`
+      );
+    }
+    
+    // If accountSlug is missing, this is legacy data (not an error, just log it)
+    if (!storedSlug && parsedData.accountId) {
+      // No-op: legacy statements without stored slug are allowed
+    }
+  }
+  
+  if (errors.length === 0) {
+    console.log(`   ✅ All stored slugs match recomputed slugs\n`);
+  } else {
+    console.log(`   ❌ ${errors.length} slug mismatches found:\n`);
+    errors.slice(0, 10).forEach(err => console.log(`      ${err}`));
+    if (errors.length > 10) {
+      console.log(`      ... and ${errors.length - 10} more\n`);
+    }
+  }
+  
+  return errors;
+}
 
 interface BucketReport {
   bucket: MoneyCoachBucket;
@@ -77,6 +135,10 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
 
   const { db } = getFirebaseAdmin();
   const errors: string[] = []; // Collect errors, exit at the end
+  
+  // Check slug stability first
+  const slugErrors = await checkSlugStability(uid, db);
+  errors.push(...slugErrors);
   
   // Get financial profile
   const profile = await getFinancialProfile(uid, db);

@@ -22,6 +22,7 @@
 
 import { getFirebaseAdmin } from "../src/lib/firebase-admin";
 import { maskAccountNumber } from "../src/lib/accountMasking";
+import { buildAccountSlug } from "../src/lib/accountSlug";
 
 const args = process.argv.slice(2);
 const uid = args.find(arg => !arg.startsWith("--"));
@@ -79,10 +80,19 @@ async function main() {
     if (accountId && accountId.length > 4) {
       const masked = maskAccountNumber(accountId);
       if (masked && masked !== accountId) {
+        // Compute slug from ORIGINAL unmasked accountId
+        const computedSlug = buildAccountSlug(
+          parsedData?.bankName as string | undefined,
+          accountId,
+          parsedData?.accountName as string | undefined,
+          parsedData?.accountType as string | undefined
+        );
+        
         toMask.push({
           id: doc.id,
           originalAccountId: accountId,
           maskedAccountId: masked,
+          computedSlug,
           slug: slug || "no-slug",
           userId: data.userId as string,
         });
@@ -130,7 +140,7 @@ async function main() {
   if (DRY_RUN) {
     console.log("DRY RUN - would mask the following account numbers:");
     for (const item of toMask.slice(0, 10)) {
-      console.log(`  ${item.id}: ${item.originalAccountId} → ${item.maskedAccountId} (slug: ${item.slug})`);
+      console.log(`  ${item.id}: ${item.originalAccountId} → ${item.maskedAccountId} (slug: ${item.computedSlug || item.slug})`);
     }
     if (toMask.length > 10) {
       console.log(`  ... and ${toMask.length - 10} more`);
@@ -159,10 +169,17 @@ async function main() {
         const data = doc.data()!;
         const parsedData = data.parsedData as Record<string, any>;
 
-        // Update only the accountId field
-        batch.update(docRef, {
+        // CRITICAL: Store computed slug BEFORE masking changes accountId
+        // so all consumers can read it instead of recomputing from masked ID
+        const updatePayload: Record<string, any> = {
           "parsedData.accountId": item.maskedAccountId,
-        });
+        };
+        
+        if (item.computedSlug) {
+          updatePayload["parsedData.accountSlug"] = item.computedSlug;
+        }
+        
+        batch.update(docRef, updatePayload);
 
         updated++;
       } catch (err) {

@@ -11,7 +11,7 @@
 
 import type * as Firestore from "firebase-admin/firestore";
 import type { ParsedStatementData } from "./types";
-import { buildAccountSlug, normalizeAccountId } from "./accountSlug";
+import { buildAccountSlug, getAccountSlug, normalizeAccountId } from "./accountSlug";
 import { inferCurrencyFromBankName } from "./currencyUtils";
 import { getYearMonth } from "./consolidate";
 import { txFingerprint } from "./txFingerprint";
@@ -144,7 +144,7 @@ function docYearMonth(d: FirebaseFirestore.DocumentData): string {
 function resolveSlug(d: Record<string, unknown>, parsed: ParsedStatementData): string {
   const normalizedId = normalizeAccountId(parsed.accountId);
   if (normalizedId !== "unknown" && /^\d{4}$/.test(normalizedId)) return normalizedId;
-  return (d.accountSlug as string | undefined) || buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
+  return (d.accountSlug as string | undefined) || getAccountSlug(parsed);
 }
 
 /**

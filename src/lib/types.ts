@@ -294,6 +294,12 @@ export interface ParsedStatementData {
   bankName: string;
   /** Masked account number e.g. "••••1234" or full if not sensitive */
   accountId?: string;
+  /**
+   * Stable account slug computed from unmasked accountId at parse time.
+   * Consumers should prefer this field over recomputing from accountId,
+   * since accountId is masked to last 4 digits in Firestore.
+   */
+  accountSlug?: string;
   /** Human-readable account nickname e.g. "Chase Sapphire Reserve" */
   accountName?: string;
   /** Type of account */

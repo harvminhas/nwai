@@ -180,6 +180,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Compute slug from (possibly patched) parsedData — now always stable
+    // CRITICAL: Store this slug on the statement so all consumers read it,
+    // never recompute from masked accountId (which would give different result)
     const slug = computeAccountSlug(parsedData);
     
     // IMPORTANT: Mask account number AFTER slug computation but BEFORE storage.
@@ -187,6 +189,10 @@ export async function POST(request: NextRequest) {
     // only last 4 digits. The slug is computed from the full accountId, then
     // we mask the accountId field that gets persisted to Firestore.
     const maskedParsedData = maskAccountNumbersInParsedData(parsedData);
+    
+    // Store the computed slug IN parsedData so all consumers can read it
+    // instead of recomputing from the masked accountId
+    maskedParsedData.accountSlug = slug;
     
     const yearMonth = parsedData.statementDate ? getYearMonth(parsedData.statementDate) : null;
     const slugIsAccountNumber = /^\d{4}$/.test(slug ?? "");

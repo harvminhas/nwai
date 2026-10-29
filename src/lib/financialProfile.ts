@@ -34,7 +34,7 @@ import type { TypicalSpend } from "./spendingMetrics";
 import { resolveTxnCurrencyFromSnapshots } from "./currencyUtils";
 import type { ManualAsset, ManualLiability, InvestmentHolding, ParsedStatementData } from "./types";
 import { validateDerivedBalances } from "./types";
-import { buildAccountSlug, normalizeAccountId } from "./accountSlug";
+import { buildAccountSlug, getAccountSlug, normalizeAccountId } from "./accountSlug";
 import { getFxRatesForCurrencies } from "./fxRates";
 import { splitDebtPayments } from "./debtUtils";
 import type { SubscriptionRecord } from "./insights/types";
@@ -426,8 +426,8 @@ export async function buildAndCacheFinancialProfile(
     }
     if (!stmtYm) continue;
 
-    // Build account slug (same logic as extractTransactions)
-    const slug = buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
+    // Build account slug - prefer stored slug to avoid recomputing from masked ID
+    const slug = (d.accountSlug as string | undefined) || getAccountSlug(parsed);
     
     // Dedupe by slug + month (handle duplicate uploads)
     const key = `${slug}:${stmtYm}`;
@@ -704,7 +704,7 @@ export async function buildAndCacheFinancialProfile(
     if (!parsed || parsed.accountType !== "investment") continue;
     const holdings = parsed.holdings;
     if (!holdings || holdings.length === 0) continue;
-    const slug = (d.accountSlug as string | undefined) || buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
+    const slug = (d.accountSlug as string | undefined) || getAccountSlug(parsed);
     const ym   = d.yearMonth as string | undefined ?? "";
     const existing = latestHoldingsBySlug.get(slug);
     if (!existing || ym > existing.statementMonth) {
@@ -948,7 +948,7 @@ export async function buildAndCacheFinancialProfile(
     const d = doc.data();
     const parsed = d.parsedData as ParsedStatementData | undefined;
     if (!parsed || parsed.netWorth == null) continue;
-    const rawSlug = (d.accountSlug as string | undefined) || buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
+    const rawSlug = (d.accountSlug as string | undefined) || getAccountSlug(parsed);
     const ym   = (d.yearMonth as string | undefined) ?? (parsed.statementDate ?? "").slice(0, 7);
     if (!ym) continue;
 
