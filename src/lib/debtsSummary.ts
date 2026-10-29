@@ -404,6 +404,11 @@ export function buildDebtsSummary(
       });
     }
   }
+  
+  // Filter transactions to only those belonging to debt accounts
+  const debtAccountSlugs = new Set(debtAccounts.map(a => a.slug));
+  const filteredExpenseTxns = (expenseTxns || []).filter(t => debtAccountSlugs.has(t.accountSlug));
+  const filteredIncomeTxns = (incomeTxns || []).filter(t => debtAccountSlugs.has(t.accountSlug));
 
   return {
     totalDebt,
@@ -417,13 +422,15 @@ export function buildDebtsSummary(
     groups,
     payoffEstimates,
     monthlyHistory,
-    scheduledPayments, // For diagnostic output
-    accountBalanceHistory: balanceHistory.map(h => ({
-      slug: h.slug,
-      label: h.label,
-      entries: h.entries,
-    })),
-    expenseTxns: expenseTxns || [],
-    incomeTxns: incomeTxns || [],
+    scheduledPayments, // For diagnostic output,
+    accountBalanceHistory: balanceHistory
+      .filter(h => debtAccountSlugs.has(h.slug))
+      .map(h => ({
+        slug: h.slug,
+        label: h.label,
+        entries: h.entries,
+      })),
+    expenseTxns: filteredExpenseTxns,
+    incomeTxns: filteredIncomeTxns,
   };
 }

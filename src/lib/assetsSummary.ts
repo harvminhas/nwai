@@ -302,6 +302,11 @@ export function buildAssetsSummary(
   }
 
   const staleAccounts = accounts.filter(a => a.isStale);
+  
+  // Filter transactions to only those belonging to asset accounts
+  const assetAccountSlugs = new Set(assetAccounts.map(a => a.slug));
+  const filteredExpenseTxns = (expenseTxns || []).filter(t => assetAccountSlugs.has(t.accountSlug));
+  const filteredIncomeTxns = (incomeTxns || []).filter(t => assetAccountSlugs.has(t.accountSlug));
 
   return {
     totalAssets,
@@ -311,12 +316,14 @@ export function buildAssetsSummary(
     groups,
     monthlyHistory,
     staleAccounts,
-    accountBalanceHistory: balanceHistory.map(h => ({
-      slug: h.slug,
-      label: h.label,
-      entries: h.entries,
-    })),
-    expenseTxns: expenseTxns || [],
-    incomeTxns: incomeTxns || [],
+    accountBalanceHistory: balanceHistory
+      .filter(h => assetAccountSlugs.has(h.slug))
+      .map(h => ({
+        slug: h.slug,
+        label: h.label,
+        entries: h.entries,
+      })),
+    expenseTxns: filteredExpenseTxns,
+    incomeTxns: filteredIncomeTxns,
   };
 }
