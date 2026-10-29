@@ -878,12 +878,34 @@ function SavingsDrawerContent({
                               }
                               
                               // Show actual months used for Prior and Current
-                              const priorLabel = acc.priorActualMonth === month.month.substring(0, 7)
-                                ? 'Prior'
-                                : `Prior (${formatMonth(acc.priorActualMonth)})`;
-                              const currentLabel = acc.currentActualMonth === month.month
-                                ? 'Current'
-                                : `Current (${formatMonth(acc.currentActualMonth)})`;
+                              const priorMonthShort = acc.priorActualMonth ? formatMonth(acc.priorActualMonth) : '';
+                              const currentMonthShort = acc.currentActualMonth ? formatMonth(acc.currentActualMonth) : '';
+                              
+                              // For current: show "End of X" if it matches the month, otherwise "Current (X)"
+                              let currentLabel: string;
+                              if (acc.currentActualMonth === month.month) {
+                                currentLabel = `End of ${formatMonthYear(month.month).split(' ')[0]}`;
+                              } else if (acc.currentCarriedForward) {
+                                currentLabel = `Current (${currentMonthShort})`;
+                              } else {
+                                currentLabel = 'Current';
+                              }
+                              
+                              // For prior: show month if it's not the immediately previous month
+                              const expectedPriorMonth = (() => {
+                                const [year, monthNum] = month.month.split('-').map(Number);
+                                const priorDate = new Date(year, monthNum - 2, 1); // -2 because month-1 gets current, -2 gets prior
+                                return `${priorDate.getFullYear()}-${String(priorDate.getMonth() + 1).padStart(2, '0')}`;
+                              })();
+                              
+                              let priorLabel: string;
+                              if (!acc.priorActualMonth) {
+                                priorLabel = 'Prior';
+                              } else if (acc.priorActualMonth === expectedPriorMonth) {
+                                priorLabel = 'Prior';
+                              } else {
+                                priorLabel = `Prior (${priorMonthShort})`;
+                              }
                               
                               return (
                                 <div key={acc.slug} className="bg-white rounded p-2 text-xs border border-gray-200">
@@ -982,12 +1004,34 @@ function SavingsDrawerContent({
                               }
                               
                               // Show actual months used for Prior and Current
-                              const priorLabel = acc.priorActualMonth === month.month.substring(0, 7)
-                                ? 'Prior'
-                                : `Prior (${formatMonth(acc.priorActualMonth)})`;
-                              const currentLabel = acc.currentActualMonth === month.month
-                                ? 'Current'
-                                : `Current (${formatMonth(acc.currentActualMonth)})`;
+                              const priorMonthShort = acc.priorActualMonth ? formatMonth(acc.priorActualMonth) : '';
+                              const currentMonthShort = acc.currentActualMonth ? formatMonth(acc.currentActualMonth) : '';
+                              
+                              // For current: show "End of X" if it matches the month, otherwise "Current (X)"
+                              let currentLabel: string;
+                              if (acc.currentActualMonth === month.month) {
+                                currentLabel = `End of ${formatMonthYear(month.month).split(' ')[0]}`;
+                              } else if (acc.currentCarriedForward) {
+                                currentLabel = `Current (${currentMonthShort})`;
+                              } else {
+                                currentLabel = 'Current';
+                              }
+                              
+                              // For prior: show month if it's not the immediately previous month
+                              const expectedPriorMonth = (() => {
+                                const [year, monthNum] = month.month.split('-').map(Number);
+                                const priorDate = new Date(year, monthNum - 2, 1); // -2 because month-1 gets current, -2 gets prior
+                                return `${priorDate.getFullYear()}-${String(priorDate.getMonth() + 1).padStart(2, '0')}`;
+                              })();
+                              
+                              let priorLabel: string;
+                              if (!acc.priorActualMonth) {
+                                priorLabel = 'Prior';
+                              } else if (acc.priorActualMonth === expectedPriorMonth) {
+                                priorLabel = 'Prior';
+                              } else {
+                                priorLabel = `Prior (${priorMonthShort})`;
+                              }
                               
                               return (
                                 <div key={acc.slug} className="bg-white rounded p-2 text-xs border border-gray-200">

@@ -17,6 +17,7 @@ import { getFirebaseAdmin } from "../src/lib/firebase-admin";
 import { getFinancialProfile } from "../src/lib/financialProfile";
 import { validateDerivedBalances } from "../src/lib/types";
 import { computeMoneyCoachBreakdown } from "../src/lib/moneyCoach";
+import { computeGapReconciliation } from "../src/lib/gapReconciliation";
 import { computeBucketBreakdown } from "../src/lib/bucketBreakdown";
 import { computeAverageSavings, computeMonthlySavings, computeWindowSavings } from "../src/lib/savingsCalculations";
 import { buildIncomeSummary, makeIncomeTxnId } from "../src/lib/incomeSummary";
@@ -1924,47 +1925,61 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   let monthLabelErrors = 0;
   
   for (const monthData of monthlyBreakdown) {
+    console.log(`\n  Month: ${monthData.month}`);
+    
     const allAccounts = [
       ...monthData.accounts.cashAccounts,
       ...monthData.accounts.debtAccounts
     ];
     
     for (const acc of allAccounts) {
-      // Check 1: No "No statement" badge for derived entries
+      // Find the account's balance history to check if entry exists for this month
+      const accountHistory = profile.accountBalanceHistory.find(h => h.slug === acc.slug);
+      const hasExactEntry = accountHistory?.entries.some(e => e.yearMonth === monthData.month);
+      
+      // Build badge description
+      let badgeDesc = 'none';
+      if (acc.currentDerived && acc.currentSourceStatement) {
+        badgeDesc = `derived from ${acc.currentSourceStatement}`;
+      } else if (acc.currentCarriedForward) {
+        badgeDesc = 'carried forward (no statement)';
+      }
+      
+      console.log(`    ${acc.accountLabel}`);
+      console.log(`      Prior: ${acc.priorActualMonth || 'unknown'} | Current: ${acc.currentActualMonth || 'unknown'} | Badge: ${badgeDesc}`);
+      
+      // Check 1: currentActualMonth must equal month being viewed when entry exists
+      if (hasExactEntry && acc.currentActualMonth !== monthData.month) {
+        console.log(`      ❌ FAIL: Entry exists for ${monthData.month} but currentActualMonth is ${acc.currentActualMonth}`);
+        monthLabelErrors++;
+        drawerErrors++;
+        errors.push(`Drawer month: ${acc.accountLabel} ${monthData.month} has entry but shows wrong current month`);
+      }
+      
+      // Check 2: No mixed derived + carriedForward flags
       if (acc.currentDerived && acc.currentCarriedForward) {
-        console.log(`  ❌ FAIL: ${acc.accountLabel} ${monthData.month} shows derived + carried forward (should only be one)`);
+        console.log(`      ❌ FAIL: Has both derived AND carriedForward flags`);
         badgeErrors++;
         drawerErrors++;
-        errors.push(`Drawer badge: ${acc.accountLabel} ${monthData.month} has both derived and carriedForward flags`);
+        errors.push(`Drawer badge: ${acc.accountLabel} ${monthData.month} has conflicting flags`);
       }
       
-      // Check 2: Verify month labels show actual months
-      if (acc.priorCarriedForward && acc.priorActualMonth) {
-        const priorMonthsBack = getMonthsBetweenYM(acc.priorActualMonth, monthData.month);
-        if (priorMonthsBack > 1) {
-          // Should show label like "Prior (May)" not just "Prior"
-          console.log(`  ✓ ${acc.accountLabel} ${monthData.month}: Prior uses ${acc.priorActualMonth} (${priorMonthsBack} months back)`);
-        }
-      }
-      
-      if (acc.currentCarriedForward && acc.currentActualMonth) {
-        const currentMonthsBack = getMonthsBetweenYM(acc.currentActualMonth, monthData.month);
-        if (currentMonthsBack > 0) {
-          console.log(`  ✓ ${acc.accountLabel} ${monthData.month}: Current uses ${acc.currentActualMonth} (${currentMonthsBack} months back)`);
-        }
-      }
-      
-      // Check 3: Derived entries should have sourceStatement
+      // Check 3: Derived entries must have sourceStatement
       if (acc.currentDerived && !acc.currentSourceStatement) {
-        console.log(`  ❌ FAIL: ${acc.accountLabel} ${monthData.month} is derived but has no sourceStatement`);
+        console.log(`      ❌ FAIL: Derived but no sourceStatement`);
+        badgeErrors++;
         drawerErrors++;
         errors.push(`Drawer badge: ${acc.accountLabel} ${monthData.month} derived without sourceStatement`);
       }
     }
   }
   
+  console.log();
+  
   if (badgeErrors === 0 && monthLabelErrors === 0) {
-    console.log(`  ✓ All ${monthlyBreakdown.length} months checked: badges and month labels correct`);
+    console.log(`  ✅ All accounts checked: badges and month labels correct`);
+  } else {
+    console.log(`  ❌ Found ${badgeErrors} badge errors and ${monthLabelErrors} month label errors`);
   }
   
   console.log();
@@ -1980,6 +1995,105 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     const [startYear, startMonth] = startYM.split('-').map(Number);
     const [endYear, endMonth] = endYM.split('-').map(Number);
     return (endYear - startYear) * 12 + (endMonth - startMonth);
+  }
+  
+  // ── MONEY COACH API END-TO-END TESTS ───────────────────────────────────────────
+  console.log("💼 MONEY COACH API END-TO-END");
+  console.log("=".repeat(80) + "\n");
+  
+  let moneyCoachErrors = 0;
+  
+  // Test money-coach route for all ranges to catch crashes
+  const testRanges: Array<{ range: TimeRange; label: string }> = [
+    { range: "3mo", label: "Last 3 months" },
+    { range: "12mo", label: "Last 12 months" },
+    { range: "ytd", label: "Year to date" }
+  ];
+  
+  for (const { range, label } of testRanges) {
+    try {
+      console.log(`Testing ${label} (${range})...`);
+      
+      // Call computeMoneyCoachBreakdown same way the API does
+      const breakdown = computeMoneyCoachBreakdown(
+        profile,
+        userReviews,
+        profile.incomeTxns,
+        profile.accountSnapshots,
+        profile.homeCurrency || "CAD",
+        incomeDepositReviews,
+        getRangeMonths(range, profile.monthlyHistory.map(m => m.yearMonth)),
+        [] // savings confirmations
+      );
+      
+      // Call computeGapReconciliation same way the API does
+      const gapReconciliation = computeGapReconciliation(
+        range,
+        profile.expenseTxns,
+        profile.incomeTxns,
+        profile.accountSnapshots,
+        profile.monthlyHistory.map(m => m.yearMonth),
+        {
+          income: breakdown.incomeAmount,
+          fixed: breakdown.buckets.find(b => b.bucket === "fixed")?.monthlyAverage || 0,
+          essentials: breakdown.buckets.find(b => b.bucket === "essentials")?.monthlyAverage || 0,
+          flexible: breakdown.buckets.find(b => b.bucket === "flexible")?.monthlyAverage || 0,
+          netSavings: breakdown.buckets.find(b => b.bucket === "savings")?.monthlyAverage || 0,
+        }
+      );
+      
+      // Verify gap reconciliation math
+      const expectedSavings = gapReconciliation.expectedSavings;
+      const actualSavings = gapReconciliation.actualSavings;
+      const gap = gapReconciliation.gap;
+      const componentsTotal = gapReconciliation.componentsTotal;
+      const unexplained = gapReconciliation.unexplained;
+      
+      // Check: components + unexplained must sum to gap within $1
+      const componentsPlusUnexplained = componentsTotal + unexplained;
+      if (Math.abs(componentsPlusUnexplained - gap) > 1) {
+        console.log(`  ❌ FAIL: Components don't sum to gap`);
+        console.log(`    Gap: ${gap.toFixed(2)}`);
+        console.log(`    Components total: ${componentsTotal.toFixed(2)}`);
+        console.log(`    Unexplained: ${unexplained.toFixed(2)}`);
+        console.log(`    Components + Unexplained: ${componentsPlusUnexplained.toFixed(2)}`);
+        console.log(`    Difference: ${Math.abs(componentsPlusUnexplained - gap).toFixed(2)}`);
+        moneyCoachErrors++;
+        drawerErrors++;
+        errors.push(`Money coach ${range}: gap reconciliation math error`);
+      }
+      
+      // Print breakdown
+      console.log(`  Income: ${breakdown.incomeAmount.toFixed(2)}`);
+      console.log(`  Expected savings: ${expectedSavings.toFixed(2)}`);
+      console.log(`  Actual savings: ${actualSavings.toFixed(2)}`);
+      console.log(`  Gap: ${gap.toFixed(2)}`);
+      console.log(`  Components:`);
+      gapReconciliation.components.forEach(c => {
+        console.log(`    ${c.name}: ${c.amount > 0 ? '+' : ''}${c.amount.toFixed(2)}`);
+      });
+      console.log(`  Components total: ${componentsTotal.toFixed(2)}`);
+      console.log(`  Unexplained: ${unexplained.toFixed(2)}`);
+      console.log(`  Reconciles: ${gapReconciliation.reconciles ? '✓' : '✗'}`);
+      
+      if (gapReconciliation.reconciles) {
+        console.log(`  ✅ ${label} passed: gap reconciles within $1\n`);
+      } else {
+        console.log(`  ⚠️  ${label} warning: unexplained remainder > $1\n`);
+      }
+      
+    } catch (err) {
+      console.log(`  ❌ FAIL: Exception thrown`);
+      console.log(`    ${err instanceof Error ? err.message : String(err)}`);
+      moneyCoachErrors++;
+      errors.push(`Money coach ${range}: crashed with ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  
+  if (moneyCoachErrors > 0) {
+    console.log(`❌ ${moneyCoachErrors} money coach test(s) failed\n`);
+  } else {
+    console.log(`✅ All money coach tests passed\n`);
   }
   
   // ── CASH COMMITMENTS & PLANNER TESTS ──────────────────────────────────────────
@@ -2760,6 +2874,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     drawerErrors +
     cashPlannerErrors +
     chatToolErrors +
+    moneyCoachErrors +
     smokeTestErrors;
   
   if (totalFailures > 0) {
@@ -2777,6 +2892,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     if (drawerErrors > 0) console.log(`Account drawer test failures: ${drawerErrors}`);
     if (cashPlannerErrors > 0) console.log(`Cash/Planner test failures: ${cashPlannerErrors}`);
     if (chatToolErrors > 0) console.log(`AI chat tool test failures: ${chatToolErrors}`);
+    if (moneyCoachErrors > 0) console.log(`Money coach API test failures: ${moneyCoachErrors}`);
     if (smokeTestErrors > 0) console.log(`Smoke test failures: ${smokeTestErrors}`);
     
     console.log();

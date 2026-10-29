@@ -51,6 +51,7 @@ interface MoneyCoachBreakdown {
     missingMonths: string[];
   };
   homeCurrency?: string;
+  gapReconciliation?: GapReconciliation;
 }
 
 // ── markdown renderer (copied from chat page) ────────────────────────────────
@@ -660,6 +661,15 @@ function WhereMoneyGoes({
               );
             })}
           </div>
+          
+          {/* Gap Reconciliation Panel */}
+          {breakdown?.gapReconciliation && (
+            <ReconciliationPanel 
+              reconciliation={breakdown.gapReconciliation}
+              currency={currency}
+              rangeLabel={rangeLabel}
+            />
+          )}
     </section>
   );
 }

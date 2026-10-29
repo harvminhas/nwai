@@ -57,15 +57,30 @@ async function auditFlexLine(uid: string) {
     return;
   }
 
-  // Filter to FlexLine account (slug ending 0085)
+  // Filter to FlexLine account (look for FlexLine, HELOC, or Equity in the label)
   const flexLineStatements = statementsSnap.docs
     .map(doc => ({
       id: doc.id,
       ...doc.data(),
     }))
     .filter((stmt: any) => {
-      const accountSlug = stmt.parsedData?.accountSlug || "";
-      return accountSlug.endsWith("0085");
+      const parsed = stmt.parsedData;
+      if (!parsed) return false;
+      
+      const accountSlug = parsed.accountSlug || "";
+      const bankName = (parsed.bankName || "").toLowerCase();
+      const accountName = (parsed.accountName || "").toLowerCase();
+      const accountType = (parsed.accountType || "").toLowerCase();
+      
+      // Look for TD Home Equity FlexLine indicators
+      return (
+        accountSlug.endsWith("0085") ||
+        accountName.includes("flexline") ||
+        accountName.includes("heloc") ||
+        accountName.includes("equity") ||
+        (bankName.includes("td") && accountType.includes("loc")) ||
+        (bankName.includes("td") && accountType.includes("line"))
+      );
     })
     .sort((a: any, b: any) => {
       const aMonth = a.parsedData?.statementMonth || "";
@@ -79,6 +94,30 @@ async function auditFlexLine(uid: string) {
   }
 
   console.log(`Found ${flexLineStatements.length} FlexLine statements\n`);
+  
+  // Debug: print all account slugs seen if no FlexLine found
+  if (flexLineStatements.length === 0) {
+    console.log("❌ No statements found for FlexLine account ending 0085");
+    console.log("\nAll account slugs/labels found in statements:");
+    const uniqueAccounts = new Map<string, string>();
+    statementsSnap.docs.forEach(doc => {
+      const data = doc.data();
+      const slug = data.parsedData?.accountSlug || '';
+      const label = data.parsedData?.bankName + ' ' + (data.parsedData?.accountName || data.parsedData?.accountType || '');
+      if (slug && !uniqueAccounts.has(slug)) {
+        uniqueAccounts.set(slug, label);
+      }
+    });
+    
+    const sortedAccounts = Array.from(uniqueAccounts.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    sortedAccounts.forEach(([slug, label]) => {
+      console.log(`  ${slug.padEnd(60)} ${label}`);
+    });
+    
+    console.log(`\nTotal unique accounts: ${uniqueAccounts.size}`);
+    console.log("Note: Looking for account with 'FlexLine', 'HELOC', or 'Equity' in name\n");
+    return;
+  }
 
   // Get all statements for cross-account transfer matching
   const allStatements = statementsSnap.docs.map(doc => ({
