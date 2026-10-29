@@ -59,7 +59,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "60"; // Multi-month balance reconstruction with debt account support
+const SCHEMA_VERSION = "61"; // Multi-month balance reconstruction with statement-scoped transactions
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
