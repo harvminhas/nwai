@@ -20,6 +20,9 @@ import { maskAccountNumbersInParsedData } from "@/lib/accountMasking";
 
 export const maxDuration = 120;
 
+// Compute slug from FRESH unmasked accountId (at parse time, before masking).
+// This is one of the only justified uses of buildAccountSlug - everywhere else
+// should read the stored accountSlug via getAccountSlug().
 function computeAccountSlug(parsed: { bankName?: string; accountId?: string; accountName?: string; accountType?: string }): string {
   return buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
 }

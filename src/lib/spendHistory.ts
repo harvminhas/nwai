@@ -10,7 +10,7 @@
 import type * as FirebaseFirestore from "firebase-admin/firestore";
 import type { ParsedStatementData } from "./types";
 import { consolidateStatements, getYearMonth } from "./consolidate";
-import { buildAccountSlug } from "./accountSlug";
+import { buildAccountSlug, getAccountSlug } from "./accountSlug";
 import { isBalanceMarker } from "./balanceMarkers";
 import { isCoreExcluded } from "./spendingMetrics";
 
@@ -43,7 +43,7 @@ export function docYearMonth(d: FirebaseFirestore.DocumentData): string {
 }
 
 function accountSlug(parsed: ParsedStatementData, storedSlug?: string): string {
-  return storedSlug || buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
+  return storedSlug || getAccountSlug(parsed);
 }
 
 /**

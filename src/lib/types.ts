@@ -124,7 +124,7 @@ export interface ExpenseTransaction {
   /** Firestore statement document ID — populated at API aggregation time. */
   stmtId?: string;
   /**
-   * Stable account identifier (`buildAccountSlug(bankName, accountId)`) — populated at API
+   * Stable account identifier (via `getAccountSlug(parsedData)`) — populated at API
    * aggregation time. Used as the account portion of txnKey so overrides survive statement
    * re-uploads (which produce a new stmtId but the same accountSlug).
    */

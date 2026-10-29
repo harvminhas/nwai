@@ -37,9 +37,8 @@ import { buildAccountSlug, getAccountSlug } from "../src/lib/accountSlug";
 const BASELINE_PATH = path.join(__dirname, "regression-baseline.json");
 
 /**
- * Check slug stability: verify that stored accountSlug matches what would be
- * computed from the stored (possibly masked) accountId. This ensures masking
- * doesn't break account continuity.
+ * Check slug stability: simulate the migration (mask accountId, keep stored slug)
+ * and verify that every consumer-facing slug matches the current slug (pre-migration).
  */
 async function checkSlugStability(uid: string, db: FirebaseFirestore.Firestore): Promise<string[]> {
   const errors: string[] = [];
@@ -50,7 +49,10 @@ async function checkSlugStability(uid: string, db: FirebaseFirestore.Firestore):
     .where("status", "==", "completed")
     .get();
     
-  console.log(`🔍 Checking slug stability for ${statementsSnap.docs.length} statements...\n`);
+  console.log(`🔍 Simulating migration for ${statementsSnap.docs.length} statements...\n`);
+  
+  let legacyCount = 0;
+  let stableCount = 0;
   
   for (const doc of statementsSnap.docs) {
     const data = doc.data();
@@ -59,31 +61,52 @@ async function checkSlugStability(uid: string, db: FirebaseFirestore.Firestore):
     if (!parsedData) continue;
     
     const storedSlug = parsedData.accountSlug as string | undefined;
-    const recomputedSlug = buildAccountSlug(
+    
+    // Current slug (what consumers see today)
+    const currentSlug = buildAccountSlug(
       parsedData.bankName,
       parsedData.accountId,
       parsedData.accountName,
       parsedData.accountType
     );
     
-    // If accountSlug is stored, it should match what we'd compute
-    if (storedSlug && storedSlug !== recomputedSlug) {
-      errors.push(
-        `Statement ${doc.id} slug mismatch: stored="${storedSlug}" vs computed="${recomputedSlug}" ` +
-        `(accountId="${parsedData.accountId}", bank="${parsedData.bankName}")`
-      );
+    // Simulate migration: mask accountId, keep accountSlug
+    const maskedAccountId = parsedData.accountId && parsedData.accountId.length > 4
+      ? parsedData.accountId.slice(-4)
+      : parsedData.accountId;
+    
+    // After migration: stored slug takes precedence
+    const postMigrationSlug = storedSlug || buildAccountSlug(
+      parsedData.bankName,
+      maskedAccountId,
+      parsedData.accountName,
+      parsedData.accountType
+    );
+    
+    if (!storedSlug) {
+      legacyCount++;
     }
     
-    // If accountSlug is missing, this is legacy data (not an error, just log it)
-    if (!storedSlug && parsedData.accountId) {
-      // No-op: legacy statements without stored slug are allowed
+    // Verify consumer-facing slug stays the same
+    if (currentSlug !== postMigrationSlug) {
+      errors.push(
+        `Statement ${doc.id} slug WOULD CHANGE after migration: ` +
+        `"${currentSlug}" → "${postMigrationSlug}" ` +
+        `(accountId: "${parsedData.accountId}" → "${maskedAccountId}", ` +
+        `storedSlug: ${storedSlug || "missing"})`
+      );
+    } else {
+      stableCount++;
     }
   }
   
+  console.log(`   Legacy statements (no stored slug): ${legacyCount}`);
+  console.log(`   Statements with stable slugs: ${stableCount}\n`);
+  
   if (errors.length === 0) {
-    console.log(`   ✅ All stored slugs match recomputed slugs\n`);
+    console.log(`   ✅ All slugs remain stable after simulated migration\n`);
   } else {
-    console.log(`   ❌ ${errors.length} slug mismatches found:\n`);
+    console.log(`   ❌ ${errors.length} slugs would change:\n`);
     errors.slice(0, 10).forEach(err => console.log(`      ${err}`));
     if (errors.length > 10) {
       console.log(`      ... and ${errors.length - 10} more\n`);

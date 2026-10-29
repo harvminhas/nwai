@@ -9,7 +9,7 @@ import NetWorthChart from "@/components/NetWorthChart";
 import SubscriptionsCard from "@/components/SubscriptionsCard";
 import InsightsSection from "@/components/InsightsSection";
 import type { ParsedStatementData, ManualAsset, InvestmentHolding, Subscription } from "@/lib/types";
-import { buildAccountSlug } from "@/lib/accountSlug";
+import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
 import CsvImportPanel from "@/components/CsvImportPanel";
 import type { PaymentFrequency } from "@/app/api/user/account-rates/route";
 import { CategoryPicker, categoryColor } from "@/app/account/spending/shared";
@@ -55,9 +55,9 @@ import { fmt, getCurrencySymbol, CURRENCY_SYMBOL } from "@/lib/currencyUtils";
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
-/** Derive the accountKey (used by account-rates API) from parsedData fields. */
-function toAccountKey(bankName: string, accountId?: string, accountName?: string, accountType?: string): string {
-  return buildAccountSlug(bankName, accountId, accountName, accountType);
+/** Derive the accountKey (used by account-rates API) from parsedData. */
+function toAccountKey(parsed: ParsedStatementData): string {
+  return getAccountSlug(parsed);
 }
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -566,7 +566,7 @@ export default function AccountDetailPage() {
       // can always use it — even when parsedData.bankName is missing.
       const parsed = json.data as ParsedStatementData | null;
       const key = parsed?.bankName
-        ? toAccountKey(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType)
+        ? toAccountKey(parsed)
         : slug; // fall back to URL slug which equals the accountKey
       setAccountKey(key);
 

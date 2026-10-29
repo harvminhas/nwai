@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { consolidateStatements, getYearMonth } from "@/lib/consolidate";
 import type { ParsedStatementData } from "@/lib/types";
-import { buildAccountSlug } from "@/lib/accountSlug";
+import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
 import { merchantSlug } from "@/lib/applyRules";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import {
@@ -138,7 +138,7 @@ export async function GET(req: NextRequest) {
             ? (raw as Date).toISOString() : String(raw)).slice(0, 7);
         }
         if (!ym || ym > currentYm) continue;
-        const slug = buildAccountSlug(p.bankName, p.accountId, p.accountName, p.accountType);
+        const slug = getAccountSlug(p);
         if (!latestPerAccount.has(slug)) latestPerAccount.set(slug, p);
       }
       consolidated = consolidateStatements(Array.from(latestPerAccount.values()), currentYm);
@@ -535,7 +535,7 @@ export async function GET(req: NextRequest) {
   for (const doc of stmtSnap.docs) {
     const p = doc.data().parsedData as ParsedStatementData | undefined;
     if (!p?.statementDate) continue;
-    const slug  = buildAccountSlug(p.bankName, p.accountId, p.accountName, p.accountType);
+    const slug  = getAccountSlug(p);
     const dates = acctStmtDatesMap.get(slug) ?? [];
     dates.push(p.statementDate);
     acctStmtDatesMap.set(slug, dates);

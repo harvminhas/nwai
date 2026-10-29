@@ -11,7 +11,7 @@
 
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getYearMonth } from "@/lib/consolidate";
-import { buildAccountSlug } from "@/lib/accountSlug";
+import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { isCoreExcluded } from "@/lib/spendingMetrics";
 import { getHomeCurrency } from "@/lib/currencyUtils";
@@ -58,7 +58,7 @@ export function docYearMonth(d: FirebaseFirestore.DocumentData): string {
 
 // keep this in sync with chat/route.ts accountSlug helper
 export function statementAccountSlug(parsed: ParsedStatementData): string {
-  return buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
+  return getAccountSlug(parsed);
 }
 
 // ── main builder ──────────────────────────────────────────────────────────────

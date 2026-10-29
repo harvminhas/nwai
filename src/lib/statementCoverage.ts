@@ -6,7 +6,7 @@
  */
 
 import type { UserStatementSummary } from "./types";
-import { buildAccountSlug } from "./accountSlug";
+import { buildAccountSlug, getAccountSlug } from "./accountSlug";
 
 export interface CoverageMonth {
   yearMonth: string;
@@ -137,7 +137,7 @@ export function computeStatementCoverage(
     }
     
     // Use canonical slug from accountSlug.ts (primarily last 4 digits)
-    const slug = buildAccountSlug(stmt.bankName, stmt.accountId, stmt.accountName, stmt.accountType);
+    const slug = getAccountSlug(stmt);
     const yearMonth = stmt.statementDate.slice(0, 7);
     
     if (!accountMap.has(slug)) {

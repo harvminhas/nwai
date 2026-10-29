@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import type { ParsedStatementData } from "@/lib/types";
-import { buildAccountSlug } from "@/lib/accountSlug";
+import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
 import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
 
 export type PaymentFrequency = "weekly" | "biweekly" | "semi-monthly" | "monthly";
@@ -23,7 +23,7 @@ function authToken(req: NextRequest): string | null {
 }
 
 function toAccountKey(p: ParsedStatementData): string {
-  return buildAccountSlug(p.bankName, p.accountId, p.accountName, p.accountType);
+  return getAccountSlug(p);
 }
 
 export interface AccountRateEntry {
