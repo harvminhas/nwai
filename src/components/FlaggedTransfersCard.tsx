@@ -43,9 +43,9 @@ export function FlaggedTransfersCard({ flaggedTransfers, currency, onConfirm }: 
   // Group by destination account number
   const grouped = new Map<string, FlaggedTransfer[]>();
   for (const ft of flaggedTransfers) {
-    const list = grouped.get(ft.destinationAccountNumber) || [];
+    const list = grouped.get(ft.destinationNumber) || [];
     list.push(ft);
-    grouped.set(ft.destinationAccountNumber, list);
+    grouped.set(ft.destinationNumber, list);
   }
 
   return (
@@ -74,7 +74,7 @@ export function FlaggedTransfersCard({ flaggedTransfers, currency, onConfirm }: 
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-semibold text-gray-900">
-                          Account ending in {accountNumber.slice(-4)}
+                          Account ending in {accountNumber?.slice(-4) || accountNumber || "unknown"}
                         </span>
                         {isAnomalous && (
                           <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700">
@@ -91,7 +91,7 @@ export function FlaggedTransfersCard({ flaggedTransfers, currency, onConfirm }: 
                         {transfers.slice(0, 3).map((t, idx) => (
                           <div key={idx} className="flex items-center justify-between text-xs text-gray-700">
                             <span className="flex-1 truncate">
-                              {t.date} · {t.description} · from {t.fromAccount}
+                              {t.date} · {t.merchant} · from {t.fromAccount}
                             </span>
                             <span className="ml-2 font-mono font-semibold tabular-nums">
                               {fmt(t.amount, currency)}

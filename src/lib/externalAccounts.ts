@@ -40,4 +40,6 @@ export interface FlaggedTransfer {
   reason: "new_destination" | "unusual_amount";
   /** If unusual_amount, what's the typical amount */
   typicalAmount?: number;
+  /** Whether this is an anomalous amount (computed: >3x typical) */
+  isAnomalous?: boolean;
 }

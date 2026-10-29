@@ -2110,6 +2110,16 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       
       // Check flagged transfers
       console.log(`\n  Flagged transfers: ${gapReconciliation.flaggedTransfers.length}`);
+      
+      // Regression check: every flagged transfer must have non-empty destinationNumber
+      for (const flagged of gapReconciliation.flaggedTransfers) {
+        if (!flagged.destinationNumber || flagged.destinationNumber.trim() === "") {
+          failures.push(
+            `REGRESSION: Flagged transfer on ${flagged.date} from ${flagged.fromAccount} has empty destinationNumber`
+          );
+        }
+      }
+      
       if (gapReconciliation.flaggedTransfers.length > 0) {
         console.log(`  Transfers to untracked accounts detected (should surface for review):`);
         for (const flagged of gapReconciliation.flaggedTransfers) {
