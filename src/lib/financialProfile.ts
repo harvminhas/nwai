@@ -775,7 +775,7 @@ export async function buildAndCacheFinancialProfile(
     closingBalance: number,
     parsed: ParsedStatementData,
     isDebtAccount: boolean
-  ): { derived: number; skipped: boolean; reason?: string } {
+  ): { derived: number; skipped: boolean; reason?: string; firstTxnMonth?: string; lastTxnMonth?: string } {
     if (!balanceHistoryMap.has(slug)) {
       return { derived: 0, skipped: true, reason: "account not in map" };
     }
@@ -814,7 +814,7 @@ export async function buildAndCacheFinancialProfile(
     const lastTxnMonth = allMonths[allMonths.length - 1];
     
     if (firstTxnMonth === lastTxnMonth) {
-      return { derived: 0, skipped: false };
+      return { derived: 0, skipped: false, firstTxnMonth, lastTxnMonth };
     }
     
     // Build months list from statement month back to first transaction month
@@ -886,7 +886,7 @@ export async function buildAndCacheFinancialProfile(
       }
     }
     
-    return { derived: count, skipped: false };
+    return { derived: count, skipped: false, firstTxnMonth, lastTxnMonth };
   }
   
   // Track reconstruction stats for logging
@@ -969,6 +969,14 @@ export async function buildAndCacheFinancialProfile(
         }
       } else {
         reconstructionStats.derived += result.derived;
+        
+        // Log details for debugging
+        if (result.derived > 0) {
+          console.log(
+            `[financialProfile] Derived ${result.derived} entries for ${entry.label} (${slug}) ` +
+            `statement ${ym}: txns span ${result.firstTxnMonth}-${result.lastTxnMonth}`
+          );
+        }
       }
     }
   }
