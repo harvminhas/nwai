@@ -158,6 +158,9 @@ export default function UploadZone({ onFileSelect, onFilesSelect, multiple = fal
           {errorMessage}
         </p>
       )}
+      <p className="mt-3 text-xs text-gray-500">
+        Your statement file is deleted right after we read it. We keep only the numbers and transactions, and the last 4 digits of account numbers.
+      </p>
     </div>
   );
 }
