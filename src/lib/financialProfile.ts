@@ -38,6 +38,7 @@ import { buildAccountSlug, normalizeAccountId } from "./accountSlug";
 import { getFxRatesForCurrencies } from "./fxRates";
 import { splitDebtPayments } from "./debtUtils";
 import type { SubscriptionRecord } from "./insights/types";
+import type { ExternalAccountLabel } from "./externalAccounts";
 
 // ── Balance snapshot shape (mirrors /api/user/balance-snapshots) ──────────────
 export interface BalanceSnapshot {
@@ -60,7 +61,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "64"; // Track sourceStatement + prevent derived overwrite by real balances
+const SCHEMA_VERSION = "65"; // Added external account labels for fraud detection
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -224,6 +225,11 @@ export interface FinancialProfileCache {
    * consumers (AI brief, etc.) don't need a separate Firestore read.
    */
   cashCommitmentEntries: CashCommitment[];
+  /**
+   * User-labeled external account destinations for transfers.
+   * Loaded from users/{uid}/externalAccounts for fraud review.
+   */
+  externalAccountLabels: ExternalAccountLabel[];
 }
 
 /** Stored APR / payment-frequency override for a single account. */
@@ -341,7 +347,7 @@ export async function buildAndCacheFinancialProfile(
   db: Firestore.Firestore,
 ): Promise<FinancialProfileCache> {
   // Fetch all data sources in parallel — same collections the assets page uses.
-  const [txData, rulesSnap, txnOverridesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap, backfillsSnap, cashCommitmentsSnap, manualLiabSnap, accountRatesSnap, goalsSnap, allSubsSnap, merchantCadenceSnap, userDocSnap] =
+  const [txData, rulesSnap, txnOverridesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap, backfillsSnap, cashCommitmentsSnap, manualLiabSnap, accountRatesSnap, goalsSnap, allSubsSnap, merchantCadenceSnap, externalAccountsSnap, userDocSnap] =
     await Promise.all([
       extractAllTransactions(uid, db),
       db.collection(`users/${uid}/categoryRules`).get(),
@@ -361,6 +367,7 @@ export async function buildAndCacheFinancialProfile(
       db.collection(`users/${uid}/goals`).get(),
       db.collection(`users/${uid}/subscriptions`).get(),
       db.collection(`users/${uid}/merchantCadence`).get(),
+      db.collection(`users/${uid}/externalAccounts`).get(),
       db.collection("users").doc(uid).get(),
     ]);
   // Split all subscriptions into confirmed (for Upcoming/profile) vs all (for category mapping).
@@ -1297,6 +1304,10 @@ export async function buildAndCacheFinancialProfile(
     };
   });
 
+  const externalAccountLabels: ExternalAccountLabel[] = externalAccountsSnap.docs.map((d) => 
+    d.data() as ExternalAccountLabel
+  );
+
   const confirmedSubscriptions: SubscriptionRecord[] = confirmedSubsSnap.docs.map(
     (d) => d.data() as SubscriptionRecord,
   );
@@ -1333,6 +1344,7 @@ export async function buildAndCacheFinancialProfile(
     merchantCadence: merchantCadenceMap,
     debtPaymentHistory,
     cashCommitmentEntries,
+    externalAccountLabels,
   };
 
   // Persist — JSON round-trip strips `undefined` fields (Firestore rejects them).

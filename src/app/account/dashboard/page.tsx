@@ -11,9 +11,9 @@ import { getSignColor } from "@/lib/colorHelpers";
 import { Drawer, type DrawerType } from "@/components/Drawer";
 import { ReviewList } from "@/components/ReviewList";
 import { RangeSwitch } from "@/components/RangeSwitch";
-import { ReconciliationPanel } from "@/components/ReconciliationPanel";
 import type { TimeRange } from "@/lib/rangeUtils";
-import type { GapReconciliation } from "@/lib/gapReconciliation";
+import type { FlaggedTransfer } from "@/lib/externalAccounts";
+import { FlaggedTransfersCard } from "@/components/FlaggedTransfersCard";
 
 // Convert TimeRange to Drawer's TimeWindow format
 function rangeToWindow(range: TimeRange): "last3" | "12month" | "ytd" {
@@ -662,12 +662,23 @@ function WhereMoneyGoes({
             })}
           </div>
           
-          {/* Gap Reconciliation Panel */}
-          {breakdown?.gapReconciliation && (
-            <ReconciliationPanel 
-              reconciliation={breakdown.gapReconciliation}
+          {/* Flagged Transfers Review Card */}
+          {breakdown?.gapReconciliation?.flaggedTransfers && (
+            <FlaggedTransfersCard
+              flaggedTransfers={breakdown.gapReconciliation.flaggedTransfers}
               currency={currency}
-              rangeLabel={rangeLabel}
+              onConfirm={async (accountNumber, label) => {
+                const res = await fetch("/api/user/external-accounts", {
+                  method: "POST",
+                  headers: { ...buildHeaders(), "Content-Type": "application/json" },
+                  body: JSON.stringify({ accountNumber, label }),
+                });
+                if (!res.ok) throw new Error("Failed to save external account label");
+                // Reload breakdown silently to reflect the change
+                if (token) {
+                  await loadData(token, range, { silent: true });
+                }
+              }}
             />
           )}
     </section>

@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
       profile,
       reviewContext.debtPaymentReviews,
       reviewContext.incomeDepositReviews,
-      [], // TODO: Load external account labels
+      profile.externalAccountLabels || [],
       {
         income: breakdown.incomeAmount,
         fixed: breakdown.buckets.find(b => b.bucket === "fixed")?.monthlyAverage || 0,
