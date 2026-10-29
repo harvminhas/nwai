@@ -59,7 +59,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "59"; // Unified income data layer + income summary
+const SCHEMA_VERSION = "60"; // Multi-month balance reconstruction with debt account support
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -824,15 +824,15 @@ export async function buildAndCacheFinancialProfile(
     for (let i = 0; i < months.length; i++) {
       const month = months[i];
       
-      // Skip if we already have a real balance for this month
-      if (entry.entries.has(month) && !entry.derivedEntries.has(month)) {
+      // If we already have a real balance for this month, use it as anchor
+      const hasRealBalance = entry.entries.has(month) && !entry.derivedEntries.has(month);
+      if (hasRealBalance) {
         runningBalance = entry.entries.get(month)!;
-        continue;
-      }
-      
-      // Store derived month-end balance (skip the statement month itself)
-      if (month !== statementMonth) {
-        derivedBalances.set(month, runningBalance);
+      } else {
+        // Store derived month-end balance (skip the statement month itself)
+        if (month !== statementMonth) {
+          derivedBalances.set(month, runningBalance);
+        }
       }
       
       // Move to the previous chronological month by subtracting current month's transactions
