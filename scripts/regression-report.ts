@@ -2114,8 +2114,11 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       // Regression check: every flagged transfer must have non-empty destinationNumber
       for (const flagged of gapReconciliation.flaggedTransfers) {
         if (!flagged.destinationNumber || flagged.destinationNumber.trim() === "") {
-          failures.push(
-            `REGRESSION: Flagged transfer on ${flagged.date} from ${flagged.fromAccount} has empty destinationNumber`
+          console.log(`  ❌ FAIL: Flagged transfer has empty destinationNumber`);
+          console.log(`    Date: ${flagged.date}, From: ${flagged.fromAccount}`);
+          moneyCoachErrors++;
+          errors.push(
+            `Money coach ${range}: Flagged transfer on ${flagged.date} from ${flagged.fromAccount} has empty destinationNumber`
           );
         }
       }

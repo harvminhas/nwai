@@ -670,7 +670,7 @@ function WhereMoneyGoes({
               onConfirm={async (accountNumber, label) => {
                 const res = await fetch("/api/user/external-accounts", {
                   method: "POST",
-                  headers: { ...buildHeaders(), "Content-Type": "application/json" },
+                  headers: { ...buildHeaders(token), "Content-Type": "application/json" },
                   body: JSON.stringify({ accountNumber, label }),
                 });
                 if (!res.ok) throw new Error("Failed to save external account label");
