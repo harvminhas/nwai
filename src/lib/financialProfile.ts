@@ -60,7 +60,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "63"; // Multi-month with per-entry logging to trace derived entry sources
+const SCHEMA_VERSION = "64"; // Track sourceStatement + prevent derived overwrite by real balances
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -75,7 +75,7 @@ export interface AccountBalanceHistory {
   /** ISO 4217 currency code — native to this account (after user override applied) */
   currency:    string;
   /** One entry per uploaded statement month, sorted ascending. May include derived month-end balances for multi-month statements. */
-  entries:     { yearMonth: string; balance: number; derived?: boolean }[];
+  entries:     { yearMonth: string; balance: number; derived?: boolean; sourceStatement?: string }[];
 }
 
 // ── types ──────────────────────────────────────────────────────────────────────
@@ -741,6 +741,7 @@ export async function buildAndCacheFinancialProfile(
     entries: Map<string, number>;
     latestDateByMonth: Map<string, string>; // Track latest statement date per month for deduplication
     derivedEntries: Set<string>; // Track which month-end balances were derived (vs real statement balances)
+    derivedSources: Map<string, string>; // Track which statement produced each derived entry (month -> statementMonth)
   }>();
   
   /**
@@ -905,15 +906,24 @@ export async function buildAndCacheFinancialProfile(
     // Validation passed - add derived entries (never overwrite real balances)
     let count = 0;
     for (const [month, balance] of derivedBalances.entries()) {
-      if (!entry.entries.has(month) || entry.derivedEntries.has(month)) {
-        entry.entries.set(month, balance);
-        entry.derivedEntries.add(month);
+      const hasRealBalance = entry.entries.has(month) && !entry.derivedEntries.has(month);
+      
+      if (hasRealBalance) {
+        // Real balance exists - it must win, don't overwrite with derived
         console.log(
-          `[derived] ${slug} ${month}: ${balance.toFixed(2)} ` +
-          `(from statement ${statementMonth}, path: multi-month reconstruction)`
+          `[derived] SKIPPED ${slug} ${month}: real balance exists (${entry.entries.get(month)?.toFixed(2)})`
         );
-        count++;
+        continue;
       }
+      
+      entry.entries.set(month, balance);
+      entry.derivedEntries.add(month);
+      entry.derivedSources.set(month, statementMonth); // Track source statement
+      console.log(
+        `[derived] ${slug} ${month}: ${balance.toFixed(2)} ` +
+        `(from statement ${statementMonth}, path: multi-month reconstruction)`
+      );
+      count++;
     }
     
     return { derived: count, skipped: false, firstTxnMonth, lastTxnMonth };
@@ -966,6 +976,7 @@ export async function buildAndCacheFinancialProfile(
         entries:     new Map(),
         latestDateByMonth: new Map(),
         derivedEntries: new Set(),
+        derivedSources: new Map(),
       });
     }
     // Keep the highest-date entry per yearMonth (handles multiple uploads same month)
@@ -975,6 +986,17 @@ export async function buildAndCacheFinancialProfile(
     
     // Overwrite if this is the first entry for this month OR this statement is newer
     if (!entry.entries.has(ym) || stmtDate > (latestDateByMonth.get(ym) ?? "")) {
+      // If this month was previously derived, clear the derived flag (real wins)
+      if (entry.derivedEntries.has(ym)) {
+        console.log(
+          `[balance] ${slug} ${ym}: REAL balance ${parsed.netWorth.toFixed(2)} ` +
+          `REPLACES derived ${entry.entries.get(ym)?.toFixed(2)} ` +
+          `(derived flag cleared)`
+        );
+        entry.derivedEntries.delete(ym);
+        entry.derivedSources.delete(ym);
+      }
+      
       entry.entries.set(ym, parsed.netWorth);
       latestDateByMonth.set(ym, stmtDate);
       
@@ -1060,6 +1082,7 @@ export async function buildAndCacheFinancialProfile(
           yearMonth, 
           balance,
           derived: e.derivedEntries.has(yearMonth) ? true : undefined,
+          sourceStatement: e.derivedSources.get(yearMonth), // Which statement produced this derived entry
         }))
         .sort((a, b) => a.yearMonth.localeCompare(b.yearMonth)),
     };

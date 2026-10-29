@@ -2350,24 +2350,17 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         account.entries.filter((e: any) => !e.derived).map((e: any) => e.yearMonth)
       );
       
-      // Group derived entries by which statement could have produced them
-      // (the statement at or after the derived month)
+      // Group derived entries by which statement produced them (use sourceStatement)
       const derivedByStatement = new Map<string, any[]>();
       
       for (const derived of derivedEntries) {
-        // Find the statement that produced this derived entry
-        // It's the first statement month >= derived month for this account
-        let statementMonth = null;
-        const sortedStmtMonths = Array.from(realBalanceMonths).sort();
+        // Use the sourceStatement field instead of guessing
+        const statementMonth = derived.sourceStatement;
         
-        for (const month of sortedStmtMonths) {
-          if (month >= derived.yearMonth) {
-            statementMonth = month;
-            break;
-          }
+        if (!statementMonth) {
+          console.log(`    ⚠️  ${derived.yearMonth}: no sourceStatement field`);
+          continue;
         }
-        
-        if (!statementMonth) continue;
         
         if (!derivedByStatement.has(statementMonth)) {
           derivedByStatement.set(statementMonth, []);
