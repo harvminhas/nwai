@@ -45,10 +45,10 @@ async function auditFlexLine(uid: string) {
 
   const { db } = getFirebaseAdmin();
   
-  // Get all statements for this user
+  // Get all statements for this user (same query as financialProfile)
   const statementsSnap = await db
-    .collection(`statements`)
-    .where("uid", "==", uid)
+    .collection("statements")
+    .where("userId", "==", uid)
     .where("status", "==", "completed")
     .get();
 
