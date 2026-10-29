@@ -33,9 +33,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    // Find the confirmed account's parsedData.accountId so we can patch it into
-    // this statement — that way buildAccountSlug(parsedData) returns the right
-    // slug everywhere without any changes to data builders.
+    // Find the confirmed account's slug so we can patch it into this statement.
+    // The stored accountSlug takes precedence over recomputation everywhere.
     let confirmedAccountId: string | undefined;
     if (isExistingAccount) {
       const existingSnap = await db
@@ -61,8 +60,8 @@ export async function POST(request: NextRequest) {
         updatedAt: new Date().toISOString(),
       }, { merge: true });
 
-    // Patch parsedData.accountId so buildAccountSlug always returns the right slug,
-    // and update accountSlug + clear confirmation flags.
+    // Update stored accountSlug so getAccountSlug() returns the confirmed slug
+    // everywhere, and clear confirmation flags.
     await stmtRef.update({
       ...(confirmedAccountId ? { "parsedData.accountId": confirmedAccountId } : {}),
       // Save nickname as the display name when user created a new account

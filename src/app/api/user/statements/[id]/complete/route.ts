@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
-import { buildAccountSlug } from "@/lib/accountSlug";
+import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
 import { getYearMonth } from "@/lib/consolidate";
 import { inferCurrencyFromBankName } from "@/lib/currencyUtils";
 import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
@@ -76,7 +76,7 @@ export async function POST(
     };
 
     // ── Account slug ─────────────────────────────────────────────────────────
-    const slug = buildAccountSlug(parsedData.bankName, parsedData.accountId, parsedData.accountName, parsedData.accountType);
+    const slug = getAccountSlug(parsedData);
     const slugIsAccountNumber = /^\d{4}$/.test(slug ?? "");
     const inferredCurrency = inferCurrencyFromBankName(parsedData.bankName, parsedData.currency);
 
@@ -84,6 +84,7 @@ export async function POST(
     let accountConfirmNeeded = false;
     let existingAccounts: { slug: string; label: string }[] = [];
     let suggestedSlug: string | undefined;
+    // Intentional use of buildAccountSlug with accountId=undefined to create bank+type key
     const bankTypeKey = buildAccountSlug(parsedData.bankName, undefined, parsedData.accountName, parsedData.accountType);
     const hasRealAccountId = !!parsedData.accountId;
 
@@ -102,7 +103,7 @@ export async function POST(
       accountConfirmNeeded = true;
     }
 
-    const finalSlug = buildAccountSlug(parsedData.bankName, parsedData.accountId, parsedData.accountName, parsedData.accountType);
+    const finalSlug = getAccountSlug(parsedData);
 
     // ── Backfill / new-account detection ─────────────────────────────────────
     let backfillPromptNeeded = false;

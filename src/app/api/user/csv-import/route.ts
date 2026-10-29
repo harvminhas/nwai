@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { parseCSV } from "@/lib/csvParser";
 import { txFingerprint } from "@/lib/txFingerprint";
-import { buildAccountSlug } from "@/lib/accountSlug";
+import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
 import { getYearMonth } from "@/lib/consolidate";
 import type { ParsedStatementData, ExpenseTransaction, IncomeTransaction } from "@/lib/types";
 import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
     if ((d.source as string | undefined) === "csv") continue; // only PDF statements define coverage
     const p = d.parsedData as ParsedStatementData | undefined;
     if (!p) continue;
-    const slug = buildAccountSlug(p.bankName, p.accountId, p.accountName, p.accountType);
+    const slug = getAccountSlug(p);
     const ym   = docYearMonth(d);
     if (!ym) continue;
 
@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
     for (const doc of stmtSnap.docs) {
       const d = doc.data();
       const p = d.parsedData as ParsedStatementData | undefined;
-      if (!p || buildAccountSlug(p.bankName, p.accountId, p.accountName, p.accountType) !== accountSlug) continue;
+      if (!p || getAccountSlug(p) !== accountSlug) continue;
       for (const txn of p.expenses?.transactions ?? []) {
         if (!txn.date) continue;
         existingFingerprints.add(txFingerprint(accountId, txn.date, txn.amount, txn.merchant ?? ""));

@@ -27,6 +27,10 @@ export function normalizeAccountId(raw: string | undefined | null): string {
  *    accountName is intentionally excluded: it varies too much per upload to be
  *    a reliable key (e.g. "HPE Hewlett Packard Enterprise 401(k) Plan" vs "HPE 401(k)").
  * 3. bankName alone — last resort when type is also absent.
+ * 
+ * IMPORTANT: After account masking was implemented, accountId is stored as last 4 digits only.
+ * Consumers should read the stored accountSlug field from parsedData instead of recomputing,
+ * to avoid slug changes when accountId is masked.
  */
 export function buildAccountSlug(
   bankName: string | undefined | null,
@@ -45,4 +49,34 @@ export function buildAccountSlug(
 
   if (bank && type) return `${bank}-${type}`;
   return bank || "unknown";
+}
+
+/**
+ * Get account slug from parsed data, preferring stored slug over recomputation.
+ * 
+ * After account masking, parsedData.accountId contains only last 4 digits, so
+ * recomputing the slug would give different results. Always prefer the stored
+ * slug which was computed from the original unmasked accountId.
+ * 
+ * Falls back to buildAccountSlug only for legacy data without stored slug.
+ */
+export function getAccountSlug(parsedData: {
+  accountSlug?: string | null;
+  bankName?: string | null;
+  accountId?: string | null;
+  accountName?: string | null;
+  accountType?: string | null;
+}): string {
+  // Prefer stored slug (computed from unmasked accountId at parse time)
+  if (parsedData.accountSlug) {
+    return parsedData.accountSlug;
+  }
+  
+  // Fall back to recomputing (legacy data or missing slug)
+  return buildAccountSlug(
+    parsedData.bankName,
+    parsedData.accountId,
+    parsedData.accountName,
+    parsedData.accountType
+  );
 }

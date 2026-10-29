@@ -3,7 +3,7 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import { consolidateStatements } from "@/lib/consolidate";
 import { applyRulesAndRecalculate, merchantSlug } from "@/lib/applyRules";
-import { buildAccountSlug } from "@/lib/accountSlug";
+import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
 import { docYearMonth, carryForwardStatements } from "@/lib/spendHistory";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { computeScheduledDebtPayments } from "@/lib/debtPayments";
@@ -26,7 +26,7 @@ import { resolveTxnCurrencyFromSnapshots, getHomeCurrency } from "@/lib/currency
 /** Human-readable label for a statement's account, e.g. "TD ••••7780" */
 function accountDisplayLabel(parsed: ParsedStatementData): string {
   if (parsed.accountName) return parsed.accountName;
-  const slug = buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
+  const slug = getAccountSlug(parsed);
   const bank = (parsed.bankName ?? "").trim();
   if (slug === "unknown") return bank || "Unknown Account";
   const parts = [bank, `••••${slug}`].filter(Boolean);
@@ -36,7 +36,7 @@ function accountDisplayLabel(parsed: ParsedStatementData): string {
 /** Tag every expense and income transaction in a statement with its account label. */
 function tagTransactions(stmt: ParsedStatementData): ParsedStatementData {
   const label = accountDisplayLabel(stmt);
-  const acctSlug = buildAccountSlug(stmt.bankName, stmt.accountId, stmt.accountName, stmt.accountType);
+  const acctSlug = getAccountSlug(stmt);
 
   const incomeTxns = (stmt.income?.transactions ?? []).map((txn) => ({
     ...txn,
@@ -69,7 +69,7 @@ function matchesBank(parsed: ParsedStatementData, bankFilter: string | null): bo
 function matchesAccount(d: Record<string, unknown>, parsed: ParsedStatementData, accountFilter: string | null): boolean {
   if (!accountFilter) return true;
   const storedSlug = d.accountSlug as string | undefined;
-  return (storedSlug || buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType)) === accountFilter;
+  return (storedSlug || getAccountSlug(parsed)) === accountFilter;
 }
 
 
@@ -415,7 +415,7 @@ export async function GET(request: NextRequest) {
       const pd = d.parsedData as ParsedStatementData | undefined;
       const stored = d.accountSlug as string | undefined;
       if (pd && stored) {
-        const pSlug = buildAccountSlug(pd.bankName, pd.accountId, pd.accountName, pd.accountType);
+        const pSlug = getAccountSlug(pd);
         if (!parsedSlugToStored.has(pSlug)) parsedSlugToStored.set(pSlug, stored);
       }
     }
@@ -423,20 +423,22 @@ export async function GET(request: NextRequest) {
     for (const ym of Array.from(yearMonths).sort()) {
       const carried = carryForwardStatements(allCompleted, ym);
       for (const parsed of carried) {
-        const pSlug = buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
+        const pSlug = getAccountSlug(parsed);
         // Use the stored accountSlug when available — it may differ from pSlug
         // when the user confirmed a custom nickname or merged accounts.
         const slug = parsedSlugToStored.get(pSlug) ?? pSlug;
         const realForThisMonth = allCompleted.some((doc) => {
           const d = doc.data();
+          const parsed = d.parsedData as ParsedStatementData;
           return docYearMonth(d) === ym &&
-            ((d.accountSlug as string | undefined) || buildAccountSlug((d.parsedData as ParsedStatementData).bankName, (d.parsedData as ParsedStatementData).accountId, (d.parsedData as ParsedStatementData).accountName, (d.parsedData as ParsedStatementData).accountType)) === slug;
+            ((d.accountSlug as string | undefined) || getAccountSlug(parsed)) === slug;
         });
         const sourceDoc = allCompleted
           .filter((doc) => {
             const d = doc.data();
+            const parsed = d.parsedData as ParsedStatementData;
             return docYearMonth(d) === ym &&
-              ((d.accountSlug as string | undefined) || buildAccountSlug((d.parsedData as ParsedStatementData).bankName, (d.parsedData as ParsedStatementData).accountId, (d.parsedData as ParsedStatementData).accountName, (d.parsedData as ParsedStatementData).accountType)) === slug;
+              ((d.accountSlug as string | undefined) || getAccountSlug(parsed)) === slug;
           })
           .sort((a, b) => {
             const aIsCSV = (a.data().source as string | undefined) === "csv";
@@ -522,7 +524,7 @@ export async function GET(request: NextRequest) {
             if (docYearMonth(d) !== ym) return false;
             const parsed = d.parsedData as ParsedStatementData | undefined;
             if (!parsed) return false;
-            return buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType) === bf.accountSlug;
+            return getAccountSlug(parsed) === bf.accountSlug;
           });
           if (hasRealStatement) continue;
 

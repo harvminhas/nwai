@@ -32,8 +32,104 @@ import type { MoneyCoachBucket } from "../src/lib/moneyCoachBuckets";
 import type { DebtPaymentReview } from "../src/lib/types";
 import { getParentCategory } from "../src/lib/categoryTaxonomy";
 import { getRangeMonths, getCurrentMonth, type TimeRange } from "../src/lib/rangeUtils";
+import { buildAccountSlug, getAccountSlug } from "../src/lib/accountSlug";
+import { maskAccountNumber } from "../src/lib/accountMasking";
 
 const BASELINE_PATH = path.join(__dirname, "regression-baseline.json");
+
+/**
+ * Check slug stability: simulate the ACTUAL migration (using the same logic as
+ * scripts/mask-account-numbers.ts) and verify that every consumer-facing slug
+ * remains stable.
+ * 
+ * Migration steps (must match mask-account-numbers.ts exactly):
+ * 1. For statements without accountSlug: set accountSlug = buildAccountSlug(original accountId)
+ * 2. Mask accountId using maskAccountNumber()
+ * 3. Consumers use getAccountSlug() which prefers stored accountSlug
+ */
+async function checkSlugStability(uid: string, db: FirebaseFirestore.Firestore): Promise<string[]> {
+  const errors: string[] = [];
+  
+  const statementsSnap = await db
+    .collection("statements")
+    .where("userId", "==", uid)
+    .where("status", "==", "completed")
+    .get();
+    
+  console.log(`🔍 Simulating migration for ${statementsSnap.docs.length} statements...\n`);
+  
+  let legacyCount = 0;
+  let stableCount = 0;
+  
+  for (const doc of statementsSnap.docs) {
+    const data = doc.data();
+    const parsedData = data.parsedData as Record<string, any> | undefined;
+    
+    if (!parsedData) continue;
+    
+    const storedSlug = parsedData.accountSlug as string | undefined;
+    
+    // Current slug (what consumers see today)
+    const currentSlug = buildAccountSlug(
+      parsedData.bankName,
+      parsedData.accountId,
+      parsedData.accountName,
+      parsedData.accountType
+    );
+    
+    // SIMULATE MIGRATION EXACTLY as mask-account-numbers.ts does:
+    
+    // Step 1: If no stored slug, compute it from ORIGINAL unmasked accountId
+    // (this is what the migration script writes BEFORE masking)
+    const slugAfterMigration = storedSlug || buildAccountSlug(
+      parsedData.bankName,
+      parsedData.accountId,
+      parsedData.accountName,
+      parsedData.accountType
+    );
+    
+    // Step 2: Mask accountId (same function the migration uses)
+    const maskedAccountId = maskAccountNumber(parsedData.accountId);
+    
+    // Step 3: Consumer reads via getAccountSlug() which prefers stored slug
+    const simulatedParsedData = {
+      ...parsedData,
+      accountId: maskedAccountId,
+      accountSlug: slugAfterMigration,
+    };
+    const consumerSlug = getAccountSlug(simulatedParsedData);
+    
+    if (!storedSlug) {
+      legacyCount++;
+    }
+    
+    // Verify consumer-facing slug stays the same
+    if (currentSlug !== consumerSlug) {
+      errors.push(
+        `Statement ${doc.id} slug WOULD CHANGE after migration: ` +
+        `"${currentSlug}" → "${consumerSlug}" ` +
+        `(accountId: "${parsedData.accountId}" → "${maskedAccountId}", ` +
+        `storedSlug: ${storedSlug || "missing"}, ` +
+        `bank: ${parsedData.bankName})`
+      );
+    } else {
+      stableCount++;
+    }
+  }
+  
+  console.log(`   Legacy statements (no stored slug): ${legacyCount}`);
+  console.log(`   Statements with stable slugs: ${stableCount}\n`);
+  
+  if (errors.length === 0) {
+    console.log(`   ✅ All slugs remain stable after simulated migration\n`);
+  } else {
+    console.log(`   ❌ ${errors.length} slugs would change:\n`);
+    errors.forEach(err => console.log(`      ${err}`));
+    console.log();
+  }
+  
+  return errors;
+}
 
 interface BucketReport {
   bucket: MoneyCoachBucket;
@@ -77,6 +173,10 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
 
   const { db } = getFirebaseAdmin();
   const errors: string[] = []; // Collect errors, exit at the end
+  
+  // Check slug stability first
+  const slugErrors = await checkSlugStability(uid, db);
+  errors.push(...slugErrors);
   
   // Get financial profile
   const profile = await getFinancialProfile(uid, db);
@@ -2928,6 +3028,120 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     console.log(`\n✅ All smoke tests passed\n`);
   }
   
+  // ── PRIVACY CHECKS ────────────────────────────────────────────────────────────
+  console.log("=".repeat(80));
+  console.log("PRIVACY CHECKS");
+  console.log("=".repeat(80) + "\n");
+
+  let privacyErrors = 0;
+
+  // Check 1: Count statements with non-empty fileUrl
+  console.log("Check 1: Statements with stored files");
+  try {
+    const statementsWithFilesSnap = await db.collection("statements")
+      .where("userId", "==", uid)
+      .get();
+
+    let statementsWithFiles = 0;
+    let completedWithFiles = 0;
+
+    for (const doc of statementsWithFilesSnap.docs) {
+      const data = doc.data();
+      const fileUrl = data.fileUrl as string | undefined;
+      const status = data.status as string | undefined;
+
+      if (fileUrl && fileUrl.trim() !== "") {
+        statementsWithFiles++;
+        if (status === "completed") {
+          completedWithFiles++;
+        }
+      }
+    }
+
+    console.log(`  Total statements with non-empty fileUrl: ${statementsWithFiles}`);
+    console.log(`  Completed statements with stored files: ${completedWithFiles}`);
+
+    if (completedWithFiles > 0) {
+      console.log(`  ⚠️  WARNING: ${completedWithFiles} completed statements still have stored files`);
+      console.log(`  Run: tsx scripts/purge-stored-statement-files.ts --apply`);
+    } else {
+      console.log(`  ✓ No completed statements have stored files`);
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking statement files: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Privacy check: failed to check statement files");
+    privacyErrors++;
+  }
+
+  // Check 2: Count account IDs longer than 4 digits
+  console.log("\nCheck 2: Account numbers longer than 4 digits");
+  try {
+    const allStatementsSnap = await db.collection("statements")
+      .where("userId", "==", uid)
+      .get();
+
+    let longAccountIds = 0;
+    const examples: Array<{ id: string; accountId: string; slug: string }> = [];
+
+    for (const doc of allStatementsSnap.docs) {
+      const data = doc.data();
+      const parsedData = data.parsedData as Record<string, any> | undefined;
+      const accountId = parsedData?.accountId as string | undefined;
+      const slug = data.accountSlug as string | undefined;
+
+      if (accountId && accountId.length > 4) {
+        longAccountIds++;
+        if (examples.length < 5) {
+          examples.push({
+            id: doc.id,
+            accountId,
+            slug: slug || "no-slug",
+          });
+        }
+      }
+    }
+
+    console.log(`  Account IDs longer than 4 digits: ${longAccountIds}`);
+
+    if (longAccountIds > 0) {
+      console.log(`  ⚠️  WARNING: ${longAccountIds} statements have unmasked account numbers`);
+      console.log(`  Examples:`);
+      for (const ex of examples) {
+        console.log(`    ${ex.id}: accountId="${ex.accountId}" (slug: ${ex.slug})`);
+      }
+      console.log(`  Run: tsx scripts/mask-account-numbers.ts --apply`);
+    } else {
+      console.log(`  ✓ All account numbers are masked (4 digits or less)`);
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking account numbers: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Privacy check: failed to check account numbers");
+    privacyErrors++;
+  }
+
+  // Check 3: Confirm debug parse route is removed
+  console.log("\nCheck 3: Debug parse route removed");
+  try {
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    const debugRoutePath = path.join(process.cwd(), "src/app/api/debug/parse/route.ts");
+
+    try {
+      await fs.access(debugRoutePath);
+      console.log(`  ❌ FAIL: Debug parse route still exists at ${debugRoutePath}`);
+      errors.push("Privacy check: debug parse route not removed");
+      privacyErrors++;
+    } catch {
+      console.log(`  ✓ Debug parse route removed`);
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking debug route: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Privacy check: failed to check debug route");
+    privacyErrors++;
+  }
+
+  console.log();
+
   // Final summary - check ALL error conditions
   const totalFailures = 
     (allErrors ? errors.length : 0) +
@@ -2939,7 +3153,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     cashPlannerErrors +
     chatToolErrors +
     moneyCoachErrors +
-    smokeTestErrors;
+    smokeTestErrors +
+    privacyErrors;
   
   if (totalFailures > 0) {
     console.log("=".repeat(80));
@@ -2958,6 +3173,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     if (chatToolErrors > 0) console.log(`AI chat tool test failures: ${chatToolErrors}`);
     if (moneyCoachErrors > 0) console.log(`Money coach API test failures: ${moneyCoachErrors}`);
     if (smokeTestErrors > 0) console.log(`Smoke test failures: ${smokeTestErrors}`);
+    if (privacyErrors > 0) console.log(`Privacy check failures: ${privacyErrors}`);
     
     console.log();
     process.exit(1);

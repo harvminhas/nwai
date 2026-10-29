@@ -15,7 +15,7 @@ import { resolveAccess } from "@/lib/access/resolveAccess";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { getHomeCurrency } from "@/lib/currencyUtils";
 import { consolidateStatements, getYearMonth } from "@/lib/consolidate";
-import { buildAccountSlug } from "@/lib/accountSlug";
+import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
 import type { ParsedStatementData } from "@/lib/types";
 import type { SubscriptionRecord } from "@/lib/insights/types";
 import type { UserEvent, TxTag } from "@/lib/events/types";
@@ -232,7 +232,7 @@ export async function GET(req: NextRequest) {
               ).slice(0, 7);
           }
           if (!ym || ym > currentYm) continue;
-          const slug = buildAccountSlug(p.bankName, p.accountId, p.accountName, p.accountType);
+          const slug = getAccountSlug(p);
           if (!latestPerAccount.has(slug)) latestPerAccount.set(slug, p);
         }
         consolidated = consolidateStatements(Array.from(latestPerAccount.values()), currentYm);

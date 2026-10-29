@@ -3,7 +3,7 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
 import { txnKey } from "@/lib/applyRules";
-import { buildAccountSlug } from "@/lib/accountSlug";
+import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
 import type { ExpenseTransaction, ParsedStatementData } from "@/lib/types";
 
 /**
@@ -36,7 +36,7 @@ export async function PUT(req: NextRequest) {
   try {
     const stmtDoc = await db.collection("statements").doc(stmtId).get();
     const p = stmtDoc.data()?.parsedData as ParsedStatementData | undefined;
-    if (p) accountSlug = buildAccountSlug(p.bankName, p.accountId, p.accountName, p.accountType);
+    if (p) accountSlug = getAccountSlug(p);
   } catch {
     // Non-fatal: fall back to stmtId
   }

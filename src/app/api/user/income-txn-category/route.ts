@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import { incomeTxnKey } from "@/lib/applyRules";
-import { buildAccountSlug } from "@/lib/accountSlug";
+import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
 import type { ParsedStatementData } from "@/lib/types";
 
 export interface IncomeSplit {
@@ -51,7 +51,7 @@ export async function PUT(req: NextRequest) {
     try {
       const stmtDoc = await db.collection("statements").doc(stmtId).get();
       const p = stmtDoc.data()?.parsedData as ParsedStatementData | undefined;
-      if (p) accountSlug = buildAccountSlug(p.bankName, p.accountId, p.accountName, p.accountType);
+      if (p) accountSlug = getAccountSlug(p);
     } catch { /* fall back */ }
   }
 

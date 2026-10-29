@@ -7,7 +7,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { isFeatureEnabled } from "@/lib/features";
 import type { UserStatementSummary } from "@/lib/types";
-import { buildAccountSlug } from "@/lib/accountSlug";
+import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
 
 // ── coverage helpers ──────────────────────────────────────────────────────────
 
@@ -17,7 +17,7 @@ function stmtYearMonth(s: UserStatementSummary): string {
 }
 
 function stmtAccountSlug(s: UserStatementSummary): string {
-  return buildAccountSlug(s.bankName, s.accountId, s.accountName, s.accountType);
+  return getAccountSlug(s);
 }
 
 function stmtDisplayName(s: UserStatementSummary): string {
@@ -120,7 +120,7 @@ interface AccountCoverage {
 function isStatementDue(slug: string, statements: UserStatementSummary[]): boolean {
   const GRACE_DAYS = 8;
   const acctStmts = statements.filter(
-    (s) => s.status === "completed" && !s.superseded && buildAccountSlug(s.bankName, s.accountId, s.accountName, s.accountType) === slug && s.statementDate,
+    (s) => s.status === "completed" && !s.superseded && getAccountSlug(s) === slug && s.statementDate,
   );
   if (acctStmts.length === 0) return false;
 

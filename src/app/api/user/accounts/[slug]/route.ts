@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
-import { buildAccountSlug } from "@/lib/accountSlug";
+import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
 import { buildAndCacheFinancialProfile } from "@/lib/financialProfile";
 import type { ParsedStatementData } from "@/lib/types";
 
@@ -51,7 +51,7 @@ export async function DELETE(
     if (d.accountSlug === slug) return true;
     const parsed = d.parsedData as ParsedStatementData | undefined;
     if (parsed) {
-      return buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType) === slug;
+      return getAccountSlug(parsed) === slug;
     }
     return false;
   });

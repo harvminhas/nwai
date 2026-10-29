@@ -16,9 +16,13 @@ import { fireInsightEvent } from "@/lib/insights/index";
 import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
 import { inferCurrencyFromBankName } from "@/lib/currencyUtils";
 import type { ParsedStatementData } from "@/lib/types";
+import { maskAccountNumbersInParsedData } from "@/lib/accountMasking";
 
 export const maxDuration = 120;
 
+// Compute slug from FRESH unmasked accountId (at parse time, before masking).
+// This is one of the only justified uses of buildAccountSlug - everywhere else
+// should read the stored accountSlug via getAccountSlug().
 function computeAccountSlug(parsed: { bankName?: string; accountId?: string; accountName?: string; accountType?: string }): string {
   return buildAccountSlug(parsed.bankName, parsed.accountId, parsed.accountName, parsed.accountType);
 }
@@ -111,6 +115,7 @@ export async function POST(request: NextRequest) {
     // Capture AI result so the catch block can persist partial data if something
     // downstream (Firestore writes, slug logic, etc.) throws unexpectedly.
     partialParsedData = parsedData;
+    
     console.log("[parse][post-parse-summary]", JSON.stringify({
       statementId,
       usedCache,
@@ -178,7 +183,20 @@ export async function POST(request: NextRequest) {
     }
 
     // Compute slug from (possibly patched) parsedData — now always stable
+    // CRITICAL: Store this slug on the statement so all consumers read it,
+    // never recompute from masked accountId (which would give different result)
     const slug = computeAccountSlug(parsedData);
+    
+    // IMPORTANT: Mask account number AFTER slug computation but BEFORE storage.
+    // This preserves existing slug logic (no duplicate accounts) while storing
+    // only last 4 digits. The slug is computed from the full accountId, then
+    // we mask the accountId field that gets persisted to Firestore.
+    const maskedParsedData = maskAccountNumbersInParsedData(parsedData);
+    
+    // Store the computed slug IN parsedData so all consumers can read it
+    // instead of recomputing from the masked accountId
+    maskedParsedData.accountSlug = slug;
+    
     const yearMonth = parsedData.statementDate ? getYearMonth(parsedData.statementDate) : null;
     const slugIsAccountNumber = /^\d{4}$/.test(slug ?? "");
 
@@ -343,13 +361,24 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Delete the original file from Storage after successful parse
+    try {
+      await bucket.file(fileUrl).delete();
+      console.log(`[parse] Deleted file from Storage: ${fileUrl}`);
+    } catch (deleteErr) {
+      console.error(`[parse] Failed to delete file ${fileUrl}:`, deleteErr);
+      // Continue - file deletion failure shouldn't block the parse
+    }
+
     await statementRef.update({
-      parsedData,
+      parsedData: maskedParsedData,  // Use masked version for storage
       status: "completed",
       errorMessage: null,
       accountSlug: slug,
       yearMonth: yearMonth ?? null,
       slugIsAccountNumber,
+      fileUrl: "",  // Clear fileUrl after deletion
+      fileDeletedAt: new Date().toISOString(),
       // Included in this same write so the onSnapshot fires with all fields set:
       ...(accountConfirmNeeded && {
         accountConfirmNeeded: true,
@@ -462,9 +491,13 @@ export async function POST(request: NextRequest) {
           if (isRetryable) {
             await ref.update({ status: "error", errorMessage: friendlyMessage });
           } else {
+            // Set file expiry to 24 hours from now - cron will clean up failed parses
+            const expiresAt = new Date();
+            expiresAt.setHours(expiresAt.getHours() + 24);
             await ref.update({
               status: "needs_review",
               parseError: friendlyMessage,
+              fileExpiresAt: expiresAt.toISOString(),
               ...(partialParsedData ? { partialParsedData } : {}),
             });
           }

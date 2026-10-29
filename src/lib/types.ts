@@ -124,7 +124,7 @@ export interface ExpenseTransaction {
   /** Firestore statement document ID — populated at API aggregation time. */
   stmtId?: string;
   /**
-   * Stable account identifier (`buildAccountSlug(bankName, accountId)`) — populated at API
+   * Stable account identifier (via `getAccountSlug(parsedData)`) — populated at API
    * aggregation time. Used as the account portion of txnKey so overrides survive statement
    * re-uploads (which produce a new stmtId but the same accountSlug).
    */
@@ -294,6 +294,12 @@ export interface ParsedStatementData {
   bankName: string;
   /** Masked account number e.g. "••••1234" or full if not sensitive */
   accountId?: string;
+  /**
+   * Stable account slug computed from unmasked accountId at parse time.
+   * Consumers should prefer this field over recomputing from accountId,
+   * since accountId is masked to last 4 digits in Firestore.
+   */
+  accountSlug?: string;
   /** Human-readable account nickname e.g. "Chase Sapphire Reserve" */
   accountName?: string;
   /** Type of account */
