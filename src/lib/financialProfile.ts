@@ -60,7 +60,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "62"; // Multi-month balance with shared validation and reconciliation gates
+const SCHEMA_VERSION = "63"; // Multi-month with per-entry logging to trace derived entry sources
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -908,6 +908,10 @@ export async function buildAndCacheFinancialProfile(
       if (!entry.entries.has(month) || entry.derivedEntries.has(month)) {
         entry.entries.set(month, balance);
         entry.derivedEntries.add(month);
+        console.log(
+          `[derived] ${slug} ${month}: ${balance.toFixed(2)} ` +
+          `(from statement ${statementMonth}, path: multi-month reconstruction)`
+        );
         count++;
       }
     }
