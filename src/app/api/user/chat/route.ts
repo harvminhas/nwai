@@ -28,6 +28,7 @@ import { executeTool } from "@/lib/chat/executor";
 import type { ToolParams } from "@/lib/chat/executor";
 import { buildChatContext } from "@/lib/chat/context";
 import { cleanAIAnswer } from "@/lib/chat/answerPostProcessor";
+import { checkAIUsageLimit, incrementAIUsage, getLimitReachedMessage } from "@/lib/aiUsageLimit";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -64,15 +65,17 @@ export async function POST(req: NextRequest) {
   const access    = await resolveAccess(req, db);
   const targetUid = access?.targetUid ?? actorUid;
 
-  // ── 3. Plan gate (actor must be Pro) ──────────────────────────────────────
+  // ── 3. Check AI usage limit (Free users have 50/month) ────────────────────
   const actorDoc  = await db.collection("users").doc(actorUid).get();
   const actorPlan = resolvePlan(
     actorDoc.exists ? (actorDoc.data() as Record<string, unknown>) : undefined,
   ) ?? "free";
-  if (actorPlan === "free") {
+  
+  const usageCheck = await checkAIUsageLimit(actorUid, db, actorPlan);
+  if (!usageCheck.allowed) {
     return NextResponse.json(
-      { error: "AI Chat is a Pro feature. Upgrade to access." },
-      { status: 403 },
+      { error: getLimitReachedMessage() },
+      { status: 429 },
     );
   }
 
@@ -185,6 +188,10 @@ export async function POST(req: NextRequest) {
   // Clean it (remove tool names/attribution) before streaming.
   // Write it to a ReadableStream so the client-side streaming reader works
   // identically to the previous implementation.
+  
+  // Increment usage counter after successful LLM response
+  await incrementAIUsage(actorUid, db);
+  
   const encoder    = new TextEncoder();
   const textToSend = cleanAIAnswer(finalText ?? "");
 
