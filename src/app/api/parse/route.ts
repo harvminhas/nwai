@@ -113,10 +113,6 @@ export async function POST(request: NextRequest) {
     // downstream (Firestore writes, slug logic, etc.) throws unexpectedly.
     partialParsedData = parsedData;
     
-    // Mask account numbers to last 4 digits only - BEFORE slug generation
-    // so slugs remain stable and based on the masked (stored) value
-    parsedData = maskAccountNumbersInParsedData(parsedData);
-    
     console.log("[parse][post-parse-summary]", JSON.stringify({
       statementId,
       usedCache,
@@ -185,6 +181,13 @@ export async function POST(request: NextRequest) {
 
     // Compute slug from (possibly patched) parsedData — now always stable
     const slug = computeAccountSlug(parsedData);
+    
+    // IMPORTANT: Mask account number AFTER slug computation but BEFORE storage.
+    // This preserves existing slug logic (no duplicate accounts) while storing
+    // only last 4 digits. The slug is computed from the full accountId, then
+    // we mask the accountId field that gets persisted to Firestore.
+    const maskedParsedData = maskAccountNumbersInParsedData(parsedData);
+    
     const yearMonth = parsedData.statementDate ? getYearMonth(parsedData.statementDate) : null;
     const slugIsAccountNumber = /^\d{4}$/.test(slug ?? "");
 
@@ -359,7 +362,7 @@ export async function POST(request: NextRequest) {
     }
 
     await statementRef.update({
-      parsedData,
+      parsedData: maskedParsedData,  // Use masked version for storage
       status: "completed",
       errorMessage: null,
       accountSlug: slug,

@@ -37,7 +37,7 @@ export function maskAccountNumber(accountNumber: string | undefined | null): str
 /**
  * Recursively masks account numbers in parsed statement data.
  * Only masks the accountId field, preserving all other data.
- * Slugs are built AFTER masking, so they remain stable.
+ * Slugs should be built BEFORE calling this function.
  */
 export function maskAccountNumbersInParsedData<T extends Record<string, any>>(data: T): T {
   if (!data || typeof data !== "object") {
@@ -45,12 +45,15 @@ export function maskAccountNumbersInParsedData<T extends Record<string, any>>(da
   }
 
   // Create shallow copy
-  const masked = { ...data };
+  const masked = { ...data } as any;
 
-  // Mask accountId if present
-  if ("accountId" in masked && typeof masked.accountId === "string") {
-    masked.accountId = maskAccountNumber(masked.accountId) || masked.accountId;
+  // Mask accountId if present and it's a string
+  if ("accountId" in data && typeof data.accountId === "string") {
+    const maskedId = maskAccountNumber(data.accountId);
+    if (maskedId) {
+      masked.accountId = maskedId;
+    }
   }
 
-  return masked;
+  return masked as T;
 }

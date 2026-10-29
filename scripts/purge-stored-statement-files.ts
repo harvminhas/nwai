@@ -6,29 +6,49 @@
  * Finds statements with:
  * - status = "completed"
  * - fileUrl is not empty
+ * - Optionally: for a specific user
  * 
  * Deletes the files from Storage and sets fileUrl = "", fileDeletedAt.
  * 
  * Usage:
- *   tsx scripts/purge-stored-statement-files.ts         # Dry run (default)
- *   tsx scripts/purge-stored-statement-files.ts --apply # Actually delete
+ *   tsx scripts/purge-stored-statement-files.ts <uid>             # Dry run for one user
+ *   tsx scripts/purge-stored-statement-files.ts <uid> --apply     # Execute for one user
+ *   tsx scripts/purge-stored-statement-files.ts --all-users       # Dry run for all users
+ *   tsx scripts/purge-stored-statement-files.ts --all-users --apply  # Execute for all users
  */
 
 import { getFirebaseAdmin, getStorageBucketName } from "../src/lib/firebase-admin";
 
-const DRY_RUN = !process.argv.includes("--apply");
+const args = process.argv.slice(2);
+const uid = args.find(arg => !arg.startsWith("--"));
+const ALL_USERS = args.includes("--all-users");
+const DRY_RUN = !args.includes("--apply");
+
+if (!uid && !ALL_USERS) {
+  console.error("Usage:");
+  console.error("  tsx scripts/purge-stored-statement-files.ts <uid>              # Dry run for one user");
+  console.error("  tsx scripts/purge-stored-statement-files.ts <uid> --apply      # Execute for one user");
+  console.error("  tsx scripts/purge-stored-statement-files.ts --all-users        # Dry run for all users");
+  console.error("  tsx scripts/purge-stored-statement-files.ts --all-users --apply # Execute for all users");
+  process.exit(1);
+}
 
 async function main() {
-  console.log("Purging stored statement files for completed statements");
+  const targetUser = ALL_USERS ? "all users" : uid;
+  console.log(`Purging stored statement files for ${targetUser}`);
   console.log(DRY_RUN ? "DRY RUN - no changes will be made" : "APPLY MODE - files will be deleted");
   console.log("=".repeat(80));
 
   const { db, storage } = getFirebaseAdmin();
 
   // Find completed statements with non-empty fileUrl
-  const completedSnap = await db.collection("statements")
-    .where("status", "==", "completed")
-    .get();
+  let query = db.collection("statements").where("status", "==", "completed");
+  
+  if (!ALL_USERS && uid) {
+    query = query.where("userId", "==", uid);
+  }
+  
+  const completedSnap = await query.get();
 
   const toDelete: Array<{
     id: string;

@@ -14,24 +14,45 @@
  * - Does NOT touch slugs or doc IDs
  * 
  * Usage:
- *   tsx scripts/mask-account-numbers.ts         # Dry run (default)
- *   tsx scripts/mask-account-numbers.ts --apply # Actually update
+ *   tsx scripts/mask-account-numbers.ts <uid>              # Dry run for one user
+ *   tsx scripts/mask-account-numbers.ts <uid> --apply      # Execute for one user
+ *   tsx scripts/mask-account-numbers.ts --all-users        # Dry run for all users
+ *   tsx scripts/mask-account-numbers.ts --all-users --apply # Execute for all users
  */
 
 import { getFirebaseAdmin } from "../src/lib/firebase-admin";
 import { maskAccountNumber } from "../src/lib/accountMasking";
 
-const DRY_RUN = !process.argv.includes("--apply");
+const args = process.argv.slice(2);
+const uid = args.find(arg => !arg.startsWith("--"));
+const ALL_USERS = args.includes("--all-users");
+const DRY_RUN = !args.includes("--apply");
+
+if (!uid && !ALL_USERS) {
+  console.error("Usage:");
+  console.error("  tsx scripts/mask-account-numbers.ts <uid>              # Dry run for one user");
+  console.error("  tsx scripts/mask-account-numbers.ts <uid> --apply      # Execute for one user");
+  console.error("  tsx scripts/mask-account-numbers.ts --all-users        # Dry run for all users");
+  console.error("  tsx scripts/mask-account-numbers.ts --all-users --apply # Execute for all users");
+  process.exit(1);
+}
 
 async function main() {
-  console.log("Masking account numbers in existing data");
+  const targetUser = ALL_USERS ? "all users" : uid;
+  console.log(`Masking account numbers in existing data for ${targetUser}`);
   console.log(DRY_RUN ? "DRY RUN - no changes will be made" : "APPLY MODE - data will be updated");
   console.log("=".repeat(80));
 
   const { db } = getFirebaseAdmin();
 
   // Find all statements with parsedData.accountId
-  const statementsSnap = await db.collection("statements").get();
+  let query = db.collection("statements");
+  
+  if (!ALL_USERS && uid) {
+    query = query.where("userId", "==", uid) as any;
+  }
+  
+  const statementsSnap = await query.get();
 
   const toMask: Array<{
     id: string;
@@ -45,6 +66,12 @@ async function main() {
 
   for (const doc of statementsSnap.docs) {
     const data = doc.data();
+    
+    // Filter by user if not scanning all users
+    if (!ALL_USERS && uid && data.userId !== uid) {
+      continue;
+    }
+    
     const parsedData = data.parsedData as Record<string, any> | undefined;
     const accountId = parsedData?.accountId as string | undefined;
     const slug = data.accountSlug as string | undefined;
