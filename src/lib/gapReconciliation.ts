@@ -64,7 +64,7 @@ export function computeGapReconciliation(
     netSavings: number;
   }
 ): GapReconciliation {
-  const rangeMonths = getRangeMonths(range);
+  const rangeMonths = getRangeMonths(range, Array.from(new Set([...(expenseTxns ?? []), ...(incomeTxns ?? [])].map(t => t.txMonth))).sort());
   
   // Filter transactions to the range
   const rangeExpenses = expenseTxns.filter(t => rangeMonths.includes(t.txMonth));
