@@ -2298,6 +2298,97 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     smokeTestErrors++;
   }
   
+  // Test multi-month balance reconstruction
+  console.log("\nTest: Multi-month balance reconstruction");
+  try {
+    let accountsTested = 0;
+    let gapsFound = 0;
+    let reconciliationErrors = 0;
+    
+    // For each account, check that months with transactions have balance entries
+    for (const account of profile.accountBalanceHistory || []) {
+      accountsTested++;
+      
+      // Get transactions for this account
+      const accountTxns = profile.expenseTxns.filter((t: any) => t.accountSlug === account.slug);
+      
+      if (accountTxns.length === 0) continue;
+      
+      // Get months with transactions
+      const txnMonths = new Set(accountTxns.map((t: any) => t.txMonth || t.yearMonth));
+      
+      // Get balance entry months
+      const balanceMonths = new Set(account.entries.map((e: any) => e.yearMonth));
+      
+      // Find gaps: months with transactions but no balance entry
+      for (const txnMonth of txnMonths) {
+        if (!balanceMonths.has(txnMonth)) {
+          // Check if this month is between two balance points (flat carry-forward)
+          const sortedBalanceMonths = Array.from(balanceMonths).sort();
+          const isInRange = sortedBalanceMonths.some((bm, idx) => {
+            if (idx === 0) return false;
+            const prevMonth = sortedBalanceMonths[idx - 1];
+            return txnMonth > prevMonth && txnMonth < bm;
+          });
+          
+          if (isInRange) {
+            gapsFound++;
+            console.log(`  ⚠️  Gap found: ${account.label} has transactions in ${txnMonth} but no balance entry`);
+            console.log(`     Balance entries: ${sortedBalanceMonths.join(", ")}`);
+            errors.push(`Multi-month balance gap in ${account.label} at ${txnMonth}`);
+            smokeTestErrors++;
+          }
+        }
+      }
+      
+      // Check derived balances reconcile to closing balance
+      // Find the last (closing) balance
+      if (account.entries.length > 0) {
+        const sortedEntries = [...account.entries].sort((a: any, b: any) => 
+          a.yearMonth.localeCompare(b.yearMonth)
+        );
+        const closingEntry = sortedEntries[sortedEntries.length - 1];
+        const closingBalance = closingEntry.balance;
+        
+        // For each derived entry, verify it can be reconstructed
+        const derivedEntries = account.entries.filter((e: any) => e.derived);
+        
+        for (const derived of derivedEntries) {
+          // Get all transactions between this derived month and the closing month
+          const txnsAfter = accountTxns.filter((t: any) => {
+            const txMonth = t.txMonth || t.yearMonth;
+            return txMonth > derived.yearMonth && txMonth <= closingEntry.yearMonth;
+          });
+          
+          const totalChange = txnsAfter.reduce((sum: number, t: any) => sum + t.amount, 0);
+          const reconstructed = closingBalance - totalChange;
+          const diff = Math.abs(reconstructed - derived.balance);
+          
+          if (diff > 1) {
+            reconciliationErrors++;
+            console.log(`  ❌ FAIL: Derived balance reconciliation error for ${account.label}`);
+            console.log(`     Month: ${derived.yearMonth}`);
+            console.log(`     Derived: ${derived.balance.toFixed(2)}`);
+            console.log(`     Reconstructed: ${reconstructed.toFixed(2)}`);
+            console.log(`     Difference: ${diff.toFixed(2)}`);
+            errors.push(`Derived balance reconciliation failed for ${account.label} at ${derived.yearMonth}`);
+            smokeTestErrors++;
+          }
+        }
+      }
+    }
+    
+    if (gapsFound > 0 || reconciliationErrors > 0) {
+      console.log(`  ⚠️  Multi-month balance: ${gapsFound} gaps, ${reconciliationErrors} reconciliation errors`);
+    } else {
+      console.log(`  ✓ Multi-month balance reconstruction: ${accountsTested} accounts checked, no gaps`);
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Exception: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push(`Multi-month balance test failed: ${err instanceof Error ? err.message : String(err)}`);
+    smokeTestErrors++;
+  }
+  
   if (smokeTestErrors > 0) {
     console.log(`\n❌ ${smokeTestErrors} smoke test(s) failed\n`);
   } else {

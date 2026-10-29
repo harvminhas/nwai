@@ -73,8 +73,8 @@ export interface AccountBalanceHistory {
   accountType: string;
   /** ISO 4217 currency code — native to this account (after user override applied) */
   currency:    string;
-  /** One entry per uploaded statement month, sorted ascending */
-  entries:     { yearMonth: string; balance: number }[];
+  /** One entry per uploaded statement month, sorted ascending. May include derived month-end balances for multi-month statements. */
+  entries:     { yearMonth: string; balance: number; derived?: boolean }[];
 }
 
 // ── types ──────────────────────────────────────────────────────────────────────
@@ -739,7 +739,163 @@ export async function buildAndCacheFinancialProfile(
     accountType: string; 
     entries: Map<string, number>;
     latestDateByMonth: Map<string, string>; // Track latest statement date per month for deduplication
+    derivedEntries: Set<string>; // Track which month-end balances were derived (vs real statement balances)
   }>();
+  
+  /**
+   * Reconstruct month-end balances for multi-month statements.
+   * 
+   * When a statement spans multiple months (e.g., 90-day statement), transactions
+   * are bucketed by txMonth but we only have one balance point at statementMonth.
+   * This creates gaps in accountBalanceHistory causing flat carry-forward and
+   * incorrect cash-change calculations.
+   * 
+   * Solution: Walk backward from closing balance using account transactions to
+   * derive month-end balances for each month in the statement period.
+   * 
+   * For debt accounts (mortgage, loan, credit card, LOC):
+   * - Payments (negative amounts) reduce the debt balance
+   * - Interest/fees/draws (positive amounts) increase the debt balance
+   * - Debt balances may be stored as negative or positive
+   * 
+   * Reconciliation: If statement has opening balance, verify derived balances
+   * reconcile to within $5 or 0.1% tolerance. If not (e.g., mortgage without
+   * itemized interest), skip derived entries and keep only real statement balance.
+   */
+  function addDerivedMonthEndBalances(
+    slug: string,
+    statementMonth: string,
+    closingBalance: number,
+    openingBalance: number | undefined,
+    transactionsInStatement: ExpenseTxnRecord[],
+    isDebtAccount: boolean
+  ): { derived: number; skipped: boolean; reason?: string } {
+    if (!balanceHistoryMap.has(slug)) {
+      return { derived: 0, skipped: true, reason: "account not in map" };
+    }
+    
+    const entry = balanceHistoryMap.get(slug)!;
+    
+    // Group transactions by month
+    const txnsByMonth = new Map<string, ExpenseTxnRecord[]>();
+    for (const txn of transactionsInStatement) {
+      const month = txn.txMonth;
+      if (!month) continue; // Skip transactions without a month
+      if (!txnsByMonth.has(month)) {
+        txnsByMonth.set(month, []);
+      }
+      txnsByMonth.get(month)!.push(txn);
+    }
+    
+    // Get sorted list of months with transactions
+    const monthsWithTxns = Array.from(txnsByMonth.keys()).sort();
+    
+    if (monthsWithTxns.length === 0) {
+      return { derived: 0, skipped: true, reason: "no transactions" };
+    }
+    
+    const firstTxnMonth = monthsWithTxns[0];
+    const lastTxnMonth = monthsWithTxns[monthsWithTxns.length - 1];
+    
+    // If statement only covers one month, no reconstruction needed
+    if (firstTxnMonth === lastTxnMonth) {
+      return { derived: 0, skipped: false };
+    }
+    
+    // Walk backward from closing balance to derive month-end balances
+    let runningBalance = closingBalance;
+    const derivedBalances = new Map<string, number>();
+    
+    // Build list of months from statement month back to first transaction month
+    const months = [];
+    let currentMonth = statementMonth;
+    
+    while (currentMonth >= firstTxnMonth) {
+      months.push(currentMonth);
+      const [year, month] = currentMonth.split('-').map(Number);
+      const prevMonth = month === 1 
+        ? `${year - 1}-12`
+        : `${year}-${String(month - 1).padStart(2, '0')}`;
+      currentMonth = prevMonth;
+    }
+    
+    // Process months backward from statement month to first transaction month
+    // months array: ["2026-10", "2026-09", "2026-08", "2026-07"] (latest to earliest)
+    for (let i = 0; i < months.length; i++) {
+      const month = months[i];
+      
+      // Skip if we already have a real balance for this month
+      if (entry.entries.has(month) && !entry.derivedEntries.has(month)) {
+        runningBalance = entry.entries.get(month)!;
+        continue;
+      }
+      
+      // Store derived month-end balance (skip the statement month itself)
+      if (month !== statementMonth) {
+        derivedBalances.set(month, runningBalance);
+      }
+      
+      // Move to the previous chronological month by subtracting current month's transactions
+      // Example: Oct month-end 4442 - Oct txns (125) = Sep month-end (4317)
+      if (i < months.length - 1) {
+        const txnsInCurrentMonth = txnsByMonth.get(month) || [];
+        
+        // Calculate change: for debts and assets, transaction amounts work the same way
+        // Negative amount = outflow (payment for debt, withdrawal for asset)
+        // Positive amount = inflow (charge/draw for debt, deposit for asset)
+        const currentMonthChange = txnsInCurrentMonth.reduce((sum, t) => sum + t.amount, 0);
+        runningBalance = runningBalance - currentMonthChange;
+      }
+    }
+    
+    // Reconciliation check if opening balance is available
+    if (openingBalance !== undefined && derivedBalances.size > 0) {
+      // Get the earliest derived month-end balance
+      const earliestMonth = Array.from(derivedBalances.keys()).sort()[0];
+      const earliestMonthEnd = derivedBalances.get(earliestMonth)!;
+      
+      // The opening balance is at the START of earliestMonth
+      // To reconcile: opening + earliestMonth txns should equal earliestMonth month-end
+      // Or equivalently: earliestMonth month-end - earliestMonth txns should equal opening
+      const earliestMonthTxns = txnsByMonth.get(earliestMonth) || [];
+      const earliestMonthChange = earliestMonthTxns.reduce((sum, t) => sum + t.amount, 0);
+      const derivedOpening = earliestMonthEnd - earliestMonthChange;
+      
+      // Check if it reconciles to opening balance within tolerance
+      const absDiff = Math.abs(derivedOpening - openingBalance);
+      const tolerance = Math.max(5, Math.abs(openingBalance) * 0.001); // $5 or 0.1%
+      
+      if (absDiff > tolerance) {
+        // Doesn't reconcile - likely missing interest or fees
+        return { 
+          derived: 0, 
+          skipped: true, 
+          reason: `opening balance reconciliation failed: derived ${derivedOpening.toFixed(2)} vs opening ${openingBalance.toFixed(2)} (diff ${absDiff.toFixed(2)})`,
+        };
+      }
+    }
+    
+    // Reconciliation passed or not needed - add derived entries
+    let count = 0;
+    for (const [month, balance] of derivedBalances.entries()) {
+      if (month >= firstTxnMonth && month < statementMonth) {
+        entry.entries.set(month, balance);
+        entry.derivedEntries.add(month);
+        count++;
+      }
+    }
+    
+    return { derived: count, skipped: false };
+  }
+  
+  // Track reconstruction stats for logging
+  const reconstructionStats = {
+    processed: 0,
+    derived: 0,
+    skipped: 0,
+    reasons: new Map<string, number>(),
+  };
+  
   for (const doc of confirmedDocs) {
     const d = doc.data();
     const parsed = d.parsedData as ParsedStatementData | undefined;
@@ -778,6 +934,7 @@ export async function buildAndCacheFinancialProfile(
         accountType: parsed.accountType ?? "other",
         entries:     new Map(),
         latestDateByMonth: new Map(),
+        derivedEntries: new Set(),
       });
     }
     // Keep the highest-date entry per yearMonth (handles multiple uploads same month)
@@ -789,6 +946,51 @@ export async function buildAndCacheFinancialProfile(
     if (!entry.entries.has(ym) || stmtDate > (latestDateByMonth.get(ym) ?? "")) {
       entry.entries.set(ym, parsed.netWorth);
       latestDateByMonth.set(ym, stmtDate);
+      
+      // Reconstruct month-end balances for multi-month statements
+      // Use ALL transactions for this account (not just from this statement)
+      const accountTxns = allExpenseTxns.filter(t => t.accountSlug === slug);
+      
+      if (accountTxns.length > 0) {
+        const accountType = parsed.accountType?.toLowerCase() || "";
+        const isDebt = ["credit", "loan", "mortgage", "loc"].includes(accountType);
+        
+        const result = addDerivedMonthEndBalances(
+          slug, 
+          ym, 
+          parsed.netWorth,
+          undefined, // TODO: Add openingBalance to ParsedStatementData
+          accountTxns, // All transactions for this account
+          isDebt
+        );
+        
+        reconstructionStats.processed++;
+        if (result.skipped) {
+          reconstructionStats.skipped++;
+          if (result.reason) {
+            const count = reconstructionStats.reasons.get(result.reason) || 0;
+            reconstructionStats.reasons.set(result.reason, count + 1);
+          }
+        } else {
+          reconstructionStats.derived += result.derived;
+        }
+      }
+    }
+  }
+  
+  // Log reconstruction stats
+  if (reconstructionStats.processed > 0) {
+    console.log(
+      `[financialProfile] Multi-month balance reconstruction: ` +
+      `processed=${reconstructionStats.processed} ` +
+      `derived=${reconstructionStats.derived} ` +
+      `skipped=${reconstructionStats.skipped}`
+    );
+    if (reconstructionStats.reasons.size > 0) {
+      console.log(`[financialProfile] Skip reasons:`);
+      for (const [reason, count] of reconstructionStats.reasons.entries()) {
+        console.log(`  ${count}x: ${reason}`);
+      }
     }
   }
   // Apply synthetic backfill entries — each doc is one pre-computed monthly record.
@@ -821,7 +1023,11 @@ export async function buildAndCacheFinancialProfile(
       accountType: e.accountType,
       currency:    currencyOverride ?? snapCurrency,
       entries:     Array.from(e.entries.entries())
-        .map(([yearMonth, balance]) => ({ yearMonth, balance }))
+        .map(([yearMonth, balance]) => ({ 
+          yearMonth, 
+          balance,
+          derived: e.derivedEntries.has(yearMonth) ? true : undefined,
+        }))
         .sort((a, b) => a.yearMonth.localeCompare(b.yearMonth)),
     };
   });
