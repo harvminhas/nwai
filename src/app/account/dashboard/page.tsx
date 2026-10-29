@@ -13,6 +13,7 @@ import { ReviewList } from "@/components/ReviewList";
 import { RangeSwitch } from "@/components/RangeSwitch";
 import type { TimeRange } from "@/lib/rangeUtils";
 import type { FlaggedTransfer } from "@/lib/externalAccounts";
+import type { GapReconciliation } from "@/lib/gapReconciliation";
 import { FlaggedTransfersCard } from "@/components/FlaggedTransfersCard";
 
 // Convert TimeRange to Drawer's TimeWindow format
@@ -421,7 +422,8 @@ function WhereMoneyGoes({
   unreviewedCount,
   range,
   onRangeChange,
-  rangeLoading
+  rangeLoading,
+  onConfirmExternalAccount,
 }: { 
   breakdown: MoneyCoachBreakdown; 
   currency: string;
@@ -430,6 +432,7 @@ function WhereMoneyGoes({
   range: TimeRange;
   onRangeChange: (range: TimeRange) => void;
   rangeLoading: boolean;
+  onConfirmExternalAccount: (accountNumber: string, label: string) => Promise<void>;
 }) {
   const { coverage, incomeAmount, incomeBasisLabel, rangeLabel, buckets } = breakdown;
   
@@ -667,18 +670,7 @@ function WhereMoneyGoes({
             <FlaggedTransfersCard
               flaggedTransfers={breakdown.gapReconciliation.flaggedTransfers}
               currency={currency}
-              onConfirm={async (accountNumber, label) => {
-                const res = await fetch("/api/user/external-accounts", {
-                  method: "POST",
-                  headers: { ...buildHeaders(token), "Content-Type": "application/json" },
-                  body: JSON.stringify({ accountNumber, label }),
-                });
-                if (!res.ok) throw new Error("Failed to save external account label");
-                // Reload breakdown silently to reflect the change
-                if (token) {
-                  await loadData(token, range, { silent: true });
-                }
-              }}
+              onConfirm={onConfirmExternalAccount}
             />
           )}
     </section>
@@ -831,6 +823,21 @@ export default function DashboardPage() {
     }
   };
 
+  const handleConfirmExternalAccount = async (accountNumber: string, label: string) => {
+    if (!token) return;
+    
+    const res = await fetch("/api/user/external-accounts", {
+      method: "POST",
+      headers: { ...buildHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({ accountNumber, label }),
+    });
+    
+    if (!res.ok) throw new Error("Failed to save external account label");
+    
+    // Reload breakdown silently to reflect the change
+    await loadData(token, range, { silent: true });
+  };
+
   const handleAsk = async (question: string) => {
     if (!token) return;
     
@@ -942,6 +949,7 @@ export default function DashboardPage() {
             range={range}
             onRangeChange={handleRangeChange}
             rangeLoading={rangeLoading}
+            onConfirmExternalAccount={handleConfirmExternalAccount}
           />
         ) : (
           <div className="mx-auto mt-16 max-w-2xl rounded-2xl border-2 border-dashed border-purple-200 bg-purple-50/30 p-12 text-center">
