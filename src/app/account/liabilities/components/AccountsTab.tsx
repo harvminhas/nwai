@@ -18,14 +18,24 @@ export function AccountsTab({ summary }: AccountsTabProps) {
   const handleAccountClick = (account: DebtAccount) => {
     const payoff = payoffEstimates.find(e => e.accountSlug === account.slug);
     
-    // Find balance history for this account (simplified)
-    const balanceHistory = monthlyHistory
-      .slice(-12)
-      .map(m => ({
+    // Find balance history for this account from accountBalanceHistory
+    const accountHistory = summary.accountBalanceHistory?.find(h => h.slug === account.slug);
+    
+    // Build 12-month series from monthlyHistory template
+    const last12Months = monthlyHistory.slice(-12);
+    
+    const balanceHistory = last12Months.map(m => {
+      // Find balance entry for this month
+      const entry = accountHistory?.entries.find(e => e.yearMonth === m.month);
+      
+      return {
         month: m.month,
         monthLabel: m.monthLabel,
-        balance: -account.balance, // Negative for debts
-      }));
+        balance: entry?.balance ?? null, // Use actual balance (already negative for debts)
+        derived: entry?.derived,
+        sourceStatement: entry?.sourceStatement,
+      };
+    });
 
     setDrawerData({
       accountName: account.accountName || account.accountType,
@@ -37,7 +47,7 @@ export function AccountsTab({ summary }: AccountsTabProps) {
       isDebt: true,
       interestRate: account.interestRate,
       monthlyPayment: account.monthlyPayment,
-      balanceHistory,
+      balanceHistory: balanceHistory.filter(h => h.balance !== null) as any, // Filter out gaps for now
       payoffInfo: payoff?.payoffDate ? {
         monthsToPayoff: payoff.monthsToPayoff || 0,
         payoffDate: payoff.payoffDate,

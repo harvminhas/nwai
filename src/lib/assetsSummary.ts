@@ -46,6 +46,12 @@ export interface AssetsSummary {
     }>;
   }>;
   staleAccounts: AssetAccount[];
+  /** Per-account balance history from profile.accountBalanceHistory */
+  accountBalanceHistory: Array<{
+    slug: string;
+    label: string;
+    entries: Array<{ yearMonth: string; balance: number; derived?: boolean; sourceStatement?: string }>;
+  }>;
 }
 
 const REGISTERED_TYPES = new Set(["rrsp", "tfsa", "fhsa", "401k", "ira", "roth_ira", "lira", "resp"]);
@@ -288,5 +294,10 @@ export function buildAssetsSummary(
     groups,
     monthlyHistory,
     staleAccounts,
+    accountBalanceHistory: balanceHistory.map(h => ({
+      slug: h.slug,
+      label: h.label,
+      entries: h.entries,
+    })),
   };
 }

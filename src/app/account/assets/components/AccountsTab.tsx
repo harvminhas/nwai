@@ -16,14 +16,24 @@ export function AccountsTab({ summary }: AccountsTabProps) {
   const [drawerData, setDrawerData] = useState<AccountDrawerData | null>(null);
 
   const handleAccountClick = (account: AssetAccount) => {
-    // Find balance history for this account
-    const balanceHistory = monthlyHistory
-      .slice(-12)
-      .map(m => ({
+    // Find balance history for this account from accountBalanceHistory
+    const accountHistory = summary.accountBalanceHistory?.find(h => h.slug === account.slug);
+    
+    // Build 12-month series from monthlyHistory template
+    const last12Months = monthlyHistory.slice(-12);
+    
+    const balanceHistory = last12Months.map(m => {
+      // Find balance entry for this month
+      const entry = accountHistory?.entries.find(e => e.yearMonth === m.month);
+      
+      return {
         month: m.month,
         monthLabel: m.monthLabel,
-        balance: account.balance, // Simplified - would need actual history per account
-      }));
+        balance: entry?.balance ?? null, // null = gap (no data for this month)
+        derived: entry?.derived,
+        sourceStatement: entry?.sourceStatement,
+      };
+    });
 
     setDrawerData({
       accountName: account.accountName || account.accountType,
@@ -33,7 +43,7 @@ export function AccountsTab({ summary }: AccountsTabProps) {
       currency,
       statementMonth: account.statementMonth,
       isDebt: false,
-      balanceHistory,
+      balanceHistory: balanceHistory.filter(h => h.balance !== null) as any, // Filter out gaps for now
     });
   };
 

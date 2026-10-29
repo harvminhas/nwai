@@ -65,6 +65,12 @@ export interface DebtsSummary {
     }>;
   }>;
   scheduledPayments?: ScheduledDebtPayment[]; // For diagnostic output
+  /** Per-account balance history from profile.accountBalanceHistory */
+  accountBalanceHistory: Array<{
+    slug: string;
+    label: string;
+    entries: Array<{ yearMonth: string; balance: number; derived?: boolean; sourceStatement?: string }>;
+  }>;
 }
 
 const DEBT_TYPES = new Set(["mortgage", "credit", "credit_card", "loc", "line_of_credit", "loan", "auto_loan", "student_loan", "personal_loan", "other_debt"]);
@@ -395,5 +401,10 @@ export function buildDebtsSummary(
     payoffEstimates,
     monthlyHistory,
     scheduledPayments, // For diagnostic output
+    accountBalanceHistory: balanceHistory.map(h => ({
+      slug: h.slug,
+      label: h.label,
+      entries: h.entries,
+    })),
   };
 }
