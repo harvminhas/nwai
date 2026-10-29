@@ -7,16 +7,22 @@ interface BalanceLineChartProps {
   history: Array<{
     month: string;
     monthLabel: string;
-    balance: number;
+    balance: number | null;
+    derived?: boolean;
+    sourceStatement?: string;
   }>;
   currency: string;
   isDebt: boolean;
+  onMonthClick?: (month: string) => void;
 }
 
-function BalanceLineChart({ history, currency, isDebt }: BalanceLineChartProps) {
+function BalanceLineChart({ history, currency, isDebt, onMonthClick }: BalanceLineChartProps) {
   const [hoveredPoint, setHoveredPoint] = useState<number | null>(null);
   
-  if (history.length === 0) {
+  // Filter out null values (gaps)
+  const validHistory = history.filter(h => h.balance !== null && Number.isFinite(h.balance));
+  
+  if (validHistory.length === 0) {
     return (
       <div className="bg-gray-50 rounded-lg p-6 text-center">
         <p className="text-sm text-gray-600">Not enough history yet</p>
@@ -25,10 +31,7 @@ function BalanceLineChart({ history, currency, isDebt }: BalanceLineChartProps) 
   }
 
   // Sort chronologically (oldest first)
-  const sortedHistory = [...history].sort((a, b) => a.month.localeCompare(b.month));
-  
-  // Filter out non-finite balances
-  const validHistory = sortedHistory.filter(h => Number.isFinite(h.balance));
+  const sortedHistory = [...validHistory].sort((a, b) => a.month.localeCompare(b.month));
   
   if (validHistory.length === 0) {
     return (
@@ -171,6 +174,7 @@ function BalanceLineChart({ history, currency, isDebt }: BalanceLineChartProps) 
                 className="cursor-pointer transition-all"
                 onMouseEnter={() => setHoveredPoint(idx)}
                 onMouseLeave={() => setHoveredPoint(null)}
+                onClick={() => onMonthClick?.(sortedHistory[idx].month)}
               />
             </g>
           ))}
@@ -228,7 +232,9 @@ export interface AccountDrawerData {
   balanceHistory: Array<{
     month: string;
     monthLabel: string;
-    balance: number;
+    balance: number | null;
+    derived?: boolean;
+    sourceStatement?: string;
   }>;
   paymentHistory?: Array<{
     month: string;
@@ -240,6 +246,14 @@ export interface AccountDrawerData {
     payoffDate: string;
     totalInterest: number;
   };
+  /** Transactions for this account (for month-detail view) */
+  transactions?: Array<{
+    date: string;
+    description: string;
+    amount: number;
+    txMonth: string;
+    isIncome: boolean;
+  }>;
 }
 
 interface AccountDrawerProps {
@@ -249,6 +263,8 @@ interface AccountDrawerProps {
 }
 
 export function AccountDrawer({ isOpen, onClose, data }: AccountDrawerProps) {
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+  
   // Close on Escape key
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -343,7 +359,86 @@ export function AccountDrawer({ isOpen, onClose, data }: AccountDrawerProps) {
             history={data.balanceHistory} 
             currency={data.currency}
             isDebt={data.isDebt}
+            onMonthClick={setSelectedMonth}
           />
+
+          {/* Month Detail View */}
+          {selectedMonth && data.transactions && (() => {
+            const monthEntry = data.balanceHistory.find(h => h.month === selectedMonth);
+            const monthTxns = data.transactions.filter(t => t.txMonth === selectedMonth);
+            const inflows = monthTxns.filter(t => t.isIncome);
+            const outflows = monthTxns.filter(t => !t.isIncome);
+            const totalIn = inflows.reduce((sum, t) => sum + t.amount, 0);
+            const totalOut = outflows.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+            
+            const monthLabel = monthEntry?.monthLabel || selectedMonth;
+            
+            return (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <h4 className="font-semibold text-gray-900">{monthLabel} Details</h4>
+                    {monthEntry && (
+                      <p className="text-sm text-gray-600 mt-1">
+                        Month-end: {formatCurrency(Math.abs(monthEntry.balance || 0), data.currency)}
+                        <span className="ml-2 text-xs">
+                          ({monthEntry.derived ? 'Calculated' : 'From statement'})
+                        </span>
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setSelectedMonth(null)}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+                
+                <div className="space-y-3">
+                  {/* Summary */}
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="bg-white rounded p-2">
+                      <p className="text-xs text-gray-600">Inflows</p>
+                      <p className="font-semibold text-green-600">
+                        +{formatCurrency(totalIn, data.currency)}
+                      </p>
+                    </div>
+                    <div className="bg-white rounded p-2">
+                      <p className="text-xs text-gray-600">Outflows</p>
+                      <p className="font-semibold text-red-600">
+                        -{formatCurrency(totalOut, data.currency)}
+                      </p>
+                    </div>
+                  </div>
+                  
+                  {/* Transactions List */}
+                  {monthTxns.length > 0 && (
+                    <div className="bg-white rounded-lg p-3 max-h-64 overflow-y-auto">
+                      <p className="text-xs font-semibold text-gray-700 mb-2">
+                        Transactions ({monthTxns.length})
+                      </p>
+                      <div className="space-y-1.5">
+                        {monthTxns.sort((a, b) => b.date.localeCompare(a.date)).map((txn, idx) => (
+                          <div key={idx} className="flex items-start justify-between text-xs gap-2">
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium text-gray-900 truncate">{txn.description}</p>
+                              <p className="text-gray-500">{txn.date}</p>
+                            </div>
+                            <p className={`font-semibold tabular-nums ${txn.isIncome ? 'text-green-600' : 'text-gray-900'}`}>
+                              {txn.isIncome ? '+' : ''}{formatCurrency(txn.amount, data.currency)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Debt Details */}
           {data.isDebt && (

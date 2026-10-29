@@ -71,6 +71,21 @@ export interface DebtsSummary {
     label: string;
     entries: Array<{ yearMonth: string; balance: number; derived?: boolean; sourceStatement?: string }>;
   }>;
+  /** Transactions for month-detail view */
+  expenseTxns: Array<{
+    date: string;
+    txMonth: string;
+    amount: number;
+    merchant: string;
+    accountSlug: string;
+  }>;
+  incomeTxns: Array<{
+    date: string;
+    txMonth: string;
+    amount: number;
+    source: string;
+    accountSlug: string;
+  }>;
 }
 
 const DEBT_TYPES = new Set(["mortgage", "credit", "credit_card", "loc", "line_of_credit", "loan", "auto_loan", "student_loan", "personal_loan", "other_debt"]);
@@ -161,7 +176,9 @@ export function buildDebtsSummary(
   manualLiabilities: ManualLiability[],
   fxRates: Record<string, number>,
   homeCurrency: string,
-  profileMonthlyHistory?: Array<{ yearMonth: string; totalDebts: number; debtPaymentsTotal: number }> // From profile
+  profileMonthlyHistory?: Array<{ yearMonth: string; totalDebts: number; debtPaymentsTotal: number }>, // From profile
+  expenseTxns?: Array<{ date: string; txMonth: string; amount: number; merchant: string; accountSlug: string }>,
+  incomeTxns?: Array<{ date: string; txMonth: string; amount: number; source: string; accountSlug: string }>
 ): DebtsSummary {
   // Compute scheduled debt payments using the same logic as computeMonthlyBuckets
   const scheduledPayments = computeScheduledDebtPayments(
@@ -406,5 +423,7 @@ export function buildDebtsSummary(
       label: h.label,
       entries: h.entries,
     })),
+    expenseTxns: expenseTxns || [],
+    incomeTxns: incomeTxns || [],
   };
 }

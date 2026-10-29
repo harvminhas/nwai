@@ -1219,7 +1219,9 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     profile.manualAssets,
     profile.fxRates,
     profile.homeCurrency,
-    profile.monthlyHistory // Pass profile monthly history for correct carry-forward
+    profile.monthlyHistory, // Pass profile monthly history for correct carry-forward
+    profile.expenseTxns, // For month-detail drawer
+    profile.incomeTxns // For month-detail drawer
   );
   
   const debtsSummary = buildDebtsSummary(
@@ -1229,7 +1231,9 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     profile.manualLiabilities,
     profile.fxRates,
     profile.homeCurrency,
-    profile.monthlyHistory // Pass profile monthly history for correct carry-forward
+    profile.monthlyHistory, // Pass profile monthly history for correct carry-forward
+    profile.expenseTxns, // For month-detail drawer
+    profile.incomeTxns // For month-detail drawer
   );
   
   console.log(`📈 Assets Summary:`);
@@ -1712,10 +1716,202 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   }
   
   console.log();
-  if (drawerErrors > 0) {
-    console.log(`❌ ${drawerErrors} account drawer test(s) failed\n`);
+  
+  // ── DRAWER SERIES AND TRANSACTIONS VALIDATION ─────────────────────────────────
+  console.log("📊 DRAWER SERIES & MONTH-DETAIL VALIDATION");
+  console.log("=".repeat(80) + "\n");
+  
+  // Reuse assetsSummary and debtsSummary already built above
+  
+  // Test 1: Verify drawer series equals accountBalanceHistory for every account
+  console.log("Test 1: Drawer series matches profile.accountBalanceHistory");
+  for (const summaryHistory of assetsSummary.accountBalanceHistory) {
+    const profileHistory = profile.accountBalanceHistory.find(h => h.slug === summaryHistory.slug);
+    if (!profileHistory) {
+      console.log(`  ❌ FAIL: Assets summary has ${summaryHistory.slug} but profile doesn't`);
+      drawerErrors++;
+      errors.push(`Drawer data: ${summaryHistory.slug} in assets summary but not in profile`);
+      continue;
+    }
+    
+    // Check entries match exactly
+    if (summaryHistory.entries.length !== profileHistory.entries.length) {
+      console.log(`  ❌ FAIL: ${summaryHistory.label} entry count mismatch: summary=${summaryHistory.entries.length}, profile=${profileHistory.entries.length}`);
+      drawerErrors++;
+      errors.push(`Drawer data: ${summaryHistory.label} entry count mismatch`);
+      continue;
+    }
+    
+    let mismatch = false;
+    for (let i = 0; i < summaryHistory.entries.length; i++) {
+      const se = summaryHistory.entries[i];
+      const pe = profileHistory.entries[i];
+      if (se.yearMonth !== pe.yearMonth || se.balance !== pe.balance || se.derived !== pe.derived) {
+        console.log(`  ❌ FAIL: ${summaryHistory.label} entry ${i} mismatch`);
+        console.log(`    Summary: ${se.yearMonth} ${se.balance} derived=${se.derived}`);
+        console.log(`    Profile: ${pe.yearMonth} ${pe.balance} derived=${pe.derived}`);
+        drawerErrors++;
+        errors.push(`Drawer data: ${summaryHistory.label} entry mismatch at ${se.yearMonth}`);
+        mismatch = true;
+        break;
+      }
+    }
+    
+    if (!mismatch) {
+      console.log(`  ✓ ${summaryHistory.label}: ${summaryHistory.entries.length} entries match exactly`);
+    }
+  }
+  
+  // Same for debts
+  for (const summaryHistory of debtsSummary.accountBalanceHistory) {
+    const profileHistory = profile.accountBalanceHistory.find(h => h.slug === summaryHistory.slug);
+    if (!profileHistory) {
+      console.log(`  ❌ FAIL: Debts summary has ${summaryHistory.slug} but profile doesn't`);
+      drawerErrors++;
+      errors.push(`Drawer data: ${summaryHistory.slug} in debts summary but not in profile`);
+      continue;
+    }
+    
+    if (summaryHistory.entries.length !== profileHistory.entries.length) {
+      console.log(`  ❌ FAIL: ${summaryHistory.label} (debt) entry count mismatch`);
+      drawerErrors++;
+      errors.push(`Drawer data: ${summaryHistory.label} debt entry count mismatch`);
+      continue;
+    }
+    
+    let mismatch = false;
+    for (let i = 0; i < summaryHistory.entries.length; i++) {
+      const se = summaryHistory.entries[i];
+      const pe = profileHistory.entries[i];
+      if (se.yearMonth !== pe.yearMonth || se.balance !== pe.balance || se.derived !== pe.derived) {
+        console.log(`  ❌ FAIL: ${summaryHistory.label} (debt) entry ${i} mismatch`);
+        drawerErrors++;
+        errors.push(`Drawer data: ${summaryHistory.label} debt entry mismatch at ${se.yearMonth}`);
+        mismatch = true;
+        break;
+      }
+    }
+    
+    if (!mismatch) {
+      console.log(`  ✓ ${summaryHistory.label} (debt): ${summaryHistory.entries.length} entries match exactly`);
+    }
+  }
+  
+  console.log();
+  
+  // Test 2: Verify no constant series when balance varies
+  console.log("Test 2: No constant series when balance history varies");
+  for (const history of profile.accountBalanceHistory) {
+    const balances = history.entries.map(e => e.balance);
+    const uniqueBalances = new Set(balances);
+    
+    // If all balances are identical
+    if (uniqueBalances.size === 1 && balances.length > 1) {
+      console.log(`  ⚠️  WARNING: ${history.label} has constant balance ${balances[0]} across ${balances.length} months`);
+      // This is OK if it's really constant (e.g., a dormant account)
+    } else {
+      console.log(`  ✓ ${history.label}: ${uniqueBalances.size} unique balance values across ${balances.length} months`);
+    }
+  }
+  
+  console.log();
+  
+  // Test 3: Verify month-detail transaction totals match expenseTxns/incomeTxns
+  console.log("Test 3: Month-detail transaction totals match profile txns");
+  
+  // Build a map of account slug -> month -> {inflow, outflow}
+  const accountMonthTotals = new Map<string, Map<string, { inflow: number; outflow: number }>>();
+  
+  for (const txn of profile.expenseTxns) {
+    if (!accountMonthTotals.has(txn.accountSlug)) {
+      accountMonthTotals.set(txn.accountSlug, new Map());
+    }
+    const monthMap = accountMonthTotals.get(txn.accountSlug)!;
+    if (!monthMap.has(txn.txMonth)) {
+      monthMap.set(txn.txMonth, { inflow: 0, outflow: 0 });
+    }
+    const totals = monthMap.get(txn.txMonth)!;
+    totals.outflow += Math.abs(txn.amount);
+  }
+  
+  for (const txn of profile.incomeTxns) {
+    if (!accountMonthTotals.has(txn.accountSlug)) {
+      accountMonthTotals.set(txn.accountSlug, new Map());
+    }
+    const monthMap = accountMonthTotals.get(txn.accountSlug)!;
+    if (!monthMap.has(txn.txMonth)) {
+      monthMap.set(txn.txMonth, { inflow: 0, outflow: 0 });
+    }
+    const totals = monthMap.get(txn.txMonth)!;
+    totals.inflow += txn.amount;
+  }
+  
+  // Verify summaries have matching transactions
+  const assetsExpenseTxns = assetsSummary.expenseTxns;
+  const assetsIncomeTxns = assetsSummary.incomeTxns;
+  const debtsExpenseTxns = debtsSummary.expenseTxns;
+  const debtsIncomeTxns = debtsSummary.incomeTxns;
+  
+  // Count should match
+  if (assetsExpenseTxns.length + debtsExpenseTxns.length !== profile.expenseTxns.length) {
+    console.log(`  ❌ FAIL: Summary expense txn count mismatch: assets=${assetsExpenseTxns.length}, debts=${debtsExpenseTxns.length}, profile=${profile.expenseTxns.length}`);
+    drawerErrors++;
+    errors.push(`Drawer data: expense transaction count mismatch`);
   } else {
-    console.log(`✅ All account drawer tests passed\n`);
+    console.log(`  ✓ Expense transactions: ${profile.expenseTxns.length} total (${assetsExpenseTxns.length} assets, ${debtsExpenseTxns.length} debts)`);
+  }
+  
+  if (assetsIncomeTxns.length + debtsIncomeTxns.length !== profile.incomeTxns.length) {
+    console.log(`  ❌ FAIL: Summary income txn count mismatch: assets=${assetsIncomeTxns.length}, debts=${debtsIncomeTxns.length}, profile=${profile.incomeTxns.length}`);
+    drawerErrors++;
+    errors.push(`Drawer data: income transaction count mismatch`);
+  } else {
+    console.log(`  ✓ Income transactions: ${profile.incomeTxns.length} total (${assetsIncomeTxns.length} assets, ${debtsIncomeTxns.length} debts)`);
+  }
+  
+  // Verify totals by account/month
+  let txnAccountsTested = 0;
+  for (const [slug, monthMap] of accountMonthTotals.entries()) {
+    const history = profile.accountBalanceHistory.find(h => h.slug === slug);
+    if (!history) continue;
+    
+    txnAccountsTested++;
+    let accountErrors = 0;
+    
+    for (const [month, totals] of monthMap.entries()) {
+      // Recompute from summaries
+      const summaryExpenses = [...assetsExpenseTxns, ...debtsExpenseTxns].filter(t => t.accountSlug === slug && t.txMonth === month);
+      const summaryIncome = [...assetsIncomeTxns, ...debtsIncomeTxns].filter(t => t.accountSlug === slug && t.txMonth === month);
+      
+      const summaryOutflow = summaryExpenses.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+      const summaryInflow = summaryIncome.reduce((sum, t) => sum + t.amount, 0);
+      
+      if (Math.abs(summaryOutflow - totals.outflow) > 0.01) {
+        console.log(`  ❌ FAIL: ${history.label} ${month} outflow mismatch: profile=${totals.outflow.toFixed(2)}, summary=${summaryOutflow.toFixed(2)}`);
+        drawerErrors++;
+        errors.push(`Drawer data: ${history.label} ${month} outflow mismatch`);
+        accountErrors++;
+      }
+      
+      if (Math.abs(summaryInflow - totals.inflow) > 0.01) {
+        console.log(`  ❌ FAIL: ${history.label} ${month} inflow mismatch: profile=${totals.inflow.toFixed(2)}, summary=${summaryInflow.toFixed(2)}`);
+        drawerErrors++;
+        errors.push(`Drawer data: ${history.label} ${month} inflow mismatch`);
+        accountErrors++;
+      }
+    }
+    
+    if (accountErrors === 0) {
+      console.log(`  ✓ ${history.label}: ${monthMap.size} months, all transaction totals match`);
+    }
+  }
+  
+  console.log(`\n  Summary: ${txnAccountsTested} accounts tested for transaction totals\n`);
+  
+  if (drawerErrors > 0) {
+    console.log(`❌ ${drawerErrors} drawer data test(s) failed\n`);
+  } else {
+    console.log(`✅ All drawer data tests passed\n`);
   }
   
   // ── CASH COMMITMENTS & PLANNER TESTS ──────────────────────────────────────────

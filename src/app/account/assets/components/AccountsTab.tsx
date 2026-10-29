@@ -34,6 +34,29 @@ export function AccountsTab({ summary }: AccountsTabProps) {
         sourceStatement: entry?.sourceStatement,
       };
     });
+    
+    // Build transactions list for this account
+    const accountExpenses = summary.expenseTxns
+      .filter(t => t.accountSlug === account.slug)
+      .map(t => ({
+        date: t.date,
+        description: t.merchant,
+        amount: t.amount,
+        txMonth: t.txMonth,
+        isIncome: false,
+      }));
+    
+    const accountIncome = summary.incomeTxns
+      .filter(t => t.accountSlug === account.slug)
+      .map(t => ({
+        date: t.date,
+        description: t.source,
+        amount: t.amount,
+        txMonth: t.txMonth,
+        isIncome: true,
+      }));
+    
+    const transactions = [...accountExpenses, ...accountIncome];
 
     setDrawerData({
       accountName: account.accountName || account.accountType,
@@ -43,7 +66,8 @@ export function AccountsTab({ summary }: AccountsTabProps) {
       currency,
       statementMonth: account.statementMonth,
       isDebt: false,
-      balanceHistory: balanceHistory.filter(h => h.balance !== null) as any, // Filter out gaps for now
+      balanceHistory,
+      transactions,
     });
   };
 

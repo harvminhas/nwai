@@ -52,6 +52,21 @@ export interface AssetsSummary {
     label: string;
     entries: Array<{ yearMonth: string; balance: number; derived?: boolean; sourceStatement?: string }>;
   }>;
+  /** Transactions for month-detail view */
+  expenseTxns: Array<{
+    date: string;
+    txMonth: string;
+    amount: number;
+    merchant: string;
+    accountSlug: string;
+  }>;
+  incomeTxns: Array<{
+    date: string;
+    txMonth: string;
+    amount: number;
+    source: string;
+    accountSlug: string;
+  }>;
 }
 
 const REGISTERED_TYPES = new Set(["rrsp", "tfsa", "fhsa", "401k", "ira", "roth_ira", "lira", "resp"]);
@@ -120,7 +135,9 @@ export function buildAssetsSummary(
   manualAssets: ManualAsset[],
   fxRates: Record<string, number>,
   homeCurrency: string,
-  profileMonthlyHistory?: Array<{ yearMonth: string; totalAssets: number }> // From profile
+  profileMonthlyHistory?: Array<{ yearMonth: string; totalAssets: number }>, // From profile
+  expenseTxns?: Array<{ date: string; txMonth: string; amount: number; merchant: string; accountSlug: string }>,
+  incomeTxns?: Array<{ date: string; txMonth: string; amount: number; source: string; accountSlug: string }>
 ): AssetsSummary {
   // Filter to asset accounts only (positive balance or asset types)
   const assetAccounts = accountSnapshots.filter(acc => 
@@ -299,5 +316,7 @@ export function buildAssetsSummary(
       label: h.label,
       entries: h.entries,
     })),
+    expenseTxns: expenseTxns || [],
+    incomeTxns: incomeTxns || [],
   };
 }
