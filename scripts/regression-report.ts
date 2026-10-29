@@ -2129,6 +2129,221 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     console.log(`\n✅ All AI chat tool tests passed\n`);
   }
   
+  // ══════════════════════════════════════════════════════════════════════════
+  // CASH RECONCILIATION DIAGNOSTIC (Jul-Sep 2026)
+  // ══════════════════════════════════════════════════════════════════════════
+  
+  console.log("=".repeat(80));
+  console.log("💰 CASH RECONCILIATION DIAGNOSTIC: Jul-Sep 2026");
+  console.log("=".repeat(80) + "\n");
+  
+  const targetMonths = ["2026-07", "2026-08", "2026-09"];
+  
+  // Get all cash account transactions for the period
+  const cashAccounts = profile.accountSnapshots.filter(a => a.accountType === "cash");
+  const allCashTxns = profile.expenseTxns.filter(t => 
+    targetMonths.includes(t.yearMonth) &&
+    cashAccounts.some(a => a.accountSlug === t.accountSlug)
+  );
+  
+  console.log(`📊 Period: ${targetMonths.join(", ")}`);
+  console.log(`💳 Cash accounts: ${cashAccounts.length}`);
+  console.log(`📝 Total cash transactions: ${allCashTxns.length}\n`);
+  
+  // Buckets for categorization
+  const buckets = {
+    countedIncome: { total: 0, txns: [] as typeof allCashTxns },
+    countedSpending: {
+      total: 0,
+      fixed: { total: 0, txns: [] as typeof allCashTxns },
+      essentials: { total: 0, txns: [] as typeof allCashTxns },
+      flexible: { total: 0, txns: [] as typeof allCashTxns },
+    },
+    debtPayments: { total: 0, txns: [] as typeof allCashTxns },
+    investmentContributions: { total: 0, txns: [] as typeof allCashTxns },
+    transfersToTracked: { total: 0, txns: [] as typeof allCashTxns },
+    transfersToUnknown: { total: 0, txns: [] as typeof allCashTxns },
+    excludedDeposits: { total: 0, txns: [] as typeof allCashTxns },
+    refunds: { total: 0, txns: [] as typeof allCashTxns },
+    uncategorized: { total: 0, txns: [] as typeof allCashTxns },
+  };
+  
+  // Also track income transactions
+  const incomeTxnsInPeriod = profile.incomeTxns.filter(t => targetMonths.includes(t.yearMonth));
+  
+  // Process each transaction
+  for (const txn of allCashTxns) {
+    const amt = txn.amount;
+    const cat = txn.category || "Other";
+    
+    // Negative amount = outflow (expense)
+    if (amt < 0) {
+      const absAmt = Math.abs(amt);
+      
+      // Check if it's a debt payment
+      if (cat === "Debt Payments") {
+        buckets.debtPayments.total += absAmt;
+        buckets.debtPayments.txns.push(txn);
+      }
+      // Check if it's an investment/savings contribution
+      else if (cat === "Investments & Savings") {
+        buckets.investmentContributions.total += absAmt;
+        buckets.investmentContributions.txns.push(txn);
+      }
+      // Check if it's a transfer
+      else if (cat === "Transfers" || cat === "Transfers & Payments") {
+        // Try to determine if transfer goes to a tracked account
+        const toAccount = profile.accountSnapshots.find(a => 
+          txn.merchant?.toLowerCase().includes(a.accountName.toLowerCase())
+        );
+        if (toAccount) {
+          buckets.transfersToTracked.total += absAmt;
+          buckets.transfersToTracked.txns.push(txn);
+        } else {
+          buckets.transfersToUnknown.total += absAmt;
+          buckets.transfersToUnknown.txns.push(txn);
+        }
+      }
+      // Otherwise it's counted spending
+      else {
+        buckets.countedSpending.total += absAmt;
+        
+        // Categorize by bucket
+        const bucketName = txn.bucket || "flexible";
+        if (bucketName === "fixed") {
+          buckets.countedSpending.fixed.total += absAmt;
+          buckets.countedSpending.fixed.txns.push(txn);
+        } else if (bucketName === "essentials") {
+          buckets.countedSpending.essentials.total += absAmt;
+          buckets.countedSpending.essentials.txns.push(txn);
+        } else {
+          buckets.countedSpending.flexible.total += absAmt;
+          buckets.countedSpending.flexible.txns.push(txn);
+        }
+      }
+    }
+    // Positive amount = inflow
+    else if (amt > 0) {
+      // Check if it's a refund (positive transaction with expense-like merchant)
+      if (cat === "Other" || txn.merchant?.toLowerCase().includes("refund")) {
+        buckets.refunds.total += amt;
+        buckets.refunds.txns.push(txn);
+      }
+      // Check if it's excluded/unreviewed income
+      else {
+        const txId = makeIncomeTxnId(txn.accountSlug, txn.date, txn.amount);
+        const review = incomeDepositReviews.get(txId);
+        if (review === "exclude" || !review) {
+          buckets.excludedDeposits.total += amt;
+          buckets.excludedDeposits.txns.push(txn);
+        } else {
+          buckets.countedIncome.total += amt;
+          buckets.countedIncome.txns.push(txn);
+        }
+      }
+    }
+  }
+  
+  // Get statement balances for cash accounts to detect discrepancies
+  const statementsSnap = await db.collection(`users/${uid}/statements`)
+    .where("status", "==", "completed")
+    .get();
+  
+  const statementsByMonth = new Map<string, any[]>();
+  statementsSnap.docs.forEach(doc => {
+    const data = doc.data();
+    const month = data.yearMonth;
+    if (targetMonths.includes(month)) {
+      if (!statementsByMonth.has(month)) {
+        statementsByMonth.set(month, []);
+      }
+      statementsByMonth.get(month)!.push(data);
+    }
+  });
+  
+  // Print summary
+  console.log("📈 INFLOWS:");
+  console.log(`   Counted income: ${formatCurrency(buckets.countedIncome.total, currency)} (${buckets.countedIncome.txns.length} txns)`);
+  console.log(`   Excluded/unreviewed deposits: ${formatCurrency(buckets.excludedDeposits.total, currency)} (${buckets.excludedDeposits.txns.length} txns)`);
+  console.log(`   Refunds: ${formatCurrency(buckets.refunds.total, currency)} (${buckets.refunds.txns.length} txns)`);
+  console.log(`   Total inflows: ${formatCurrency(buckets.countedIncome.total + buckets.excludedDeposits.total + buckets.refunds.total, currency)}\n`);
+  
+  console.log("📉 OUTFLOWS:");
+  console.log(`   Counted spending: ${formatCurrency(buckets.countedSpending.total, currency)} (${buckets.countedSpending.fixed.txns.length + buckets.countedSpending.essentials.txns.length + buckets.countedSpending.flexible.txns.length} txns)`);
+  console.log(`      Fixed: ${formatCurrency(buckets.countedSpending.fixed.total, currency)}`);
+  console.log(`      Essentials: ${formatCurrency(buckets.countedSpending.essentials.total, currency)}`);
+  console.log(`      Flexible: ${formatCurrency(buckets.countedSpending.flexible.total, currency)}`);
+  console.log(`   Debt payments: ${formatCurrency(buckets.debtPayments.total, currency)} (${buckets.debtPayments.txns.length} txns)`);
+  console.log(`   Investment contributions: ${formatCurrency(buckets.investmentContributions.total, currency)} (${buckets.investmentContributions.txns.length} txns)`);
+  console.log(`   Transfers to tracked accounts: ${formatCurrency(buckets.transfersToTracked.total, currency)} (${buckets.transfersToTracked.txns.length} txns)`);
+  console.log(`   Transfers to unknown accounts: ${formatCurrency(buckets.transfersToUnknown.total, currency)} (${buckets.transfersToUnknown.txns.length} txns)`);
+  
+  const totalOutflows = buckets.countedSpending.total + buckets.debtPayments.total + 
+    buckets.investmentContributions.total + buckets.transfersToTracked.total + buckets.transfersToUnknown.total;
+  console.log(`   Total outflows: ${formatCurrency(totalOutflows, currency)}\n`);
+  
+  // Calculate net from transactions
+  const netFromTxns = (buckets.countedIncome.total + buckets.excludedDeposits.total + buckets.refunds.total) - totalOutflows;
+  console.log(`💵 NET CASH CHANGE (from transactions): ${formatCurrency(netFromTxns, currency)}\n`);
+  
+  // Get actual balance changes from account snapshots
+  let totalActualCashChange = 0;
+  for (const month of targetMonths) {
+    for (const acc of cashAccounts) {
+      const monthHistory = profile.monthlyHistory.find(h => h.yearMonth === month);
+      if (monthHistory) {
+        // This is a simplified approach - we'd need to track per-account balance changes
+        // For now, just note that we should compare
+      }
+    }
+  }
+  
+  // Calculate expected vs actual gap
+  console.log("🔍 RECONCILIATION:");
+  
+  // From dashboard cards (user reported):
+  const dashboardIncome = 24439 * 3; // 3 months
+  const dashboardSpending = 21091 * 3; // 3 months
+  const dashboardNetSavings = -3490 * 3; // 3 months
+  
+  console.log(`   Dashboard Income (3mo): ${formatCurrency(dashboardIncome, currency)}`);
+  console.log(`   Dashboard Spending (3mo): ${formatCurrency(dashboardSpending, currency)}`);
+  console.log(`   Expected (Income - Spending): ${formatCurrency(dashboardIncome - dashboardSpending, currency)}`);
+  console.log(`   Actual Net Savings card: ${formatCurrency(dashboardNetSavings, currency)}`);
+  console.log(`   Gap: ${formatCurrency((dashboardIncome - dashboardSpending) - dashboardNetSavings, currency)}\n`);
+  
+  // Show top unexplained items
+  console.log("🔎 TOP 15 UNEXPLAINED ITEMS:\n");
+  
+  const unexplainedItems = [
+    ...buckets.excludedDeposits.txns.slice(0, 5).map(t => ({
+      ...t,
+      type: "Excluded deposit",
+      absAmt: t.amount,
+    })),
+    ...buckets.transfersToUnknown.txns.slice(0, 5).map(t => ({
+      ...t,
+      type: "Transfer to unknown",
+      absAmt: Math.abs(t.amount),
+    })),
+    ...buckets.uncategorized.txns.slice(0, 5).map(t => ({
+      ...t,
+      type: "Uncategorized",
+      absAmt: Math.abs(t.amount),
+    })),
+  ];
+  
+  unexplainedItems
+    .sort((a, b) => b.absAmt - a.absAmt)
+    .slice(0, 15)
+    .forEach((item, i) => {
+      console.log(`   ${i + 1}. ${item.type}: ${formatCurrency(item.absAmt, currency)}`);
+      console.log(`      ${item.date} | ${item.merchant} | ${item.accountSlug}`);
+      console.log(`      Category: ${item.category || "none"}\n`);
+    });
+  
+  console.log("\n");
+  
   // Final summary - check ALL error conditions
   const totalFailures = 
     (allErrors ? errors.length : 0) +
