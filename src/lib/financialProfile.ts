@@ -33,6 +33,7 @@ import { txFingerprint } from "./txFingerprint";
 import type { TypicalSpend } from "./spendingMetrics";
 import { resolveTxnCurrencyFromSnapshots } from "./currencyUtils";
 import type { ManualAsset, ManualLiability, InvestmentHolding, ParsedStatementData } from "./types";
+import { validateDerivedBalances } from "./types";
 import { buildAccountSlug, normalizeAccountId } from "./accountSlug";
 import { getFxRatesForCurrencies } from "./fxRates";
 import { splitDebtPayments } from "./debtUtils";
@@ -59,7 +60,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "61"; // Multi-month balance reconstruction with statement-scoped transactions
+const SCHEMA_VERSION = "62"; // Multi-month balance with shared validation and reconciliation gates
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -876,7 +877,32 @@ export async function buildAndCacheFinancialProfile(
       }
     }
     
-    // Add derived entries (never overwrite real balances)
+    // If no derived balances, nothing to do
+    if (derivedBalances.size === 0) {
+      return { derived: 0, skipped: false, firstTxnMonth, lastTxnMonth };
+    }
+    
+    // Validate derived balances using shared validation logic
+    const validation = validateDerivedBalances(
+      statementMonth,
+      closingBalance,
+      parsed,
+      derivedBalances,
+      isDebtAccount
+    );
+    
+    if (!validation.valid) {
+      // Validation failed - skip this statement's derived entries
+      return {
+        derived: 0,
+        skipped: true,
+        reason: `validation failed: ${validation.errors[0]}`,
+        firstTxnMonth,
+        lastTxnMonth
+      };
+    }
+    
+    // Validation passed - add derived entries (never overwrite real balances)
     let count = 0;
     for (const [month, balance] of derivedBalances.entries()) {
       if (!entry.entries.has(month) || entry.derivedEntries.has(month)) {

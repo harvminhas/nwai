@@ -205,6 +205,85 @@ export interface InvestmentHolding {
   percentOfPortfolio?: number;
 }
 
+/**
+ * Shared validation function for multi-month balance reconstruction.
+ * Used by both production (financialProfile.ts) and regression test.
+ * 
+ * Verifies that derived balances reconcile with statement data by walking
+ * backward from closing balance using ONLY that statement's own transactions.
+ */
+export function validateDerivedBalances(
+  statementMonth: string,
+  closingBalance: number,
+  parsed: ParsedStatementData,
+  derivedBalances: Map<string, number>,
+  isDebtAccount: boolean
+): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+  
+  // Get statement's own transactions
+  const stmtExpenses = parsed.expenses?.transactions ?? [];
+  const stmtIncome = parsed.income?.transactions ?? [];
+  
+  // Build transaction net flows by month
+  const txnsByMonth = new Map<string, number>();
+  
+  for (const exp of stmtExpenses) {
+    if (!exp.date) continue;
+    const month = exp.date.slice(0, 7);
+    const current = txnsByMonth.get(month) || 0;
+    txnsByMonth.set(month, current - exp.amount); // Expenses = outflow
+  }
+  
+  for (const inc of stmtIncome) {
+    if (!inc.date) continue;
+    const month = inc.date.slice(0, 7);
+    const current = txnsByMonth.get(month) || 0;
+    txnsByMonth.set(month, current + inc.amount); // Income = inflow
+  }
+  
+  const txnMonths = Array.from(txnsByMonth.keys()).sort();
+  if (txnMonths.length === 0) {
+    return { valid: true, errors: [] }; // No transactions, nothing to validate
+  }
+  
+  const firstTxnMonth = txnMonths[0];
+  const lastTxnMonth = txnMonths[txnMonths.length - 1];
+  
+  // Validate each derived balance
+  for (const [month, balance] of derivedBalances.entries()) {
+    // Check 1: Within statement's transaction range
+    if (month < firstTxnMonth || month > lastTxnMonth) {
+      errors.push(`${month}: outside txn range [${firstTxnMonth}, ${lastTxnMonth}]`);
+      continue;
+    }
+    
+    // Check 2: Savings/checking must be >= 0
+    if (!isDebtAccount && balance < 0) {
+      errors.push(`${month}: negative balance ${balance.toFixed(2)} for asset account`);
+      continue;
+    }
+    
+    // Check 3: Reconcile by walking backward from closing balance
+    // Sum all transaction months AFTER this derived month
+    let txnChangeAfter = 0;
+    for (const [txnMonth, netFlow] of txnsByMonth.entries()) {
+      if (txnMonth > month && txnMonth <= statementMonth) {
+        txnChangeAfter += netFlow;
+      }
+    }
+    
+    const recomputed = closingBalance - txnChangeAfter;
+    const diff = Math.abs(recomputed - balance);
+    
+    if (diff > 1) {
+      errors.push(`${month}: derived ${balance.toFixed(2)} vs recomputed ${recomputed.toFixed(2)} (diff ${diff.toFixed(2)})`);
+    }
+  }
+  
+  return { valid: errors.length === 0, errors };
+}
+
 export interface ParsedStatementData {
   netWorth?: number;
   /** When statement shows breakdown; else derived from netWorth (positive = assets, negative = debts). */

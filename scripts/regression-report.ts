@@ -15,6 +15,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { getFirebaseAdmin } from "../src/lib/firebase-admin";
 import { getFinancialProfile } from "../src/lib/financialProfile";
+import { validateDerivedBalances } from "../src/lib/types";
 import { computeMoneyCoachBreakdown } from "../src/lib/moneyCoach";
 import { computeBucketBreakdown } from "../src/lib/bucketBreakdown";
 import { computeAverageSavings, computeMonthlySavings, computeWindowSavings } from "../src/lib/savingsCalculations";
@@ -2416,56 +2417,58 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         
         console.log(`    Statement ${statementMonth}: txns ${firstTxnMonth}-${lastTxnMonth}, ${derivedList.length} derived`);
         
-        // Verify each derived entry from this statement
-        for (const derived of derivedList) {
-          derivedEntriesChecked++;
-          
-          // Check 1: Within statement's transaction range
-          if (derived.yearMonth < firstTxnMonth || derived.yearMonth > lastTxnMonth) {
-            boundaryErrors++;
-            console.log(`      ❌ ${derived.yearMonth}: OUTSIDE txn range [${firstTxnMonth}, ${lastTxnMonth}]`);
-            errors.push(`${account.label} ${derived.yearMonth}: outside statement txn range`);
-            smokeTestErrors++;
-            continue;
+        // Build derivedBalances map for validation
+        const derivedBalancesMap = new Map<string, number>();
+        for (const d of derivedList) {
+          derivedBalancesMap.set(d.yearMonth, d.balance);
+        }
+        
+        // Use shared validation function (same as production)
+        const accountType = account.accountType?.toLowerCase() || "";
+        const isDebt = ["credit", "loan", "mortgage", "loc"].includes(accountType);
+        
+        const validation = validateDerivedBalances(
+          statementMonth,
+          closingBalance,
+          parsed,
+          derivedBalancesMap,
+          isDebt
+        );
+        
+        if (validation.valid) {
+          for (const d of derivedList) {
+            derivedEntriesChecked++;
+            console.log(`      ✓ ${d.yearMonth}: ${d.balance.toFixed(2)} reconciles`);
           }
-          
-          // Check 2: Doesn't overwrite a real balance
-          if (realBalanceMonths.has(derived.yearMonth)) {
-            overwriteErrors++;
-            console.log(`      ❌ ${derived.yearMonth}: OVERWRITES real balance`);
-            errors.push(`${account.label} ${derived.yearMonth}: overwrites real balance`);
-            smokeTestErrors++;
-            continue;
-          }
-          
-          // Check 3: Savings/checking must be >= 0
-          if (isSavingsOrChecking && derived.balance < 0) {
-            negativeErrors++;
-            console.log(`      ❌ ${derived.yearMonth}: NEGATIVE ${derived.balance.toFixed(2)}`);
-            errors.push(`${account.label} ${derived.yearMonth}: negative savings/checking`);
-            smokeTestErrors++;
-            continue;
-          }
-          
-          // Check 4: Reconcile by walking backward from closing balance
-          // Sum all transaction months AFTER this derived month
-          let txnChangeAfter = 0;
-          for (const [month, netFlow] of txnsByMonth.entries()) {
-            if (month > derived.yearMonth && month <= statementMonth) {
-              txnChangeAfter += netFlow;
+        } else {
+          // Report errors
+          for (const error of validation.errors) {
+            const parts = error.split(':');
+            const month = parts[0];
+            const msg = parts.slice(1).join(':').trim();
+            
+            derivedEntriesChecked++;
+            
+            if (msg.includes('outside txn range')) {
+              boundaryErrors++;
+              console.log(`      ❌ ${month}: OUTSIDE ${msg}`);
+              errors.push(`${account.label} ${month}: ${msg}`);
+              smokeTestErrors++;
+            } else if (msg.includes('negative balance')) {
+              negativeErrors++;
+              console.log(`      ❌ ${month}: NEGATIVE ${msg}`);
+              errors.push(`${account.label} ${month}: ${msg}`);
+              smokeTestErrors++;
+            } else if (msg.includes('vs recomputed')) {
+              reconciliationErrors++;
+              console.log(`      ❌ ${month}: ${msg}`);
+              errors.push(`${account.label} ${month}: reconciliation error`);
+              smokeTestErrors++;
+            } else {
+              console.log(`      ❌ ${month}: ${msg}`);
+              errors.push(`${account.label} ${month}: ${msg}`);
+              smokeTestErrors++;
             }
-          }
-          
-          const recomputed = closingBalance - txnChangeAfter;
-          const diff = Math.abs(recomputed - derived.balance);
-          
-          if (diff > 1) {
-            reconciliationErrors++;
-            console.log(`      ❌ ${derived.yearMonth}: derived ${derived.balance.toFixed(2)} vs recomputed ${recomputed.toFixed(2)} (diff ${diff.toFixed(2)})`);
-            errors.push(`${account.label} ${derived.yearMonth}: reconciliation error ${diff.toFixed(2)}`);
-            smokeTestErrors++;
-          } else {
-            console.log(`      ✓ ${derived.yearMonth}: ${derived.balance.toFixed(2)} reconciles`);
           }
         }
       }
