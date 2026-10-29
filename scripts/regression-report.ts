@@ -2128,6 +2128,16 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         for (const flagged of gapReconciliation.flaggedTransfers) {
           console.log(`    ${flagged.date} ${flagged.destinationNumber.padEnd(8)} $${flagged.amount.toFixed(2).padStart(10)} [${flagged.reason}]`);
         }
+        
+        // Print what the Net Savings info icon popover would show
+        const total = gapReconciliation.flaggedTransfers.reduce((sum, t) => sum + t.amount, 0);
+        console.log(`\n  Net Savings info icon would show:`);
+        console.log(`    "Includes transfers to accounts not in the app"`);
+        for (const transfer of gapReconciliation.flaggedTransfers) {
+          const last4 = transfer.destinationNumber?.slice(-4) || transfer.destinationNumber || "unknown";
+          console.log(`    ${transfer.date} · ${transfer.fromAccount} → Account ending in ${last4} · $${transfer.amount.toFixed(2)}`);
+        }
+        console.log(`    Total: $${total.toFixed(2)}`);
       }
       
       if (gapReconciliation.reconciles && Math.abs(unexplained) <= unexplainedThreshold && unexplainedPct <= unexplainedPctThreshold) {

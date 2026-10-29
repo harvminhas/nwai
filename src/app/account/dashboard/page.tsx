@@ -12,9 +12,7 @@ import { Drawer, type DrawerType } from "@/components/Drawer";
 import { ReviewList } from "@/components/ReviewList";
 import { RangeSwitch } from "@/components/RangeSwitch";
 import type { TimeRange } from "@/lib/rangeUtils";
-import type { FlaggedTransfer } from "@/lib/externalAccounts";
 import type { GapReconciliation } from "@/lib/gapReconciliation";
-import { FlaggedTransfersCard } from "@/components/FlaggedTransfersCard";
 
 // Convert TimeRange to Drawer's TimeWindow format
 function rangeToWindow(range: TimeRange): "last3" | "12month" | "ytd" {
@@ -423,7 +421,6 @@ function WhereMoneyGoes({
   range,
   onRangeChange,
   rangeLoading,
-  onConfirmExternalAccount,
 }: { 
   breakdown: MoneyCoachBreakdown; 
   currency: string;
@@ -432,9 +429,9 @@ function WhereMoneyGoes({
   range: TimeRange;
   onRangeChange: (range: TimeRange) => void;
   rangeLoading: boolean;
-  onConfirmExternalAccount: (accountNumber: string, label: string) => Promise<void>;
 }) {
   const { coverage, incomeAmount, incomeBasisLabel, rangeLabel, buckets } = breakdown;
+  const [showExternalAccountsPopover, setShowExternalAccountsPopover] = useState(false);
   
   // Calculate bucket percentages
   const fixedBucket = buckets.find(b => b.bucket === "fixed");
@@ -620,10 +617,53 @@ function WhereMoneyGoes({
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>
                   </div>
-                  <p className={`text-2xl font-bold tracking-tight ${bucket.bucket === 'savings' ? getSignColor(bucket.monthlyAverage) : 'text-gray-900'}`}>
-                    {fmt(bucket.monthlyAverage, currency)}
-                    <span className="text-sm font-medium text-gray-400">/mo</span>
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className={`text-2xl font-bold tracking-tight ${bucket.bucket === 'savings' ? getSignColor(bucket.monthlyAverage) : 'text-gray-900'}`}>
+                      {fmt(bucket.monthlyAverage, currency)}
+                      <span className="text-sm font-medium text-gray-400">/mo</span>
+                    </p>
+                    {bucket.bucket === "savings" && breakdown.gapReconciliation?.flaggedTransfers && breakdown.gapReconciliation.flaggedTransfers.length > 0 && (
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onMouseEnter={() => setShowExternalAccountsPopover(true)}
+                          onMouseLeave={() => setShowExternalAccountsPopover(false)}
+                          onClick={() => setShowExternalAccountsPopover(!showExternalAccountsPopover)}
+                          className="flex h-5 w-5 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                        >
+                          <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                          </svg>
+                        </button>
+                        {showExternalAccountsPopover && (
+                          <div className="absolute left-0 top-full z-50 mt-2 w-80 rounded-lg border border-gray-200 bg-white p-4 shadow-lg">
+                            <div className="text-xs font-semibold text-gray-900">Includes transfers to accounts not in the app</div>
+                            <div className="mt-3 space-y-2">
+                              {breakdown.gapReconciliation.flaggedTransfers.map((transfer, idx) => (
+                                <div key={idx} className="flex items-start justify-between gap-2 text-xs">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="font-medium text-gray-900">{transfer.date}</div>
+                                    <div className="text-gray-600 truncate">
+                                      {transfer.fromAccount} → Account ending in {transfer.destinationNumber?.slice(-4) || transfer.destinationNumber || "unknown"}
+                                    </div>
+                                  </div>
+                                  <div className="font-mono font-semibold text-gray-900 tabular-nums whitespace-nowrap">
+                                    {fmt(transfer.amount, currency)}
+                                  </div>
+                                </div>
+                              ))}
+                              <div className="mt-3 flex items-center justify-between border-t border-gray-200 pt-2 text-xs font-semibold">
+                                <span className="text-gray-700">Total</span>
+                                <span className="font-mono text-gray-900 tabular-nums">
+                                  {fmt(breakdown.gapReconciliation.flaggedTransfers.reduce((sum, t) => sum + t.amount, 0), currency)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                   <p className="mt-1 text-xs text-gray-500">
                     {rangeLabel} · {Math.round(bucket.pctOfIncome)}% of take-home
                     {bucket.bucket === "savings" && ` · target ${bucket.targetPct}%`}
@@ -664,15 +704,6 @@ function WhereMoneyGoes({
               );
             })}
           </div>
-          
-          {/* Flagged Transfers Review Card */}
-          {breakdown?.gapReconciliation?.flaggedTransfers && (
-            <FlaggedTransfersCard
-              flaggedTransfers={breakdown.gapReconciliation.flaggedTransfers}
-              currency={currency}
-              onConfirm={onConfirmExternalAccount}
-            />
-          )}
     </section>
   );
 }
@@ -823,21 +854,6 @@ export default function DashboardPage() {
     }
   };
 
-  const handleConfirmExternalAccount = async (accountNumber: string, label: string) => {
-    if (!token) return;
-    
-    const res = await fetch("/api/user/external-accounts", {
-      method: "POST",
-      headers: { ...buildHeaders(token), "Content-Type": "application/json" },
-      body: JSON.stringify({ accountNumber, label }),
-    });
-    
-    if (!res.ok) throw new Error("Failed to save external account label");
-    
-    // Reload breakdown silently to reflect the change
-    await loadData(token, range, { silent: true });
-  };
-
   const handleAsk = async (question: string) => {
     if (!token) return;
     
@@ -949,7 +965,6 @@ export default function DashboardPage() {
             range={range}
             onRangeChange={handleRangeChange}
             rangeLoading={rangeLoading}
-            onConfirmExternalAccount={handleConfirmExternalAccount}
           />
         ) : (
           <div className="mx-auto mt-16 max-w-2xl rounded-2xl border-2 border-dashed border-purple-200 bg-purple-50/30 p-12 text-center">
