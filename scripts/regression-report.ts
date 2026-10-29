@@ -2225,9 +2225,26 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   // Test that dashboard page component exports exist
   console.log("\nTest: Dashboard page exports");
   try {
-    // Just verify the file can be imported (Next.js client components)
-    // Actual rendering would need a browser environment
-    console.log("  ✓ Dashboard page structure validated");
+    // Verify SHOW_OPEN_IN_CHAT feature flag is set to false
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    const dashboardPath = path.join(process.cwd(), "src/app/account/dashboard/page.tsx");
+    const dashboardContent = await fs.readFile(dashboardPath, "utf-8");
+    
+    if (!dashboardContent.includes("const SHOW_OPEN_IN_CHAT = false")) {
+      console.log("  ⚠️  WARNING: SHOW_OPEN_IN_CHAT is not set to false (expected hidden)");
+    } else {
+      console.log("  ✓ 'Open in Chat' link is hidden (SHOW_OPEN_IN_CHAT = false)");
+    }
+    
+    // Verify saved answers link exists
+    if (!dashboardContent.includes("Saved answers") || !dashboardContent.includes("/account/saved-answers")) {
+      console.log("  ❌ FAIL: Dashboard missing 'Saved answers' link");
+      errors.push("Dashboard: missing saved answers link");
+      smokeTestErrors++;
+    } else {
+      console.log("  ✓ Dashboard has 'Saved answers' link");
+    }
   } catch (err) {
     console.log(`  ❌ FAIL: Exception: ${err instanceof Error ? err.message : String(err)}`);
     errors.push(`Dashboard page import failed: ${err instanceof Error ? err.message : String(err)}`);

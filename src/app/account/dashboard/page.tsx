@@ -184,11 +184,13 @@ function QuestionBox({
   loading,
   suggestions,
   usageStats,
+  savedAnswersCount,
 }: { 
   onAsk: (q: string) => void; 
   loading: boolean;
   suggestions: string[];
   usageStats?: { remaining: number; limit: number } | null;
+  savedAnswersCount: number;
 }) {
   const [query, setQuery] = useState("");
 
@@ -239,9 +241,27 @@ function QuestionBox({
           </button>
         ))}
       </div>
+      
+      {/* Saved answers link */}
+      {savedAnswersCount > 0 && (
+        <div className="text-center">
+          <Link
+            href="/account/saved-answers"
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-purple-600 hover:text-purple-700 transition"
+          >
+            <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/>
+            </svg>
+            <span>Saved answers ({savedAnswersCount})</span>
+          </Link>
+        </div>
+      )}
     </div>
   );
 }
+
+// Feature flag - set to true to show "Open in Chat" link in answer cards
+const SHOW_OPEN_IN_CHAT = false;
 
 function AnswerCard({ 
   question, 
@@ -355,15 +375,17 @@ function AnswerCard({
             {renderMarkdown(answer)}
           </div>
           <div className="mt-4 flex items-center gap-3 border-t border-purple-100 pt-3">
-            <Link
-              href={`/account/chat?q=${encodeURIComponent(question)}`}
-              className="text-sm font-semibold text-purple-600 hover:text-purple-700 flex items-center gap-1"
-            >
-              Open in Chat
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
-              </svg>
-            </Link>
+            {SHOW_OPEN_IN_CHAT && (
+              <Link
+                href={`/account/chat?q=${encodeURIComponent(question)}`}
+                className="text-sm font-semibold text-purple-600 hover:text-purple-700 flex items-center gap-1"
+              >
+                Open in Chat
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                </svg>
+              </Link>
+            )}
             <button
               onClick={onClear}
               className="text-sm font-medium text-gray-600 hover:text-gray-700"
@@ -653,6 +675,7 @@ export default function DashboardPage() {
   const [breakdown, setBreakdown] = useState<MoneyCoachBreakdown | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [usageStats, setUsageStats] = useState<{ remaining: number; limit: number } | null>(null);
+  const [savedAnswersCount, setSavedAnswersCount] = useState<number>(0);
   const [currency, setCurrency] = useState("USD");
   const [activeDrawer, setActiveDrawer] = useState<DrawerType | null>(null);
   const [unreviewedCount, setUnreviewedCount] = useState(0);
@@ -706,10 +729,11 @@ export default function DashboardPage() {
       setLoading(true);
     }
     try {
-      const [coachRes, suggestionsRes, anomaliesRes] = await Promise.all([
+      const [coachRes, suggestionsRes, anomaliesRes, savedAnswersRes] = await Promise.all([
         fetch(`/api/user/money-coach?range=${selectedRange}`, { headers: buildHeaders(tok) }),
         fetch("/api/user/ai-ask", { headers: buildHeaders(tok) }),
         fetch("/api/user/debt-payment-anomalies", { headers: buildHeaders(tok) }),
+        fetch("/api/user/saved-answers", { headers: buildHeaders(tok) }),
       ]);
       
       if (coachRes.ok) {
@@ -730,6 +754,11 @@ export default function DashboardPage() {
       if (anomaliesRes.ok) {
         const data = await anomaliesRes.json();
         setUnreviewedCount(data.anomalies?.length || 0);
+      }
+      
+      if (savedAnswersRes.ok) {
+        const data = await savedAnswersRes.json();
+        setSavedAnswersCount(data.savedAnswers?.length || 0);
       }
     } catch (error) {
       console.error("Failed to load dashboard data:", error);
@@ -848,6 +877,7 @@ export default function DashboardPage() {
             loading={askLoading}
             suggestions={suggestions}
             usageStats={usageStats}
+            savedAnswersCount={savedAnswersCount}
           />
         </div>
 
