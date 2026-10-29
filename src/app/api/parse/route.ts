@@ -16,6 +16,7 @@ import { fireInsightEvent } from "@/lib/insights/index";
 import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
 import { inferCurrencyFromBankName } from "@/lib/currencyUtils";
 import type { ParsedStatementData } from "@/lib/types";
+import { maskAccountNumbersInParsedData } from "@/lib/accountMasking";
 
 export const maxDuration = 120;
 
@@ -111,6 +112,11 @@ export async function POST(request: NextRequest) {
     // Capture AI result so the catch block can persist partial data if something
     // downstream (Firestore writes, slug logic, etc.) throws unexpectedly.
     partialParsedData = parsedData;
+    
+    // Mask account numbers to last 4 digits only - BEFORE slug generation
+    // so slugs remain stable and based on the masked (stored) value
+    parsedData = maskAccountNumbersInParsedData(parsedData);
+    
     console.log("[parse][post-parse-summary]", JSON.stringify({
       statementId,
       usedCache,
