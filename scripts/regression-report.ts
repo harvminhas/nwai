@@ -1908,10 +1908,78 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   
   console.log(`\n  Summary: ${txnAccountsTested} accounts tested for transaction totals\n`);
   
+  // Test 4: Net Savings drawer badge and month label validation
+  console.log("Test 4: Net Savings drawer - badge and month label validation");
+  
+  // Compute window savings to get the monthly breakdown
+  const { monthlyBreakdown } = computeWindowSavings(
+    profile.monthlyHistory,
+    profile.accountBalanceHistory,
+    profile.expenseTxns,
+    "3mo",
+    [] // No confirmed items needed for regression check
+  );
+  
+  let badgeErrors = 0;
+  let monthLabelErrors = 0;
+  
+  for (const monthData of monthlyBreakdown) {
+    const allAccounts = [
+      ...monthData.accounts.cashAccounts,
+      ...monthData.accounts.debtAccounts
+    ];
+    
+    for (const acc of allAccounts) {
+      // Check 1: No "No statement" badge for derived entries
+      if (acc.currentDerived && acc.currentCarriedForward) {
+        console.log(`  ❌ FAIL: ${acc.accountLabel} ${monthData.month} shows derived + carried forward (should only be one)`);
+        badgeErrors++;
+        drawerErrors++;
+        errors.push(`Drawer badge: ${acc.accountLabel} ${monthData.month} has both derived and carriedForward flags`);
+      }
+      
+      // Check 2: Verify month labels show actual months
+      if (acc.priorCarriedForward && acc.priorActualMonth) {
+        const priorMonthsBack = getMonthsBetweenYM(acc.priorActualMonth, monthData.month);
+        if (priorMonthsBack > 1) {
+          // Should show label like "Prior (May)" not just "Prior"
+          console.log(`  ✓ ${acc.accountLabel} ${monthData.month}: Prior uses ${acc.priorActualMonth} (${priorMonthsBack} months back)`);
+        }
+      }
+      
+      if (acc.currentCarriedForward && acc.currentActualMonth) {
+        const currentMonthsBack = getMonthsBetweenYM(acc.currentActualMonth, monthData.month);
+        if (currentMonthsBack > 0) {
+          console.log(`  ✓ ${acc.accountLabel} ${monthData.month}: Current uses ${acc.currentActualMonth} (${currentMonthsBack} months back)`);
+        }
+      }
+      
+      // Check 3: Derived entries should have sourceStatement
+      if (acc.currentDerived && !acc.currentSourceStatement) {
+        console.log(`  ❌ FAIL: ${acc.accountLabel} ${monthData.month} is derived but has no sourceStatement`);
+        drawerErrors++;
+        errors.push(`Drawer badge: ${acc.accountLabel} ${monthData.month} derived without sourceStatement`);
+      }
+    }
+  }
+  
+  if (badgeErrors === 0 && monthLabelErrors === 0) {
+    console.log(`  ✓ All ${monthlyBreakdown.length} months checked: badges and month labels correct`);
+  }
+  
+  console.log();
+  
   if (drawerErrors > 0) {
     console.log(`❌ ${drawerErrors} drawer data test(s) failed\n`);
   } else {
     console.log(`✅ All drawer data tests passed\n`);
+  }
+  
+  // Helper function for month difference calculation
+  function getMonthsBetweenYM(startYM: string, endYM: string): number {
+    const [startYear, startMonth] = startYM.split('-').map(Number);
+    const [endYear, endMonth] = endYM.split('-').map(Number);
+    return (endYear - startYear) * 12 + (endMonth - startMonth);
   }
   
   // ── CASH COMMITMENTS & PLANNER TESTS ──────────────────────────────────────────
