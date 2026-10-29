@@ -2044,6 +2044,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         profile.expenseTxns,
         profile.incomeTxns,
         profile.accountSnapshots,
+        profile.accountBalanceHistory,
         {
           income: breakdown.incomeAmount,
           fixed: breakdown.buckets.find(b => b.bucket === "fixed")?.monthlyAverage || 0,

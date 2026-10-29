@@ -48,6 +48,9 @@ export interface GapReconciliation {
   reconciles: boolean; // abs(unexplained) < 1
 }
 
+// Import AccountBalanceHistory type
+import type { AccountBalanceHistory } from "./financialProfile";
+
 /**
  * Compute gap reconciliation for a given time range
  */
@@ -56,6 +59,7 @@ export function computeGapReconciliation(
   expenseTxns: ExpenseTxnRecord[],
   incomeTxns: IncomeTxnRecord[],
   accountSnapshots: AccountSnapshot[],
+  accountBalanceHistory: AccountBalanceHistory[],
   bucketTotals: {
     income: number;
     fixed: number;
@@ -78,57 +82,129 @@ export function computeGapReconciliation(
   
   const components: GapComponent[] = [];
   
-  // 1. Borrowing (LOC/FlexLine draws, credit card advances)
-  // These are income on debt accounts (increases available cash without being counted as income)
+  // Identify debt accounts
   const debtAccountSlugs = new Set(
     accountSnapshots
-      .filter(a => a.balance < 0 || ["credit", "credit_card", "loc", "line_of_credit", "loan"].includes(a.accountType))
+      .filter(a => a.balance < 0 || ["credit", "credit_card", "loc", "line_of_credit", "loan", "mortgage"].includes(a.accountType))
       .map(a => a.slug)
   );
   
-  const borrowingTxns = rangeIncome.filter(t => {
-    const isDebtAccount = debtAccountSlugs.has(t.accountSlug);
-    const cat = (t.category || "").toLowerCase();
-    const desc = (t.source || "").toLowerCase();
+  // Helper: get balance for a specific month from accountBalanceHistory
+  function getBalanceForMonth(slug: string, month: string): number | null {
+    const history = accountBalanceHistory.find(h => h.slug === slug);
+    if (!history) return null;
     
-    // Income on debt accounts that are draws/advances
-    return isDebtAccount && (
-      cat.includes("transfer") ||
-      cat.includes("advance") ||
-      desc.includes("advance") ||
-      desc.includes("draw") ||
-      desc.includes("flexline") ||
-      desc.includes("cash advance")
-    );
-  });
+    // Try exact month
+    const exact = history.entries.find(e => e.yearMonth === month);
+    if (exact) return exact.balance;
+    
+    // Find most recent prior
+    const priors = history.entries
+      .filter(e => e.yearMonth < month)
+      .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth));
+    
+    return priors.length > 0 ? priors[0].balance : null;
+  }
   
-  const borrowingTotal = borrowingTxns.reduce((sum, t) => sum + t.amount, 0);
-  const borrowingMonthly = borrowingTotal / numMonths;
+  // 1. Borrowing (increases in debt balances = new draws/charges)
+  // For each debt account, sum balance increases across range months
+  let totalBorrowingAllMonths = 0;
+  
+  for (const slug of debtAccountSlugs) {
+    const history = accountBalanceHistory.find(h => h.slug === slug);
+    if (!history) continue;
+    
+    for (let i = 0; i < rangeMonths.length; i++) {
+      const month = rangeMonths[i];
+      const priorMonth = i > 0 ? rangeMonths[i - 1] : null;
+      
+      if (!priorMonth) {
+        // First month - compare to month before range start
+        const [y, m] = month.split('-').map(Number);
+        const prevMonthDate = new Date(y, m - 2, 1); // m-2 because m is 1-indexed
+        const prevMonth = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, '0')}`;
+        
+        const prevBalance = getBalanceForMonth(slug, prevMonth);
+        const currentBalance = getBalanceForMonth(slug, month);
+        
+        if (prevBalance !== null && currentBalance !== null) {
+          // Debt balances are negative, so increase in debt = more negative = borrowed more
+          const debtIncrease = Math.abs(currentBalance) - Math.abs(prevBalance);
+          if (debtIncrease > 0) {
+            totalBorrowingAllMonths += debtIncrease;
+          }
+        }
+      } else {
+        const prevBalance = getBalanceForMonth(slug, priorMonth);
+        const currentBalance = getBalanceForMonth(slug, month);
+        
+        if (prevBalance !== null && currentBalance !== null) {
+          const debtIncrease = Math.abs(currentBalance) - Math.abs(prevBalance);
+          if (debtIncrease > 0) {
+            totalBorrowingAllMonths += debtIncrease;
+          }
+        }
+      }
+    }
+  }
+  
+  const borrowingMonthly = totalBorrowingAllMonths / numMonths;
   
   if (borrowingMonthly > 0.01) {
     components.push({
       name: "Borrowing",
       amount: borrowingMonthly,
-      description: "LOC/FlexLine draws, credit advances (monthly avg)",
+      description: "LOC/FlexLine draws, credit card spending (monthly avg)",
     });
   }
   
-  // 2. Debt principal paid
-  // Payments to debt accounts (paymentsMade) - already counted in expenses as "Debt Payments"
-  // but excluded from bucket totals by CORE_EXCLUDE_RE (transfers category)
-  const debtPaymentsTxns = rangeExpenses.filter(t => {
-    const cat = (t.category || "").toLowerCase();
-    return cat === "debt payments";
-  });
+  // 2. Debt principal paid (decreases in debt balances = net debt reduction)
+  let totalDebtPrincipalPaidAllMonths = 0;
   
-  const debtPaymentsTotal = debtPaymentsTxns.reduce((sum, t) => sum + Math.abs(t.amount), 0);
-  const debtPaymentsMonthly = debtPaymentsTotal / numMonths;
+  for (const slug of debtAccountSlugs) {
+    const history = accountBalanceHistory.find(h => h.slug === slug);
+    if (!history) continue;
+    
+    for (let i = 0; i < rangeMonths.length; i++) {
+      const month = rangeMonths[i];
+      const priorMonth = i > 0 ? rangeMonths[i - 1] : null;
+      
+      if (!priorMonth) {
+        const [y, m] = month.split('-').map(Number);
+        const prevMonthDate = new Date(y, m - 2, 1);
+        const prevMonth = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, '0')}`;
+        
+        const prevBalance = getBalanceForMonth(slug, prevMonth);
+        const currentBalance = getBalanceForMonth(slug, month);
+        
+        if (prevBalance !== null && currentBalance !== null) {
+          // Debt decrease = less owed = paid down
+          const debtDecrease = Math.abs(prevBalance) - Math.abs(currentBalance);
+          if (debtDecrease > 0) {
+            totalDebtPrincipalPaidAllMonths += debtDecrease;
+          }
+        }
+      } else {
+        const prevBalance = getBalanceForMonth(slug, priorMonth);
+        const currentBalance = getBalanceForMonth(slug, month);
+        
+        if (prevBalance !== null && currentBalance !== null) {
+          const debtDecrease = Math.abs(prevBalance) - Math.abs(currentBalance);
+          if (debtDecrease > 0) {
+            totalDebtPrincipalPaidAllMonths += debtDecrease;
+          }
+        }
+      }
+    }
+  }
   
-  if (debtPaymentsMonthly > 0.01) {
+  const debtPrincipalPaidMonthly = totalDebtPrincipalPaidAllMonths / numMonths;
+  
+  if (debtPrincipalPaidMonthly > 0.01) {
     components.push({
       name: "Debt principal paid",
-      amount: -debtPaymentsMonthly, // Negative because it reduces available cash
-      description: "Credit card and loan payments (monthly avg)",
+      amount: -debtPrincipalPaidMonthly, // Negative because it reduces available cash
+      description: "Net debt reduction from balance changes (monthly avg)",
     });
   }
   

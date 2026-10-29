@@ -133,9 +133,13 @@ async function auditFlexLine(uid: string) {
     const parsed = stmt.parsedData;
     if (!parsed) continue;
 
-    const month = parsed.statementMonth;
-    const closingBalance = Math.abs(parsed.closingBalance || 0);
-    const openingBalance = previousClosing !== null ? previousClosing : Math.abs(parsed.openingBalance || closingBalance);
+    // Use the same fields as financialProfile
+    const month = (stmt.yearMonth as string | undefined) ?? (parsed.statementDate ?? "").slice(0, 7);
+    if (!month) continue;
+    
+    // FlexLine is a debt account, so balance is negative (or absolute value is the amount owed)
+    const closingBalance = Math.abs(parsed.netWorth ?? parsed.closingBalance ?? 0);
+    const openingBalance = previousClosing !== null ? previousClosing : Math.abs(parsed.openingBalance ?? closingBalance);
     
     // Extract financial data
     const paymentsIn = parsed.paymentsMade || 0;
@@ -241,6 +245,9 @@ async function auditFlexLine(uid: string) {
     previousClosing = closingBalance;
   }
 
+  // Sort by month
+  monthlyData.sort((a, b) => a.month.localeCompare(b.month));
+
   // Print summary table
   console.log("MONTHLY SUMMARY");
   console.log("=".repeat(150));
@@ -311,6 +318,27 @@ async function auditFlexLine(uid: string) {
   console.log(`Net change (draws + interest + fees - payments): $${(totalDraws + totalInterest + totalFees - totalPayments).toFixed(2)}`);
   console.log(`Actual balance growth: $${balanceGrowth.toFixed(2)}`);
   console.log(`Difference: $${(balanceGrowth - (totalDraws + totalInterest + totalFees - totalPayments)).toFixed(2)}`);
+  
+  // Check for regular payments (same amount)
+  const paymentAmounts = monthlyData.map(d => d.paymentsIn).filter(p => p > 0);
+  const paymentCounts = new Map<number, number>();
+  for (const amount of paymentAmounts) {
+    // Round to 2 decimals for comparison
+    const rounded = Math.round(amount * 100) / 100;
+    paymentCounts.set(rounded, (paymentCounts.get(rounded) || 0) + 1);
+  }
+  
+  const regularPayments = Array.from(paymentCounts.entries())
+    .filter(([_, count]) => count >= 3)
+    .sort((a, b) => b[1] - a[1]);
+  
+  if (regularPayments.length > 0) {
+    console.log();
+    console.log("REGULAR PAYMENTS DETECTED:");
+    for (const [amount, count] of regularPayments) {
+      console.log(`  $${amount.toFixed(2)} appears ${count} times (likely TD ALLINCLUSIVE automatic payment)`);
+    }
+  }
   
   // Detailed month-by-month findings
   console.log("\n\nDETAILED FINDINGS");
