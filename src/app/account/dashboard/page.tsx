@@ -183,10 +183,12 @@ function QuestionBox({
   onAsk, 
   loading,
   suggestions,
+  usageStats,
 }: { 
   onAsk: (q: string) => void; 
   loading: boolean;
   suggestions: string[];
+  usageStats?: { remaining: number; limit: number } | null;
 }) {
   const [query, setQuery] = useState("");
 
@@ -217,6 +219,13 @@ function QuestionBox({
         </button>
       </div>
       
+      {/* Usage stats for free users */}
+      {usageStats && usageStats.limit > 0 && (
+        <div className="text-center text-xs text-gray-500">
+          {usageStats.remaining} of {usageStats.limit} AI answers left this month
+        </div>
+      )}
+      
       <div className="flex flex-wrap items-center justify-center gap-2">
         <span className="text-sm text-gray-500">Try asking:</span>
         {suggestions.slice(0, 3).map((q) => (
@@ -237,13 +246,17 @@ function QuestionBox({
 function AnswerCard({ 
   question, 
   answer, 
-  onClear 
+  onClear,
+  token,
 }: { 
   question: string; 
   answer: string; 
   onClear: () => void;
+  token: string | null;
 }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   
   // Handle Escape key
   useEffect(() => {
@@ -256,6 +269,30 @@ function AnswerCard({
     return () => window.removeEventListener("keydown", handleEscape);
   }, [onClear]);
   
+  const handleSave = async () => {
+    if (!token || saving || saved) return;
+    
+    setSaving(true);
+    try {
+      const res = await fetch("/api/user/saved-answers", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ question, answer }),
+      });
+      
+      if (res.ok) {
+        setSaved(true);
+      }
+    } catch (error) {
+      console.error("Failed to save answer:", error);
+    } finally {
+      setSaving(false);
+    }
+  };
+  
   return (
     <div className="mx-auto max-w-3xl rounded-2xl border-2 border-purple-100 bg-purple-50/30 shadow-sm">
       {/* Sticky Header */}
@@ -267,6 +304,23 @@ function AnswerCard({
           <h4 className="text-sm font-semibold text-purple-900">{question}</h4>
         </div>
         <div className="flex shrink-0 gap-2">
+          <button
+            onClick={handleSave}
+            disabled={saving || saved}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-purple-600 hover:bg-purple-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label={saved ? "Saved" : "Save answer"}
+            title={saved ? "Saved" : "Save answer"}
+          >
+            {saved ? (
+              <svg className="h-4 w-4 fill-current" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/>
+              </svg>
+            ) : (
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
+              </svg>
+            )}
+          </button>
           <button
             onClick={() => setCollapsed(!collapsed)}
             className="flex h-7 w-7 items-center justify-center rounded-lg text-purple-600 hover:bg-purple-100 transition"
@@ -598,6 +652,7 @@ export default function DashboardPage() {
   const [currentAnswer, setCurrentAnswer] = useState<{ question: string; answer: string } | null>(null);
   const [breakdown, setBreakdown] = useState<MoneyCoachBreakdown | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [usageStats, setUsageStats] = useState<{ remaining: number; limit: number } | null>(null);
   const [currency, setCurrency] = useState("USD");
   const [activeDrawer, setActiveDrawer] = useState<DrawerType | null>(null);
   const [unreviewedCount, setUnreviewedCount] = useState(0);
@@ -666,6 +721,10 @@ export default function DashboardPage() {
       if (suggestionsRes.ok) {
         const data = await suggestionsRes.json();
         setSuggestions(data.suggestions || []);
+        // Set usage stats (limit -1 means paid plan / unlimited)
+        if (data.limit !== undefined && data.remaining !== undefined) {
+          setUsageStats({ remaining: data.remaining, limit: data.limit });
+        }
       }
 
       if (anomaliesRes.ok) {
@@ -737,6 +796,11 @@ export default function DashboardPage() {
       const data = await res.json();
       setCurrentAnswer({ question, answer: data.answer });
       
+      // Update usage stats if returned
+      if (data.remaining !== undefined && data.limit !== undefined) {
+        setUsageStats({ remaining: data.remaining, limit: data.limit });
+      }
+      
       setTimeout(() => {
         document.getElementById("answer-card")?.scrollIntoView({ 
           behavior: "smooth", 
@@ -783,6 +847,7 @@ export default function DashboardPage() {
             onAsk={handleAsk} 
             loading={askLoading}
             suggestions={suggestions}
+            usageStats={usageStats}
           />
         </div>
 
@@ -793,6 +858,7 @@ export default function DashboardPage() {
               question={currentAnswer.question}
               answer={currentAnswer.answer}
               onClear={clearAnswer}
+              token={token}
             />
           </div>
         )}
