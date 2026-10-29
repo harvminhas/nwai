@@ -19,8 +19,8 @@ interface BalanceLineChartProps {
 function BalanceLineChart({ history, currency, isDebt, onMonthClick }: BalanceLineChartProps) {
   const [hoveredPoint, setHoveredPoint] = useState<number | null>(null);
   
-  // Filter out null values (gaps)
-  const validHistory = history.filter(h => h.balance !== null && Number.isFinite(h.balance));
+  // Filter out null values (gaps) and narrow type
+  const validHistory = history.filter((h): h is typeof h & { balance: number } => h.balance !== null && Number.isFinite(h.balance));
   
   if (validHistory.length === 0) {
     return (
