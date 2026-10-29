@@ -762,12 +762,18 @@ export async function buildAndCacheFinancialProfile(
    * reconcile to within $5 or 0.1% tolerance. If not (e.g., mortgage without
    * itemized interest), skip derived entries and keep only real statement balance.
    */
+  /**
+   * Reconstruct month-end balances for multi-month statements.
+   * 
+   * Uses ONLY this statement's own transactions (from parsed.income/expenses.transactions)
+   * to derive balances within the statement's period. Never crosses statement boundaries
+   * or overwrites real balances.
+   */
   function addDerivedMonthEndBalances(
     slug: string,
     statementMonth: string,
     closingBalance: number,
-    openingBalance: number | undefined,
-    transactionsInStatement: ExpenseTxnRecord[],
+    parsed: ParsedStatementData,
     isDebtAccount: boolean
   ): { derived: number; skipped: boolean; reason?: string } {
     if (!balanceHistoryMap.has(slug)) {
@@ -776,38 +782,43 @@ export async function buildAndCacheFinancialProfile(
     
     const entry = balanceHistoryMap.get(slug)!;
     
-    // Group transactions by month
-    const txnsByMonth = new Map<string, ExpenseTxnRecord[]>();
-    for (const txn of transactionsInStatement) {
-      const month = txn.txMonth;
-      if (!month) continue; // Skip transactions without a month
-      if (!txnsByMonth.has(month)) {
-        txnsByMonth.set(month, []);
-      }
-      txnsByMonth.get(month)!.push(txn);
+    // Get transactions from THIS STATEMENT ONLY
+    const stmtExpenses = parsed.expenses?.transactions ?? [];
+    const stmtIncome = parsed.income?.transactions ?? [];
+    
+    // Combine into net cash flow by month:
+    // - Expenses are outflows (negative)
+    // - Income is inflows (positive)
+    const txnsByMonth = new Map<string, number>();
+    
+    for (const exp of stmtExpenses) {
+      if (!exp.date) continue;
+      const month = exp.date.slice(0, 7);
+      const current = txnsByMonth.get(month) || 0;
+      txnsByMonth.set(month, current - exp.amount); // Outflow = negative
     }
     
-    // Get sorted list of months with transactions
-    const monthsWithTxns = Array.from(txnsByMonth.keys()).sort();
+    for (const inc of stmtIncome) {
+      if (!inc.date) continue;
+      const month = inc.date.slice(0, 7);
+      const current = txnsByMonth.get(month) || 0;
+      txnsByMonth.set(month, current + inc.amount); // Inflow = positive
+    }
     
-    if (monthsWithTxns.length === 0) {
+    const allMonths = Array.from(txnsByMonth.keys()).sort();
+    if (allMonths.length === 0) {
       return { derived: 0, skipped: true, reason: "no transactions" };
     }
     
-    const firstTxnMonth = monthsWithTxns[0];
-    const lastTxnMonth = monthsWithTxns[monthsWithTxns.length - 1];
+    const firstTxnMonth = allMonths[0];
+    const lastTxnMonth = allMonths[allMonths.length - 1];
     
-    // If statement only covers one month, no reconstruction needed
     if (firstTxnMonth === lastTxnMonth) {
       return { derived: 0, skipped: false };
     }
     
-    // Walk backward from closing balance to derive month-end balances
-    let runningBalance = closingBalance;
-    const derivedBalances = new Map<string, number>();
-    
-    // Build list of months from statement month back to first transaction month
-    const months = [];
+    // Build months list from statement month back to first transaction month
+    const months: string[] = [];
     let currentMonth = statementMonth;
     
     while (currentMonth >= firstTxnMonth) {
@@ -819,66 +830,56 @@ export async function buildAndCacheFinancialProfile(
       currentMonth = prevMonth;
     }
     
-    // Process months backward from statement month to first transaction month
-    // months array: ["2026-10", "2026-09", "2026-08", "2026-07"] (latest to earliest)
+    // Walk backward deriving month-end balances
+    let runningBalance = closingBalance;
+    const derivedBalances = new Map<string, number>();
+    
     for (let i = 0; i < months.length; i++) {
       const month = months[i];
       
-      // If we already have a real balance for this month, use it as anchor
+      // NEVER touch months with real statement balances
       const hasRealBalance = entry.entries.has(month) && !entry.derivedEntries.has(month);
       if (hasRealBalance) {
-        runningBalance = entry.entries.get(month)!;
+        // Hit a real balance - check reconciliation
+        const realBalance = entry.entries.get(month)!;
+        if (derivedBalances.size > 0) {
+          const diff = Math.abs(runningBalance - realBalance);
+          const tolerance = Math.max(5, Math.abs(realBalance) * 0.001);
+          if (diff > tolerance) {
+            return {
+              derived: 0,
+              skipped: true,
+              reason: `hit real balance at ${month}: derived ${runningBalance.toFixed(2)} vs real ${realBalance.toFixed(2)}`
+            };
+          }
+        }
+        runningBalance = realBalance;
       } else {
-        // Store derived month-end balance (skip the statement month itself)
-        if (month !== statementMonth) {
+        // Store derived balance (not the statement month itself)
+        if (month !== statementMonth && month >= firstTxnMonth && month <= lastTxnMonth) {
+          // Sanity: savings can't go negative
+          if (!isDebtAccount && runningBalance < 0) {
+            return {
+              derived: 0,
+              skipped: true,
+              reason: `savings would go negative at ${month}: ${runningBalance.toFixed(2)}`
+            };
+          }
           derivedBalances.set(month, runningBalance);
         }
       }
       
-      // Move to the previous chronological month by subtracting current month's transactions
-      // Example: Oct month-end 4442 - Oct txns (125) = Sep month-end (4317)
+      // Subtract current month's net flow to get previous month-end
       if (i < months.length - 1) {
-        const txnsInCurrentMonth = txnsByMonth.get(month) || [];
-        
-        // Calculate change: for debts and assets, transaction amounts work the same way
-        // Negative amount = outflow (payment for debt, withdrawal for asset)
-        // Positive amount = inflow (charge/draw for debt, deposit for asset)
-        const currentMonthChange = txnsInCurrentMonth.reduce((sum, t) => sum + t.amount, 0);
-        runningBalance = runningBalance - currentMonthChange;
+        const netFlow = txnsByMonth.get(month) || 0;
+        runningBalance = runningBalance - netFlow;
       }
     }
     
-    // Reconciliation check if opening balance is available
-    if (openingBalance !== undefined && derivedBalances.size > 0) {
-      // Get the earliest derived month-end balance
-      const earliestMonth = Array.from(derivedBalances.keys()).sort()[0];
-      const earliestMonthEnd = derivedBalances.get(earliestMonth)!;
-      
-      // The opening balance is at the START of earliestMonth
-      // To reconcile: opening + earliestMonth txns should equal earliestMonth month-end
-      // Or equivalently: earliestMonth month-end - earliestMonth txns should equal opening
-      const earliestMonthTxns = txnsByMonth.get(earliestMonth) || [];
-      const earliestMonthChange = earliestMonthTxns.reduce((sum, t) => sum + t.amount, 0);
-      const derivedOpening = earliestMonthEnd - earliestMonthChange;
-      
-      // Check if it reconciles to opening balance within tolerance
-      const absDiff = Math.abs(derivedOpening - openingBalance);
-      const tolerance = Math.max(5, Math.abs(openingBalance) * 0.001); // $5 or 0.1%
-      
-      if (absDiff > tolerance) {
-        // Doesn't reconcile - likely missing interest or fees
-        return { 
-          derived: 0, 
-          skipped: true, 
-          reason: `opening balance reconciliation failed: derived ${derivedOpening.toFixed(2)} vs opening ${openingBalance.toFixed(2)} (diff ${absDiff.toFixed(2)})`,
-        };
-      }
-    }
-    
-    // Reconciliation passed or not needed - add derived entries
+    // Add derived entries (never overwrite real balances)
     let count = 0;
     for (const [month, balance] of derivedBalances.entries()) {
-      if (month >= firstTxnMonth && month < statementMonth) {
+      if (!entry.entries.has(month) || entry.derivedEntries.has(month)) {
         entry.entries.set(month, balance);
         entry.derivedEntries.add(month);
         count++;
@@ -948,32 +949,26 @@ export async function buildAndCacheFinancialProfile(
       latestDateByMonth.set(ym, stmtDate);
       
       // Reconstruct month-end balances for multi-month statements
-      // Use ALL transactions for this account (not just from this statement)
-      const accountTxns = allExpenseTxns.filter(t => t.accountSlug === slug);
+      const accountType = parsed.accountType?.toLowerCase() || "";
+      const isDebt = ["credit", "loan", "mortgage", "loc"].includes(accountType);
       
-      if (accountTxns.length > 0) {
-        const accountType = parsed.accountType?.toLowerCase() || "";
-        const isDebt = ["credit", "loan", "mortgage", "loc"].includes(accountType);
-        
-        const result = addDerivedMonthEndBalances(
-          slug, 
-          ym, 
-          parsed.netWorth,
-          undefined, // TODO: Add openingBalance to ParsedStatementData
-          accountTxns, // All transactions for this account
-          isDebt
-        );
-        
-        reconstructionStats.processed++;
-        if (result.skipped) {
-          reconstructionStats.skipped++;
-          if (result.reason) {
-            const count = reconstructionStats.reasons.get(result.reason) || 0;
-            reconstructionStats.reasons.set(result.reason, count + 1);
-          }
-        } else {
-          reconstructionStats.derived += result.derived;
+      const result = addDerivedMonthEndBalances(
+        slug, 
+        ym, 
+        parsed.netWorth,
+        parsed, // Pass parsed data so function can access statement's own transactions
+        isDebt
+      );
+      
+      reconstructionStats.processed++;
+      if (result.skipped) {
+        reconstructionStats.skipped++;
+        if (result.reason) {
+          const count = reconstructionStats.reasons.get(result.reason) || 0;
+          reconstructionStats.reasons.set(result.reason, count + 1);
         }
+      } else {
+        reconstructionStats.derived += result.derived;
       }
     }
   }
