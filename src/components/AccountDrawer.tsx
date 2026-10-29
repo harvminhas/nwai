@@ -19,7 +19,7 @@ function BalanceLineChart({ history, currency, isDebt }: BalanceLineChartProps) 
   if (history.length === 0) {
     return (
       <div className="bg-gray-50 rounded-lg p-6 text-center">
-        <p className="text-sm text-gray-600">No balance history available</p>
+        <p className="text-sm text-gray-600">Not enough history yet</p>
       </div>
     );
   }
@@ -27,18 +27,45 @@ function BalanceLineChart({ history, currency, isDebt }: BalanceLineChartProps) 
   // Sort chronologically (oldest first)
   const sortedHistory = [...history].sort((a, b) => a.month.localeCompare(b.month));
   
+  // Filter out non-finite balances
+  const validHistory = sortedHistory.filter(h => Number.isFinite(h.balance));
+  
+  if (validHistory.length === 0) {
+    return (
+      <div className="bg-gray-50 rounded-lg p-6 text-center">
+        <p className="text-sm text-gray-600">Not enough history yet</p>
+      </div>
+    );
+  }
+  
   // Calculate min/max with 5% padding
-  const values = sortedHistory.map(h => Math.abs(h.balance));
+  const values = validHistory.map(h => Math.abs(h.balance));
   const minValue = Math.min(...values);
   const maxValue = Math.max(...values);
   const range = maxValue - minValue;
-  const paddedMin = Math.max(0, minValue - (range * 0.05));
-  const paddedMax = maxValue + (range * 0.05);
-  const effectiveRange = paddedMax - paddedMin;
+  
+  // Guard against constant values (max === min)
+  const hasVariation = range > 0.01; // Allow for tiny floating point differences
+  
+  let paddedMin: number;
+  let paddedMax: number;
+  let effectiveRange: number;
+  
+  if (hasVariation) {
+    paddedMin = Math.max(0, minValue - (range * 0.05));
+    paddedMax = maxValue + (range * 0.05);
+    effectiveRange = paddedMax - paddedMin;
+  } else {
+    // All values are the same - create artificial range for display
+    const value = minValue;
+    paddedMin = Math.max(0, value * 0.9);
+    paddedMax = value * 1.1;
+    effectiveRange = paddedMax - paddedMin;
+  }
   
   // Determine if trend is improving
-  const firstBalance = Math.abs(sortedHistory[0].balance);
-  const lastBalance = Math.abs(sortedHistory[sortedHistory.length - 1].balance);
+  const firstBalance = Math.abs(validHistory[0].balance);
+  const lastBalance = Math.abs(validHistory[validHistory.length - 1].balance);
   const isImproving = isDebt 
     ? lastBalance < firstBalance  // Debt decreasing is good
     : lastBalance > firstBalance; // Assets increasing is good
@@ -53,10 +80,24 @@ function BalanceLineChart({ history, currency, isDebt }: BalanceLineChartProps) 
   const plotWidth = chartWidth - padding.left - padding.right;
   const plotHeight = chartHeight - padding.top - padding.bottom;
   
-  // Map data to coordinates
-  const points = sortedHistory.map((entry, idx) => {
-    const x = padding.left + (idx / Math.max(sortedHistory.length - 1, 1)) * plotWidth;
-    const y = padding.top + (1 - ((Math.abs(entry.balance) - paddedMin) / effectiveRange)) * plotHeight;
+  // Map data to coordinates with safeguards
+  const points = validHistory.map((entry, idx) => {
+    let x: number;
+    let y: number;
+    
+    if (validHistory.length === 1) {
+      // Single point - center it
+      x = padding.left + plotWidth / 2;
+      y = padding.top + plotHeight / 2;
+    } else {
+      x = padding.left + (idx / (validHistory.length - 1)) * plotWidth;
+      y = padding.top + (1 - ((Math.abs(entry.balance) - paddedMin) / effectiveRange)) * plotHeight;
+    }
+    
+    // Final safeguard - ensure no NaN
+    x = Number.isFinite(x) ? x : padding.left + plotWidth / 2;
+    y = Number.isFinite(y) ? y : padding.top + plotHeight / 2;
+    
     return { x, y, ...entry };
   });
   

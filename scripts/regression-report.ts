@@ -2251,6 +2251,53 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     smokeTestErrors++;
   }
   
+  // Test chart point scaling for all accounts
+  console.log("\nTest: Chart point scaling (NaN prevention)");
+  try {
+    const { scaleBalancePoints } = await import("../src/lib/chartScaling");
+    
+    const dimensions = {
+      chartWidth: 400,
+      chartHeight: 200,
+      padding: { top: 20, right: 20, bottom: 30, left: 50 },
+    };
+    
+    let accountsTested = 0;
+    let pointsTested = 0;
+    
+    // Test every account in accountBalanceHistory
+    for (const account of profile.accountBalanceHistory || []) {
+      const history = account.entries.map((e: any) => ({
+        month: e.yearMonth,
+        monthLabel: e.yearMonth,
+        balance: e.balance,
+      }));
+      
+      const points = scaleBalancePoints(history, dimensions, account.accountType === "credit");
+      
+      accountsTested++;
+      pointsTested += points.length;
+      
+      // Assert all points have finite coordinates
+      for (const point of points) {
+        if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+          console.log(`  ❌ FAIL: Non-finite chart point for ${account.label}`);
+          console.log(`     Account: ${account.label} (${account.accountType})`);
+          console.log(`     Entries: ${history.length}`);
+          console.log(`     Point: x=${point.x}, y=${point.y}`);
+          errors.push(`Chart scaling produced NaN for ${account.label}`);
+          smokeTestErrors++;
+        }
+      }
+    }
+    
+    console.log(`  ✓ Chart scaling: ${accountsTested} accounts, ${pointsTested} points, all finite`);
+  } catch (err) {
+    console.log(`  ❌ FAIL: Exception: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push(`Chart scaling test failed: ${err instanceof Error ? err.message : String(err)}`);
+    smokeTestErrors++;
+  }
+  
   if (smokeTestErrors > 0) {
     console.log(`\n❌ ${smokeTestErrors} smoke test(s) failed\n`);
   } else {
