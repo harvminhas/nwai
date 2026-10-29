@@ -392,11 +392,30 @@ export function computeGapReconciliation(
   const components: GapComponent[] = [];
   
   // Component 1: Transfers to untracked accounts (outflows)
-  if (avgTransfersToUntracked > 1) {
+  // Check if any transfers are to the wife's LOC (4002808)
+  const transfersToWifeLOC = perMonthData.reduce((sum, data) => {
+    return sum + data.transfersToUntracked
+      .filter(t => t.destination === '2808')
+      .reduce((s, t) => s + t.amount, 0);
+  }, 0);
+  
+  const transfersToOtherUntracked = totalTransfersToUntracked - transfersToWifeLOC;
+  const avgTransfersToWifeLOC = transfersToWifeLOC / numMonths;
+  const avgTransfersToOtherUntracked = transfersToOtherUntracked / numMonths;
+  
+  if (avgTransfersToWifeLOC > 1) {
     components.push({
-      name: "Transfers to untracked accounts",
-      amount: -avgTransfersToUntracked,
-      description: "Money sent to accounts not tracked in the app",
+      name: "Paid toward a line of credit not in the app",
+      amount: -avgTransfersToWifeLOC,
+      description: "Payments to wife's TD LOC (4002808)",
+    });
+  }
+  
+  if (avgTransfersToOtherUntracked > 1) {
+    components.push({
+      name: "Moved to accounts not in the app",
+      amount: -avgTransfersToOtherUntracked,
+      description: "Transfers to other untracked accounts",
     });
   }
   
