@@ -12,10 +12,11 @@
 import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
 import type { TimeRange } from "./rangeUtils";
 import { getRangeMonths } from "./rangeUtils";
-import type { AccountBalanceHistory, MonthlyHistoryEntry, DebtPaymentReview, FinancialProfileCache } from "./financialProfile";
+import type { AccountBalanceHistory, MonthlyHistoryEntry, FinancialProfileCache } from "./financialProfile";
+import type { DebtPaymentReview } from "./types";
 import { computeMonthlySavings } from "./savingsCalculations";
-import { buildSpendingSummary } from "./spendingMetrics";
-import { computeIncomeMetrics } from "./incomeMetrics";
+import { buildSpendingSummary } from "./spendingSummary";
+import { getMoneyCoachIncome } from "./incomeMetrics";
 
 export interface GapComponent {
   name: string;
@@ -97,7 +98,7 @@ export function computeGapReconciliation(
   );
   
   // Use the SAME income calculation as the dashboard
-  const incomeMetrics = computeIncomeMetrics(
+  const incomeResult = getMoneyCoachIncome(
     profile.monthlyHistory,
     profile.incomeTxns,
     profile.accountSnapshots,
@@ -134,9 +135,11 @@ export function computeGapReconciliation(
   const monthlyBuckets = spendingSummary.monthlyHistory;
   
   for (const month of rangeMonths) {
-    // Income for this month (from income metrics, same as cards)
-    const monthData = incomeMetrics.monthlyIncome.find(m => m.yearMonth === month);
-    const monthIncome = monthData ? monthData.total : 0;
+    // Income for this month
+    // getMoneyCoachIncome returns overall average, need to compute per-month ourselves
+    const monthIncome = profile.incomeTxns
+      .filter(t => t.txMonth === month)
+      .reduce((sum, t) => sum + t.amount, 0);
     
     // Buckets for this month (from spending summary, same as cards)
     const bucketData = monthlyBuckets.find(m => m.yearMonth === month);
@@ -169,7 +172,7 @@ export function computeGapReconciliation(
       })
       .map(t => ({
         date: t.date || '',
-        merchant: t.source || t.merchant || '',
+        merchant: t.merchant || '',
         amount: Math.abs(t.amount),
         category: t.category || 'uncategorized',
       }))
