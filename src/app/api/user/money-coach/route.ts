@@ -57,6 +57,7 @@ export async function GET(req: NextRequest) {
       profile.incomeTxns,
       profile.accountSnapshots,
       profile.accountBalanceHistory,
+      profile.monthlyHistory,
       {
         income: breakdown.incomeAmount,
         fixed: breakdown.buckets.find(b => b.bucket === "fixed")?.monthlyAverage || 0,

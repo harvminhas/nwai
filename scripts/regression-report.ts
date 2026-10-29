@@ -1992,11 +1992,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   
   console.log();
   
-  if (drawerErrors > 0) {
-    console.log(`❌ ${drawerErrors} drawer data test(s) failed\n`);
-  } else {
-    console.log(`✅ All drawer data tests passed\n`);
-  }
+  // Note: drawerErrors is cumulative across all drawer tests, so don't print here
+  // Final count printed at end of all tests
   
   // Helper function for month difference calculation
   function getMonthsBetweenYM(startYM: string, endYM: string): number {
@@ -2048,6 +2045,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         profile.incomeTxns,
         profile.accountSnapshots,
         profile.accountBalanceHistory,
+        profile.monthlyHistory,
         {
           income: breakdown.incomeAmount,
           fixed: breakdown.buckets.find(b => b.bucket === "fixed")?.monthlyAverage || 0,
