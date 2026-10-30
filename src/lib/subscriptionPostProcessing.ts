@@ -5,7 +5,7 @@
 
 import type { DetectedSubscription } from "./subscriptionEngine";
 import type { SourceMapping } from "./sourceMappings";
-import { resolveCanonical } from "./sourceMappings";
+import { resolveCanonical, normaliseName } from "./sourceMappings";
 
 export interface PostProcessingResult {
   confirmedActive: DetectedSubscription[];
@@ -25,7 +25,7 @@ function collapseAliases(
   
   // Group subscriptions by canonical merchant name
   for (const sub of subscriptions) {
-    const canonical = resolveCanonical(sub.merchant, mappings);
+    const canonical = normaliseName(resolveCanonical(sub.merchant, mappings));
     if (!canonicalMap.has(canonical)) {
       canonicalMap.set(canonical, []);
     }
@@ -34,7 +34,8 @@ function collapseAliases(
   
   // Collapse each group into one subscription
   const collapsed: DetectedSubscription[] = [];
-  for (const [canonical, subs] of canonicalMap.entries()) {
+  for (const [, subs] of canonicalMap.entries()) {
+    const canonical = resolveCanonical(subs[0].merchant, mappings);
     if (subs.length === 1) {
       collapsed.push(subs[0]);
       continue;
@@ -52,6 +53,8 @@ function collapseAliases(
     const merged: DetectedSubscription = {
       ...subs[0],
       merchant: canonical,
+      billingFrequency: subs.find(s => s.billingFrequency)?.billingFrequency ?? subs[0].billingFrequency,
+      cadence: subs.find(s => s.billingFrequency)?.cadence ?? subs[0].cadence,
       amount: lastTxn.amount, // Use latest charge amount
       chargeCount: allTransactions.length,
       lastDate: lastTxn.date,
