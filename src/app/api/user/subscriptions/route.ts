@@ -110,6 +110,13 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       billingFrequencyOverrides
     );
     
+    // Load confirmed source mappings to collapse aliases
+    const mappingsSnap = await db.collection(`users/${decoded.uid}/sourceMappings`).get();
+    const sourceMappings = mappingsSnap.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as import("@/lib/sourceMappings").SourceMapping));
+    
     // Get latest transaction date from user's data
     const latestTxnDate = profile.expenseTxns.length > 0
       ? profile.expenseTxns.reduce((latest, txn) => txn.date > latest ? txn.date : latest, profile.expenseTxns[0].date)
@@ -118,7 +125,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // Post-process subscriptions using shared function
     // Product decision: ALL confirmed subscriptions stay active regardless of staleness
     const { confirmedActive, inactive: finalInactive } = 
-      postProcessSubscriptions(summary, cancelledSlugs, synthesizedSubs, latestTxnDate);
+      postProcessSubscriptions(summary, cancelledSlugs, synthesizedSubs, latestTxnDate, sourceMappings);
     
     // Recalculate totals including synthesized subs
     let adjustedMonthlyTotal = summary.monthlyTotal;
@@ -148,7 +155,24 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       ...summary.candidates,
       ...finalInactive,
     ];
-    const mergeSuggestions = findMergeSuggestions(allDetected);
+    const allMergeSuggestions = findMergeSuggestions(allDetected);
+    
+    // Exclude already-merged pairs from suggestions
+    const confirmedMappings = sourceMappings.filter(m => m.status === "confirmed");
+    const mergedNames = new Set<string>();
+    confirmedMappings.forEach(m => {
+      mergedNames.add(m.canonical.toLowerCase());
+      mergedNames.add(m.alias.toLowerCase());
+    });
+    
+    const mergeSuggestions = allMergeSuggestions.filter(group => {
+      // Only show suggestion if NOT all members are already merged to the same canonical
+      const canonicals = new Set(group.map(s => {
+        const { resolveCanonical } = require("@/lib/sourceMappings");
+        return resolveCanonical(s.merchant, sourceMappings).toLowerCase();
+      }));
+      return canonicals.size > 1; // Keep if members resolve to different canonicals
+    });
     
     return NextResponse.json({
       ...summary,

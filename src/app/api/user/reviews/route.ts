@@ -25,9 +25,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const { auth, db } = getFirebaseAdmin();
     const decoded = await auth.verifyIdToken(token);
     const { searchParams } = new URL(req.url);
-    const reviewType = searchParams.get("type") as "debt_payment" | "savings_item" | "income_classification" | "subscription" | "income_deposit" | "stale_account" | null;
+    const reviewType = searchParams.get("type") as "debt_payment" | "savings_item" | "income_classification" | "subscription" | "income_deposit" | "stale_account" | "merge_dismissed" | null;
 
-    if (!reviewType || !["debt_payment", "savings_item", "income_classification", "subscription", "income_deposit", "stale_account"].includes(reviewType)) {
+    if (!reviewType || !["debt_payment", "savings_item", "income_classification", "subscription", "income_deposit", "stale_account", "merge_dismissed"].includes(reviewType)) {
       return NextResponse.json({ error: "Invalid review type" }, { status: 400 });
     }
 
@@ -215,7 +215,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    if (!["debt_payment", "savings_item", "income_classification", "subscription", "income_deposit", "stale_account"].includes(type)) {
+    if (!["debt_payment", "savings_item", "income_classification", "subscription", "income_deposit", "stale_account", "merge_dismissed"].includes(type)) {
       return NextResponse.json({ error: "Invalid review type" }, { status: 400 });
     }
 

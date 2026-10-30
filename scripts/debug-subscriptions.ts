@@ -218,10 +218,19 @@ async function debugSubscriptions(uid: string) {
   
   console.log(`Latest transaction date in data: ${latestTxnDate}\n`);
   
+  // Load confirmed source mappings (for alias collapsing)
+  const mappingsSnap = await db.collection(`users/${uid}/sourceMappings`).get();
+  const sourceMappings = mappingsSnap.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  } as import("../src/lib/sourceMappings").SourceMapping));
+  
+  console.log(`Loaded ${sourceMappings.length} source mappings\n`);
+  
   // Use the same post-processing function as the API route
   const { postProcessSubscriptions } = await import("../src/lib/subscriptionPostProcessing");
   const { confirmedActive: finalConfirmedActive, inactive: finalInactive } = 
-    postProcessSubscriptions(summary, cancelledSlugs, synthesizedSubs, latestTxnDate);
+    postProcessSubscriptions(summary, cancelledSlugs, synthesizedSubs, latestTxnDate, sourceMappings);
   
   const confirmedInactiveCount = summary.inactive.filter(s => s.tier === "confirmed" && !cancelledSlugs.has(s.merchantSlug)).length;
   

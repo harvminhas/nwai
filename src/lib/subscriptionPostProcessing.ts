@@ -4,11 +4,64 @@
  */
 
 import type { DetectedSubscription } from "./subscriptionEngine";
+import type { SourceMapping } from "./sourceMappings";
+import { resolveCanonical } from "./sourceMappings";
 
 export interface PostProcessingResult {
   confirmedActive: DetectedSubscription[];
   inactive: DetectedSubscription[];
   candidates: DetectedSubscription[];
+}
+
+/**
+ * Collapse subscriptions with the same canonical merchant name (after resolving aliases).
+ * Combines charges, uses latest lastDate, recomputes cadence from combined charge dates.
+ */
+function collapseAliases(
+  subscriptions: DetectedSubscription[],
+  mappings: SourceMapping[]
+): DetectedSubscription[] {
+  const canonicalMap = new Map<string, DetectedSubscription[]>();
+  
+  // Group subscriptions by canonical merchant name
+  for (const sub of subscriptions) {
+    const canonical = resolveCanonical(sub.merchant, mappings);
+    if (!canonicalMap.has(canonical)) {
+      canonicalMap.set(canonical, []);
+    }
+    canonicalMap.get(canonical)!.push(sub);
+  }
+  
+  // Collapse each group into one subscription
+  const collapsed: DetectedSubscription[] = [];
+  for (const [canonical, subs] of canonicalMap.entries()) {
+    if (subs.length === 1) {
+      collapsed.push(subs[0]);
+      continue;
+    }
+    
+    // Merge multiple subscriptions
+    const allTransactions = subs.flatMap(s => s.transactions);
+    const sortedTransactions = allTransactions.sort((a, b) => a.date.localeCompare(b.date));
+    const lastTxn = sortedTransactions[sortedTransactions.length - 1];
+    
+    // Sum amounts (use the most recent amount as the primary amount)
+    const totalAmount = subs.reduce((sum, s) => sum + s.amount, 0);
+    
+    // Use the first subscription as the base, but update key fields
+    const merged: DetectedSubscription = {
+      ...subs[0],
+      merchant: canonical,
+      amount: lastTxn.amount, // Use latest charge amount
+      chargeCount: allTransactions.length,
+      lastDate: lastTxn.date,
+      transactions: sortedTransactions,
+    };
+    
+    collapsed.push(merged);
+  }
+  
+  return collapsed;
 }
 
 function daysBetween(date1: string, date2: string): number {
@@ -32,7 +85,8 @@ export function postProcessSubscriptions(
   },
   cancelledSlugs: Set<string>,
   synthesizedSubs: DetectedSubscription[],
-  latestTxnDate: string
+  latestTxnDate: string,
+  sourceMappings: SourceMapping[] = []
 ): PostProcessingResult {
   // Separate cancelled from non-cancelled inactive
   const cancelled = detected.inactive.filter(s => cancelledSlugs.has(s.merchantSlug));
@@ -73,7 +127,10 @@ export function postProcessSubscriptions(
     }
   });
   
-  const confirmedActive = allActive.sort((a, b) => b.amount - a.amount);
+  // Collapse aliases based on confirmed source mappings
+  const collapsedActive = collapseAliases(allActive, sourceMappings);
+  
+  const confirmedActive = collapsedActive.sort((a, b) => b.amount - a.amount);
   
   // Inactive now contains only cancelled items
   const inactive = cancelled;
