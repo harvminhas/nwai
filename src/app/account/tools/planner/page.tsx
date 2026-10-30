@@ -6,9 +6,13 @@ import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import type { Plan, PlanLinkedTransaction, PlanCashEntry } from "@/app/api/user/plans/route";
 import { formatCurrency } from "@/lib/currencyUtils";
+import { useConfirm } from "@/components/useConfirm";
+import { useToast } from "@/components/useToast";
 
 export default function PlannerPage() {
   const router = useRouter();
+  const { confirm, ConfirmDialog } = useConfirm();
+  const { success, error, Toast } = useToast();
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -57,7 +61,16 @@ export default function PlannerPage() {
   const { upcoming, inProgress, done } = categorizePlans(plans);
 
   async function handleDeletePlan(id: string) {
-    if (!token || !confirm("Delete this plan?")) return;
+    if (!token) return;
+    
+    const confirmed = await confirm({
+      title: "Delete this plan?",
+      message: "This will permanently delete the plan and all its linked transactions.",
+      confirmLabel: "Delete",
+      variant: "danger",
+    });
+    
+    if (!confirmed) return;
     
     try {
       const res = await fetch(`/api/user/plans?id=${id}`, {
@@ -66,9 +79,13 @@ export default function PlannerPage() {
       });
       if (res.ok) {
         await loadPlans(token);
+        success("Plan deleted");
+      } else {
+        error("Failed to delete plan. Please try again.");
       }
-    } catch (error) {
-      console.error("Failed to delete plan:", error);
+    } catch (err) {
+      console.error("Failed to delete plan:", err);
+      error("Failed to delete plan. Please try again.");
     }
   }
 
@@ -172,6 +189,10 @@ export default function PlannerPage() {
           }}
         />
       )}
+      
+      {/* Dialogs and Toasts */}
+      <ConfirmDialog />
+      <Toast />
     </div>
   );
 }

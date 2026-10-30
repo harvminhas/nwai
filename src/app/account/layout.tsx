@@ -4,10 +4,12 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
-import { useActiveProfile } from "@/contexts/ActiveProfileContext";
+import { ActiveProfileProvider, useActiveProfile } from "@/contexts/ActiveProfileContext";
+import { PlanProvider } from "@/contexts/PlanContext";
+import { ProfileRefreshProvider } from "@/contexts/ProfileRefreshContext";
 import { MvpTopNav } from "@/components/MvpTopNav";
 
-export default function AccountLayout({ children }: { children: React.ReactNode }) {
+function AccountLayoutInner({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { buildHeaders } = useActiveProfile();
   const [token, setToken] = useState<string | null>(null);
@@ -72,5 +74,17 @@ export default function AccountLayout({ children }: { children: React.ReactNode 
       <MvpTopNav netWorthData={netWorthData} />
       <main>{children}</main>
     </>
+  );
+}
+
+export default function AccountLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <ActiveProfileProvider>
+      <PlanProvider>
+        <ProfileRefreshProvider>
+          <AccountLayoutInner>{children}</AccountLayoutInner>
+        </ProfileRefreshProvider>
+      </PlanProvider>
+    </ActiveProfileProvider>
   );
 }

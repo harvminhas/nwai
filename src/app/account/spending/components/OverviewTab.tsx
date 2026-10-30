@@ -137,6 +137,16 @@ export function OverviewTab({ summary, token, onReviewComplete }: OverviewTabPro
             const change = lastMonthAmt - priorAvg;
             const changePct = priorAvg > 0 ? (change / priorAvg) * 100 : 0;
 
+            const barColor = bucketColors[cat.bucket] || bucketColors.flexible;
+            
+            // Dot color (same as bar but as text color)
+            const dotColorMap: Record<string, string> = {
+              "bg-purple-600": "text-purple-600",
+              "bg-blue-600": "text-blue-600",
+              "bg-green-600": "text-green-600",
+            };
+            const dotColor = dotColorMap[barColor] || "text-gray-500";
+            
             return (
               <button
                 key={cat.category}
@@ -144,10 +154,13 @@ export function OverviewTab({ summary, token, onReviewComplete }: OverviewTabPro
                   setSelectedCategory(cat.category);
                   setExpandedMerchants(new Set()); // Reset expanded state when changing category
                 }}
-                className="w-full text-left hover:bg-gray-50 rounded-lg p-2 -m-2 transition-colors"
+                className="w-full text-left hover:bg-gray-50 rounded-lg p-2 -m-2 transition-colors cursor-pointer group"
               >
                 <div className="flex items-center justify-between mb-1">
-                  <div className="text-sm font-medium text-neutral-900">{cat.category}</div>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xl ${dotColor}`}>•</span>
+                    <div className="text-sm font-medium text-neutral-900">{cat.category}</div>
+                  </div>
                   <div className="flex items-center gap-2">
                     <div className="text-sm text-neutral-900">
                       {formatCurrency(lastMonthAmt, summary.currency)}
@@ -158,11 +171,14 @@ export function OverviewTab({ summary, token, onReviewComplete }: OverviewTabPro
                         {changePct.toFixed(0)}%
                       </div>
                     )}
+                    <svg className="w-4 h-4 text-gray-400 group-hover:text-gray-600 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
                   </div>
                 </div>
                 <div className="relative w-full h-2 bg-neutral-100 rounded overflow-hidden">
                   <div
-                    className="absolute h-full bg-purple-600 rounded"
+                    className={`absolute h-full ${barColor} rounded`}
                     style={{ width: `${Math.min(100, (cat.share * 100))}%` }}
                   />
                 </div>
@@ -356,56 +372,100 @@ export function OverviewTab({ summary, token, onReviewComplete }: OverviewTabPro
                   </div>
                 </div>
 
-                {/* Merchants */}
+                {/* Merchants or Debt Accounts */}
                 <div>
-                  <h3 className="text-sm font-semibold text-gray-900 mb-3">By merchant</h3>
+                  <h3 className="text-sm font-semibold text-gray-900 mb-3">
+                    {selectedCategory === "Loan payments" || selectedCategory === "Credit card minimums" 
+                      ? "By account" 
+                      : "By merchant"}
+                  </h3>
                   <div className="space-y-1">
-                    {catData.merchants.sort((a, b) => b.total - a.total).map(merchant => {
-                      const monthTxns = merchant.transactions.filter(t => t.txMonth === lastMonth);
-                      const expanded = expandedMerchants.has(merchant.merchantSlug);
+                    {(() => {
+                      // Special handling for debt categories
+                      const isDebtCategory = selectedCategory === "Loan payments" || selectedCategory === "Credit card minimums";
                       
-                      if (monthTxns.length === 0) return null;
-                      const monthTotal = monthTxns.reduce((s, t) => s + t.amount, 0);
+                      if (isDebtCategory) {
+                        const debtType = selectedCategory === "Loan payments" ? "loan" : "credit";
+                        const payments = summary.scheduledPayments.filter(p => p.debtType === debtType);
+                        
+                        if (payments.length === 0) {
+                          return (
+                            <div className="text-xs text-gray-500 py-3">
+                              No breakdown available
+                            </div>
+                          );
+                        }
+                        
+                        return payments.map(payment => (
+                          <div key={payment.accountSlug} className="border-b border-gray-100 last:border-0 py-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm font-medium text-gray-900">
+                                {payment.accountName || payment.accountSlug}
+                              </span>
+                              <span className="text-sm font-semibold text-gray-900">
+                                {formatCurrency(payment.amount, summary.currency)}
+                              </span>
+                            </div>
+                          </div>
+                        ));
+                      }
                       
-                      return (
-                        <div key={merchant.merchantSlug} className="border-b border-gray-100 last:border-0">
-                          <button
-                            onClick={() => {
-                              const newExpanded = new Set(expandedMerchants);
-                              if (expanded) {
-                                newExpanded.delete(merchant.merchantSlug);
-                              } else {
-                                newExpanded.add(merchant.merchantSlug);
-                              }
-                              setExpandedMerchants(newExpanded);
-                            }}
-                            className="w-full flex items-center justify-between py-3 hover:bg-gray-50 transition-colors"
-                          >
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium text-gray-900">{merchant.merchant}</span>
-                              <span className="text-xs text-gray-500">({monthTxns.length})</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-semibold text-gray-900">{formatCurrency(monthTotal, summary.currency)}</span>
-                              <svg className={`h-4 w-4 text-gray-400 transition-transform ${expanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                              </svg>
-                            </div>
-                          </button>
-                          
-                          {expanded && (
-                            <div className="pl-4 pb-3 space-y-1">
-                              {monthTxns.map((txn, idx) => (
-                                <div key={idx} className="flex items-center justify-between text-xs text-gray-600">
-                                  <span>{new Date(txn.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
-                                  <span className="font-medium">{formatCurrency(txn.amount, summary.currency)}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                      // Regular categories: show merchants
+                      if (catData.merchants.length === 0) {
+                        return (
+                          <div className="text-xs text-gray-500 py-3">
+                            No breakdown available
+                          </div>
+                        );
+                      }
+                      
+                      return catData.merchants.sort((a, b) => b.total - a.total).map(merchant => {
+                        const monthTxns = merchant.transactions.filter(t => t.txMonth === lastMonth);
+                        const expanded = expandedMerchants.has(merchant.merchantSlug);
+                        
+                        if (monthTxns.length === 0) return null;
+                        const monthTotal = monthTxns.reduce((s, t) => s + t.amount, 0);
+                        
+                        return (
+                          <div key={merchant.merchantSlug} className="border-b border-gray-100 last:border-0">
+                            <button
+                              onClick={() => {
+                                const newExpanded = new Set(expandedMerchants);
+                                if (expanded) {
+                                  newExpanded.delete(merchant.merchantSlug);
+                                } else {
+                                  newExpanded.add(merchant.merchantSlug);
+                                }
+                                setExpandedMerchants(newExpanded);
+                              }}
+                              className="w-full flex items-center justify-between py-3 hover:bg-gray-50 transition-colors"
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium text-gray-900">{merchant.merchant}</span>
+                                <span className="text-xs text-gray-500">({monthTxns.length})</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-semibold text-gray-900">{formatCurrency(monthTotal, summary.currency)}</span>
+                                <svg className={`h-4 w-4 text-gray-400 transition-transform ${expanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </div>
+                            </button>
+                            
+                            {expanded && (
+                              <div className="pl-4 pb-3 space-y-1">
+                                {monthTxns.map((txn, idx) => (
+                                  <div key={idx} className="flex items-center justify-between text-xs text-gray-600">
+                                    <span>{new Date(txn.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                                    <span className="font-medium">{formatCurrency(txn.amount, summary.currency)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      });
+                    })()}
                   </div>
                 </div>
               </div>

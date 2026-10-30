@@ -12,6 +12,7 @@ import { merchantSlug } from "./applyRules";
 import { resolveMerchantAlias, resolveCanonicalMerchantSlug } from "./merchantUtils";
 import { getLastCompleteMonth } from "./monthAnchor";
 import { computeMonthlyBuckets } from "./monthlyBucketComputation";
+import { computeScheduledDebtPayments } from "./debtPayments";
 
 export interface SpendingTransaction {
   date: string;
@@ -67,6 +68,14 @@ export interface SpendingInsight {
   message: string;
 }
 
+export interface ScheduledPaymentSummary {
+  accountSlug: string;
+  accountName?: string;
+  amount: number;
+  isEstimated: boolean;
+  debtType: "loan" | "credit";
+}
+
 export interface SpendingSummary {
   currentMonth: string;
   lastCompleteMonth: string;
@@ -83,6 +92,8 @@ export interface SpendingSummary {
   topCategories: CategorySummary[];
   insights: SpendingInsight[];
   currency: string;
+  /** Scheduled debt payments (for "Loan payments" / "Credit card minimums" category breakdowns) */
+  scheduledPayments: ScheduledPaymentSummary[];
 }
 
 function detectAnnualCharge(txns: SpendingTransaction[]): boolean {
@@ -338,6 +349,23 @@ export function buildSpendingSummary(
     b.share = bucketTotal > 0 ? b.total / bucketTotal : 0;
   });
   
+  // Compute scheduled debt payments for category breakdowns
+  const scheduledPaymentsData = computeScheduledDebtPayments(
+    accountSnapshots,
+    debtPaymentHistory,
+    userReviews,
+    fxRates,
+    currency
+  );
+  
+  const scheduledPayments: ScheduledPaymentSummary[] = scheduledPaymentsData.map(p => ({
+    accountSlug: p.accountSlug,
+    accountName: p.accountName,
+    amount: p.amount,
+    isEstimated: p.isEstimated,
+    debtType: p.debtType,
+  }));
+  
   const summaryWithoutInsights: Omit<SpendingSummary, 'insights'> = {
     currentMonth,
     lastCompleteMonth,
@@ -352,7 +380,8 @@ export function buildSpendingSummary(
     categories,
     merchants,
     topCategories,
-    currency
+    currency,
+    scheduledPayments
   };
   
   const insights = computeInsights(summaryWithoutInsights, monthlyHistory);

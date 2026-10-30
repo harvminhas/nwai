@@ -15,6 +15,7 @@ interface OverviewTabProps {
 
 export function OverviewTab({ summary }: OverviewTabProps) {
   const [token, setToken] = useState<string | null>(null);
+  const [showInterestInfo, setShowInterestInfo] = useState(false);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -97,11 +98,61 @@ export function OverviewTab({ summary }: OverviewTabProps) {
         </div>
 
         {/* Interest Last 3 Months */}
-        <div className="bg-white rounded-lg border border-gray-200 p-4">
-          <p className="text-xs text-gray-600 mb-1">Interest (Last 3 Months)</p>
+        <div className="bg-white rounded-lg border border-gray-200 p-4 relative">
+          <div className="flex items-center gap-2 mb-1">
+            <p className="text-xs text-gray-600">Est. Interest (Last 3 Months)</p>
+            <span 
+              role="button" 
+              tabIndex={0}
+              onClick={() => setShowInterestInfo(!showInterestInfo)}
+              onKeyDown={(e) => e.key === 'Enter' && setShowInterestInfo(!showInterestInfo)}
+              className="text-gray-400 hover:text-gray-600 cursor-pointer"
+              aria-label="Interest calculation info"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </span>
+          </div>
           <p className="text-2xl font-bold text-gray-900">
             {formatCurrency(interestPaidLast3Months, currency)}
           </p>
+          
+          {/* Popover */}
+          {showInterestInfo && (
+            <>
+              <div 
+                className="fixed inset-0 z-10" 
+                onClick={() => setShowInterestInfo(false)}
+                aria-hidden="true"
+              />
+              <div className="absolute right-0 top-full mt-2 w-72 bg-white border border-gray-200 rounded-lg shadow-lg p-4 z-20">
+                <p className="text-xs text-gray-600 mb-3">
+                  Estimated from each debt's current balance × its interest rate ÷ 12 × 3. 
+                  Not the actual interest charged on your statements.
+                </p>
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-gray-700">Per-account breakdown:</p>
+                  {groups.flatMap(g => g.accounts).map(acc => {
+                    const monthlyInterest = acc.interestRate 
+                      ? (acc.balance * (acc.interestRate / 100)) / 12 
+                      : 0;
+                    const threeMonthInterest = monthlyInterest * 3;
+                    return (
+                      <div key={acc.slug} className="text-xs flex justify-between gap-2">
+                        <span className="text-gray-700 truncate">
+                          {acc.accountName || acc.bankName}
+                        </span>
+                        <span className="text-gray-600 whitespace-nowrap">
+                          {acc.interestRate ? `${acc.interestRate.toFixed(2)}% → ${formatCurrency(threeMonthInterest, currency)}` : 'No rate'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Weighted Average Rate */}
@@ -199,17 +250,16 @@ export function OverviewTab({ summary }: OverviewTabProps) {
       {/* Interest by Year */}
       {interestPaidByYear.length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Interest Paid by Year</h2>
-          <div className="space-y-3">
-            {interestPaidByYear.map((period) => (
-              <div key={period.period} className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">{period.period}</span>
-                <span className="text-base font-semibold text-gray-900 tabular-nums">
-                  {formatCurrency(period.total, currency)}
-                </span>
-              </div>
-            ))}
+          <div className="flex items-center gap-2 mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Est. Annual Interest</h2>
+            <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-600 rounded">Estimated</span>
           </div>
+          <p className="text-base font-semibold text-gray-900 tabular-nums mb-2">
+            {formatCurrency(interestPaidByYear[0]?.total || 0, currency)}/year
+          </p>
+          <p className="text-xs text-gray-500">
+            Based on current balances and interest rates (balance × rate ÷ 12 × 12)
+          </p>
         </div>
       )}
 

@@ -3508,6 +3508,1007 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
 
   console.log();
 
+  // ══════════════════════════════════════════════════════════════════════════════
+  // Debt Payoff Planner Checks
+  // ══════════════════════════════════════════════════════════════════════════════
+  let debtPayoffErrors = 0;
+
+  console.log("═".repeat(80));
+  console.log("Debt Payoff Planner Checks");
+  console.log("═".repeat(80));
+
+  // Check 1: Test debt payoff simulation on uid's debts
+  console.log("\nCheck 1: Debt payoff simulation");
+  try {
+    const debtPayoffModule = await import("../src/lib/debtPayoff");
+    const { calculateDebtPayoff, calculateMinimumPayment, isHELOC } = debtPayoffModule;
+    
+    // Convert debtsSummary to DebtInput format, including payment history
+    const debtsForSimulation: any[] = debtsSummary.groups.flatMap(g =>
+      g.accounts.map(acc => {
+        // Get payment history for this account
+        const accountHistory = profile.debtPaymentHistory
+          .filter(entry => entry.accountSlug === acc.slug && entry.paymentsMade > 0)
+          .map(entry => ({
+            date: `${entry.statementMonth}-15`, // Mid-month approximation
+            amount: entry.paymentsMade,
+          }));
+        
+        return {
+          id: acc.slug,
+          name: acc.accountName || acc.bankName,
+          balance: acc.balance,
+          interestRate: acc.interestRate,
+          monthlyPayment: acc.monthlyPayment,
+          minPayment: acc.minPayment,
+          accountType: acc.accountType,
+          included: true,
+          paymentHistory: accountHistory.length > 0 ? accountHistory : undefined,
+        };
+      })
+    );
+
+    if (debtsForSimulation.length === 0) {
+      console.log(`  ⏭  Skipped: No debts found`);
+    } else {
+      console.log(`  Testing with ${debtsForSimulation.length} debts:\n`);
+      
+      // Print calculated minimums for each debt with full details
+      console.log(`  Per-debt details:`);
+      let totalMinimums = 0;
+      let totalBalance = 0;
+      for (const debt of debtsForSimulation) {
+        const minDetail = calculateMinimumPayment(debt, true) as any;
+        const minimum = minDetail.amount;
+        totalMinimums += minimum;
+        totalBalance += debt.balance;
+        
+        const minAsPercent = debt.balance > 0 ? (minimum / debt.balance * 100).toFixed(1) : "N/A";
+        const rawField = debt.minPayment !== null ? formatCurrency(debt.minPayment, currency) : "null";
+        
+        console.log(`    ${debt.name}:`);
+        console.log(`      Balance: ${formatCurrency(debt.balance, currency)}`);
+        console.log(`      Rate: ${debt.interestRate ? debt.interestRate.toFixed(2) + "%" : "N/A"}`);
+        console.log(`      Type: ${debt.accountType}`);
+        console.log(`      Raw statement field (paymentsMade): ${rawField}`);
+        console.log(`      Debts page payment (monthlyPayment): ${debt.monthlyPayment ? formatCurrency(debt.monthlyPayment, currency) : "null"}`);
+        console.log(`      Planner minimum: ${formatCurrency(minimum, currency)} (${minAsPercent}% of balance)`);
+        console.log(`      Source: ${minDetail.source} — ${minDetail.method}`);
+        
+        // Check 1: Planner minimum must equal Debts page payment when one exists
+        if (debt.monthlyPayment && debt.monthlyPayment > 0) {
+          const diff = Math.abs(minimum - debt.monthlyPayment);
+          if (diff > 0.01) {
+            console.log(`      ❌ FAIL: Planner minimum (${formatCurrency(minimum, currency)}) != Debts page payment (${formatCurrency(debt.monthlyPayment, currency)})`);
+            errors.push(`Debt payoff: ${debt.name} planner minimum doesn't match Debts page payment`);
+            debtPayoffErrors++;
+          } else {
+            console.log(`      ✓ Planner minimum matches Debts page payment`);
+          }
+        }
+        
+        // Check 2: Card payoff months must match amortization
+        const cardPayoffEstimate = debtsSummary.payoffEstimates.find(est => est.accountSlug === debt.id);
+        if (cardPayoffEstimate && cardPayoffEstimate.monthsToPayoff !== null && debt.monthlyPayment && debt.interestRate) {
+          // Calculate actual amortization
+          const monthlyRate = debt.interestRate / 100 / 12;
+          const monthlyInterest = debt.balance * monthlyRate;
+          
+          let actualMonths: number | null = null;
+          if (debt.monthlyPayment > monthlyInterest) {
+            // Use amortization formula: n = -log(1 - (r * P) / M) / log(1 + r)
+            const n = -Math.log(1 - (monthlyRate * debt.balance) / debt.monthlyPayment) / Math.log(1 + monthlyRate);
+            if (isFinite(n) && n > 0 && n <= 600) {
+              actualMonths = Math.round(n);
+            }
+          }
+          
+          console.log(`      Debts card payoff: ${cardPayoffEstimate.monthsToPayoff} months → ${cardPayoffEstimate.payoffDate}`);
+          console.log(`      Amortization calc: ${actualMonths !== null ? actualMonths + ' months' : 'unpayable (payment <= interest)'}`);
+          
+          if (actualMonths !== null) {
+            const diff = Math.abs(cardPayoffEstimate.monthsToPayoff - actualMonths);
+            if (diff > 1) {
+              console.log(`      ❌ FAIL: Card payoff (${cardPayoffEstimate.monthsToPayoff} mo) differs from amortization (${actualMonths} mo) by ${diff} months`);
+              errors.push(`Debt payoff: ${debt.name} card payoff doesn't match amortization (off by ${diff} months)`);
+              debtPayoffErrors++;
+            } else {
+              console.log(`      ✓ Card payoff matches amortization (within 1 month)`);
+            }
+          } else if (cardPayoffEstimate.monthsToPayoff !== null) {
+            console.log(`      ❌ FAIL: Card shows payoff but amortization says unpayable (payment <= interest)`);
+            errors.push(`Debt payoff: ${debt.name} card shows payoff but payment doesn't cover interest`);
+            debtPayoffErrors++;
+          }
+        }
+        
+        // For loans with payment history, show the detection details
+        if ((debt.accountType.toLowerCase().includes('loan') || debt.accountType.toLowerCase().includes('mortgage')) 
+            && !isHELOC(debt) 
+            && debt.paymentHistory && debt.paymentHistory.length > 0) {
+          const paymentAmounts = debt.paymentHistory.map((p: any) => p.amount).filter((a: number) => a > 0);
+          if (paymentAmounts.length > 0) {
+            console.log(`      Payment history: ${paymentAmounts.length} payment${paymentAmounts.length === 1 ? '' : 's'} found`);
+            const sortedAmounts = [...paymentAmounts].sort((a, b) => a - b);
+            if (sortedAmounts.length <= 5) {
+              console.log(`        Amounts: ${sortedAmounts.map(a => formatCurrency(a, currency)).join(', ')}`);
+            } else {
+              const median = sortedAmounts[Math.floor(sortedAmounts.length / 2)];
+              console.log(`        Range: ${formatCurrency(sortedAmounts[0], currency)} – ${formatCurrency(sortedAmounts[sortedAmounts.length - 1], currency)}, median: ${formatCurrency(median, currency)}`);
+            }
+          }
+        }
+        
+        // Assert minimum is never null or 0
+        if (minimum === null || minimum === 0) {
+          console.log(`      ❌ FAIL: Minimum is null or 0`);
+          errors.push(`Debt payoff: ${debt.name} has invalid minimum payment`);
+          debtPayoffErrors++;
+        }
+        
+        // Assert minimum is less than 10% of balance (unless balance < $500)
+        if (debt.balance >= 500 && minimum > debt.balance * 0.1) {
+          console.log(`      ❌ FAIL: Minimum (${formatCurrency(minimum, currency)}) is more than 10% of balance`);
+          errors.push(`Debt payoff: ${debt.name} minimum exceeds 10% of balance`);
+          debtPayoffErrors++;
+        }
+        
+        // Assert minimum is less than balance
+        if (minimum >= debt.balance) {
+          console.log(`      ❌ FAIL: Minimum (${formatCurrency(minimum, currency)}) >= balance`);
+          errors.push(`Debt payoff: ${debt.name} minimum >= balance`);
+          debtPayoffErrors++;
+        }
+      }
+      console.log(`\n  Total balance: ${formatCurrency(totalBalance, currency)}`);
+      console.log(`  Total minimums: ${formatCurrency(totalMinimums, currency)}\n`);
+      
+      // Test plan 1: budget = minimums only
+      console.log(`  Plan 1: Budget = minimums only (${formatCurrency(totalMinimums, currency)})`);
+      const avalancheMin = calculateDebtPayoff(debtsForSimulation, totalMinimums, "avalanche");
+      const snowballMin = calculateDebtPayoff(debtsForSimulation, totalMinimums, "snowball");
+      
+      console.log(`    Avalanche (highest rate first):`);
+      console.log(`      Debt-free: ${avalancheMin.debtFreeDate || 'N/A (unpayable)'}`);
+      console.log(`      Months: ${avalancheMin.monthsToPayoff ?? 'N/A'}`);
+      console.log(`      Total interest: ${formatCurrency(avalancheMin.totalInterestPaid, currency)}`);
+      
+      console.log(`    Snowball (smallest balance first):`);
+      console.log(`      Debt-free: ${snowballMin.debtFreeDate || 'N/A (unpayable)'}`);
+      console.log(`      Months: ${snowballMin.monthsToPayoff ?? 'N/A'}`);
+      console.log(`      Total interest: ${formatCurrency(snowballMin.totalInterestPaid, currency)}\n`);
+      
+      // Assert: payoff at minimums should take longer than 12 months when total debt > $20k
+      if (totalBalance > 20000) {
+        if (avalancheMin.monthsToPayoff !== null && avalancheMin.monthsToPayoff <= 12) {
+          console.log(`    ❌ FAIL: Payoff at minimums only takes ${avalancheMin.monthsToPayoff} months (should be > 12 for ${formatCurrency(totalBalance, currency)} debt)`);
+          errors.push(`Debt payoff: minimums-only payoff is unrealistically fast (${avalancheMin.monthsToPayoff} months)`);
+          debtPayoffErrors++;
+        }
+      }
+      
+      // Test plan 2: budget = minimums + $500
+      const budgetPlus500 = totalMinimums + 500;
+      console.log(`  Plan 2: Budget = minimums + $500 (${formatCurrency(budgetPlus500, currency)})`);
+      const avalanchePlus = calculateDebtPayoff(debtsForSimulation, budgetPlus500, "avalanche");
+      const snowballPlus = calculateDebtPayoff(debtsForSimulation, budgetPlus500, "snowball");
+      
+      console.log(`    Avalanche (highest rate first):`);
+      console.log(`      Debt-free: ${avalanchePlus.debtFreeDate || 'N/A'}`);
+      console.log(`      Months: ${avalanchePlus.monthsToPayoff ?? 'N/A'}`);
+      console.log(`      Total interest: ${formatCurrency(avalanchePlus.totalInterestPaid, currency)}`);
+      if (avalancheMin.monthsToPayoff && avalanchePlus.monthsToPayoff) {
+        const monthsSaved = avalancheMin.monthsToPayoff - avalanchePlus.monthsToPayoff;
+        const interestSaved = avalancheMin.totalInterestPaid - avalanchePlus.totalInterestPaid;
+        console.log(`      Saves: ${monthsSaved} months, ${formatCurrency(interestSaved, currency)}`);
+      }
+      
+      console.log(`    Snowball (smallest balance first):`);
+      console.log(`      Debt-free: ${snowballPlus.debtFreeDate || 'N/A'}`);
+      console.log(`      Months: ${snowballPlus.monthsToPayoff ?? 'N/A'}`);
+      console.log(`      Total interest: ${formatCurrency(snowballPlus.totalInterestPaid, currency)}`);
+      if (snowballMin.monthsToPayoff && snowballPlus.monthsToPayoff) {
+        const monthsSaved = snowballMin.monthsToPayoff - snowballPlus.monthsToPayoff;
+        const interestSaved = snowballMin.totalInterestPaid - snowballPlus.totalInterestPaid;
+        console.log(`      Saves: ${monthsSaved} months, ${formatCurrency(interestSaved, currency)}`);
+      }
+      
+      if (avalancheMin.warnings.length > 0 || snowballMin.warnings.length > 0 || 
+          avalanchePlus.warnings.length > 0 || snowballPlus.warnings.length > 0) {
+        console.log(`\n    Warnings:`);
+        const allWarnings = new Set([
+          ...avalancheMin.warnings, 
+          ...snowballMin.warnings, 
+          ...avalanchePlus.warnings, 
+          ...snowballPlus.warnings
+        ]);
+        allWarnings.forEach(w => console.log(`      ${w}`));
+      }
+      
+      console.log(`\n  ✓ Debt payoff simulation completed successfully`);
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error running debt payoff simulation: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Debt payoff: simulation failed");
+    debtPayoffErrors++;
+  }
+
+  // Check 1b: Saved plan tests (create, track, delete)
+  console.log("\nCheck 1b: Saved debt plan workflow");
+  try {
+    const debtPayoffModule = await import("../src/lib/debtPayoff");
+    const { calculateDebtPayoff, calculateMinimumPayment, solveForTargetDate, classifyPlanStatus, isHELOC, compareWithMinimumOnly } = debtPayoffModule;
+    
+    // Convert debtsSummary to DebtInput format, including payment history
+    const debtsForSimulation: any[] = debtsSummary.groups.flatMap(g =>
+      g.accounts.map(acc => {
+        // Get payment history for this account
+        const accountHistory = profile.debtPaymentHistory
+          .filter(entry => entry.accountSlug === acc.slug && entry.paymentsMade > 0)
+          .map(entry => ({
+            date: `${entry.statementMonth}-15`, // Mid-month approximation
+            amount: entry.paymentsMade,
+          }));
+        
+        return {
+          id: acc.slug,
+          name: acc.accountName || acc.bankName,
+          balance: acc.balance,
+          interestRate: acc.interestRate,
+          monthlyPayment: acc.monthlyPayment,
+          minPayment: acc.minPayment,
+          accountType: acc.accountType,
+          included: false, // will be set by plan
+          paymentHistory: accountHistory.length > 0 ? accountHistory : undefined,
+        };
+      })
+    );
+
+    if (debtsForSimulation.length === 0) {
+      console.log(`  ⏭  Skipped: No debts found`);
+    } else {
+      // Plan 1: Credit cards only, +$500
+      console.log(`\n  Testing Plan 1: 'Credit cards only, +$500' (extra mode)`);
+      const creditCardDebts = debtsForSimulation.map(d => ({
+        ...d,
+        included: d.accountType.toLowerCase().includes("credit"),
+      }));
+      const ccIncluded = creditCardDebts.filter(d => d.included);
+      
+      if (ccIncluded.length === 0) {
+        console.log(`    ⏭  Skipped: No credit cards found`);
+      } else {
+        const ccMinimums = ccIncluded.reduce((sum: number, d: any) => sum + calculateMinimumPayment(d), 0);
+        const ccBudget = ccMinimums + 500;
+        const ccResult = calculateDebtPayoff(creditCardDebts, ccBudget, "avalanche");
+        
+        console.log(`    Included debts: ${ccIncluded.length}`);
+        console.log(`    Total minimums: ${formatCurrency(ccMinimums, currency)}`);
+        console.log(`    Budget: ${formatCurrency(ccBudget, currency)}`);
+        console.log(`    Debt-free: ${ccResult.debtFreeDate || 'N/A'}`);
+        console.log(`    Months: ${ccResult.monthsToPayoff ?? 'N/A'}`);
+        console.log(`    Total interest: ${formatCurrency(ccResult.totalInterestPaid, currency)}`);
+        
+        if (ccResult.monthsToPayoff === null) {
+          console.log(`    ❌ FAIL: Credit cards plan is unpayable`);
+          errors.push("Debt payoff: Credit cards +$500 plan unpayable");
+          debtPayoffErrors++;
+        } else {
+          console.log(`    ✓ Plan is payable`);
+        }
+      }
+
+      // Plan 2: Debt-free by 2028-02, all non-HELOC
+      console.log(`\n  Testing Plan 2: 'Debt-free by 2028-02, all non-HELOC' (targetDate mode)`);
+      const nonHELOCDebts = debtsForSimulation.map(d => ({
+        ...d,
+        included: !isHELOC(d) && !d.accountType.toLowerCase().includes("mortgage"),
+      }));
+      const nhIncluded = nonHELOCDebts.filter(d => d.included);
+      
+      if (nhIncluded.length === 0) {
+        console.log(`    ⏭  Skipped: No non-HELOC debts found`);
+      } else {
+        const targetDate = "2028-02";
+        const [targetYear, targetMonth] = targetDate.split("-").map(Number);
+        const now = new Date();
+        const target = new Date(targetYear, targetMonth - 1);
+        const monthsToTarget = Math.round((target.getTime() - now.getTime()) / (30.44 * 24 * 60 * 60 * 1000));
+        
+        console.log(`    Included debts: ${nhIncluded.length}`);
+        console.log(`    Target date: ${targetDate}`);
+        console.log(`    Months to target: ${monthsToTarget}`);
+        
+        if (monthsToTarget <= 0) {
+          console.log(`    ⏭  Skipped: Target date is in the past`);
+        } else {
+          const solved = solveForTargetDate(nonHELOCDebts, monthsToTarget, "avalanche");
+          
+          if (!solved) {
+            console.log(`    ❌ FAIL: solveForTargetDate returned null for future target (should always return a result)`);
+            errors.push("Debt payoff: solveForTargetDate returned null for future target");
+            debtPayoffErrors++;
+          } else {
+            console.log(`    Required budget: ${formatCurrency(solved.requiredBudget, currency)}`);
+            console.log(`    Debt-free: ${solved.result.debtFreeDate || 'N/A'}`);
+            console.log(`    Months: ${solved.result.monthsToPayoff ?? 'N/A'}`);
+            console.log(`    Total interest: ${formatCurrency(solved.result.totalInterestPaid, currency)}`);
+            
+            // Assert solver hits target within 1 month
+            if (solved.result.monthsToPayoff !== null) {
+              const delta = Math.abs(solved.result.monthsToPayoff - monthsToTarget);
+              if (delta > 1) {
+                console.log(`    ❌ FAIL: Solver missed target by ${delta} months (expected ≤1)`);
+                errors.push(`Debt payoff: solveForTargetDate missed target by ${delta} months`);
+                debtPayoffErrors++;
+              } else {
+                console.log(`    ✓ Solver hit target within 1 month (delta: ${delta})`);
+              }
+            } else {
+              console.log(`    ❌ FAIL: Solver returned null monthsToPayoff`);
+              errors.push("Debt payoff: solveForTargetDate returned unpayable result");
+              debtPayoffErrors++;
+            }
+          }
+        }
+      }
+
+      // Plan 3: Create temporary plan documents in BOTH modes, compute status, delete
+      console.log(`\n  Testing Plan 3: Create, track, and delete saved plans (both modes)`);
+      const testPlanDebts = debtsForSimulation.map(d => ({
+        ...d,
+        included: d.accountType.toLowerCase().includes("credit"),
+      }));
+      const testIncluded = testPlanDebts.filter(d => d.included);
+      
+      if (testIncluded.length === 0) {
+        console.log(`    ⏭  Skipped: No debts to test plan tracking`);
+      } else {
+        // Helper to strip undefined fields (same as route.ts)
+        function stripUndefined(obj: any): any {
+          const result: any = {};
+          for (const [key, value] of Object.entries(obj)) {
+            if (value === undefined) {
+              continue;
+            } else if (Array.isArray(value)) {
+              result[key] = value.map((item: any) => 
+                typeof item === 'object' && item !== null ? stripUndefined(item) : item
+              );
+            } else if (value !== null && typeof value === 'object' && !(value instanceof Date)) {
+              result[key] = stripUndefined(value);
+            } else {
+              result[key] = value;
+            }
+          }
+          return result;
+        }
+        
+        const testMinimums = testIncluded.reduce((sum: number, d: any) => sum + calculateMinimumPayment(d), 0);
+        const testBudget = testMinimums + 100;
+        const testResult = calculateDebtPayoff(testPlanDebts, testBudget, "avalanche");
+        const testComparison = compareWithMinimumOnly(testPlanDebts, testBudget, "avalanche");
+        
+        // Build baseline
+        const now = new Date();
+        const baseline = {
+          balances: Object.fromEntries(testIncluded.map((d: any) => [d.id, d.balance])),
+          monthlyProjection: testResult.monthlyBalances.map((mb: any) => {
+            const future = new Date(now);
+            future.setMonth(future.getMonth() + mb.month);
+            return {
+              month: `${future.getFullYear()}-${String(future.getMonth() + 1).padStart(2, "0")}`,
+              totalBalance: mb.totalBalance,
+            };
+          }),
+        };
+        
+        // Test Plan 3a: "extra" mode
+        console.log(`\n    Plan 3a: "extra" mode`);
+        const planDocExtra = {
+          name: "Test Plan Extra (regression)",
+          mode: "extra" as const,
+          debtSlugs: testIncluded.map((d: any) => d.id),
+          strategy: "avalanche" as const,
+          extraMonthly: 100,
+          targetDate: undefined, // Should be stripped
+          monthlyBudget: testBudget,
+          baseline,
+          interestSaved: testComparison.interestSaved,
+          monthsSaved: testComparison.monthsSaved,
+          createdAt: new Date(),
+        };
+        
+        const sanitizedExtra = stripUndefined(planDocExtra);
+        const planRefExtra = db.collection(`users/${uid}/debtPlans`).doc();
+        await planRefExtra.set(sanitizedExtra);
+        console.log(`      ✓ Created "extra" mode plan: ${planRefExtra.id}`);
+        
+        // Read back to verify
+        const savedExtra = await planRefExtra.get();
+        if (!savedExtra.exists) {
+          console.log(`      ❌ FAIL: Plan not found after save`);
+          errors.push("Debt payoff: extra mode plan not found after save");
+          debtPayoffErrors++;
+        } else {
+          const data = savedExtra.data();
+          if (data?.targetDate !== undefined) {
+            console.log(`      ❌ FAIL: targetDate should not exist but is: ${data.targetDate}`);
+            errors.push("Debt payoff: extra mode plan has targetDate field");
+            debtPayoffErrors++;
+          } else {
+            console.log(`      ✓ Read back: targetDate field correctly omitted`);
+          }
+          
+          // Check required fields for display
+          if (data?.extraMonthly === undefined || data.extraMonthly === null) {
+            console.log(`      ❌ FAIL: extraMonthly not saved (required for card display)`);
+            errors.push("Debt payoff: extra mode plan missing extraMonthly");
+            debtPayoffErrors++;
+          } else {
+            console.log(`      ✓ extraMonthly saved: ${formatCurrency(data.extraMonthly, currency)}`);
+          }
+          
+          if (data?.interestSaved === undefined || data.interestSaved === null) {
+            console.log(`      ❌ FAIL: interestSaved not saved (required for card display)`);
+            errors.push("Debt payoff: extra mode plan missing interestSaved");
+            debtPayoffErrors++;
+          } else {
+            console.log(`      ✓ interestSaved: ${formatCurrency(data.interestSaved, currency)}`);
+          }
+          
+          if (data?.monthsSaved === undefined || data.monthsSaved === null) {
+            console.log(`      ❌ FAIL: monthsSaved not saved (required for card display)`);
+            errors.push("Debt payoff: extra mode plan missing monthsSaved");
+            debtPayoffErrors++;
+          } else {
+            console.log(`      ✓ monthsSaved: ${data.monthsSaved} months`);
+          }
+        }
+        
+        // Delete plan
+        await planRefExtra.delete();
+        console.log(`      ✓ Deleted "extra" mode plan`);
+        
+        // Test Plan 3b: "targetDate" mode
+        console.log(`\n    Plan 3b: "targetDate" mode`);
+        const futureDate = new Date(now);
+        futureDate.setMonth(futureDate.getMonth() + 12);
+        const targetDateStr = `${futureDate.getFullYear()}-${String(futureDate.getMonth() + 1).padStart(2, "0")}`;
+        
+        // Compute required payment for target date
+        const targetMonthsAway = 12;
+        const targetSolved = solveForTargetDate(testPlanDebts, targetMonthsAway, "avalanche");
+        const targetBudget = targetSolved ? targetSolved.requiredBudget : testBudget;
+        const targetExtra = Math.max(0, targetBudget - testMinimums);
+        const targetComparison = compareWithMinimumOnly(testPlanDebts, targetBudget, "avalanche");
+        
+        const planDocTarget = {
+          name: "Test Plan Target (regression)",
+          mode: "targetDate" as const,
+          debtSlugs: testIncluded.map((d: any) => d.id),
+          strategy: "avalanche" as const,
+          extraMonthly: targetExtra, // Computed extra for targetDate mode
+          targetDate: targetDateStr,
+          monthlyBudget: targetBudget,
+          baseline,
+          interestSaved: targetComparison.interestSaved,
+          monthsSaved: targetComparison.monthsSaved,
+          createdAt: new Date(),
+        };
+        
+        const sanitizedTarget = stripUndefined(planDocTarget);
+        const planRefTarget = db.collection(`users/${uid}/debtPlans`).doc();
+        await planRefTarget.set(sanitizedTarget);
+        console.log(`      ✓ Created "targetDate" mode plan: ${planRefTarget.id}`);
+        
+        // Read back to verify
+        const savedTarget = await planRefTarget.get();
+        if (!savedTarget.exists) {
+          console.log(`      ❌ FAIL: Plan not found after save`);
+          errors.push("Debt payoff: targetDate mode plan not found after save");
+          debtPayoffErrors++;
+        } else {
+          const data = savedTarget.data();
+          
+          // Check that extraMonthly is saved (computed extra for targetDate mode)
+          if (data?.extraMonthly === undefined || data.extraMonthly === null) {
+            console.log(`      ⚠  WARNING: extraMonthly not saved for targetDate mode (card won't show extra amount)`);
+          } else {
+            console.log(`      ✓ extraMonthly saved: ${formatCurrency(data.extraMonthly, currency)} (computed extra)`);
+          }
+          
+          if (data?.interestSaved === undefined || data.interestSaved === null) {
+            console.log(`      ❌ FAIL: interestSaved not saved (required for card display)`);
+            errors.push("Debt payoff: targetDate mode plan missing interestSaved");
+            debtPayoffErrors++;
+          } else {
+            console.log(`      ✓ interestSaved: ${formatCurrency(data.interestSaved, currency)}`);
+          }
+          
+          if (data?.monthsSaved === undefined || data.monthsSaved === null) {
+            console.log(`      ❌ FAIL: monthsSaved not saved (required for card display)`);
+            errors.push("Debt payoff: targetDate mode plan missing monthsSaved");
+            debtPayoffErrors++;
+          } else {
+            console.log(`      ✓ monthsSaved: ${data.monthsSaved} months`);
+          }
+        }
+        
+        // Compute status (should be "on-track" immediately after creation)
+        const currentTotalBalance = testIncluded.reduce((sum: number, d: any) => sum + d.balance, 0);
+        const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+        const projectedEntry = baseline.monthlyProjection.find(p => p.month === currentMonth);
+        const projectedBalance = projectedEntry?.totalBalance ?? currentTotalBalance;
+        
+        const status = classifyPlanStatus(
+          currentTotalBalance,
+          projectedBalance,
+          testBudget,
+          "avalanche",
+          testPlanDebts
+        );
+        
+        console.log(`      Current balance: ${formatCurrency(currentTotalBalance, currency)}`);
+        console.log(`      Projected balance: ${formatCurrency(projectedBalance, currency)}`);
+        console.log(`      Status: ${status.status}`);
+        
+        if (status.status !== "on-track") {
+          console.log(`      ❌ FAIL: New plan should be "on-track" but got "${status.status}"`);
+          errors.push(`Debt payoff: New plan status is "${status.status}" instead of "on-track"`);
+          debtPayoffErrors++;
+        } else {
+          console.log(`      ✓ Status is "on-track" as expected`);
+        }
+        
+        // Delete plan
+        await planRefTarget.delete();
+        console.log(`      ✓ Deleted "targetDate" mode plan`);
+      }
+      
+      // Check 1c: Verify all real saved plans have valid comparison logic
+      console.log(`\n    Plan 1c: Verify saved plans comparison logic`);
+      try {
+        const plansSnapshot = await db.collection("users").doc(uid).collection("debtPlans").get();
+        
+        if (plansSnapshot.empty) {
+          console.log(`      ℹ No saved plans to check`);
+        } else {
+          console.log(`      Found ${plansSnapshot.size} saved plan(s)`);
+          
+          for (const planDoc of plansSnapshot.docs) {
+            const plan = planDoc.data();
+            console.log(`\n      Plan: ${plan.name}`);
+            
+            // Get debts for this plan
+            const planDebtSlugs = plan.debtSlugs || [];
+            const planDebts = debtsForSimulation.map((d: any) => ({
+              ...d,
+              included: planDebtSlugs.includes(d.id),
+            }));
+            
+            const includedDebts = debtsForSimulation.filter((d: any) => planDebtSlugs.includes(d.id));
+            const planMinimums = includedDebts.reduce((sum: number, d: any) => sum + calculateMinimumPayment(d), 0);
+            
+            // Compute with-plan and without-plan results
+            const withPlan = calculateDebtPayoff(planDebts, plan.monthlyBudget, plan.strategy);
+            const withoutPlan = calculateDebtPayoff(planDebts, planMinimums, plan.strategy);
+            const comparison = compareWithMinimumOnly(planDebts, plan.monthlyBudget, plan.strategy);
+            
+            const extraMonthly = plan.extraMonthly ?? Math.max(0, plan.monthlyBudget - planMinimums);
+            
+            console.log(`        Extra: ${formatCurrency(extraMonthly, currency)}/mo`);
+            console.log(`        With plan: ${withPlan.debtFreeDate || "N/A"}`);
+            console.log(`        Without plan: ${withoutPlan.debtFreeDate || "N/A"}`);
+            console.log(`        Interest saved: ${formatCurrency(comparison.interestSaved, currency)}`);
+            console.log(`        Months saved: ${comparison.monthsSaved}`);
+            
+            // Assertions
+            if (withPlan.debtFreeDate && withoutPlan.debtFreeDate) {
+              const withDate = new Date(withPlan.debtFreeDate + "-01");
+              const withoutDate = new Date(withoutPlan.debtFreeDate + "-01");
+              
+              if (withoutDate < withDate) {
+                console.log(`        ❌ FAIL: Without-plan date (${withoutPlan.debtFreeDate}) is before with-plan date (${withPlan.debtFreeDate})`);
+                errors.push(`Debt payoff: Plan "${plan.name}" has without-plan date before with-plan date`);
+                debtPayoffErrors++;
+              } else {
+                console.log(`        ✓ Without-plan date is at or after with-plan date`);
+              }
+            }
+            
+            if (comparison.interestSaved < 0) {
+              console.log(`        ❌ FAIL: Interest saved is negative: ${comparison.interestSaved}`);
+              errors.push(`Debt payoff: Plan "${plan.name}" has negative interest saved`);
+              debtPayoffErrors++;
+            } else {
+              console.log(`        ✓ Interest saved ≥ 0`);
+            }
+          }
+        }
+      } catch (err) {
+        console.error(err);
+        errors.push("Debt payoff: Check 1c failed");
+        debtPayoffErrors++;
+      }
+
+      console.log(`\n  ✓ Saved plan workflow tests completed`);
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error in saved plan tests: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Debt payoff: saved plan tests failed");
+    debtPayoffErrors++;
+  }
+
+  // Check 2: No native browser dialogs (confirm/alert) outside test files
+  console.log("\nCheck 2: No native browser dialogs in src/");
+  try {
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    
+    const confirmMatches: string[] = [];
+    const alertMatches: string[] = [];
+    
+    async function walkDir(dir: string): Promise<void> {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        
+        if (entry.isDirectory()) {
+          // Skip test directories
+          if (entry.name === "__tests__" || entry.name === "test") continue;
+          await walkDir(fullPath);
+        } else if (entry.isFile() && (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))) {
+          // Skip test files
+          if (entry.name.includes(".test.") || entry.name.includes(".spec.")) continue;
+          
+          const content = await fs.readFile(fullPath, "utf-8");
+          const lines = content.split("\n");
+          
+          lines.forEach((line, idx) => {
+            // Check for confirm( but not useConfirm
+            if (/\bconfirm\(/.test(line) && !line.includes("useConfirm")) {
+              confirmMatches.push(`${fullPath}:${idx + 1}: ${line.trim()}`);
+            }
+            // Check for alert( but not useToast or AlertCircle
+            if (/\balert\(/.test(line) && !line.includes("useToast") && !line.includes("AlertCircle")) {
+              alertMatches.push(`${fullPath}:${idx + 1}: ${line.trim()}`);
+            }
+          });
+        }
+      }
+    }
+    
+    await walkDir("src");
+    
+    if (confirmMatches.length === 0 && alertMatches.length === 0) {
+      console.log(`  ✓ No native browser dialogs found in src/`);
+    } else {
+      if (confirmMatches.length > 0) {
+        console.log(`  ❌ FAIL: Found ${confirmMatches.length} confirm() call(s):`);
+        confirmMatches.slice(0, 5).forEach(match => console.log(`    ${match}`));
+        if (confirmMatches.length > 5) console.log(`    ... and ${confirmMatches.length - 5} more`);
+        errors.push(`Native dialogs: ${confirmMatches.length} confirm() calls found`);
+        debtPayoffErrors++;
+      }
+      if (alertMatches.length > 0) {
+        console.log(`  ❌ FAIL: Found ${alertMatches.length} alert() call(s):`);
+        alertMatches.slice(0, 5).forEach(match => console.log(`    ${match}`));
+        if (alertMatches.length > 5) console.log(`    ... and ${alertMatches.length - 5} more`);
+        errors.push(`Native dialogs: ${alertMatches.length} alert() calls found`);
+        debtPayoffErrors++;
+      }
+    }
+  } catch (err) {
+    console.error(`  ❌ FAIL: Error checking for native dialogs: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Native dialogs check failed");
+    debtPayoffErrors++;
+  }
+
+  // Check 3: Top categories use cat.bucket and bucket consistency
+  console.log("\nCheck 3: Top categories use cat.bucket and bucket consistency");
+  try {
+    const fs = await import("fs/promises");
+    const overviewTabPath = "src/app/account/spending/components/OverviewTab.tsx";
+    
+    const content = await fs.readFile(overviewTabPath, "utf-8");
+    
+    // Check 1: Uses cat.bucket (not getCategoryBucket)
+    const usesCatBucket = content.includes("bucketColors[cat.bucket]");
+    const doesNotCallGetCategoryBucket = !content.includes("getCategoryBucket(cat.category)");
+    
+    // Check 2: has click handler that sets category
+    const hasClickHandler = content.includes("onClick={() => {") && 
+                             content.includes("setSelectedCategory(cat.category)");
+    
+    // Check 3: has chevron icon
+    const hasChevron = content.includes("M9 5l7 7-7 7") || content.includes("chevron");
+    
+    if (usesCatBucket && doesNotCallGetCategoryBucket && hasClickHandler && hasChevron) {
+      console.log(`  ✓ Top categories use cat.bucket and are clickable`);
+    } else {
+      if (!usesCatBucket) {
+        console.log(`  ❌ FAIL: Top categories don't use cat.bucket for colors`);
+        errors.push("Spending: categories should use cat.bucket, not getCategoryBucket");
+        debtPayoffErrors++;
+      }
+      if (!doesNotCallGetCategoryBucket) {
+        console.log(`  ❌ FAIL: Top categories call getCategoryBucket instead of using cat.bucket`);
+        errors.push("Spending: categories calling getCategoryBucket unnecessarily");
+        debtPayoffErrors++;
+      }
+      if (!hasClickHandler) {
+        console.log(`  ❌ FAIL: Top categories missing click handler`);
+        errors.push("Spending: categories not clickable");
+        debtPayoffErrors++;
+      }
+      if (!hasChevron) {
+        console.log(`  ❌ FAIL: Top categories missing chevron icon`);
+        errors.push("Spending: categories missing chevron");
+        debtPayoffErrors++;
+      }
+    }
+    
+    // Check 4: Runtime verification of category bucket mappings
+    const { getCategoryBucket } = await import("../src/lib/moneyCoachBuckets");
+    
+    const testCategories = [
+      { name: "Loan payments", expectedBucket: "fixed" },
+      { name: "Loan Payments", expectedBucket: "fixed" },
+      { name: "Debt Payments", expectedBucket: "fixed" },
+      { name: "Debt", expectedBucket: "fixed" },
+      { name: "Installment Servicing", expectedBucket: "fixed" },
+      { name: "Card Servicing", expectedBucket: "fixed" },
+      { name: "Car Insurance", expectedBucket: "essentials" },
+      { name: "Groceries", expectedBucket: "essentials" },
+      { name: "Dining", expectedBucket: "flexible" },
+    ];
+    
+    let allPassed = true;
+    for (const { name, expectedBucket } of testCategories) {
+      const actualBucket = getCategoryBucket(name);
+      if (actualBucket !== expectedBucket) {
+        console.log(`  ❌ FAIL: getCategoryBucket("${name}") = "${actualBucket}", expected "${expectedBucket}"`);
+        errors.push(`Spending: "${name}" bucket is ${actualBucket}, expected ${expectedBucket}`);
+        debtPayoffErrors++;
+        allPassed = false;
+      }
+    }
+    
+    if (allPassed) {
+      console.log(`  ✓ All ${testCategories.length} category bucket mappings correct at runtime`);
+    }
+    
+  } catch (err) {
+    console.error(`  ❌ FAIL: Error checking top categories: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Spending: top categories check failed");
+    debtPayoffErrors++;
+  }
+
+  // Check 4: Interest card label contains "Est."
+  console.log("\nCheck 4: Interest card labeled as estimate");
+  try {
+    const fs = await import("fs/promises");
+    const overviewTabPath = "src/app/account/liabilities/components/OverviewTab.tsx";
+    
+    const content = await fs.readFile(overviewTabPath, "utf-8");
+    
+    const hasEstLabel = content.includes("Est. Interest") || content.includes("Estimated");
+    
+    if (hasEstLabel) {
+      console.log(`  ✓ Interest card correctly labeled as estimate in ${overviewTabPath}`);
+    } else {
+      console.log(`  ❌ FAIL: Interest card does not contain "Est." or "Estimated" label`);
+      errors.push("Debt payoff: interest card missing estimate label");
+      debtPayoffErrors++;
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking interest card label: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Debt payoff: failed to check interest card label");
+    debtPayoffErrors++;
+  }
+
+  // Check 5: Header Tools menu contains debt-payoff link
+  console.log("\nCheck 5: Header Tools menu contains Debt Payoff link");
+  try {
+    const fs = await import("fs/promises");
+    const mvpTopNavPath = "src/components/MvpTopNav.tsx";
+    
+    const content = await fs.readFile(mvpTopNavPath, "utf-8");
+    
+    const hasDebtPayoffLink = content.includes("/account/tools/debt-payoff");
+    const hasDebtPayoffLabel = content.includes("Debt Payoff");
+    
+    if (hasDebtPayoffLink && hasDebtPayoffLabel) {
+      console.log(`  ✓ Tools menu contains Debt Payoff link in ${mvpTopNavPath}`);
+    } else {
+      console.log(`  ❌ FAIL: Tools menu missing debt-payoff link or label`);
+      console.log(`    Has link: ${hasDebtPayoffLink}, Has label: ${hasDebtPayoffLabel}`);
+      errors.push("Debt payoff: Tools menu missing debt-payoff link");
+      debtPayoffErrors++;
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking Tools menu: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Debt payoff: failed to check Tools menu");
+    debtPayoffErrors++;
+  }
+
+  // Check 6: Account layout renders PlanProvider
+  console.log("\nCheck 6: Account layout renders PlanProvider");
+  try {
+    const fs = await import("fs/promises");
+    const accountLayoutPath = "src/app/account/layout.tsx";
+    
+    const content = await fs.readFile(accountLayoutPath, "utf-8");
+    
+    const hasPlanProviderImport = content.includes("from \"@/contexts/PlanContext\"") || content.includes("from '@/contexts/PlanContext'");
+    const hasPlanProviderRender = content.includes("<PlanProvider");
+    const hasActiveProfileProvider = content.includes("<ActiveProfileProvider");
+    const hasProfileRefreshProvider = content.includes("<ProfileRefreshProvider");
+    
+    if (hasPlanProviderImport && hasPlanProviderRender && hasActiveProfileProvider && hasProfileRefreshProvider) {
+      console.log(`  ✓ Account layout renders all required providers (ActiveProfile, Plan, ProfileRefresh)`);
+    } else {
+      console.log(`  ❌ FAIL: Account layout missing required providers`);
+      console.log(`    PlanProvider import: ${hasPlanProviderImport}, render: ${hasPlanProviderRender}`);
+      console.log(`    ActiveProfileProvider: ${hasActiveProfileProvider}`);
+      console.log(`    ProfileRefreshProvider: ${hasProfileRefreshProvider}`);
+      errors.push("Debt payoff: account layout missing providers");
+      debtPayoffErrors++;
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking account layout providers: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Debt payoff: failed to check account layout providers");
+    debtPayoffErrors++;
+  }
+
+  // Check 7: Debt payment breakdowns sum to category total
+  console.log("\nCheck 7: Debt payment breakdowns sum to category total");
+  try {
+    // Build spending summary for the user
+    const spendingSummary = buildSpendingSummary(
+      profile.expenseTxns,
+      profile.accountSnapshots,
+      profile.debtPaymentHistory,
+      [], // userReviews
+      profile.fxRates,
+      profile.homeCurrency
+    );
+    
+    const loanPaymentsCategory = spendingSummary.categories.find(c => c.category === "Loan payments");
+    const creditPaymentsCategory = spendingSummary.categories.find(c => c.category === "Credit card minimums");
+    
+    let allMatch = true;
+    
+    // Check Loan payments
+    if (loanPaymentsCategory) {
+      const loanScheduledPayments = spendingSummary.scheduledPayments.filter(p => p.debtType === "loan");
+      const scheduledSum = loanScheduledPayments.reduce((s, p) => s + p.amount, 0);
+      
+      // Category total should equal the average monthly (for last 3 months)
+      const last3Months = spendingSummary.monthlyHistory.slice(-3);
+      const last3Total = last3Months.reduce((s, m) => {
+        const cat = m.categories.find(c => c.category === "Loan payments");
+        return s + (cat?.amount || 0);
+      }, 0);
+      const monthlyAvg = last3Total / Math.max(1, last3Months.length);
+      
+      const diff = Math.abs(scheduledSum - monthlyAvg);
+      if (diff > 1) { // Allow $1 rounding tolerance
+        console.log(`  ❌ FAIL: Loan payments breakdown mismatch`);
+        console.log(`    Scheduled payments sum: ${scheduledSum.toFixed(2)}`);
+        console.log(`    Monthly average: ${monthlyAvg.toFixed(2)}`);
+        console.log(`    Difference: ${diff.toFixed(2)}`);
+        errors.push(`Spending: Loan payments breakdown sum mismatch (${diff.toFixed(2)})`);
+        debtPayoffErrors++;
+        allMatch = false;
+      }
+    }
+    
+    // Check Credit card minimums
+    if (creditPaymentsCategory) {
+      const creditScheduledPayments = spendingSummary.scheduledPayments.filter(p => p.debtType === "credit");
+      const scheduledSum = creditScheduledPayments.reduce((s, p) => s + p.amount, 0);
+      
+      const last3Months = spendingSummary.monthlyHistory.slice(-3);
+      const last3Total = last3Months.reduce((s, m) => {
+        const cat = m.categories.find(c => c.category === "Credit card minimums");
+        return s + (cat?.amount || 0);
+      }, 0);
+      const monthlyAvg = last3Total / Math.max(1, last3Months.length);
+      
+      const diff = Math.abs(scheduledSum - monthlyAvg);
+      if (diff > 1) { // Allow $1 rounding tolerance
+        console.log(`  ❌ FAIL: Credit card minimums breakdown mismatch`);
+        console.log(`    Scheduled payments sum: ${scheduledSum.toFixed(2)}`);
+        console.log(`    Monthly average: ${monthlyAvg.toFixed(2)}`);
+        console.log(`    Difference: ${diff.toFixed(2)}`);
+        errors.push(`Spending: Credit card minimums breakdown sum mismatch (${diff.toFixed(2)})`);
+        debtPayoffErrors++;
+        allMatch = false;
+      }
+    }
+    
+    if (allMatch && (loanPaymentsCategory || creditPaymentsCategory)) {
+      const categories = [
+        loanPaymentsCategory ? "Loan payments" : null,
+        creditPaymentsCategory ? "Credit card minimums" : null
+      ].filter(Boolean);
+      console.log(`  ✓ Debt payment breakdowns sum correctly for: ${categories.join(", ")}`);
+    }
+    
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking debt payment breakdowns: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Spending: failed to check debt payment breakdowns");
+    debtPayoffErrors++;
+  }
+
+  // Check 8: Bucket categories sum to bucket total per month
+  console.log("\nCheck 8: Bucket categories sum to bucket total per month");
+  try {
+    const spendingSummary = buildSpendingSummary(
+      profile.expenseTxns,
+      profile.accountSnapshots,
+      profile.debtPaymentHistory,
+      [], // userReviews
+      profile.fxRates,
+      profile.homeCurrency
+    );
+    
+    let allMonthsMatch = true;
+    const failedMonths: string[] = [];
+    
+    // Check each month in history
+    for (const month of spendingSummary.monthlyHistory) {
+      // Sum categories by bucket
+      const bucketSums = {
+        fixed: 0,
+        essentials: 0,
+        flexible: 0,
+      };
+      
+      for (const cat of month.categories) {
+        if (cat.bucket === "fixed" || cat.bucket === "essentials" || cat.bucket === "flexible") {
+          bucketSums[cat.bucket] += cat.amount;
+        }
+      }
+      
+      // Compare to month's bucket totals (within $1 tolerance)
+      const fixedDiff = Math.abs(bucketSums.fixed - month.fixed);
+      const essentialsDiff = Math.abs(bucketSums.essentials - month.essentials);
+      const flexibleDiff = Math.abs(bucketSums.flexible - month.flexible);
+      
+      if (fixedDiff > 1 || essentialsDiff > 1 || flexibleDiff > 1) {
+        allMonthsMatch = false;
+        failedMonths.push(month.yearMonth);
+        console.log(`  ❌ FAIL: ${month.yearMonth} bucket sums mismatch`);
+        if (fixedDiff > 1) {
+          console.log(`    Fixed: categories sum ${bucketSums.fixed.toFixed(2)}, bucket total ${month.fixed.toFixed(2)}, diff ${fixedDiff.toFixed(2)}`);
+        }
+        if (essentialsDiff > 1) {
+          console.log(`    Essentials: categories sum ${bucketSums.essentials.toFixed(2)}, bucket total ${month.essentials.toFixed(2)}, diff ${essentialsDiff.toFixed(2)}`);
+        }
+        if (flexibleDiff > 1) {
+          console.log(`    Flexible: categories sum ${bucketSums.flexible.toFixed(2)}, bucket total ${month.flexible.toFixed(2)}, diff ${flexibleDiff.toFixed(2)}`);
+        }
+      }
+    }
+    
+    if (!allMonthsMatch) {
+      errors.push(`Spending: bucket category sums mismatch in ${failedMonths.length} months`);
+      debtPayoffErrors++;
+    } else {
+      console.log(`  ✓ All ${spendingSummary.monthlyHistory.length} months: categories sum to bucket totals`);
+    }
+    
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking bucket category sums: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Spending: failed to check bucket category sums");
+    debtPayoffErrors++;
+  }
+
+  console.log();
+
   // Final summary - check ALL error conditions
   const totalFailures = 
     (allErrors ? errors.length : 0) +
@@ -3522,7 +4523,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     smokeTestErrors +
     aiFormatErrors +
     privacyErrors +
-    planAlignmentErrors;
+    planAlignmentErrors +
+    debtPayoffErrors;
   
   if (totalFailures > 0) {
     console.log("=".repeat(80));
@@ -3544,6 +4546,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     if (aiFormatErrors > 0) console.log(`AI formatting consistency failures: ${aiFormatErrors}`);
     if (privacyErrors > 0) console.log(`Privacy check failures: ${privacyErrors}`);
     if (planAlignmentErrors > 0) console.log(`Plan alignment check failures: ${planAlignmentErrors}`);
+    if (debtPayoffErrors > 0) console.log(`Debt payoff check failures: ${debtPayoffErrors}`);
     
     console.log();
     process.exit(1);

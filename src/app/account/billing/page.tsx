@@ -21,6 +21,7 @@ const PRO_FEATURES = [
   "Unlimited AI answers",
   "AI chat & saved answers",
   "Goals tracking",
+  "Debt payoff planner",
   "What-if scenarios",
   "CSV / PDF export",
 ];
@@ -28,7 +29,6 @@ const PRO_FEATURES = [
 const PRO_COMING_SOON = [
   "AI insights",
   "Forecasting & projections",
-  "Debt payoff planner",
 ];
 
 interface FeaturedCampaign {
