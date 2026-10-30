@@ -240,6 +240,24 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                     const categoryMerchants = summary.merchants.filter(m => m.category === cat.category);
                     const expanded = expandedCategories.has(cat.category);
                     
+                    const bucketColors: Record<string, string> = {
+                      fixed: "bg-purple-600",
+                      essentials: "bg-blue-600",
+                      flexible: "bg-green-600",
+                    };
+                    const barColor = bucketColors[cat.bucket] || "bg-gray-400";
+                    
+                    const dotColorMap: Record<string, string> = {
+                      "bg-purple-600": "text-purple-600",
+                      "bg-blue-600": "text-blue-600",
+                      "bg-green-600": "text-green-600",
+                    };
+                    const dotColor = dotColorMap[barColor] || "text-gray-500";
+                    
+                    // Calculate share for bar width
+                    const maxAmount = Math.max(...selectedData.categories.map(c => c.amount));
+                    const share = maxAmount > 0 ? cat.amount / maxAmount : 0;
+                    
                     return (
                       <div key={cat.category} className="border-b border-gray-100 last:border-0">
                         <button
@@ -252,14 +270,25 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                             }
                             setExpandedCategories(newExpanded);
                           }}
-                          className="w-full flex items-center justify-between py-3 hover:bg-gray-50 transition-colors focus:outline-none"
+                          className="w-full hover:bg-gray-50 transition-colors focus:outline-none py-3 group"
                         >
-                          <span className="text-sm font-medium text-gray-900">{cat.category}</span>
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-semibold text-gray-900">{formatCurrency(cat.amount, currency)}</span>
-                            <svg className={`h-4 w-4 text-gray-400 transition-transform ${expanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                            </svg>
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-xl ${dotColor}`}>•</span>
+                              <span className="text-sm font-medium text-gray-900">{cat.category}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold text-gray-900 whitespace-nowrap">{formatCurrency(cat.amount, currency)}</span>
+                              <svg className={`h-4 w-4 text-gray-400 group-hover:text-gray-600 transition-transform ${expanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </div>
+                          </div>
+                          <div className="relative w-full h-2 bg-gray-100 rounded overflow-hidden">
+                            <div
+                              className={`absolute h-full ${barColor} rounded`}
+                              style={{ width: `${Math.min(100, share * 100)}%` }}
+                            />
                           </div>
                         </button>
                         
@@ -291,66 +320,82 @@ export function TrendsTab({ summary }: TrendsTabProps) {
         </>
       )}
 
-      {/* Category list with sparklines */}
+      {/* Category list - 3-month averages */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-gray-900">By category</h3>
-          <p className="text-xs text-gray-500">Last 3 months vs prior 3 months</p>
+          <p className="text-xs text-gray-500">3-month average</p>
         </div>
 
         <div className="divide-y divide-gray-100">
-          {summary.categories.slice(0, 10).map(cat => {
-            // Get last 3 and prior 3 months
-            const last3 = monthlyHistory.slice(-3);
-            const prior3 = monthlyHistory.slice(-6, -3);
-            
-            const last3Total = last3.reduce((s, m) => {
-              const c = m.categories.find(c => c.category === cat.category);
-              return s + (c?.amount || 0);
-            }, 0);
-            
-            const prior3Total = prior3.reduce((s, m) => {
-              const c = m.categories.find(c => c.category === cat.category);
-              return s + (c?.amount || 0);
-            }, 0);
-            
-            const change = prior3Total > 0 ? ((last3Total - prior3Total) / prior3Total) * 100 : 0;
-            
-            const sparklineData = last3.map(m => {
-              const c = m.categories.find(c => c.category === cat.category);
-              return c?.amount || 0;
-            });
+          {summary.categories
+            .map(cat => {
+              // Get last 3 months
+              const last3 = monthlyHistory.slice(-3);
+              const last3Total = last3.reduce((s, m) => {
+                const c = m.categories.find(c => c.category === cat.category);
+                return s + (c?.amount || 0);
+              }, 0);
+              const avg3Month = last3Total / 3;
+              
+              return { ...cat, avg3Month, last3Total };
+            })
+            .filter(cat => cat.avg3Month > 0)
+            .sort((a, b) => b.avg3Month - a.avg3Month)
+            .slice(0, 10)
+            .map(cat => {
+              const bucketColors: Record<string, string> = {
+                fixed: "bg-purple-600",
+                essentials: "bg-blue-600",
+                flexible: "bg-green-600",
+              };
+              const barColor = bucketColors[cat.bucket] || "bg-gray-400";
+              
+              const dotColorMap: Record<string, string> = {
+                "bg-purple-600": "text-purple-600",
+                "bg-blue-600": "text-blue-600",
+                "bg-green-600": "text-green-600",
+              };
+              const dotColor = dotColorMap[barColor] || "text-gray-500";
+              
+              // Calculate share for bar width
+              const maxAmount = Math.max(...summary.categories.map(c => {
+                const last3 = monthlyHistory.slice(-3);
+                return last3.reduce((s, m) => {
+                  const found = m.categories.find(mc => mc.category === c.category);
+                  return s + (found?.amount || 0);
+                }, 0) / 3;
+              }));
+              const share = maxAmount > 0 ? cat.avg3Month / maxAmount : 0;
 
-            return (
-              <div key={cat.category} className="px-6 py-4 flex items-center gap-4">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-900">{cat.category}</p>
-                  <p className="text-xs text-gray-500">
-                    {formatCurrency(last3Total, currency)} in last 3 months
-                  </p>
-                </div>
-
-                <div className="w-20 h-8">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={sparklineData.map((v, i) => ({ v, i }))} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
-                      <Bar dataKey="v" fill={change >= 0 ? "#9ca3af" : "#7c3aed"} radius={[1, 1, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-
-                <div className="w-20 text-right">
-                  {Math.abs(change) < 5 ? (
-                    <span className="text-sm text-gray-400">—</span>
-                  ) : (
-                    <span className={`text-sm font-semibold tabular-nums ${getSignColor(change)}`}>
-                      {change > 0 ? "+" : ""}
-                      {Math.round(change)}%
-                    </span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+              return (
+                <button
+                  key={cat.category}
+                  className="w-full px-6 py-3 text-left hover:bg-gray-50 transition-colors group"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xl ${dotColor}`}>•</span>
+                      <span className="text-sm font-medium text-gray-900">{cat.category}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-gray-900 whitespace-nowrap">
+                        {formatCurrency(cat.avg3Month, currency)}/mo
+                      </span>
+                      <svg className="w-4 h-4 text-gray-400 group-hover:text-gray-600 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </div>
+                  </div>
+                  <div className="relative w-full h-2 bg-gray-100 rounded overflow-hidden">
+                    <div
+                      className={`absolute h-full ${barColor} rounded`}
+                      style={{ width: `${Math.min(100, share * 100)}%` }}
+                    />
+                  </div>
+                </button>
+              );
+            })}
         </div>
       </div>
     </div>

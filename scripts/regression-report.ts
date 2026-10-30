@@ -4261,8 +4261,78 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     debtPayoffErrors++;
   }
 
-  // Check 4: Interest card label contains "Est."
-  console.log("\nCheck 4: Interest card labeled as estimate");
+  // Check 4: Category totals match bucket totals (3-month avg and per-month)
+  console.log("\nCheck 4: Category totals match bucket totals in Trends");
+  try {
+    if (!profile.monthlyHistory || profile.monthlyHistory.length === 0) {
+      console.log(`  ⊘ SKIP: No monthly history available`);
+    } else {
+      // Check 1: 3-month average category sum matches 3-month average total
+      const last3Months = profile.monthlyHistory.slice(-3);
+      
+      if (last3Months.length < 3) {
+        console.log(`  ⊘ SKIP: Not enough months for 3-month average check (have ${last3Months.length})`);
+      } else {
+        // Sum all categories across last 3 months
+        const categorySums = new Map<string, number>();
+        for (const month of last3Months) {
+          for (const cat of month.categories || []) {
+            const current = categorySums.get(cat.category) || 0;
+            categorySums.set(cat.category, current + cat.amount);
+          }
+        }
+        
+        const categoryTotal3Month = Array.from(categorySums.values()).reduce((sum, amt) => sum + amt, 0);
+        const categoryAvg3Month = categoryTotal3Month / 3;
+        
+        // Compare to bucket totals
+        const bucketTotal3Month = last3Months.reduce((sum, m) => sum + m.coreExpensesTotal, 0);
+        const bucketAvg3Month = bucketTotal3Month / 3;
+        
+        const diff3Month = Math.abs(categoryAvg3Month - bucketAvg3Month);
+        const tolerance = 1.0; // Allow $1 rounding difference
+        
+        if (diff3Month <= tolerance) {
+          console.log(`  ✓ 3-month category avg ${formatCurrency(categoryAvg3Month, currency)} matches bucket avg ${formatCurrency(bucketAvg3Month, currency)}`);
+        } else {
+          console.log(`  ❌ FAIL: 3-month category avg ${formatCurrency(categoryAvg3Month, currency)} != bucket avg ${formatCurrency(bucketAvg3Month, currency)} (diff: ${formatCurrency(diff3Month, currency)})`);
+          errors.push(`Trends: 3-month category sum mismatch by ${formatCurrency(diff3Month, currency)}`);
+          debtPayoffErrors++;
+        }
+      }
+      
+      // Check 2: Each month's category sum matches that month's total
+      let monthChecksPassed = 0;
+      let monthChecksFailed = 0;
+      
+      for (const month of profile.monthlyHistory.slice(-6)) {
+        const categoriesSum = (month.categories || []).reduce((sum, cat) => sum + cat.amount, 0);
+        const monthTotal = month.coreExpensesTotal;
+        const diff = Math.abs(categoriesSum - monthTotal);
+        const tolerance = 1.0;
+        
+        if (diff <= tolerance) {
+          monthChecksPassed++;
+        } else {
+          monthChecksFailed++;
+          console.log(`  ❌ FAIL: ${month.yearMonth} categories sum ${formatCurrency(categoriesSum, currency)} != total ${formatCurrency(monthTotal, currency)} (diff: ${formatCurrency(diff, currency)})`);
+          errors.push(`Trends: ${month.yearMonth} category sum mismatch`);
+          debtPayoffErrors++;
+        }
+      }
+      
+      if (monthChecksFailed === 0) {
+        console.log(`  ✓ All ${monthChecksPassed} month(s) category sums match totals`);
+      }
+    }
+  } catch (err) {
+    console.error(`  ❌ FAIL: Error checking category totals: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Trends: category totals check failed");
+    debtPayoffErrors++;
+  }
+
+  // Check 5: Interest card label contains "Est."
+  console.log("\nCheck 5: Interest card labeled as estimate");
   try {
     const fs = await import("fs/promises");
     const overviewTabPath = "src/app/account/liabilities/components/OverviewTab.tsx";
@@ -4284,8 +4354,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     debtPayoffErrors++;
   }
 
-  // Check 5: Header Tools menu contains debt-payoff link
-  console.log("\nCheck 5: Header Tools menu contains Debt Payoff link");
+  // Check 6: Header Tools menu contains debt-payoff link
+  console.log("\nCheck 6: Header Tools menu contains Debt Payoff link");
   try {
     const fs = await import("fs/promises");
     const mvpTopNavPath = "src/components/MvpTopNav.tsx";
@@ -4309,8 +4379,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     debtPayoffErrors++;
   }
 
-  // Check 6: Account layout renders PlanProvider
-  console.log("\nCheck 6: Account layout renders PlanProvider");
+  // Check 7: Account layout renders PlanProvider
+  console.log("\nCheck 7: Account layout renders PlanProvider");
   try {
     const fs = await import("fs/promises");
     const accountLayoutPath = "src/app/account/layout.tsx";
