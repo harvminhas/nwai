@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
+import { AiAnswer } from "@/components/AiAnswer";
 
 interface SavedAnswer {
   id: string;
@@ -11,62 +12,7 @@ interface SavedAnswer {
   createdAt: string;
 }
 
-function renderMarkdown(text: string) {
-  // Simple markdown rendering (same logic as dashboard)
-  const lines = text.split("\n");
-  const result: React.ReactNode[] = [];
-  let i = 0;
-
-  while (i < lines.length) {
-    const line = lines[i]!;
-    const trimmed = line.trim();
-
-    // Empty line
-    if (!trimmed) {
-      result.push(<br key={`br-${i}`} />);
-      i++;
-      continue;
-    }
-
-    // Bullet point
-    if (trimmed.startsWith("• ") || trimmed.startsWith("* ")) {
-      result.push(
-        <li key={`li-${i}`} className="ml-5 list-disc text-gray-700">
-          {boldify(trimmed.slice(2))}
-        </li>
-      );
-      i++;
-      continue;
-    }
-
-    // Regular paragraph
-    result.push(
-      <p key={`p-${i}`} className="mb-2 text-gray-700">
-        {boldify(trimmed)}
-      </p>
-    );
-    i++;
-  }
-
-  return <div>{result}</div>;
-}
-
-function boldify(s: string) {
-  const parts = s.split(/(\*\*[^*]+\*\*)/g);
-  return (
-    <>
-      {parts.map((p, idx) =>
-        p.startsWith("**") && p.endsWith("**") ? (
-          <strong key={idx} className="font-semibold text-gray-900">
-            {p.slice(2, -2)}
-          </strong>
-        ) : (
-          <span key={idx}>{p}</span>
-        )
-      )}
-    </>
-  );
-}
+// Note: AI answer rendering moved to shared AiAnswer component
 
 export default function SavedAnswersPage() {
   const [token, setToken] = useState<string | null>(null);
@@ -190,7 +136,7 @@ export default function SavedAnswersPage() {
                   </button>
                 </div>
                 <div className="prose prose-sm max-w-none">
-                  {renderMarkdown(answer.answer)}
+                  <AiAnswer content={answer.answer} />
                 </div>
               </div>
             ))}

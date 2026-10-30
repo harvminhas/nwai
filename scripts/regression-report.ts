@@ -3028,6 +3028,81 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     console.log(`\n✅ All smoke tests passed\n`);
   }
   
+  // ── AI ANSWER FORMATTING CONSISTENCY CHECKS ────────────────────────────────────
+  console.log("=".repeat(80));
+  console.log("AI ANSWER FORMATTING CONSISTENCY CHECKS");
+  console.log("=".repeat(80) + "\n");
+
+  let aiFormatErrors = 0;
+
+  // Check 1: All answer display sites use shared AiAnswer component
+  console.log("Check 1: Answer display sites use shared AiAnswer component");
+  try {
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    
+    const filesToCheck = [
+      "src/app/account/dashboard/page.tsx",
+      "src/app/account/chat/page.tsx",
+      "src/app/account/saved-answers/page.tsx",
+    ];
+    
+    for (const file of filesToCheck) {
+      const filePath = path.join(process.cwd(), file);
+      const content = await fs.readFile(filePath, "utf-8");
+      
+      const hasImport = content.includes('import { AiAnswer } from "@/components/AiAnswer"') ||
+                       content.includes("import { AiAnswer } from '@/components/AiAnswer'");
+      const hasUsage = content.includes("<AiAnswer");
+      
+      if (!hasImport || !hasUsage) {
+        console.log(`  ❌ FAIL: ${file} does not use shared AiAnswer component`);
+        errors.push(`AI formatting: ${file} missing AiAnswer usage`);
+        aiFormatErrors++;
+      } else {
+        console.log(`  ✓ ${file} uses AiAnswer component`);
+      }
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking answer components: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("AI formatting: failed to check answer components");
+    aiFormatErrors++;
+  }
+
+  // Check 2: All Gemini answer routes include AI_ANSWER_FORMAT
+  console.log("\nCheck 2: Gemini answer routes include AI_ANSWER_FORMAT");
+  try {
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    
+    const routesToCheck = [
+      { file: "src/lib/chat/context.ts", description: "Chat context builder" },
+    ];
+    
+    for (const route of routesToCheck) {
+      const filePath = path.join(process.cwd(), route.file);
+      const content = await fs.readFile(filePath, "utf-8");
+      
+      const hasImport = content.includes('import { AI_ANSWER_FORMAT } from "@/lib/aiAnswerFormat"') ||
+                       content.includes("import { AI_ANSWER_FORMAT } from '@/lib/aiAnswerFormat'");
+      const hasUsage = content.includes("${AI_ANSWER_FORMAT}");
+      
+      if (!hasImport || !hasUsage) {
+        console.log(`  ❌ FAIL: ${route.description} (${route.file}) does not include AI_ANSWER_FORMAT`);
+        errors.push(`AI formatting: ${route.file} missing AI_ANSWER_FORMAT`);
+        aiFormatErrors++;
+      } else {
+        console.log(`  ✓ ${route.description} includes AI_ANSWER_FORMAT`);
+      }
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking Gemini routes: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("AI formatting: failed to check Gemini routes");
+    aiFormatErrors++;
+  }
+
+  console.log();
+  
   // ── PRIVACY CHECKS ────────────────────────────────────────────────────────────
   console.log("=".repeat(80));
   console.log("PRIVACY CHECKS");
@@ -3154,6 +3229,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     chatToolErrors +
     moneyCoachErrors +
     smokeTestErrors +
+    aiFormatErrors +
     privacyErrors;
   
   if (totalFailures > 0) {
@@ -3173,6 +3249,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     if (chatToolErrors > 0) console.log(`AI chat tool test failures: ${chatToolErrors}`);
     if (moneyCoachErrors > 0) console.log(`Money coach API test failures: ${moneyCoachErrors}`);
     if (smokeTestErrors > 0) console.log(`Smoke test failures: ${smokeTestErrors}`);
+    if (aiFormatErrors > 0) console.log(`AI formatting consistency failures: ${aiFormatErrors}`);
     if (privacyErrors > 0) console.log(`Privacy check failures: ${privacyErrors}`);
     
     console.log();

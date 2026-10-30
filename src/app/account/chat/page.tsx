@@ -5,6 +5,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { usePlan } from "@/contexts/PlanContext";
 import UpgradePrompt from "@/components/UpgradePrompt";
+import { AiAnswer } from "@/components/AiAnswer";
 
 // ── types ──────────────────────────────────────────────────────────────────────
 
@@ -46,133 +47,7 @@ const SUGGESTED = [
   { icon: "✂️",  text: "Where can I realistically cut my spending?" },
 ];
 
-// ── markdown-ish renderer ──────────────────────────────────────────────────────
-// Converts **bold**, bullet lines, pipe tables (leading | required; trailing | optional), and line breaks without a full MD lib
-
-/** Split a GFM-style pipe row. Trailing `|` is optional (models often omit it; strict require broke prod rendering). */
-function parsePipeTableRow(line: string): string[] | null {
-  const t = line.trim();
-  if (!t.startsWith("|")) return null;
-  const inner = t.endsWith("|") ? t.slice(1, -1) : t.slice(1);
-  const cells = inner.split("|").map((c) => c.trim());
-  if (cells.length === 0 || cells.every((c) => c === "")) return null;
-  return cells;
-}
-
-function isTableSeparatorRow(cells: string[]): boolean {
-  return cells.length > 0 && cells.every((c) => /^:?-{2,}:?$/.test(c.replace(/\s/g, "")));
-}
-
-function TableView({ rows }: { rows: string[][] }) {
-  if (rows.length === 0) return null;
-  const header = rows[0]!;
-  let dataStart = 1;
-  if (rows.length > 1 && isTableSeparatorRow(rows[1]!)) dataStart = 2;
-  const body = rows.slice(dataStart);
-  return (
-    <div className="my-2 -mx-1 max-w-full overflow-x-auto rounded-lg border border-gray-100 bg-gray-50/80">
-      <table className="w-full min-w-[320px] border-collapse text-left text-xs text-gray-800">
-        <thead>
-          <tr className="border-b border-gray-200 bg-gray-100/90">
-            {header.map((h, i) => (
-              <th key={i} className="whitespace-nowrap px-2 py-1.5 font-semibold text-gray-700">
-                <span dangerouslySetInnerHTML={{ __html: boldifyStatic(h) }} />
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {body.map((cells, ri) => (
-            <tr key={ri} className="border-b border-gray-100 last:border-0 hover:bg-white/80">
-              {cells.map((cell, ci) => (
-                <td key={ci} className="max-w-[200px] px-2 py-1.5 align-top text-gray-700 sm:max-w-[280px]">
-                  <span className="break-words" dangerouslySetInnerHTML={{ __html: boldifyStatic(cell) }} />
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function boldifyStatic(s: string) {
-  return s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-}
-
-function renderContent(text: string) {
-  const lines = text.split("\n");
-  const elements: React.ReactNode[] = [];
-  let inList = false;
-  let listItems: string[] = [];
-  /** Accumulated pipe-table rows (including header); separator row kept for TableView to strip */
-  let tableRows: string[][] | null = null;
-
-  function flushTable() {
-    if (tableRows && tableRows.length > 0) {
-      elements.push(<TableView key={`tbl-${elements.length}`} rows={tableRows} />);
-      tableRows = null;
-    }
-  }
-
-  function flushList() {
-    if (listItems.length > 0) {
-      elements.push(
-        <ul key={elements.length} className="my-1.5 space-y-0.5 pl-4">
-          {listItems.map((item, i) => (
-            <li key={i} className="flex items-start gap-1.5 text-sm">
-              <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-current opacity-40" />
-              <span dangerouslySetInnerHTML={{ __html: boldifyStatic(item) }} />
-            </li>
-          ))}
-        </ul>
-      );
-      listItems = [];
-      inList = false;
-    }
-  }
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    const pipeRow = parsePipeTableRow(line);
-
-    if (pipeRow && pipeRow.length > 0) {
-      flushList();
-      if (tableRows === null) tableRows = [];
-      tableRows.push(pipeRow);
-      continue;
-    }
-
-    flushTable();
-
-    if (trimmed.startsWith("- ") || trimmed.startsWith("• ")) {
-      inList = true;
-      listItems.push(trimmed.slice(2));
-    } else if (trimmed.match(/^\d+\.\s/)) {
-      inList = true;
-      listItems.push(trimmed.replace(/^\d+\.\s/, ""));
-    } else {
-      flushList();
-      if (trimmed === "") {
-        elements.push(<div key={elements.length} className="h-2" />);
-      } else if (trimmed.startsWith("## ")) {
-        elements.push(
-          <p key={elements.length} className="mt-3 first:mt-0 font-semibold text-[13px] uppercase tracking-wide text-gray-800"
-            dangerouslySetInnerHTML={{ __html: boldifyStatic(trimmed.slice(3)) }} />
-        );
-      } else {
-        elements.push(
-          <p key={elements.length} className="text-sm leading-relaxed"
-            dangerouslySetInnerHTML={{ __html: boldifyStatic(trimmed) }} />
-        );
-      }
-    }
-  }
-  flushList();
-  flushTable();
-  return elements;
-}
+// Note: AI answer rendering moved to shared AiAnswer component
 
 // ── main component ─────────────────────────────────────────────────────────────
 
@@ -188,6 +63,7 @@ export default function ChatPage() {
   const [sessionLoading, setSessionLoading] = useState(false);
   const [recentSessions, setRecentSessions] = useState<SessionSummary[]>([]);
   const [usageStats,   setUsageStats]    = useState<{ remaining: number; limit: number } | null>(null);
+  const [hasInteracted, setHasInteracted] = useState(false);
   const bottomRef  = useRef<HTMLDivElement>(null);
   const inputRef   = useRef<HTMLTextAreaElement>(null);
   const abortRef   = useRef<AbortController | null>(null);
@@ -291,8 +167,22 @@ export default function ChatPage() {
   // Auto-resize textarea
   function handleInputChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     setInput(e.target.value);
+    setHasInteracted(true);
     e.target.style.height = "auto";
     e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+  }
+
+  function handleInputFocus(e: React.FocusEvent<HTMLTextAreaElement>) {
+    if (!hasInteracted && input) {
+      e.target.select();
+    }
+  }
+
+  function handleInputMouseUp(e: React.MouseEvent<HTMLTextAreaElement>) {
+    if (!hasInteracted && input) {
+      e.preventDefault();
+      setHasInteracted(true);
+    }
   }
 
   async function sendMessage(text: string) {
@@ -376,6 +266,7 @@ export default function ChatPage() {
     setError(null);
     setStreaming(false);
     setSessionId(null);
+    setHasInteracted(false);
     // Refresh session list so history reflects the session we just left
     if (token) {
       fetch("/api/user/chat-sessions", { headers: { Authorization: `Bearer ${token}` } })
@@ -587,7 +478,7 @@ export default function ChatPage() {
                       <div className="space-y-2">
                         <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 text-gray-700 shadow-sm rounded-tl-sm">
                           {msg.content ? (
-                            <div className="space-y-0.5 text-gray-700">{renderContent(msg.content)}</div>
+                            <AiAnswer content={msg.content} />
                           ) : (
                             /* Streaming dots */
                             <div className="flex items-center gap-1 py-1">
@@ -671,6 +562,8 @@ export default function ChatPage() {
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
+              onFocus={handleInputFocus}
+              onMouseUp={handleInputMouseUp}
               placeholder={streaming ? "Waiting for response…" : "Ask about your finances…"}
               disabled={streaming || !token}
               aria-label={streaming ? "Waiting for AI response" : "Ask about your finances"}
