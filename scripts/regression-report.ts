@@ -3601,6 +3601,31 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     debtPayoffErrors++;
   }
 
+  // Check 3: Header Tools menu contains debt-payoff link
+  console.log("\nCheck 3: Header Tools menu contains Debt Payoff link");
+  try {
+    const fs = await import("fs/promises");
+    const mvpTopNavPath = "src/components/MvpTopNav.tsx";
+    
+    const content = await fs.readFile(mvpTopNavPath, "utf-8");
+    
+    const hasDebtPayoffLink = content.includes("/account/tools/debt-payoff");
+    const hasDebtPayoffLabel = content.includes("Debt Payoff");
+    
+    if (hasDebtPayoffLink && hasDebtPayoffLabel) {
+      console.log(`  ✓ Tools menu contains Debt Payoff link in ${mvpTopNavPath}`);
+    } else {
+      console.log(`  ❌ FAIL: Tools menu missing debt-payoff link or label`);
+      console.log(`    Has link: ${hasDebtPayoffLink}, Has label: ${hasDebtPayoffLabel}`);
+      errors.push("Debt payoff: Tools menu missing debt-payoff link");
+      debtPayoffErrors++;
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking Tools menu: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Debt payoff: failed to check Tools menu");
+    debtPayoffErrors++;
+  }
+
   console.log();
 
   // Final summary - check ALL error conditions
