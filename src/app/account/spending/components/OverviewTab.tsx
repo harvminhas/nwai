@@ -6,6 +6,7 @@ import { formatCurrency } from "@/lib/currencyUtils";
 import { getSignColor } from "@/lib/colorHelpers";
 import { ReviewList } from "@/components/ReviewList";
 import Link from "next/link";
+import { getCategoryBucket } from "@/lib/moneyCoachBuckets";
 
 interface OverviewTabProps {
   summary: SpendingSummary;
@@ -137,6 +138,17 @@ export function OverviewTab({ summary, token, onReviewComplete }: OverviewTabPro
             const change = lastMonthAmt - priorAvg;
             const changePct = priorAvg > 0 ? (change / priorAvg) * 100 : 0;
 
+            const bucket = getCategoryBucket(cat.category);
+            const barColor = bucketColors[bucket] || bucketColors.flexible;
+            
+            // Dot color (same as bar but as text color)
+            const dotColorMap: Record<string, string> = {
+              "bg-purple-600": "text-purple-600",
+              "bg-blue-600": "text-blue-600",
+              "bg-green-600": "text-green-600",
+            };
+            const dotColor = dotColorMap[barColor] || "text-purple-600";
+            
             return (
               <button
                 key={cat.category}
@@ -144,10 +156,13 @@ export function OverviewTab({ summary, token, onReviewComplete }: OverviewTabPro
                   setSelectedCategory(cat.category);
                   setExpandedMerchants(new Set()); // Reset expanded state when changing category
                 }}
-                className="w-full text-left hover:bg-gray-50 rounded-lg p-2 -m-2 transition-colors"
+                className="w-full text-left hover:bg-gray-50 rounded-lg p-2 -m-2 transition-colors cursor-pointer group"
               >
                 <div className="flex items-center justify-between mb-1">
-                  <div className="text-sm font-medium text-neutral-900">{cat.category}</div>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xl ${dotColor}`}>•</span>
+                    <div className="text-sm font-medium text-neutral-900">{cat.category}</div>
+                  </div>
                   <div className="flex items-center gap-2">
                     <div className="text-sm text-neutral-900">
                       {formatCurrency(lastMonthAmt, summary.currency)}
@@ -158,11 +173,14 @@ export function OverviewTab({ summary, token, onReviewComplete }: OverviewTabPro
                         {changePct.toFixed(0)}%
                       </div>
                     )}
+                    <svg className="w-4 h-4 text-gray-400 group-hover:text-gray-600 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
                   </div>
                 </div>
                 <div className="relative w-full h-2 bg-neutral-100 rounded overflow-hidden">
                   <div
-                    className="absolute h-full bg-purple-600 rounded"
+                    className={`absolute h-full ${barColor} rounded`}
                     style={{ width: `${Math.min(100, (cat.share * 100))}%` }}
                   />
                 </div>

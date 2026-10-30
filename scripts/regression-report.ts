@@ -4181,8 +4181,60 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     debtPayoffErrors++;
   }
 
-  // Check 3: Interest card label contains "Est."
-  console.log("\nCheck 3: Interest card labeled as estimate");
+  // Check 3: Top categories use bucket colors and have click handlers
+  console.log("\nCheck 3: Top categories colored by group and clickable");
+  try {
+    const fs = await import("fs/promises");
+    const overviewTabPath = "src/app/account/spending/components/OverviewTab.tsx";
+    
+    const content = await fs.readFile(overviewTabPath, "utf-8");
+    
+    // Check 1: getCategoryBucket import
+    const hasImport = content.includes("import { getCategoryBucket }") || content.includes("import {getCategoryBucket}");
+    
+    // Check 2: bucket is used for color
+    const usesBucketForColor = content.includes("getCategoryBucket(cat.category)") && 
+                                content.includes("bucketColors[bucket]");
+    
+    // Check 3: has click handler that sets category
+    const hasClickHandler = content.includes("onClick={() => {") && 
+                             content.includes("setSelectedCategory(cat.category)");
+    
+    // Check 4: has chevron icon
+    const hasChevron = content.includes("M9 5l7 7-7 7") || content.includes("chevron");
+    
+    if (hasImport && usesBucketForColor && hasClickHandler && hasChevron) {
+      console.log(`  ✓ Top categories use bucket colors and are clickable`);
+    } else {
+      if (!hasImport) {
+        console.log(`  ❌ FAIL: getCategoryBucket not imported in OverviewTab`);
+        errors.push("Spending: getCategoryBucket not imported");
+        debtPayoffErrors++;
+      }
+      if (!usesBucketForColor) {
+        console.log(`  ❌ FAIL: Top categories don't use bucket colors`);
+        errors.push("Spending: categories not colored by bucket");
+        debtPayoffErrors++;
+      }
+      if (!hasClickHandler) {
+        console.log(`  ❌ FAIL: Top categories missing click handler`);
+        errors.push("Spending: categories not clickable");
+        debtPayoffErrors++;
+      }
+      if (!hasChevron) {
+        console.log(`  ❌ FAIL: Top categories missing chevron icon`);
+        errors.push("Spending: categories missing chevron");
+        debtPayoffErrors++;
+      }
+    }
+  } catch (err) {
+    console.error(`  ❌ FAIL: Error checking top categories: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Spending: top categories check failed");
+    debtPayoffErrors++;
+  }
+
+  // Check 4: Interest card label contains "Est."
+  console.log("\nCheck 4: Interest card labeled as estimate");
   try {
     const fs = await import("fs/promises");
     const overviewTabPath = "src/app/account/liabilities/components/OverviewTab.tsx";
@@ -4204,8 +4256,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     debtPayoffErrors++;
   }
 
-  // Check 4: Header Tools menu contains debt-payoff link
-  console.log("\nCheck 4: Header Tools menu contains Debt Payoff link");
+  // Check 5: Header Tools menu contains debt-payoff link
+  console.log("\nCheck 5: Header Tools menu contains Debt Payoff link");
   try {
     const fs = await import("fs/promises");
     const mvpTopNavPath = "src/components/MvpTopNav.tsx";
@@ -4229,8 +4281,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     debtPayoffErrors++;
   }
 
-  // Check 5: Account layout renders PlanProvider
-  console.log("\nCheck 5: Account layout renders PlanProvider");
+  // Check 6: Account layout renders PlanProvider
+  console.log("\nCheck 6: Account layout renders PlanProvider");
   try {
     const fs = await import("fs/promises");
     const accountLayoutPath = "src/app/account/layout.tsx";
