@@ -4443,6 +4443,70 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     debtPayoffErrors++;
   }
 
+  // Check 8: Bucket categories sum to bucket total per month
+  console.log("\nCheck 8: Bucket categories sum to bucket total per month");
+  try {
+    const spendingSummary = buildSpendingSummary(
+      profile.expenseTxns,
+      profile.accountSnapshots,
+      profile.debtPaymentHistory,
+      [], // userReviews
+      profile.fxRates,
+      profile.homeCurrency
+    );
+    
+    let allMonthsMatch = true;
+    const failedMonths: string[] = [];
+    
+    // Check each month in history
+    for (const month of spendingSummary.monthlyHistory) {
+      // Sum categories by bucket
+      const bucketSums = {
+        fixed: 0,
+        essentials: 0,
+        flexible: 0,
+      };
+      
+      for (const cat of month.categories) {
+        if (cat.bucket === "fixed" || cat.bucket === "essentials" || cat.bucket === "flexible") {
+          bucketSums[cat.bucket] += cat.amount;
+        }
+      }
+      
+      // Compare to month's bucket totals (within $1 tolerance)
+      const fixedDiff = Math.abs(bucketSums.fixed - month.fixed);
+      const essentialsDiff = Math.abs(bucketSums.essentials - month.essentials);
+      const flexibleDiff = Math.abs(bucketSums.flexible - month.flexible);
+      
+      if (fixedDiff > 1 || essentialsDiff > 1 || flexibleDiff > 1) {
+        allMonthsMatch = false;
+        failedMonths.push(month.yearMonth);
+        console.log(`  ❌ FAIL: ${month.yearMonth} bucket sums mismatch`);
+        if (fixedDiff > 1) {
+          console.log(`    Fixed: categories sum ${bucketSums.fixed.toFixed(2)}, bucket total ${month.fixed.toFixed(2)}, diff ${fixedDiff.toFixed(2)}`);
+        }
+        if (essentialsDiff > 1) {
+          console.log(`    Essentials: categories sum ${bucketSums.essentials.toFixed(2)}, bucket total ${month.essentials.toFixed(2)}, diff ${essentialsDiff.toFixed(2)}`);
+        }
+        if (flexibleDiff > 1) {
+          console.log(`    Flexible: categories sum ${bucketSums.flexible.toFixed(2)}, bucket total ${month.flexible.toFixed(2)}, diff ${flexibleDiff.toFixed(2)}`);
+        }
+      }
+    }
+    
+    if (!allMonthsMatch) {
+      errors.push(`Spending: bucket category sums mismatch in ${failedMonths.length} months`);
+      debtPayoffErrors++;
+    } else {
+      console.log(`  ✓ All ${spendingSummary.monthlyHistory.length} months: categories sum to bucket totals`);
+    }
+    
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking bucket category sums: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Spending: failed to check bucket category sums");
+    debtPayoffErrors++;
+  }
+
   console.log();
 
   // Final summary - check ALL error conditions

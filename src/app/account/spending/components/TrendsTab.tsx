@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from "recharts";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, PieChart, Pie } from "recharts";
 import type { SpendingSummary } from "@/lib/spendingSummary";
+import type { MoneyCoachBucket } from "@/lib/moneyCoachBuckets";
 import { formatMonth, formatMonthYear } from "@/lib/dateFormatting";
 import { formatCurrency, getCurrencySymbol } from "@/lib/currencyUtils";
 import { getSignColor } from "@/lib/colorHelpers";
@@ -15,6 +16,8 @@ export function TrendsTab({ summary }: TrendsTabProps) {
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [selected3MonthCategory, setSelected3MonthCategory] = useState<string | null>(null);
+  const [selectedMonthBucket, setSelectedMonthBucket] = useState<MoneyCoachBucket>("fixed");
+  const [selected3MonthBucket, setSelected3MonthBucket] = useState<MoneyCoachBucket>("fixed");
   const { monthlyHistory, currency } = summary;
 
   // Chart data
@@ -205,39 +208,109 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                 </div>
               </div>
 
-              {/* Bucket breakdown */}
+              {/* Bucket selector with donut chart */}
               <div>
                 <h3 className="text-sm font-semibold text-gray-900 mb-3">By bucket</h3>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 bg-purple-600 rounded"></div>
-                      <span className="text-sm font-medium text-gray-900">Fixed</span>
-                    </div>
-                    <span className="text-sm font-semibold text-gray-900">{formatCurrency(selectedData.fixed, currency)}</span>
+                <div className="flex items-center gap-6">
+                  {/* Donut chart */}
+                  <div className="w-32 h-32 flex-shrink-0">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={[
+                            { name: "Fixed", value: selectedData.fixed, bucket: "fixed" as MoneyCoachBucket, color: "#7c3aed" },
+                            { name: "Essentials", value: selectedData.essentials, bucket: "essentials" as MoneyCoachBucket, color: "#2563eb" },
+                            { name: "Flexible", value: selectedData.flexible, bucket: "flexible" as MoneyCoachBucket, color: "#16a34a" },
+                          ]}
+                          dataKey="value"
+                          nameKey="name"
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={35}
+                          outerRadius={60}
+                          paddingAngle={2}
+                          onClick={(data: any) => {
+                            if (data && data.bucket) {
+                              setSelectedMonthBucket(data.bucket as MoneyCoachBucket);
+                              setExpandedCategories(new Set());
+                            }
+                          }}
+                          cursor="pointer"
+                        >
+                          {[
+                            { name: "Fixed", value: selectedData.fixed, bucket: "fixed" as MoneyCoachBucket, color: "#7c3aed" },
+                            { name: "Essentials", value: selectedData.essentials, bucket: "essentials" as MoneyCoachBucket, color: "#2563eb" },
+                            { name: "Flexible", value: selectedData.flexible, bucket: "flexible" as MoneyCoachBucket, color: "#16a34a" },
+                          ].map((entry, index) => (
+                            <Cell 
+                              key={`cell-${index}`} 
+                              fill={entry.color}
+                              opacity={selectedMonthBucket === entry.bucket ? 1 : 0.3}
+                              stroke={selectedMonthBucket === entry.bucket ? entry.color : "none"}
+                              strokeWidth={selectedMonthBucket === entry.bucket ? 2 : 0}
+                            />
+                          ))}
+                        </Pie>
+                      </PieChart>
+                    </ResponsiveContainer>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 bg-blue-600 rounded"></div>
-                      <span className="text-sm font-medium text-gray-900">Essentials</span>
-                    </div>
-                    <span className="text-sm font-semibold text-gray-900">{formatCurrency(selectedData.essentials, currency)}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 bg-green-600 rounded"></div>
-                      <span className="text-sm font-medium text-gray-900">Flexible</span>
-                    </div>
-                    <span className="text-sm font-semibold text-gray-900">{formatCurrency(selectedData.flexible, currency)}</span>
+                  
+                  {/* Legend with amounts */}
+                  <div className="flex-1 space-y-2">
+                    {[
+                      { bucket: "fixed" as MoneyCoachBucket, label: "Fixed", amount: selectedData.fixed, color: "bg-purple-600", textColor: "text-purple-900" },
+                      { bucket: "essentials" as MoneyCoachBucket, label: "Essentials", amount: selectedData.essentials, color: "bg-blue-600", textColor: "text-blue-900" },
+                      { bucket: "flexible" as MoneyCoachBucket, label: "Flexible", amount: selectedData.flexible, color: "bg-green-600", textColor: "text-green-900" },
+                    ].map(({ bucket, label, amount, color, textColor }) => {
+                      const isSelected = selectedMonthBucket === bucket;
+                      const share = selectedData.total > 0 ? (amount / selectedData.total) * 100 : 0;
+                      
+                      return (
+                        <button
+                          key={bucket}
+                          onClick={() => {
+                            setSelectedMonthBucket(bucket);
+                            setExpandedCategories(new Set());
+                          }}
+                          className={`w-full text-left px-3 py-2 rounded-lg transition-colors ${
+                            isSelected ? `bg-gray-100 ${textColor}` : "hover:bg-gray-50"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className={`w-3 h-3 ${color} rounded`}></div>
+                              <span className={`text-sm font-medium ${isSelected ? textColor : "text-gray-900"}`}>
+                                {label}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-sm font-semibold ${isSelected ? textColor : "text-gray-900"}`}>
+                                {formatCurrency(amount, currency)}
+                              </span>
+                              {isSelected && (
+                                <span className="text-xs text-gray-500">
+                                  ({share.toFixed(0)}%)
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
 
-              {/* Categories with transactions */}
+              {/* Categories for selected bucket */}
               <div>
-                <h3 className="text-sm font-semibold text-gray-900 mb-3">By category</h3>
+                <h3 className="text-sm font-semibold text-gray-900 mb-3">
+                  {selectedMonthBucket === "fixed" ? "Fixed" : selectedMonthBucket === "essentials" ? "Essentials" : "Flexible"} categories
+                </h3>
                 <div className="space-y-1">
-                  {selectedData.categories.sort((a, b) => b.amount - a.amount).map(cat => {
+                  {selectedData.categories
+                    .filter(cat => cat.bucket === selectedMonthBucket)
+                    .sort((a, b) => b.amount - a.amount)
+                    .map(cat => {
                     const categoryMerchants = summary.merchants.filter(m => m.category === cat.category);
                     const expanded = expandedCategories.has(cat.category);
                     
@@ -255,8 +328,13 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                     };
                     const dotColor = dotColorMap[barColor] || "text-gray-500";
                     
-                    // Calculate share for bar width
-                    const maxAmount = Math.max(...selectedData.categories.map(c => c.amount));
+                    // Calculate share for bar width (within selected bucket only)
+                    const maxAmount = Math.max(
+                      ...selectedData.categories
+                        .filter(c => c.bucket === selectedMonthBucket)
+                        .map(c => c.amount),
+                      1 // Ensure at least 1 to avoid division by zero
+                    );
                     const share = maxAmount > 0 ? cat.amount / maxAmount : 0;
                     
                     return (
@@ -362,11 +440,41 @@ export function TrendsTab({ summary }: TrendsTabProps) {
         </>
       )}
 
-      {/* Category list - 3-month averages */}
+      {/* Category list - 3-month averages with bucket selector */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-gray-900">By category</h3>
-          <p className="text-xs text-gray-500">3-month average</p>
+        <div className="px-6 py-4 border-b border-gray-100">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-gray-900">By category</h3>
+            <p className="text-xs text-gray-500">3-month average</p>
+          </div>
+          
+          {/* Bucket selector */}
+          <div className="flex gap-2">
+            {[
+              { bucket: "fixed" as MoneyCoachBucket, label: "Fixed", color: "bg-purple-600" },
+              { bucket: "essentials" as MoneyCoachBucket, label: "Essentials", color: "bg-blue-600" },
+              { bucket: "flexible" as MoneyCoachBucket, label: "Flexible", color: "bg-green-600" },
+            ].map(({ bucket, label, color }) => {
+              const isSelected = selected3MonthBucket === bucket;
+              
+              return (
+                <button
+                  key={bucket}
+                  onClick={() => {
+                    setSelected3MonthBucket(bucket);
+                    setSelected3MonthCategory(null);
+                  }}
+                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    isSelected 
+                      ? `${color} text-white` 
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         <div className="divide-y divide-gray-100">
@@ -382,9 +490,8 @@ export function TrendsTab({ summary }: TrendsTabProps) {
               
               return { ...cat, avg3Month, last3Total };
             })
-            .filter(cat => cat.avg3Month > 0)
+            .filter(cat => cat.avg3Month > 0 && cat.bucket === selected3MonthBucket)
             .sort((a, b) => b.avg3Month - a.avg3Month)
-            .slice(0, 10)
             .map(cat => {
               const bucketColors: Record<string, string> = {
                 fixed: "bg-purple-600",
@@ -400,14 +507,16 @@ export function TrendsTab({ summary }: TrendsTabProps) {
               };
               const dotColor = dotColorMap[barColor] || "text-gray-500";
               
-              // Calculate share for bar width
-              const maxAmount = Math.max(...summary.categories.map(c => {
-                const last3 = monthlyHistory.slice(-3);
-                return last3.reduce((s, m) => {
-                  const found = m.categories.find(mc => mc.category === c.category);
-                  return s + (found?.amount || 0);
-                }, 0) / 3;
-              }));
+              // Calculate share for bar width (within selected bucket only)
+              const maxAmount = Math.max(...summary.categories
+                .filter(c => c.bucket === selected3MonthBucket)
+                .map(c => {
+                  const last3 = monthlyHistory.slice(-3);
+                  return last3.reduce((s, m) => {
+                    const found = m.categories.find(mc => mc.category === c.category);
+                    return s + (found?.amount || 0);
+                  }, 0) / 3;
+                }), 1); // Ensure at least 1 to avoid division by zero
               const share = maxAmount > 0 ? cat.avg3Month / maxAmount : 0;
 
               const isExpanded = selected3MonthCategory === cat.category;
