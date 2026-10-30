@@ -360,10 +360,11 @@ export function OverviewTab({ summary, token, onReviewComplete }: OverviewTabPro
                       {monthlyAmounts.map((amt, idx) => {
                         const max = Math.max(...monthlyAmounts, 1);
                         const height = (amt / max) * 100;
+                        const isLatest = idx === monthlyAmounts.length - 1;
                         return (
                           <div
                             key={idx}
-                            className="flex-1 bg-purple-600 rounded-t"
+                            className={`flex-1 rounded-t ${isLatest ? "bg-slate-600" : "bg-slate-400"}`}
                             style={{ height: `${height}%` }}
                           />
                         );
