@@ -63,7 +63,6 @@ export default function ChatPage() {
   const [sessionLoading, setSessionLoading] = useState(false);
   const [recentSessions, setRecentSessions] = useState<SessionSummary[]>([]);
   const [usageStats,   setUsageStats]    = useState<{ remaining: number; limit: number } | null>(null);
-  const [hasInteracted, setHasInteracted] = useState(false);
   const bottomRef  = useRef<HTMLDivElement>(null);
   const inputRef   = useRef<HTMLTextAreaElement>(null);
   const abortRef   = useRef<AbortController | null>(null);

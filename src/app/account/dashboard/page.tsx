@@ -72,7 +72,6 @@ function QuestionBox({
   savedAnswersCount: number;
 }) {
   const [query, setQuery] = useState("");
-  const [hasInteracted, setHasInteracted] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = () => {
@@ -81,22 +80,29 @@ function QuestionBox({
     }
   };
 
-  const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
-    if (!hasInteracted) {
-      e.target.select();
+  const selectAllText = (input: HTMLInputElement) => {
+    try {
+      input.select();
+    } catch {
+      // Fallback for mobile
+      input.setSelectionRange(0, input.value.length);
     }
   };
 
-  const handleMouseUp = (e: React.MouseEvent<HTMLInputElement>) => {
-    if (!hasInteracted) {
+  const handleMouseDown = (e: React.MouseEvent<HTMLInputElement>) => {
+    if (document.activeElement !== e.currentTarget) {
       e.preventDefault();
-      setHasInteracted(true);
+      e.currentTarget.focus();
+      selectAllText(e.currentTarget);
     }
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setQuery(e.target.value);
-    setHasInteracted(true);
+  const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+    requestAnimationFrame(() => {
+      if (inputRef.current) {
+        selectAllText(inputRef.current);
+      }
+    });
   };
 
   return (
@@ -106,10 +112,10 @@ function QuestionBox({
           ref={inputRef}
           type="text"
           value={query}
-          onChange={handleChange}
+          onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+          onMouseDown={handleMouseDown}
           onFocus={handleFocus}
-          onMouseUp={handleMouseUp}
           disabled={loading}
           placeholder="Ask about your spending, savings, or goals…"
           className="w-full rounded-2xl border-2 border-gray-200 px-6 py-5 pr-28 text-lg shadow-sm transition-all placeholder:text-gray-400 focus:border-purple-500 focus:shadow-lg focus:shadow-purple-100 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
@@ -119,7 +125,13 @@ function QuestionBox({
           disabled={!query.trim() || loading}
           className="absolute right-3 top-1/2 -translate-y-1/2 rounded-xl bg-purple-600 px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {loading ? "Thinking…" : "Ask"}
+          {loading ? (
+            <span className="inline-flex items-center gap-1">
+              <span className="animate-pulse">…</span>
+            </span>
+          ) : (
+            "Ask"
+          )}
         </button>
       </div>
       
