@@ -885,7 +885,7 @@ function DashboardV2() {
                     href="/account/spending#flexible"
                     className="h-10 rounded-r-lg flex items-center justify-center px-3 hover:opacity-80 transition"
                     style={{ 
-                      backgroundColor: "#f59e0b",
+                      backgroundColor: "#10b981",
                       width: `${(currentMonthData.flexible / currentMonthData.income) * 100}%`
                     }}
                     title={`Flexible: ${fmt(currentMonthData.flexible, currency)}`}
@@ -915,12 +915,13 @@ function DashboardV2() {
         )}
 
         {/* Action List */}
-        {totalActions > 0 && (
-          <div className="mb-8 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-            <h2 className="mb-4 text-lg font-semibold text-gray-900">
-              {totalActions} {totalActions === 1 ? "item" : "items"} need your attention
-            </h2>
-            <div className="space-y-3">
+        <div className="mb-8 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+          {totalActions > 0 ? (
+            <>
+              <h2 className="mb-4 text-lg font-semibold text-gray-900">
+                {totalActions} {totalActions === 1 ? "item" : "items"} need your attention
+              </h2>
+              <div className="space-y-3">
               {/* Subscriptions with no recent charge */}
               {subscriptions.noRecentCharge.length > 0 && (
                 <Link
@@ -1046,9 +1047,20 @@ function DashboardV2() {
                   </svg>
                 </Link>
               )}
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-8 text-center">
+              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-100 mb-4">
+                <svg className="h-8 w-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-1">All caught up!</h3>
+              <p className="text-sm text-gray-500">No items need your attention right now.</p>
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Quick Navigation */}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
