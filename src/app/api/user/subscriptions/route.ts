@@ -100,16 +100,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const cancelled = summary.inactive.filter(s => cancelledSlugs.has(s.merchantSlug));
     const inactive = summary.inactive.filter(s => !cancelledSlugs.has(s.merchantSlug));
     
-    // Override status for ALL user-confirmed items (move from inactive to active unless cancelled)
-    // User-confirmed items should always be shown in active list with noRecentCharge hint if stale
-    const userConfirmedSet = new Set(userConfirmedSlugs);
-    const userConfirmedInactive = inactive.filter(s => userConfirmedSet.has(s.merchantSlug));
-    userConfirmedInactive.forEach(item => {
+    // Product decision: ALL confirmed subscriptions stay active regardless of staleness
+    // (Engine-confirmed OR user-confirmed). Inactive section = cancelled only.
+    // If past cadence window, noRecentCharge flag shows hint with "Mark cancelled" action.
+    const confirmedInactive = inactive.filter(s => s.tier === "confirmed");
+    confirmedInactive.forEach(item => {
       item.status = "active";
     });
     
-    // Remove user-confirmed items from inactive list since they're now active
-    const finalInactive = inactive.filter(s => !userConfirmedSet.has(s.merchantSlug));
+    // Inactive list is now empty (all non-cancelled confirmed items moved to active)
+    // Candidates remain in candidates list
+    const finalInactive: typeof summary.inactive = [];
     
     // Synthesize subscriptions for manually marked merchants not detected by engine
     const allDetectedSlugs = new Set([
@@ -128,7 +129,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // Rebuild lists with overrides and synthesized subs
     const confirmedActive = [
       ...summary.subscriptions,
-      ...userConfirmedInactive, // Add user-confirmed inactive items to active list
+      ...confirmedInactive, // Add ALL confirmed inactive items to active list
       ...synthesizedSubs, // Add manually marked merchants
     ].sort((a, b) => b.amount - a.amount);
     

@@ -211,27 +211,37 @@ async function debugSubscriptions(uid: string) {
   console.log("FINAL OUTPUT (what /api/user/subscriptions would return)");
   console.log("=".repeat(80) + "\n");
   
-  // Match API route: move user-confirmed inactive items to active
-  const userConfirmedSet = new Set(userConfirmedSlugs);
-  const userConfirmedInactive = summary.inactive.filter(s => userConfirmedSet.has(s.merchantSlug));
+  // Match API route: ALL confirmed subscriptions stay active (engine-confirmed or user-confirmed)
+  const cancelled = summary.inactive.filter(s => cancelledSlugs.has(s.merchantSlug));
+  const inactive = summary.inactive.filter(s => !cancelledSlugs.has(s.merchantSlug));
+  const confirmedInactive = inactive.filter(s => s.tier === "confirmed");
   
   const finalConfirmedActive = [
     ...summary.subscriptions,
-    ...userConfirmedInactive, // User-confirmed items from inactive list
+    ...confirmedInactive, // ALL confirmed items from inactive list
     ...synthesizedSubs,
   ];
   
+  const finalInactive: any[] = []; // Empty - only cancelled items go here
+  
   console.log(`Total confirmed active subscriptions: ${finalConfirmedActive.length}`);
   console.log(`  From engine (naturally active): ${summary.subscriptions.length}`);
-  console.log(`  User-confirmed (was inactive): ${userConfirmedInactive.length}`);
+  console.log(`  Confirmed (was inactive): ${confirmedInactive.length}`);
   console.log(`  Synthesized: ${synthesizedSubs.length}\n`);
   
   if (finalConfirmedActive.length > 0) {
-    console.log("Confirmed active list:");
+    console.log("Active list:");
     finalConfirmedActive.forEach(sub => {
       const hint = sub.noRecentCharge ? " [no recent charge]" : "";
       const cadenceStr = sub.cadence === "yearly" ? "yearly" : sub.cadence === "monthly" ? "monthly" : "ambig";
       console.log(`  - ${sub.merchant} (${sub.merchantSlug}): ${sub.amount} ${profile.homeCurrency} [${cadenceStr}, last: ${sub.lastDate}]${hint}`);
+    });
+  }
+  
+  console.log(`\nInactive (cancelled only): ${cancelled.length}`);
+  if (cancelled.length > 0) {
+    cancelled.forEach(sub => {
+      console.log(`  - ${sub.merchant} (${sub.merchantSlug})`);
     });
   }
   
@@ -244,11 +254,9 @@ async function debugSubscriptions(uid: string) {
   
   // Run over all detected subscriptions (active, candidates, inactive) to catch split variants
   const allDetected = [
-    ...summary.subscriptions,
-    ...userConfirmedInactive,
-    ...synthesizedSubs,
+    ...finalConfirmedActive,
     ...summary.candidates,
-    ...summary.inactive.filter(s => !userConfirmedSet.has(s.merchantSlug)),
+    ...finalInactive,
   ];
   
   const groups = findMergeSuggestions(allDetected);

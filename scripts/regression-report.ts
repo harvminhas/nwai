@@ -4670,6 +4670,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       // Parse reviews
       const userConfirmedSlugs: string[] = [];
       const excludedSlugs = new Set<string>();
+      const cancelledSlugs = new Set<string>();
       const billingFrequencyOverrides = new Map<string, import("../src/lib/reviewTypes").BillingFrequency>();
       
       subReviewsSnap.docs.forEach(doc => {
@@ -4681,6 +4682,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
           userConfirmedSlugs.push(merchantSlug);
         } else if (classification === "not_subscription") {
           excludedSlugs.add(merchantSlug);
+        } else if (classification === "cancelled") {
+          cancelledSlugs.add(merchantSlug);
         }
         
         if (billingFrequency) {
@@ -4725,12 +4728,14 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         );
         
         // Build final active list (matching API route logic)
-        const userConfirmedSet = new Set(userConfirmedSlugs);
-        const userConfirmedInactive = summary.inactive.filter(s => userConfirmedSet.has(s.merchantSlug));
+        // Product decision: ALL confirmed subscriptions stay active (engine-confirmed or user-confirmed)
+        const cancelled = summary.inactive.filter(s => cancelledSlugs.has(s.merchantSlug));
+        const inactive = summary.inactive.filter(s => !cancelledSlugs.has(s.merchantSlug));
+        const confirmedInactive = inactive.filter(s => s.tier === "confirmed");
         
         const finalActiveSubs = [
           ...summary.subscriptions,
-          ...userConfirmedInactive, // User-confirmed items moved from inactive
+          ...confirmedInactive, // ALL confirmed items moved from inactive
           ...synthesized,
         ];
         
@@ -4750,7 +4755,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         if (allPresent) {
           console.log(`  ✓ All ${userConfirmedSlugs.length} is_subscription slugs appear in ACTIVE list`);
           console.log(`    Engine naturally active: ${summary.subscriptions.length}`);
-          console.log(`    User-confirmed (was inactive): ${userConfirmedInactive.length}`);
+          console.log(`    Confirmed (was inactive): ${confirmedInactive.length}`);
           console.log(`    Synthesized: ${synthesized.length}`);
         } else {
           console.log(`  ❌ FAIL: ${missing.length} is_subscription slugs missing from ACTIVE list:`);
