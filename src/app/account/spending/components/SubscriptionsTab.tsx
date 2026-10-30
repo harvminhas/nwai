@@ -19,6 +19,29 @@ export function SubscriptionsTab({ token }: SubscriptionsTabProps) {
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState<{ message: string; undoId?: string } | null>(null);
   const [dismissedMergeGroups, setDismissedMergeGroups] = useState<Set<string>>(new Set());
+  
+  // Load dismissed merge groups
+  useEffect(() => {
+    const loadDismissedGroups = async () => {
+      if (!token) return;
+      
+      try {
+        const res = await fetch("/api/user/reviews?type=merge_dismissed", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        
+        if (res.ok) {
+          const data = await res.json();
+          const dismissed = new Set<string>(data.reviews?.map((r: any) => r.id as string) || []);
+          setDismissedMergeGroups(dismissed);
+        }
+      } catch (err) {
+        console.error("Failed to load dismissed merge groups:", err);
+      }
+    };
+    
+    loadDismissedGroups();
+  }, [token]);
 
   const loadSubscriptions = async () => {
     try {
@@ -206,8 +229,29 @@ export function SubscriptionsTab({ token }: SubscriptionsTabProps) {
     }
   };
   
-  const handleDismissMergeGroup = (groupKey: string) => {
-    setDismissedMergeGroups(prev => new Set([...prev, groupKey]));
+  const handleDismissMergeGroup = async (groupKey: string) => {
+    if (!token) return;
+    
+    try {
+      const res = await fetch("/api/user/reviews", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: groupKey,
+          type: "merge_dismissed",
+          classification: "dismissed",
+        }),
+      });
+      
+      if (res.ok) {
+        setDismissedMergeGroups(prev => new Set([...prev, groupKey]));
+      }
+    } catch (err) {
+      console.error("Failed to dismiss merge group:", err);
+    }
   };
 
   if (loading) {

@@ -2,22 +2,23 @@
  * Unit tests for merchant name normalization used in merge suggestions
  */
 
-/**
- * Normalize merchant name for similarity matching.
- * Strips special chars, trailing random codes, and normalizes whitespace.
- */
-function normalizeMerchantForSimilarity(name: string): string {
-  let cleaned = name.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
-  // Strip trailing tokens that contain BOTH a letter and a digit (or all digits)
-  // separated by space. This catches codes like "XR3XS7", "74DBCz", "123456"
-  // but preserves real words like "netflix", "resend", "godaddy", "turbotax"
-  cleaned = cleaned.replace(/\s+(?=\S*\d)(?=\S*[a-z])[a-z0-9]{5,8}$/i, "").trim();
-  // Also strip all-digit codes at the end
-  cleaned = cleaned.replace(/\s+\d{5,8}$/, "").trim();
-  return cleaned;
-}
+import { normalizeMerchantForSimilarity } from "../merchantSimilarity";
 
 describe("normalizeMerchantForSimilarity", () => {
+  test("real Google Cloud variants from production data", () => {
+    // These are the exact 10 Google Cloud names from the user's data
+    // All should normalize to "google cloud"
+    expect(normalizeMerchantForSimilarity("GOOGLE CLOUD XR3XS7")).toBe("google cloud");
+    expect(normalizeMerchantForSimilarity("GOOGLE *CLOUD 74DBCz")).toBe("google cloud");
+    expect(normalizeMerchantForSimilarity("Google *CLOUD R69wX8")).toBe("google cloud");
+    expect(normalizeMerchantForSimilarity("GOOGLE *CLOUD VF5Q3W")).toBe("google cloud");
+    expect(normalizeMerchantForSimilarity("GOOGLE CLOUD A1B2C3")).toBe("google cloud");
+    
+    // MPRCGL has no digit, so it's kept but should still group via "google cloud" prefix
+    const mprcgl = normalizeMerchantForSimilarity("GOOGLE *CLOUD MPRCGL");
+    expect(mprcgl.startsWith("google cloud")).toBe(true);
+  });
+  
   test("strips trailing codes with mixed letters and digits", () => {
     expect(normalizeMerchantForSimilarity("GOOGLE CLOUD XR3XS7")).toBe("google cloud");
     expect(normalizeMerchantForSimilarity("GOOGLE *CLOUD 74DBCz")).toBe("google cloud");

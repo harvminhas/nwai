@@ -4822,13 +4822,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     const finalActive = [...summary.subscriptions, ...userConfirmedInactive];
     
     // Find merge suggestions
-    const normalizeMerchantForSimilarity = (name: string): string => {
-      let cleaned = name.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
-      // Strip trailing tokens that contain BOTH a letter and a digit (or all digits)
-      cleaned = cleaned.replace(/\s+(?=\S*\d)(?=\S*[a-z])[a-z0-9]{5,8}$/i, "").trim();
-      cleaned = cleaned.replace(/\s+\d{5,8}$/, "").trim();
-      return cleaned;
-    };
+    const { normalizeMerchantForSimilarity } = await import("../src/lib/merchantSimilarity");
     
     const groups: Array<typeof finalActive> = [];
     const processed = new Set<string>();
@@ -4868,23 +4862,25 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       group.some(sub => normalizeMerchantForSimilarity(sub.merchant).includes("google cloud"))
     );
     
-    if (googleCloudGroup && googleCloudGroup.length > 1) {
-      console.log(`  ✓ Google Cloud variants produce merge suggestion (${googleCloudGroup.length} merchants in group)`);
-      googleCloudGroup.forEach(sub => {
-        console.log(`    - ${sub.merchant} (${sub.merchantSlug})`);
-      });
-    } else {
-      const googleItems = finalActive.filter(s => 
-        s.merchant.toLowerCase().includes("google") && s.merchant.toLowerCase().includes("cloud")
-      );
-      if (googleItems.length > 1) {
-        console.log(`  ❌ FAIL: ${googleItems.length} Google Cloud items found but not grouped as merge suggestion:`);
+    const googleItems = finalActive.filter(s => 
+      s.merchant.toLowerCase().includes("google") && s.merchant.toLowerCase().includes("cloud")
+    );
+    
+    if (googleItems.length > 1) {
+      // We have multiple Google Cloud items, so they MUST be grouped
+      if (googleCloudGroup && googleCloudGroup.length > 1) {
+        console.log(`  ✓ Google Cloud variants produce merge suggestion (${googleCloudGroup.length} merchants in group)`);
+        googleCloudGroup.forEach(sub => {
+          console.log(`    - ${sub.merchant} (${sub.merchantSlug})`);
+        });
+      } else {
+        console.log(`  ❌ FAIL: ${googleItems.length} Google Cloud items found but not grouped as merge suggestion (${groups.length} total groups found):`);
         googleItems.forEach(sub => console.log(`      - ${sub.merchant} (${sub.merchantSlug})`));
         errors.push("Subscription: Google Cloud variants not detected as merge suggestion");
         debtPayoffErrors++;
-      } else {
-        console.log(`  ⊘ No multiple Google Cloud items in this user's data`);
       }
+    } else {
+      console.log(`  ⊘ No multiple Google Cloud items in this user's data (found ${googleItems.length})`);
     }
     
   } catch (err) {
