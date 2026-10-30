@@ -98,11 +98,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const cancelled = summary.inactive.filter(s => cancelledSlugs.has(s.merchantSlug));
     const inactive = summary.inactive.filter(s => !cancelledSlugs.has(s.merchantSlug));
     
-    // Override status for still_active items (move from inactive to active if needed)
-    const stillActiveItems = summary.inactive.filter(s => stillActiveSlugs.has(s.merchantSlug));
-    stillActiveItems.forEach(item => {
+    // Override status for ALL user-confirmed items (move from inactive to active unless cancelled)
+    // User-confirmed items should always be shown in active list with noRecentCharge hint if stale
+    const userConfirmedSet = new Set(userConfirmedSlugs);
+    const userConfirmedInactive = inactive.filter(s => userConfirmedSet.has(s.merchantSlug));
+    userConfirmedInactive.forEach(item => {
       item.status = "active";
     });
+    
+    // Remove user-confirmed items from inactive list since they're now active
+    const finalInactive = inactive.filter(s => !userConfirmedSet.has(s.merchantSlug));
     
     // Synthesize subscriptions for manually marked merchants not detected by engine
     const allDetectedSlugs = new Set([
@@ -121,7 +126,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // Rebuild lists with overrides and synthesized subs
     const confirmedActive = [
       ...summary.subscriptions,
-      ...stillActiveItems, // Add still_active items to active list
+      ...userConfirmedInactive, // Add user-confirmed inactive items to active list
       ...synthesizedSubs, // Add manually marked merchants
     ].sort((a, b) => b.amount - a.amount);
     
@@ -149,7 +154,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({
       ...summary,
       subscriptions: confirmedActive,
-      inactive,
+      inactive: finalInactive,
       cancelled,
       monthlyTotal: adjustedMonthlyTotal,
       yearlyTotal: adjustedYearlyTotal,

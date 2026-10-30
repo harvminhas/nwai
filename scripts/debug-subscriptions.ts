@@ -206,24 +206,31 @@ async function debugSubscriptions(uid: string) {
     });
   }
   
-  // Final summary
+  // Final summary (matching API route logic)
   console.log("=".repeat(80));
   console.log("FINAL OUTPUT (what /api/user/subscriptions would return)");
   console.log("=".repeat(80) + "\n");
   
+  // Match API route: move user-confirmed inactive items to active
+  const userConfirmedSet = new Set(userConfirmedSlugs);
+  const userConfirmedInactive = summary.inactive.filter(s => userConfirmedSet.has(s.merchantSlug));
+  
   const finalConfirmedActive = [
     ...summary.subscriptions,
+    ...userConfirmedInactive, // User-confirmed items from inactive list
     ...synthesizedSubs,
   ];
   
   console.log(`Total confirmed active subscriptions: ${finalConfirmedActive.length}`);
-  console.log(`  From engine: ${summary.subscriptions.length}`);
+  console.log(`  From engine (naturally active): ${summary.subscriptions.length}`);
+  console.log(`  User-confirmed (was inactive): ${userConfirmedInactive.length}`);
   console.log(`  Synthesized: ${synthesizedSubs.length}\n`);
   
   if (finalConfirmedActive.length > 0) {
     console.log("Confirmed active list:");
     finalConfirmedActive.forEach(sub => {
-      console.log(`  - ${sub.merchant} (${sub.merchantSlug}): ${sub.amount} ${profile.homeCurrency}`);
+      const hint = sub.noRecentCharge ? " [no recent charge]" : "";
+      console.log(`  - ${sub.merchant} (${sub.merchantSlug}): ${sub.amount} ${profile.homeCurrency}${hint}`);
     });
   }
   

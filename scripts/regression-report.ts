@@ -4724,31 +4724,38 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
           billingFrequencyOverrides
         );
         
-        // Combine: engine-detected + synthesized
-        const finalSlugs = new Set([
-          ...allDetectedSlugs,
-          ...synthesized.map(s => s.merchantSlug),
-        ]);
+        // Build final active list (matching API route logic)
+        const userConfirmedSet = new Set(userConfirmedSlugs);
+        const userConfirmedInactive = summary.inactive.filter(s => userConfirmedSet.has(s.merchantSlug));
         
-        // Validate: every is_subscription slug should appear
+        const finalActiveSubs = [
+          ...summary.subscriptions,
+          ...userConfirmedInactive, // User-confirmed items moved from inactive
+          ...synthesized,
+        ];
+        
+        const finalActiveSlugs = new Set(finalActiveSubs.map(s => s.merchantSlug));
+        
+        // Validate: every is_subscription slug should be in the ACTIVE list
         let allPresent = true;
         const missing: string[] = [];
         
         userConfirmedSlugs.forEach(slug => {
-          if (!finalSlugs.has(slug)) {
+          if (!finalActiveSlugs.has(slug)) {
             allPresent = false;
             missing.push(slug);
           }
         });
         
         if (allPresent) {
-          console.log(`  ✓ All ${userConfirmedSlugs.length} is_subscription slugs appear in final output`);
-          console.log(`    Engine detected: ${allDetectedSlugs.size}`);
+          console.log(`  ✓ All ${userConfirmedSlugs.length} is_subscription slugs appear in ACTIVE list`);
+          console.log(`    Engine naturally active: ${summary.subscriptions.length}`);
+          console.log(`    User-confirmed (was inactive): ${userConfirmedInactive.length}`);
           console.log(`    Synthesized: ${synthesized.length}`);
         } else {
-          console.log(`  ❌ FAIL: ${missing.length} is_subscription slugs missing from output:`);
+          console.log(`  ❌ FAIL: ${missing.length} is_subscription slugs missing from ACTIVE list:`);
           missing.forEach(slug => console.log(`      - ${slug}`));
-          errors.push(`Subscription: ${missing.length} is_subscription reviews missing from synthesis output`);
+          errors.push(`Subscription: ${missing.length} is_subscription reviews missing from active subscriptions list`);
           debtPayoffErrors++;
         }
       }

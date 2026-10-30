@@ -429,7 +429,12 @@ function SubscriptionTable({
               >
                 <td className="px-6 py-4">
                   <div className="text-sm font-medium text-gray-900">{sub.merchant}</div>
-                  <div className="text-xs text-gray-500">{sub.category}</div>
+                  <div className="text-xs text-gray-500">
+                    {sub.category}
+                    {sub.noRecentCharge && (
+                      <span className="ml-2 text-amber-600">• No recent charge</span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-6 py-4">
                   <div className="relative">
