@@ -211,10 +211,17 @@ async function debugSubscriptions(uid: string) {
   console.log("FINAL OUTPUT (what /api/user/subscriptions would return)");
   console.log("=".repeat(80) + "\n");
   
+  // Get latest transaction date from user's data
+  const latestTxnDate = profile.expenseTxns.length > 0
+    ? profile.expenseTxns.reduce((latest, txn) => txn.date > latest ? txn.date : latest, profile.expenseTxns[0].date)
+    : new Date().toISOString().slice(0, 10);
+  
+  console.log(`Latest transaction date in data: ${latestTxnDate}\n`);
+  
   // Use the same post-processing function as the API route
   const { postProcessSubscriptions } = await import("../src/lib/subscriptionPostProcessing");
   const { confirmedActive: finalConfirmedActive, inactive: finalInactive } = 
-    postProcessSubscriptions(summary, cancelledSlugs, synthesizedSubs);
+    postProcessSubscriptions(summary, cancelledSlugs, synthesizedSubs, latestTxnDate);
   
   const confirmedInactiveCount = summary.inactive.filter(s => s.tier === "confirmed" && !cancelledSlugs.has(s.merchantSlug)).length;
   
@@ -231,6 +238,16 @@ async function debugSubscriptions(uid: string) {
       const tierStr = sub.tier === "confirmed" ? "confirmed" : "candidate";
       console.log(`  - ${sub.merchant} (${sub.merchantSlug})`);
       console.log(`    Amount: ${sub.amount} ${profile.homeCurrency}, Cadence: ${cadenceStr}, Tier: ${tierStr}, Last: ${sub.lastDate}${noRecentStr}`);
+    });
+  }
+  
+  // Print flagged items
+  const flaggedItems = finalConfirmedActive.filter(s => s.noRecentCharge);
+  console.log(`\nFlagged items (NO RECENT CHARGE): ${flaggedItems.length}`);
+  if (flaggedItems.length > 0) {
+    flaggedItems.forEach(sub => {
+      const cadenceStr = sub.cadence === "yearly" ? "yearly" : sub.cadence === "monthly" ? "monthly" : "ambig";
+      console.log(`  - ${sub.merchant}: ${cadenceStr}, last ${sub.lastDate}`);
     });
   }
   

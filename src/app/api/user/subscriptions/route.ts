@@ -110,10 +110,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       billingFrequencyOverrides
     );
     
+    // Get latest transaction date from user's data
+    const latestTxnDate = profile.expenseTxns.length > 0
+      ? profile.expenseTxns.reduce((latest, txn) => txn.date > latest ? txn.date : latest, profile.expenseTxns[0].date)
+      : new Date().toISOString().slice(0, 10);
+    
     // Post-process subscriptions using shared function
     // Product decision: ALL confirmed subscriptions stay active regardless of staleness
     const { confirmedActive, inactive: finalInactive } = 
-      postProcessSubscriptions(summary, cancelledSlugs, synthesizedSubs);
+      postProcessSubscriptions(summary, cancelledSlugs, synthesizedSubs, latestTxnDate);
     
     // Recalculate totals including synthesized subs
     let adjustedMonthlyTotal = summary.monthlyTotal;

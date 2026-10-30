@@ -3,8 +3,10 @@ import { postProcessSubscriptions } from "../subscriptionPostProcessing";
 import type { DetectedSubscription } from "../subscriptionEngine";
 
 describe("postProcessSubscriptions", () => {
+  const latestDataDate = "2026-10-30"; // User's latest transaction date
+  
   test("single charge 5 months ago with yearly cadence stays yearly with no flag", () => {
-    const fiveMonthsAgo = "2026-05-30";
+    const fiveMonthsAgo = "2026-05-30"; // ~150 days before latestDataDate, within yearly window (400 days)
     
     const detected: DetectedSubscription = {
       merchant: "Amazon Prime",
@@ -19,7 +21,7 @@ describe("postProcessSubscriptions", () => {
       priceIncrease: false,
       transactions: [{ date: fiveMonthsAgo, amount: 111.87 }],
       tier: "confirmed",
-      status: "active", // Within yearly window (< 395 days)
+      status: "active",
       noRecentCharge: undefined,
     };
     
@@ -30,7 +32,8 @@ describe("postProcessSubscriptions", () => {
         inactive: [],
       },
       new Set(),
-      []
+      [],
+      latestDataDate
     );
     
     expect(result.confirmedActive).toHaveLength(1);
@@ -39,7 +42,7 @@ describe("postProcessSubscriptions", () => {
   });
   
   test("monthly charge last seen 9 months ago is active with noRecentCharge=true", () => {
-    const nineMonthsAgo = "2026-01-30";
+    const nineMonthsAgo = "2026-01-30"; // ~270 days before latestDataDate, past monthly window (45 days)
     
     const detected: DetectedSubscription = {
       merchant: "Cursor",
@@ -54,7 +57,7 @@ describe("postProcessSubscriptions", () => {
       priceIncrease: false,
       transactions: [{ date: nineMonthsAgo, amount: 20.00 }],
       tier: "confirmed",
-      status: "inactive", // Past monthly window (> 45 days)
+      status: "inactive",
       noRecentCharge: undefined,
     };
     
@@ -65,13 +68,50 @@ describe("postProcessSubscriptions", () => {
         inactive: [detected],
       },
       new Set(),
-      []
+      [],
+      latestDataDate
     );
     
     expect(result.confirmedActive).toHaveLength(1);
     expect(result.confirmedActive[0].cadence).toBe("monthly");
     expect(result.confirmedActive[0].status).toBe("active");
     expect(result.confirmedActive[0].noRecentCharge).toBe(true);
+  });
+  
+  test("monthly charge 20 days before latest data date is NOT flagged", () => {
+    const twentyDaysAgo = "2026-10-10"; // 20 days before latestDataDate, within monthly window (45 days)
+    
+    const detected: DetectedSubscription = {
+      merchant: "Netflix",
+      merchantSlug: "netflix-com",
+      category: "Subscriptions",
+      amount: 16.49,
+      cadence: "monthly",
+      lastDate: twentyDaysAgo,
+      nextDate: "2026-11-10",
+      chargeCount: 12,
+      isNew: false,
+      priceIncrease: false,
+      transactions: [{ date: twentyDaysAgo, amount: 16.49 }],
+      tier: "confirmed",
+      status: "active",
+      noRecentCharge: undefined,
+    };
+    
+    const result = postProcessSubscriptions(
+      {
+        subscriptions: [detected],
+        candidates: [],
+        inactive: [],
+      },
+      new Set(),
+      [],
+      latestDataDate
+    );
+    
+    expect(result.confirmedActive).toHaveLength(1);
+    expect(result.confirmedActive[0].cadence).toBe("monthly");
+    expect(result.confirmedActive[0].noRecentCharge).toBeFalsy();
   });
   
   test("cancelled items stay in inactive list", () => {
@@ -99,7 +139,8 @@ describe("postProcessSubscriptions", () => {
         inactive: [detected],
       },
       new Set(["old-service"]), // User marked as cancelled
-      []
+      [],
+      latestDataDate
     );
     
     expect(result.confirmedActive).toHaveLength(0);
