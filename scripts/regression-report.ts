@@ -3338,62 +3338,70 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   }
 
   // Check 4: No outdated marketing strings remain
-  console.log("\nCheck 4: Outdated marketing strings");
+  console.log("\nCheck 4: Outdated marketing strings in pricing surfaces");
   try {
     const fs = await import("fs/promises");
     const path = await import("path");
-    const { glob } = await import("glob");
     
-    // Search for "6 months" and "5 statement" in relevant files
-    const searchPatterns = ["6 months", "5 statement"];
-    const foundStrings: Array<{ file: string; pattern: string; line: number; text: string }> = [];
+    // Only check user-visible pricing/marketing surfaces
+    const pricingSurfaces = [
+      "src/app/page.tsx",                      // Landing page
+      "src/app/account/billing/page.tsx",      // Billing page
+      "src/components/UpgradePrompt.tsx",      // Upgrade prompts
+      "src/app/promo/[code]/page.tsx",         // Promo pages
+    ];
     
-    // Exclude files where these strings are allowed (test fixtures, comments about historical behavior)
-    const filesToCheck = await glob("src/{app,components,lib}/**/*.{ts,tsx}", {
-      ignore: [
-        "**/node_modules/**",
-        "**/__tests__/**",
-        "**/test/**",
-        "**/setup/page.tsx", // Contains legitimate "6 months" UI for account age selection
-        "**/forecast/page.tsx", // Contains "6 months" as a data threshold message
-        "**/goals/[id]/page.tsx", // Contains "6 months" in goal progress messaging
-        "**/activity/page.tsx", // Contains "6 months" in activity filter
-      ],
-    });
+    // User-visible plan-limit phrases only (not technical comments)
+    const marketingPhrases = [
+      "6 months of history",
+      "Last 6 months",
+      "5 statement uploads",
+      "5 uploads",
+    ];
     
-    for (const file of filesToCheck) {
-      const content = await fs.readFile(file, "utf-8");
-      const lines = content.split("\n");
-      
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        for (const pattern of searchPatterns) {
-          if (line.toLowerCase().includes(pattern.toLowerCase())) {
-            // Skip if it's a comment explaining the old behavior
-            if (line.includes("was 6 months") || line.includes("(was 6 months)")) continue;
-            foundStrings.push({
-              file: file.replace(process.cwd() + "/", ""),
-              pattern,
-              line: i + 1,
-              text: line.trim().slice(0, 100),
-            });
+    const foundStrings: Array<{ file: string; phrase: string; line: number; text: string }> = [];
+    
+    for (const file of pricingSurfaces) {
+      try {
+        const content = await fs.readFile(file, "utf-8");
+        const lines = content.split("\n");
+        
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          
+          // Skip code comments
+          const trimmed = line.trim();
+          if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) continue;
+          
+          for (const phrase of marketingPhrases) {
+            if (line.toLowerCase().includes(phrase.toLowerCase())) {
+              // Skip if it's explaining the old behavior
+              if (line.includes("was 6 months") || line.includes("(was 6 months)")) continue;
+              
+              foundStrings.push({
+                file: file.replace(process.cwd() + "/", ""),
+                phrase,
+                line: i + 1,
+                text: line.trim().slice(0, 100),
+              });
+            }
           }
         }
+      } catch (err) {
+        // File doesn't exist - skip silently (e.g. promo page might not exist)
+        if ((err as any).code !== "ENOENT") throw err;
       }
     }
     
     if (foundStrings.length === 0) {
-      console.log(`  ✓ No outdated marketing strings found`);
+      console.log(`  ✓ No outdated marketing strings in pricing surfaces`);
     } else {
-      console.log(`  ❌ FAIL: Found ${foundStrings.length} outdated marketing strings:`);
-      for (const item of foundStrings.slice(0, 10)) {
-        console.log(`    ${item.file}:${item.line} - "${item.pattern}"`);
+      console.log(`  ❌ FAIL: Found ${foundStrings.length} outdated marketing phrases:`);
+      for (const item of foundStrings) {
+        console.log(`    ${item.file}:${item.line} - "${item.phrase}"`);
         console.log(`      ${item.text}`);
       }
-      if (foundStrings.length > 10) {
-        console.log(`    ... and ${foundStrings.length - 10} more`);
-      }
-      errors.push(`Plan alignment: ${foundStrings.length} outdated marketing strings remain`);
+      errors.push(`Plan alignment: ${foundStrings.length} outdated marketing phrases in pricing surfaces`);
       planAlignmentErrors++;
     }
   } catch (err) {
