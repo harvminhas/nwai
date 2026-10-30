@@ -3254,6 +3254,156 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
 
   console.log();
 
+  // ── Plan Alignment Checks ───────────────────────────────────────────────────
+
+  console.log("=".repeat(80));
+  console.log("PLAN ALIGNMENT CHECKS");
+  console.log("=".repeat(80));
+  let planAlignmentErrors = 0;
+
+  // Check 1: Print resolved plan for uid
+  console.log("\nCheck 1: Resolved plan for uid");
+  try {
+    const userDoc = await db.collection("users").doc(uid).get();
+    const userData = userDoc.exists ? userDoc.data() : undefined;
+    
+    // Import resolvePlan from the plan route
+    const { resolvePlan } = await import("../src/app/api/user/plan/route.js");
+    const resolvedPlan = resolvePlan(userData as Record<string, unknown> | undefined);
+    
+    console.log(`  Resolved plan: ${resolvedPlan ?? "free"}`);
+    if (userData?.manualPro) console.log(`  → manualPro = true (admin override)`);
+    if (userData?.subscription?.status) console.log(`  → subscription.status = ${userData.subscription.status}`);
+    if (userData?.promoExpiresAt) {
+      const expiry = (userData.promoExpiresAt as any).toDate?.() ?? new Date(userData.promoExpiresAt as any);
+      console.log(`  → promoExpiresAt = ${expiry.toISOString()} (${expiry > new Date() ? "active" : "expired"})`);
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error resolving plan: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Plan alignment: failed to resolve plan");
+    planAlignmentErrors++;
+  }
+
+  // Check 2: Free upload counters
+  console.log("\nCheck 2: Free upload counters");
+  try {
+    const userDoc = await db.collection("users").doc(uid).get();
+    const userData = userDoc.data() ?? {};
+    
+    const onetimeUsed = userData.uploadCountOneTime ?? 0;
+    const monthlyUsed = userData.uploadCountMonthly ?? 0;
+    const monthlyResetAt = userData.uploadCountResetAt as any;
+    
+    console.log(`  One-time pool used: ${onetimeUsed} / 50`);
+    console.log(`  Monthly pool used: ${monthlyUsed} / 8`);
+    if (monthlyResetAt) {
+      const resetDate = monthlyResetAt.toDate?.() ?? new Date(monthlyResetAt);
+      console.log(`  Monthly reset: ${resetDate.toLocaleDateString()}`);
+    }
+  } catch (err) {
+    console.log(`  ⚠️  WARNING: Error checking upload counters: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // Check 3: Verify resolvePlan is used in upload and ai-ask routes
+  console.log("\nCheck 3: resolvePlan usage in routes");
+  try {
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    
+    // Check upload route
+    const uploadRoutePath = path.join(process.cwd(), "src/app/api/upload/route.ts");
+    const uploadRouteContent = await fs.readFile(uploadRoutePath, "utf-8");
+    const uploadUsesResolvePlan = uploadRouteContent.includes("resolvePlan(") && uploadRouteContent.includes("from \"@/app/api/user/plan/route\"");
+    
+    // Check ai-ask route
+    const aiAskRoutePath = path.join(process.cwd(), "src/app/api/user/ai-ask/route.ts");
+    const aiAskRouteContent = await fs.readFile(aiAskRoutePath, "utf-8");
+    const aiAskUsesResolvePlan = aiAskRouteContent.includes("resolvePlan(") && aiAskRouteContent.includes("from \"../plan/route\"");
+    
+    console.log(`  Upload route uses resolvePlan: ${uploadUsesResolvePlan ? "✓" : "❌"}`);
+    console.log(`  AI-ask route uses resolvePlan: ${aiAskUsesResolvePlan ? "✓" : "❌"}`);
+    
+    if (!uploadUsesResolvePlan) {
+      errors.push("Plan alignment: upload route must import and use resolvePlan from plan/route");
+      planAlignmentErrors++;
+    }
+    if (!aiAskUsesResolvePlan) {
+      errors.push("Plan alignment: ai-ask route must import and use resolvePlan from plan/route");
+      planAlignmentErrors++;
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking resolvePlan usage: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Plan alignment: failed to check resolvePlan usage");
+    planAlignmentErrors++;
+  }
+
+  // Check 4: No outdated marketing strings remain
+  console.log("\nCheck 4: Outdated marketing strings");
+  try {
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    const { glob } = await import("glob");
+    
+    // Search for "6 months" and "5 statement" in relevant files
+    const searchPatterns = ["6 months", "5 statement"];
+    const foundStrings: Array<{ file: string; pattern: string; line: number; text: string }> = [];
+    
+    // Exclude files where these strings are allowed (test fixtures, comments about historical behavior)
+    const filesToCheck = await glob("src/{app,components,lib}/**/*.{ts,tsx}", {
+      ignore: [
+        "**/node_modules/**",
+        "**/__tests__/**",
+        "**/test/**",
+        "**/setup/page.tsx", // Contains legitimate "6 months" UI for account age selection
+        "**/forecast/page.tsx", // Contains "6 months" as a data threshold message
+        "**/goals/[id]/page.tsx", // Contains "6 months" in goal progress messaging
+        "**/activity/page.tsx", // Contains "6 months" in activity filter
+      ],
+    });
+    
+    for (const file of filesToCheck) {
+      const content = await fs.readFile(file, "utf-8");
+      const lines = content.split("\n");
+      
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        for (const pattern of searchPatterns) {
+          if (line.toLowerCase().includes(pattern.toLowerCase())) {
+            // Skip if it's a comment explaining the old behavior
+            if (line.includes("was 6 months") || line.includes("(was 6 months)")) continue;
+            foundStrings.push({
+              file: file.replace(process.cwd() + "/", ""),
+              pattern,
+              line: i + 1,
+              text: line.trim().slice(0, 100),
+            });
+          }
+        }
+      }
+    }
+    
+    if (foundStrings.length === 0) {
+      console.log(`  ✓ No outdated marketing strings found`);
+    } else {
+      console.log(`  ❌ FAIL: Found ${foundStrings.length} outdated marketing strings:`);
+      for (const item of foundStrings.slice(0, 10)) {
+        console.log(`    ${item.file}:${item.line} - "${item.pattern}"`);
+        console.log(`      ${item.text}`);
+      }
+      if (foundStrings.length > 10) {
+        console.log(`    ... and ${foundStrings.length - 10} more`);
+      }
+      errors.push(`Plan alignment: ${foundStrings.length} outdated marketing strings remain`);
+      planAlignmentErrors++;
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking marketing strings: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Plan alignment: failed to check marketing strings");
+    planAlignmentErrors++;
+  }
+
+  console.log();
+
   // Final summary - check ALL error conditions
   const totalFailures = 
     (allErrors ? errors.length : 0) +
@@ -3267,7 +3417,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     moneyCoachErrors +
     smokeTestErrors +
     aiFormatErrors +
-    privacyErrors;
+    privacyErrors +
+    planAlignmentErrors;
   
   if (totalFailures > 0) {
     console.log("=".repeat(80));
@@ -3288,6 +3439,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     if (smokeTestErrors > 0) console.log(`Smoke test failures: ${smokeTestErrors}`);
     if (aiFormatErrors > 0) console.log(`AI formatting consistency failures: ${aiFormatErrors}`);
     if (privacyErrors > 0) console.log(`Privacy check failures: ${privacyErrors}`);
+    if (planAlignmentErrors > 0) console.log(`Plan alignment check failures: ${planAlignmentErrors}`);
     
     console.log();
     process.exit(1);

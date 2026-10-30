@@ -192,7 +192,7 @@ const socialStats = [
 // ── Pricing plans ─────────────────────────────────────────────────────────────
 const pricingFeatures = [
   { label: "Upload statements",            free: "Up to 5 / month",  pro: "Unlimited" },
-  { label: "Statement history",            free: "Last 6 months",    pro: "Unlimited" },
+  { label: "Statement history",            free: "Full (unlimited)",    pro: "Unlimited" },
   { label: "Net worth & spending summary", free: true,               pro: true },
   { label: "Subscription detection",       free: true,               pro: true },
   { label: "AI-powered insights",          free: false,              pro: true },

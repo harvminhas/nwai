@@ -1,6 +1,7 @@
 /**
  * POST /api/stripe/checkout
  * Creates a Stripe Checkout Session for the Pro plan.
+ * Body: { interval?: "month" | "year" } — defaults to "month"
  * Returns { url } — redirect the user to this URL.
  *
  * Stripe will redirect back to /account/billing?session_id={CHECKOUT_SESSION_ID}
@@ -24,6 +25,16 @@ export async function POST(req: NextRequest) {
     const { auth, db } = getFirebaseAdmin();
     const { uid, email } = await auth.verifyIdToken(token);
 
+    // Read optional interval from request body
+    const body = await req.json().catch(() => ({}));
+    const interval = body.interval === "year" ? "year" : "month";
+
+    // Use STRIPE_PRICE_ID_YEARLY if interval is "year" and env var is set
+    const yearlyPriceId = process.env.STRIPE_PRICE_ID_YEARLY ?? "";
+    const priceId = interval === "year" && yearlyPriceId
+      ? yearlyPriceId
+      : PRO_PRICE_ID;
+
     // Re-use existing Stripe customer if one was already created
     const userDoc  = await db.collection("users").doc(uid).get();
     const userData = userDoc.data() ?? {};
@@ -46,7 +57,7 @@ export async function POST(req: NextRequest) {
     const session = await stripe.checkout.sessions.create({
       customer:   customerId,
       mode:       "subscription",
-      line_items: [{ price: PRO_PRICE_ID, quantity: 1 }],
+      line_items: [{ price: priceId, quantity: 1 }],
       success_url: `${origin}/account/billing?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url:  `${origin}/account/billing?canceled=1`,
       metadata:   { firebaseUid: uid },

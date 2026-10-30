@@ -1,20 +1,26 @@
 /**
  * Plan definitions.
  *
- * Plan resolution priority (see /api/user/plan GET):
+ * Plan resolution priority (see /api/user/plan GET and resolvePlan function):
  *   1. users/{uid}.manualPro === true  → "pro"  (admin override, bypasses Stripe)
- *   2. users/{uid}.subscription.status === "active" → "pro"
- *   3. Otherwise → "free"
+ *   2. users/{uid}.subscription.status === "active" | "trialing" → "pro"
+ *   3. users/{uid}.promoExpiresAt > now → "pro"  (promo code grant)
+ *   4. Otherwise → "free"
  */
 
 /**
- * Free-tier upload allowances.
+ * Free-tier upload allowances — SINGLE SOURCE OF TRUTH.
  * ONE_TIME: lifetime allotment granted on signup, carries over indefinitely.
  * MONTHLY:  refreshes on the 1st of each month, unused quota does NOT carry over.
- * Change these constants to adjust limits without touching any other code.
+ * Import these constants wherever upload limits are checked.
  */
 export const FREE_ONETIME_UPLOADS  = 50;
 export const FREE_MONTHLY_UPLOADS  = 8;
+
+/**
+ * Free-tier AI answer limit (per month).
+ */
+export const FREE_AI_ANSWERS_PER_MONTH = 50;
 
 export type PlanId = "free" | "pro";
 
@@ -45,7 +51,7 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
     name: "Free",
     price: "$0",
     uploadsPerMonth: FREE_MONTHLY_UPLOADS,
-    historyMonths: 6,
+    historyMonths: -1, // FULL history (was 6 months)
     features: {
       forecast:      false,
       goals:         true,
@@ -55,7 +61,7 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
       aiInsights:    false,
       multiUser:     false,
       whatIf:        false,
-      aiChat:        false,
+      aiChat:        true,  // true, but gated at 50 answers/month
     },
   },
   pro: {
