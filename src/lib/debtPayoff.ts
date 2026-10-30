@@ -48,21 +48,37 @@ interface PayoffResult {
 }
 
 /**
+ * Detect if a debt is a HELOC/line of credit (interest-only minimum).
+ * Checks both account type and name for keywords.
+ */
+function isHELOC(debt: Pick<DebtInput, 'accountType' | 'name'>): boolean {
+  const typeLower = debt.accountType.toLowerCase();
+  const nameLower = debt.name.toLowerCase();
+  
+  return typeLower.includes('loc') || 
+         typeLower.includes('line') || 
+         typeLower.includes('heloc') ||
+         nameLower.includes('flexline') ||
+         nameLower.includes('heloc') ||
+         nameLower.includes('line of credit');
+}
+
+/**
  * Calculate minimum payment for a debt based on type.
  * Never uses the statement "minPayment" field (which is actually paymentsMade, not a minimum).
  * Always calculates based on type and balance.
  */
-export function calculateMinimumPayment(debt: Pick<DebtInput, 'balance' | 'interestRate' | 'accountType'>): number {
+export function calculateMinimumPayment(debt: Pick<DebtInput, 'balance' | 'interestRate' | 'accountType' | 'name'>): number {
   const rate = debt.interestRate || 0;
   const monthlyRate = rate / 100 / 12;
   const monthlyInterest = debt.balance * monthlyRate;
   
-  const typeLower = debt.accountType.toLowerCase();
-  
-  // Line of credit / HELOC: interest + 1% of balance (check before credit card!)
-  if (typeLower.includes('loc') || typeLower.includes('line') || typeLower.includes('heloc')) {
-    return monthlyInterest + debt.balance * 0.01;
+  // HELOC / Line of credit: interest-only (no +1%)
+  if (isHELOC(debt)) {
+    return monthlyInterest;
   }
+  
+  const typeLower = debt.accountType.toLowerCase();
   
   // Credit card: max(interest + 1% of balance, 3% of balance, $10)
   if (typeLower.includes('credit')) {
@@ -78,6 +94,115 @@ export function calculateMinimumPayment(debt: Pick<DebtInput, 'balance' | 'inter
   
   // Default: interest + 1%
   return monthlyInterest + debt.balance * 0.01;
+}
+
+/**
+ * Solve for the required monthly budget to reach debt-free by a target date.
+ * Uses binary search to find the budget that results in payoff within 1 month of target.
+ * Returns null if target is impossible even with 10x minimums.
+ */
+export function solveForTargetDate(
+  debts: DebtInput[],
+  targetMonths: number,
+  strategy: PayoffStrategy
+): { requiredBudget: number; result: DebtPayoffResult } | null {
+  const includedDebts = debts.filter(d => d.included);
+  if (includedDebts.length === 0) return null;
+  
+  const totalMinimums = includedDebts.reduce((sum, d) => sum + calculateMinimumPayment(d), 0);
+  
+  // Check if target is achievable with minimums
+  const minimumsResult = calculateDebtPayoff(debts, totalMinimums, strategy);
+  if (minimumsResult.monthsToPayoff !== null && minimumsResult.monthsToPayoff <= targetMonths) {
+    return { requiredBudget: totalMinimums, result: minimumsResult };
+  }
+  
+  // Binary search for required budget
+  let low = totalMinimums;
+  let high = totalMinimums * 10; // Cap at 10x minimums
+  let bestBudget = high;
+  let bestResult: DebtPayoffResult | null = null;
+  
+  const maxIterations = 50;
+  for (let i = 0; i < maxIterations; i++) {
+    const mid = (low + high) / 2;
+    const result = calculateDebtPayoff(debts, mid, strategy);
+    
+    if (result.monthsToPayoff === null) {
+      // Unpayable at this budget
+      low = mid;
+      continue;
+    }
+    
+    if (Math.abs(result.monthsToPayoff - targetMonths) <= 1) {
+      // Within 1 month - good enough
+      return { requiredBudget: mid, result };
+    }
+    
+    if (result.monthsToPayoff > targetMonths) {
+      // Too slow, need more budget
+      low = mid;
+    } else {
+      // Too fast, can reduce budget
+      high = mid;
+      bestBudget = mid;
+      bestResult = result;
+    }
+    
+    // Convergence check
+    if (high - low < 1) break;
+  }
+  
+  // Return best result found, or null if impossible
+  if (bestResult && bestResult.monthsToPayoff !== null && bestResult.monthsToPayoff <= targetMonths + 2) {
+    return { requiredBudget: bestBudget, result: bestResult };
+  }
+  
+  return null;
+}
+
+/**
+ * Classify plan status based on current vs projected balance.
+ * Returns "on-track", "ahead", or "behind" with delta amount/months.
+ */
+export function classifyPlanStatus(
+  currentBalance: number,
+  projectedBalance: number,
+  monthlyBudget: number,
+  strategy: PayoffStrategy,
+  debts: DebtInput[]
+): {
+  status: "on-track" | "ahead" | "behind";
+  deltaAmount: number; // positive = ahead, negative = behind
+  deltaMonths: number; // positive = ahead, negative = behind
+} {
+  const deltaAmount = projectedBalance - currentBalance;
+  
+  // On track if within 5% of projected
+  const threshold = projectedBalance * 0.05;
+  if (Math.abs(deltaAmount) <= threshold) {
+    return { status: "on-track", deltaAmount: 0, deltaMonths: 0 };
+  }
+  
+  // Estimate months ahead/behind by simulating from current balance
+  const adjustedDebts = debts.map(d => ({
+    ...d,
+    balance: d.included ? (currentBalance / debts.filter(dd => dd.included).length) : d.balance,
+  }));
+  
+  const currentResult = calculateDebtPayoff(adjustedDebts, monthlyBudget, strategy);
+  const projectedResult = calculateDebtPayoff(debts, monthlyBudget, strategy);
+  
+  let deltaMonths = 0;
+  if (currentResult.monthsToPayoff !== null && projectedResult.monthsToPayoff !== null) {
+    deltaMonths = projectedResult.monthsToPayoff - currentResult.monthsToPayoff;
+  }
+  
+  if (deltaAmount > 0) {
+    return { status: "ahead", deltaAmount, deltaMonths: Math.abs(deltaMonths) };
+  } else {
+    return { status: "behind", deltaAmount: Math.abs(deltaAmount), deltaMonths: Math.abs(deltaMonths) };
+  }
 }
 
 /**
