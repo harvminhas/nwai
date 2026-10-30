@@ -3101,6 +3101,43 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     aiFormatErrors++;
   }
 
+  // Check 3: No 'Thinking' loading text or hasInteracted state
+  console.log("\nCheck 3: Loading indicators use animated dots (not 'Thinking' text)");
+  try {
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    
+    const filesToCheck = [
+      "src/app/account/dashboard/page.tsx",
+      "src/app/account/chat/page.tsx",
+    ];
+    
+    for (const file of filesToCheck) {
+      const filePath = path.join(process.cwd(), file);
+      const content = await fs.readFile(filePath, "utf-8");
+      
+      const hasThinkingText = content.includes('"Thinking') || content.includes("'Thinking");
+      const hasWaitingText = content.includes('"Waiting for response') || content.includes("'Waiting for response");
+      const hasInteractedState = content.includes('hasInteracted');
+      
+      if (hasThinkingText || hasWaitingText) {
+        console.log(`  ❌ FAIL: ${file} still contains loading text ("Thinking" or "Waiting")`);
+        errors.push(`AI formatting: ${file} has old loading text`);
+        aiFormatErrors++;
+      } else if (hasInteractedState) {
+        console.log(`  ❌ FAIL: ${file} still contains hasInteracted state`);
+        errors.push(`AI formatting: ${file} has hasInteracted state`);
+        aiFormatErrors++;
+      } else {
+        console.log(`  ✓ ${file} uses animated loading indicator`);
+      }
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking loading indicators: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("AI formatting: failed to check loading indicators");
+    aiFormatErrors++;
+  }
+
   console.log();
   
   // ── PRIVACY CHECKS ────────────────────────────────────────────────────────────

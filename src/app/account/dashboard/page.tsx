@@ -807,11 +807,13 @@ export default function DashboardPage() {
     setCurrentAnswer(null);
     window.scrollTo({ top: 0, behavior: "smooth" });
     // Focus and select all text in the Ask box
-    const questionBox = document.querySelector('input[placeholder*="Ask about"]') as HTMLInputElement;
-    if (questionBox) {
-      questionBox.focus();
-      questionBox.select();
-    }
+    setTimeout(() => {
+      const questionBox = document.querySelector('input[placeholder*="Ask about"]') as HTMLInputElement;
+      if (questionBox) {
+        questionBox.focus();
+        // Selection will happen via onFocus handler
+      }
+    }, 100);
   };
 
   if (loading) {

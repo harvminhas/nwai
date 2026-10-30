@@ -166,22 +166,33 @@ export default function ChatPage() {
   // Auto-resize textarea
   function handleInputChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     setInput(e.target.value);
-    setHasInteracted(true);
     e.target.style.height = "auto";
     e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
   }
 
-  function handleInputFocus(e: React.FocusEvent<HTMLTextAreaElement>) {
-    if (!hasInteracted && input) {
-      e.target.select();
+  const selectAllText = (textarea: HTMLTextAreaElement) => {
+    try {
+      textarea.select();
+    } catch {
+      // Fallback for mobile
+      textarea.setSelectionRange(0, textarea.value.length);
+    }
+  };
+
+  function handleInputMouseDown(e: React.MouseEvent<HTMLTextAreaElement>) {
+    if (document.activeElement !== e.currentTarget) {
+      e.preventDefault();
+      e.currentTarget.focus();
+      selectAllText(e.currentTarget);
     }
   }
 
-  function handleInputMouseUp(e: React.MouseEvent<HTMLTextAreaElement>) {
-    if (!hasInteracted && input) {
-      e.preventDefault();
-      setHasInteracted(true);
-    }
+  function handleInputFocus(e: React.FocusEvent<HTMLTextAreaElement>) {
+    requestAnimationFrame(() => {
+      if (inputRef.current) {
+        selectAllText(inputRef.current);
+      }
+    });
   }
 
   async function sendMessage(text: string) {
@@ -265,7 +276,6 @@ export default function ChatPage() {
     setError(null);
     setStreaming(false);
     setSessionId(null);
-    setHasInteracted(false);
     // Refresh session list so history reflects the session we just left
     if (token) {
       fetch("/api/user/chat-sessions", { headers: { Authorization: `Bearer ${token}` } })
@@ -561,9 +571,9 @@ export default function ChatPage() {
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
+              onMouseDown={handleInputMouseDown}
               onFocus={handleInputFocus}
-              onMouseUp={handleInputMouseUp}
-              placeholder={streaming ? "Waiting for response…" : "Ask about your finances…"}
+              placeholder={streaming ? "" : "Ask about your finances…"}
               disabled={streaming || !token}
               aria-label={streaming ? "Waiting for AI response" : "Ask about your finances"}
               className="min-w-0 flex-1 resize-none bg-transparent text-base text-gray-800 outline-none placeholder:text-gray-500 disabled:cursor-not-allowed sm:text-sm"
@@ -587,9 +597,7 @@ export default function ChatPage() {
               aria-label={streaming ? "Stop" : "Send"}
             >
               {streaming ? (
-                <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
-                  <rect x="4" y="4" width="16" height="16" rx="2" />
-                </svg>
+                <span className="text-base animate-pulse">…</span>
               ) : (
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.269 20.876L5.999 12zm0 0h7.5" />
