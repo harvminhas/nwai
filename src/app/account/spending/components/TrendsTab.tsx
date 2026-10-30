@@ -14,6 +14,7 @@ interface TrendsTabProps {
 export function TrendsTab({ summary }: TrendsTabProps) {
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
+  const [selected3MonthCategory, setSelected3MonthCategory] = useState<string | null>(null);
   const { monthlyHistory, currency } = summary;
 
   // Chart data
@@ -368,32 +369,62 @@ export function TrendsTab({ summary }: TrendsTabProps) {
               }));
               const share = maxAmount > 0 ? cat.avg3Month / maxAmount : 0;
 
+              const isExpanded = selected3MonthCategory === cat.category;
+              const categoryMerchants = summary.merchants.filter(m => m.category === cat.category);
+              const last3Months = monthlyHistory.slice(-3);
+              
               return (
-                <button
-                  key={cat.category}
-                  className="w-full px-6 py-3 text-left hover:bg-gray-50 transition-colors group"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <span className={`text-xl ${dotColor}`}>•</span>
-                      <span className="text-sm font-medium text-gray-900">{cat.category}</span>
+                <div key={cat.category} className="border-b border-gray-100 last:border-0">
+                  <button
+                    onClick={() => {
+                      setSelected3MonthCategory(isExpanded ? null : cat.category);
+                    }}
+                    className="w-full px-6 py-3 text-left hover:bg-gray-50 transition-colors group"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xl ${dotColor}`}>•</span>
+                        <span className="text-sm font-medium text-gray-900">{cat.category}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-gray-900 whitespace-nowrap">
+                          {formatCurrency(cat.avg3Month, currency)}/mo
+                        </span>
+                        <svg className={`h-4 w-4 text-gray-400 group-hover:text-gray-600 transition-transform ${isExpanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-gray-900 whitespace-nowrap">
-                        {formatCurrency(cat.avg3Month, currency)}/mo
-                      </span>
-                      <svg className="w-4 h-4 text-gray-400 group-hover:text-gray-600 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
+                    <div className="relative w-full h-2 bg-gray-100 rounded overflow-hidden">
+                      <div
+                        className={`absolute h-full ${barColor} rounded`}
+                        style={{ width: `${Math.min(100, share * 100)}%` }}
+                      />
                     </div>
-                  </div>
-                  <div className="relative w-full h-2 bg-gray-100 rounded overflow-hidden">
-                    <div
-                      className={`absolute h-full ${barColor} rounded`}
-                      style={{ width: `${Math.min(100, share * 100)}%` }}
-                    />
-                  </div>
-                </button>
+                  </button>
+                  
+                  {isExpanded && categoryMerchants.length > 0 && (
+                    <div className="px-6 pb-3 space-y-2">
+                      <p className="text-xs text-gray-500 mb-2">Last 3 months</p>
+                      {categoryMerchants.map(merchant => {
+                        const last3Txns = merchant.transactions.filter(t => 
+                          last3Months.some(m => m.yearMonth === t.txMonth)
+                        );
+                        if (last3Txns.length === 0) return null;
+                        const total = last3Txns.reduce((s, t) => s + t.amount, 0);
+                        
+                        return (
+                          <div key={merchant.merchantSlug} className="text-xs">
+                            <div className="flex items-center justify-between text-gray-700">
+                              <span>{merchant.merchant}</span>
+                              <span className="font-medium">{formatCurrency(total, currency)}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               );
             })}
         </div>

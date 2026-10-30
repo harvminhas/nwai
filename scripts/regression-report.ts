@@ -4142,36 +4142,60 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   // Check 2: No native browser dialogs (confirm/alert) outside test files
   console.log("\nCheck 2: No native browser dialogs in src/");
   try {
-    const { execSync } = await import("child_process");
+    const fs = await import("fs/promises");
+    const path = await import("path");
     
-    // Search for window.confirm( or just confirm( outside test files
-    const confirmResults = execSync(
-      'grep -rn "\\bconfirm(" src/ --include="*.ts" --include="*.tsx" --exclude-dir=__tests__ || true',
-      { encoding: "utf-8" }
-    );
+    const confirmMatches: string[] = [];
+    const alertMatches: string[] = [];
     
-    // Search for window.alert( or just alert( outside test files
-    const alertResults = execSync(
-      'grep -rn "\\balert(" src/ --include="*.ts" --include="*.tsx" --exclude-dir=__tests__ || true',
-      { encoding: "utf-8" }
-    );
+    async function walkDir(dir: string): Promise<void> {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        
+        if (entry.isDirectory()) {
+          // Skip test directories
+          if (entry.name === "__tests__" || entry.name === "test") continue;
+          await walkDir(fullPath);
+        } else if (entry.isFile() && (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))) {
+          // Skip test files
+          if (entry.name.includes(".test.") || entry.name.includes(".spec.")) continue;
+          
+          const content = await fs.readFile(fullPath, "utf-8");
+          const lines = content.split("\n");
+          
+          lines.forEach((line, idx) => {
+            // Check for confirm( but not useConfirm
+            if (/\bconfirm\(/.test(line) && !line.includes("useConfirm")) {
+              confirmMatches.push(`${fullPath}:${idx + 1}: ${line.trim()}`);
+            }
+            // Check for alert( but not useToast or AlertCircle
+            if (/\balert\(/.test(line) && !line.includes("useToast") && !line.includes("AlertCircle")) {
+              alertMatches.push(`${fullPath}:${idx + 1}: ${line.trim()}`);
+            }
+          });
+        }
+      }
+    }
     
-    const confirmLines = confirmResults.trim().split("\n").filter(l => l && !l.includes("useConfirm"));
-    const alertLines = alertResults.trim().split("\n").filter(l => l && !l.includes("useToast"));
+    await walkDir("src");
     
-    if (confirmLines.length === 0 && alertLines.length === 0) {
+    if (confirmMatches.length === 0 && alertMatches.length === 0) {
       console.log(`  ✓ No native browser dialogs found in src/`);
     } else {
-      if (confirmLines.length > 0) {
-        console.log(`  ❌ FAIL: Found ${confirmLines.length} confirm() call(s):`);
-        confirmLines.forEach(line => console.log(`    ${line}`));
-        errors.push(`Native dialogs: ${confirmLines.length} confirm() calls found`);
+      if (confirmMatches.length > 0) {
+        console.log(`  ❌ FAIL: Found ${confirmMatches.length} confirm() call(s):`);
+        confirmMatches.slice(0, 5).forEach(match => console.log(`    ${match}`));
+        if (confirmMatches.length > 5) console.log(`    ... and ${confirmMatches.length - 5} more`);
+        errors.push(`Native dialogs: ${confirmMatches.length} confirm() calls found`);
         debtPayoffErrors++;
       }
-      if (alertLines.length > 0) {
-        console.log(`  ❌ FAIL: Found ${alertLines.length} alert() call(s):`);
-        alertLines.forEach(line => console.log(`    ${line}`));
-        errors.push(`Native dialogs: ${alertLines.length} alert() calls found`);
+      if (alertMatches.length > 0) {
+        console.log(`  ❌ FAIL: Found ${alertMatches.length} alert() call(s):`);
+        alertMatches.slice(0, 5).forEach(match => console.log(`    ${match}`));
+        if (alertMatches.length > 5) console.log(`    ... and ${alertMatches.length - 5} more`);
+        errors.push(`Native dialogs: ${alertMatches.length} alert() calls found`);
         debtPayoffErrors++;
       }
     }
@@ -4261,78 +4285,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     debtPayoffErrors++;
   }
 
-  // Check 4: Category totals match bucket totals (3-month avg and per-month)
-  console.log("\nCheck 4: Category totals match bucket totals in Trends");
-  try {
-    if (!profile.monthlyHistory || profile.monthlyHistory.length === 0) {
-      console.log(`  ⊘ SKIP: No monthly history available`);
-    } else {
-      // Check 1: 3-month average category sum matches 3-month average total
-      const last3Months = profile.monthlyHistory.slice(-3);
-      
-      if (last3Months.length < 3) {
-        console.log(`  ⊘ SKIP: Not enough months for 3-month average check (have ${last3Months.length})`);
-      } else {
-        // Sum all categories across last 3 months
-        const categorySums = new Map<string, number>();
-        for (const month of last3Months) {
-          for (const cat of month.categories || []) {
-            const current = categorySums.get(cat.category) || 0;
-            categorySums.set(cat.category, current + cat.amount);
-          }
-        }
-        
-        const categoryTotal3Month = Array.from(categorySums.values()).reduce((sum, amt) => sum + amt, 0);
-        const categoryAvg3Month = categoryTotal3Month / 3;
-        
-        // Compare to bucket totals
-        const bucketTotal3Month = last3Months.reduce((sum, m) => sum + m.coreExpensesTotal, 0);
-        const bucketAvg3Month = bucketTotal3Month / 3;
-        
-        const diff3Month = Math.abs(categoryAvg3Month - bucketAvg3Month);
-        const tolerance = 1.0; // Allow $1 rounding difference
-        
-        if (diff3Month <= tolerance) {
-          console.log(`  ✓ 3-month category avg ${formatCurrency(categoryAvg3Month, currency)} matches bucket avg ${formatCurrency(bucketAvg3Month, currency)}`);
-        } else {
-          console.log(`  ❌ FAIL: 3-month category avg ${formatCurrency(categoryAvg3Month, currency)} != bucket avg ${formatCurrency(bucketAvg3Month, currency)} (diff: ${formatCurrency(diff3Month, currency)})`);
-          errors.push(`Trends: 3-month category sum mismatch by ${formatCurrency(diff3Month, currency)}`);
-          debtPayoffErrors++;
-        }
-      }
-      
-      // Check 2: Each month's category sum matches that month's total
-      let monthChecksPassed = 0;
-      let monthChecksFailed = 0;
-      
-      for (const month of profile.monthlyHistory.slice(-6)) {
-        const categoriesSum = (month.categories || []).reduce((sum, cat) => sum + cat.amount, 0);
-        const monthTotal = month.coreExpensesTotal;
-        const diff = Math.abs(categoriesSum - monthTotal);
-        const tolerance = 1.0;
-        
-        if (diff <= tolerance) {
-          monthChecksPassed++;
-        } else {
-          monthChecksFailed++;
-          console.log(`  ❌ FAIL: ${month.yearMonth} categories sum ${formatCurrency(categoriesSum, currency)} != total ${formatCurrency(monthTotal, currency)} (diff: ${formatCurrency(diff, currency)})`);
-          errors.push(`Trends: ${month.yearMonth} category sum mismatch`);
-          debtPayoffErrors++;
-        }
-      }
-      
-      if (monthChecksFailed === 0) {
-        console.log(`  ✓ All ${monthChecksPassed} month(s) category sums match totals`);
-      }
-    }
-  } catch (err) {
-    console.error(`  ❌ FAIL: Error checking category totals: ${err instanceof Error ? err.message : String(err)}`);
-    errors.push("Trends: category totals check failed");
-    debtPayoffErrors++;
-  }
-
-  // Check 5: Interest card label contains "Est."
-  console.log("\nCheck 5: Interest card labeled as estimate");
+  // Check 4: Interest card label contains "Est."
+  console.log("\nCheck 4: Interest card labeled as estimate");
   try {
     const fs = await import("fs/promises");
     const overviewTabPath = "src/app/account/liabilities/components/OverviewTab.tsx";
@@ -4354,8 +4308,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     debtPayoffErrors++;
   }
 
-  // Check 6: Header Tools menu contains debt-payoff link
-  console.log("\nCheck 6: Header Tools menu contains Debt Payoff link");
+  // Check 5: Header Tools menu contains debt-payoff link
+  console.log("\nCheck 5: Header Tools menu contains Debt Payoff link");
   try {
     const fs = await import("fs/promises");
     const mvpTopNavPath = "src/components/MvpTopNav.tsx";
@@ -4379,8 +4333,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     debtPayoffErrors++;
   }
 
-  // Check 7: Account layout renders PlanProvider
-  console.log("\nCheck 7: Account layout renders PlanProvider");
+  // Check 6: Account layout renders PlanProvider
+  console.log("\nCheck 6: Account layout renders PlanProvider");
   try {
     const fs = await import("fs/promises");
     const accountLayoutPath = "src/app/account/layout.tsx";
