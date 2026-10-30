@@ -239,22 +239,29 @@ function PlanCard({ plan, debts, currency, onEdit, onDelete }: PlanCardProps) {
   // Get extra monthly amount (stored for both modes, or compute for old plans)
   const extraMonthly = plan.extraMonthly ?? Math.max(0, plan.monthlyBudget - totalMinimums);
   
-  // Target date or debt-free date
-  let targetDisplay = "";
-  if (plan.mode === "targetDate" && plan.targetDate) {
-    const [year, month] = plan.targetDate.split("-");
-    targetDisplay = new Date(Number(year), Number(month) - 1).toLocaleDateString("en-US", { month: "short", year: "numeric" });
-  } else {
-    // Estimate from baseline projection
-    const lastEntry = plan.baseline.monthlyProjection[plan.baseline.monthlyProjection.length - 1];
-    if (lastEntry && lastEntry.totalBalance < 10) {
-      targetDisplay = new Date(lastEntry.month + "-01").toLocaleDateString("en-US", { month: "short", year: "numeric" });
-    }
+  // Compute comparison LIVE from current balances
+  const { calculateDebtPayoff, compareWithMinimumOnly } = require("@/lib/debtPayoff");
+  const liveComparison = compareWithMinimumOnly(workingDebts, plan.monthlyBudget, plan.strategy);
+  const withPlanResult = calculateDebtPayoff(workingDebts, plan.monthlyBudget, plan.strategy);
+  const withoutPlanResult = calculateDebtPayoff(workingDebts, totalMinimums, plan.strategy);
+  
+  // Use live values, fallback to stored if computation fails
+  const interestSaved = liveComparison.interestSaved ?? plan.interestSaved ?? 0;
+  const monthsSaved = liveComparison.monthsSaved ?? plan.monthsSaved ?? 0;
+  
+  // With-plan date
+  let withPlanDate = "";
+  if (withPlanResult.debtFreeDate) {
+    const [year, month] = withPlanResult.debtFreeDate.split("-");
+    withPlanDate = new Date(Number(year), Number(month) - 1).toLocaleDateString("en-US", { month: "short", year: "numeric" });
   }
   
-  // Get savings (stored or default to 0 for old plans)
-  const interestSaved = plan.interestSaved ?? 0;
-  const monthsSaved = plan.monthsSaved ?? 0;
+  // Without-plan date (minimums only)
+  let withoutPlanDate = "";
+  if (withoutPlanResult.debtFreeDate) {
+    const [year, month] = withoutPlanResult.debtFreeDate.split("-");
+    withoutPlanDate = new Date(Number(year), Number(month) - 1).toLocaleDateString("en-US", { month: "short", year: "numeric" });
+  }
 
   // Debt names for small text
   const debtNames = includedDebts.map(d => d.name).join(", ");
@@ -285,19 +292,26 @@ function PlanCard({ plan, debts, currency, onEdit, onDelete }: PlanCardProps) {
           <div className="text-sm text-gray-600 mt-0.5">extra payment</div>
         </div>
 
-        {/* Debt-free date */}
-        {targetDisplay && (
-          <div className="text-lg font-semibold text-gray-900">
-            Debt-free {targetDisplay}
+        {/* With vs Without comparison */}
+        {withPlanDate && withoutPlanDate && (
+          <div className="bg-gray-50 rounded-lg px-3 py-2">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <div className="text-xs text-gray-600">With plan</div>
+                <div className="font-semibold text-gray-900 whitespace-nowrap">{withPlanDate}</div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-600">Without</div>
+                <div className="font-semibold text-gray-500 whitespace-nowrap">{withoutPlanDate}</div>
+              </div>
+            </div>
           </div>
         )}
 
         {/* Savings */}
-        {(interestSaved > 0 || monthsSaved > 0) && (
-          <div className="text-sm text-gray-700 whitespace-nowrap">
-            Saves {formatCurrency(interestSaved, currency)} interest · {monthsSaved} months sooner
-          </div>
-        )}
+        <div className="text-sm text-gray-700 whitespace-nowrap">
+          Saves {formatCurrency(interestSaved, currency)} interest · {monthsSaved} months sooner
+        </div>
 
         {/* Status Pill */}
         <div>

@@ -4064,6 +4064,72 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         await planRefTarget.delete();
         console.log(`      ✓ Deleted "targetDate" mode plan`);
       }
+      
+      // Check 1c: Verify all real saved plans have valid comparison logic
+      console.log(`\n    Plan 1c: Verify saved plans comparison logic`);
+      try {
+        const plansSnapshot = await db.collection("users").doc(uid).collection("debtPlans").get();
+        
+        if (plansSnapshot.empty) {
+          console.log(`      ℹ No saved plans to check`);
+        } else {
+          console.log(`      Found ${plansSnapshot.size} saved plan(s)`);
+          
+          for (const planDoc of plansSnapshot.docs) {
+            const plan = planDoc.data();
+            console.log(`\n      Plan: ${plan.name}`);
+            
+            // Get debts for this plan
+            const planDebtSlugs = plan.debtSlugs || [];
+            const planDebts = debtsForSimulation.map((d: any) => ({
+              ...d,
+              included: planDebtSlugs.includes(d.id),
+            }));
+            
+            const includedDebts = debtsForSimulation.filter((d: any) => planDebtSlugs.includes(d.id));
+            const planMinimums = includedDebts.reduce((sum: number, d: any) => sum + calculateMinimumPayment(d), 0);
+            
+            // Compute with-plan and without-plan results
+            const withPlan = calculateDebtPayoff(planDebts, plan.monthlyBudget, plan.strategy);
+            const withoutPlan = calculateDebtPayoff(planDebts, planMinimums, plan.strategy);
+            const comparison = compareWithMinimumOnly(planDebts, plan.monthlyBudget, plan.strategy);
+            
+            const extraMonthly = plan.extraMonthly ?? Math.max(0, plan.monthlyBudget - planMinimums);
+            
+            console.log(`        Extra: ${formatCurrency(extraMonthly, currency)}/mo`);
+            console.log(`        With plan: ${withPlan.debtFreeDate || "N/A"}`);
+            console.log(`        Without plan: ${withoutPlan.debtFreeDate || "N/A"}`);
+            console.log(`        Interest saved: ${formatCurrency(comparison.interestSaved, currency)}`);
+            console.log(`        Months saved: ${comparison.monthsSaved}`);
+            
+            // Assertions
+            if (withPlan.debtFreeDate && withoutPlan.debtFreeDate) {
+              const withDate = new Date(withPlan.debtFreeDate + "-01");
+              const withoutDate = new Date(withoutPlan.debtFreeDate + "-01");
+              
+              if (withoutDate < withDate) {
+                console.log(`        ❌ FAIL: Without-plan date (${withoutPlan.debtFreeDate}) is before with-plan date (${withPlan.debtFreeDate})`);
+                errors.push(`Debt payoff: Plan "${plan.name}" has without-plan date before with-plan date`);
+                debtPayoffErrors++;
+              } else {
+                console.log(`        ✓ Without-plan date is at or after with-plan date`);
+              }
+            }
+            
+            if (comparison.interestSaved < 0) {
+              console.log(`        ❌ FAIL: Interest saved is negative: ${comparison.interestSaved}`);
+              errors.push(`Debt payoff: Plan "${plan.name}" has negative interest saved`);
+              debtPayoffErrors++;
+            } else {
+              console.log(`        ✓ Interest saved ≥ 0`);
+            }
+          }
+        }
+      } catch (err) {
+        console.error(err);
+        errors.push("Debt payoff: Check 1c failed");
+        debtPayoffErrors++;
+      }
 
       console.log(`\n  ✓ Saved plan workflow tests completed`);
     }
