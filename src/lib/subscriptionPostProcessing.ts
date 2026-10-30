@@ -91,52 +91,51 @@ export function postProcessSubscriptions(
   latestTxnDate: string,
   sourceMappings: SourceMapping[] = []
 ): PostProcessingResult {
-  // Separate cancelled from non-cancelled inactive
-  const cancelled = detected.inactive.filter(s => cancelledSlugs.has(s.merchantSlug));
-  const nonCancelledInactive = detected.inactive.filter(s => !cancelledSlugs.has(s.merchantSlug));
-  
-  // Product decision: ALL confirmed items (tier === "confirmed") stay active
-  const confirmedInactive = nonCancelledInactive.filter(s => s.tier === "confirmed");
-  confirmedInactive.forEach(item => {
-    item.status = "active";
-  });
-  
-  // Build final active list
-  const allActive = [
+  // 1. Pool every subscription the user should see: engine-active, confirmed
+  //    items the engine called inactive (we never auto-inactivate), and
+  //    user-marked synthesized ones. Unconfirmed inactive items are dropped.
+  const pool: DetectedSubscription[] = [
     ...detected.subscriptions,
-    ...confirmedInactive,
+    ...detected.inactive.filter(s => s.tier === "confirmed" || cancelledSlugs.has(s.merchantSlug)),
     ...synthesizedSubs,
   ];
-  
-  // Date-based noRecentCharge flag: check if last charge is past cadence window + grace
-  // Measured against latest data date, NOT today
-  allActive.forEach(item => {
-    const daysSinceLast = daysBetween(item.lastDate, latestTxnDate);
-    const effectiveCadence = item.billingFrequency 
-      ? (item.billingFrequency === "yearly" ? "yearly" : "monthly")
-      : item.cadence;
-    
-    let isPastWindow = false;
-    if (effectiveCadence === "monthly" || item.billingFrequency === "weekly" || item.billingFrequency === "quarterly") {
-      // Monthly/weekly/quarterly: flag if > 45 days
-      isPastWindow = daysSinceLast > 45;
-    } else if (effectiveCadence === "yearly") {
-      // Yearly: flag if > 400 days
-      isPastWindow = daysSinceLast > 400;
+
+  // 2. Which merged groups did the user cancel? A cancel on ANY member slug
+  //    cancels the whole merged row (the visible row may carry another slug).
+  const groupKey = (s: DetectedSubscription) =>
+    normaliseName(resolveCanonical(s.merchant, sourceMappings));
+  const cancelledGroups = new Set(
+    pool.filter(s => cancelledSlugs.has(s.merchantSlug)).map(groupKey)
+  );
+
+  // 3. Collapse merged names into one row each.
+  const collapsed = collapseAliases(pool, sourceMappings);
+
+  // 4. Split into active vs cancelled (cancelled is the ONLY way to be inactive).
+  const active: DetectedSubscription[] = [];
+  const inactive: DetectedSubscription[] = [];
+  for (const row of collapsed) {
+    if (cancelledGroups.has(groupKey(row))) {
+      row.status = "inactive";
+      row.noRecentCharge = false;
+      inactive.push(row);
+    } else {
+      row.status = "active";
+      active.push(row);
     }
-    
-    if (isPastWindow) {
-      item.noRecentCharge = true;
-    }
-  });
-  
-  // Collapse aliases based on confirmed source mappings
-  const collapsedActive = collapseAliases(allActive, sourceMappings);
-  
-  const confirmedActive = collapsedActive.sort((a, b) => b.amount - a.amount);
-  
-  // Inactive now contains only cancelled items
-  const inactive = cancelled;
+  }
+
+  // 5. Flag (never deactivate) rows whose last charge is past their
+  //    billing interval plus grace, measured from the latest data date.
+  const intervalDays: Record<string, number> = { weekly: 7, monthly: 30, quarterly: 91, yearly: 365 };
+  for (const row of active) {
+    const freq = (row.billingFrequency || row.cadence) as string;
+    const interval = intervalDays[freq] ?? 30;
+    const grace = Math.max(15, Math.round(interval * 0.1));
+    row.noRecentCharge = daysBetween(row.lastDate, latestTxnDate) > interval + grace;
+  }
+
+  const confirmedActive = active.sort((a, b) => b.amount - a.amount);
   
   return {
     confirmedActive,
