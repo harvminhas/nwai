@@ -10,7 +10,9 @@ export interface DebtInput {
   name: string;
   balance: number;
   interestRate: number | null; // annual %, null = no rate
-  monthlyPayment: number | null; // null = needs to be set
+  monthlyPayment: number | null; // observed monthly payment from statements, null = unknown
+  minPayment: number | null; // statement minimum payment, null = unknown
+  accountType: string; // for minimum calculation
   included: boolean;
 }
 
@@ -28,10 +30,7 @@ export interface DebtPayoffResult {
   }>;
   monthlyBalances: Array<{
     month: number; // 0 = now, 1 = next month, etc.
-    debts: Array<{
-      debtId: string;
-      balance: number;
-    }>;
+    totalBalance: number; // total across all debts
   }>;
   warnings: string[];
 }
@@ -49,16 +48,56 @@ interface PayoffResult {
 }
 
 /**
+ * Calculate minimum payment for a debt based on type and available data.
+ * Priority: (1) statement minPayment, (2) estimate by type
+ */
+export function calculateMinimumPayment(debt: Pick<DebtInput, 'balance' | 'interestRate' | 'minPayment' | 'monthlyPayment' | 'accountType'>): number {
+  // Use statement minimum if available
+  if (debt.minPayment !== null && debt.minPayment > 0) {
+    return debt.minPayment;
+  }
+  
+  const rate = debt.interestRate || 0;
+  const monthlyRate = rate / 100 / 12;
+  const monthlyInterest = debt.balance * monthlyRate;
+  
+  const typeLower = debt.accountType.toLowerCase();
+  
+  // Line of credit / HELOC: interest + 1% of balance (check before credit card!)
+  if (typeLower.includes('loc') || typeLower.includes('line') || typeLower.includes('heloc')) {
+    return monthlyInterest + debt.balance * 0.01;
+  }
+  
+  // Credit card: max(interest + 1% of balance, 3% of balance, $10)
+  if (typeLower.includes('credit')) {
+    const option1 = monthlyInterest + debt.balance * 0.01;
+    const option2 = debt.balance * 0.03;
+    return Math.max(option1, option2, 10);
+  }
+  
+  // Loan / Mortgage: use observed payment if known, otherwise interest + 1%
+  if (typeLower.includes('loan') || typeLower.includes('mortgage')) {
+    if (debt.monthlyPayment !== null && debt.monthlyPayment > 0) {
+      return debt.monthlyPayment;
+    }
+    return monthlyInterest + debt.balance * 0.01;
+  }
+  
+  // Default: interest + 1%
+  return monthlyInterest + debt.balance * 0.01;
+}
+
+/**
  * Simulate debt payoff using the specified strategy
  */
 export function calculateDebtPayoff(
   debts: DebtInput[],
-  extraMonthlyPayment: number,
+  monthlyBudget: number,
   strategy: PayoffStrategy
 ): DebtPayoffResult {
   const warnings: string[] = [];
   
-  // Filter to included debts with valid data
+  // Filter to included debts
   const includedDebts = debts.filter(d => d.included);
   
   if (includedDebts.length === 0) {
@@ -72,11 +111,23 @@ export function calculateDebtPayoff(
     };
   }
   
+  // Calculate minimums for all debts
+  const debtsWithMinimums = includedDebts.map(d => ({
+    ...d,
+    calculatedMinimum: calculateMinimumPayment(d),
+  }));
+  
+  const totalMinimums = debtsWithMinimums.reduce((sum, d) => sum + d.calculatedMinimum, 0);
+  
+  // Enforce budget >= minimums
+  const effectiveBudget = Math.max(monthlyBudget, totalMinimums);
+  
+  if (effectiveBudget > monthlyBudget) {
+    warnings.push(`Budget increased to ${effectiveBudget.toFixed(2)} (sum of minimums)`);
+  }
+  
   // Check for missing data
   for (const debt of includedDebts) {
-    if (debt.monthlyPayment === null || debt.monthlyPayment <= 0) {
-      warnings.push(`${debt.name}: missing monthly payment`);
-    }
     if (debt.interestRate === null) {
       warnings.push(`${debt.name}: missing interest rate (assumed 0%)`);
     }
@@ -88,31 +139,18 @@ export function calculateDebtPayoff(
     name: string;
     balance: number;
     rate: number; // monthly rate
-    payment: number;
+    minimum: number;
     interestPaid: number;
   }
   
-  const debtStates: DebtState[] = includedDebts
-    .filter(d => d.monthlyPayment !== null && d.monthlyPayment > 0)
-    .map(d => ({
-      id: d.id,
-      name: d.name,
-      balance: d.balance,
-      rate: (d.interestRate || 0) / 100 / 12, // convert annual % to monthly decimal
-      payment: d.monthlyPayment!,
-      interestPaid: 0,
-    }));
-  
-  if (debtStates.length === 0) {
-    return {
-      debtFreeDate: null,
-      monthsToPayoff: null,
-      totalInterestPaid: 0,
-      payoffOrder: [],
-      monthlyBalances: [],
-      warnings,
-    };
-  }
+  const debtStates: DebtState[] = debtsWithMinimums.map(d => ({
+    id: d.id,
+    name: d.name,
+    balance: d.balance,
+    rate: (d.interestRate || 0) / 100 / 12,
+    minimum: d.calculatedMinimum,
+    interestPaid: 0,
+  }));
   
   const payoffOrder: DebtPayoffResult["payoffOrder"] = [];
   const monthlyBalances: DebtPayoffResult["monthlyBalances"] = [];
@@ -120,12 +158,12 @@ export function calculateDebtPayoff(
   // Record initial state
   monthlyBalances.push({
     month: 0,
-    debts: debtStates.map(d => ({ debtId: d.id, balance: d.balance })),
+    totalBalance: debtStates.reduce((sum, d) => sum + d.balance, 0),
   });
   
   let month = 0;
   const maxMonths = 600; // 50 years cap
-  let availableExtraPayment = extraMonthlyPayment;
+  let budgetRemaining = effectiveBudget;
   
   while (debtStates.some(d => d.balance > 0) && month < maxMonths) {
     month++;
@@ -139,12 +177,15 @@ export function calculateDebtPayoff(
       }
     }
     
-    // Check if any debt is unpayable (payment <= interest)
-    for (const debt of debtStates) {
-      if (debt.balance > 0) {
+    // Check if budget is unpayable (total minimums > budget AND any debt's minimum <= interest)
+    const activeDebts = debtStates.filter(d => d.balance > 0);
+    const currentMinimums = activeDebts.reduce((sum, d) => sum + d.minimum, 0);
+    
+    if (budgetRemaining < currentMinimums) {
+      for (const debt of activeDebts) {
         const monthlyInterest = debt.balance * debt.rate;
-        if (debt.payment <= monthlyInterest) {
-          warnings.push(`${debt.name}: payment ($${debt.payment.toFixed(2)}) doesn't cover monthly interest ($${monthlyInterest.toFixed(2)})`);
+        if (debt.minimum <= monthlyInterest) {
+          warnings.push(`${debt.name}: minimum payment doesn't cover interest`);
           return {
             debtFreeDate: null,
             monthsToPayoff: null,
@@ -160,24 +201,26 @@ export function calculateDebtPayoff(
     // Apply minimum payments to all debts
     for (const debt of debtStates) {
       if (debt.balance > 0) {
-        const payment = Math.min(debt.payment, debt.balance);
+        const payment = Math.min(debt.minimum, debt.balance);
         debt.balance -= payment;
+        budgetRemaining -= payment;
       }
     }
     
     // Determine target debt for extra payment
-    const activeDebts = debtStates.filter(d => d.balance > 0);
+    const stillActiveDebts = debtStates.filter(d => d.balance > 0);
     
-    if (activeDebts.length > 0 && availableExtraPayment > 0) {
+    if (stillActiveDebts.length > 0 && budgetRemaining > 0) {
       const target = strategy === "avalanche"
-        ? activeDebts.reduce((highest, d) => d.rate > highest.rate ? d : highest)
-        : activeDebts.reduce((smallest, d) => d.balance < smallest.balance ? d : smallest);
+        ? stillActiveDebts.reduce((highest, d) => d.rate > highest.rate ? d : highest)
+        : stillActiveDebts.reduce((smallest, d) => d.balance < smallest.balance ? d : smallest);
       
-      const extraPayment = Math.min(availableExtraPayment, target.balance);
+      const extraPayment = Math.min(budgetRemaining, target.balance);
       target.balance -= extraPayment;
+      budgetRemaining -= extraPayment;
     }
     
-    // Check for paid-off debts and roll over their payments
+    // Check for paid-off debts and reclaim their minimums
     for (const debt of debtStates) {
       if (debt.balance <= 0.01 && !payoffOrder.some(p => p.debtId === debt.id)) {
         payoffOrder.push({
@@ -186,16 +229,19 @@ export function calculateDebtPayoff(
           payoffMonth: month,
           interestPaid: debt.interestPaid,
         });
-        // Roll over freed payment to extra payment pool
-        availableExtraPayment += debt.payment;
+        // Free up this debt's minimum for next month
+        budgetRemaining += debt.minimum;
         debt.balance = 0;
       }
     }
     
-    // Record month-end balances
+    // Reset budget for next month
+    budgetRemaining = effectiveBudget;
+    
+    // Record month-end balance
     monthlyBalances.push({
       month,
-      debts: debtStates.map(d => ({ debtId: d.id, balance: Math.max(0, d.balance) })),
+      totalBalance: debtStates.reduce((sum, d) => sum + Math.max(0, d.balance), 0),
     });
   }
   
@@ -225,11 +271,16 @@ export function calculateDebtPayoff(
  */
 export function compareWithMinimumOnly(
   debts: DebtInput[],
-  extraMonthlyPayment: number,
+  monthlyBudget: number,
   strategy: PayoffStrategy
 ): ComparisonResult {
-  const strategyResult = calculateDebtPayoff(debts, extraMonthlyPayment, strategy);
-  const minimumResult = calculateDebtPayoff(debts, 0, strategy);
+  // Calculate minimums
+  const totalMinimums = debts
+    .filter(d => d.included)
+    .reduce((sum, d) => sum + calculateMinimumPayment(d), 0);
+  
+  const strategyResult = calculateDebtPayoff(debts, monthlyBudget, strategy);
+  const minimumResult = calculateDebtPayoff(debts, totalMinimums, strategy);
   
   const monthsSaved = 
     strategyResult.monthsToPayoff !== null && minimumResult.monthsToPayoff !== null

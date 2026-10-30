@@ -3521,7 +3521,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   console.log("\nCheck 1: Debt payoff simulation");
   try {
     const debtPayoffModule = await import("../src/lib/debtPayoff");
-    const { calculateDebtPayoff } = debtPayoffModule;
+    const { calculateDebtPayoff, calculateMinimumPayment } = debtPayoffModule;
     
     // Convert debtsSummary to DebtInput format
     const debtsForSimulation: any[] = debtsSummary.groups.flatMap(g =>
@@ -3530,44 +3530,87 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         name: acc.accountName || acc.bankName,
         balance: acc.balance,
         interestRate: acc.interestRate,
-        monthlyPayment: acc.monthlyPayment || acc.minPayment,
+        monthlyPayment: acc.monthlyPayment,
+        minPayment: acc.minPayment,
+        accountType: acc.accountType,
         included: true,
       }))
-    ).filter((d: any) => d.monthlyPayment !== null && d.monthlyPayment > 0);
+    );
 
     if (debtsForSimulation.length === 0) {
-      console.log(`  ⏭  Skipped: No debts with valid monthly payments`);
+      console.log(`  ⏭  Skipped: No debts found`);
     } else {
-      console.log(`  Testing with ${debtsForSimulation.length} debts (0 extra payment):`);
+      console.log(`  Testing with ${debtsForSimulation.length} debts:\n`);
       
-      // Test Avalanche strategy
-      const avalancheResult = calculateDebtPayoff(debtsForSimulation, 0, "avalanche");
-      console.log(`\n  Avalanche (highest rate first):`);
-      console.log(`    Debt-free date: ${avalancheResult.debtFreeDate || 'N/A (unpayable)'}`);
-      console.log(`    Months to payoff: ${avalancheResult.monthsToPayoff ?? 'N/A'}`);
-      console.log(`    Total interest: ${formatCurrency(avalancheResult.totalInterestPaid, currency)}`);
+      // Print calculated minimums for each debt
+      console.log(`  Calculated minimums per debt:`);
+      let totalMinimums = 0;
+      for (const debt of debtsForSimulation) {
+        const minimum = calculateMinimumPayment(debt);
+        totalMinimums += minimum;
+        const source = debt.minPayment ? "(from statement)" : "(calculated)";
+        console.log(`    ${debt.name}: ${formatCurrency(minimum, currency)} ${source}`);
+        
+        // Assert minimum is never null or 0
+        if (minimum === null || minimum === 0) {
+          console.log(`    ❌ FAIL: ${debt.name} has null or 0 minimum`);
+          errors.push(`Debt payoff: ${debt.name} has invalid minimum payment`);
+          debtPayoffErrors++;
+        }
+      }
+      console.log(`    Total minimums: ${formatCurrency(totalMinimums, currency)}\n`);
       
-      if (avalancheResult.warnings.length > 0) {
-        console.log(`    Warnings: ${avalancheResult.warnings.join(", ")}`);
+      // Test plan 1: budget = minimums only
+      console.log(`  Plan 1: Budget = minimums only (${formatCurrency(totalMinimums, currency)})`);
+      const avalancheMin = calculateDebtPayoff(debtsForSimulation, totalMinimums, "avalanche");
+      const snowballMin = calculateDebtPayoff(debtsForSimulation, totalMinimums, "snowball");
+      
+      console.log(`    Avalanche (highest rate first):`);
+      console.log(`      Debt-free: ${avalancheMin.debtFreeDate || 'N/A (unpayable)'}`);
+      console.log(`      Months: ${avalancheMin.monthsToPayoff ?? 'N/A'}`);
+      console.log(`      Total interest: ${formatCurrency(avalancheMin.totalInterestPaid, currency)}`);
+      
+      console.log(`    Snowball (smallest balance first):`);
+      console.log(`      Debt-free: ${snowballMin.debtFreeDate || 'N/A (unpayable)'}`);
+      console.log(`      Months: ${snowballMin.monthsToPayoff ?? 'N/A'}`);
+      console.log(`      Total interest: ${formatCurrency(snowballMin.totalInterestPaid, currency)}\n`);
+      
+      // Test plan 2: budget = minimums + $500
+      const budgetPlus500 = totalMinimums + 500;
+      console.log(`  Plan 2: Budget = minimums + $500 (${formatCurrency(budgetPlus500, currency)})`);
+      const avalanchePlus = calculateDebtPayoff(debtsForSimulation, budgetPlus500, "avalanche");
+      const snowballPlus = calculateDebtPayoff(debtsForSimulation, budgetPlus500, "snowball");
+      
+      console.log(`    Avalanche (highest rate first):`);
+      console.log(`      Debt-free: ${avalanchePlus.debtFreeDate || 'N/A'}`);
+      console.log(`      Months: ${avalanchePlus.monthsToPayoff ?? 'N/A'}`);
+      console.log(`      Total interest: ${formatCurrency(avalanchePlus.totalInterestPaid, currency)}`);
+      if (avalancheMin.monthsToPayoff && avalanchePlus.monthsToPayoff) {
+        const monthsSaved = avalancheMin.monthsToPayoff - avalanchePlus.monthsToPayoff;
+        const interestSaved = avalancheMin.totalInterestPaid - avalanchePlus.totalInterestPaid;
+        console.log(`      Saves: ${monthsSaved} months, ${formatCurrency(interestSaved, currency)}`);
       }
       
-      // Test Snowball strategy
-      const snowballResult = calculateDebtPayoff(debtsForSimulation, 0, "snowball");
-      console.log(`\n  Snowball (smallest balance first):`);
-      console.log(`    Debt-free date: ${snowballResult.debtFreeDate || 'N/A (unpayable)'}`);
-      console.log(`    Months to payoff: ${snowballResult.monthsToPayoff ?? 'N/A'}`);
-      console.log(`    Total interest: ${formatCurrency(snowballResult.totalInterestPaid, currency)}`);
-      
-      if (snowballResult.warnings.length > 0) {
-        console.log(`    Warnings: ${snowballResult.warnings.join(", ")}`);
+      console.log(`    Snowball (smallest balance first):`);
+      console.log(`      Debt-free: ${snowballPlus.debtFreeDate || 'N/A'}`);
+      console.log(`      Months: ${snowballPlus.monthsToPayoff ?? 'N/A'}`);
+      console.log(`      Total interest: ${formatCurrency(snowballPlus.totalInterestPaid, currency)}`);
+      if (snowballMin.monthsToPayoff && snowballPlus.monthsToPayoff) {
+        const monthsSaved = snowballMin.monthsToPayoff - snowballPlus.monthsToPayoff;
+        const interestSaved = snowballMin.totalInterestPaid - snowballPlus.totalInterestPaid;
+        console.log(`      Saves: ${monthsSaved} months, ${formatCurrency(interestSaved, currency)}`);
       }
       
-      // Compare strategies
-      if (avalancheResult.monthsToPayoff && snowballResult.monthsToPayoff) {
-        const monthsDiff = snowballResult.monthsToPayoff - avalancheResult.monthsToPayoff;
-        const interestDiff = snowballResult.totalInterestPaid - avalancheResult.totalInterestPaid;
-        console.log(`\n  Strategy comparison:`);
-        console.log(`    Avalanche saves ${monthsDiff} months and ${formatCurrency(interestDiff, currency)} in interest vs Snowball`);
+      if (avalancheMin.warnings.length > 0 || snowballMin.warnings.length > 0 || 
+          avalanchePlus.warnings.length > 0 || snowballPlus.warnings.length > 0) {
+        console.log(`\n    Warnings:`);
+        const allWarnings = new Set([
+          ...avalancheMin.warnings, 
+          ...snowballMin.warnings, 
+          ...avalanchePlus.warnings, 
+          ...snowballPlus.warnings
+        ]);
+        allWarnings.forEach(w => console.log(`      ${w}`));
       }
       
       console.log(`\n  ✓ Debt payoff simulation completed successfully`);
