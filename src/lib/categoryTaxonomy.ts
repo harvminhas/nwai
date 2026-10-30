@@ -329,8 +329,11 @@ const CATEGORY_ALIASES: Record<string, ParentCategory> = {
   "student loan":           "Debt",
   "debt payments":          "Debt",
   "credit card payment":    "Debt",
+  "credit card payments":   "Debt",
   "loan payment":           "Debt",
+  "loan payments":          "Debt",
   "mortgage payment":       "Debt",
+  "mortgage payments":      "Debt",
 
   // Insurance
   "life insurance":         "Insurance",

@@ -4225,33 +4225,34 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       }
     }
     
-    // Check 4: Verify "Debt Payments" category maps to "fixed" bucket
+    // Check 4: Runtime verification of category bucket mappings
     const { getCategoryBucket } = await import("../src/lib/moneyCoachBuckets");
-    const debtPaymentsBucket = getCategoryBucket("Debt Payments");
     
-    if (debtPaymentsBucket === "fixed") {
-      console.log(`  ✓ "Debt Payments" category maps to "fixed" bucket`);
-    } else {
-      console.log(`  ❌ FAIL: "Debt Payments" maps to "${debtPaymentsBucket}" but should be "fixed"`);
-      errors.push(`Spending: "Debt Payments" bucket is ${debtPaymentsBucket}, expected "fixed"`);
-      debtPayoffErrors++;
-    }
-    
-    // Check 5: Verify common debt categories
     const testCategories = [
       { name: "Loan payments", expectedBucket: "fixed" },
+      { name: "Loan Payments", expectedBucket: "fixed" },
+      { name: "Debt Payments", expectedBucket: "fixed" },
       { name: "Debt", expectedBucket: "fixed" },
       { name: "Installment Servicing", expectedBucket: "fixed" },
       { name: "Card Servicing", expectedBucket: "fixed" },
+      { name: "Car Insurance", expectedBucket: "essentials" },
+      { name: "Groceries", expectedBucket: "essentials" },
+      { name: "Dining", expectedBucket: "flexible" },
     ];
     
+    let allPassed = true;
     for (const { name, expectedBucket } of testCategories) {
       const actualBucket = getCategoryBucket(name);
       if (actualBucket !== expectedBucket) {
-        console.log(`  ❌ FAIL: "${name}" maps to "${actualBucket}" but should be "${expectedBucket}"`);
+        console.log(`  ❌ FAIL: getCategoryBucket("${name}") = "${actualBucket}", expected "${expectedBucket}"`);
         errors.push(`Spending: "${name}" bucket is ${actualBucket}, expected ${expectedBucket}`);
         debtPayoffErrors++;
+        allPassed = false;
       }
+    }
+    
+    if (allPassed) {
+      console.log(`  ✓ All ${testCategories.length} category bucket mappings correct at runtime`);
     }
     
   } catch (err) {
