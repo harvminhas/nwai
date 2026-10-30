@@ -3853,8 +3853,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         }
       }
 
-      // Plan 3: Create temporary plan document, compute status, delete
-      console.log(`\n  Testing Plan 3: Create, track, and delete a saved plan`);
+      // Plan 3: Create temporary plan documents in BOTH modes, compute status, delete
+      console.log(`\n  Testing Plan 3: Create, track, and delete saved plans (both modes)`);
       const testPlanDebts = debtsForSimulation.map(d => ({
         ...d,
         included: d.accountType.toLowerCase().includes("credit"),
@@ -3864,6 +3864,25 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       if (testIncluded.length === 0) {
         console.log(`    ⏭  Skipped: No debts to test plan tracking`);
       } else {
+        // Helper to strip undefined fields (same as route.ts)
+        function stripUndefined(obj: any): any {
+          const result: any = {};
+          for (const [key, value] of Object.entries(obj)) {
+            if (value === undefined) {
+              continue;
+            } else if (Array.isArray(value)) {
+              result[key] = value.map((item: any) => 
+                typeof item === 'object' && item !== null ? stripUndefined(item) : item
+              );
+            } else if (value !== null && typeof value === 'object' && !(value instanceof Date)) {
+              result[key] = stripUndefined(value);
+            } else {
+              result[key] = value;
+            }
+          }
+          return result;
+        }
+        
         const testMinimums = testIncluded.reduce((sum: number, d: any) => sum + calculateMinimumPayment(d), 0);
         const testBudget = testMinimums + 100;
         const testResult = calculateDebtPayoff(testPlanDebts, testBudget, "avalanche");
@@ -3882,21 +3901,85 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
           }),
         };
         
-        // Create plan document
-        const planDoc = {
-          name: "Test Plan (regression)",
+        // Test Plan 3a: "extra" mode
+        console.log(`\n    Plan 3a: "extra" mode`);
+        const planDocExtra = {
+          name: "Test Plan Extra (regression)",
           mode: "extra" as const,
           debtSlugs: testIncluded.map((d: any) => d.id),
           strategy: "avalanche" as const,
           extraMonthly: 100,
+          targetDate: undefined, // Should be stripped
           monthlyBudget: testBudget,
           baseline,
           createdAt: new Date(),
         };
         
-        const planRef = db.collection(`users/${uid}/debtPlans`).doc();
-        await planRef.set(planDoc);
-        console.log(`    ✓ Created plan document: ${planRef.id}`);
+        const sanitizedExtra = stripUndefined(planDocExtra);
+        const planRefExtra = db.collection(`users/${uid}/debtPlans`).doc();
+        await planRefExtra.set(sanitizedExtra);
+        console.log(`      ✓ Created "extra" mode plan: ${planRefExtra.id}`);
+        
+        // Read back to verify
+        const savedExtra = await planRefExtra.get();
+        if (!savedExtra.exists) {
+          console.log(`      ❌ FAIL: Plan not found after save`);
+          errors.push("Debt payoff: extra mode plan not found after save");
+          debtPayoffErrors++;
+        } else {
+          const data = savedExtra.data();
+          if (data?.targetDate !== undefined) {
+            console.log(`      ❌ FAIL: targetDate should not exist but is: ${data.targetDate}`);
+            errors.push("Debt payoff: extra mode plan has targetDate field");
+            debtPayoffErrors++;
+          } else {
+            console.log(`      ✓ Read back: targetDate field correctly omitted`);
+          }
+        }
+        
+        // Delete plan
+        await planRefExtra.delete();
+        console.log(`      ✓ Deleted "extra" mode plan`);
+        
+        // Test Plan 3b: "targetDate" mode
+        console.log(`\n    Plan 3b: "targetDate" mode`);
+        const futureDate = new Date(now);
+        futureDate.setMonth(futureDate.getMonth() + 12);
+        const targetDate = `${futureDate.getFullYear()}-${String(futureDate.getMonth() + 1).padStart(2, "0")}`;
+        
+        const planDocTarget = {
+          name: "Test Plan Target (regression)",
+          mode: "targetDate" as const,
+          debtSlugs: testIncluded.map((d: any) => d.id),
+          strategy: "avalanche" as const,
+          extraMonthly: undefined, // Should be stripped
+          targetDate,
+          monthlyBudget: testBudget,
+          baseline,
+          createdAt: new Date(),
+        };
+        
+        const sanitizedTarget = stripUndefined(planDocTarget);
+        const planRefTarget = db.collection(`users/${uid}/debtPlans`).doc();
+        await planRefTarget.set(sanitizedTarget);
+        console.log(`      ✓ Created "targetDate" mode plan: ${planRefTarget.id}`);
+        
+        // Read back to verify
+        const savedTarget = await planRefTarget.get();
+        if (!savedTarget.exists) {
+          console.log(`      ❌ FAIL: Plan not found after save`);
+          errors.push("Debt payoff: targetDate mode plan not found after save");
+          debtPayoffErrors++;
+        } else {
+          const data = savedTarget.data();
+          if (data?.extraMonthly !== undefined) {
+            console.log(`      ❌ FAIL: extraMonthly should not exist but is: ${data.extraMonthly}`);
+            errors.push("Debt payoff: targetDate mode plan has extraMonthly field");
+            debtPayoffErrors++;
+          } else {
+            console.log(`      ✓ Read back: extraMonthly field correctly omitted`);
+          }
+        }
         
         // Compute status (should be "on-track" immediately after creation)
         const currentTotalBalance = testIncluded.reduce((sum: number, d: any) => sum + d.balance, 0);
@@ -3912,21 +3995,21 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
           testPlanDebts
         );
         
-        console.log(`    Current balance: ${formatCurrency(currentTotalBalance, currency)}`);
-        console.log(`    Projected balance: ${formatCurrency(projectedBalance, currency)}`);
-        console.log(`    Status: ${status.status}`);
+        console.log(`      Current balance: ${formatCurrency(currentTotalBalance, currency)}`);
+        console.log(`      Projected balance: ${formatCurrency(projectedBalance, currency)}`);
+        console.log(`      Status: ${status.status}`);
         
         if (status.status !== "on-track") {
-          console.log(`    ❌ FAIL: New plan should be "on-track" but got "${status.status}"`);
+          console.log(`      ❌ FAIL: New plan should be "on-track" but got "${status.status}"`);
           errors.push(`Debt payoff: New plan status is "${status.status}" instead of "on-track"`);
           debtPayoffErrors++;
         } else {
-          console.log(`    ✓ Status is "on-track" as expected`);
+          console.log(`      ✓ Status is "on-track" as expected`);
         }
         
         // Delete plan
-        await planRef.delete();
-        console.log(`    ✓ Deleted plan document`);
+        await planRefTarget.delete();
+        console.log(`      ✓ Deleted "targetDate" mode plan`);
       }
 
       console.log(`\n  ✓ Saved plan workflow tests completed`);

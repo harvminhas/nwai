@@ -14,6 +14,31 @@ async function getUid(request: NextRequest): Promise<string | null> {
   }
 }
 
+/**
+ * Strip undefined fields from an object (Firestore doesn't accept undefined).
+ * Recursively handles nested objects and arrays.
+ */
+function stripUndefined<T extends Record<string, any>>(obj: T): Partial<T> {
+  const result: any = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined) {
+      // Skip undefined fields
+      continue;
+    } else if (Array.isArray(value)) {
+      // Recursively strip arrays
+      result[key] = value.map(item => 
+        typeof item === 'object' && item !== null ? stripUndefined(item) : item
+      );
+    } else if (value !== null && typeof value === 'object' && !(value instanceof Date)) {
+      // Recursively strip nested objects (but not Dates)
+      result[key] = stripUndefined(value);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 /** PATCH /api/user/debt-plans/[id] — update an existing debt plan */
 export async function PATCH(
   request: NextRequest,
@@ -48,7 +73,10 @@ export async function PATCH(
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });
   }
 
-  await docRef.update(updates);
+  // Strip undefined fields (Firestore doesn't accept them)
+  const sanitized = stripUndefined(updates);
+
+  await docRef.update(sanitized);
 
   return NextResponse.json({ ok: true });
 }
