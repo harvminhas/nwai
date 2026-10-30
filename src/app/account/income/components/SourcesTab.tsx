@@ -5,6 +5,8 @@ import type { IncomeSummary, IncomeSource } from "@/lib/incomeSummary";
 import { formatDate } from "@/lib/dateFormatting";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { INCOME_CATEGORIES, FREQUENCY_CONFIG, type Frequency, type IncomeCategory } from "@/lib/incomeEngine";
+import { useConfirm } from "@/components/useConfirm";
+import { useToast } from "@/components/useToast";
 
 interface SourcesTabProps {
   summary: IncomeSummary;
@@ -13,6 +15,8 @@ interface SourcesTabProps {
 }
 
 export function SourcesTab({ summary, token, onUpdate }: SourcesTabProps) {
+  const { confirm, ConfirmDialog } = useConfirm();
+  const { error, Toast } = useToast();
   const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
   const [cashIncomeExpanded, setCashIncomeExpanded] = useState(false);
   const [byCategoryExpanded, setByCategoryExpanded] = useState(false);
@@ -62,7 +66,7 @@ export function SourcesTab({ summary, token, onUpdate }: SourcesTabProps) {
         setNewSourceName("");
         onUpdate?.();
       } else {
-        alert("Failed to rename source");
+        error("Failed to rename source");
       }
     } finally {
       setSaving(false);
@@ -89,7 +93,7 @@ export function SourcesTab({ summary, token, onUpdate }: SourcesTabProps) {
       if (res.ok) {
         onUpdate?.();
       } else {
-        alert("Failed to mark as transfer");
+        error("Failed to mark as transfer");
       }
     } finally {
       setSaving(false);
@@ -99,7 +103,12 @@ export function SourcesTab({ summary, token, onUpdate }: SourcesTabProps) {
   const handleExclude = async (sourceName: string) => {
     if (!token) return;
     
-    const confirmed = confirm(`Exclude all income from "${sourceName}"? This will hide it from totals.`);
+    const confirmed = await confirm({
+      title: `Exclude "${sourceName}"?`,
+      message: "This will hide all income from this source from your totals.",
+      confirmLabel: "Exclude",
+      variant: "danger",
+    });
     if (!confirmed) return;
     
     setSaving(true);
@@ -116,7 +125,7 @@ export function SourcesTab({ summary, token, onUpdate }: SourcesTabProps) {
       if (res.ok) {
         onUpdate?.();
       } else {
-        alert("Failed to exclude source");
+        error("Failed to exclude source");
       }
     } finally {
       setSaving(false);
@@ -140,7 +149,7 @@ export function SourcesTab({ summary, token, onUpdate }: SourcesTabProps) {
       if (res.ok) {
         onUpdate?.();
       } else {
-        alert("Failed to update category");
+        error("Failed to update category");
       }
     } finally {
       setSaving(false);
@@ -556,6 +565,7 @@ function SourceRow({
           </div>
         </div>
       )}
+      
     </div>
   );
 }

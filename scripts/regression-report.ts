@@ -4139,8 +4139,50 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     debtPayoffErrors++;
   }
 
-  // Check 2: Interest card label contains "Est."
-  console.log("\nCheck 2: Interest card labeled as estimate");
+  // Check 2: No native browser dialogs (confirm/alert) outside test files
+  console.log("\nCheck 2: No native browser dialogs in src/");
+  try {
+    const { execSync } = await import("child_process");
+    
+    // Search for window.confirm( or just confirm( outside test files
+    const confirmResults = execSync(
+      'grep -rn "\\bconfirm(" src/ --include="*.ts" --include="*.tsx" --exclude-dir=__tests__ || true',
+      { encoding: "utf-8" }
+    );
+    
+    // Search for window.alert( or just alert( outside test files
+    const alertResults = execSync(
+      'grep -rn "\\balert(" src/ --include="*.ts" --include="*.tsx" --exclude-dir=__tests__ || true',
+      { encoding: "utf-8" }
+    );
+    
+    const confirmLines = confirmResults.trim().split("\n").filter(l => l && !l.includes("useConfirm"));
+    const alertLines = alertResults.trim().split("\n").filter(l => l && !l.includes("useToast"));
+    
+    if (confirmLines.length === 0 && alertLines.length === 0) {
+      console.log(`  ✓ No native browser dialogs found in src/`);
+    } else {
+      if (confirmLines.length > 0) {
+        console.log(`  ❌ FAIL: Found ${confirmLines.length} confirm() call(s):`);
+        confirmLines.forEach(line => console.log(`    ${line}`));
+        errors.push(`Native dialogs: ${confirmLines.length} confirm() calls found`);
+        debtPayoffErrors++;
+      }
+      if (alertLines.length > 0) {
+        console.log(`  ❌ FAIL: Found ${alertLines.length} alert() call(s):`);
+        alertLines.forEach(line => console.log(`    ${line}`));
+        errors.push(`Native dialogs: ${alertLines.length} alert() calls found`);
+        debtPayoffErrors++;
+      }
+    }
+  } catch (err) {
+    console.error(`  ❌ FAIL: Error checking for native dialogs: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Native dialogs check failed");
+    debtPayoffErrors++;
+  }
+
+  // Check 3: Interest card label contains "Est."
+  console.log("\nCheck 3: Interest card labeled as estimate");
   try {
     const fs = await import("fs/promises");
     const overviewTabPath = "src/app/account/liabilities/components/OverviewTab.tsx";
@@ -4162,8 +4204,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     debtPayoffErrors++;
   }
 
-  // Check 3: Header Tools menu contains debt-payoff link
-  console.log("\nCheck 3: Header Tools menu contains Debt Payoff link");
+  // Check 4: Header Tools menu contains debt-payoff link
+  console.log("\nCheck 4: Header Tools menu contains Debt Payoff link");
   try {
     const fs = await import("fs/promises");
     const mvpTopNavPath = "src/components/MvpTopNav.tsx";
@@ -4187,8 +4229,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     debtPayoffErrors++;
   }
 
-  // Check 4: Account layout renders PlanProvider
-  console.log("\nCheck 4: Account layout renders PlanProvider");
+  // Check 5: Account layout renders PlanProvider
+  console.log("\nCheck 5: Account layout renders PlanProvider");
   try {
     const fs = await import("fs/promises");
     const accountLayoutPath = "src/app/account/layout.tsx";

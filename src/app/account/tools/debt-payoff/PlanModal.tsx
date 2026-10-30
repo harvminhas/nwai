@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { calculateDebtPayoff, calculateMinimumPayment, solveForTargetDate, compareWithMinimumOnly, isHELOC, type DebtInput, type PayoffStrategy } from "@/lib/debtPayoff";
 import { formatCurrency } from "@/lib/currencyUtils";
 import type { DebtPlan } from "@/lib/debtPlanTypes";
+import { useToast } from "@/components/useToast";
 
 interface PlanModalProps {
   debts: DebtInput[];
@@ -19,6 +20,7 @@ type DebtSelection = "credit_cards" | "exclude_heloc" | "all" | "custom";
 type GoalMode = "extra" | "target_date";
 
 export default function PlanModal({ debts, currency, token, existingPlan, onClose, onSave }: PlanModalProps) {
+  const { error, Toast } = useToast();
   const [step, setStep] = useState<Step>(1);
   const [debtSelection, setDebtSelection] = useState<DebtSelection>("exclude_heloc");
   const [customDebts, setCustomDebts] = useState<Record<string, boolean>>({});
@@ -130,7 +132,7 @@ export default function PlanModal({ debts, currency, token, existingPlan, onClos
 
   const handleSave = async () => {
     if (!planName.trim() || selectedDebts.length === 0) {
-      alert("Please enter a plan name and select at least one debt.");
+      error("Please enter a plan name and select at least one debt.");
       return;
     }
 
@@ -188,7 +190,7 @@ export default function PlanModal({ debts, currency, token, existingPlan, onClos
       onSave();
     } catch (err) {
       console.error("Save error:", err);
-      alert("Failed to save plan. Please try again.");
+      error("Failed to save plan. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -571,6 +573,9 @@ export default function PlanModal({ debts, currency, token, existingPlan, onClos
           </button>
         </div>
       </div>
+      
+      {/* Toast */}
+      <Toast />
     </div>
   );
 }

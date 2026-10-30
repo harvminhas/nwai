@@ -11,10 +11,14 @@ import { calculateMinimumPayment, classifyPlanStatus, type DebtInput } from "@/l
 import { formatCurrency } from "@/lib/currencyUtils";
 import type { DebtPlan } from "@/lib/debtPlanTypes";
 import PlanModal from "./PlanModal";
+import { useConfirm } from "@/components/useConfirm";
+import { useToast } from "@/components/useToast";
 
 export default function DebtPayoffPage() {
   const router = useRouter();
   const { can, loading: planLoading } = usePlan();
+  const { confirm, ConfirmDialog } = useConfirm();
+  const { success, error, Toast } = useToast();
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [debts, setDebts] = useState<DebtInput[]>([]);
@@ -89,7 +93,14 @@ export default function DebtPayoffPage() {
   };
 
   const handleDeletePlan = async (plan: DebtPlan) => {
-    if (!confirm(`Delete "${plan.name}"?`)) return;
+    const confirmed = await confirm({
+      title: `Delete "${plan.name}"?`,
+      message: "This removes the plan and its progress tracking. Your accounts aren't affected.",
+      confirmLabel: "Delete",
+      variant: "danger",
+    });
+    
+    if (!confirmed) return;
     
     try {
       const res = await fetch(`/api/user/debt-plans/${plan.id}`, {
@@ -98,10 +109,13 @@ export default function DebtPayoffPage() {
       });
       if (res.ok && token) {
         await loadData(token);
+        success("Plan deleted");
+      } else {
+        error("Failed to delete plan. Please try again.");
       }
     } catch (err) {
       console.error("Delete error:", err);
-      alert("Failed to delete plan. Please try again.");
+      error("Failed to delete plan. Please try again.");
     }
   };
 
@@ -114,6 +128,7 @@ export default function DebtPayoffPage() {
     setShowModal(false);
     setEditingPlan(null);
     if (token) await loadData(token);
+    success("Plan saved");
   };
 
   const canUsePayoffPlanner = can("payoffPlanner");
@@ -193,6 +208,10 @@ export default function DebtPayoffPage() {
           onSave={handleModalSave}
         />
       )}
+      
+      {/* Dialogs and Toasts */}
+      <ConfirmDialog />
+      <Toast />
     </div>
   );
 }
