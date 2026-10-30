@@ -1,7 +1,12 @@
 /**
- * Shared merchant name normalization for merge suggestions.
+ * Shared merchant name normalization and grouping for merge suggestions.
  * Used by subscriptions API, debug script, and regression tests.
  */
+
+export interface MerchantItem {
+  merchant: string;
+  merchantSlug: string;
+}
 
 /**
  * Normalize merchant name for similarity matching.
@@ -27,4 +32,50 @@ export function normalizeMerchantForSimilarity(name: string): string {
   cleaned = cleaned.replace(/\s+\d{5,8}$/, "").trim();
   
   return cleaned;
+}
+
+/**
+ * Find groups of similar merchants that should be suggested for merging.
+ * Runs over all provided items (active, candidates, inactive) to catch split variants.
+ */
+export function findMergeSuggestions<T extends MerchantItem>(items: T[]): Array<T[]> {
+  const groups: Array<T[]> = [];
+  const processed = new Set<string>();
+  
+  for (const item of items) {
+    if (processed.has(item.merchantSlug)) continue;
+    
+    const normalized = normalizeMerchantForSimilarity(item.merchant);
+    const firstWord = normalized.split(" ")[0] ?? "";
+    
+    // Find similar merchants
+    const similar = items.filter(other => {
+      if (other.merchantSlug === item.merchantSlug || processed.has(other.merchantSlug)) return false;
+      
+      const otherNorm = normalizeMerchantForSimilarity(other.merchant);
+      const otherFirst = otherNorm.split(" ")[0] ?? "";
+      
+      // Rule 1: normalized names match exactly (e.g. after stripping codes)
+      if (normalized === otherNorm && normalized.length >= 5) return true;
+      
+      // Rule 2: shared first word ≥5 chars (e.g. "google")
+      if (firstWord.length >= 5 && firstWord === otherFirst) return true;
+      
+      // Rule 3: one is prefix of the other, ≥5 chars, ≥30% coverage
+      const shorter = normalized.length <= otherNorm.length ? normalized : otherNorm;
+      const longer = normalized.length <= otherNorm.length ? otherNorm : normalized;
+      if (shorter.length >= 5 && longer.startsWith(shorter) && shorter.length / longer.length >= 0.3) return true;
+      
+      return false;
+    });
+    
+    if (similar.length > 0) {
+      const group = [item, ...similar];
+      groups.push(group);
+      processed.add(item.merchantSlug);
+      similar.forEach(s => processed.add(s.merchantSlug));
+    }
+  }
+  
+  return groups;
 }

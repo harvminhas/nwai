@@ -4821,41 +4821,16 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     const userConfirmedInactive = summary.inactive.filter(s => userConfirmedSet.has(s.merchantSlug));
     const finalActive = [...summary.subscriptions, ...userConfirmedInactive];
     
-    // Find merge suggestions
-    const { normalizeMerchantForSimilarity } = await import("../src/lib/merchantSimilarity");
+    // Find merge suggestions over ALL detected subscriptions (active, candidates, inactive)
+    const { findMergeSuggestions, normalizeMerchantForSimilarity } = await import("../src/lib/merchantSimilarity");
     
-    const groups: Array<typeof finalActive> = [];
-    const processed = new Set<string>();
+    const allDetected = [
+      ...finalActive,
+      ...summary.candidates,
+      ...summary.inactive.filter(s => !userConfirmedSet.has(s.merchantSlug)),
+    ];
     
-    for (const sub of finalActive) {
-      if (processed.has(sub.merchantSlug)) continue;
-      
-      const normalized = normalizeMerchantForSimilarity(sub.merchant);
-      const firstWord = normalized.split(" ")[0] ?? "";
-      
-      const similar = finalActive.filter(other => {
-        if (other.merchantSlug === sub.merchantSlug || processed.has(other.merchantSlug)) return false;
-        
-        const otherNorm = normalizeMerchantForSimilarity(other.merchant);
-        const otherFirst = otherNorm.split(" ")[0] ?? "";
-        
-        if (normalized === otherNorm && normalized.length >= 5) return true;
-        if (firstWord.length >= 5 && firstWord === otherFirst) return true;
-        
-        const shorter = normalized.length <= otherNorm.length ? normalized : otherNorm;
-        const longer = normalized.length <= otherNorm.length ? otherNorm : normalized;
-        if (shorter.length >= 5 && longer.startsWith(shorter) && shorter.length / longer.length >= 0.3) return true;
-        
-        return false;
-      });
-      
-      if (similar.length > 0) {
-        const group = [sub, ...similar];
-        groups.push(group);
-        processed.add(sub.merchantSlug);
-        similar.forEach(s => processed.add(s.merchantSlug));
-      }
-    }
+    const groups = findMergeSuggestions(allDetected);
     
     // Check for Google Cloud group
     const googleCloudGroup = groups.find(group => 

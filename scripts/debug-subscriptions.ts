@@ -235,45 +235,23 @@ async function debugSubscriptions(uid: string) {
     });
   }
   
-  // Merge suggestions
+  // Merge suggestions (over ALL detected subscriptions, not just active)
   console.log("\n" + "=".repeat(80));
   console.log("MERGE SUGGESTIONS");
   console.log("=".repeat(80) + "\n");
   
-  const { normalizeMerchantForSimilarity } = await import("../src/lib/merchantSimilarity");
+  const { findMergeSuggestions } = await import("../src/lib/merchantSimilarity");
   
-  const groups: Array<typeof finalConfirmedActive> = [];
-  const processed = new Set<string>();
+  // Run over all detected subscriptions (active, candidates, inactive) to catch split variants
+  const allDetected = [
+    ...summary.subscriptions,
+    ...userConfirmedInactive,
+    ...synthesizedSubs,
+    ...summary.candidates,
+    ...summary.inactive.filter(s => !userConfirmedSet.has(s.merchantSlug)),
+  ];
   
-  for (const sub of finalConfirmedActive) {
-    if (processed.has(sub.merchantSlug)) continue;
-    
-    const normalized = normalizeMerchantForSimilarity(sub.merchant);
-    const firstWord = normalized.split(" ")[0] ?? "";
-    
-    const similar = finalConfirmedActive.filter(other => {
-      if (other.merchantSlug === sub.merchantSlug || processed.has(other.merchantSlug)) return false;
-      
-      const otherNorm = normalizeMerchantForSimilarity(other.merchant);
-      const otherFirst = otherNorm.split(" ")[0] ?? "";
-      
-      if (normalized === otherNorm && normalized.length >= 5) return true;
-      if (firstWord.length >= 5 && firstWord === otherFirst) return true;
-      
-      const shorter = normalized.length <= otherNorm.length ? normalized : otherNorm;
-      const longer = normalized.length <= otherNorm.length ? otherNorm : normalized;
-      if (shorter.length >= 5 && longer.startsWith(shorter) && shorter.length / longer.length >= 0.3) return true;
-      
-      return false;
-    });
-    
-    if (similar.length > 0) {
-      const group = [sub, ...similar];
-      groups.push(group);
-      processed.add(sub.merchantSlug);
-      similar.forEach(s => processed.add(s.merchantSlug));
-    }
-  }
+  const groups = findMergeSuggestions(allDetected);
   
   console.log(`Found ${groups.length} merge suggestion groups:\n`);
   
