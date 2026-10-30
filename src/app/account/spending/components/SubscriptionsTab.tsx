@@ -18,6 +18,7 @@ export function SubscriptionsTab({ token }: SubscriptionsTabProps) {
   const [showInactive, setShowInactive] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState<{ message: string; undoId?: string } | null>(null);
+  const [dismissedMergeGroups, setDismissedMergeGroups] = useState<Set<string>>(new Set());
 
   const loadSubscriptions = async () => {
     try {
@@ -166,6 +167,48 @@ export function SubscriptionsTab({ token }: SubscriptionsTabProps) {
       setSubmitting(false);
     }
   };
+  
+  const handleMergeMerchants = async (group: DetectedSubscription[], canonicalName: string) => {
+    if (!token || submitting) return;
+    
+    setSubmitting(true);
+    
+    try {
+      // Create mappings for all merchants in the group except the canonical one
+      const mappings = group
+        .filter(sub => sub.merchant !== canonicalName)
+        .map(sub => ({
+          type: "expense",
+          canonical: canonicalName,
+          alias: sub.merchant,
+        }));
+      
+      const res = await fetch("/api/user/source-mappings", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ mappings }),
+      });
+      
+      if (res.ok) {
+        setToast({
+          message: `Merged ${group.length} ${canonicalName} charges`,
+        });
+        setTimeout(() => setToast(null), 5000);
+        await loadSubscriptions();
+      }
+    } catch (err) {
+      console.error("Failed to merge merchants:", err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  
+  const handleDismissMergeGroup = (groupKey: string) => {
+    setDismissedMergeGroups(prev => new Set([...prev, groupKey]));
+  };
 
   if (loading) {
     return (
@@ -279,6 +322,45 @@ export function SubscriptionsTab({ token }: SubscriptionsTabProps) {
           </ul>
         </div>
       )}
+
+      {/* Merge suggestions */}
+      {(summary as any).mergeSuggestions?.filter((group: DetectedSubscription[]) => {
+        const groupKey = group.map(s => s.merchantSlug).sort().join("|");
+        return !dismissedMergeGroups.has(groupKey);
+      }).map((group: DetectedSubscription[], idx: number) => {
+        const groupKey = group.map(s => s.merchantSlug).sort().join("|");
+        const firstMerchant = group[0].merchant;
+        const normalizedName = firstMerchant.replace(/[^a-zA-Z0-9 ]+/g, " ").trim();
+        const canonicalName = normalizedName.split(" ").slice(0, 2).join(" "); // First 2 words
+        
+        return (
+          <div key={groupKey} className="bg-purple-50 border border-purple-200 rounded-lg p-4 flex items-center justify-between">
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-purple-900">
+                {group.length} {canonicalName} charges look like the same merchant
+              </p>
+              <p className="text-xs text-purple-700 mt-0.5">
+                {group.map(s => s.merchant).join(", ")}
+              </p>
+            </div>
+            <div className="flex gap-2 ml-4">
+              <button
+                onClick={() => handleDismissMergeGroup(groupKey)}
+                className="px-3 py-1.5 text-xs font-medium text-purple-700 hover:text-purple-900 transition"
+              >
+                Dismiss
+              </button>
+              <button
+                onClick={() => handleMergeMerchants(group, canonicalName)}
+                disabled={submitting}
+                className="px-3 py-1.5 text-xs font-semibold rounded-md bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 transition"
+              >
+                Merge
+              </button>
+            </div>
+          </div>
+        );
+      })}
 
       {/* Active confirmed subscriptions */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">

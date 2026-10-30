@@ -242,7 +242,9 @@ async function debugSubscriptions(uid: string) {
   
   const normalizeMerchantForSimilarity = (name: string): string => {
     let cleaned = name.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
-    cleaned = cleaned.replace(/[\s-]?[a-z0-9]{5,8}$/i, "").trim();
+    // Strip trailing tokens that contain BOTH a letter and a digit (or all digits)
+    cleaned = cleaned.replace(/\s+(?=\S*\d)(?=\S*[a-z])[a-z0-9]{5,8}$/i, "").trim();
+    cleaned = cleaned.replace(/\s+\d{5,8}$/, "").trim();
     return cleaned;
   };
   

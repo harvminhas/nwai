@@ -355,9 +355,11 @@ export async function GET(request: NextRequest) {
       //   Rule 2: first word matches exactly, ≥5 chars
       const normName = (s: string) => {
         let cleaned = s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
-        // Strip trailing random alphanumeric codes (e.g. "google cloud xr3xs7" → "google cloud")
-        // Pattern: 5-8 alphanumeric chars at the end, optionally separated by space/dash
-        cleaned = cleaned.replace(/[\s-]?[a-z0-9]{5,8}$/i, "").trim();
+        // Strip trailing tokens that contain BOTH a letter and a digit (or all digits)
+        // This catches codes like "XR3XS7", "74DBCz", "123456"
+        // but preserves real words like "netflix", "resend", "godaddy", "turbotax"
+        cleaned = cleaned.replace(/\s+(?=\S*\d)(?=\S*[a-z])[a-z0-9]{5,8}$/i, "").trim();
+        cleaned = cleaned.replace(/\s+\d{5,8}$/, "").trim();
         return cleaned;
       };
       const firstWord = (s: string) => normName(s).split(" ")[0] ?? "";

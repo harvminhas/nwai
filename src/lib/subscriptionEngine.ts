@@ -408,10 +408,10 @@ function detectSubscription(
     intervals.push(daysBetween(sorted[i - 1].date, sorted[i].date));
   }
   
-  // Average interval (or use a reasonable default for single-charge known subs)
+  // Average interval (or use a reasonable default for single-charge user-confirmed subs)
   const avgInterval = intervals.length > 0 
     ? intervals.reduce((s, i) => s + i, 0) / intervals.length 
-    : (tier === "confirmed" && sorted.length === 1) ? 365 : 30; // Single-charge confirmed subs default to yearly
+    : (isUserConfirmed && sorted.length === 1) ? 365 : 30; // User-confirmed single charge defaults to yearly
   
   // Determine cadence
   let cadence: SubscriptionCadence = "ambiguous";
@@ -420,8 +420,9 @@ function detectSubscription(
   } else if (avgInterval >= 320 && avgInterval <= 400) {
     cadence = "yearly";
   } else if (tier === "confirmed") {
-    // Known/confirmed subs: single-charge defaults to yearly, multi-charge to monthly
-    cadence = sorted.length === 1 ? "yearly" : "monthly";
+    // User-confirmed single charge: default to yearly
+    // Multi-charge with ambiguous interval: default to monthly
+    cadence = (isUserConfirmed && sorted.length === 1) ? "yearly" : "monthly";
   } else {
     // Candidates with unclear cadence are rejected
     return null;
