@@ -4652,6 +4652,116 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
 
   console.log();
 
+  // Check 11: Real subscription reviews synthesis validation
+  console.log("\nCheck 11: All is_subscription reviews appear in synthesis output");
+  try {
+    const { buildSubscriptionSummary } = await import("../src/lib/subscriptionEngine");
+    const { synthesizeSubscriptions } = await import("../src/lib/subscriptionSynthesis");
+    
+    // Load actual subscription reviews
+    const subReviewsSnap = await db
+      .collection(`users/${uid}/reviews`)
+      .where("type", "==", "subscription")
+      .get();
+    
+    if (subReviewsSnap.docs.length === 0) {
+      console.log(`  ⊘ No subscription reviews found for this user`);
+    } else {
+      // Parse reviews
+      const userConfirmedSlugs: string[] = [];
+      const excludedSlugs = new Set<string>();
+      const billingFrequencyOverrides = new Map<string, import("../src/lib/reviewTypes").BillingFrequency>();
+      
+      subReviewsSnap.docs.forEach(doc => {
+        const classification = doc.get("classification");
+        const merchantSlug = doc.get("merchantSlug") || doc.id;
+        const billingFrequency = doc.get("billingFrequency");
+        
+        if (classification === "is_subscription" || classification === "still_active") {
+          userConfirmedSlugs.push(merchantSlug);
+        } else if (classification === "not_subscription") {
+          excludedSlugs.add(merchantSlug);
+        }
+        
+        if (billingFrequency) {
+          billingFrequencyOverrides.set(merchantSlug, billingFrequency);
+        }
+      });
+      
+      console.log(`  Found ${userConfirmedSlugs.length} is_subscription reviews to validate`);
+      
+      if (userConfirmedSlugs.length === 0) {
+        console.log(`  ⊘ No is_subscription reviews to validate`);
+      } else {
+        // Filter excluded merchants
+        const filteredExpenseTxns = profile.expenseTxns.filter(txn => {
+          const { merchantSlug } = require("../src/lib/applyRules");
+          const slug = merchantSlug(txn.merchant);
+          return !excludedSlugs.has(slug);
+        });
+        
+        // Run engine
+        const summary = buildSubscriptionSummary(
+          filteredExpenseTxns,
+          profile.homeCurrency,
+          undefined,
+          userConfirmedSlugs,
+          billingFrequencyOverrides
+        );
+        
+        // Get all detected slugs
+        const allDetectedSlugs = new Set([
+          ...summary.subscriptions.map(s => s.merchantSlug),
+          ...summary.candidates.map(s => s.merchantSlug),
+          ...summary.inactive.map(s => s.merchantSlug),
+        ]);
+        
+        // Run synthesis on undetected slugs
+        const synthesized = synthesizeSubscriptions(
+          userConfirmedSlugs,
+          allDetectedSlugs,
+          profile.expenseTxns,
+          billingFrequencyOverrides
+        );
+        
+        // Combine: engine-detected + synthesized
+        const finalSlugs = new Set([
+          ...allDetectedSlugs,
+          ...synthesized.map(s => s.merchantSlug),
+        ]);
+        
+        // Validate: every is_subscription slug should appear
+        let allPresent = true;
+        const missing: string[] = [];
+        
+        userConfirmedSlugs.forEach(slug => {
+          if (!finalSlugs.has(slug)) {
+            allPresent = false;
+            missing.push(slug);
+          }
+        });
+        
+        if (allPresent) {
+          console.log(`  ✓ All ${userConfirmedSlugs.length} is_subscription slugs appear in final output`);
+          console.log(`    Engine detected: ${allDetectedSlugs.size}`);
+          console.log(`    Synthesized: ${synthesized.length}`);
+        } else {
+          console.log(`  ❌ FAIL: ${missing.length} is_subscription slugs missing from output:`);
+          missing.forEach(slug => console.log(`      - ${slug}`));
+          errors.push(`Subscription: ${missing.length} is_subscription reviews missing from synthesis output`);
+          debtPayoffErrors++;
+        }
+      }
+    }
+    
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error validating subscription synthesis: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Subscription: failed to validate synthesis");
+    debtPayoffErrors++;
+  }
+
+  console.log();
+
   // Final summary - check ALL error conditions
   const totalFailures = 
     (allErrors ? errors.length : 0) +
