@@ -3626,6 +3626,35 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     debtPayoffErrors++;
   }
 
+  // Check 4: Account layout renders PlanProvider
+  console.log("\nCheck 4: Account layout renders PlanProvider");
+  try {
+    const fs = await import("fs/promises");
+    const accountLayoutPath = "src/app/account/layout.tsx";
+    
+    const content = await fs.readFile(accountLayoutPath, "utf-8");
+    
+    const hasPlanProviderImport = content.includes("from \"@/contexts/PlanContext\"") || content.includes("from '@/contexts/PlanContext'");
+    const hasPlanProviderRender = content.includes("<PlanProvider");
+    const hasActiveProfileProvider = content.includes("<ActiveProfileProvider");
+    const hasProfileRefreshProvider = content.includes("<ProfileRefreshProvider");
+    
+    if (hasPlanProviderImport && hasPlanProviderRender && hasActiveProfileProvider && hasProfileRefreshProvider) {
+      console.log(`  ✓ Account layout renders all required providers (ActiveProfile, Plan, ProfileRefresh)`);
+    } else {
+      console.log(`  ❌ FAIL: Account layout missing required providers`);
+      console.log(`    PlanProvider import: ${hasPlanProviderImport}, render: ${hasPlanProviderRender}`);
+      console.log(`    ActiveProfileProvider: ${hasActiveProfileProvider}`);
+      console.log(`    ProfileRefreshProvider: ${hasProfileRefreshProvider}`);
+      errors.push("Debt payoff: account layout missing providers");
+      debtPayoffErrors++;
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking account layout providers: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Debt payoff: failed to check account layout providers");
+    debtPayoffErrors++;
+  }
+
   console.log();
 
   // Final summary - check ALL error conditions
