@@ -4,8 +4,65 @@ import { getFinancialProfile } from "@/lib/financialProfile";
 import { buildSubscriptionSummary } from "@/lib/subscriptionEngine";
 import { buildSpendingSummary } from "@/lib/spendingSummary";
 import { synthesizeSubscriptions } from "@/lib/subscriptionSynthesis";
+import type { DetectedSubscription } from "@/lib/subscriptionEngine";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * Normalize merchant name for similarity matching.
+ * Strips special chars, trailing random codes, and normalizes whitespace.
+ */
+function normalizeMerchantForSimilarity(name: string): string {
+  let cleaned = name.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  // Strip trailing random alphanumeric codes (e.g. "google cloud xr3xs7" → "google cloud")
+  cleaned = cleaned.replace(/[\s-]?[a-z0-9]{5,8}$/i, "").trim();
+  return cleaned;
+}
+
+/**
+ * Find groups of similar subscription merchants that should be suggested for merging.
+ */
+function findMergeSuggestions(subscriptions: DetectedSubscription[]): Array<DetectedSubscription[]> {
+  const groups: Array<DetectedSubscription[]> = [];
+  const processed = new Set<string>();
+  
+  for (const sub of subscriptions) {
+    if (processed.has(sub.merchantSlug)) continue;
+    
+    const normalized = normalizeMerchantForSimilarity(sub.merchant);
+    const firstWord = normalized.split(" ")[0] ?? "";
+    
+    // Find similar merchants
+    const similar = subscriptions.filter(other => {
+      if (other.merchantSlug === sub.merchantSlug || processed.has(other.merchantSlug)) return false;
+      
+      const otherNorm = normalizeMerchantForSimilarity(other.merchant);
+      const otherFirst = otherNorm.split(" ")[0] ?? "";
+      
+      // Rule 1: normalized names match exactly (e.g. after stripping codes)
+      if (normalized === otherNorm && normalized.length >= 5) return true;
+      
+      // Rule 2: shared first word ≥5 chars (e.g. "google")
+      if (firstWord.length >= 5 && firstWord === otherFirst) return true;
+      
+      // Rule 3: one is prefix of the other, ≥5 chars, ≥30% coverage
+      const shorter = normalized.length <= otherNorm.length ? normalized : otherNorm;
+      const longer = normalized.length <= otherNorm.length ? otherNorm : normalized;
+      if (shorter.length >= 5 && longer.startsWith(shorter) && shorter.length / longer.length >= 0.3) return true;
+      
+      return false;
+    });
+    
+    if (similar.length > 0) {
+      const group = [sub, ...similar];
+      groups.push(group);
+      processed.add(sub.merchantSlug);
+      similar.forEach(s => processed.add(s.merchantSlug));
+    }
+  }
+  
+  return groups;
+}
 
 /**
  * GET /api/user/subscriptions
@@ -151,6 +208,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       }
     });
 
+    // Find merge suggestion groups
+    const mergeSuggestions = findMergeSuggestions(confirmedActive);
+    
     return NextResponse.json({
       ...summary,
       subscriptions: confirmedActive,
@@ -159,6 +219,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       monthlyTotal: adjustedMonthlyTotal,
       yearlyTotal: adjustedYearlyTotal,
       activeCount: confirmedActive.length,
+      mergeSuggestions,
     });
   } catch (error) {
     console.error("Subscriptions error:", error);

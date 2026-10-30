@@ -4769,6 +4769,130 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
 
   console.log();
 
+  // Check 12: Google Cloud variants produce merge suggestion
+  console.log("\nCheck 12: Google Cloud variants trigger merge suggestion on real data");
+  try {
+    const { buildSubscriptionSummary } = await import("../src/lib/subscriptionEngine");
+    
+    // Load subscription reviews
+    const subReviewsSnap = await db
+      .collection(`users/${uid}/reviews`)
+      .where("type", "==", "subscription")
+      .get();
+    
+    const userConfirmedSlugs: string[] = [];
+    const excludedSlugs = new Set<string>();
+    const billingFrequencyOverrides = new Map<string, import("../src/lib/reviewTypes").BillingFrequency>();
+    
+    subReviewsSnap.docs.forEach(doc => {
+      const classification = doc.get("classification");
+      const merchantSlug = doc.get("merchantSlug") || doc.id;
+      const billingFrequency = doc.get("billingFrequency");
+      
+      if (classification === "is_subscription" || classification === "still_active") {
+        userConfirmedSlugs.push(merchantSlug);
+      } else if (classification === "not_subscription") {
+        excludedSlugs.add(merchantSlug);
+      }
+      
+      if (billingFrequency) {
+        billingFrequencyOverrides.set(merchantSlug, billingFrequency);
+      }
+    });
+    
+    // Filter excluded merchants
+    const filteredExpenseTxns = profile.expenseTxns.filter(txn => {
+      const { merchantSlug } = require("../src/lib/applyRules");
+      const slug = merchantSlug(txn.merchant);
+      return !excludedSlugs.has(slug);
+    });
+    
+    // Run engine
+    const summary = buildSubscriptionSummary(
+      filteredExpenseTxns,
+      profile.homeCurrency,
+      undefined,
+      userConfirmedSlugs,
+      billingFrequencyOverrides
+    );
+    
+    // Build final active list
+    const userConfirmedSet = new Set(userConfirmedSlugs);
+    const userConfirmedInactive = summary.inactive.filter(s => userConfirmedSet.has(s.merchantSlug));
+    const finalActive = [...summary.subscriptions, ...userConfirmedInactive];
+    
+    // Find merge suggestions
+    const normalizeMerchantForSimilarity = (name: string): string => {
+      let cleaned = name.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+      cleaned = cleaned.replace(/[\s-]?[a-z0-9]{5,8}$/i, "").trim();
+      return cleaned;
+    };
+    
+    const groups: Array<typeof finalActive> = [];
+    const processed = new Set<string>();
+    
+    for (const sub of finalActive) {
+      if (processed.has(sub.merchantSlug)) continue;
+      
+      const normalized = normalizeMerchantForSimilarity(sub.merchant);
+      const firstWord = normalized.split(" ")[0] ?? "";
+      
+      const similar = finalActive.filter(other => {
+        if (other.merchantSlug === sub.merchantSlug || processed.has(other.merchantSlug)) return false;
+        
+        const otherNorm = normalizeMerchantForSimilarity(other.merchant);
+        const otherFirst = otherNorm.split(" ")[0] ?? "";
+        
+        if (normalized === otherNorm && normalized.length >= 5) return true;
+        if (firstWord.length >= 5 && firstWord === otherFirst) return true;
+        
+        const shorter = normalized.length <= otherNorm.length ? normalized : otherNorm;
+        const longer = normalized.length <= otherNorm.length ? otherNorm : normalized;
+        if (shorter.length >= 5 && longer.startsWith(shorter) && shorter.length / longer.length >= 0.3) return true;
+        
+        return false;
+      });
+      
+      if (similar.length > 0) {
+        const group = [sub, ...similar];
+        groups.push(group);
+        processed.add(sub.merchantSlug);
+        similar.forEach(s => processed.add(s.merchantSlug));
+      }
+    }
+    
+    // Check for Google Cloud group
+    const googleCloudGroup = groups.find(group => 
+      group.some(sub => normalizeMerchantForSimilarity(sub.merchant).includes("google cloud"))
+    );
+    
+    if (googleCloudGroup && googleCloudGroup.length > 1) {
+      console.log(`  ✓ Google Cloud variants produce merge suggestion (${googleCloudGroup.length} merchants in group)`);
+      googleCloudGroup.forEach(sub => {
+        console.log(`    - ${sub.merchant} (${sub.merchantSlug})`);
+      });
+    } else {
+      const googleItems = finalActive.filter(s => 
+        s.merchant.toLowerCase().includes("google") && s.merchant.toLowerCase().includes("cloud")
+      );
+      if (googleItems.length > 1) {
+        console.log(`  ❌ FAIL: ${googleItems.length} Google Cloud items found but not grouped as merge suggestion:`);
+        googleItems.forEach(sub => console.log(`      - ${sub.merchant} (${sub.merchantSlug})`));
+        errors.push("Subscription: Google Cloud variants not detected as merge suggestion");
+        debtPayoffErrors++;
+      } else {
+        console.log(`  ⊘ No multiple Google Cloud items in this user's data`);
+      }
+    }
+    
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking merge suggestions: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Subscription: failed to check merge suggestions");
+    debtPayoffErrors++;
+  }
+
+  console.log();
+
   // Final summary - check ALL error conditions
   const totalFailures = 
     (allErrors ? errors.length : 0) +

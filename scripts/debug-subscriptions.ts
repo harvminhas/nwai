@@ -230,11 +230,76 @@ async function debugSubscriptions(uid: string) {
     console.log("Confirmed active list:");
     finalConfirmedActive.forEach(sub => {
       const hint = sub.noRecentCharge ? " [no recent charge]" : "";
-      console.log(`  - ${sub.merchant} (${sub.merchantSlug}): ${sub.amount} ${profile.homeCurrency}${hint}`);
+      const cadenceStr = sub.cadence === "yearly" ? "yearly" : sub.cadence === "monthly" ? "monthly" : "ambig";
+      console.log(`  - ${sub.merchant} (${sub.merchantSlug}): ${sub.amount} ${profile.homeCurrency} [${cadenceStr}, last: ${sub.lastDate}]${hint}`);
     });
   }
   
+  // Merge suggestions
   console.log("\n" + "=".repeat(80));
+  console.log("MERGE SUGGESTIONS");
+  console.log("=".repeat(80) + "\n");
+  
+  const normalizeMerchantForSimilarity = (name: string): string => {
+    let cleaned = name.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+    cleaned = cleaned.replace(/[\s-]?[a-z0-9]{5,8}$/i, "").trim();
+    return cleaned;
+  };
+  
+  const groups: Array<typeof finalConfirmedActive> = [];
+  const processed = new Set<string>();
+  
+  for (const sub of finalConfirmedActive) {
+    if (processed.has(sub.merchantSlug)) continue;
+    
+    const normalized = normalizeMerchantForSimilarity(sub.merchant);
+    const firstWord = normalized.split(" ")[0] ?? "";
+    
+    const similar = finalConfirmedActive.filter(other => {
+      if (other.merchantSlug === sub.merchantSlug || processed.has(other.merchantSlug)) return false;
+      
+      const otherNorm = normalizeMerchantForSimilarity(other.merchant);
+      const otherFirst = otherNorm.split(" ")[0] ?? "";
+      
+      if (normalized === otherNorm && normalized.length >= 5) return true;
+      if (firstWord.length >= 5 && firstWord === otherFirst) return true;
+      
+      const shorter = normalized.length <= otherNorm.length ? normalized : otherNorm;
+      const longer = normalized.length <= otherNorm.length ? otherNorm : normalized;
+      if (shorter.length >= 5 && longer.startsWith(shorter) && shorter.length / longer.length >= 0.3) return true;
+      
+      return false;
+    });
+    
+    if (similar.length > 0) {
+      const group = [sub, ...similar];
+      groups.push(group);
+      processed.add(sub.merchantSlug);
+      similar.forEach(s => processed.add(s.merchantSlug));
+    }
+  }
+  
+  console.log(`Found ${groups.length} merge suggestion groups:\n`);
+  
+  if (groups.length === 0) {
+    console.log("  No merge suggestions (all merchants are distinct)\n");
+  } else {
+    groups.forEach((group, i) => {
+      console.log(`Group ${i + 1}: ${group.length} similar merchants`);
+      group.forEach(sub => {
+        console.log(`  - ${sub.merchant} (${sub.merchantSlug}): ${sub.amount} ${profile.homeCurrency}`);
+      });
+      const totalMonthly = group.reduce((sum, sub) => {
+        if (sub.billingFrequency === "yearly" || (!sub.billingFrequency && sub.cadence === "yearly")) {
+          return sum + (sub.amount / 12);
+        }
+        return sum + sub.amount;
+      }, 0);
+      console.log(`  Combined monthly: ${totalMonthly.toFixed(2)} ${profile.homeCurrency}\n`);
+    });
+  }
+  
+  console.log("=".repeat(80));
 }
 
 // Main

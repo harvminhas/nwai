@@ -353,8 +353,13 @@ export async function GET(request: NextRequest) {
       // Find similar merchants using:
       //   Rule 1 (relaxed): shorter is a prefix of longer, ≥5 chars, ≥30% coverage
       //   Rule 2: first word matches exactly, ≥5 chars
-      const normName = (s: string) =>
-        s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+      const normName = (s: string) => {
+        let cleaned = s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+        // Strip trailing random alphanumeric codes (e.g. "google cloud xr3xs7" → "google cloud")
+        // Pattern: 5-8 alphanumeric chars at the end, optionally separated by space/dash
+        cleaned = cleaned.replace(/[\s-]?[a-z0-9]{5,8}$/i, "").trim();
+        return cleaned;
+      };
       const firstWord = (s: string) => normName(s).split(" ")[0] ?? "";
 
       const similarMerchants: MerchantSummary[] = target
