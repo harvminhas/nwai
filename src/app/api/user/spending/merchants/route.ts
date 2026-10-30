@@ -353,8 +353,8 @@ export async function GET(request: NextRequest) {
       // Find similar merchants using:
       //   Rule 1 (relaxed): shorter is a prefix of longer, ≥5 chars, ≥30% coverage
       //   Rule 2: first word matches exactly, ≥5 chars
-      const normName = (s: string) =>
-        s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+      const { normalizeMerchantForSimilarity } = await import("@/lib/merchantSimilarity");
+      const normName = (s: string) => normalizeMerchantForSimilarity(s);
       const firstWord = (s: string) => normName(s).split(" ")[0] ?? "";
 
       const similarMerchants: MerchantSummary[] = target

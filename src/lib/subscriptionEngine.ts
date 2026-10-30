@@ -54,6 +54,8 @@ export interface DetectedSubscription {
   tier: SubscriptionTier;
   /** Status: active or inactive */
   status: SubscriptionStatus;
+  /** Flag for user-confirmed subs that are past their normal grace period */
+  noRecentCharge?: boolean;
 }
 
 export interface SubscriptionSummary {
@@ -333,8 +335,8 @@ function determineStatus(
     // Monthly/weekly/quarterly: active if charged within 45 days
     return daysSinceLast <= 45 ? "active" : "inactive";
   } else if (effectiveCadence === "yearly") {
-    // Yearly: active if charged within 400 days of latest txn date
-    return daysSinceLast <= 400 ? "active" : "inactive";
+    // Yearly: active if charged within 13 months (395 days) of latest txn date
+    return daysSinceLast <= 395 ? "active" : "inactive";
   }
   
   // Ambiguous cadence: consider active if within 45 days
@@ -406,10 +408,10 @@ function detectSubscription(
     intervals.push(daysBetween(sorted[i - 1].date, sorted[i].date));
   }
   
-  // Average interval (or use a reasonable default for single-charge known subs)
+  // Average interval (or use a reasonable default for single-charge confirmed subs)
   const avgInterval = intervals.length > 0 
     ? intervals.reduce((s, i) => s + i, 0) / intervals.length 
-    : 30; // Default to monthly for known subs with 1 charge
+    : (tier === "confirmed" && sorted.length === 1) ? 365 : 30; // Single-charge confirmed defaults to yearly
   
   // Determine cadence
   let cadence: SubscriptionCadence = "ambiguous";
@@ -418,8 +420,8 @@ function detectSubscription(
   } else if (avgInterval >= 320 && avgInterval <= 400) {
     cadence = "yearly";
   } else if (tier === "confirmed") {
-    // Known/confirmed subs get monthly cadence by default if ambiguous
-    cadence = "monthly";
+    // Confirmed subs: single-charge defaults to yearly, multi-charge to monthly
+    cadence = sorted.length === 1 ? "yearly" : "monthly";
   } else {
     // Candidates with unclear cadence are rejected
     return null;
@@ -478,6 +480,9 @@ function detectSubscription(
     }
   }
   
+  // Flag user-confirmed subs that are stale but should still be shown as active
+  const noRecentCharge = isUserConfirmed && status === "inactive";
+  
   return {
     merchant,
     merchantSlug: normalizedSlug,
@@ -495,6 +500,7 @@ function detectSubscription(
     transactions: sorted,
     tier,
     status,
+    noRecentCharge: noRecentCharge ? true : undefined,
   };
 }
 

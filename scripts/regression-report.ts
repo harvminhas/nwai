@@ -4652,6 +4652,225 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
 
   console.log();
 
+  // Check 11: Real subscription reviews synthesis validation
+  console.log("\nCheck 11: All is_subscription reviews appear in synthesis output");
+  try {
+    const { buildSubscriptionSummary } = await import("../src/lib/subscriptionEngine");
+    const { synthesizeSubscriptions } = await import("../src/lib/subscriptionSynthesis");
+    
+    // Load actual subscription reviews
+    const subReviewsSnap = await db
+      .collection(`users/${uid}/reviews`)
+      .where("type", "==", "subscription")
+      .get();
+    
+    if (subReviewsSnap.docs.length === 0) {
+      console.log(`  ⊘ No subscription reviews found for this user`);
+    } else {
+      // Parse reviews
+      const userConfirmedSlugs: string[] = [];
+      const excludedSlugs = new Set<string>();
+      const cancelledSlugs = new Set<string>();
+      const billingFrequencyOverrides = new Map<string, import("../src/lib/reviewTypes").BillingFrequency>();
+      
+      subReviewsSnap.docs.forEach(doc => {
+        const classification = doc.get("classification");
+        const merchantSlug = doc.get("merchantSlug") || doc.id;
+        const billingFrequency = doc.get("billingFrequency");
+        
+        if (classification === "is_subscription" || classification === "still_active") {
+          userConfirmedSlugs.push(merchantSlug);
+        } else if (classification === "not_subscription") {
+          excludedSlugs.add(merchantSlug);
+        } else if (classification === "cancelled") {
+          cancelledSlugs.add(merchantSlug);
+        }
+        
+        if (billingFrequency) {
+          billingFrequencyOverrides.set(merchantSlug, billingFrequency);
+        }
+      });
+      
+      console.log(`  Found ${userConfirmedSlugs.length} is_subscription reviews to validate`);
+      
+      if (userConfirmedSlugs.length === 0) {
+        console.log(`  ⊘ No is_subscription reviews to validate`);
+      } else {
+        // Filter excluded merchants
+        const filteredExpenseTxns = profile.expenseTxns.filter(txn => {
+          const { merchantSlug } = require("../src/lib/applyRules");
+          const slug = merchantSlug(txn.merchant);
+          return !excludedSlugs.has(slug);
+        });
+        
+        // Run engine
+        const summary = buildSubscriptionSummary(
+          filteredExpenseTxns,
+          profile.homeCurrency,
+          undefined,
+          userConfirmedSlugs,
+          billingFrequencyOverrides
+        );
+        
+        // Get all detected slugs
+        const allDetectedSlugs = new Set([
+          ...summary.subscriptions.map(s => s.merchantSlug),
+          ...summary.candidates.map(s => s.merchantSlug),
+          ...summary.inactive.map(s => s.merchantSlug),
+        ]);
+        
+        // Run synthesis on undetected slugs
+        const synthesized = synthesizeSubscriptions(
+          userConfirmedSlugs,
+          allDetectedSlugs,
+          profile.expenseTxns,
+          billingFrequencyOverrides
+        );
+        
+        // Build final active list (matching API route logic)
+        // Product decision: ALL confirmed subscriptions stay active (engine-confirmed or user-confirmed)
+        const cancelled = summary.inactive.filter(s => cancelledSlugs.has(s.merchantSlug));
+        const inactive = summary.inactive.filter(s => !cancelledSlugs.has(s.merchantSlug));
+        const confirmedInactive = inactive.filter(s => s.tier === "confirmed");
+        
+        const finalActiveSubs = [
+          ...summary.subscriptions,
+          ...confirmedInactive, // ALL confirmed items moved from inactive
+          ...synthesized,
+        ];
+        
+        const finalActiveSlugs = new Set(finalActiveSubs.map(s => s.merchantSlug));
+        
+        // Validate: every is_subscription slug should be in the ACTIVE list
+        let allPresent = true;
+        const missing: string[] = [];
+        
+        userConfirmedSlugs.forEach(slug => {
+          if (!finalActiveSlugs.has(slug)) {
+            allPresent = false;
+            missing.push(slug);
+          }
+        });
+        
+        if (allPresent) {
+          console.log(`  ✓ All ${userConfirmedSlugs.length} is_subscription slugs appear in ACTIVE list`);
+          console.log(`    Engine naturally active: ${summary.subscriptions.length}`);
+          console.log(`    Confirmed (was inactive): ${confirmedInactive.length}`);
+          console.log(`    Synthesized: ${synthesized.length}`);
+        } else {
+          console.log(`  ❌ FAIL: ${missing.length} is_subscription slugs missing from ACTIVE list:`);
+          missing.forEach(slug => console.log(`      - ${slug}`));
+          errors.push(`Subscription: ${missing.length} is_subscription reviews missing from active subscriptions list`);
+          debtPayoffErrors++;
+        }
+      }
+    }
+    
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error validating subscription synthesis: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Subscription: failed to validate synthesis");
+    debtPayoffErrors++;
+  }
+
+  console.log();
+
+  // Check 12: Google Cloud variants produce merge suggestion
+  console.log("\nCheck 12: Google Cloud variants trigger merge suggestion on real data");
+  try {
+    const { buildSubscriptionSummary } = await import("../src/lib/subscriptionEngine");
+    
+    // Load subscription reviews
+    const subReviewsSnap = await db
+      .collection(`users/${uid}/reviews`)
+      .where("type", "==", "subscription")
+      .get();
+    
+    const userConfirmedSlugs: string[] = [];
+    const excludedSlugs = new Set<string>();
+    const billingFrequencyOverrides = new Map<string, import("../src/lib/reviewTypes").BillingFrequency>();
+    
+    subReviewsSnap.docs.forEach(doc => {
+      const classification = doc.get("classification");
+      const merchantSlug = doc.get("merchantSlug") || doc.id;
+      const billingFrequency = doc.get("billingFrequency");
+      
+      if (classification === "is_subscription" || classification === "still_active") {
+        userConfirmedSlugs.push(merchantSlug);
+      } else if (classification === "not_subscription") {
+        excludedSlugs.add(merchantSlug);
+      }
+      
+      if (billingFrequency) {
+        billingFrequencyOverrides.set(merchantSlug, billingFrequency);
+      }
+    });
+    
+    // Filter excluded merchants
+    const filteredExpenseTxns = profile.expenseTxns.filter(txn => {
+      const { merchantSlug } = require("../src/lib/applyRules");
+      const slug = merchantSlug(txn.merchant);
+      return !excludedSlugs.has(slug);
+    });
+    
+    // Run engine
+    const summary = buildSubscriptionSummary(
+      filteredExpenseTxns,
+      profile.homeCurrency,
+      undefined,
+      userConfirmedSlugs,
+      billingFrequencyOverrides
+    );
+    
+    // Build final active list
+    const userConfirmedSet = new Set(userConfirmedSlugs);
+    const userConfirmedInactive = summary.inactive.filter(s => userConfirmedSet.has(s.merchantSlug));
+    const finalActive = [...summary.subscriptions, ...userConfirmedInactive];
+    
+    // Find merge suggestions over ALL detected subscriptions (active, candidates, inactive)
+    const { findMergeSuggestions, normalizeMerchantForSimilarity } = await import("../src/lib/merchantSimilarity");
+    
+    const allDetected = [
+      ...finalActive,
+      ...summary.candidates,
+      ...summary.inactive.filter(s => !userConfirmedSet.has(s.merchantSlug)),
+    ];
+    
+    const groups = findMergeSuggestions(allDetected);
+    
+    // Check for Google Cloud group
+    const googleCloudGroup = groups.find(group => 
+      group.some(sub => normalizeMerchantForSimilarity(sub.merchant).includes("google cloud"))
+    );
+    
+    const googleItems = finalActive.filter(s => 
+      s.merchant.toLowerCase().includes("google") && s.merchant.toLowerCase().includes("cloud")
+    );
+    
+    if (googleItems.length > 1) {
+      // We have multiple Google Cloud items, so they MUST be grouped
+      if (googleCloudGroup && googleCloudGroup.length > 1) {
+        console.log(`  ✓ Google Cloud variants produce merge suggestion (${googleCloudGroup.length} merchants in group)`);
+        googleCloudGroup.forEach(sub => {
+          console.log(`    - ${sub.merchant} (${sub.merchantSlug})`);
+        });
+      } else {
+        console.log(`  ❌ FAIL: ${googleItems.length} Google Cloud items found but not grouped as merge suggestion (${groups.length} total groups found):`);
+        googleItems.forEach(sub => console.log(`      - ${sub.merchant} (${sub.merchantSlug})`));
+        errors.push("Subscription: Google Cloud variants not detected as merge suggestion");
+        debtPayoffErrors++;
+      }
+    } else {
+      console.log(`  ⊘ No multiple Google Cloud items in this user's data (found ${googleItems.length})`);
+    }
+    
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking merge suggestions: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Subscription: failed to check merge suggestions");
+    debtPayoffErrors++;
+  }
+
+  console.log();
+
   // Final summary - check ALL error conditions
   const totalFailures = 
     (allErrors ? errors.length : 0) +
