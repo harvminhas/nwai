@@ -3320,8 +3320,14 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     const aiAskRouteContent = await fs.readFile(aiAskRoutePath, "utf-8");
     const aiAskUsesResolvePlan = aiAskRouteContent.includes("resolvePlan(") && aiAskRouteContent.includes("from \"../plan/route\"");
     
+    // Check statements route
+    const statementsRoutePath = path.join(process.cwd(), "src/app/api/user/statements/route.ts");
+    const statementsRouteContent = await fs.readFile(statementsRoutePath, "utf-8");
+    const statementsUsesResolvePlan = statementsRouteContent.includes("resolvePlan(") && statementsRouteContent.includes("from \"@/app/api/user/plan/route\"");
+    
     console.log(`  Upload route uses resolvePlan: ${uploadUsesResolvePlan ? "✓" : "❌"}`);
     console.log(`  AI-ask route uses resolvePlan: ${aiAskUsesResolvePlan ? "✓" : "❌"}`);
+    console.log(`  Statements route uses resolvePlan: ${statementsUsesResolvePlan ? "✓" : "❌"}`);
     
     if (!uploadUsesResolvePlan) {
       errors.push("Plan alignment: upload route must import and use resolvePlan from plan/route");
@@ -3331,9 +3337,99 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       errors.push("Plan alignment: ai-ask route must import and use resolvePlan from plan/route");
       planAlignmentErrors++;
     }
+    if (!statementsUsesResolvePlan) {
+      errors.push("Plan alignment: statements route must import and use resolvePlan from plan/route");
+      planAlignmentErrors++;
+    }
   } catch (err) {
     console.log(`  ❌ FAIL: Error checking resolvePlan usage: ${err instanceof Error ? err.message : String(err)}`);
     errors.push("Plan alignment: failed to check resolvePlan usage");
+    planAlignmentErrors++;
+  }
+
+  // Check 3a: Verify statements API quota.isPro matches resolved plan
+  console.log("\nCheck 3a: Statements API quota.isPro consistency");
+  try {
+    const userDoc = await db.collection("users").doc(uid).get();
+    const userData = userDoc.exists ? userDoc.data() : undefined;
+    
+    const { resolvePlan } = await import("../src/app/api/user/plan/route.js");
+    const resolvedPlan = resolvePlan(userData as Record<string, unknown> | undefined) ?? "free";
+    const expectedIsPro = resolvedPlan === "pro";
+    
+    // Simulate what statements route would return
+    const userPlan = resolvePlan(userData as Record<string, unknown> | undefined) ?? "free";
+    const actualIsPro = userPlan === "pro";
+    
+    console.log(`  Resolved plan: ${resolvedPlan}`);
+    console.log(`  Expected quota.isPro: ${expectedIsPro}`);
+    console.log(`  Actual quota.isPro: ${actualIsPro}`);
+    
+    if (expectedIsPro !== actualIsPro) {
+      console.log(`  ❌ FAIL: quota.isPro mismatch`);
+      errors.push(`Plan alignment: quota.isPro (${actualIsPro}) does not match resolved plan (${resolvedPlan})`);
+      planAlignmentErrors++;
+    } else {
+      console.log(`  ✓ quota.isPro matches resolved plan`);
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking quota consistency: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Plan alignment: failed to check quota consistency");
+    planAlignmentErrors++;
+  }
+
+  // Check 3b: No direct userData.plan reads remain
+  console.log("\nCheck 3b: No direct userData.plan reads");
+  try {
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    const { glob } = await import("glob");
+    
+    // Search for direct userData.plan accesses
+    const filesToCheck = await glob("src/app/api/**/*.ts", {
+      ignore: [
+        "**/node_modules/**",
+        "**/plan/route.ts", // resolvePlan itself is defined here
+      ],
+    });
+    
+    const foundDirectReads: Array<{ file: string; line: number; text: string }> = [];
+    
+    for (const file of filesToCheck) {
+      const content = await fs.readFile(file, "utf-8");
+      const lines = content.split("\n");
+      
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        
+        // Look for userData.plan or similar patterns (but not in comments)
+        const trimmed = line.trim();
+        if (trimmed.startsWith("//") || trimmed.startsWith("*")) continue;
+        
+        if (/userData\.plan(?!\w)|userData\[['"']plan['"']\]/.test(line)) {
+          foundDirectReads.push({
+            file: file.replace(process.cwd() + "/", ""),
+            line: i + 1,
+            text: line.trim().slice(0, 100),
+          });
+        }
+      }
+    }
+    
+    if (foundDirectReads.length === 0) {
+      console.log(`  ✓ No direct userData.plan reads in API routes`);
+    } else {
+      console.log(`  ❌ FAIL: Found ${foundDirectReads.length} direct userData.plan reads:`);
+      for (const item of foundDirectReads) {
+        console.log(`    ${item.file}:${item.line}`);
+        console.log(`      ${item.text}`);
+      }
+      errors.push(`Plan alignment: ${foundDirectReads.length} direct userData.plan reads remain in API routes`);
+      planAlignmentErrors++;
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking direct plan reads: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Plan alignment: failed to check direct plan reads");
     planAlignmentErrors++;
   }
 
