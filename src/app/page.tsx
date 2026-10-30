@@ -245,7 +245,536 @@ const steps = [
   },
 ];
 
-export default function Home() {
+// ── V2 Landing Page ───────────────────────────────────────────────────────────
+
+function LandingV2() {
+  return (
+    <>
+      {/* JSON-LD — invisible to users, visible to search engines */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(appJsonLd) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
+      />
+
+      {/* Invisible client component: redirects logged-in users to dashboard */}
+      <AuthRedirect />
+
+      <div className="min-h-screen bg-white">
+        <LandingHeader />
+        <main>
+
+          {/* ── Hero (Clear Value Prop) ──────────────────────────────────────────── */}
+          <section className="relative overflow-hidden bg-gradient-to-b from-purple-50 to-white py-16 md:py-24" aria-label="Hero">
+            <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+              <div className="text-center">
+                <h1 className="font-extrabold text-4xl md:text-5xl lg:text-6xl text-gray-900 leading-tight">
+                  Your bank statement knows<br />
+                  everything. <span className="text-purple-600">Now you do too.</span>
+                </h1>
+                <p className="mt-6 text-lg md:text-xl text-gray-600 max-w-3xl mx-auto leading-relaxed">
+                  Upload a PDF statement and instantly see: <span className="font-semibold text-gray-900">net worth</span>, spending in{" "}
+                  <span className="font-semibold text-purple-600">Fixed</span> /{" "}
+                  <span className="font-semibold text-blue-600">Essentials</span> /{" "}
+                  <span className="font-semibold text-green-600">Flexible</span> groups,{" "}
+                  <span className="font-semibold text-gray-900">forgotten subscriptions</span>, and{" "}
+                  <span className="font-semibold text-gray-900">debt payoff plans</span>.
+                  <br />
+                  <span className="text-base text-gray-500 mt-2 inline-block">No bank login required.</span>
+                </p>
+                <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center items-center">
+                  <Link
+                    href="/upload"
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-purple-600 px-8 py-4 font-semibold text-white shadow-lg transition hover:bg-purple-700 hover:shadow-xl text-lg"
+                  >
+                    Try it free — Upload a statement
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                  </Link>
+                  <p className="text-sm text-gray-500">
+                    PDF · Any major bank · Results in under 60 seconds
+                  </p>
+                </div>
+                
+                {/* Product visual */}
+                <div className="mt-12 max-w-5xl mx-auto">
+                  <div className="rounded-xl shadow-2xl border border-gray-200 overflow-hidden bg-white">
+                    {/* Browser chrome */}
+                    <div className="bg-gray-100 px-4 py-3 flex items-center gap-2 border-b border-gray-200">
+                      <div className="flex gap-1.5">
+                        <div className="w-3 h-3 rounded-full bg-red-400" />
+                        <div className="w-3 h-3 rounded-full bg-yellow-400" />
+                        <div className="w-3 h-3 rounded-full bg-green-400" />
+                      </div>
+                      <div className="flex-1 bg-white rounded-md text-xs text-gray-400 px-4 py-1.5 text-center max-w-xs ml-2">
+                        networth.online
+                      </div>
+                    </div>
+                    
+                    {/* Dashboard preview */}
+                    <div className="p-6 md:p-8 bg-gray-50 space-y-4">
+                      {/* Net worth */}
+                      <div className="bg-white rounded-lg p-6 border border-gray-100">
+                        <div className="text-sm text-gray-500 uppercase tracking-wide font-medium">Net Worth</div>
+                        <div className="text-4xl font-bold text-gray-900 mt-2">$45,234</div>
+                        <div className="flex gap-3 mt-4">
+                          <span className="bg-green-50 text-green-700 text-sm font-semibold px-3 py-1 rounded-full">↑ $1,234 this month</span>
+                        </div>
+                      </div>
+                      
+                      {/* Spending breakdown */}
+                      <div className="bg-white rounded-lg p-6 border border-gray-100">
+                        <div className="text-sm font-semibold text-gray-900 mb-4">October Spending</div>
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-20 text-xs font-medium text-gray-600">Income</div>
+                            <div className="flex-1 h-8 rounded-lg bg-purple-100 flex items-center px-3">
+                              <span className="text-sm font-semibold text-purple-900">$5,200</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="w-20 text-xs font-medium text-gray-600">Spending</div>
+                            <div className="flex-1 flex gap-1">
+                              <div className="h-8 rounded-l-lg bg-purple-600 flex items-center justify-center px-2 text-xs font-semibold text-white" style={{ width: "35%" }}>
+                                Fixed $1,800
+                              </div>
+                              <div className="h-8 bg-blue-500 flex items-center justify-center px-2 text-xs font-semibold text-white" style={{ width: "12%" }}>
+                                Essentials $650
+                              </div>
+                              <div className="h-8 rounded-r-lg bg-green-500 flex items-center justify-center px-2 text-xs font-semibold text-white" style={{ width: "8%" }}>
+                                Flexible $420
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Subscriptions */}
+                      <div className="bg-white rounded-lg p-6 border border-gray-100">
+                        <div className="text-sm font-semibold text-gray-900 mb-3">3 subscriptions need your attention</div>
+                        <div className="space-y-2 text-sm text-gray-600">
+                          <div className="flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full bg-amber-500" />
+                            <span>Netflix, Spotify, LinkedIn haven't charged in 45+ days</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* ── How It Works ────────────────────────────────────────────────────── */}
+          <section className="py-16 md:py-24 bg-white" aria-labelledby="how-heading">
+            <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+              <div className="text-center max-w-2xl mx-auto mb-12">
+                <h2 id="how-heading" className="text-3xl font-bold text-gray-900 md:text-4xl">
+                  Three steps. Under a minute.
+                </h2>
+                <p className="mt-3 text-lg text-gray-600">
+                  No account linking. No waiting. Just a PDF and your complete financial picture.
+                </p>
+              </div>
+              <ol className="grid gap-8 md:grid-cols-3 list-none">
+                {steps.map((step) => (
+                  <li key={step.n} className="bg-gray-50 rounded-xl border border-gray-200 p-8">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-purple-600 font-bold text-white text-xl" aria-hidden="true">
+                      {step.n}
+                    </div>
+                    <h3 className="mt-4 text-lg font-semibold text-gray-900">{step.title}</h3>
+                    <p className="mt-2 text-sm text-gray-600 leading-relaxed">{step.body}</p>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </section>
+
+          {/* ── Key Features ─────────────────────────────────────────────────────── */}
+          <section className="py-16 md:py-24 bg-gray-50" aria-labelledby="features-heading">
+            <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+              <div className="text-center max-w-2xl mx-auto mb-12">
+                <h2 id="features-heading" className="text-3xl font-bold text-gray-900 md:text-4xl">
+                  Everything you need to understand your money
+                </h2>
+              </div>
+              <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
+                {/* Net Worth Tracking */}
+                <div className="bg-white rounded-xl border border-gray-200 p-8 flex flex-col">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-purple-100 mb-4">
+                    <svg className="h-6 w-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    </svg>
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-900">Net Worth Tracking</h3>
+                  <p className="mt-2 text-sm text-gray-600 leading-relaxed flex-1">
+                    See all your accounts in one place. Track assets, liabilities, and monthly changes automatically.
+                  </p>
+                </div>
+
+                {/* Smart Spending Groups */}
+                <div className="bg-white rounded-xl border border-gray-200 p-8 flex flex-col">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-100 mb-4">
+                    <svg className="h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-900">Smart Spending Groups</h3>
+                  <p className="mt-2 text-sm text-gray-600 leading-relaxed flex-1">
+                    Spending organized into Fixed (loans, insurance), Essentials (groceries, utilities), and Flexible (dining, shopping) groups.
+                  </p>
+                </div>
+
+                {/* Subscription Detection */}
+                <div className="bg-white rounded-xl border border-gray-200 p-8 flex flex-col">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-green-100 mb-4">
+                    <svg className="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-900">Subscription Detection</h3>
+                  <p className="mt-2 text-sm text-gray-600 leading-relaxed flex-1">
+                    Automatically find recurring charges across all accounts. Get alerts when subscriptions stop charging or renewals are coming.
+                  </p>
+                </div>
+
+                {/* Debt Payoff Planner */}
+                <div className="bg-white rounded-xl border border-gray-200 p-8 flex flex-col relative">
+                  <span className="absolute top-4 right-4 bg-purple-100 text-purple-700 text-xs font-bold px-2 py-1 rounded">PRO</span>
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-red-100 mb-4">
+                    <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                    </svg>
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-900">Debt Payoff Planner</h3>
+                  <p className="mt-2 text-sm text-gray-600 leading-relaxed flex-1">
+                    Calculate payoff strategies for credit cards and loans. See how extra payments save interest and time.
+                  </p>
+                </div>
+
+                {/* Ask AI */}
+                <div className="bg-white rounded-xl border border-gray-200 p-8 flex flex-col">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-purple-100 mb-4">
+                    <svg className="h-6 w-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                    </svg>
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-900">Ask AI</h3>
+                  <p className="mt-2 text-sm text-gray-600 leading-relaxed flex-1">
+                    Chat about your finances. Ask questions like "Where can I cut spending?" or "Am I saving enough?" 50 free answers per month.
+                  </p>
+                </div>
+
+                {/* Spending Forecast */}
+                <div className="bg-white rounded-xl border border-gray-200 p-8 flex flex-col relative">
+                  <span className="absolute top-4 right-4 bg-purple-100 text-purple-700 text-xs font-bold px-2 py-1 rounded">PRO</span>
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-amber-100 mb-4">
+                    <svg className="h-6 w-6 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    </svg>
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-900">Spending Forecast</h3>
+                  <p className="mt-2 text-sm text-gray-600 leading-relaxed flex-1">
+                    See upcoming bills and income. Plan around paydays with extra paychecks or seasonal expenses.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* ── Security (ONE Section) ────────────────────────────────────────────── */}
+          <section className="py-16 md:py-24 bg-white" aria-labelledby="security-heading">
+            <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 text-center">
+              <div className="inline-flex items-center gap-2 rounded-full border border-green-200 bg-green-50 px-4 py-2 text-sm font-semibold text-green-700 mb-6">
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+                Your data stays yours
+              </div>
+              <h2 id="security-heading" className="text-3xl font-bold text-gray-900 md:text-4xl mb-4">
+                Safer than connecting your bank
+              </h2>
+              <p className="text-lg text-gray-600 max-w-2xl mx-auto mb-12">
+                Upload a PDF directly from your bank. We never see your login credentials or have access to your account.
+              </p>
+              <div className="grid gap-6 md:grid-cols-2 text-left">
+                <div className="flex gap-4">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-purple-100">
+                    <svg className="h-5 w-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-gray-900">No bank login required</h3>
+                    <p className="mt-1 text-sm text-gray-600">
+                      Your banking credentials never touch our systems. Upload a PDF, not your password.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-4">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-purple-100">
+                    <svg className="h-5 w-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-gray-900">Encrypted & private</h3>
+                    <p className="mt-1 text-sm text-gray-600">
+                      Your statement is stored encrypted on Google Cloud and only accessible to your account.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-4">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-purple-100">
+                    <svg className="h-5 w-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-gray-900">Never sold or shared</h3>
+                    <p className="mt-1 text-sm text-gray-600">
+                      We don't sell your data. Our business model is simple: you pay for the service, not with your data.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-4">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-purple-100">
+                    <svg className="h-5 w-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-gray-900">Works with any bank</h3>
+                    <p className="mt-1 text-sm text-gray-600">
+                      TD, RBC, Chase, Wells Fargo, Bank of America, and most major banks. If it's a PDF, it works.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* ── Pricing ──────────────────────────────────────────────────────────── */}
+          <section className="py-16 md:py-24 bg-gray-50" aria-labelledby="pricing-heading">
+            <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
+              <div className="text-center max-w-2xl mx-auto mb-12">
+                <h2 id="pricing-heading" className="text-3xl font-bold text-gray-900 md:text-4xl">
+                  Simple, transparent pricing
+                </h2>
+                <p className="mt-3 text-lg text-gray-600">
+                  Start free. Upgrade when you need more.
+                </p>
+              </div>
+
+              <div className="grid gap-8 lg:grid-cols-2">
+                {/* Free plan */}
+                <div className="rounded-2xl border-2 border-gray-200 bg-white p-8 flex flex-col">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Free</p>
+                    <p className="mt-4 text-5xl font-extrabold text-gray-900">$0</p>
+                    <p className="mt-2 text-base text-gray-500">Forever free</p>
+                  </div>
+                  <ul className="mt-8 space-y-4 flex-1">
+                    <li className="flex items-start gap-3">
+                      <svg className="h-5 w-5 shrink-0 text-green-500 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span className="text-gray-700">8 uploads per month</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <svg className="h-5 w-5 shrink-0 text-green-500 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span className="text-gray-700">Full history (unlimited)</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <svg className="h-5 w-5 shrink-0 text-green-500 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span className="text-gray-700">Net worth & spending breakdown</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <svg className="h-5 w-5 shrink-0 text-green-500 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span className="text-gray-700">Subscription detection</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <svg className="h-5 w-5 shrink-0 text-green-500 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span className="text-gray-700">Ask AI (50 answers/month)</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <svg className="h-5 w-5 shrink-0 text-gray-300 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                      <span className="text-gray-400">Debt payoff planner</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <svg className="h-5 w-5 shrink-0 text-gray-300 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                      <span className="text-gray-400">AI insights & forecast</span>
+                    </li>
+                  </ul>
+                  <div className="mt-8">
+                    <Link
+                      href="/upload"
+                      className="block w-full rounded-lg border-2 border-gray-300 bg-white px-6 py-3 text-center font-semibold text-gray-700 hover:bg-gray-50 transition"
+                    >
+                      Start free
+                    </Link>
+                  </div>
+                </div>
+
+                {/* Pro plan */}
+                <div className="rounded-2xl border-2 border-purple-600 bg-white p-8 flex flex-col relative shadow-lg">
+                  <div className="absolute -top-4 left-1/2 -translate-x-1/2">
+                    <span className="rounded-full bg-purple-600 px-4 py-1 text-xs font-bold text-white tracking-wide shadow-md">
+                      Most popular
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-purple-600 uppercase tracking-wide">Pro</p>
+                    <p className="mt-4 text-5xl font-extrabold text-gray-900">$9.99</p>
+                    <p className="mt-2 text-base text-gray-500">per month</p>
+                  </div>
+                  <ul className="mt-8 space-y-4 flex-1">
+                    <li className="flex items-start gap-3">
+                      <svg className="h-5 w-5 shrink-0 text-purple-600 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span className="text-gray-700 font-medium">Unlimited uploads</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <svg className="h-5 w-5 shrink-0 text-purple-600 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span className="text-gray-700">Everything in Free, plus:</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <svg className="h-5 w-5 shrink-0 text-purple-600 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span className="text-gray-700">Debt payoff planner</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <svg className="h-5 w-5 shrink-0 text-purple-600 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span className="text-gray-700">AI-powered insights & forecast</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <svg className="h-5 w-5 shrink-0 text-purple-600 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span className="text-gray-700">What-if scenarios</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <svg className="h-5 w-5 shrink-0 text-purple-600 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span className="text-gray-700">Data export (CSV)</span>
+                    </li>
+                    <li className="flex items-start gap-3">
+                      <svg className="h-5 w-5 shrink-0 text-purple-600 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span className="text-gray-700">Unlimited AI chat</span>
+                    </li>
+                  </ul>
+                  <div className="mt-8">
+                    <Link
+                      href="/signup"
+                      className="block w-full rounded-lg bg-purple-600 px-6 py-3 text-center font-semibold text-white hover:bg-purple-700 transition shadow-md"
+                    >
+                      Start with Pro
+                    </Link>
+                    <p className="mt-3 text-center text-sm text-gray-500">
+                      Cancel anytime
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* ── FAQ ──────────────────────────────────────────────────────────────── */}
+          <section className="py-16 md:py-24 bg-white" aria-labelledby="faq-heading">
+            <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
+              <h2 id="faq-heading" className="text-3xl font-bold text-gray-900 md:text-4xl text-center mb-12">
+                Frequently asked questions
+              </h2>
+              <dl className="space-y-6">
+                {faqs.slice(0, 5).map(({ q, a }) => (
+                  <div key={q} className="bg-gray-50 rounded-xl border border-gray-200 p-6">
+                    <dt className="font-semibold text-gray-900">{q}</dt>
+                    <dd className="mt-3 text-sm text-gray-600 leading-relaxed">{a}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          </section>
+
+          {/* ── Final CTA ────────────────────────────────────────────────────────── */}
+          <section className="py-16 md:py-24 bg-gradient-to-b from-purple-50 to-white" aria-labelledby="final-cta-heading">
+            <div className="mx-auto max-w-3xl px-4 text-center sm:px-6 lg:px-8">
+              <h2 id="final-cta-heading" className="text-3xl font-bold text-gray-900 md:text-4xl">
+                Ready to understand your money?
+              </h2>
+              <p className="mt-4 text-lg text-gray-600">
+                Upload your first statement for free. No bank login. No credit card. See results in under 60 seconds.
+              </p>
+              <div className="mt-8">
+                <Link
+                  href="/upload"
+                  className="inline-flex items-center gap-2 rounded-lg bg-purple-600 px-8 py-4 font-semibold text-white shadow-lg transition hover:bg-purple-700 hover:shadow-xl text-lg"
+                >
+                  Try it free now
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                  </svg>
+                </Link>
+              </div>
+            </div>
+          </section>
+
+        </main>
+
+        {/* ── Footer ──────────────────────────────────────────────────────────── */}
+        <footer className="border-t border-gray-100 bg-white">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-400">
+            <span>
+              <span className="font-semibold text-purple-600">networth.online</span>
+              {" "}— Upload bank statements. See everything.
+            </span>
+            <div className="flex gap-5">
+              <Link href="/login" className="hover:text-gray-600 transition">Log in</Link>
+              <Link href="/upload" className="hover:text-gray-600 transition">Upload</Link>
+              <Link href="/privacy" className="hover:text-gray-600 transition">Privacy</Link>
+              <Link href="/terms" className="hover:text-gray-600 transition">Terms</Link>
+            </div>
+          </div>
+        </footer>
+      </div>
+    </>
+  );
+}
+
+// ── V1 Landing Page (Original) ───────────────────────────────────────────────
+
+export default function Home({ searchParams }: { searchParams?: { v?: string } }) {
+  // Check for v=2 query parameter
+  if (searchParams?.v === "2") {
+    return <LandingV2 />;
+  }
+
   return (
     <>
       {/* JSON-LD — invisible to users, visible to search engines */}
