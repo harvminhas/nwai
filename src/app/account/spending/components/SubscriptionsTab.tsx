@@ -204,6 +204,10 @@ export function SubscriptionsTab({ token }: SubscriptionsTabProps) {
           type: "expense",
           canonical: canonicalName,
           alias: sub.merchant,
+          status: "confirmed",
+          pairKey: `${canonicalName}|${sub.merchant}`,
+          affectsCache: true,
+          createdAt: new Date().toISOString(),
         }));
       
       const res = await fetch("/api/user/source-mappings", {
@@ -342,7 +346,7 @@ export function SubscriptionsTab({ token }: SubscriptionsTabProps) {
             {(newCount > 0 || priceIncreaseCount > 0) && (
               <div className="text-xs text-red-600 font-medium">
                 {newCount > 0 && `${newCount} new`}
-                {newCount > 0 && priceIncreaseCount > 0 && " · "}
+                {newCount > 0 && priceIncreaseCount > 0 && " Â· "}
                 {priceIncreaseCount > 0 && `${priceIncreaseCount} price increase`}
               </div>
             )}
@@ -558,7 +562,7 @@ function SubscriptionTable({
                   <div className="text-xs text-gray-500">
                     {sub.category}
                     {sub.noRecentCharge && (
-                      <span className="ml-2 text-amber-600">• No recent charge</span>
+                      <span className="ml-2 text-amber-600">â€¢ No recent charge</span>
                     )}
                   </div>
                 </td>
@@ -622,7 +626,7 @@ function SubscriptionTable({
                   {formatDate(sub.lastDate)}
                 </td>
                 <td className="px-6 py-4 text-sm text-gray-600">
-                  {sub.nextDate ? formatDate(sub.nextDate) : "—"}
+                  {sub.nextDate ? formatDate(sub.nextDate) : "â€”"}
                 </td>
                 <td className="px-6 py-4 text-right">
                   <div className="text-sm font-semibold text-gray-900">
