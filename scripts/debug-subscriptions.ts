@@ -232,9 +232,11 @@ async function debugSubscriptions(uid: string) {
   if (finalConfirmedActive.length > 0) {
     console.log("Active list:");
     finalConfirmedActive.forEach(sub => {
-      const hint = sub.noRecentCharge ? " [no recent charge]" : "";
+      const noRecentStr = sub.noRecentCharge ? " [NO RECENT CHARGE]" : "";
       const cadenceStr = sub.cadence === "yearly" ? "yearly" : sub.cadence === "monthly" ? "monthly" : "ambig";
-      console.log(`  - ${sub.merchant} (${sub.merchantSlug}): ${sub.amount} ${profile.homeCurrency} [${cadenceStr}, last: ${sub.lastDate}]${hint}`);
+      const tierStr = sub.tier === "confirmed" ? "confirmed" : "candidate";
+      console.log(`  - ${sub.merchant} (${sub.merchantSlug})`);
+      console.log(`    Amount: ${sub.amount} ${profile.homeCurrency}, Cadence: ${cadenceStr}, Tier: ${tierStr}, Last: ${sub.lastDate}${noRecentStr}`);
     });
   }
   

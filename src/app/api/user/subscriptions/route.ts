@@ -106,6 +106,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const confirmedInactive = inactive.filter(s => s.tier === "confirmed");
     confirmedInactive.forEach(item => {
       item.status = "active";
+      // These items were marked inactive by the engine (past cadence window)
+      // Set noRecentCharge flag to show "No recent charge" / "Possibly cancelled?" hint
+      item.noRecentCharge = true;
     });
     
     // Inactive list is now empty (all non-cancelled confirmed items moved to active)
