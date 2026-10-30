@@ -273,11 +273,11 @@ export default function StatementsPage() {
   const quotaUsed = quota ? (quota.onetimeRemaining > 0 ? quota.onetimeUsed : quota.monthlyUsed) : 0;
   const quotaLimit = quota ? (quota.onetimeRemaining > 0 ? quota.onetimeLimit : quota.monthlyLimit) : 0;
   const quotaLabel = (quota?.onetimeRemaining ?? 0) > 0
-    ? `${quota!.onetimeUsed} of ${quota!.onetimeLimit} one-time uploads used`
-    : `${quota?.monthlyUsed ?? 0} of ${quota?.monthlyLimit ?? 0} free uploads used this month`;
+    ? `${quota!.onetimeRemaining} of ${quota!.onetimeLimit} starter uploads left`
+    : `${quota?.monthlyUsed ?? 0} of ${quota?.monthlyLimit ?? 0} uploads used this month`;
   const quotaSubLabel = (quota?.onetimeRemaining ?? 0) > 0
-    ? `${quota!.onetimeRemaining} remaining · resets never`
-    : `resets ${resetLabel(quota?.monthlyResetAt ?? "")}`;
+    ? `One-time pool (resets never)`
+    : `Resets ${resetLabel(quota?.monthlyResetAt ?? "")}`;
   const quotaPct = quotaLimit > 0 ? Math.min(1, quotaUsed / quotaLimit) : 0;
   const quotaBarColor = quotaPct >= 1 ? "bg-red-500" : quotaPct >= 0.75 ? "bg-amber-500" : "bg-green-500";
 
@@ -769,10 +769,14 @@ export default function StatementsPage() {
           <div className="h-2 w-full rounded-full bg-gray-100 overflow-hidden">
             <div className={`h-full rounded-full transition-all ${quotaBarColor}`} style={{ width: `${Math.max(quotaPct * 100, quotaUsed > 0 ? 2 : 0)}%` }} />
           </div>
+          <p className="mt-2.5 text-xs text-gray-500">
+            Free plan allowance.{" "}
+            <Link href="/account/billing" className="font-medium text-purple-600 hover:underline">Upgrade to Pro for unlimited uploads →</Link>
+          </p>
           {quota.onetimeRemaining === 0 && quota.monthlyUsed >= quota.monthlyLimit && (
-            <p className="mt-2.5 text-xs text-gray-500">
-              You&apos;ve used all your free uploads.{" "}
-              <Link href="/account/billing" className="font-medium text-purple-600 hover:underline">Upgrade to Pro for unlimited →</Link>
+            <p className="mt-2 text-xs font-medium text-red-600">
+              You&apos;ve used all your free uploads this month.{" "}
+              <Link href="/account/billing" className="text-purple-600 hover:underline">Upgrade to Pro →</Link>
             </p>
           )}
         </div>

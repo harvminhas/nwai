@@ -3,6 +3,7 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import type { UserStatementSummary } from "@/lib/types";
 import { FREE_ONETIME_UPLOADS, FREE_MONTHLY_UPLOADS } from "@/lib/plans";
+import { resolvePlan } from "@/app/api/user/plan/route";
 
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
@@ -67,8 +68,8 @@ export async function GET(request: NextRequest) {
     });
 
     // Build quota info for display on the statements page
-    const userPlan: string = userData.plan ?? "free";
-    const isPro = userPlan === "pro" || userPlan === "family";
+    const userPlan = resolvePlan(userData as Record<string, unknown>) ?? "free";
+    const isPro = userPlan === "pro";
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const nextReset = new Date(now.getFullYear(), now.getMonth() + 1, 1);

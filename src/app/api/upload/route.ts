@@ -5,6 +5,8 @@ import {
   getStorageBucketName,
 } from "@/lib/firebase-admin";
 import { randomUUID, createHash } from "crypto";
+import { FREE_ONETIME_UPLOADS, FREE_MONTHLY_UPLOADS } from "@/lib/plans";
+import { resolvePlan } from "@/app/api/user/plan/route";
 
 export const maxDuration = 30;
 
@@ -29,16 +31,6 @@ function isFirestoreNotFound(err: unknown): boolean {
 
 const MAX_SIZE = 10 * 1024 * 1024; // 10MB
 
-// Configurable upload limits for free-tier users.
-// Override via env vars to adjust without a code deploy.
-// ONE_TIME: lifetime allotment, carries over indefinitely.
-// MONTHLY:  resets on the 1st of each month, unused quota does NOT carry over.
-const FREE_ONETIME_UPLOADS = parseInt(
-  process.env.FREE_ONETIME_UPLOADS ?? "50", 10
-);
-const FREE_MONTHLY_UPLOADS = parseInt(
-  process.env.FREE_MONTHLY_UPLOADS ?? "8", 10
-);
 const ALLOWED_TYPES = [
   "application/pdf",
   "image/png",
@@ -144,10 +136,11 @@ export async function POST(request: NextRequest) {
       const userData = userDoc.exists ? userDoc.data() ?? {} : {};
       const now      = new Date();
 
-      const userPlan: string = userData.plan ?? "free";
-      const isPaidPlan = userPlan === "pro" || userPlan === "family";
+      // Use shared resolvePlan logic (includes manualPro, subscription, promo)
+      const userPlan = resolvePlan(userData) ?? "free";
+      const isPro = userPlan === "pro";
 
-      if (!isPaidPlan) {
+      if (!isPro) {
         // ── One-time pool ────────────────────────────────────────────────────
         // Tracks total uploads across the account's lifetime.
         // Decrements once; never resets.

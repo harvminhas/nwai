@@ -8,21 +8,27 @@ import { usePlan } from "@/contexts/PlanContext";
 import { PLANS } from "@/lib/plans";
 
 const FREE_FEATURES = [
-  "5 statement uploads / month",
-  "6 months of history",
-  "Net worth tracking",
-  "Spending overview",
+  "50 first statement uploads + 8/month ongoing",
+  "50 AI answers / month",
+  "Full history (unlimited)",
+  "Net worth & spending dashboards",
+  "Income & savings tracking",
+  "Goals tracking",
 ];
 
 const PRO_FEATURES = [
   "Unlimited uploads",
-  "Full history",
-  "AI insights & chat",
-  "Forecasting & projections",
+  "Unlimited AI answers",
+  "AI chat & saved answers",
   "Goals tracking",
-  "Debt payoff planner",
+  "What-if scenarios",
   "CSV / PDF export",
-  "Scenarios",
+];
+
+const PRO_COMING_SOON = [
+  "AI insights",
+  "Forecasting & projections",
+  "Debt payoff planner",
 ];
 
 interface FeaturedCampaign {
@@ -51,6 +57,7 @@ function BillingContent() {
   const [promoError,   setPromoError]   = useState<string | null>(null);
   const [promoSuccess, setPromoSuccess] = useState(false);
   const [promoExpiry,  setPromoExpiry]  = useState<string | null>(null);
+  const [billingInterval, setBillingInterval] = useState<"month" | "year">("month");
 
   const [subInfo, setSubInfo] = useState<{
     status?: string;
@@ -59,6 +66,8 @@ function BillingContent() {
     manualPro?: boolean;
     _raw?: Record<string, unknown>;
   } | null>(null);
+
+  const yearlyPriceAvailable = !!process.env.NEXT_PUBLIC_STRIPE_PRICE_ID_YEARLY;
 
   const fetchSubInfo = async (tok: string) => {
     const res  = await fetch("/api/user/billing-info", { headers: { Authorization: `Bearer ${tok}` } });
@@ -181,7 +190,8 @@ function BillingContent() {
     try {
       const res  = await fetch("/api/stripe/checkout", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ interval: billingInterval }),
       });
       const json = await res.json();
       if (!res.ok || !json.url) throw new Error(json.error ?? "Failed to start checkout");
@@ -444,7 +454,9 @@ function BillingContent() {
           <div className="flex items-center justify-between mb-4">
             <div>
               <p className="font-bold text-gray-900">Pro</p>
-              <p className="text-xs text-gray-400 mt-0.5">$9.99 / month</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                {billingInterval === "year" ? "$99 / year" : "$9.99 / month"}
+              </p>
             </div>
             {isPro ? (
               <span className="rounded-full bg-purple-600 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
@@ -465,15 +477,46 @@ function BillingContent() {
                 {f}
               </li>
             ))}
+            {PRO_COMING_SOON.length > 0 && (
+              <li className="pt-1 text-xs text-gray-400 font-medium">
+                Coming soon: {PRO_COMING_SOON.join(", ")}
+              </li>
+            )}
           </ul>
           {!isPro && (
-            <button
-              onClick={handleUpgrade}
-              disabled={working}
-              className="mt-5 w-full rounded-xl bg-gradient-to-r from-purple-600 to-purple-700 py-3 text-sm font-bold text-white hover:from-purple-700 hover:to-purple-800 transition shadow-sm disabled:opacity-60"
-            >
-              {working ? "Redirecting…" : "Upgrade to Pro →"}
-            </button>
+            <>
+              {yearlyPriceAvailable && (
+                <div className="mt-4 flex items-center justify-center gap-2 text-sm">
+                  <button
+                    onClick={() => setBillingInterval("month")}
+                    className={`px-3 py-1 rounded-lg transition ${
+                      billingInterval === "month"
+                        ? "bg-purple-600 text-white font-semibold"
+                        : "text-gray-600 hover:bg-gray-100"
+                    }`}
+                  >
+                    Monthly
+                  </button>
+                  <button
+                    onClick={() => setBillingInterval("year")}
+                    className={`px-3 py-1 rounded-lg transition ${
+                      billingInterval === "year"
+                        ? "bg-purple-600 text-white font-semibold"
+                        : "text-gray-600 hover:bg-gray-100"
+                    }`}
+                  >
+                    Yearly
+                  </button>
+                </div>
+              )}
+              <button
+                onClick={handleUpgrade}
+                disabled={working}
+                className="mt-3 w-full rounded-xl bg-gradient-to-r from-purple-600 to-purple-700 py-3 text-sm font-bold text-white hover:from-purple-700 hover:to-purple-800 transition shadow-sm disabled:opacity-60"
+              >
+                {working ? "Redirecting…" : "Upgrade to Pro →"}
+              </button>
+            </>
           )}
         </div>
       </div>
