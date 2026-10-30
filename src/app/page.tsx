@@ -3,6 +3,7 @@ import Link from "next/link";
 import AuthRedirect from "@/components/AuthRedirect";
 import Hero from "@/components/Hero";
 import LandingHeader from "@/components/LandingHeader";
+import { HeroDemo } from "@/components/landing/HeroDemo";
 
 // â”€â”€ SEO metadata â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export const metadata: Metadata = {
@@ -270,101 +271,43 @@ function LandingV2() {
           {/* â”€â”€ Hero (Clear Value Prop) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
           <section className="relative overflow-hidden bg-gradient-to-b from-purple-50 to-white py-16 md:py-24" aria-label="Hero">
             <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-              <div className="text-center">
-                <h1 className="font-extrabold text-4xl md:text-5xl lg:text-6xl text-gray-900 leading-tight">
-                  Your bank statement knows<br />
-                  everything. <span className="text-purple-600">Now you do too.</span>
-                </h1>
-                <p className="mt-6 text-lg md:text-xl text-gray-600 max-w-3xl mx-auto leading-relaxed">
+              <div className="grid gap-12 lg:grid-cols-2 lg:gap-16 items-center">
+                {/* Left: Headline & CTA */}
+                <div>
+                  <h1 className="font-extrabold text-4xl md:text-5xl text-gray-900 leading-tight">
+                    Your bank statement knows<br />
+                    everything. <span className="text-purple-600">Now you do too.</span>
+                  </h1>
+                  <p className="mt-6 text-lg text-gray-600 leading-relaxed">
                   Upload a PDF statement and instantly see: <span className="font-semibold text-gray-900">net worth</span>, spending in{" "}
                   <span className="font-semibold text-purple-600">Fixed</span> /{" "}
                   <span className="font-semibold text-blue-600">Essentials</span> /{" "}
                   <span className="font-semibold text-green-600">Flexible</span> groups,{" "}
                   <span className="font-semibold text-gray-900">forgotten subscriptions</span>, and{" "}
-                  <span className="font-semibold text-gray-900">debt payoff plans</span>.
-                  <br />
-                  <span className="text-base text-gray-500 mt-2 inline-block">No bank login required.</span>
-                </p>
-                <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center items-center">
-                  <Link
-                    href="/upload"
-                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-purple-600 px-8 py-4 font-semibold text-white shadow-lg transition hover:bg-purple-700 hover:shadow-xl text-lg"
-                  >
-                    Try it free â€” Upload a statement
-                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                    </svg>
-                  </Link>
-                  <p className="text-sm text-gray-500">
-                    PDF Â· Any major bank Â· Results in under 60 seconds
+                    <span className="font-semibold text-gray-900">debt payoff plans</span>.
+                  </p>
+                  <p className="mt-3 text-base text-gray-500">
+                    No bank login required.
+                  </p>
+                  <div className="mt-8 flex flex-col sm:flex-row gap-4 items-start">
+                    <Link
+                      href="/upload"
+                      className="inline-flex items-center justify-center gap-2 rounded-lg bg-purple-600 px-8 py-4 font-semibold text-white shadow-lg transition hover:bg-purple-700 hover:shadow-xl text-lg"
+                    >
+                      Try it free â€” Upload a statement
+                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                      </svg>
+                    </Link>
+                  </div>
+                  <p className="mt-4 text-sm text-gray-500">
+                    PDF · Any major bank · Results in under 60 seconds
                   </p>
                 </div>
-                
-                {/* Product visual */}
-                <div className="mt-12 max-w-5xl mx-auto">
-                  <div className="rounded-xl shadow-2xl border border-gray-200 overflow-hidden bg-white">
-                    {/* Browser chrome */}
-                    <div className="bg-gray-100 px-4 py-3 flex items-center gap-2 border-b border-gray-200">
-                      <div className="flex gap-1.5">
-                        <div className="w-3 h-3 rounded-full bg-red-400" />
-                        <div className="w-3 h-3 rounded-full bg-yellow-400" />
-                        <div className="w-3 h-3 rounded-full bg-green-400" />
-                      </div>
-                      <div className="flex-1 bg-white rounded-md text-xs text-gray-400 px-4 py-1.5 text-center max-w-xs ml-2">
-                        networth.online
-                      </div>
-                    </div>
-                    
-                    {/* Dashboard preview */}
-                    <div className="p-6 md:p-8 bg-gray-50 space-y-4">
-                      {/* Net worth */}
-                      <div className="bg-white rounded-lg p-6 border border-gray-100">
-                        <div className="text-sm text-gray-500 uppercase tracking-wide font-medium">Net Worth</div>
-                        <div className="text-4xl font-bold text-gray-900 mt-2">$45,234</div>
-                        <div className="flex gap-3 mt-4">
-                          <span className="bg-green-50 text-green-700 text-sm font-semibold px-3 py-1 rounded-full">â†‘ $1,234 this month</span>
-                        </div>
-                      </div>
-                      
-                      {/* Spending breakdown */}
-                      <div className="bg-white rounded-lg p-6 border border-gray-100">
-                        <div className="text-sm font-semibold text-gray-900 mb-4">October Spending</div>
-                        <div className="space-y-3">
-                          <div className="flex items-center gap-3">
-                            <div className="w-20 text-xs font-medium text-gray-600">Income</div>
-                            <div className="flex-1 h-8 rounded-lg bg-purple-100 flex items-center px-3">
-                              <span className="text-sm font-semibold text-purple-900">$5,200</span>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <div className="w-20 text-xs font-medium text-gray-600">Spending</div>
-                            <div className="flex-1 flex gap-1">
-                              <div className="h-8 rounded-l-lg bg-purple-600 flex items-center justify-center px-2 text-xs font-semibold text-white" style={{ width: "35%" }}>
-                                Fixed $1,800
-                              </div>
-                              <div className="h-8 bg-blue-500 flex items-center justify-center px-2 text-xs font-semibold text-white" style={{ width: "12%" }}>
-                                Essentials $650
-                              </div>
-                              <div className="h-8 rounded-r-lg bg-green-500 flex items-center justify-center px-2 text-xs font-semibold text-white" style={{ width: "8%" }}>
-                                Flexible $420
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      
-                      {/* Subscriptions */}
-                      <div className="bg-white rounded-lg p-6 border border-gray-100">
-                        <div className="text-sm font-semibold text-gray-900 mb-3">3 subscriptions need your attention</div>
-                        <div className="space-y-2 text-sm text-gray-600">
-                          <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full bg-amber-500" />
-                            <span>Netflix, Spotify, LinkedIn haven't charged in 45+ days</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+
+                {/* Right: Animated Demo */}
+                <div>
+                  <HeroDemo />
                 </div>
               </div>
             </div>
