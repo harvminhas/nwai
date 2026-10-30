@@ -6,7 +6,6 @@ import { formatCurrency } from "@/lib/currencyUtils";
 import { getSignColor } from "@/lib/colorHelpers";
 import { ReviewList } from "@/components/ReviewList";
 import Link from "next/link";
-import { getCategoryBucket } from "@/lib/moneyCoachBuckets";
 
 interface OverviewTabProps {
   summary: SpendingSummary;
@@ -138,8 +137,7 @@ export function OverviewTab({ summary, token, onReviewComplete }: OverviewTabPro
             const change = lastMonthAmt - priorAvg;
             const changePct = priorAvg > 0 ? (change / priorAvg) * 100 : 0;
 
-            const bucket = getCategoryBucket(cat.category);
-            const barColor = bucketColors[bucket] || bucketColors.flexible;
+            const barColor = bucketColors[cat.bucket] || bucketColors.flexible;
             
             // Dot color (same as bar but as text color)
             const dotColorMap: Record<string, string> = {
@@ -147,7 +145,7 @@ export function OverviewTab({ summary, token, onReviewComplete }: OverviewTabPro
               "bg-blue-600": "text-blue-600",
               "bg-green-600": "text-green-600",
             };
-            const dotColor = dotColorMap[barColor] || "text-purple-600";
+            const dotColor = dotColorMap[barColor] || "text-gray-500";
             
             return (
               <button

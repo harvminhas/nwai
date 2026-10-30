@@ -4181,39 +4181,36 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     debtPayoffErrors++;
   }
 
-  // Check 3: Top categories use bucket colors and have click handlers
-  console.log("\nCheck 3: Top categories colored by group and clickable");
+  // Check 3: Top categories use cat.bucket and bucket consistency
+  console.log("\nCheck 3: Top categories use cat.bucket and bucket consistency");
   try {
     const fs = await import("fs/promises");
     const overviewTabPath = "src/app/account/spending/components/OverviewTab.tsx";
     
     const content = await fs.readFile(overviewTabPath, "utf-8");
     
-    // Check 1: getCategoryBucket import
-    const hasImport = content.includes("import { getCategoryBucket }") || content.includes("import {getCategoryBucket}");
+    // Check 1: Uses cat.bucket (not getCategoryBucket)
+    const usesCatBucket = content.includes("bucketColors[cat.bucket]");
+    const doesNotCallGetCategoryBucket = !content.includes("getCategoryBucket(cat.category)");
     
-    // Check 2: bucket is used for color
-    const usesBucketForColor = content.includes("getCategoryBucket(cat.category)") && 
-                                content.includes("bucketColors[bucket]");
-    
-    // Check 3: has click handler that sets category
+    // Check 2: has click handler that sets category
     const hasClickHandler = content.includes("onClick={() => {") && 
                              content.includes("setSelectedCategory(cat.category)");
     
-    // Check 4: has chevron icon
+    // Check 3: has chevron icon
     const hasChevron = content.includes("M9 5l7 7-7 7") || content.includes("chevron");
     
-    if (hasImport && usesBucketForColor && hasClickHandler && hasChevron) {
-      console.log(`  ✓ Top categories use bucket colors and are clickable`);
+    if (usesCatBucket && doesNotCallGetCategoryBucket && hasClickHandler && hasChevron) {
+      console.log(`  ✓ Top categories use cat.bucket and are clickable`);
     } else {
-      if (!hasImport) {
-        console.log(`  ❌ FAIL: getCategoryBucket not imported in OverviewTab`);
-        errors.push("Spending: getCategoryBucket not imported");
+      if (!usesCatBucket) {
+        console.log(`  ❌ FAIL: Top categories don't use cat.bucket for colors`);
+        errors.push("Spending: categories should use cat.bucket, not getCategoryBucket");
         debtPayoffErrors++;
       }
-      if (!usesBucketForColor) {
-        console.log(`  ❌ FAIL: Top categories don't use bucket colors`);
-        errors.push("Spending: categories not colored by bucket");
+      if (!doesNotCallGetCategoryBucket) {
+        console.log(`  ❌ FAIL: Top categories call getCategoryBucket instead of using cat.bucket`);
+        errors.push("Spending: categories calling getCategoryBucket unnecessarily");
         debtPayoffErrors++;
       }
       if (!hasClickHandler) {
@@ -4227,6 +4224,36 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         debtPayoffErrors++;
       }
     }
+    
+    // Check 4: Verify "Debt Payments" category maps to "fixed" bucket
+    const { getCategoryBucket } = await import("../src/lib/moneyCoachBuckets");
+    const debtPaymentsBucket = getCategoryBucket("Debt Payments");
+    
+    if (debtPaymentsBucket === "fixed") {
+      console.log(`  ✓ "Debt Payments" category maps to "fixed" bucket`);
+    } else {
+      console.log(`  ❌ FAIL: "Debt Payments" maps to "${debtPaymentsBucket}" but should be "fixed"`);
+      errors.push(`Spending: "Debt Payments" bucket is ${debtPaymentsBucket}, expected "fixed"`);
+      debtPayoffErrors++;
+    }
+    
+    // Check 5: Verify common debt categories
+    const testCategories = [
+      { name: "Loan payments", expectedBucket: "fixed" },
+      { name: "Debt", expectedBucket: "fixed" },
+      { name: "Installment Servicing", expectedBucket: "fixed" },
+      { name: "Card Servicing", expectedBucket: "fixed" },
+    ];
+    
+    for (const { name, expectedBucket } of testCategories) {
+      const actualBucket = getCategoryBucket(name);
+      if (actualBucket !== expectedBucket) {
+        console.log(`  ❌ FAIL: "${name}" maps to "${actualBucket}" but should be "${expectedBucket}"`);
+        errors.push(`Spending: "${name}" bucket is ${actualBucket}, expected ${expectedBucket}`);
+        debtPayoffErrors++;
+      }
+    }
+    
   } catch (err) {
     console.error(`  ❌ FAIL: Error checking top categories: ${err instanceof Error ? err.message : String(err)}`);
     errors.push("Spending: top categories check failed");
