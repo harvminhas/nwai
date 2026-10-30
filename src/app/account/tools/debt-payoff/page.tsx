@@ -294,7 +294,7 @@ export default function DebtPayoffPage() {
                     tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                   />
                   <Tooltip 
-                    formatter={(value: number) => `$${value.toFixed(0)}`}
+                    formatter={(value) => `$${Number(value).toFixed(0)}`}
                     labelFormatter={(month) => `Month ${month}`}
                   />
                   <Legend />
