@@ -210,60 +210,20 @@ export function TrendsTab({ summary }: TrendsTabProps) {
 
               {/* Bucket selector with donut chart */}
               <div>
-                <h3 className="text-sm font-semibold text-gray-900 mb-3">By bucket</h3>
-                <div className="flex items-center gap-6">
-                  {/* Donut chart */}
-                  <div className="w-32 h-32 flex-shrink-0">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={[
-                            { name: "Fixed", value: selectedData.fixed, bucket: "fixed" as MoneyCoachBucket, color: "#7c3aed" },
-                            { name: "Essentials", value: selectedData.essentials, bucket: "essentials" as MoneyCoachBucket, color: "#2563eb" },
-                            { name: "Flexible", value: selectedData.flexible, bucket: "flexible" as MoneyCoachBucket, color: "#16a34a" },
-                          ]}
-                          dataKey="value"
-                          nameKey="name"
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={35}
-                          outerRadius={60}
-                          paddingAngle={2}
-                          onClick={(data: any) => {
-                            if (data && data.bucket) {
-                              setSelectedMonthBucket(data.bucket as MoneyCoachBucket);
-                              setExpandedCategories(new Set());
-                            }
-                          }}
-                          cursor="pointer"
-                        >
-                          {[
-                            { name: "Fixed", value: selectedData.fixed, bucket: "fixed" as MoneyCoachBucket, color: "#7c3aed" },
-                            { name: "Essentials", value: selectedData.essentials, bucket: "essentials" as MoneyCoachBucket, color: "#2563eb" },
-                            { name: "Flexible", value: selectedData.flexible, bucket: "flexible" as MoneyCoachBucket, color: "#16a34a" },
-                          ].map((entry, index) => (
-                            <Cell 
-                              key={`cell-${index}`} 
-                              fill={entry.color}
-                              opacity={selectedMonthBucket === entry.bucket ? 1 : 0.3}
-                              stroke={selectedMonthBucket === entry.bucket ? entry.color : "none"}
-                              strokeWidth={selectedMonthBucket === entry.bucket ? 2 : 0}
-                            />
-                          ))}
-                        </Pie>
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-gray-900">By bucket</h3>
                   
-                  {/* Legend with amounts */}
-                  <div className="flex-1 space-y-2">
+                  {/* Compact segmented pill control */}
+                  <div className="flex items-center bg-gray-100 rounded-full p-0.5">
                     {[
-                      { bucket: "fixed" as MoneyCoachBucket, label: "Fixed", amount: selectedData.fixed, color: "bg-purple-600", textColor: "text-purple-900" },
-                      { bucket: "essentials" as MoneyCoachBucket, label: "Essentials", amount: selectedData.essentials, color: "bg-blue-600", textColor: "text-blue-900" },
-                      { bucket: "flexible" as MoneyCoachBucket, label: "Flexible", amount: selectedData.flexible, color: "bg-green-600", textColor: "text-green-900" },
-                    ].map(({ bucket, label, amount, color, textColor }) => {
+                      { bucket: "fixed" as MoneyCoachBucket, label: "Fixed", amount: selectedData.fixed, color: "bg-purple-600" },
+                      { bucket: "essentials" as MoneyCoachBucket, label: "Essentials", amount: selectedData.essentials, color: "bg-blue-600" },
+                      { bucket: "flexible" as MoneyCoachBucket, label: "Flexible", amount: selectedData.flexible, color: "bg-green-600" },
+                    ].map(({ bucket, label, amount, color }) => {
                       const isSelected = selectedMonthBucket === bucket;
-                      const share = selectedData.total > 0 ? (amount / selectedData.total) * 100 : 0;
+                      const fmtAmount = amount >= 1000 
+                        ? `${getCurrencySymbol(currency)}${(amount / 1000).toFixed(1)}k`
+                        : formatCurrency(amount, currency, undefined, true);
                       
                       return (
                         <button
@@ -272,41 +232,69 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                             setSelectedMonthBucket(bucket);
                             setExpandedCategories(new Set());
                           }}
-                          className={`w-full text-left px-3 py-2 rounded-lg transition-colors ${
-                            isSelected ? `bg-gray-100 ${textColor}` : "hover:bg-gray-50"
+                          className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${
+                            isSelected 
+                              ? `${color} text-white` 
+                              : "text-gray-600 hover:text-gray-900"
                           }`}
                         >
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <div className={`w-3 h-3 ${color} rounded`}></div>
-                              <span className={`text-sm font-medium ${isSelected ? textColor : "text-gray-900"}`}>
-                                {label}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className={`text-sm font-semibold ${isSelected ? textColor : "text-gray-900"}`}>
-                                {formatCurrency(amount, currency)}
-                              </span>
-                              {isSelected && (
-                                <span className="text-xs text-gray-500">
-                                  ({share.toFixed(0)}%)
-                                </span>
-                              )}
-                            </div>
-                          </div>
+                          {label} {fmtAmount}
                         </button>
                       );
                     })}
                   </div>
                 </div>
+                
+                {/* Donut chart */}
+                <div className="w-48 h-48 mx-auto mb-4">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={[
+                          { name: "Fixed", value: selectedData.fixed, bucket: "fixed" as MoneyCoachBucket, color: "#7c3aed" },
+                          { name: "Essentials", value: selectedData.essentials, bucket: "essentials" as MoneyCoachBucket, color: "#2563eb" },
+                          { name: "Flexible", value: selectedData.flexible, bucket: "flexible" as MoneyCoachBucket, color: "#16a34a" },
+                        ]}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={55}
+                        outerRadius={85}
+                        paddingAngle={2}
+                        onClick={(data: any) => {
+                          if (data && data.bucket) {
+                            setSelectedMonthBucket(data.bucket as MoneyCoachBucket);
+                            setExpandedCategories(new Set());
+                          }
+                        }}
+                        cursor="pointer"
+                      >
+                        {[
+                          { name: "Fixed", value: selectedData.fixed, bucket: "fixed" as MoneyCoachBucket, color: "#7c3aed" },
+                          { name: "Essentials", value: selectedData.essentials, bucket: "essentials" as MoneyCoachBucket, color: "#2563eb" },
+                          { name: "Flexible", value: selectedData.flexible, bucket: "flexible" as MoneyCoachBucket, color: "#16a34a" },
+                        ].map((entry, index) => (
+                          <Cell 
+                            key={`cell-${index}`} 
+                            fill={entry.color}
+                            opacity={selectedMonthBucket === entry.bucket ? 1 : 0.3}
+                            stroke={selectedMonthBucket === entry.bucket ? entry.color : "none"}
+                            strokeWidth={selectedMonthBucket === entry.bucket ? 2 : 0}
+                          />
+                        ))}
+                      </Pie>
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
 
               {/* Categories for selected bucket */}
               <div>
-                <h3 className="text-sm font-semibold text-gray-900 mb-3">
+                <h3 className="text-sm font-semibold text-gray-900 mb-2">
                   {selectedMonthBucket === "fixed" ? "Fixed" : selectedMonthBucket === "essentials" ? "Essentials" : "Flexible"} categories
                 </h3>
-                <div className="space-y-1">
+                <div>
                   {selectedData.categories
                     .filter(cat => cat.bucket === selectedMonthBucket)
                     .sort((a, b) => b.amount - a.amount)
@@ -338,7 +326,7 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                     const share = maxAmount > 0 ? cat.amount / maxAmount : 0;
                     
                     return (
-                      <div key={cat.category} className="border-b border-gray-100 last:border-0">
+                      <div key={cat.category}>
                         <button
                           onClick={() => {
                             const newExpanded = new Set(expandedCategories);
@@ -349,25 +337,26 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                             }
                             setExpandedCategories(newExpanded);
                           }}
-                          className="w-full hover:bg-gray-50 transition-colors focus:outline-none py-3 group"
+                          className="w-full hover:bg-gray-50 transition-colors focus:outline-none py-1.5 group relative"
                         >
-                          <div className="flex items-center justify-between mb-2">
+                          {/* Inline background bar */}
+                          <div 
+                            className={`absolute inset-y-0 left-0 ${barColor} opacity-10`}
+                            style={{ width: `${Math.min(100, share * 100)}%` }}
+                          />
+                          
+                          {/* Content */}
+                          <div className="relative flex items-center justify-between">
                             <div className="flex items-center gap-2">
-                              <span className={`text-xl ${dotColor}`}>•</span>
+                              <span className={`text-base ${dotColor}`}>•</span>
                               <span className="text-sm font-medium text-gray-900">{cat.category}</span>
                             </div>
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-semibold text-gray-900 whitespace-nowrap">{formatCurrency(cat.amount, currency)}</span>
-                              <svg className={`h-4 w-4 text-gray-400 group-hover:text-gray-600 transition-transform ${expanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <svg className={`h-3.5 w-3.5 text-gray-400 group-hover:text-gray-600 transition-transform ${expanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                               </svg>
                             </div>
-                          </div>
-                          <div className="relative w-full h-2 bg-gray-100 rounded overflow-hidden">
-                            <div
-                              className={`absolute h-full ${barColor} rounded`}
-                              style={{ width: `${Math.min(100, share * 100)}%` }}
-                            />
                           </div>
                         </button>
                         
@@ -442,38 +431,40 @@ export function TrendsTab({ summary }: TrendsTabProps) {
 
       {/* Category list - 3-month averages with bucket selector */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100">
-          <div className="flex items-center justify-between mb-4">
+        <div className="px-6 py-3 border-b border-gray-100">
+          <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-gray-900">By category</h3>
-            <p className="text-xs text-gray-500">3-month average</p>
-          </div>
-          
-          {/* Bucket selector */}
-          <div className="flex gap-2">
-            {[
-              { bucket: "fixed" as MoneyCoachBucket, label: "Fixed", color: "bg-purple-600" },
-              { bucket: "essentials" as MoneyCoachBucket, label: "Essentials", color: "bg-blue-600" },
-              { bucket: "flexible" as MoneyCoachBucket, label: "Flexible", color: "bg-green-600" },
-            ].map(({ bucket, label, color }) => {
-              const isSelected = selected3MonthBucket === bucket;
-              
-              return (
-                <button
-                  key={bucket}
-                  onClick={() => {
-                    setSelected3MonthBucket(bucket);
-                    setSelected3MonthCategory(null);
-                  }}
-                  className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    isSelected 
-                      ? `${color} text-white` 
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  }`}
-                >
-                  {label}
-                </button>
-              );
-            })}
+            
+            {/* Compact segmented pill control */}
+            <div className="flex items-center bg-gray-100 rounded-full p-0.5">
+              {[
+                { bucket: "fixed" as MoneyCoachBucket, label: "Fixed", amount: monthlyHistory.slice(-3).reduce((s, m) => s + m.fixed, 0) / 3, color: "bg-purple-600" },
+                { bucket: "essentials" as MoneyCoachBucket, label: "Essentials", amount: monthlyHistory.slice(-3).reduce((s, m) => s + m.essentials, 0) / 3, color: "bg-blue-600" },
+                { bucket: "flexible" as MoneyCoachBucket, label: "Flexible", amount: monthlyHistory.slice(-3).reduce((s, m) => s + m.flexible, 0) / 3, color: "bg-green-600" },
+              ].map(({ bucket, label, amount, color }) => {
+                const isSelected = selected3MonthBucket === bucket;
+                const fmtAmount = amount >= 1000 
+                  ? `${getCurrencySymbol(currency)}${(amount / 1000).toFixed(1)}k`
+                  : formatCurrency(amount, currency, undefined, true);
+                
+                return (
+                  <button
+                    key={bucket}
+                    onClick={() => {
+                      setSelected3MonthBucket(bucket);
+                      setSelected3MonthCategory(null);
+                    }}
+                    className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${
+                      isSelected 
+                        ? `${color} text-white` 
+                        : "text-gray-600 hover:text-gray-900"
+                    }`}
+                  >
+                    {label} {fmtAmount}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
 
@@ -524,32 +515,33 @@ export function TrendsTab({ summary }: TrendsTabProps) {
               const last3Months = monthlyHistory.slice(-3);
               
               return (
-                <div key={cat.category} className="border-b border-gray-100 last:border-0">
+                <div key={cat.category}>
                   <button
                     onClick={() => {
                       setSelected3MonthCategory(isExpanded ? null : cat.category);
                     }}
-                    className="w-full px-6 py-3 text-left hover:bg-gray-50 transition-colors group"
+                    className="w-full px-6 py-1.5 text-left hover:bg-gray-50 transition-colors group relative"
                   >
-                    <div className="flex items-center justify-between mb-2">
+                    {/* Inline background bar */}
+                    <div 
+                      className={`absolute inset-y-0 left-0 ${barColor} opacity-10`}
+                      style={{ width: `${Math.min(100, share * 100)}%` }}
+                    />
+                    
+                    {/* Content */}
+                    <div className="relative flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <span className={`text-xl ${dotColor}`}>•</span>
+                        <span className={`text-base ${dotColor}`}>•</span>
                         <span className="text-sm font-medium text-gray-900">{cat.category}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-semibold text-gray-900 whitespace-nowrap">
                           {formatCurrency(cat.avg3Month, currency)}/mo
                         </span>
-                        <svg className={`h-4 w-4 text-gray-400 group-hover:text-gray-600 transition-transform ${isExpanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className={`h-3.5 w-3.5 text-gray-400 group-hover:text-gray-600 transition-transform ${isExpanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                         </svg>
                       </div>
-                    </div>
-                    <div className="relative w-full h-2 bg-gray-100 rounded overflow-hidden">
-                      <div
-                        className={`absolute h-full ${barColor} rounded`}
-                        style={{ width: `${Math.min(100, share * 100)}%` }}
-                      />
                     </div>
                   </button>
                   
