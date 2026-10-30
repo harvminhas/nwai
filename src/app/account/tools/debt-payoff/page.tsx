@@ -209,6 +209,7 @@ function PlanCard({ plan, debts, currency, onEdit, onDelete }: PlanCardProps) {
   // Get current balances for included debts
   const includedDebts = debts.filter(d => plan.debtSlugs.includes(d.id));
   const currentTotalBalance = includedDebts.reduce((sum, d) => sum + d.balance, 0);
+  const totalMinimums = includedDebts.reduce((sum, d) => sum + calculateMinimumPayment(d), 0);
   
   // Get projected balance for current month
   const now = new Date();
@@ -235,6 +236,9 @@ function PlanCard({ plan, debts, currency, onEdit, onDelete }: PlanCardProps) {
     workingDebts
   );
   
+  // Get extra monthly amount (stored for both modes, or compute for old plans)
+  const extraMonthly = plan.extraMonthly ?? Math.max(0, plan.monthlyBudget - totalMinimums);
+  
   // Target date or debt-free date
   let targetDisplay = "";
   if (plan.mode === "targetDate" && plan.targetDate) {
@@ -247,51 +251,53 @@ function PlanCard({ plan, debts, currency, onEdit, onDelete }: PlanCardProps) {
       targetDisplay = new Date(lastEntry.month + "-01").toLocaleDateString("en-US", { month: "short", year: "numeric" });
     }
   }
+  
+  // Get savings (stored or default to 0 for old plans)
+  const interestSaved = plan.interestSaved ?? 0;
+  const monthsSaved = plan.monthsSaved ?? 0;
+
+  // Debt names for small text
+  const debtNames = includedDebts.map(d => d.name).join(", ");
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 hover:border-purple-300 transition-colors cursor-pointer" onClick={onEdit}>
-      <div className="p-5 space-y-4">
-        {/* Header */}
+      <div className="p-5 space-y-3">
+        {/* Delete button */}
         <div className="flex items-start justify-between">
-          <div className="flex-1 min-w-0">
-            <h3 className="text-lg font-semibold text-gray-900 truncate">{plan.name}</h3>
-            <p className="text-xs text-gray-500 mt-0.5">
-              {includedDebts.length} debt{includedDebts.length !== 1 ? "s" : ""} · {plan.strategy === "avalanche" ? "Highest interest first" : "Smallest balance first"}
-            </p>
-          </div>
+          <div className="flex-1" />
           <button
             onClick={(e) => {
               e.stopPropagation();
               onDelete();
             }}
-            className="text-gray-400 hover:text-red-600 text-xl leading-none ml-2 shrink-0"
+            className="text-gray-400 hover:text-red-600 text-xl leading-none shrink-0"
             title="Delete plan"
           >
             ×
           </button>
         </div>
 
-        {/* Target/Debt-Free Date */}
+        {/* Extra payment headline */}
+        <div>
+          <div className="text-4xl font-bold text-purple-900 whitespace-nowrap">
+            {formatCurrency(extraMonthly, currency)}/mo
+          </div>
+          <div className="text-sm text-gray-600 mt-0.5">extra payment</div>
+        </div>
+
+        {/* Debt-free date */}
         {targetDisplay && (
-          <div>
-            <p className="text-xs text-gray-500">
-              {plan.mode === "targetDate" ? "Target date" : "Debt-free"}
-            </p>
-            <p className="text-lg font-bold text-gray-900">{targetDisplay}</p>
+          <div className="text-lg font-semibold text-gray-900">
+            Debt-free {targetDisplay}
           </div>
         )}
 
-        {/* Current Balance vs Projection */}
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <div>
-            <p className="text-xs text-gray-500">Current balance</p>
-            <p className="font-semibold text-gray-900 whitespace-nowrap">{formatCurrency(currentTotalBalance, currency)}</p>
+        {/* Savings */}
+        {(interestSaved > 0 || monthsSaved > 0) && (
+          <div className="text-sm text-gray-700 whitespace-nowrap">
+            Saves {formatCurrency(interestSaved, currency)} interest · {monthsSaved} months sooner
           </div>
-          <div>
-            <p className="text-xs text-gray-500">Projected</p>
-            <p className="font-semibold text-gray-900 whitespace-nowrap">{formatCurrency(projectedBalance, currency)}</p>
-          </div>
-        </div>
+        )}
 
         {/* Status Pill */}
         <div>
@@ -317,36 +323,21 @@ function PlanCard({ plan, debts, currency, onEdit, onDelete }: PlanCardProps) {
 
         {/* Progress Bar */}
         <div>
-          <div className="flex justify-between items-center mb-1">
-            <p className="text-xs text-gray-500">Progress</p>
-            <p className="text-xs font-semibold text-gray-700">{Math.round(progressPercent)}%</p>
-          </div>
-          <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+          <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
             <div
               className="h-full bg-purple-600 transition-all"
               style={{ width: `${Math.min(progressPercent, 100)}%` }}
             ></div>
           </div>
+          <div className="flex justify-between items-center mt-1">
+            <p className="text-xs text-gray-500">{Math.round(progressPercent)}% paid</p>
+          </div>
         </div>
 
-        {/* Sparkline (simple visualization) */}
-        {plan.baseline.monthlyProjection.length > 1 && (
-          <div className="h-12 flex items-end gap-0.5">
-            {plan.baseline.monthlyProjection.slice(0, 24).map((entry, idx) => {
-              const maxBalance = Math.max(...plan.baseline.monthlyProjection.map(e => e.totalBalance));
-              const heightPercent = maxBalance > 0 ? (entry.totalBalance / maxBalance) * 100 : 0;
-              const isPast = entry.month <= currentMonth;
-              return (
-                <div
-                  key={idx}
-                  className={`flex-1 ${isPast ? "bg-purple-300" : "bg-gray-200"} rounded-t`}
-                  style={{ height: `${heightPercent}%`, minHeight: "2px" }}
-                  title={`${entry.month}: ${formatCurrency(entry.totalBalance, currency)}`}
-                ></div>
-              );
-            })}
-          </div>
-        )}
+        {/* Debt names */}
+        <div className="text-xs text-gray-400 truncate" title={debtNames}>
+          {plan.name}
+        </div>
       </div>
     </div>
   );

@@ -3737,7 +3737,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   console.log("\nCheck 1b: Saved debt plan workflow");
   try {
     const debtPayoffModule = await import("../src/lib/debtPayoff");
-    const { calculateDebtPayoff, calculateMinimumPayment, solveForTargetDate, classifyPlanStatus, isHELOC } = debtPayoffModule;
+    const { calculateDebtPayoff, calculateMinimumPayment, solveForTargetDate, classifyPlanStatus, isHELOC, compareWithMinimumOnly } = debtPayoffModule;
     
     // Convert debtsSummary to DebtInput format, including payment history
     const debtsForSimulation: any[] = debtsSummary.groups.flatMap(g =>
@@ -3886,6 +3886,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         const testMinimums = testIncluded.reduce((sum: number, d: any) => sum + calculateMinimumPayment(d), 0);
         const testBudget = testMinimums + 100;
         const testResult = calculateDebtPayoff(testPlanDebts, testBudget, "avalanche");
+        const testComparison = compareWithMinimumOnly(testPlanDebts, testBudget, "avalanche");
         
         // Build baseline
         const now = new Date();
@@ -3912,6 +3913,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
           targetDate: undefined, // Should be stripped
           monthlyBudget: testBudget,
           baseline,
+          interestSaved: testComparison.interestSaved,
+          monthsSaved: testComparison.monthsSaved,
           createdAt: new Date(),
         };
         
@@ -3935,6 +3938,31 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
           } else {
             console.log(`      ✓ Read back: targetDate field correctly omitted`);
           }
+          
+          // Check required fields for display
+          if (data?.extraMonthly === undefined || data.extraMonthly === null) {
+            console.log(`      ❌ FAIL: extraMonthly not saved (required for card display)`);
+            errors.push("Debt payoff: extra mode plan missing extraMonthly");
+            debtPayoffErrors++;
+          } else {
+            console.log(`      ✓ extraMonthly saved: ${formatCurrency(data.extraMonthly, currency)}`);
+          }
+          
+          if (data?.interestSaved === undefined || data.interestSaved === null) {
+            console.log(`      ❌ FAIL: interestSaved not saved (required for card display)`);
+            errors.push("Debt payoff: extra mode plan missing interestSaved");
+            debtPayoffErrors++;
+          } else {
+            console.log(`      ✓ interestSaved: ${formatCurrency(data.interestSaved, currency)}`);
+          }
+          
+          if (data?.monthsSaved === undefined || data.monthsSaved === null) {
+            console.log(`      ❌ FAIL: monthsSaved not saved (required for card display)`);
+            errors.push("Debt payoff: extra mode plan missing monthsSaved");
+            debtPayoffErrors++;
+          } else {
+            console.log(`      ✓ monthsSaved: ${data.monthsSaved} months`);
+          }
         }
         
         // Delete plan
@@ -3945,17 +3973,26 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         console.log(`\n    Plan 3b: "targetDate" mode`);
         const futureDate = new Date(now);
         futureDate.setMonth(futureDate.getMonth() + 12);
-        const targetDate = `${futureDate.getFullYear()}-${String(futureDate.getMonth() + 1).padStart(2, "0")}`;
+        const targetDateStr = `${futureDate.getFullYear()}-${String(futureDate.getMonth() + 1).padStart(2, "0")}`;
+        
+        // Compute required payment for target date
+        const targetMonthsAway = 12;
+        const targetSolved = solveForTargetDate(testPlanDebts, targetMonthsAway, "avalanche");
+        const targetBudget = targetSolved ? targetSolved.requiredBudget : testBudget;
+        const targetExtra = Math.max(0, targetBudget - testMinimums);
+        const targetComparison = compareWithMinimumOnly(testPlanDebts, targetBudget, "avalanche");
         
         const planDocTarget = {
           name: "Test Plan Target (regression)",
           mode: "targetDate" as const,
           debtSlugs: testIncluded.map((d: any) => d.id),
           strategy: "avalanche" as const,
-          extraMonthly: undefined, // Should be stripped
-          targetDate,
-          monthlyBudget: testBudget,
+          extraMonthly: targetExtra, // Computed extra for targetDate mode
+          targetDate: targetDateStr,
+          monthlyBudget: targetBudget,
           baseline,
+          interestSaved: targetComparison.interestSaved,
+          monthsSaved: targetComparison.monthsSaved,
           createdAt: new Date(),
         };
         
@@ -3972,12 +4009,28 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
           debtPayoffErrors++;
         } else {
           const data = savedTarget.data();
-          if (data?.extraMonthly !== undefined) {
-            console.log(`      ❌ FAIL: extraMonthly should not exist but is: ${data.extraMonthly}`);
-            errors.push("Debt payoff: targetDate mode plan has extraMonthly field");
+          
+          // Check that extraMonthly is saved (computed extra for targetDate mode)
+          if (data?.extraMonthly === undefined || data.extraMonthly === null) {
+            console.log(`      ⚠  WARNING: extraMonthly not saved for targetDate mode (card won't show extra amount)`);
+          } else {
+            console.log(`      ✓ extraMonthly saved: ${formatCurrency(data.extraMonthly, currency)} (computed extra)`);
+          }
+          
+          if (data?.interestSaved === undefined || data.interestSaved === null) {
+            console.log(`      ❌ FAIL: interestSaved not saved (required for card display)`);
+            errors.push("Debt payoff: targetDate mode plan missing interestSaved");
             debtPayoffErrors++;
           } else {
-            console.log(`      ✓ Read back: extraMonthly field correctly omitted`);
+            console.log(`      ✓ interestSaved: ${formatCurrency(data.interestSaved, currency)}`);
+          }
+          
+          if (data?.monthsSaved === undefined || data.monthsSaved === null) {
+            console.log(`      ❌ FAIL: monthsSaved not saved (required for card display)`);
+            errors.push("Debt payoff: targetDate mode plan missing monthsSaved");
+            debtPayoffErrors++;
+          } else {
+            console.log(`      ✓ monthsSaved: ${data.monthsSaved} months`);
           }
         }
         

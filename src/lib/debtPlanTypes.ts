@@ -22,7 +22,7 @@ export interface DebtPlan {
   /** Array of debt slugs included in this plan */
   debtSlugs: string[];
   strategy: DebtPlanStrategy;
-  /** Extra monthly payment above minimums (for 'extra' mode) */
+  /** Extra monthly payment above minimums (for 'extra' mode, or computed for 'targetDate' mode) */
   extraMonthly?: number;
   /** Target debt-free date (YYYY-MM format, for 'targetDate' mode) */
   targetDate?: string;
@@ -30,6 +30,10 @@ export interface DebtPlan {
   monthlyBudget: number;
   /** Baseline snapshot at plan creation */
   baseline: DebtPlanBaseline;
+  /** Interest saved vs minimum-only (computed at creation for display) */
+  interestSaved?: number;
+  /** Months saved vs minimum-only (computed at creation for display) */
+  monthsSaved?: number;
   createdAt: Date | { toDate(): Date };
 }
 

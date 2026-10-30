@@ -3,8 +3,7 @@
 import { useState, useEffect } from "react";
 import { calculateDebtPayoff, calculateMinimumPayment, solveForTargetDate, compareWithMinimumOnly, isHELOC, type DebtInput, type PayoffStrategy } from "@/lib/debtPayoff";
 import { formatCurrency } from "@/lib/currencyUtils";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
-import type { DebtPlan, DebtPlanMode } from "@/lib/debtPlanTypes";
+import type { DebtPlan } from "@/lib/debtPlanTypes";
 
 interface PlanModalProps {
   debts: DebtInput[];
@@ -15,87 +14,79 @@ interface PlanModalProps {
   onSave: () => void;
 }
 
+type Step = 1 | 2 | 3;
+type DebtSelection = "credit_cards" | "exclude_heloc" | "all" | "custom";
+type GoalMode = "extra" | "target_date";
+
 export default function PlanModal({ debts, currency, token, existingPlan, onClose, onSave }: PlanModalProps) {
-  const [tab, setTab] = useState<DebtPlanMode>(existingPlan?.mode || "extra");
-  const [planName, setPlanName] = useState(existingPlan?.name || "");
-  const [strategy, setStrategy] = useState<PayoffStrategy>(existingPlan?.strategy || "avalanche");
-  const [selectedDebts, setSelectedDebts] = useState<Record<string, boolean>>({});
-  const [extraAmount, setExtraAmount] = useState(existingPlan?.extraMonthly || 0);
-  const [targetDate, setTargetDate] = useState(existingPlan?.targetDate || "");
+  const [step, setStep] = useState<Step>(1);
+  const [debtSelection, setDebtSelection] = useState<DebtSelection>("exclude_heloc");
+  const [customDebts, setCustomDebts] = useState<Record<string, boolean>>({});
+  const [goalMode, setGoalMode] = useState<GoalMode>("extra");
+  const [extraAmount, setExtraAmount] = useState(500);
+  const [targetDate, setTargetDate] = useState("");
+  const [planName, setPlanName] = useState("");
+  const [strategy, setStrategy] = useState<PayoffStrategy>("avalanche");
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Initialize debt selection
+  // Initialize from existing plan
   useEffect(() => {
     if (existingPlan) {
+      setPlanName(existingPlan.name);
+      setStrategy(existingPlan.strategy);
+      setGoalMode(existingPlan.mode === "extra" ? "extra" : "target_date");
+      if (existingPlan.mode === "extra" && existingPlan.extraMonthly) {
+        setExtraAmount(existingPlan.extraMonthly);
+      }
+      if (existingPlan.mode === "targetDate" && existingPlan.targetDate) {
+        setTargetDate(existingPlan.targetDate);
+      }
+      
+      // Initialize custom debt selection
       const selection: Record<string, boolean> = {};
       existingPlan.debtSlugs.forEach(slug => {
         selection[slug] = true;
       });
-      setSelectedDebts(selection);
-    } else {
-      // Default: all non-HELOC/non-mortgage debts
-      const selection: Record<string, boolean> = {};
-      debts.forEach(d => {
-        const isHELOCorMortgage = isHELOC(d) || d.accountType.toLowerCase().includes("mortgage");
-        selection[d.id] = !isHELOCorMortgage;
-      });
-      setSelectedDebts(selection);
+      setCustomDebts(selection);
+      setDebtSelection("custom");
     }
-  }, [debts, existingPlan]);
+  }, [existingPlan]);
 
+  // Get selected debts based on current selection mode
+  const getSelectedDebts = (): DebtInput[] => {
+    if (debtSelection === "credit_cards") {
+      return debts.filter(d => d.accountType.toLowerCase().includes("credit"));
+    } else if (debtSelection === "exclude_heloc") {
+      return debts.filter(d => !isHELOC(d) && !d.accountType.toLowerCase().includes("mortgage"));
+    } else if (debtSelection === "all") {
+      return debts;
+    } else {
+      // custom
+      return debts.filter(d => customDebts[d.id]);
+    }
+  };
+
+  const selectedDebts = getSelectedDebts();
+  const totalBalance = selectedDebts.reduce((sum, d) => sum + d.balance, 0);
+  const totalMinimums = selectedDebts.reduce((sum, d) => sum + calculateMinimumPayment(d), 0);
+
+  // Compute result for current settings
   const workingDebts = debts.map(d => ({
     ...d,
-    included: selectedDebts[d.id] || false,
+    included: selectedDebts.some(sd => sd.id === d.id),
   }));
 
-  const includedDebts = workingDebts.filter(d => d.included);
-  const totalMinimums = includedDebts.reduce((sum, d) => sum + calculateMinimumPayment(d), 0);
-
-  // Quick selection presets
-  const selectCreditCardsOnly = () => {
-    const selection: Record<string, boolean> = {};
-    debts.forEach(d => {
-      selection[d.id] = d.accountType.toLowerCase().includes("credit");
-    });
-    setSelectedDebts(selection);
-  };
-
-  const excludeHELOCMortgage = () => {
-    const selection: Record<string, boolean> = {};
-    debts.forEach(d => {
-      const isHELOCorMortgage = isHELOC(d) || d.accountType.toLowerCase().includes("mortgage");
-      selection[d.id] = !isHELOCorMortgage;
-    });
-    setSelectedDebts(selection);
-  };
-
-  const selectAll = () => {
-    const selection: Record<string, boolean> = {};
-    debts.forEach(d => {
-      selection[d.id] = true;
-    });
-    setSelectedDebts(selection);
-  };
-
-  // Calculate results based on mode
   let result = null;
   let comparison = null;
-  let chartData = null;
   let requiredPayment = 0;
   let isPossible = true;
 
-  if (tab === "extra" && includedDebts.length > 0) {
+  if (goalMode === "extra" && selectedDebts.length > 0) {
     const budget = totalMinimums + extraAmount;
     result = calculateDebtPayoff(workingDebts, budget, strategy);
     comparison = compareWithMinimumOnly(workingDebts, budget, strategy);
-    
-    const minimumOnlyResult = calculateDebtPayoff(workingDebts, totalMinimums, strategy);
-    chartData = result.monthlyBalances.map((mb, i) => ({
-      month: mb.month,
-      "Your plan": Math.round(mb.totalBalance),
-      "Minimums only": Math.round(minimumOnlyResult.monthlyBalances[i]?.totalBalance || 0),
-    })).filter((_, i) => i % 3 === 0);
-  } else if (tab === "targetDate" && includedDebts.length > 0 && targetDate) {
+  } else if (goalMode === "target_date" && selectedDebts.length > 0 && targetDate) {
     const [year, month] = targetDate.split("-").map(Number);
     const now = new Date();
     const target = new Date(year, month - 1);
@@ -106,55 +97,74 @@ export default function PlanModal({ debts, currency, token, existingPlan, onClos
       if (solved) {
         requiredPayment = solved.requiredBudget;
         result = solved.result;
-        
-        const minimumOnlyResult = calculateDebtPayoff(workingDebts, totalMinimums, strategy);
-        chartData = result.monthlyBalances.map((mb, i) => ({
-          month: mb.month,
-          "Your plan": Math.round(mb.totalBalance),
-          "Minimums only": Math.round(minimumOnlyResult.monthlyBalances[i]?.totalBalance || 0),
-        })).filter((_, i) => i % 3 === 0);
+        comparison = compareWithMinimumOnly(workingDebts, requiredPayment, strategy);
       } else {
         isPossible = false;
-        // Show earliest possible date at minimums
         result = calculateDebtPayoff(workingDebts, totalMinimums, strategy);
       }
     }
   }
 
+  // Auto-generate plan name from debt selection
+  useEffect(() => {
+    if (!existingPlan && !planName) {
+      if (debtSelection === "credit_cards") {
+        setPlanName("Credit cards payoff");
+      } else if (debtSelection === "exclude_heloc") {
+        setPlanName("Debt payoff plan");
+      } else if (debtSelection === "all") {
+        setPlanName("Pay off everything");
+      } else if (selectedDebts.length > 0) {
+        setPlanName(`${selectedDebts.length} debts payoff`);
+      }
+    }
+  }, [debtSelection, selectedDebts.length, existingPlan, planName]);
+
+  const handleNext = () => {
+    if (step < 3) setStep((step + 1) as Step);
+  };
+
+  const handleBack = () => {
+    if (step > 1) setStep((step - 1) as Step);
+  };
+
   const handleSave = async () => {
-    if (!planName.trim() || includedDebts.length === 0) {
+    if (!planName.trim() || selectedDebts.length === 0) {
       alert("Please enter a plan name and select at least one debt.");
       return;
     }
 
     setSaving(true);
     try {
-      const debtSlugs = includedDebts.map(d => d.id);
-      const budget = tab === "extra" ? totalMinimums + extraAmount : requiredPayment;
+      const debtSlugs = selectedDebts.map(d => d.id);
+      const budget = goalMode === "extra" ? totalMinimums + extraAmount : requiredPayment;
+      const extra = goalMode === "extra" ? extraAmount : Math.max(0, requiredPayment - totalMinimums);
       
       // Build baseline
       const baseline = {
-        balances: Object.fromEntries(includedDebts.map(d => [d.id, d.balance])),
-        monthlyProjection: result?.monthlyBalances.map(mb => ({
-          month: (() => {
-            const now = new Date();
-            const future = new Date(now);
-            future.setMonth(future.getMonth() + mb.month);
-            return `${future.getFullYear()}-${String(future.getMonth() + 1).padStart(2, "0")}`;
-          })(),
-          totalBalance: mb.totalBalance,
-        })) || [],
+        balances: Object.fromEntries(selectedDebts.map(d => [d.id, d.balance])),
+        monthlyProjection: result?.monthlyBalances.map(mb => {
+          const now = new Date();
+          const future = new Date(now);
+          future.setMonth(future.getMonth() + mb.month);
+          return {
+            month: `${future.getFullYear()}-${String(future.getMonth() + 1).padStart(2, "0")}`,
+            totalBalance: mb.totalBalance,
+          };
+        }) || [],
       };
 
       const planData = {
         name: planName.trim(),
-        mode: tab,
+        mode: goalMode === "extra" ? ("extra" as const) : ("targetDate" as const),
         debtSlugs,
         strategy,
-        extraMonthly: tab === "extra" ? extraAmount : undefined,
-        targetDate: tab === "targetDate" ? targetDate : undefined,
+        extraMonthly: extra,
+        targetDate: goalMode === "target_date" ? targetDate : undefined,
         monthlyBudget: budget,
         baseline,
+        interestSaved: comparison?.interestSaved || 0,
+        monthsSaved: comparison?.monthsSaved || 0,
       };
 
       const url = existingPlan 
@@ -186,324 +196,378 @@ export default function PlanModal({ debts, currency, token, existingPlan, onClos
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-auto">
-      <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-auto">
+      <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-auto">
         {/* Header */}
-        <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-          <h2 className="text-xl font-bold text-gray-900">
-            {existingPlan ? "Edit plan" : "New debt payoff plan"}
-          </h2>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
-          >
-            ×
-          </button>
+        <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-bold text-gray-900">
+              {existingPlan ? "Edit plan" : "New debt payoff plan"}
+            </h2>
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
+            >
+              ×
+            </button>
+          </div>
+          
+          {/* Step indicator */}
+          <div className="flex items-center gap-2">
+            {[1, 2, 3].map((s) => (
+              <div key={s} className="flex items-center flex-1">
+                <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-semibold ${
+                  s === step ? "bg-purple-600 text-white" : s < step ? "bg-purple-200 text-purple-800" : "bg-gray-200 text-gray-500"
+                }`}>
+                  {s}
+                </div>
+                {s < 3 && <div className={`flex-1 h-1 mx-2 ${s < step ? "bg-purple-600" : "bg-gray-200"}`} />}
+              </div>
+            ))}
+          </div>
         </div>
 
-        <div className="p-6 space-y-6">
-          {/* Plan Name */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-900 mb-2">Plan name</label>
-            <input
-              type="text"
-              value={planName}
-              onChange={(e) => setPlanName(e.target.value)}
-              placeholder="e.g., Pay off credit cards"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-            />
-          </div>
-
-          {/* Debt Selection */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-900 mb-2">Which debts?</label>
-            <div className="flex flex-wrap gap-2 mb-3">
-              <button
-                onClick={selectCreditCardsOnly}
-                className="px-3 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200"
-              >
-                Credit cards only
-              </button>
-              <button
-                onClick={excludeHELOCMortgage}
-                className="px-3 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200"
-              >
-                Exclude HELOC/mortgage
-              </button>
-              <button
-                onClick={selectAll}
-                className="px-3 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200"
-              >
-                All
-              </button>
-            </div>
-            <div className="space-y-2 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-3">
-              {debts.map(debt => (
-                <label key={debt.id} className="flex items-center gap-3 cursor-pointer hover:bg-gray-50 p-2 rounded">
-                  <input
-                    type="checkbox"
-                    checked={selectedDebts[debt.id] || false}
-                    onChange={(e) => setSelectedDebts({ ...selectedDebts, [debt.id]: e.target.checked })}
-                    className="h-4 w-4 rounded accent-purple-600"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{debt.name}</p>
-                    <p className="text-xs text-gray-600">
-                      {formatCurrency(debt.balance, currency)} · {debt.interestRate ? `${debt.interestRate.toFixed(2)}%` : "No rate"}
-                    </p>
+        <div className="p-6">
+          {/* Step 1: Debt Selection */}
+          {step === 1 && (
+            <div className="space-y-6">
+              <h3 className="text-lg font-semibold text-gray-900">What do you want to pay off?</h3>
+              
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => setDebtSelection("credit_cards")}
+                  className={`p-4 rounded-lg border-2 text-left transition ${
+                    debtSelection === "credit_cards"
+                      ? "border-purple-600 bg-purple-50"
+                      : "border-gray-200 hover:border-gray-300"
+                  }`}
+                >
+                  <div className="font-semibold text-gray-900">Credit cards</div>
+                  <div className="text-sm text-gray-600 mt-1">
+                    {debts.filter(d => d.accountType.toLowerCase().includes("credit")).length} cards
                   </div>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {/* Strategy */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-900 mb-2">Payoff strategy</label>
-            <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1 w-full">
-              <button
-                onClick={() => setStrategy("avalanche")}
-                className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition whitespace-nowrap ${
-                  strategy === "avalanche"
-                    ? "bg-white text-purple-700 shadow-sm"
-                    : "text-gray-600 hover:text-gray-900"
-                }`}
-              >
-                Highest interest first (saves the most)
-              </button>
-              <button
-                onClick={() => setStrategy("snowball")}
-                className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition whitespace-nowrap ${
-                  strategy === "snowball"
-                    ? "bg-white text-purple-700 shadow-sm"
-                    : "text-gray-600 hover:text-gray-900"
-                }`}
-              >
-                Smallest balance first (quick wins)
-              </button>
-            </div>
-          </div>
-
-          {/* Mode Tabs */}
-          <div>
-            <div className="border-b border-gray-200">
-              <div className="flex gap-4">
-                <button
-                  onClick={() => setTab("extra")}
-                  className={`pb-3 px-1 text-sm font-semibold border-b-2 transition ${
-                    tab === "extra"
-                      ? "border-purple-600 text-purple-600"
-                      : "border-transparent text-gray-500 hover:text-gray-700"
-                  }`}
-                >
-                  I have extra to pay
                 </button>
+                
                 <button
-                  onClick={() => setTab("targetDate")}
-                  className={`pb-3 px-1 text-sm font-semibold border-b-2 transition ${
-                    tab === "targetDate"
-                      ? "border-purple-600 text-purple-600"
-                      : "border-transparent text-gray-500 hover:text-gray-700"
+                  onClick={() => setDebtSelection("exclude_heloc")}
+                  className={`p-4 rounded-lg border-2 text-left transition ${
+                    debtSelection === "exclude_heloc"
+                      ? "border-purple-600 bg-purple-50"
+                      : "border-gray-200 hover:border-gray-300"
                   }`}
                 >
-                  Debt-free by a date
+                  <div className="font-semibold text-gray-900">Everything except HELOC & mortgage</div>
+                  <div className="text-sm text-gray-600 mt-1">
+                    {debts.filter(d => !isHELOC(d) && !d.accountType.toLowerCase().includes("mortgage")).length} debts
+                  </div>
+                </button>
+                
+                <button
+                  onClick={() => setDebtSelection("all")}
+                  className={`p-4 rounded-lg border-2 text-left transition ${
+                    debtSelection === "all"
+                      ? "border-purple-600 bg-purple-50"
+                      : "border-gray-200 hover:border-gray-300"
+                  }`}
+                >
+                  <div className="font-semibold text-gray-900">Everything</div>
+                  <div className="text-sm text-gray-600 mt-1">All {debts.length} debts</div>
+                </button>
+                
+                <button
+                  onClick={() => setDebtSelection("custom")}
+                  className={`p-4 rounded-lg border-2 text-left transition ${
+                    debtSelection === "custom"
+                      ? "border-purple-600 bg-purple-50"
+                      : "border-gray-200 hover:border-gray-300"
+                  }`}
+                >
+                  <div className="font-semibold text-gray-900">Custom</div>
+                  <div className="text-sm text-gray-600 mt-1">Pick specific debts</div>
                 </button>
               </div>
-            </div>
 
-            <div className="pt-6 space-y-6">
-              {tab === "extra" ? (
-                <>
+              {debtSelection === "custom" && (
+                <div className="space-y-2 max-h-64 overflow-y-auto border border-gray-200 rounded-lg p-3">
+                  {debts.map(debt => (
+                    <label key={debt.id} className="flex items-center gap-3 cursor-pointer hover:bg-gray-50 p-2 rounded">
+                      <input
+                        type="checkbox"
+                        checked={customDebts[debt.id] || false}
+                        onChange={(e) => setCustomDebts({ ...customDebts, [debt.id]: e.target.checked })}
+                        className="h-4 w-4 rounded accent-purple-600"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{debt.name}</p>
+                        <p className="text-xs text-gray-600 whitespace-nowrap">
+                          {formatCurrency(debt.balance, currency)}
+                        </p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              <div className="bg-gray-50 rounded-lg p-4">
+                <div className="text-sm text-gray-600">Total balance to pay off</div>
+                <div className="text-2xl font-bold text-gray-900 whitespace-nowrap">{formatCurrency(totalBalance, currency)}</div>
+                <div className="text-sm text-gray-600 mt-1 whitespace-nowrap">
+                  Minimums: {formatCurrency(totalMinimums, currency)}/mo
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Step 2: Goal */}
+          {step === 2 && (
+            <div className="space-y-6">
+              <h3 className="text-lg font-semibold text-gray-900">What's your goal?</h3>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <button
+                  onClick={() => setGoalMode("extra")}
+                  className={`p-6 rounded-lg border-2 text-left transition ${
+                    goalMode === "extra"
+                      ? "border-purple-600 bg-purple-50"
+                      : "border-gray-200 hover:border-gray-300"
+                  }`}
+                >
+                  <div className="text-lg font-bold text-gray-900 mb-2">Pay extra each month</div>
+                  <div className="text-sm text-gray-600">Add money above minimums to pay off faster</div>
+                </button>
+                
+                <button
+                  onClick={() => setGoalMode("target_date")}
+                  className={`p-6 rounded-lg border-2 text-left transition ${
+                    goalMode === "target_date"
+                      ? "border-purple-600 bg-purple-50"
+                      : "border-gray-200 hover:border-gray-300"
+                  }`}
+                >
+                  <div className="text-lg font-bold text-gray-900 mb-2">Be debt-free by a date</div>
+                  <div className="text-sm text-gray-600">Pick a target month and see what you need</div>
+                </button>
+              </div>
+
+              {goalMode === "extra" && (
+                <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-semibold text-gray-900 mb-2">
-                      Extra monthly payment (above minimums)
+                      Extra monthly amount
                     </label>
                     <input
-                      type="number"
+                      type="range"
+                      min="0"
+                      max={Math.min(10000, totalBalance / 12)}
+                      step="50"
                       value={extraAmount}
-                      onChange={(e) => setExtraAmount(Number(e.target.value) || 0)}
-                      className="w-full px-4 py-3 text-lg border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      onChange={(e) => setExtraAmount(Number(e.target.value))}
+                      className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-purple-600"
                     />
-                    <p className="mt-2 text-sm text-gray-600">
-                      Minimums total {formatCurrency(totalMinimums, currency)}
-                    </p>
+                    <div className="flex justify-between items-center mt-2">
+                      <input
+                        type="number"
+                        value={extraAmount}
+                        onChange={(e) => setExtraAmount(Number(e.target.value) || 0)}
+                        className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-lg font-semibold"
+                      />
+                      <div className="flex gap-2">
+                        {[100, 250, 500, 1000].map(amt => (
+                          <button
+                            key={amt}
+                            onClick={() => setExtraAmount(amt)}
+                            className={`px-3 py-1 text-sm rounded-full whitespace-nowrap ${
+                              extraAmount === amt
+                                ? "bg-purple-600 text-white"
+                                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                            }`}
+                          >
+                            +{formatCurrency(amt, currency)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
+                </div>
+              )}
 
-                  {result && result.monthsToPayoff !== null && (
-                    <div className="bg-purple-50 border border-purple-200 rounded-lg p-6">
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        <div>
-                          <p className="text-xs text-purple-700 mb-1">Debt-free date</p>
-                          <p className="text-xl font-bold text-purple-900 whitespace-nowrap">
-                            {result.debtFreeDate ? new Date(result.debtFreeDate + "-01").toLocaleDateString("en-US", { month: "short", year: "numeric" }) : "—"}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-purple-700 mb-1">Total interest</p>
-                          <p className="text-xl font-bold text-purple-900 whitespace-nowrap">
-                            {formatCurrency(result.totalInterestPaid, currency)}
-                          </p>
+              {goalMode === "target_date" && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-900 mb-2">
+                    Target debt-free date
+                  </label>
+                  <input
+                    type="month"
+                    value={targetDate}
+                    onChange={(e) => setTargetDate(e.target.value)}
+                    className="w-full px-4 py-3 text-lg border border-gray-300 rounded-lg"
+                  />
+                </div>
+              )}
+
+              {/* Live preview */}
+              {result && result.monthsToPayoff !== null && (
+                <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                  <div className="text-sm font-semibold text-purple-900 mb-2">
+                    {goalMode === "extra" 
+                      ? `Paying ${formatCurrency(extraAmount, currency)} extra:` 
+                      : isPossible 
+                        ? `To be debt-free by ${targetDate}:` 
+                        : "Target not achievable"}
+                  </div>
+                  <div className="space-y-1">
+                    {goalMode === "extra" ? (
+                      <>
+                        <div className="text-gray-900">
+                          <span className="font-bold">Debt-free {result.debtFreeDate ? new Date(result.debtFreeDate + "-01").toLocaleDateString("en-US", { month: "short", year: "numeric" }) : "—"}</span>
                         </div>
                         {comparison && comparison.interestSaved > 0 && (
-                          <div>
-                            <p className="text-xs text-green-700 mb-1">Interest saved</p>
-                            <p className="text-xl font-bold text-green-800 whitespace-nowrap">
-                              {formatCurrency(comparison.interestSaved, currency)}
-                            </p>
+                          <div className="text-sm text-gray-700 whitespace-nowrap">
+                            Saves {formatCurrency(comparison.interestSaved, currency)} interest
                           </div>
                         )}
+                      </>
+                    ) : isPossible ? (
+                      <>
+                        <div className="text-gray-900">
+                          You need <span className="font-bold whitespace-nowrap">{formatCurrency(requiredPayment - totalMinimums, currency)}/mo extra</span>
+                        </div>
+                        <div className="text-sm text-gray-700 whitespace-nowrap">
+                          ({formatCurrency(requiredPayment, currency)} total)
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-amber-800">
+                        Earliest possible: {result.debtFreeDate ? new Date(result.debtFreeDate + "-01").toLocaleDateString("en-US", { month: "long", year: "numeric" }) : "—"}
                       </div>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <>
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-900 mb-2">
-                      Target debt-free date
-                    </label>
-                    <input
-                      type="month"
-                      value={targetDate}
-                      onChange={(e) => setTargetDate(e.target.value)}
-                      className="w-full px-4 py-3 text-lg border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                    />
-                  </div>
-
-                  {!isPossible && result && (
-                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                      <p className="text-sm font-semibold text-amber-900 mb-1">⚠ Target not achievable</p>
-                      <p className="text-sm text-amber-800">
-                        The earliest possible debt-free date at minimum payments is{" "}
-                        <strong>
-                          {result.debtFreeDate ? new Date(result.debtFreeDate + "-01").toLocaleDateString("en-US", { month: "long", year: "numeric" }) : "unknown"}
-                        </strong>.
-                      </p>
-                    </div>
-                  )}
-
-                  {isPossible && result && result.monthsToPayoff !== null && (
-                    <div className="bg-purple-50 border border-purple-200 rounded-lg p-6">
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        <div>
-                          <p className="text-xs text-purple-700 mb-1">Required monthly payment</p>
-                          <p className="text-xl font-bold text-purple-900 whitespace-nowrap">
-                            {formatCurrency(requiredPayment, currency)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-purple-700 mb-1">Above minimums</p>
-                          <p className="text-xl font-bold text-purple-900 whitespace-nowrap">
-                            {formatCurrency(requiredPayment - totalMinimums, currency)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-purple-700 mb-1">Total interest</p>
-                          <p className="text-xl font-bold text-purple-900 whitespace-nowrap">
-                            {formatCurrency(result.totalInterestPaid, currency)}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-
-              {/* Minimums breakdown */}
-              {includedDebts.length > 0 && (
-                <div>
-                  <p className="text-sm font-semibold text-gray-900 mb-2">
-                    Minimum payments
-                  </p>
-                  <div className="space-y-1 text-xs text-gray-700">
-                    {includedDebts.map(d => {
-                      const minDetail = calculateMinimumPayment(d, true);
-                      return (
-                        <div key={d.id} className="flex justify-between items-center gap-2">
-                          <span className="truncate">{d.name}</span>
-                          <div className="flex items-center gap-1 shrink-0">
-                            <span className="whitespace-nowrap">{formatCurrency(minDetail.amount, currency)}</span>
-                            <span 
-                              className="text-[9px] px-1 py-0.5 bg-gray-200 text-gray-600 rounded uppercase font-semibold cursor-help"
-                              title={minDetail.method}
-                            >
-                              {minDetail.source === "regular_payment" ? "actual" : "est"}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
+                    )}
                   </div>
                 </div>
               )}
 
-              {/* Chart */}
-              {chartData && chartData.length > 1 && (
-                <div>
-                  <p className="text-sm font-semibold text-gray-900 mb-3">Balance projection</p>
-                  <ResponsiveContainer width="100%" height={200}>
-                    <LineChart data={chartData}>
-                      <XAxis dataKey="month" hide />
-                      <YAxis hide />
-                      <Tooltip 
-                        formatter={(value) => formatCurrency(Number(value), currency)}
-                        labelFormatter={(month) => `Month ${month}`}
-                      />
-                      <Legend />
-                      <Line
-                        type="monotone"
-                        dataKey="Your plan"
-                        stroke="#8b5cf6"
-                        strokeWidth={3}
-                        dot={false}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="Minimums only"
-                        stroke="#d1d5db"
-                        strokeWidth={2}
-                        strokeDasharray="5 5"
-                        dot={false}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-
-              {/* Payoff order preview */}
-              {result && result.payoffOrder.length > 0 && result.payoffOrder.length <= 5 && (
-                <div>
-                  <p className="text-sm font-semibold text-gray-900 mb-2">Payoff order</p>
-                  <div className="space-y-1 text-xs text-gray-700">
-                    {result.payoffOrder.map((po, idx) => (
-                      <div key={po.debtId} className="flex items-center gap-2">
-                        <span className="flex items-center justify-center w-5 h-5 rounded-full bg-purple-100 text-purple-700 text-[10px] font-bold shrink-0">
-                          {idx + 1}
-                        </span>
-                        <span className="flex-1 truncate">{po.debtName}</span>
-                        <span className="whitespace-nowrap text-gray-600">Month {po.payoffMonth}</span>
-                      </div>
-                    ))}
+              {/* Advanced: Strategy */}
+              <div>
+                <button
+                  onClick={() => setShowAdvanced(!showAdvanced)}
+                  className="text-sm text-gray-600 hover:text-gray-900 flex items-center gap-1"
+                >
+                  <svg className={`w-4 h-4 transition-transform ${showAdvanced ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                  Advanced
+                </button>
+                
+                {showAdvanced && (
+                  <div className="mt-3 pl-5">
+                    <label className="block text-sm font-semibold text-gray-900 mb-2">Payoff strategy</label>
+                    <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1">
+                      <button
+                        onClick={() => setStrategy("avalanche")}
+                        className={`px-3 py-2 rounded-md text-sm font-medium transition whitespace-nowrap ${
+                          strategy === "avalanche"
+                            ? "bg-white text-purple-700 shadow-sm"
+                            : "text-gray-600 hover:text-gray-900"
+                        }`}
+                      >
+                        Highest interest first
+                      </button>
+                      <button
+                        onClick={() => setStrategy("snowball")}
+                        className={`px-3 py-2 rounded-md text-sm font-medium transition whitespace-nowrap ${
+                          strategy === "snowball"
+                            ? "bg-white text-purple-700 shadow-sm"
+                            : "text-gray-600 hover:text-gray-900"
+                        }`}
+                      >
+                        Smallest balance first
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-2">Highest interest saves the most money</p>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Step 3: Review & Name */}
+          {step === 3 && (
+            <div className="space-y-6">
+              <h3 className="text-lg font-semibold text-gray-900">Review & name</h3>
+              
+              {result && result.monthsToPayoff !== null && comparison && (
+                <div className="bg-gray-50 rounded-lg p-6 space-y-4">
+                  <div>
+                    <div className="text-sm text-gray-600">Extra payment</div>
+                    <div className="text-3xl font-bold text-purple-900 whitespace-nowrap">
+                      {formatCurrency(goalMode === "extra" ? extraAmount : Math.max(0, requiredPayment - totalMinimums), currency)}/mo
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <div className="text-gray-600">Debt-free date</div>
+                      <div className="font-semibold text-gray-900 whitespace-nowrap">
+                        {result.debtFreeDate ? new Date(result.debtFreeDate + "-01").toLocaleDateString("en-US", { month: "short", year: "numeric" }) : "—"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-gray-600">Saves vs minimums</div>
+                      <div className="font-semibold text-gray-900 whitespace-nowrap">
+                        {formatCurrency(comparison.interestSaved, currency)} · {comparison.monthsSaved} mo
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {result.payoffOrder.length > 0 && result.payoffOrder.length <= 5 && (
+                    <div>
+                      <div className="text-sm text-gray-600 mb-2">Payoff order</div>
+                      <div className="space-y-1">
+                        {result.payoffOrder.map((po, idx) => (
+                          <div key={po.debtId} className="flex items-center gap-2 text-sm">
+                            <span className="flex items-center justify-center w-5 h-5 rounded-full bg-purple-100 text-purple-700 text-xs font-bold shrink-0">
+                              {idx + 1}
+                            </span>
+                            <span className="text-gray-700 truncate">{po.debtName}</span>
+                            <span className="text-gray-500 text-xs whitespace-nowrap ml-auto">Month {po.payoffMonth}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              <div>
+                <label className="block text-sm font-semibold text-gray-900 mb-2">Plan name</label>
+                <input
+                  type="text"
+                  value={planName}
+                  onChange={(e) => setPlanName(e.target.value)}
+                  placeholder="e.g., Credit cards payoff"
+                  className="w-full px-4 py-3 text-lg border border-gray-300 rounded-lg"
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
-        <div className="sticky bottom-0 bg-white border-t border-gray-200 px-6 py-4 flex justify-end gap-3">
+        <div className="sticky bottom-0 bg-white border-t border-gray-200 px-6 py-4 flex justify-between">
           <button
-            onClick={onClose}
+            onClick={step === 1 ? onClose : handleBack}
             className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
           >
-            Cancel
+            {step === 1 ? "Cancel" : "Back"}
           </button>
           <button
-            onClick={handleSave}
-            disabled={saving || includedDebts.length === 0 || !planName.trim()}
-            className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={step === 3 ? handleSave : handleNext}
+            disabled={
+              (step === 1 && selectedDebts.length === 0) ||
+              (step === 2 && goalMode === "target_date" && !targetDate) ||
+              (step === 3 && saving)
+            }
+            className="px-6 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {saving ? "Saving..." : "Save plan"}
+            {step === 3 ? (saving ? "Saving..." : "Save plan") : "Next"}
           </button>
         </div>
       </div>
