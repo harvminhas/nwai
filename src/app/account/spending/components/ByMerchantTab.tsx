@@ -5,6 +5,9 @@ import type { SpendingSummary, MerchantSummary } from "@/lib/spendingSummary";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { formatDate, formatMonthYear } from "@/lib/dateFormatting";
 import type { Plan } from "@/app/api/user/plans/route";
+import { useConfirm } from "@/components/useConfirm";
+import { useToast } from "@/components/useToast";
+import { getFirebaseClient } from "@/lib/firebase";
 
 type SortMode = "total" | "frequency" | "recent";
 
@@ -17,6 +20,9 @@ export function ByMerchantTab({ summary }: ByMerchantTabProps) {
   const [sortMode, setSortMode] = useState<SortMode>("total");
   const [expandedMerchants, setExpandedMerchants] = useState<Set<string>>(new Set());
   const [planMap, setPlanMap] = useState<Map<string, string>>(new Map());
+  const [submitting, setSubmitting] = useState(false);
+  const { confirm, ConfirmDialog } = useConfirm();
+  const { success, error: showError, Toast } = useToast();
 
   // Load plans to show tags on linked transactions
   useEffect(() => {
@@ -75,6 +81,59 @@ export function ByMerchantTab({ summary }: ByMerchantTabProps) {
       }
       return next;
     });
+  };
+
+  const handleMarkAsSubscription = async (merchant: MerchantSummary, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent merchant row expansion
+    
+    if (submitting) return;
+
+    const confirmed = await confirm({
+      title: "Mark as subscription",
+      message: `Mark "${merchant.merchant}" as a subscription? The app will track it with detected subscriptions.`,
+    });
+
+    if (!confirmed) return;
+
+    setSubmitting(true);
+
+    try {
+      const { auth } = getFirebaseClient();
+      const user = auth.currentUser;
+      if (!user) {
+        showError("You must be logged in");
+        return;
+      }
+
+      const token = await user.getIdToken();
+
+      const res = await fetch("/api/user/reviews", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: merchant.merchantSlug,
+          type: "subscription",
+          classification: "is_subscription",
+          merchantSlug: merchant.merchantSlug,
+          date: merchant.lastDate,
+          amount: merchant.avgAmount, // Use average amount for inferred frequency
+        }),
+      });
+
+      if (res.ok) {
+        success(`${merchant.merchant} marked as subscription`);
+      } else {
+        const data = await res.json().catch(() => ({ error: "Failed to save" }));
+        showError(data.error || "Failed to save");
+      }
+    } catch (err) {
+      showError(err instanceof Error ? err.message : "Failed to mark as subscription");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -147,32 +206,46 @@ export function ByMerchantTab({ summary }: ByMerchantTabProps) {
               return (
                 <div key={merchant.merchantSlug}>
                   {/* Merchant row */}
-                  <button
-                    onClick={() => toggleMerchant(merchant.merchantSlug)}
-                    className="w-full px-6 py-4 flex items-center gap-4 hover:bg-gray-50 transition-colors"
-                  >
-                    <svg
-                      className={`w-4 h-4 text-gray-400 transition-transform ${
-                        isExpanded ? "rotate-90" : ""
-                      }`}
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
+                  <div className="flex items-center hover:bg-gray-50 transition-colors">
+                    <button
+                      onClick={() => toggleMerchant(merchant.merchantSlug)}
+                      className="flex-1 px-6 py-4 flex items-center gap-4"
                     >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
+                      <svg
+                        className={`w-4 h-4 text-gray-400 transition-transform ${
+                          isExpanded ? "rotate-90" : ""
+                        }`}
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
 
-                    <div className="flex-1 text-left">
-                      <div className="text-sm font-medium text-gray-900">{merchant.merchant}</div>
-                      <div className="text-xs text-gray-500">
-                        {merchant.category} · {merchant.count} {merchant.count === 1 ? "transaction" : "transactions"}
+                      <div className="flex-1 text-left">
+                        <div className="text-sm font-medium text-gray-900">{merchant.merchant}</div>
+                        <div className="text-xs text-gray-500">
+                          {merchant.category} · {merchant.count} {merchant.count === 1 ? "transaction" : "transactions"}
+                        </div>
                       </div>
-                    </div>
 
-                    <div className="text-sm font-semibold text-gray-900">
-                      {formatCurrency(merchant.total, summary.currency)}
-                    </div>
-                  </button>
+                      <div className="text-sm font-semibold text-gray-900">
+                        {formatCurrency(merchant.total, summary.currency)}
+                      </div>
+                    </button>
+                    
+                    {/* Mark as subscription button */}
+                    <button
+                      onClick={(e) => handleMarkAsSubscription(merchant, e)}
+                      disabled={submitting}
+                      className="px-4 py-2 mr-4 text-xs text-purple-600 hover:text-purple-700 hover:bg-purple-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Mark as subscription"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                      </svg>
+                    </button>
+                  </div>
 
                   {/* Transaction list grouped by month (when expanded) */}
                   {isExpanded && (
@@ -242,6 +315,9 @@ export function ByMerchantTab({ summary }: ByMerchantTabProps) {
           )}
         </div>
       </div>
+      
+      <ConfirmDialog />
+      <Toast />
     </div>
   );
 }

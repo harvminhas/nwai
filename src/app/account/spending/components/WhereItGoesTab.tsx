@@ -126,7 +126,16 @@ export function WhereItGoesTab({ summary }: WhereItGoesTabProps) {
                     <div className="flex-1 text-left">
                       <div className="text-sm font-medium text-gray-900">{cat.category}</div>
                       <div className="text-xs text-gray-500">
-                        {cat.merchants.length} {cat.merchants.length === 1 ? "merchant" : "merchants"} · {cat.count} transactions
+                        {(() => {
+                          // Debt categories show account count instead of merchant count
+                          const isDebtCategory = cat.category === "Loan payments" || cat.category === "Credit card minimums";
+                          if (isDebtCategory) {
+                            const debtType = cat.category === "Loan payments" ? "loan" : "credit";
+                            const accountCount = summary.scheduledPayments.filter(p => p.debtType === debtType).length;
+                            return `${accountCount} ${accountCount === 1 ? "account" : "accounts"}`;
+                          }
+                          return `${cat.merchants.length} ${cat.merchants.length === 1 ? "merchant" : "merchants"} · ${cat.count} transactions`;
+                        })()}
                       </div>
                     </div>
 
@@ -140,10 +149,49 @@ export function WhereItGoesTab({ summary }: WhereItGoesTabProps) {
                     </div>
                   </button>
 
-                  {/* Merchant list (when category expanded) */}
-                  {isExpanded && (
-                    <div className="bg-gray-50 border-t border-gray-100">
-                      {cat.merchants.map(merchant => {
+                  {/* Merchant list or account breakdown (when category expanded) */}
+                  {isExpanded && (() => {
+                    // Debt categories show account breakdown instead of merchants
+                    const isDebtCategory = cat.category === "Loan payments" || cat.category === "Credit card minimums";
+                    
+                    if (isDebtCategory) {
+                      const debtType = cat.category === "Loan payments" ? "loan" : "credit";
+                      const accounts = summary.scheduledPayments.filter(p => p.debtType === debtType);
+                      
+                      if (accounts.length === 0) {
+                        return (
+                          <div className="bg-gray-50 border-t border-gray-100 px-12 py-3 text-xs text-gray-500">
+                            No accounts found
+                          </div>
+                        );
+                      }
+                      
+                      return (
+                        <div className="bg-gray-50 border-t border-gray-100">
+                          {accounts.map(account => (
+                            <div key={account.accountSlug} className="px-12 py-3 flex items-center justify-between">
+                              <div className="flex-1 text-left">
+                                <div className="text-sm font-medium text-gray-900">
+                                  {account.accountName || account.accountSlug}
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  Monthly payment
+                                  {account.isEstimated && " (estimated)"}
+                                </div>
+                              </div>
+                              <div className="text-sm font-semibold text-gray-900">
+                                {formatCurrency(account.amount, summary.currency)}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    }
+                    
+                    // Regular categories show merchants
+                    return (
+                      <div className="bg-gray-50 border-t border-gray-100">
+                        {cat.merchants.map(merchant => {
                         const isMerchantExpanded = expandedMerchants.has(merchant.merchantSlug);
                         return (
                           <div key={merchant.merchantSlug}>
@@ -202,7 +250,8 @@ export function WhereItGoesTab({ summary }: WhereItGoesTabProps) {
                         );
                       })}
                     </div>
-                  )}
+                  );
+                })()}
                 </div>
               );
             })
