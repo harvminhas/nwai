@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { calculateDebtPayoff, calculateMinimumPayment, solveForTargetDate, compareWithMinimumOnly, type DebtInput, type PayoffStrategy } from "@/lib/debtPayoff";
+import { calculateDebtPayoff, calculateMinimumPayment, solveForTargetDate, compareWithMinimumOnly, isHELOC, type DebtInput, type PayoffStrategy } from "@/lib/debtPayoff";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import type { DebtPlan, DebtPlanMode } from "@/lib/debtPlanTypes";
@@ -36,9 +36,7 @@ export default function PlanModal({ debts, currency, token, existingPlan, onClos
       // Default: all non-HELOC/non-mortgage debts
       const selection: Record<string, boolean> = {};
       debts.forEach(d => {
-        const isHELOCorMortgage = d.accountType.toLowerCase().includes("mortgage") || 
-                                   d.accountType.toLowerCase().includes("loc") ||
-                                   d.accountType.toLowerCase().includes("line");
+        const isHELOCorMortgage = isHELOC(d) || d.accountType.toLowerCase().includes("mortgage");
         selection[d.id] = !isHELOCorMortgage;
       });
       setSelectedDebts(selection);
@@ -65,9 +63,7 @@ export default function PlanModal({ debts, currency, token, existingPlan, onClos
   const excludeHELOCMortgage = () => {
     const selection: Record<string, boolean> = {};
     debts.forEach(d => {
-      const isHELOCorMortgage = d.accountType.toLowerCase().includes("mortgage") || 
-                                 d.accountType.toLowerCase().includes("loc") ||
-                                 d.accountType.toLowerCase().includes("line");
+      const isHELOCorMortgage = isHELOC(d) || d.accountType.toLowerCase().includes("mortgage");
       selection[d.id] = !isHELOCorMortgage;
     });
     setSelectedDebts(selection);

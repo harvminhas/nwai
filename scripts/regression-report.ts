@@ -3659,7 +3659,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   console.log("\nCheck 1b: Saved debt plan workflow");
   try {
     const debtPayoffModule = await import("../src/lib/debtPayoff");
-    const { calculateDebtPayoff, calculateMinimumPayment, solveForTargetDate, classifyPlanStatus } = debtPayoffModule;
+    const { calculateDebtPayoff, calculateMinimumPayment, solveForTargetDate, classifyPlanStatus, isHELOC } = debtPayoffModule;
     
     // Convert debtsSummary to DebtInput format
     const debtsForSimulation: any[] = debtsSummary.groups.flatMap(g =>
@@ -3713,9 +3713,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       console.log(`\n  Testing Plan 2: 'Debt-free by 2028-02, all non-HELOC' (targetDate mode)`);
       const nonHELOCDebts = debtsForSimulation.map(d => ({
         ...d,
-        included: !d.accountType.toLowerCase().includes("mortgage") && 
-                  !d.accountType.toLowerCase().includes("loc") &&
-                  !d.accountType.toLowerCase().includes("line"),
+        included: !isHELOC(d) && !d.accountType.toLowerCase().includes("mortgage"),
       }));
       const nhIncluded = nonHELOCDebts.filter(d => d.included);
       
@@ -3738,7 +3736,9 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
           const solved = solveForTargetDate(nonHELOCDebts, monthsToTarget, "avalanche");
           
           if (!solved) {
-            console.log(`    ⚠  Target is not achievable (even with 10x minimums)`);
+            console.log(`    ❌ FAIL: solveForTargetDate returned null for future target (should always return a result)`);
+            errors.push("Debt payoff: solveForTargetDate returned null for future target");
+            debtPayoffErrors++;
           } else {
             console.log(`    Required budget: ${formatCurrency(solved.requiredBudget, currency)}`);
             console.log(`    Debt-free: ${solved.result.debtFreeDate || 'N/A'}`);

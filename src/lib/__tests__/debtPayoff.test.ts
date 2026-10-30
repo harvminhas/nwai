@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calculateDebtPayoff, calculateMinimumPayment, solveForTargetDate, classifyPlanStatus, compareWithMinimumOnly, type DebtInput } from "../debtPayoff";
+import { calculateDebtPayoff, calculateMinimumPayment, solveForTargetDate, classifyPlanStatus, compareWithMinimumOnly, isHELOC, type DebtInput } from "../debtPayoff";
 
 describe("debtPayoff", () => {
   const createDebt = (overrides: Partial<DebtInput> = {}): DebtInput => ({
@@ -50,6 +50,18 @@ describe("debtPayoff", () => {
       const withPrincipal = interestOnly + 20000 * 0.01; // 83.33 + 200 = 283.33
       expect(minimum).toBeCloseTo(withPrincipal, 2);
       expect(minimum).toBeGreaterThan(interestOnly);
+    });
+
+    it("should export isHELOC for use in UI and regression tests", () => {
+      // Bug fix: TD Home Equity FlexLine (type 'loan') wasn't detected as HELOC
+      const flexLine = createDebt({ name: "TD Home Equity FlexLine", accountType: "loan", balance: 529599, interestRate: 6 });
+      expect(isHELOC(flexLine)).toBe(true);
+      
+      const regularLoan = createDebt({ name: "Car Loan", accountType: "loan", balance: 20000, interestRate: 5 });
+      expect(isHELOC(regularLoan)).toBe(false);
+      
+      const mortgage = createDebt({ name: "Mortgage", accountType: "mortgage", balance: 500000, interestRate: 3 });
+      expect(isHELOC(mortgage)).toBe(false); // Mortgage is separate from HELOC
     });
   });
 
@@ -106,9 +118,9 @@ describe("debtPayoff", () => {
       expect(result!.requiredBudget).toBeCloseTo(minimums, 1);
     });
 
-    it("should return null if target is impossible", () => {
+    it("should return null only if target is in the past", () => {
       const debts = [createDebt({ balance: 100000, interestRate: 24 })];
-      const targetMonths = 1; // Impossible
+      const targetMonths = 0; // Current month
       const result = solveForTargetDate(debts, targetMonths, "avalanche");
       
       expect(result).toBeNull();
@@ -123,6 +135,37 @@ describe("debtPayoff", () => {
       const result = solveForTargetDate(debts, targetMonths, "avalanche");
       
       expect(result).not.toBeNull();
+      expect(result!.result.monthsToPayoff).toBeLessThanOrEqual(targetMonths + 1);
+    });
+
+    it("should always return a result for any future target (bug fix: no 10x cap)", () => {
+      // Bug fix: Previously capped at 10x minimums and returned null for aggressive targets
+      // Now uses total balance + interest as upper bound, so any future target is achievable
+      const debts = [createDebt({ balance: 100000, interestRate: 24 })];
+      const targetMonths = 1; // Very aggressive, requires huge payment
+      const result = solveForTargetDate(debts, targetMonths, "avalanche");
+      
+      expect(result).not.toBeNull();
+      expect(result!.requiredBudget).toBeGreaterThan(0);
+      // 1-month payoff requires the full balance in one payment (plus a bit for interest in the first month)
+      const minimums = calculateMinimumPayment(debts[0]);
+      expect(result!.requiredBudget).toBeGreaterThan(minimums * 10); // Way more than 10x minimums
+      expect(result!.result.monthsToPayoff).toBeLessThanOrEqual(targetMonths + 1);
+    });
+
+    it("should handle large HELOC balance with reasonable target", () => {
+      // Real-world scenario: TD Home Equity FlexLine CA$529,599 at 6%
+      const debts = [createDebt({ 
+        balance: 529599, 
+        interestRate: 6, 
+        name: "TD Home Equity FlexLine",
+        accountType: "loan" 
+      })];
+      const targetMonths = 15; // Feb 2028 from Oct 2026
+      const result = solveForTargetDate(debts, targetMonths, "avalanche");
+      
+      expect(result).not.toBeNull();
+      expect(result!.requiredBudget).toBeGreaterThan(0);
       expect(result!.result.monthsToPayoff).toBeLessThanOrEqual(targetMonths + 1);
     });
   });

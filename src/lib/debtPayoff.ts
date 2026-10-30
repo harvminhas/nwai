@@ -50,8 +50,9 @@ interface PayoffResult {
 /**
  * Detect if a debt is a HELOC/line of credit (interest-only minimum).
  * Checks both account type and name for keywords.
+ * Exported for use in UI and regression tests to ensure consistent exclusion logic.
  */
-function isHELOC(debt: Pick<DebtInput, 'accountType' | 'name'>): boolean {
+export function isHELOC(debt: Pick<DebtInput, 'accountType' | 'name'>): boolean {
   const typeLower = debt.accountType.toLowerCase();
   const nameLower = debt.name.toLowerCase();
   
@@ -99,7 +100,8 @@ export function calculateMinimumPayment(debt: Pick<DebtInput, 'balance' | 'inter
 /**
  * Solve for the required monthly budget to reach debt-free by a target date.
  * Uses binary search to find the budget that results in payoff within 1 month of target.
- * Returns null if target is impossible even with 10x minimums.
+ * Returns null only if target is in the past or current month (targetMonths <= 0).
+ * Any future target is achievable with sufficient monthly payment.
  */
 export function solveForTargetDate(
   debts: DebtInput[],
@@ -109,7 +111,11 @@ export function solveForTargetDate(
   const includedDebts = debts.filter(d => d.included);
   if (includedDebts.length === 0) return null;
   
+  // Target in the past or current month is impossible
+  if (targetMonths <= 0) return null;
+  
   const totalMinimums = includedDebts.reduce((sum, d) => sum + calculateMinimumPayment(d), 0);
+  const totalBalance = includedDebts.reduce((sum, d) => sum + d.balance, 0);
   
   // Check if target is achievable with minimums
   const minimumsResult = calculateDebtPayoff(debts, totalMinimums, strategy);
@@ -118,8 +124,11 @@ export function solveForTargetDate(
   }
   
   // Binary search for required budget
+  // Upper bound: total balance + estimated interest (1 month at highest rate for all debts)
+  const maxRate = Math.max(...includedDebts.map(d => d.interestRate || 0)) / 100 / 12;
+  const estimatedInterest = totalBalance * maxRate * targetMonths;
   let low = totalMinimums;
-  let high = totalMinimums * 10; // Cap at 10x minimums
+  let high = totalBalance + estimatedInterest;
   let bestBudget = high;
   let bestResult: DebtPayoffResult | null = null;
   
@@ -129,7 +138,7 @@ export function solveForTargetDate(
     const result = calculateDebtPayoff(debts, mid, strategy);
     
     if (result.monthsToPayoff === null) {
-      // Unpayable at this budget
+      // Unpayable at this budget (shouldn't happen with our upper bound)
       low = mid;
       continue;
     }
@@ -153,12 +162,14 @@ export function solveForTargetDate(
     if (high - low < 1) break;
   }
   
-  // Return best result found, or null if impossible
+  // Return best result found
   if (bestResult && bestResult.monthsToPayoff !== null && bestResult.monthsToPayoff <= targetMonths + 2) {
     return { requiredBudget: bestBudget, result: bestResult };
   }
   
-  return null;
+  // If we couldn't find a solution within tolerance, return the high bound result
+  const fallbackResult = calculateDebtPayoff(debts, high, strategy);
+  return { requiredBudget: high, result: fallbackResult };
 }
 
 /**
