@@ -206,27 +206,21 @@ async function debugSubscriptions(uid: string) {
     });
   }
   
-  // Final summary (matching API route logic)
+  // Final summary (matching API route logic via shared function)
   console.log("=".repeat(80));
   console.log("FINAL OUTPUT (what /api/user/subscriptions would return)");
   console.log("=".repeat(80) + "\n");
   
-  // Match API route: ALL confirmed subscriptions stay active (engine-confirmed or user-confirmed)
-  const cancelled = summary.inactive.filter(s => cancelledSlugs.has(s.merchantSlug));
-  const inactive = summary.inactive.filter(s => !cancelledSlugs.has(s.merchantSlug));
-  const confirmedInactive = inactive.filter(s => s.tier === "confirmed");
+  // Use the same post-processing function as the API route
+  const { postProcessSubscriptions } = await import("../src/lib/subscriptionPostProcessing");
+  const { confirmedActive: finalConfirmedActive, inactive: finalInactive } = 
+    postProcessSubscriptions(summary, cancelledSlugs, synthesizedSubs);
   
-  const finalConfirmedActive = [
-    ...summary.subscriptions,
-    ...confirmedInactive, // ALL confirmed items from inactive list
-    ...synthesizedSubs,
-  ];
-  
-  const finalInactive: any[] = []; // Empty - only cancelled items go here
+  const confirmedInactiveCount = summary.inactive.filter(s => s.tier === "confirmed" && !cancelledSlugs.has(s.merchantSlug)).length;
   
   console.log(`Total confirmed active subscriptions: ${finalConfirmedActive.length}`);
   console.log(`  From engine (naturally active): ${summary.subscriptions.length}`);
-  console.log(`  Confirmed (was inactive): ${confirmedInactive.length}`);
+  console.log(`  Confirmed (was inactive): ${confirmedInactiveCount}`);
   console.log(`  Synthesized: ${synthesizedSubs.length}\n`);
   
   if (finalConfirmedActive.length > 0) {
@@ -240,9 +234,9 @@ async function debugSubscriptions(uid: string) {
     });
   }
   
-  console.log(`\nInactive (cancelled only): ${cancelled.length}`);
-  if (cancelled.length > 0) {
-    cancelled.forEach(sub => {
+  console.log(`\nInactive (cancelled only): ${finalInactive.length}`);
+  if (finalInactive.length > 0) {
+    finalInactive.forEach(sub => {
       console.log(`  - ${sub.merchant} (${sub.merchantSlug})`);
     });
   }

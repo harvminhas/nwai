@@ -6,6 +6,7 @@ import { buildSpendingSummary } from "@/lib/spendingSummary";
 import { synthesizeSubscriptions } from "@/lib/subscriptionSynthesis";
 import type { DetectedSubscription } from "@/lib/subscriptionEngine";
 import { findMergeSuggestions } from "@/lib/merchantSimilarity";
+import { postProcessSubscriptions } from "@/lib/subscriptionPostProcessing";
 
 export const dynamic = "force-dynamic";
 
@@ -95,26 +96,6 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       billingFrequencyOverrides
     );
     
-    // Post-process: handle cancelled subscriptions
-    // Move cancelled items from inactive to a separate cancelled list
-    const cancelled = summary.inactive.filter(s => cancelledSlugs.has(s.merchantSlug));
-    const inactive = summary.inactive.filter(s => !cancelledSlugs.has(s.merchantSlug));
-    
-    // Product decision: ALL confirmed subscriptions stay active regardless of staleness
-    // (Engine-confirmed OR user-confirmed). Inactive section = cancelled only.
-    // If past cadence window, noRecentCharge flag shows hint with "Mark cancelled" action.
-    const confirmedInactive = inactive.filter(s => s.tier === "confirmed");
-    confirmedInactive.forEach(item => {
-      item.status = "active";
-      // These items were marked inactive by the engine (past cadence window)
-      // Set noRecentCharge flag to show "No recent charge" / "Possibly cancelled?" hint
-      item.noRecentCharge = true;
-    });
-    
-    // Inactive list is now empty (all non-cancelled confirmed items moved to active)
-    // Candidates remain in candidates list
-    const finalInactive: typeof summary.inactive = [];
-    
     // Synthesize subscriptions for manually marked merchants not detected by engine
     const allDetectedSlugs = new Set([
       ...summary.subscriptions.map(s => s.merchantSlug),
@@ -129,12 +110,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       billingFrequencyOverrides
     );
     
-    // Rebuild lists with overrides and synthesized subs
-    const confirmedActive = [
-      ...summary.subscriptions,
-      ...confirmedInactive, // Add ALL confirmed inactive items to active list
-      ...synthesizedSubs, // Add manually marked merchants
-    ].sort((a, b) => b.amount - a.amount);
+    // Post-process subscriptions using shared function
+    // Product decision: ALL confirmed subscriptions stay active regardless of staleness
+    const { confirmedActive, inactive: finalInactive } = 
+      postProcessSubscriptions(summary, cancelledSlugs, synthesizedSubs);
     
     // Recalculate totals including synthesized subs
     let adjustedMonthlyTotal = summary.monthlyTotal;
@@ -170,7 +149,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       ...summary,
       subscriptions: confirmedActive,
       inactive: finalInactive,
-      cancelled,
+      cancelled: finalInactive.filter(s => cancelledSlugs.has(s.merchantSlug)),
       monthlyTotal: adjustedMonthlyTotal,
       yearlyTotal: adjustedYearlyTotal,
       activeCount: confirmedActive.length,
