@@ -113,32 +113,62 @@ function detectRegularPayment(
 
 /**
  * Calculate minimum payment for a debt based on type.
- * For loans (non-HELOC), detects actual regular payment from history.
- * Falls back to interest + 1% if no payment history is available.
+ * For loans and HELOCs, uses observed regular payment (monthlyPayment) when available.
+ * Falls back to detection from payment history, then to formula estimates.
  */
 export function calculateMinimumPayment(
-  debt: Pick<DebtInput, 'balance' | 'interestRate' | 'accountType' | 'name' | 'paymentHistory'>
+  debt: Pick<DebtInput, 'balance' | 'interestRate' | 'accountType' | 'name' | 'paymentHistory' | 'monthlyPayment'>
 ): number;
 export function calculateMinimumPayment(
-  debt: Pick<DebtInput, 'balance' | 'interestRate' | 'accountType' | 'name' | 'paymentHistory'>,
+  debt: Pick<DebtInput, 'balance' | 'interestRate' | 'accountType' | 'name' | 'paymentHistory' | 'monthlyPayment'>,
   detailed: true
 ): MinimumPaymentResult;
 export function calculateMinimumPayment(
-  debt: Pick<DebtInput, 'balance' | 'interestRate' | 'accountType' | 'name' | 'paymentHistory'>,
+  debt: Pick<DebtInput, 'balance' | 'interestRate' | 'accountType' | 'name' | 'paymentHistory' | 'monthlyPayment'>,
   detailed?: boolean
 ): number | MinimumPaymentResult {
   const rate = debt.interestRate || 0;
   const monthlyRate = rate / 100 / 12;
   const monthlyInterest = debt.balance * monthlyRate;
   
-  // HELOC / Line of credit: interest-only (no +1%)
+  // HELOC / Line of credit: use observed regular payment if available, else interest-only
   if (isHELOC(debt)) {
+    // First priority: use the observed regular payment from Debts page (monthlyPayment)
+    if (debt.monthlyPayment && debt.monthlyPayment > 0) {
+      const amount = debt.monthlyPayment;
+      if (detailed) {
+        return {
+          amount,
+          source: "regular_payment",
+          method: "regular payment (HELOC)",
+        };
+      }
+      return amount;
+    }
+    
+    // Second priority: detect from payment history
+    const detected = detectRegularPayment(debt.paymentHistory || []);
+    if (detected && detected.count >= 1) {
+      const amount = detected.amount;
+      if (detailed) {
+        return {
+          amount,
+          source: "regular_payment",
+          method: detected.count >= 6 
+            ? `regular payment (${detected.count} payments, HELOC)` 
+            : `regular payment (${detected.count} payment${detected.count === 1 ? '' : 's'}, low confidence, HELOC)`,
+        };
+      }
+      return amount;
+    }
+    
+    // Fall back to interest-only
     const amount = monthlyInterest;
     if (detailed) {
       return {
         amount,
         source: "estimated",
-        method: "interest only (HELOC)",
+        method: "interest only (HELOC, no payment history)",
       };
     }
     return amount;
@@ -161,32 +191,44 @@ export function calculateMinimumPayment(
     return amount;
   }
   
-  // Loan / Mortgage: detect from payment history, or fall back to interest + 1%
+  // Loan / Mortgage: use observed regular payment if available, else detect from history
   if (typeLower.includes('loan') || typeLower.includes('mortgage')) {
-    const detected = detectRegularPayment(debt.paymentHistory || []);
+    // First priority: use the observed regular payment from Debts page (monthlyPayment)
+    if (debt.monthlyPayment && debt.monthlyPayment > 0) {
+      const amount = debt.monthlyPayment;
+      if (detailed) {
+        return {
+          amount,
+          source: "regular_payment",
+          method: "regular payment",
+        };
+      }
+      return amount;
+    }
     
+    // Second priority: detect from payment history
+    const detected = detectRegularPayment(debt.paymentHistory || []);
     if (detected && detected.count >= 1) {
-      // Found regular payment in history
       const amount = detected.amount;
       if (detailed) {
         return {
           amount,
           source: "regular_payment",
           method: detected.count >= 6 
-            ? `usual payment (${detected.count} payments)` 
-            : `usual payment (${detected.count} payment${detected.count === 1 ? '' : 's'}, low confidence)`,
+            ? `regular payment (${detected.count} payments)` 
+            : `regular payment (${detected.count} payment${detected.count === 1 ? '' : 's'}, low confidence)`,
         };
       }
       return amount;
     }
     
-    // No payment history: fall back to interest + 1%
+    // Fall back to interest + 1%
     const amount = monthlyInterest + debt.balance * 0.01;
     if (detailed) {
       return {
         amount,
         source: "estimated",
-        method: "interest + 1% of balance",
+        method: "interest + 1% of balance (no payment history)",
       };
     }
     return amount;

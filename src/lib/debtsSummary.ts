@@ -358,7 +358,9 @@ export function buildDebtsSummary(
   const payoffEstimates: PayoffEstimate[] = accounts
     .filter(acc => acc.balance > 0)
     .map(acc => {
-      const payment = acc.minPayment || acc.monthlyPayment;
+      // Use detected regular payment (monthlyPayment from computeScheduledDebtPayments)
+      // Never use minPayment (which is paymentsMade, not a true minimum)
+      const payment = acc.monthlyPayment;
       const months = payment && acc.interestRate 
         ? estimatePayoffMonths(acc.balance, acc.interestRate, payment)
         : null;

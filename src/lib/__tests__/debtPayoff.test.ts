@@ -16,35 +16,35 @@ describe("debtPayoff", () => {
 
   describe("isHELOC detection", () => {
     it("should detect HELOC by account type 'loc'", () => {
-      const debt = createDebt({ accountType: "loc", balance: 50000, interestRate: 6 });
+      const debt = createDebt({ accountType: "loc", balance: 50000, interestRate: 6, monthlyPayment: null });
       const minimum = calculateMinimumPayment(debt);
       const interestOnly = 50000 * 0.06 / 12; // 250
       expect(minimum).toBe(interestOnly);
     });
 
     it("should detect HELOC by account type 'line_of_credit'", () => {
-      const debt = createDebt({ accountType: "line_of_credit", balance: 50000, interestRate: 6 });
+      const debt = createDebt({ accountType: "line_of_credit", balance: 50000, interestRate: 6, monthlyPayment: null });
       const minimum = calculateMinimumPayment(debt);
       const interestOnly = 50000 * 0.06 / 12;
       expect(minimum).toBe(interestOnly);
     });
 
     it("should detect HELOC by name 'FlexLine'", () => {
-      const debt = createDebt({ name: "TD Home Equity FlexLine", accountType: "loan", balance: 50000, interestRate: 6 });
+      const debt = createDebt({ name: "TD Home Equity FlexLine", accountType: "loan", balance: 50000, interestRate: 6, monthlyPayment: null });
       const minimum = calculateMinimumPayment(debt);
       const interestOnly = 50000 * 0.06 / 12;
       expect(minimum).toBe(interestOnly);
     });
 
     it("should detect HELOC by name 'HELOC'", () => {
-      const debt = createDebt({ name: "Bank HELOC", accountType: "loan", balance: 50000, interestRate: 6 });
+      const debt = createDebt({ name: "Bank HELOC", accountType: "loan", balance: 50000, interestRate: 6, monthlyPayment: null });
       const minimum = calculateMinimumPayment(debt);
       const interestOnly = 50000 * 0.06 / 12;
       expect(minimum).toBe(interestOnly);
     });
 
     it("should NOT treat regular loans as HELOC", () => {
-      const debt = createDebt({ name: "Car Loan", accountType: "loan", balance: 20000, interestRate: 5 });
+      const debt = createDebt({ name: "Car Loan", accountType: "loan", balance: 20000, interestRate: 5, monthlyPayment: null });
       const minimum = calculateMinimumPayment(debt);
       const interestOnly = 20000 * 0.05 / 12; // 83.33
       const withPrincipal = interestOnly + 20000 * 0.01; // 83.33 + 200 = 283.33
@@ -77,13 +77,13 @@ describe("debtPayoff", () => {
     });
 
     it("should calculate HELOC minimum (interest-only)", () => {
-      const debt = createDebt({ balance: 10000, interestRate: 6, name: "HELOC", accountType: "line_of_credit" });
+      const debt = createDebt({ balance: 10000, interestRate: 6, name: "HELOC", accountType: "line_of_credit", monthlyPayment: null });
       const monthlyInterest = 10000 * 0.06 / 12; // 50
       expect(calculateMinimumPayment(debt)).toBe(monthlyInterest);
     });
 
     it("should calculate minimum for loans (interest + 1%)", () => {
-      const debt = createDebt({ balance: 50000, interestRate: 4, accountType: "mortgage" });
+      const debt = createDebt({ balance: 50000, interestRate: 4, accountType: "mortgage", monthlyPayment: null });
       const monthlyInterest = 50000 * 0.04 / 12; // 166.67
       const expected = monthlyInterest + 50000 * 0.01; // 166.67 + 500 = 666.67
       expect(calculateMinimumPayment(debt)).toBeCloseTo(expected, 2);
@@ -93,6 +93,18 @@ describe("debtPayoff", () => {
       const debt = createDebt({ balance: 10000, interestRate: 18, accountType: "credit_card" });
       const minimum = calculateMinimumPayment(debt);
       expect(minimum).toBeLessThan(debt.balance * 0.1);
+    });
+
+    it("should use monthlyPayment when available (loans)", () => {
+      const debt = createDebt({ balance: 50000, interestRate: 4, accountType: "mortgage", monthlyPayment: 1500 });
+      const minimum = calculateMinimumPayment(debt);
+      expect(minimum).toBe(1500); // Should use observed payment, not formula
+    });
+
+    it("should use monthlyPayment when available (HELOCs)", () => {
+      const debt = createDebt({ balance: 100000, interestRate: 6, name: "TD Home Equity FlexLine", accountType: "loan", monthlyPayment: 3338 });
+      const minimum = calculateMinimumPayment(debt);
+      expect(minimum).toBe(3338); // Should use observed payment, not interest-only
     });
   });
 

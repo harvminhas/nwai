@@ -3571,8 +3571,56 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         console.log(`      Rate: ${debt.interestRate ? debt.interestRate.toFixed(2) + "%" : "N/A"}`);
         console.log(`      Type: ${debt.accountType}`);
         console.log(`      Raw statement field (paymentsMade): ${rawField}`);
-        console.log(`      Calculated minimum: ${formatCurrency(minimum, currency)} (${minAsPercent}% of balance)`);
+        console.log(`      Debts page payment (monthlyPayment): ${debt.monthlyPayment ? formatCurrency(debt.monthlyPayment, currency) : "null"}`);
+        console.log(`      Planner minimum: ${formatCurrency(minimum, currency)} (${minAsPercent}% of balance)`);
         console.log(`      Source: ${minDetail.source} — ${minDetail.method}`);
+        
+        // Check 1: Planner minimum must equal Debts page payment when one exists
+        if (debt.monthlyPayment && debt.monthlyPayment > 0) {
+          const diff = Math.abs(minimum - debt.monthlyPayment);
+          if (diff > 0.01) {
+            console.log(`      ❌ FAIL: Planner minimum (${formatCurrency(minimum, currency)}) != Debts page payment (${formatCurrency(debt.monthlyPayment, currency)})`);
+            errors.push(`Debt payoff: ${debt.name} planner minimum doesn't match Debts page payment`);
+            debtPayoffErrors++;
+          } else {
+            console.log(`      ✓ Planner minimum matches Debts page payment`);
+          }
+        }
+        
+        // Check 2: Card payoff months must match amortization
+        const cardPayoffEstimate = debtsSummary.payoffEstimates.find(est => est.accountSlug === debt.id);
+        if (cardPayoffEstimate && cardPayoffEstimate.monthsToPayoff !== null && debt.monthlyPayment && debt.interestRate) {
+          // Calculate actual amortization
+          const monthlyRate = debt.interestRate / 100 / 12;
+          const monthlyInterest = debt.balance * monthlyRate;
+          
+          let actualMonths: number | null = null;
+          if (debt.monthlyPayment > monthlyInterest) {
+            // Use amortization formula: n = -log(1 - (r * P) / M) / log(1 + r)
+            const n = -Math.log(1 - (monthlyRate * debt.balance) / debt.monthlyPayment) / Math.log(1 + monthlyRate);
+            if (isFinite(n) && n > 0 && n <= 600) {
+              actualMonths = Math.round(n);
+            }
+          }
+          
+          console.log(`      Debts card payoff: ${cardPayoffEstimate.monthsToPayoff} months → ${cardPayoffEstimate.payoffDate}`);
+          console.log(`      Amortization calc: ${actualMonths !== null ? actualMonths + ' months' : 'unpayable (payment <= interest)'}`);
+          
+          if (actualMonths !== null) {
+            const diff = Math.abs(cardPayoffEstimate.monthsToPayoff - actualMonths);
+            if (diff > 1) {
+              console.log(`      ❌ FAIL: Card payoff (${cardPayoffEstimate.monthsToPayoff} mo) differs from amortization (${actualMonths} mo) by ${diff} months`);
+              errors.push(`Debt payoff: ${debt.name} card payoff doesn't match amortization (off by ${diff} months)`);
+              debtPayoffErrors++;
+            } else {
+              console.log(`      ✓ Card payoff matches amortization (within 1 month)`);
+            }
+          } else if (cardPayoffEstimate.monthsToPayoff !== null) {
+            console.log(`      ❌ FAIL: Card shows payoff but amortization says unpayable (payment <= interest)`);
+            errors.push(`Debt payoff: ${debt.name} card shows payoff but payment doesn't cover interest`);
+            debtPayoffErrors++;
+          }
+        }
         
         // For loans with payment history, show the detection details
         if ((debt.accountType.toLowerCase().includes('loan') || debt.accountType.toLowerCase().includes('mortgage')) 

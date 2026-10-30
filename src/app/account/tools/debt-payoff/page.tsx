@@ -53,7 +53,7 @@ export default function DebtPayoffPage() {
             name: acc.accountName || acc.bankName,
             balance: acc.balance,
             interestRate: acc.interestRate,
-            monthlyPayment: acc.monthlyPayment,
+            monthlyPayment: acc.monthlyPayment, // Detected regular payment from Debts page
             minPayment: acc.minPayment,
             accountType: acc.accountType,
             included: true,
