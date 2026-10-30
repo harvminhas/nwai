@@ -624,6 +624,564 @@ function WhereMoneyGoes({
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
+// ── V2 Dashboard ───────────────────────────────────────────────────────────────
+
+function DashboardV2() {
+  const router = useRouter();
+  const { buildHeaders } = useActiveProfile();
+  const [token, setToken] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [netWorth, setNetWorth] = useState<number>(0);
+  const [monthlyChange, setMonthlyChange] = useState<number>(0);
+  const [currency, setCurrency] = useState("CAD");
+  const [currentMonthData, setCurrentMonthData] = useState<{
+    income: number;
+    fixed: number;
+    essentials: number;
+    flexible: number;
+    savings: number;
+    yearMonth: string;
+  } | null>(null);
+  const [subscriptions, setSubscriptions] = useState<{
+    noRecentCharge: Array<{ merchant: string; lastDate: string; amount: number }>;
+    upcomingRenewals: Array<{ merchant: string; nextDate: string; amount: number }>;
+  }>({ noRecentCharge: [], upcomingRenewals: [] });
+  const [debtPlan, setDebtPlan] = useState<{ interestSaved: number; progressPct: number } | null>(null);
+  const [flaggedTransfers, setFlaggedTransfers] = useState<{ total: number; count: number }>({ total: 0, count: 0 });
+  const [unreviewedCount, setUnreviewedCount] = useState(0);
+
+  useEffect(() => {
+    const { auth } = getFirebaseClient();
+    return onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        router.push("/login");
+        return;
+      }
+      const tok = await user.getIdToken();
+      setToken(tok);
+    });
+  }, [router]);
+
+  useEffect(() => {
+    if (!token) return;
+
+    const loadDashboardData = async () => {
+      setLoading(true);
+      try {
+        const headers = buildHeaders(token);
+        
+        // Parallel fetch all data
+        const [netWorthRes, moneyCoachRes, subscriptionsRes, debtPlansRes, anomaliesRes] = await Promise.all([
+          fetch("/api/user/net-worth-summary", { headers }),
+          fetch("/api/user/money-coach?range=3mo", { headers }),
+          fetch("/api/user/subscriptions", { headers }),
+          fetch("/api/user/debt-plans", { headers }),
+          fetch("/api/user/debt-payment-anomalies", { headers }),
+        ]);
+
+        // Net worth data
+        if (netWorthRes.ok) {
+          const data = await netWorthRes.json();
+          setNetWorth(data.netWorth || 0);
+          setMonthlyChange(data.monthlyChange || 0);
+          setCurrency(data.currency || "CAD");
+        }
+
+        // Money coach data (for cash flow)
+        if (moneyCoachRes.ok) {
+          const data = await moneyCoachRes.json();
+          setCurrency(data.homeCurrency || currency);
+          
+          // Extract current month data from buckets
+          const fixedBucket = data.buckets.find((b: { bucket: string }) => b.bucket === "fixed");
+          const essentialsBucket = data.buckets.find((b: { bucket: string }) => b.bucket === "essentials");
+          const flexibleBucket = data.buckets.find((b: { bucket: string }) => b.bucket === "flexible");
+          const savingsBucket = data.buckets.find((b: { bucket: string }) => b.bucket === "savings");
+
+          setCurrentMonthData({
+            income: data.incomeAmount || 0,
+            fixed: fixedBucket?.monthlyAverage || 0,
+            essentials: essentialsBucket?.monthlyAverage || 0,
+            flexible: flexibleBucket?.monthlyAverage || 0,
+            savings: savingsBucket?.monthlyAverage || 0,
+            yearMonth: new Date().toISOString().slice(0, 7),
+          });
+
+          // Flagged transfers
+          if (data.gapReconciliation?.flaggedTransfers) {
+            const transfers = data.gapReconciliation.flaggedTransfers;
+            const total = transfers.reduce((sum: number, t: { amount: number }) => sum + t.amount, 0);
+            setFlaggedTransfers({ total, count: transfers.length });
+          }
+        }
+
+        // Subscriptions data
+        if (subscriptionsRes.ok) {
+          const data = await subscriptionsRes.json();
+          const noRecentCharge = (data.confirmedActive || [])
+            .filter((s: { noRecentCharge?: boolean }) => s.noRecentCharge)
+            .map((s: { merchant: string; lastDate: string; amount: number }) => ({
+              merchant: s.merchant,
+              lastDate: s.lastDate,
+              amount: s.amount,
+            }));
+
+          // Calculate upcoming renewals (next 30 days)
+          const today = new Date();
+          const thirtyDaysLater = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+          const upcomingRenewals = (data.confirmedActive || [])
+            .filter((s: { nextDate: string | null }) => {
+              if (!s.nextDate) return false;
+              const nextDate = new Date(s.nextDate);
+              return nextDate >= today && nextDate <= thirtyDaysLater;
+            })
+            .map((s: { merchant: string; nextDate: string; amount: number }) => ({
+              merchant: s.merchant,
+              nextDate: s.nextDate,
+              amount: s.amount,
+            }));
+
+          setSubscriptions({ noRecentCharge, upcomingRenewals });
+        }
+
+        // Debt plans data
+        if (debtPlansRes.ok) {
+          const data = await debtPlansRes.json();
+          if (data.plans && data.plans.length > 0) {
+            const activePlan = data.plans.find((p: { status: string }) => p.status === "active");
+            if (activePlan) {
+              setDebtPlan({
+                interestSaved: activePlan.interestSaved || 0,
+                progressPct: activePlan.progressPct || 0,
+              });
+            }
+          }
+        }
+
+        // Debt payment anomalies
+        if (anomaliesRes.ok) {
+          const data = await anomaliesRes.json();
+          setUnreviewedCount(data.anomalies?.length || 0);
+        }
+
+      } catch (error) {
+        console.error("Failed to load dashboard data:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadDashboardData();
+  }, [token, buildHeaders, currency, router]);
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-purple-600 border-t-transparent" />
+      </div>
+    );
+  }
+
+  const totalActions = 
+    subscriptions.noRecentCharge.length +
+    subscriptions.upcomingRenewals.length +
+    (debtPlan ? 1 : 0) +
+    (flaggedTransfers.count > 0 ? 1 : 0) +
+    unreviewedCount;
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white pb-12">
+      <div className="mx-auto max-w-6xl px-4 py-8">
+        
+        {/* Hero - Net Worth */}
+        <div className="mb-8 rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-500 uppercase tracking-wide">Net Worth</p>
+              <p className="mt-2 text-5xl font-bold tracking-tight text-gray-900">
+                {fmt(netWorth, currency)}
+              </p>
+            </div>
+            <div className={`flex items-center gap-2 rounded-xl px-4 py-2 ${monthlyChange >= 0 ? "bg-green-50" : "bg-red-50"}`}>
+              {monthlyChange >= 0 ? (
+                <svg className="h-5 w-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                </svg>
+              ) : (
+                <svg className="h-5 w-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                </svg>
+              )}
+              <span className={`text-lg font-semibold ${monthlyChange >= 0 ? "text-green-700" : "text-red-700"}`}>
+                {fmt(Math.abs(monthlyChange), currency)} this month
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Monthly Cash Flow Strip */}
+        {currentMonthData && (
+          <div className="mb-8 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">
+                {new Date(currentMonthData.yearMonth + "-01").toLocaleDateString("en-US", { month: "long", year: "numeric" })} Cash Flow
+              </h2>
+              <Link 
+                href="/account/spending"
+                className="text-sm font-medium text-purple-600 hover:text-purple-700 transition"
+              >
+                See full breakdown →
+              </Link>
+            </div>
+            
+            {/* Flow bars */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-4">
+                <div className="w-24 text-sm font-medium text-gray-600">Income</div>
+                <div className="flex-1">
+                  <div className="h-10 rounded-lg bg-purple-100 flex items-center px-3">
+                    <span className="text-sm font-semibold text-purple-900">
+                      {fmt(currentMonthData.income, currency)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="flex items-center gap-4">
+                <div className="w-24 text-sm font-medium text-gray-600">Spending</div>
+                <div className="flex-1 flex gap-1">
+                  {/* Fixed */}
+                  <Link 
+                    href="/account/spending#fixed"
+                    className="h-10 rounded-l-lg flex items-center justify-center px-3 hover:opacity-80 transition"
+                    style={{ 
+                      backgroundColor: "#7c3aed",
+                      width: `${(currentMonthData.fixed / currentMonthData.income) * 100}%`
+                    }}
+                    title={`Fixed: ${fmt(currentMonthData.fixed, currency)}`}
+                  >
+                    <span className="text-xs font-semibold text-white whitespace-nowrap">
+                      Fixed {fmt(currentMonthData.fixed, currency)}
+                    </span>
+                  </Link>
+                  
+                  {/* Essentials */}
+                  <Link 
+                    href="/account/spending#essentials"
+                    className="h-10 flex items-center justify-center px-3 hover:opacity-80 transition"
+                    style={{ 
+                      backgroundColor: "#0ea5e9",
+                      width: `${(currentMonthData.essentials / currentMonthData.income) * 100}%`
+                    }}
+                    title={`Essentials: ${fmt(currentMonthData.essentials, currency)}`}
+                  >
+                    <span className="text-xs font-semibold text-white whitespace-nowrap">
+                      Essentials {fmt(currentMonthData.essentials, currency)}
+                    </span>
+                  </Link>
+                  
+                  {/* Flexible */}
+                  <Link 
+                    href="/account/spending#flexible"
+                    className="h-10 rounded-r-lg flex items-center justify-center px-3 hover:opacity-80 transition"
+                    style={{ 
+                      backgroundColor: "#f59e0b",
+                      width: `${(currentMonthData.flexible / currentMonthData.income) * 100}%`
+                    }}
+                    title={`Flexible: ${fmt(currentMonthData.flexible, currency)}`}
+                  >
+                    <span className="text-xs font-semibold text-white whitespace-nowrap">
+                      Flexible {fmt(currentMonthData.flexible, currency)}
+                    </span>
+                  </Link>
+                </div>
+              </div>
+              
+              <div className="flex items-center gap-4">
+                <div className="w-24 text-sm font-medium text-gray-600">Remaining</div>
+                <div className="flex-1">
+                  <div 
+                    className="h-10 rounded-lg flex items-center px-3"
+                    style={{ backgroundColor: currentMonthData.savings >= 0 ? "#10b981" : "#ef4444" }}
+                  >
+                    <span className="text-sm font-semibold text-white">
+                      {fmt(currentMonthData.savings, currency)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Action List */}
+        {totalActions > 0 && (
+          <div className="mb-8 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+            <h2 className="mb-4 text-lg font-semibold text-gray-900">
+              {totalActions} {totalActions === 1 ? "item" : "items"} need your attention
+            </h2>
+            <div className="space-y-3">
+              {/* Subscriptions with no recent charge */}
+              {subscriptions.noRecentCharge.length > 0 && (
+                <Link
+                  href="/account/spending?tab=subscriptions"
+                  className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 hover:bg-amber-100 transition"
+                >
+                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-600 text-white">
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-amber-900">
+                      {subscriptions.noRecentCharge.length} {subscriptions.noRecentCharge.length === 1 ? "subscription hasn't" : "subscriptions haven't"} charged in 45+ days
+                    </p>
+                    <p className="mt-1 text-xs text-amber-700">
+                      {subscriptions.noRecentCharge.slice(0, 3).map(s => s.merchant).join(", ")}
+                      {subscriptions.noRecentCharge.length > 3 && `, +${subscriptions.noRecentCharge.length - 3} more`}
+                    </p>
+                  </div>
+                  <svg className="h-5 w-5 shrink-0 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </Link>
+              )}
+
+              {/* Upcoming renewals */}
+              {subscriptions.upcomingRenewals.length > 0 && (
+                <Link
+                  href="/account/spending?tab=subscriptions"
+                  className="flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 p-4 hover:bg-blue-100 transition"
+                >
+                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white">
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-blue-900">
+                      {subscriptions.upcomingRenewals.length} {subscriptions.upcomingRenewals.length === 1 ? "subscription renewing" : "subscriptions renewing"} in the next 30 days
+                    </p>
+                    <p className="mt-1 text-xs text-blue-700">
+                      Total: {fmt(subscriptions.upcomingRenewals.reduce((sum, s) => sum + s.amount, 0), currency)}
+                    </p>
+                  </div>
+                  <svg className="h-5 w-5 shrink-0 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </Link>
+              )}
+
+              {/* Debt payoff progress */}
+              {debtPlan && (
+                <Link
+                  href="/account/debts?tab=payoff"
+                  className="flex items-start gap-3 rounded-lg border border-green-200 bg-green-50 p-4 hover:bg-green-100 transition"
+                >
+                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-green-600 text-white">
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-green-900">
+                      Debt payoff: On track to save {fmt(debtPlan.interestSaved, currency)} in interest
+                    </p>
+                    <p className="mt-1 text-xs text-green-700">
+                      {Math.round(debtPlan.progressPct)}% complete
+                    </p>
+                  </div>
+                  <svg className="h-5 w-5 shrink-0 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </Link>
+              )}
+
+              {/* Flagged transfers */}
+              {flaggedTransfers.count > 0 && (
+                <Link
+                  href="/account/spending"
+                  className="flex items-start gap-3 rounded-lg border border-purple-200 bg-purple-50 p-4 hover:bg-purple-100 transition"
+                >
+                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-purple-600 text-white">
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                    </svg>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-purple-900">
+                      {fmt(flaggedTransfers.total, currency)} in transfers to external accounts
+                    </p>
+                    <p className="mt-1 text-xs text-purple-700">
+                      {flaggedTransfers.count} {flaggedTransfers.count === 1 ? "transfer" : "transfers"} to accounts not in the app
+                    </p>
+                  </div>
+                  <svg className="h-5 w-5 shrink-0 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </Link>
+              )}
+
+              {/* Unreviewed debt payments */}
+              {unreviewedCount > 0 && (
+                <Link
+                  href="/account/spending"
+                  className="flex items-start gap-3 rounded-lg border border-violet-200 bg-violet-50 p-4 hover:bg-violet-100 transition"
+                >
+                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-600 text-white">
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-violet-900">
+                      {unreviewedCount} {unreviewedCount === 1 ? "debt payment needs" : "debt payments need"} review
+                    </p>
+                    <p className="mt-1 text-xs text-violet-700">
+                      Classify payments to improve spending accuracy
+                    </p>
+                  </div>
+                  <svg className="h-5 w-5 shrink-0 text-violet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </Link>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Quick Navigation */}
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <Link
+            href="/account/spending"
+            className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-5 shadow-sm hover:shadow-md hover:border-purple-300 transition"
+          >
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-purple-100">
+              <svg className="h-6 w-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-gray-900">Spending</p>
+              {currentMonthData && (
+                <p className="text-xs text-gray-500">
+                  {fmt(currentMonthData.fixed + currentMonthData.essentials + currentMonthData.flexible, currency)} this month
+                </p>
+              )}
+            </div>
+            <svg className="h-5 w-5 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </Link>
+
+          <Link
+            href="/account/debts"
+            className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-5 shadow-sm hover:shadow-md hover:border-purple-300 transition"
+          >
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-red-100">
+              <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-gray-900">Debts</p>
+              <p className="text-xs text-gray-500">Credit cards & loans</p>
+            </div>
+            <svg className="h-5 w-5 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </Link>
+
+          <Link
+            href="/account/assets"
+            className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-5 shadow-sm hover:shadow-md hover:border-purple-300 transition"
+          >
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-green-100">
+              <svg className="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-gray-900">Assets</p>
+              <p className="text-xs text-gray-500">Bank accounts & investments</p>
+            </div>
+            <svg className="h-5 w-5 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </Link>
+
+          <Link
+            href="/account/spending?tab=subscriptions"
+            className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-5 shadow-sm hover:shadow-md hover:border-purple-300 transition"
+          >
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-blue-100">
+              <svg className="h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-gray-900">Subscriptions</p>
+              {subscriptions.noRecentCharge.length > 0 && (
+                <p className="text-xs text-amber-600 font-medium">
+                  {subscriptions.noRecentCharge.length} inactive
+                </p>
+              )}
+            </div>
+            <svg className="h-5 w-5 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </Link>
+
+          <Link
+            href="/account/debts?tab=payoff"
+            className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-5 shadow-sm hover:shadow-md hover:border-purple-300 transition"
+          >
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-violet-100">
+              <svg className="h-6 w-6 text-violet-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-gray-900">Debt Payoff</p>
+              {debtPlan ? (
+                <p className="text-xs text-green-600 font-medium">
+                  {Math.round(debtPlan.progressPct)}% complete
+                </p>
+              ) : (
+                <p className="text-xs text-gray-500">Plan your payoff strategy</p>
+              )}
+            </div>
+            <svg className="h-5 w-5 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </Link>
+
+          <Link
+            href="/account/chat"
+            className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-5 shadow-sm hover:shadow-md hover:border-purple-300 transition"
+          >
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-purple-100">
+              <svg className="h-6 w-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-gray-900">Ask AI</p>
+              <p className="text-xs text-gray-500">Get financial insights</p>
+            </div>
+            <svg className="h-5 w-5 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </Link>
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+// ── V1 Dashboard (Original) ───────────────────────────────────────────────────
+
 export default function DashboardPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -822,6 +1380,12 @@ export default function DashboardPage() {
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-purple-600 border-t-transparent" />
       </div>
     );
+  }
+
+  // Check for v=2 query parameter
+  const version = searchParams.get("v");
+  if (version === "2") {
+    return <DashboardV2 />;
   }
 
   return (
