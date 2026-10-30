@@ -413,20 +413,25 @@ export default function PlanModal({ debts, currency, token, existingPlan, onClos
                 <div>
                   <p className="text-sm font-semibold text-gray-900 mb-2">
                     Minimum payments
-                    <span 
-                      className="ml-2 text-[10px] px-1.5 py-0.5 bg-gray-200 text-gray-600 rounded uppercase font-semibold cursor-help"
-                      title="Cards: max(interest + 1%, 3%, $10); HELOC: interest only; Loans: interest + 1%"
-                    >
-                      how?
-                    </span>
                   </p>
                   <div className="space-y-1 text-xs text-gray-700">
-                    {includedDebts.map(d => (
-                      <div key={d.id} className="flex justify-between">
-                        <span className="truncate">{d.name}</span>
-                        <span className="whitespace-nowrap ml-2">{formatCurrency(calculateMinimumPayment(d), currency)}</span>
-                      </div>
-                    ))}
+                    {includedDebts.map(d => {
+                      const minDetail = calculateMinimumPayment(d, true);
+                      return (
+                        <div key={d.id} className="flex justify-between items-center gap-2">
+                          <span className="truncate">{d.name}</span>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <span className="whitespace-nowrap">{formatCurrency(minDetail.amount, currency)}</span>
+                            <span 
+                              className="text-[9px] px-1 py-0.5 bg-gray-200 text-gray-600 rounded uppercase font-semibold cursor-help"
+                              title={minDetail.method}
+                            >
+                              {minDetail.source === "regular_payment" ? "actual" : "est"}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}

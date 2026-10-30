@@ -3521,20 +3521,31 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
   console.log("\nCheck 1: Debt payoff simulation");
   try {
     const debtPayoffModule = await import("../src/lib/debtPayoff");
-    const { calculateDebtPayoff, calculateMinimumPayment } = debtPayoffModule;
+    const { calculateDebtPayoff, calculateMinimumPayment, isHELOC } = debtPayoffModule;
     
-    // Convert debtsSummary to DebtInput format
+    // Convert debtsSummary to DebtInput format, including payment history
     const debtsForSimulation: any[] = debtsSummary.groups.flatMap(g =>
-      g.accounts.map(acc => ({
-        id: acc.slug,
-        name: acc.accountName || acc.bankName,
-        balance: acc.balance,
-        interestRate: acc.interestRate,
-        monthlyPayment: acc.monthlyPayment,
-        minPayment: acc.minPayment,
-        accountType: acc.accountType,
-        included: true,
-      }))
+      g.accounts.map(acc => {
+        // Get payment history for this account
+        const accountHistory = profile.debtPaymentHistory
+          .filter(entry => entry.accountSlug === acc.slug && entry.paymentsMade > 0)
+          .map(entry => ({
+            date: `${entry.statementMonth}-15`, // Mid-month approximation
+            amount: entry.paymentsMade,
+          }));
+        
+        return {
+          id: acc.slug,
+          name: acc.accountName || acc.bankName,
+          balance: acc.balance,
+          interestRate: acc.interestRate,
+          monthlyPayment: acc.monthlyPayment,
+          minPayment: acc.minPayment,
+          accountType: acc.accountType,
+          included: true,
+          paymentHistory: accountHistory.length > 0 ? accountHistory : undefined,
+        };
+      })
     );
 
     if (debtsForSimulation.length === 0) {
@@ -3547,7 +3558,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       let totalMinimums = 0;
       let totalBalance = 0;
       for (const debt of debtsForSimulation) {
-        const minimum = calculateMinimumPayment(debt);
+        const minDetail = calculateMinimumPayment(debt, true) as any;
+        const minimum = minDetail.amount;
         totalMinimums += minimum;
         totalBalance += debt.balance;
         
@@ -3560,6 +3572,24 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         console.log(`      Type: ${debt.accountType}`);
         console.log(`      Raw statement field (paymentsMade): ${rawField}`);
         console.log(`      Calculated minimum: ${formatCurrency(minimum, currency)} (${minAsPercent}% of balance)`);
+        console.log(`      Source: ${minDetail.source} — ${minDetail.method}`);
+        
+        // For loans with payment history, show the detection details
+        if ((debt.accountType.toLowerCase().includes('loan') || debt.accountType.toLowerCase().includes('mortgage')) 
+            && !isHELOC(debt) 
+            && debt.paymentHistory && debt.paymentHistory.length > 0) {
+          const paymentAmounts = debt.paymentHistory.map((p: any) => p.amount).filter((a: number) => a > 0);
+          if (paymentAmounts.length > 0) {
+            console.log(`      Payment history: ${paymentAmounts.length} payment${paymentAmounts.length === 1 ? '' : 's'} found`);
+            const sortedAmounts = [...paymentAmounts].sort((a, b) => a - b);
+            if (sortedAmounts.length <= 5) {
+              console.log(`        Amounts: ${sortedAmounts.map(a => formatCurrency(a, currency)).join(', ')}`);
+            } else {
+              const median = sortedAmounts[Math.floor(sortedAmounts.length / 2)];
+              console.log(`        Range: ${formatCurrency(sortedAmounts[0], currency)} – ${formatCurrency(sortedAmounts[sortedAmounts.length - 1], currency)}, median: ${formatCurrency(median, currency)}`);
+            }
+          }
+        }
         
         // Assert minimum is never null or 0
         if (minimum === null || minimum === 0) {
@@ -3661,18 +3691,29 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     const debtPayoffModule = await import("../src/lib/debtPayoff");
     const { calculateDebtPayoff, calculateMinimumPayment, solveForTargetDate, classifyPlanStatus, isHELOC } = debtPayoffModule;
     
-    // Convert debtsSummary to DebtInput format
+    // Convert debtsSummary to DebtInput format, including payment history
     const debtsForSimulation: any[] = debtsSummary.groups.flatMap(g =>
-      g.accounts.map(acc => ({
-        id: acc.slug,
-        name: acc.accountName || acc.bankName,
-        balance: acc.balance,
-        interestRate: acc.interestRate,
-        monthlyPayment: acc.monthlyPayment,
-        minPayment: acc.minPayment,
-        accountType: acc.accountType,
-        included: false, // will be set by plan
-      }))
+      g.accounts.map(acc => {
+        // Get payment history for this account
+        const accountHistory = profile.debtPaymentHistory
+          .filter(entry => entry.accountSlug === acc.slug && entry.paymentsMade > 0)
+          .map(entry => ({
+            date: `${entry.statementMonth}-15`, // Mid-month approximation
+            amount: entry.paymentsMade,
+          }));
+        
+        return {
+          id: acc.slug,
+          name: acc.accountName || acc.bankName,
+          balance: acc.balance,
+          interestRate: acc.interestRate,
+          monthlyPayment: acc.monthlyPayment,
+          minPayment: acc.minPayment,
+          accountType: acc.accountType,
+          included: false, // will be set by plan
+          paymentHistory: accountHistory.length > 0 ? accountHistory : undefined,
+        };
+      })
     );
 
     if (debtsForSimulation.length === 0) {

@@ -22,6 +22,7 @@ export interface DebtAccount {
   statementMonth: string;
   monthlyPayment: number | null; // estimated from payment history
   minPayment: number | null; // from paymentsMade in latest statement
+  paymentHistory?: Array<{ date: string; amount: number }>; // for detecting regular loan payments
 }
 
 export interface DebtGroup {
@@ -212,6 +213,16 @@ export function buildDebtsSummary(
       .filter(p => p.accountSlug === acc.slug)
       .sort((a, b) => b.statementMonth.localeCompare(a.statementMonth))[0];
     
+    // Get payment history for loan payment detection (last 12 months)
+    const accountPaymentHistory = paymentHistory
+      .filter(p => p.accountSlug === acc.slug && p.paymentsMade > 0)
+      .sort((a, b) => b.statementMonth.localeCompare(a.statementMonth))
+      .slice(0, 12) // Last 12 months max
+      .map(p => ({
+        date: `${p.statementMonth}-15`, // Mid-month approximation
+        amount: convertToHome(p.paymentsMade, p.currency || homeCurrency, fxRates, homeCurrency),
+      }));
+    
     return {
       slug: acc.slug,
       bankName: acc.bankName,
@@ -223,6 +234,7 @@ export function buildDebtsSummary(
       statementMonth: acc.statementMonth,
       monthlyPayment,
       minPayment: latestPayment?.paymentsMade || null,
+      paymentHistory: accountPaymentHistory.length > 0 ? accountPaymentHistory : undefined,
     };
   });
 

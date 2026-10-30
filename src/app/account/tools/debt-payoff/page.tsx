@@ -57,6 +57,7 @@ export default function DebtPayoffPage() {
             minPayment: acc.minPayment,
             accountType: acc.accountType,
             included: true,
+            paymentHistory: acc.paymentHistory,
           }))
         );
         setDebts(debtInputs);

@@ -14,6 +14,14 @@ export interface DebtInput {
   minPayment: number | null; // statement minimum payment, null = unknown
   accountType: string; // for minimum calculation
   included: boolean;
+  /** Payment history for detecting regular loan payments (optional) */
+  paymentHistory?: Array<{ date: string; amount: number }>;
+}
+
+export interface MinimumPaymentResult {
+  amount: number;
+  source: "regular_payment" | "estimated";
+  method: string; // e.g. "usual payment (6 payments)" or "interest + 1% of balance"
 }
 
 export type PayoffStrategy = "avalanche" | "snowball";
@@ -65,18 +73,75 @@ export function isHELOC(debt: Pick<DebtInput, 'accountType' | 'name'>): boolean 
 }
 
 /**
- * Calculate minimum payment for a debt based on type.
- * Never uses the statement "minPayment" field (which is actually paymentsMade, not a minimum).
- * Always calculates based on type and balance.
+ * Detect regular payment from payment history (for loans/mortgages).
+ * Returns median of payments, filtering out outliers (>1.5x or <0.5x median).
  */
-export function calculateMinimumPayment(debt: Pick<DebtInput, 'balance' | 'interestRate' | 'accountType' | 'name'>): number {
+function detectRegularPayment(
+  paymentHistory: Array<{ date: string; amount: number }>
+): { amount: number; count: number } | null {
+  if (!paymentHistory || paymentHistory.length === 0) return null;
+  
+  const amounts = paymentHistory
+    .map(p => p.amount)
+    .filter(a => a > 0)
+    .sort((a, b) => a - b);
+  
+  if (amounts.length === 0) return null;
+  if (amounts.length === 1) return { amount: amounts[0], count: 1 };
+  
+  // Calculate initial median
+  const medianIdx = Math.floor(amounts.length / 2);
+  const rawMedian = amounts.length % 2 === 0
+    ? (amounts[medianIdx - 1] + amounts[medianIdx]) / 2
+    : amounts[medianIdx];
+  
+  // Filter out outliers (>1.5x or <0.5x median)
+  const regular = amounts.filter(
+    a => a <= rawMedian * 1.5 && (rawMedian <= 100 || a >= rawMedian * 0.5)
+  );
+  
+  if (regular.length === 0) return { amount: rawMedian, count: amounts.length };
+  
+  // Return median of regular payments
+  const midIdx = Math.floor(regular.length / 2);
+  const regularAmount = regular.length % 2 === 0
+    ? (regular[midIdx - 1] + regular[midIdx]) / 2
+    : regular[midIdx];
+  
+  return { amount: regularAmount, count: regular.length };
+}
+
+/**
+ * Calculate minimum payment for a debt based on type.
+ * For loans (non-HELOC), detects actual regular payment from history.
+ * Falls back to interest + 1% if no payment history is available.
+ */
+export function calculateMinimumPayment(
+  debt: Pick<DebtInput, 'balance' | 'interestRate' | 'accountType' | 'name' | 'paymentHistory'>
+): number;
+export function calculateMinimumPayment(
+  debt: Pick<DebtInput, 'balance' | 'interestRate' | 'accountType' | 'name' | 'paymentHistory'>,
+  detailed: true
+): MinimumPaymentResult;
+export function calculateMinimumPayment(
+  debt: Pick<DebtInput, 'balance' | 'interestRate' | 'accountType' | 'name' | 'paymentHistory'>,
+  detailed?: boolean
+): number | MinimumPaymentResult {
   const rate = debt.interestRate || 0;
   const monthlyRate = rate / 100 / 12;
   const monthlyInterest = debt.balance * monthlyRate;
   
   // HELOC / Line of credit: interest-only (no +1%)
   if (isHELOC(debt)) {
-    return monthlyInterest;
+    const amount = monthlyInterest;
+    if (detailed) {
+      return {
+        amount,
+        source: "estimated",
+        method: "interest only (HELOC)",
+      };
+    }
+    return amount;
   }
   
   const typeLower = debt.accountType.toLowerCase();
@@ -85,16 +150,58 @@ export function calculateMinimumPayment(debt: Pick<DebtInput, 'balance' | 'inter
   if (typeLower.includes('credit')) {
     const option1 = monthlyInterest + debt.balance * 0.01;
     const option2 = debt.balance * 0.03;
-    return Math.max(option1, option2, 10);
+    const amount = Math.max(option1, option2, 10);
+    if (detailed) {
+      return {
+        amount,
+        source: "estimated",
+        method: "max(interest + 1%, 3%, $10)",
+      };
+    }
+    return amount;
   }
   
-  // Loan / Mortgage: interest + 1% of balance
+  // Loan / Mortgage: detect from payment history, or fall back to interest + 1%
   if (typeLower.includes('loan') || typeLower.includes('mortgage')) {
-    return monthlyInterest + debt.balance * 0.01;
+    const detected = detectRegularPayment(debt.paymentHistory || []);
+    
+    if (detected && detected.count >= 1) {
+      // Found regular payment in history
+      const amount = detected.amount;
+      if (detailed) {
+        return {
+          amount,
+          source: "regular_payment",
+          method: detected.count >= 6 
+            ? `usual payment (${detected.count} payments)` 
+            : `usual payment (${detected.count} payment${detected.count === 1 ? '' : 's'}, low confidence)`,
+        };
+      }
+      return amount;
+    }
+    
+    // No payment history: fall back to interest + 1%
+    const amount = monthlyInterest + debt.balance * 0.01;
+    if (detailed) {
+      return {
+        amount,
+        source: "estimated",
+        method: "interest + 1% of balance",
+      };
+    }
+    return amount;
   }
   
   // Default: interest + 1%
-  return monthlyInterest + debt.balance * 0.01;
+  const amount = monthlyInterest + debt.balance * 0.01;
+  if (detailed) {
+    return {
+      amount,
+      source: "estimated",
+      method: "interest + 1% of balance",
+    };
+  }
+  return amount;
 }
 
 /**
