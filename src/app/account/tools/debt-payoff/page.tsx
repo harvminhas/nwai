@@ -341,9 +341,9 @@ export default function DebtPayoffPage() {
                         Minimum
                         <span 
                           className="text-[9px] px-1 py-0.5 bg-gray-200 text-gray-600 rounded uppercase font-semibold cursor-help"
-                          title={debt.minPayment ? "From your statement" : `Calculated: ${debt.accountType.includes("credit") ? "max(interest + 1%, 3%, $10)" : debt.accountType.includes("loc") ? "interest + 1%" : "interest + 1% or observed payment"}`}
+                          title={`Calculated: ${debt.accountType.includes("credit") ? "max(interest + 1%, 3%, $10)" : debt.accountType.includes("loc") ? "interest + 1%" : "interest + 1%"}`}
                         >
-                          {debt.minPayment ? "stmt" : "calc"}
+                          calc
                         </span>
                       </label>
                       <div className="px-2 py-1 text-sm bg-gray-100 border border-gray-200 rounded text-gray-700">

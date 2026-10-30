@@ -48,15 +48,11 @@ interface PayoffResult {
 }
 
 /**
- * Calculate minimum payment for a debt based on type and available data.
- * Priority: (1) statement minPayment, (2) estimate by type
+ * Calculate minimum payment for a debt based on type.
+ * Never uses the statement "minPayment" field (which is actually paymentsMade, not a minimum).
+ * Always calculates based on type and balance.
  */
-export function calculateMinimumPayment(debt: Pick<DebtInput, 'balance' | 'interestRate' | 'minPayment' | 'monthlyPayment' | 'accountType'>): number {
-  // Use statement minimum if available
-  if (debt.minPayment !== null && debt.minPayment > 0) {
-    return debt.minPayment;
-  }
-  
+export function calculateMinimumPayment(debt: Pick<DebtInput, 'balance' | 'interestRate' | 'accountType'>): number {
   const rate = debt.interestRate || 0;
   const monthlyRate = rate / 100 / 12;
   const monthlyInterest = debt.balance * monthlyRate;
@@ -75,11 +71,8 @@ export function calculateMinimumPayment(debt: Pick<DebtInput, 'balance' | 'inter
     return Math.max(option1, option2, 10);
   }
   
-  // Loan / Mortgage: use observed payment if known, otherwise interest + 1%
+  // Loan / Mortgage: interest + 1% of balance
   if (typeLower.includes('loan') || typeLower.includes('mortgage')) {
-    if (debt.monthlyPayment !== null && debt.monthlyPayment > 0) {
-      return debt.monthlyPayment;
-    }
     return monthlyInterest + debt.balance * 0.01;
   }
   

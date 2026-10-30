@@ -15,13 +15,8 @@ describe("debtPayoff", () => {
   });
 
   describe("calculateMinimumPayment", () => {
-    it("should use statement minPayment if available", () => {
-      const debt = createDebt({ minPayment: 150 });
-      expect(calculateMinimumPayment(debt)).toBe(150);
-    });
-
     it("should calculate credit card minimum (max of 3 formulas)", () => {
-      const debt = createDebt({ balance: 1000, interestRate: 18, minPayment: null, accountType: "credit_card" });
+      const debt = createDebt({ balance: 1000, interestRate: 18, accountType: "credit_card" });
       const monthlyInterest = 1000 * 0.18 / 12; // 15
       const option1 = monthlyInterest + 1000 * 0.01; // 15 + 10 = 25
       const option2 = 1000 * 0.03; // 30
@@ -31,29 +26,30 @@ describe("debtPayoff", () => {
     });
 
     it("should calculate line of credit minimum (interest + 1%)", () => {
-      const debt = createDebt({ balance: 10000, interestRate: 6, minPayment: null, accountType: "line_of_credit" });
+      const debt = createDebt({ balance: 10000, interestRate: 6, accountType: "line_of_credit" });
       const monthlyInterest = 10000 * 0.06 / 12; // 50
       const expected = monthlyInterest + 10000 * 0.01; // 50 + 100 = 150
       expect(calculateMinimumPayment(debt)).toBe(expected);
     });
 
-    it("should use observed payment for loans if known", () => {
-      const debt = createDebt({ balance: 50000, interestRate: 4, monthlyPayment: 800, minPayment: null, accountType: "mortgage" });
-      expect(calculateMinimumPayment(debt)).toBe(800);
-    });
-
-    it("should calculate minimum for loans without observed payment", () => {
-      const debt = createDebt({ balance: 50000, interestRate: 4, monthlyPayment: null, minPayment: null, accountType: "mortgage" });
+    it("should calculate minimum for loans (interest + 1%)", () => {
+      const debt = createDebt({ balance: 50000, interestRate: 4, accountType: "mortgage" });
       const monthlyInterest = 50000 * 0.04 / 12; // 166.67
       const expected = monthlyInterest + 50000 * 0.01; // 166.67 + 500 = 666.67
       expect(calculateMinimumPayment(debt)).toBeCloseTo(expected, 2);
     });
 
     it("should never return null or 0", () => {
-      const debt = createDebt({ balance: 100, interestRate: 0, minPayment: null, monthlyPayment: null });
+      const debt = createDebt({ balance: 100, interestRate: 0 });
       const minimum = calculateMinimumPayment(debt);
       expect(minimum).toBeGreaterThan(0);
       expect(minimum).not.toBeNull();
+    });
+
+    it("should return minimum < 10% of balance for normal balances", () => {
+      const debt = createDebt({ balance: 10000, interestRate: 18, accountType: "credit_card" });
+      const minimum = calculateMinimumPayment(debt);
+      expect(minimum).toBeLessThan(debt.balance * 0.1);
     });
   });
 

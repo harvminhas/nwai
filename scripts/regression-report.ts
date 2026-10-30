@@ -3542,23 +3542,48 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     } else {
       console.log(`  Testing with ${debtsForSimulation.length} debts:\n`);
       
-      // Print calculated minimums for each debt
-      console.log(`  Calculated minimums per debt:`);
+      // Print calculated minimums for each debt with full details
+      console.log(`  Per-debt details:`);
       let totalMinimums = 0;
+      let totalBalance = 0;
       for (const debt of debtsForSimulation) {
         const minimum = calculateMinimumPayment(debt);
         totalMinimums += minimum;
-        const source = debt.minPayment ? "(from statement)" : "(calculated)";
-        console.log(`    ${debt.name}: ${formatCurrency(minimum, currency)} ${source}`);
+        totalBalance += debt.balance;
+        
+        const minAsPercent = debt.balance > 0 ? (minimum / debt.balance * 100).toFixed(1) : "N/A";
+        const rawField = debt.minPayment !== null ? formatCurrency(debt.minPayment, currency) : "null";
+        
+        console.log(`    ${debt.name}:`);
+        console.log(`      Balance: ${formatCurrency(debt.balance, currency)}`);
+        console.log(`      Rate: ${debt.interestRate ? debt.interestRate.toFixed(2) + "%" : "N/A"}`);
+        console.log(`      Type: ${debt.accountType}`);
+        console.log(`      Raw statement field (paymentsMade): ${rawField}`);
+        console.log(`      Calculated minimum: ${formatCurrency(minimum, currency)} (${minAsPercent}% of balance)`);
         
         // Assert minimum is never null or 0
         if (minimum === null || minimum === 0) {
-          console.log(`    ❌ FAIL: ${debt.name} has null or 0 minimum`);
+          console.log(`      ❌ FAIL: Minimum is null or 0`);
           errors.push(`Debt payoff: ${debt.name} has invalid minimum payment`);
           debtPayoffErrors++;
         }
+        
+        // Assert minimum is less than 10% of balance (unless balance < $500)
+        if (debt.balance >= 500 && minimum > debt.balance * 0.1) {
+          console.log(`      ❌ FAIL: Minimum (${formatCurrency(minimum, currency)}) is more than 10% of balance`);
+          errors.push(`Debt payoff: ${debt.name} minimum exceeds 10% of balance`);
+          debtPayoffErrors++;
+        }
+        
+        // Assert minimum is less than balance
+        if (minimum >= debt.balance) {
+          console.log(`      ❌ FAIL: Minimum (${formatCurrency(minimum, currency)}) >= balance`);
+          errors.push(`Debt payoff: ${debt.name} minimum >= balance`);
+          debtPayoffErrors++;
+        }
       }
-      console.log(`    Total minimums: ${formatCurrency(totalMinimums, currency)}\n`);
+      console.log(`\n  Total balance: ${formatCurrency(totalBalance, currency)}`);
+      console.log(`  Total minimums: ${formatCurrency(totalMinimums, currency)}\n`);
       
       // Test plan 1: budget = minimums only
       console.log(`  Plan 1: Budget = minimums only (${formatCurrency(totalMinimums, currency)})`);
@@ -3574,6 +3599,15 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
       console.log(`      Debt-free: ${snowballMin.debtFreeDate || 'N/A (unpayable)'}`);
       console.log(`      Months: ${snowballMin.monthsToPayoff ?? 'N/A'}`);
       console.log(`      Total interest: ${formatCurrency(snowballMin.totalInterestPaid, currency)}\n`);
+      
+      // Assert: payoff at minimums should take longer than 12 months when total debt > $20k
+      if (totalBalance > 20000) {
+        if (avalancheMin.monthsToPayoff !== null && avalancheMin.monthsToPayoff <= 12) {
+          console.log(`    ❌ FAIL: Payoff at minimums only takes ${avalancheMin.monthsToPayoff} months (should be > 12 for ${formatCurrency(totalBalance, currency)} debt)`);
+          errors.push(`Debt payoff: minimums-only payoff is unrealistically fast (${avalancheMin.monthsToPayoff} months)`);
+          debtPayoffErrors++;
+        }
+      }
       
       // Test plan 2: budget = minimums + $500
       const budgetPlus500 = totalMinimums + 500;
