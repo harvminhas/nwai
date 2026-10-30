@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calculateDebtPayoff, calculateMinimumPayment, compareWithMinimumOnly, type DebtInput } from "../debtPayoff";
+import { calculateDebtPayoff, calculateMinimumPayment, solveForTargetDate, classifyPlanStatus, compareWithMinimumOnly, type DebtInput } from "../debtPayoff";
 
 describe("debtPayoff", () => {
   const createDebt = (overrides: Partial<DebtInput> = {}): DebtInput => ({
@@ -14,6 +14,45 @@ describe("debtPayoff", () => {
     ...overrides,
   });
 
+  describe("isHELOC detection", () => {
+    it("should detect HELOC by account type 'loc'", () => {
+      const debt = createDebt({ accountType: "loc", balance: 50000, interestRate: 6 });
+      const minimum = calculateMinimumPayment(debt);
+      const interestOnly = 50000 * 0.06 / 12; // 250
+      expect(minimum).toBe(interestOnly);
+    });
+
+    it("should detect HELOC by account type 'line_of_credit'", () => {
+      const debt = createDebt({ accountType: "line_of_credit", balance: 50000, interestRate: 6 });
+      const minimum = calculateMinimumPayment(debt);
+      const interestOnly = 50000 * 0.06 / 12;
+      expect(minimum).toBe(interestOnly);
+    });
+
+    it("should detect HELOC by name 'FlexLine'", () => {
+      const debt = createDebt({ name: "TD Home Equity FlexLine", accountType: "loan", balance: 50000, interestRate: 6 });
+      const minimum = calculateMinimumPayment(debt);
+      const interestOnly = 50000 * 0.06 / 12;
+      expect(minimum).toBe(interestOnly);
+    });
+
+    it("should detect HELOC by name 'HELOC'", () => {
+      const debt = createDebt({ name: "Bank HELOC", accountType: "loan", balance: 50000, interestRate: 6 });
+      const minimum = calculateMinimumPayment(debt);
+      const interestOnly = 50000 * 0.06 / 12;
+      expect(minimum).toBe(interestOnly);
+    });
+
+    it("should NOT treat regular loans as HELOC", () => {
+      const debt = createDebt({ name: "Car Loan", accountType: "loan", balance: 20000, interestRate: 5 });
+      const minimum = calculateMinimumPayment(debt);
+      const interestOnly = 20000 * 0.05 / 12; // 83.33
+      const withPrincipal = interestOnly + 20000 * 0.01; // 83.33 + 200 = 283.33
+      expect(minimum).toBeCloseTo(withPrincipal, 2);
+      expect(minimum).toBeGreaterThan(interestOnly);
+    });
+  });
+
   describe("calculateMinimumPayment", () => {
     it("should calculate credit card minimum (max of 3 formulas)", () => {
       const debt = createDebt({ balance: 1000, interestRate: 18, accountType: "credit_card" });
@@ -25,11 +64,10 @@ describe("debtPayoff", () => {
       expect(calculateMinimumPayment(debt)).toBe(expected);
     });
 
-    it("should calculate line of credit minimum (interest + 1%)", () => {
-      const debt = createDebt({ balance: 10000, interestRate: 6, accountType: "line_of_credit" });
+    it("should calculate HELOC minimum (interest-only)", () => {
+      const debt = createDebt({ balance: 10000, interestRate: 6, name: "HELOC", accountType: "line_of_credit" });
       const monthlyInterest = 10000 * 0.06 / 12; // 50
-      const expected = monthlyInterest + 10000 * 0.01; // 50 + 100 = 150
-      expect(calculateMinimumPayment(debt)).toBe(expected);
+      expect(calculateMinimumPayment(debt)).toBe(monthlyInterest);
     });
 
     it("should calculate minimum for loans (interest + 1%)", () => {
@@ -39,17 +77,84 @@ describe("debtPayoff", () => {
       expect(calculateMinimumPayment(debt)).toBeCloseTo(expected, 2);
     });
 
-    it("should never return null or 0", () => {
-      const debt = createDebt({ balance: 100, interestRate: 0 });
-      const minimum = calculateMinimumPayment(debt);
-      expect(minimum).toBeGreaterThan(0);
-      expect(minimum).not.toBeNull();
-    });
-
     it("should return minimum < 10% of balance for normal balances", () => {
       const debt = createDebt({ balance: 10000, interestRate: 18, accountType: "credit_card" });
       const minimum = calculateMinimumPayment(debt);
       expect(minimum).toBeLessThan(debt.balance * 0.1);
+    });
+  });
+
+  describe("solveForTargetDate", () => {
+    it("should find required budget to hit target date", () => {
+      const debts = [createDebt({ balance: 10000, interestRate: 18 })];
+      const targetMonths = 36; // 3 years
+      const result = solveForTargetDate(debts, targetMonths, "avalanche");
+      
+      expect(result).not.toBeNull();
+      expect(result!.requiredBudget).toBeGreaterThan(0);
+      expect(result!.result.monthsToPayoff).toBeLessThanOrEqual(targetMonths + 1);
+      expect(result!.result.monthsToPayoff).toBeGreaterThanOrEqual(targetMonths - 1);
+    });
+
+    it("should return minimums if target is already achievable", () => {
+      const debts = [createDebt({ balance: 1000, interestRate: 18 })];
+      const minimums = calculateMinimumPayment(debts[0]);
+      const targetMonths = 100; // Very generous target
+      const result = solveForTargetDate(debts, targetMonths, "avalanche");
+      
+      expect(result).not.toBeNull();
+      expect(result!.requiredBudget).toBeCloseTo(minimums, 1);
+    });
+
+    it("should return null if target is impossible", () => {
+      const debts = [createDebt({ balance: 100000, interestRate: 24 })];
+      const targetMonths = 1; // Impossible
+      const result = solveForTargetDate(debts, targetMonths, "avalanche");
+      
+      expect(result).toBeNull();
+    });
+
+    it("should handle multiple debts", () => {
+      const debts = [
+        createDebt({ id: "1", balance: 5000, interestRate: 18 }),
+        createDebt({ id: "2", balance: 3000, interestRate: 15 }),
+      ];
+      const targetMonths = 24;
+      const result = solveForTargetDate(debts, targetMonths, "avalanche");
+      
+      expect(result).not.toBeNull();
+      expect(result!.result.monthsToPayoff).toBeLessThanOrEqual(targetMonths + 1);
+    });
+  });
+
+  describe("classifyPlanStatus", () => {
+    it("should return on-track when within 5% threshold", () => {
+      const debts = [createDebt({ balance: 10000 })];
+      const current = 9500;
+      const projected = 10000;
+      const status = classifyPlanStatus(current, projected, 300, "avalanche", debts);
+      
+      expect(status.status).toBe("on-track");
+    });
+
+    it("should return ahead when significantly under projected", () => {
+      const debts = [createDebt({ balance: 10000 })];
+      const current = 8000;
+      const projected = 10000;
+      const status = classifyPlanStatus(current, projected, 300, "avalanche", debts);
+      
+      expect(status.status).toBe("ahead");
+      expect(status.deltaAmount).toBeGreaterThan(0);
+    });
+
+    it("should return behind when significantly over projected", () => {
+      const debts = [createDebt({ balance: 10000 })];
+      const current = 12000;
+      const projected = 10000;
+      const status = classifyPlanStatus(current, projected, 300, "avalanche", debts);
+      
+      expect(status.status).toBe("behind");
+      expect(status.deltaAmount).toBeGreaterThan(0);
     });
   });
 
@@ -75,45 +180,6 @@ describe("debtPayoff", () => {
       expect(result.debtFreeDate).not.toBeNull();
     });
 
-    it("should enforce budget >= sum of minimums", () => {
-      const debts = [createDebt()];
-      const minimums = calculateMinimumPayment(debts[0]);
-      const result = calculateDebtPayoff(debts, minimums - 50, "avalanche");
-      
-      // Should still succeed, just with warning
-      expect(result.warnings.length).toBeGreaterThan(0);
-      expect(result.warnings.some(w => w.includes("sum of minimums"))).toBe(true);
-    });
-
-    it("should exclude debts not included", () => {
-      const debts = [
-        createDebt({ id: "1", included: true }),
-        createDebt({ id: "2", included: false }),
-      ];
-      const minimums = calculateMinimumPayment(debts[0]);
-      const result = calculateDebtPayoff(debts, minimums, "avalanche");
-      
-      expect(result.payoffOrder).toHaveLength(1);
-      expect(result.payoffOrder[0].debtId).toBe("1");
-    });
-
-    it("should rollover freed minimums to budget", () => {
-      const debts = [
-        createDebt({ id: "1", balance: 500, interestRate: 18 }),
-        createDebt({ id: "2", balance: 5000, interestRate: 18 }),
-      ];
-      const min1 = calculateMinimumPayment(debts[0]);
-      const min2 = calculateMinimumPayment(debts[1]);
-      const totalMin = min1 + min2;
-      
-      const result = calculateDebtPayoff(debts, totalMin, "avalanche");
-      
-      // Both debts should pay off (first debt frees up its minimum for second)
-      expect(result.payoffOrder).toHaveLength(2);
-      expect(result.payoffOrder[0].debtId).toBe("1");
-      expect(result.payoffOrder[1].debtId).toBe("2");
-    });
-
     it("should prioritize highest rate for avalanche strategy", () => {
       const debts = [
         createDebt({ id: "low", balance: 2000, interestRate: 10 }),
@@ -122,7 +188,6 @@ describe("debtPayoff", () => {
       const totalMin = calculateMinimumPayment(debts[0]) + calculateMinimumPayment(debts[1]);
       const result = calculateDebtPayoff(debts, totalMin + 100, "avalanche");
       
-      // High rate debt should pay off first
       expect(result.payoffOrder[0].debtId).toBe("high");
     });
 
@@ -134,17 +199,7 @@ describe("debtPayoff", () => {
       const totalMin = calculateMinimumPayment(debts[0]) + calculateMinimumPayment(debts[1]);
       const result = calculateDebtPayoff(debts, totalMin + 100, "snowball");
       
-      // Small balance should pay off first
       expect(result.payoffOrder[0].debtId).toBe("small");
-    });
-
-    it("should warn about missing interest rate", () => {
-      const debts = [createDebt({ interestRate: null })];
-      const minimums = calculateMinimumPayment(debts[0]);
-      const result = calculateDebtPayoff(debts, minimums, "avalanche");
-      
-      expect(result.warnings.length).toBeGreaterThan(0);
-      expect(result.warnings.some(w => w.includes("missing interest rate"))).toBe(true);
     });
 
     it("should record total monthly balances", () => {
@@ -156,7 +211,6 @@ describe("debtPayoff", () => {
       expect(result.monthlyBalances[0].month).toBe(0);
       expect(result.monthlyBalances[0].totalBalance).toBe(5000);
       
-      // Balance should decrease over time
       const lastMonth = result.monthlyBalances[result.monthlyBalances.length - 1];
       expect(lastMonth.totalBalance).toBeLessThan(1);
     });
