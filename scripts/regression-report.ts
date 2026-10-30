@@ -3508,6 +3508,101 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
 
   console.log();
 
+  // ══════════════════════════════════════════════════════════════════════════════
+  // Debt Payoff Planner Checks
+  // ══════════════════════════════════════════════════════════════════════════════
+  let debtPayoffErrors = 0;
+
+  console.log("═".repeat(80));
+  console.log("Debt Payoff Planner Checks");
+  console.log("═".repeat(80));
+
+  // Check 1: Test debt payoff simulation on uid's debts
+  console.log("\nCheck 1: Debt payoff simulation");
+  try {
+    const debtPayoffModule = await import("../src/lib/debtPayoff");
+    const { calculateDebtPayoff } = debtPayoffModule;
+    
+    // Convert debtsSummary to DebtInput format
+    const debtsForSimulation: any[] = debtsSummary.groups.flatMap(g =>
+      g.accounts.map(acc => ({
+        id: acc.slug,
+        name: acc.accountName || acc.bankName,
+        balance: acc.balance,
+        interestRate: acc.interestRate,
+        monthlyPayment: acc.monthlyPayment || acc.minPayment,
+        included: true,
+      }))
+    ).filter((d: any) => d.monthlyPayment !== null && d.monthlyPayment > 0);
+
+    if (debtsForSimulation.length === 0) {
+      console.log(`  ⏭  Skipped: No debts with valid monthly payments`);
+    } else {
+      console.log(`  Testing with ${debtsForSimulation.length} debts (0 extra payment):`);
+      
+      // Test Avalanche strategy
+      const avalancheResult = calculateDebtPayoff(debtsForSimulation, 0, "avalanche");
+      console.log(`\n  Avalanche (highest rate first):`);
+      console.log(`    Debt-free date: ${avalancheResult.debtFreeDate || 'N/A (unpayable)'}`);
+      console.log(`    Months to payoff: ${avalancheResult.monthsToPayoff ?? 'N/A'}`);
+      console.log(`    Total interest: ${formatCurrency(avalancheResult.totalInterestPaid, currency)}`);
+      
+      if (avalancheResult.warnings.length > 0) {
+        console.log(`    Warnings: ${avalancheResult.warnings.join(", ")}`);
+      }
+      
+      // Test Snowball strategy
+      const snowballResult = calculateDebtPayoff(debtsForSimulation, 0, "snowball");
+      console.log(`\n  Snowball (smallest balance first):`);
+      console.log(`    Debt-free date: ${snowballResult.debtFreeDate || 'N/A (unpayable)'}`);
+      console.log(`    Months to payoff: ${snowballResult.monthsToPayoff ?? 'N/A'}`);
+      console.log(`    Total interest: ${formatCurrency(snowballResult.totalInterestPaid, currency)}`);
+      
+      if (snowballResult.warnings.length > 0) {
+        console.log(`    Warnings: ${snowballResult.warnings.join(", ")}`);
+      }
+      
+      // Compare strategies
+      if (avalancheResult.monthsToPayoff && snowballResult.monthsToPayoff) {
+        const monthsDiff = snowballResult.monthsToPayoff - avalancheResult.monthsToPayoff;
+        const interestDiff = snowballResult.totalInterestPaid - avalancheResult.totalInterestPaid;
+        console.log(`\n  Strategy comparison:`);
+        console.log(`    Avalanche saves ${monthsDiff} months and ${formatCurrency(interestDiff, currency)} in interest vs Snowball`);
+      }
+      
+      console.log(`\n  ✓ Debt payoff simulation completed successfully`);
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error running debt payoff simulation: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Debt payoff: simulation failed");
+    debtPayoffErrors++;
+  }
+
+  // Check 2: Interest card label contains "Est."
+  console.log("\nCheck 2: Interest card labeled as estimate");
+  try {
+    const fs = await import("fs/promises");
+    const overviewTabPath = "src/app/account/liabilities/components/OverviewTab.tsx";
+    
+    const content = await fs.readFile(overviewTabPath, "utf-8");
+    
+    const hasEstLabel = content.includes("Est. Interest") || content.includes("Estimated");
+    
+    if (hasEstLabel) {
+      console.log(`  ✓ Interest card correctly labeled as estimate in ${overviewTabPath}`);
+    } else {
+      console.log(`  ❌ FAIL: Interest card does not contain "Est." or "Estimated" label`);
+      errors.push("Debt payoff: interest card missing estimate label");
+      debtPayoffErrors++;
+    }
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking interest card label: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Debt payoff: failed to check interest card label");
+    debtPayoffErrors++;
+  }
+
+  console.log();
+
   // Final summary - check ALL error conditions
   const totalFailures = 
     (allErrors ? errors.length : 0) +
@@ -3522,7 +3617,8 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     smokeTestErrors +
     aiFormatErrors +
     privacyErrors +
-    planAlignmentErrors;
+    planAlignmentErrors +
+    debtPayoffErrors;
   
   if (totalFailures > 0) {
     console.log("=".repeat(80));
@@ -3544,6 +3640,7 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     if (aiFormatErrors > 0) console.log(`AI formatting consistency failures: ${aiFormatErrors}`);
     if (privacyErrors > 0) console.log(`Privacy check failures: ${privacyErrors}`);
     if (planAlignmentErrors > 0) console.log(`Plan alignment check failures: ${planAlignmentErrors}`);
+    if (debtPayoffErrors > 0) console.log(`Debt payoff check failures: ${debtPayoffErrors}`);
     
     console.log();
     process.exit(1);
