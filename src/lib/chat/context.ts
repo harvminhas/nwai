@@ -12,6 +12,7 @@ import type { FinancialProfileCache } from "@/lib/financialProfile";
 import { getNetWorth, buildEmergencyFundSnapshot } from "@/lib/profileMetrics";
 import { buildCategoryPromptLines } from "@/lib/categoryTaxonomy";
 import { getHomeCurrency, toHome as toHomeCurrency } from "@/lib/currencyUtils";
+import { AI_ANSWER_FORMAT } from "@/lib/aiAnswerFormat";
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -263,5 +264,7 @@ Legacy granular tools (still useful for drill-downs):
 - Subscriptions + cash commitments together → list_recurring_charges
 - Monthly debt cashflows → get_debt_payment_trend
 
-Trackers / Events → no chat tool; see == TRACKERS (EVENTS) — NOT LOADED IN THIS CHAT ==.`;
+Trackers / Events → no chat tool; see == TRACKERS (EVENTS) — NOT LOADED IN THIS CHAT ==.
+
+${AI_ANSWER_FORMAT}`;
 }

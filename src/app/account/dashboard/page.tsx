@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
@@ -13,6 +13,7 @@ import { ReviewList } from "@/components/ReviewList";
 import { RangeSwitch } from "@/components/RangeSwitch";
 import type { TimeRange } from "@/lib/rangeUtils";
 import type { GapReconciliation } from "@/lib/gapReconciliation";
+import { AiAnswer } from "@/components/AiAnswer";
 
 // Convert TimeRange to Drawer's TimeWindow format
 function rangeToWindow(range: TimeRange): "last3" | "12month" | "ytd" {
@@ -53,131 +54,7 @@ interface MoneyCoachBreakdown {
   gapReconciliation?: GapReconciliation;
 }
 
-// ── markdown renderer (copied from chat page) ────────────────────────────────
-
-/** Split a GFM-style pipe row. Trailing `|` is optional. */
-function parsePipeTableRow(line: string): string[] | null {
-  const t = line.trim();
-  if (!t.startsWith("|")) return null;
-  const inner = t.endsWith("|") ? t.slice(1, -1) : t.slice(1);
-  const cells = inner.split("|").map((c) => c.trim());
-  if (cells.length === 0 || cells.every((c) => c === "")) return null;
-  return cells;
-}
-
-function isTableSeparatorRow(cells: string[]): boolean {
-  return cells.length > 0 && cells.every((c) => /^:?-{2,}:?$/.test(c.replace(/\s/g, "")));
-}
-
-function TableView({ rows }: { rows: string[][] }) {
-  if (rows.length === 0) return null;
-  const header = rows[0]!;
-  let dataStart = 1;
-  if (rows.length > 1 && isTableSeparatorRow(rows[1]!)) dataStart = 2;
-  const body = rows.slice(dataStart);
-  return (
-    <div className="my-2 -mx-1 max-w-full overflow-x-auto rounded-lg border border-gray-100 bg-gray-50/80">
-      <table className="w-full min-w-[320px] border-collapse text-left text-xs text-gray-800">
-        <thead>
-          <tr className="border-b border-gray-200 bg-gray-100/90">
-            {header.map((h, i) => (
-              <th key={i} className="whitespace-nowrap px-2 py-1.5 font-semibold text-gray-700">
-                <span dangerouslySetInnerHTML={{ __html: boldifyStatic(h) }} />
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {body.map((cells, ri) => (
-            <tr key={ri} className="border-b border-gray-100 last:border-0 hover:bg-white/80">
-              {cells.map((cell, ci) => (
-                <td key={ci} className="max-w-[200px] px-2 py-1.5 align-top text-gray-700 sm:max-w-[280px]">
-                  <span className="break-words" dangerouslySetInnerHTML={{ __html: boldifyStatic(cell) }} />
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function boldifyStatic(s: string) {
-  return s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-}
-
-function renderMarkdown(text: string): React.ReactNode[] {
-  const lines = text.split("\n");
-  const elements: React.ReactNode[] = [];
-  let inList = false;
-  let listItems: string[] = [];
-  let tableRows: string[][] | null = null;
-
-  function flushTable() {
-    if (tableRows && tableRows.length > 0) {
-      elements.push(<TableView key={`tbl-${elements.length}`} rows={tableRows} />);
-      tableRows = null;
-    }
-  }
-
-  function flushList() {
-    if (listItems.length > 0) {
-      elements.push(
-        <ul key={elements.length} className="my-1.5 space-y-0.5 pl-4">
-          {listItems.map((item, i) => (
-            <li key={i} className="flex items-start gap-1.5 text-sm">
-              <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-current opacity-40" />
-              <span dangerouslySetInnerHTML={{ __html: boldifyStatic(item) }} />
-            </li>
-          ))}
-        </ul>
-      );
-      listItems = [];
-      inList = false;
-    }
-  }
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    const pipeRow = parsePipeTableRow(line);
-
-    if (pipeRow && pipeRow.length > 0) {
-      flushList();
-      if (tableRows === null) tableRows = [];
-      tableRows.push(pipeRow);
-      continue;
-    }
-
-    flushTable();
-
-    if (trimmed.startsWith("- ") || trimmed.startsWith("• ") || trimmed.startsWith("* ")) {
-      inList = true;
-      listItems.push(trimmed.slice(2));
-    } else if (trimmed.match(/^\d+\.\s/)) {
-      inList = true;
-      listItems.push(trimmed.replace(/^\d+\.\s/, ""));
-    } else {
-      flushList();
-      if (trimmed === "") {
-        elements.push(<div key={elements.length} className="h-2" />);
-      } else if (trimmed.startsWith("## ")) {
-        elements.push(
-          <p key={elements.length} className="mt-3 first:mt-0 font-semibold text-[13px] uppercase tracking-wide text-gray-800"
-            dangerouslySetInnerHTML={{ __html: boldifyStatic(trimmed.slice(3)) }} />
-        );
-      } else {
-        elements.push(
-          <p key={elements.length} className="text-sm leading-relaxed"
-            dangerouslySetInnerHTML={{ __html: boldifyStatic(trimmed) }} />
-        );
-      }
-    }
-  }
-  flushList();
-  flushTable();
-  return elements;
-}
+// Note: AI answer rendering moved to shared AiAnswer component
 
 // ── Components ─────────────────────────────────────────────────────────────────
 
@@ -195,6 +72,7 @@ function QuestionBox({
   savedAnswersCount: number;
 }) {
   const [query, setQuery] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = () => {
     if (query.trim() && !loading) {
@@ -202,14 +80,42 @@ function QuestionBox({
     }
   };
 
+  const selectAllText = (input: HTMLInputElement) => {
+    try {
+      input.select();
+    } catch {
+      // Fallback for mobile
+      input.setSelectionRange(0, input.value.length);
+    }
+  };
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLInputElement>) => {
+    if (document.activeElement !== e.currentTarget) {
+      e.preventDefault();
+      e.currentTarget.focus();
+      selectAllText(e.currentTarget);
+    }
+  };
+
+  const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+    requestAnimationFrame(() => {
+      if (inputRef.current) {
+        selectAllText(inputRef.current);
+      }
+    });
+  };
+
   return (
     <div className="mx-auto max-w-3xl space-y-4">
       <div className="relative">
         <input
+          ref={inputRef}
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+          onMouseDown={handleMouseDown}
+          onFocus={handleFocus}
           disabled={loading}
           placeholder="Ask about your spending, savings, or goals…"
           className="w-full rounded-2xl border-2 border-gray-200 px-6 py-5 pr-28 text-lg shadow-sm transition-all placeholder:text-gray-400 focus:border-purple-500 focus:shadow-lg focus:shadow-purple-100 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
@@ -219,7 +125,13 @@ function QuestionBox({
           disabled={!query.trim() || loading}
           className="absolute right-3 top-1/2 -translate-y-1/2 rounded-xl bg-purple-600 px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {loading ? "Thinking…" : "Ask"}
+          {loading ? (
+            <span className="inline-flex items-center gap-1">
+              <span className="animate-pulse">…</span>
+            </span>
+          ) : (
+            "Ask"
+          )}
         </button>
       </div>
       
@@ -374,20 +286,9 @@ function AnswerCard({
       {!collapsed && (
         <div className="max-h-[320px] overflow-y-auto p-4">
           <div className="text-gray-700">
-            {renderMarkdown(answer)}
+            <AiAnswer content={answer} />
           </div>
           <div className="mt-4 flex items-center gap-3 border-t border-purple-100 pt-3">
-            {SHOW_OPEN_IN_CHAT && (
-              <Link
-                href={`/account/chat?q=${encodeURIComponent(question)}`}
-                className="text-sm font-semibold text-purple-600 hover:text-purple-700 flex items-center gap-1"
-              >
-                Open in Chat
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                </svg>
-              </Link>
-            )}
             <button
               onClick={onClear}
               className="text-sm font-medium text-gray-600 hover:text-gray-700"
@@ -905,6 +806,14 @@ export default function DashboardPage() {
   const clearAnswer = () => {
     setCurrentAnswer(null);
     window.scrollTo({ top: 0, behavior: "smooth" });
+    // Focus and select all text in the Ask box
+    setTimeout(() => {
+      const questionBox = document.querySelector('input[placeholder*="Ask about"]') as HTMLInputElement;
+      if (questionBox) {
+        questionBox.focus();
+        // Selection will happen via onFocus handler
+      }
+    }, 100);
   };
 
   if (loading) {
