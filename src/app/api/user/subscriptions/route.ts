@@ -128,24 +128,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       postProcessSubscriptions(summary, cancelledSlugs, synthesizedSubs, latestTxnDate, sourceMappings);
     
     // Recalculate totals including synthesized subs
-    let adjustedMonthlyTotal = summary.monthlyTotal;
-    let adjustedYearlyTotal = summary.yearlyTotal;
-    
-    synthesizedSubs.forEach(sub => {
-      const frequency = sub.billingFrequency;
-      if (frequency === "weekly") {
-        adjustedMonthlyTotal += (sub.amount * 52) / 12;
-        adjustedYearlyTotal += sub.amount * 52;
-      } else if (frequency === "monthly" || (!frequency && sub.cadence === "monthly")) {
-        adjustedMonthlyTotal += sub.amount;
-        adjustedYearlyTotal += sub.amount * 12;
-      } else if (frequency === "quarterly") {
-        adjustedMonthlyTotal += (sub.amount * 4) / 12;
-        adjustedYearlyTotal += sub.amount * 4;
-      } else if (frequency === "yearly" || (!frequency && sub.cadence === "yearly")) {
-        adjustedMonthlyTotal += sub.amount / 12;
-        adjustedYearlyTotal += sub.amount;
-      }
+    // Totals are computed from the FINAL list (after merges, overrides, synthesis)
+    // using each row's effective frequency: user override first, then detected cadence.
+    let adjustedMonthlyTotal = 0;
+    let adjustedYearlyTotal = 0;
+    const perYear: Record<string, number> = { weekly: 52, monthly: 12, quarterly: 4, yearly: 1 };
+    confirmedActive.forEach(sub => {
+      const freq = (sub.billingFrequency || sub.cadence) as string;
+      const n = perYear[freq] ?? 12;
+      adjustedYearlyTotal += sub.amount * n;
+      adjustedMonthlyTotal += (sub.amount * n) / 12;
     });
 
     // Find merge suggestion groups over ALL detected subscriptions (active, candidates, inactive)
