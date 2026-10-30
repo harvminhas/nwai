@@ -293,24 +293,65 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                           </div>
                         </button>
                         
-                        {expanded && categoryMerchants.length > 0 && (
-                          <div className="pl-4 pb-3 space-y-2">
-                            {categoryMerchants.map(merchant => {
-                              const monthTxns = merchant.transactions.filter(t => t.txMonth === selectedMonth);
-                              if (monthTxns.length === 0) return null;
-                              const monthTotal = monthTxns.reduce((s, t) => s + t.amount, 0);
-                              
+                        {expanded && (() => {
+                          // Special handling for debt categories (Loan payments, Credit card minimums)
+                          const isDebtCategory = cat.category === "Loan payments" || cat.category === "Credit card minimums";
+                          
+                          if (isDebtCategory) {
+                            // Show scheduled debt payments (account-level breakdown)
+                            const debtType = cat.category === "Loan payments" ? "loan" : "credit";
+                            const payments = summary.scheduledPayments.filter(p => p.debtType === debtType);
+                            
+                            if (payments.length === 0) {
                               return (
-                                <div key={merchant.merchantSlug} className="text-xs">
-                                  <div className="flex items-center justify-between text-gray-700">
-                                    <span>{merchant.merchant}</span>
-                                    <span className="font-medium">{formatCurrency(monthTotal, currency)}</span>
-                                  </div>
+                                <div className="pl-4 pb-3 text-xs text-gray-500">
+                                  No breakdown available
                                 </div>
                               );
-                            })}
-                          </div>
-                        )}
+                            }
+                            
+                            return (
+                              <div className="pl-4 pb-3 space-y-2">
+                                {payments.map(payment => (
+                                  <div key={payment.accountSlug} className="text-xs">
+                                    <div className="flex items-center justify-between text-gray-700">
+                                      <span>{payment.accountName || payment.accountSlug}</span>
+                                      <span className="font-medium">{formatCurrency(payment.amount, currency)}</span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          }
+                          
+                          // Regular categories: show merchants
+                          if (categoryMerchants.length === 0) {
+                            return (
+                              <div className="pl-4 pb-3 text-xs text-gray-500">
+                                No breakdown available
+                              </div>
+                            );
+                          }
+                          
+                          return (
+                            <div className="pl-4 pb-3 space-y-2">
+                              {categoryMerchants.map(merchant => {
+                                const monthTxns = merchant.transactions.filter(t => t.txMonth === selectedMonth);
+                                if (monthTxns.length === 0) return null;
+                                const monthTotal = monthTxns.reduce((s, t) => s + t.amount, 0);
+                                
+                                return (
+                                  <div key={merchant.merchantSlug} className="text-xs">
+                                    <div className="flex items-center justify-between text-gray-700">
+                                      <span>{merchant.merchant}</span>
+                                      <span className="font-medium">{formatCurrency(monthTotal, currency)}</span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
                       </div>
                     );
                   })}
@@ -403,27 +444,69 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                     </div>
                   </button>
                   
-                  {isExpanded && categoryMerchants.length > 0 && (
-                    <div className="px-6 pb-3 space-y-2">
-                      <p className="text-xs text-gray-500 mb-2">Last 3 months</p>
-                      {categoryMerchants.map(merchant => {
-                        const last3Txns = merchant.transactions.filter(t => 
-                          last3Months.some(m => m.yearMonth === t.txMonth)
-                        );
-                        if (last3Txns.length === 0) return null;
-                        const total = last3Txns.reduce((s, t) => s + t.amount, 0);
-                        
+                  {isExpanded && (() => {
+                    // Special handling for debt categories (Loan payments, Credit card minimums)
+                    const isDebtCategory = cat.category === "Loan payments" || cat.category === "Credit card minimums";
+                    
+                    if (isDebtCategory) {
+                      // Show scheduled debt payments (account-level breakdown)
+                      const debtType = cat.category === "Loan payments" ? "loan" : "credit";
+                      const payments = summary.scheduledPayments.filter(p => p.debtType === debtType);
+                      
+                      if (payments.length === 0) {
                         return (
-                          <div key={merchant.merchantSlug} className="text-xs">
-                            <div className="flex items-center justify-between text-gray-700">
-                              <span>{merchant.merchant}</span>
-                              <span className="font-medium">{formatCurrency(total, currency)}</span>
-                            </div>
+                          <div className="px-6 pb-3 text-xs text-gray-500">
+                            No breakdown available
                           </div>
                         );
-                      })}
-                    </div>
-                  )}
+                      }
+                      
+                      return (
+                        <div className="px-6 pb-3 space-y-2">
+                          <p className="text-xs text-gray-500 mb-2">Monthly payment per account</p>
+                          {payments.map(payment => (
+                            <div key={payment.accountSlug} className="text-xs">
+                              <div className="flex items-center justify-between text-gray-700">
+                                <span>{payment.accountName || payment.accountSlug}</span>
+                                <span className="font-medium">{formatCurrency(payment.amount, currency)}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    }
+                    
+                    // Regular categories: show merchants from last 3 months
+                    if (categoryMerchants.length === 0) {
+                      return (
+                        <div className="px-6 pb-3 text-xs text-gray-500">
+                          No breakdown available
+                        </div>
+                      );
+                    }
+                    
+                    return (
+                      <div className="px-6 pb-3 space-y-2">
+                        <p className="text-xs text-gray-500 mb-2">Last 3 months</p>
+                        {categoryMerchants.map(merchant => {
+                          const last3Txns = merchant.transactions.filter(t => 
+                            last3Months.some(m => m.yearMonth === t.txMonth)
+                          );
+                          if (last3Txns.length === 0) return null;
+                          const total = last3Txns.reduce((s, t) => s + t.amount, 0);
+                          
+                          return (
+                            <div key={merchant.merchantSlug} className="text-xs">
+                              <div className="flex items-center justify-between text-gray-700">
+                                <span>{merchant.merchant}</span>
+                                <span className="font-medium">{formatCurrency(total, currency)}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })}

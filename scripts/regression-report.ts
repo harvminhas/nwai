@@ -4362,6 +4362,87 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     debtPayoffErrors++;
   }
 
+  // Check 7: Debt payment breakdowns sum to category total
+  console.log("\nCheck 7: Debt payment breakdowns sum to category total");
+  try {
+    // Build spending summary for the user
+    const spendingSummary = buildSpendingSummary(
+      profile.expenseTxns,
+      profile.accountSnapshots,
+      profile.debtPaymentHistory,
+      [], // userReviews
+      profile.fxRates,
+      profile.homeCurrency
+    );
+    
+    const loanPaymentsCategory = spendingSummary.categories.find(c => c.category === "Loan payments");
+    const creditPaymentsCategory = spendingSummary.categories.find(c => c.category === "Credit card minimums");
+    
+    let allMatch = true;
+    
+    // Check Loan payments
+    if (loanPaymentsCategory) {
+      const loanScheduledPayments = spendingSummary.scheduledPayments.filter(p => p.debtType === "loan");
+      const scheduledSum = loanScheduledPayments.reduce((s, p) => s + p.amount, 0);
+      
+      // Category total should equal the average monthly (for last 3 months)
+      const last3Months = spendingSummary.monthlyHistory.slice(-3);
+      const last3Total = last3Months.reduce((s, m) => {
+        const cat = m.categories.find(c => c.category === "Loan payments");
+        return s + (cat?.amount || 0);
+      }, 0);
+      const monthlyAvg = last3Total / Math.max(1, last3Months.length);
+      
+      const diff = Math.abs(scheduledSum - monthlyAvg);
+      if (diff > 1) { // Allow $1 rounding tolerance
+        console.log(`  ❌ FAIL: Loan payments breakdown mismatch`);
+        console.log(`    Scheduled payments sum: ${scheduledSum.toFixed(2)}`);
+        console.log(`    Monthly average: ${monthlyAvg.toFixed(2)}`);
+        console.log(`    Difference: ${diff.toFixed(2)}`);
+        errors.push(`Spending: Loan payments breakdown sum mismatch (${diff.toFixed(2)})`);
+        debtPayoffErrors++;
+        allMatch = false;
+      }
+    }
+    
+    // Check Credit card minimums
+    if (creditPaymentsCategory) {
+      const creditScheduledPayments = spendingSummary.scheduledPayments.filter(p => p.debtType === "credit");
+      const scheduledSum = creditScheduledPayments.reduce((s, p) => s + p.amount, 0);
+      
+      const last3Months = spendingSummary.monthlyHistory.slice(-3);
+      const last3Total = last3Months.reduce((s, m) => {
+        const cat = m.categories.find(c => c.category === "Credit card minimums");
+        return s + (cat?.amount || 0);
+      }, 0);
+      const monthlyAvg = last3Total / Math.max(1, last3Months.length);
+      
+      const diff = Math.abs(scheduledSum - monthlyAvg);
+      if (diff > 1) { // Allow $1 rounding tolerance
+        console.log(`  ❌ FAIL: Credit card minimums breakdown mismatch`);
+        console.log(`    Scheduled payments sum: ${scheduledSum.toFixed(2)}`);
+        console.log(`    Monthly average: ${monthlyAvg.toFixed(2)}`);
+        console.log(`    Difference: ${diff.toFixed(2)}`);
+        errors.push(`Spending: Credit card minimums breakdown sum mismatch (${diff.toFixed(2)})`);
+        debtPayoffErrors++;
+        allMatch = false;
+      }
+    }
+    
+    if (allMatch && (loanPaymentsCategory || creditPaymentsCategory)) {
+      const categories = [
+        loanPaymentsCategory ? "Loan payments" : null,
+        creditPaymentsCategory ? "Credit card minimums" : null
+      ].filter(Boolean);
+      console.log(`  ✓ Debt payment breakdowns sum correctly for: ${categories.join(", ")}`);
+    }
+    
+  } catch (err) {
+    console.log(`  ❌ FAIL: Error checking debt payment breakdowns: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push("Spending: failed to check debt payment breakdowns");
+    debtPayoffErrors++;
+  }
+
   console.log();
 
   // Final summary - check ALL error conditions
