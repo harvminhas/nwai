@@ -17,6 +17,18 @@ function isETransferPattern(source: string): boolean {
 }
 
 /** 
+ * Detect if source is a person-to-person transfer with masked/random codes.
+ * These should NOT be merged (different senders, same pattern).
+ */
+function isMaskedPersonalTransfer(source: string): boolean {
+  // Check for e-transfer/interac pattern with masked tokens or random suffixes
+  if (/e[-\s]?transfer|interac/i.test(source) && /\*{3}|xxx/i.test(source)) {
+    return true;
+  }
+  return false;
+}
+
+/** 
  * Detect if a transaction might be a transfer based on ambiguous characteristics.
  * Only flags if: e-transfer pattern AND not part of recurring payroll pattern.
  */
@@ -75,23 +87,27 @@ function hasAmbiguousCategory(source: string, category: string | undefined): boo
 /**
  * Detect similar source names that might be the same entity.
  * Uses fuzzy matching with thresholds.
+ * Excludes person-to-person transfers with masked tokens (different senders).
  */
 function findSimilarSources(
   sources: string[],
   threshold: number = 0.7
 ): Array<{ canonical: string; aliases: string[] }> {
-  const normalized = sources.map(s => s.toLowerCase().trim());
+  // Filter out masked personal transfers - they shouldn't be merged
+  const mergeCandidates = sources.filter(s => !isMaskedPersonalTransfer(s));
+  
+  const normalized = mergeCandidates.map(s => s.toLowerCase().trim());
   const groups: Array<{ canonical: string; aliases: string[] }> = [];
   const processed = new Set<string>();
   
-  for (let i = 0; i < sources.length; i++) {
-    if (processed.has(sources[i])) continue;
+  for (let i = 0; i < mergeCandidates.length; i++) {
+    if (processed.has(mergeCandidates[i])) continue;
     
     const similar: string[] = [];
     const base = normalized[i];
     
-    for (let j = i + 1; j < sources.length; j++) {
-      if (processed.has(sources[j])) continue;
+    for (let j = i + 1; j < mergeCandidates.length; j++) {
+      if (processed.has(mergeCandidates[j])) continue;
       
       const compare = normalized[j];
       
@@ -101,17 +117,17 @@ function findSimilarSources(
       const prefixRatio = sharedPrefix.length / Math.min(base.length, compare.length);
       
       if (isSubstring || prefixRatio > threshold) {
-        similar.push(sources[j]);
-        processed.add(sources[j]);
+        similar.push(mergeCandidates[j]);
+        processed.add(mergeCandidates[j]);
       }
     }
     
     if (similar.length > 0) {
       groups.push({
-        canonical: sources[i],
+        canonical: mergeCandidates[i],
         aliases: similar
       });
-      processed.add(sources[i]);
+      processed.add(mergeCandidates[i]);
     }
   }
   
@@ -155,29 +171,33 @@ export function generateIncomeReviews(
   const mergeSuggestions = findSimilarSources(allSources);
   
   // Add merge suggestion reviews
+  // Add merge suggestion reviews
+  // One review per group (not per alias) so skipping suppresses the whole group
   for (const group of mergeSuggestions) {
-    for (const alias of group.aliases) {
-      const reviewId = `income_merge_${alias.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`;
-      if (reviewedIds.has(reviewId)) continue;
-      
-      const aliasTxn = incomeTxns.find(t => t.source === alias);
-      if (!aliasTxn) continue;
-      
-      reviews.push({
-        id: reviewId,
-        type: "income_classification",
-        accountSlug: aliasTxn.accountSlug,
-        date: aliasTxn.date,
-        amount: aliasTxn.amount,
-        txMonth: aliasTxn.txMonth,
-        source: `${alias} → ${group.canonical}?`,
-        reason: "ambiguous_category",
-        suggestedCategory: "merge"
-      });
-      
-      // Limit merge suggestions
-      if (reviews.length >= 5) break;
-    }
+    // Create stable group ID from canonical + sorted aliases
+    const allNames = [group.canonical, ...group.aliases].sort();
+    const groupId = `income_merge_group_${allNames.map(n => n.toLowerCase().replace(/[^a-z0-9]+/g, "_")).join("_")}`;
+    
+    if (reviewedIds.has(groupId)) continue;
+    
+    // Use the first alias for transaction details
+    const firstAlias = group.aliases[0];
+    const aliasTxn = incomeTxns.find(t => t.source === firstAlias);
+    if (!aliasTxn) continue;
+    
+    reviews.push({
+      id: groupId,
+      type: "income_classification",
+      accountSlug: aliasTxn.accountSlug,
+      date: aliasTxn.date,
+      amount: aliasTxn.amount,
+      txMonth: aliasTxn.txMonth,
+      source: `${firstAlias} → ${group.canonical}?`,
+      reason: "ambiguous_category",
+      suggestedCategory: "merge"
+    });
+    
+    // Limit merge suggestions
     if (reviews.length >= 5) break;
   }
   
