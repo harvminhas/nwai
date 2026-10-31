@@ -86,7 +86,7 @@ const faqs = [
   },
   {
     q: "Is my data private and secure?",
-    a: "Yes. Your uploaded statement is stored encrypted in Google Cloud and is only accessible to your account — it is never visible to other users or third parties. Your data is never sold or shared.",
+    a: "Yes. We never ask for your bank login. Your PDF is deleted from our servers as soon as it has been read; we keep only the extracted figures, with account numbers masked, encrypted and private to your account. Your data is never sold or shared.",
   },
   {
     q: "How much does it cost?",
@@ -113,7 +113,7 @@ const faqJsonLd = {
 };
 const trustItems = [
   "No bank login or credentials",
-  "Statement stored encrypted, private to your account",
+  "Your PDF is deleted right after it's read",
   "Data never sold or shared",
 ];
 
@@ -159,8 +159,8 @@ const securityBadges = [
         <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
       </svg>
     ),
-    title: "Your file is private to you",
-    body: "Your uploaded statement is stored encrypted in Google Cloud and is only accessible to your account. It is never shared with other users or third parties.",
+    title: "We don't keep your statement",
+    body: "Your PDF is deleted as soon as it has been read. Only the extracted figures are kept, with account numbers masked, private to your account.",
   },
   {
     icon: (
@@ -286,9 +286,16 @@ function LandingV2() {
                   <span className="font-semibold text-gray-900">forgotten subscriptions</span>, and{" "}
                     <span className="font-semibold text-gray-900">debt payoff plans</span>.
                   </p>
-                  <p className="mt-3 text-base text-gray-500">
-                    No bank login required.
-                  </p>
+                  <ul className="mt-5 flex flex-wrap gap-3">
+                    <li className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-gray-200">
+                      <svg className="h-4 w-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                      No bank login required
+                    </li>
+                    <li className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-gray-200">
+                      <svg className="h-4 w-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                      Your PDF is deleted right after it&apos;s read
+                    </li>
+                  </ul>
                   <div className="mt-8 flex flex-col sm:flex-row gap-4 items-start">
                     <Link
                       href="/upload"
@@ -466,9 +473,9 @@ function LandingV2() {
                     </svg>
                   </div>
                   <div>
-                    <h3 className="font-semibold text-gray-900">Encrypted & private</h3>
+                    <h3 className="font-semibold text-gray-900">Statements aren&apos;t stored</h3>
                     <p className="mt-1 text-sm text-gray-600">
-                      Your statement is stored encrypted on Google Cloud and only accessible to your account.
+                      Your PDF is deleted right after it&apos;s read. We keep only the numbers, with account numbers masked, encrypted and private to you.
                     </p>
                   </div>
                 </div>
