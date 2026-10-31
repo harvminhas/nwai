@@ -9,7 +9,7 @@ async function getUid(request: NextRequest): Promise<string | null> {
   return access?.targetUid ?? null;
 }
 
-/** GET /api/user/source-mappings â€” return all mappings for the user */
+/** GET /api/user/source-mappings — return all mappings for the user */
 export async function GET(request: NextRequest) {
   const uid = await getUid(request);
   if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * POST /api/user/source-mappings â€” batch upsert mappings.
+ * POST /api/user/source-mappings — batch upsert mappings.
  * Body: { mappings: SourceMapping[] }
  * Uses canonical+alias as the document ID so re-submissions are idempotent.
  */

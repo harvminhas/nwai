@@ -108,9 +108,7 @@ export default async function DashboardPage({
           snap={snap}
           statementDate={data.statementDate}
           bankName={data.bankName}
-          accountId={data.accountId}
           accountType={data.accountType}
-          statementId={id}
         />
 
         {/* ── Upload more CTA ──────────────────────────────────────────────── */}

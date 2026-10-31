@@ -1,17 +1,9 @@
 "use client";
 
-import { useState } from "react";
 import { fmt } from "@/lib/currencyUtils";
 import type { StatementSnapshot } from "@/lib/statementSnapshot";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function rateColor(rate: number | null): string {
-  if (rate === null)  return "text-gray-400";
-  if (rate >= 20)     return "text-green-600";
-  if (rate >= 0)      return "text-amber-500";
-  return "text-red-500";
-}
 
 function UnavailableCard({ label, reason }: { label: string; reason: string }) {
   return (
@@ -38,17 +30,17 @@ function StatTile({
   );
 }
 
-// ── Bucket bar ────────────────────────────────────────────────────────────────
+// ── Bucket bar (Fixed/Essentials/Flexible) ────────────────────────────────────
 
 const BUCKET_COLORS: Record<string, string> = {
-  committed:         "bg-red-400",
-  transfers_savings: "bg-blue-400",
-  discretionary:     "bg-purple-500",
+  fixed:       "bg-purple-600",
+  essentials:  "bg-blue-500",
+  flexible:    "bg-green-500",
 };
 const BUCKET_ICON: Record<string, string> = {
-  committed:         "🔒",
-  transfers_savings: "🔄",
-  discretionary:     "🛍️",
+  fixed:       "🏠",
+  essentials:  "🛒",
+  flexible:    "🎭",
 };
 
 // ── Teased locked section ─────────────────────────────────────────────────────
@@ -76,33 +68,24 @@ export default function SnapshotView({
   snap,
   statementDate,
   bankName,
-  accountId,
   accountType,
-  statementId,
 }: {
   snap: StatementSnapshot;
   statementDate?: string;
   bankName?: string;
-  accountId?: string;
   accountType?: string;
-  statementId: string;
 }) {
-  const [includeDebt, setIncludeDebt] = useState(false);
-
-  const savingsRate = includeDebt ? snap.savingsRateWithDebt : snap.savingsRateCore;
-  const rateLabel   = includeDebt ? "incl. card servicing" : "excl. card servicing add-on";
 
   return (
     <div className="space-y-5">
 
       {/* ── Preview banner ────────────────────────────────────────────────── */}
-      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-start gap-2.5">
-        <span className="text-amber-500 mt-0.5 shrink-0">⚠</span>
-        <p className="text-sm text-amber-800 leading-snug">
-          <strong>Statement preview only.</strong> These numbers come directly from the AI
-          extraction of this one statement. After creating an account the full analysis
-          pipeline re-processes your transactions, filters transfer income, and applies
-          your category rules — so final numbers will differ slightly.
+      <div className="rounded-xl border border-purple-200 bg-purple-50 px-4 py-3 flex items-start gap-2.5">
+        <span className="text-purple-500 mt-0.5 shrink-0">✓</span>
+        <p className="text-sm text-purple-900 leading-snug">
+          <strong>Your statement preview</strong> — these numbers use the same income filtering
+          and spending categorization as the full app. Create an account to see trends, savings rate,
+          and AI insights across all your statements.
         </p>
       </div>
 
@@ -128,9 +111,8 @@ export default function SnapshotView({
         </div>
       </div>
 
-      {/* ── Key metrics row ───────────────────────────────────────────────── */}
-      <div className="grid gap-4 sm:grid-cols-3">
-
+      {/* ── Key metrics: Income & Net ────────────────────────────────────────── */}
+      <div className="grid gap-4 sm:grid-cols-2">
         {/* Income */}
         {snap.incomeUnavailableReason ? (
           <UnavailableCard label="Income" reason={snap.incomeUnavailableReason} />
@@ -138,72 +120,44 @@ export default function SnapshotView({
           <StatTile
             label="Income this month"
             value={fmt(snap.incomeTotal)}
-            sub={`${snap.categories.length > 0 ? "1" : "—"} source`}
+            sub="excl. transfers"
             color="text-green-600"
           />
         )}
 
-        {/* Discretionary spending */}
-        {snap.expenseUnavailableReason ? (
-          <UnavailableCard label="Spending" reason={snap.expenseUnavailableReason} />
+        {/* Net (Income - Spending) */}
+        {snap.expenseUnavailableReason || snap.incomeUnavailableReason ? (
+          <UnavailableCard label="Net" reason="Income and spending data required" />
         ) : (
           <StatTile
-            label="Core expenses"
-            value={fmt(snap.coreExpenses)}
-            sub="excl. transfers & debt"
+            label="Net (Income − Spending)"
+            value={fmt(snap.incomeTotal - snap.coreExpenses)}
+            sub={snap.incomeTotal > snap.coreExpenses ? "positive cash flow" : "negative cash flow"}
+            color={snap.incomeTotal > snap.coreExpenses ? "text-green-600" : "text-red-600"}
           />
-        )}
-
-        {/* Savings rate */}
-        {snap.savingsUnavailableReason ? (
-          <UnavailableCard label="Savings Rate" reason={snap.savingsUnavailableReason} />
-        ) : (
-          <StatTile
-            label="Savings Rate (est.)"
-            value={savingsRate !== null ? `${savingsRate >= 0 ? "+" : ""}${savingsRate}%` : "—"}
-            sub={rateLabel}
-            color={rateColor(savingsRate)}
-          >
-            {/* Debt toggle — only show if we have debt payment data */}
-            {snap.minDebtPayments > 0 && (
-              <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-gray-500 select-none">
-                <span
-                  role="checkbox"
-                  aria-checked={includeDebt}
-                  tabIndex={0}
-                  onKeyDown={(e) => e.key === " " && setIncludeDebt(!includeDebt)}
-                  onClick={() => setIncludeDebt(!includeDebt)}
-                  className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition
-                    ${includeDebt ? "bg-purple-600" : "bg-gray-300"}`}
-                >
-                  <span className={`inline-block h-3 w-3 rounded-full bg-white shadow transition-transform
-                    ${includeDebt ? "translate-x-3.5" : "translate-x-0.5"}`} />
-                </span>
-                Incl. min debt ({fmt(snap.minDebtPayments)})
-              </label>
-            )}
-          </StatTile>
         )}
       </div>
 
-      {/* ── Spending buckets ──────────────────────────────────────────────── */}
+      {/* ── Spending breakdown: Fixed / Essentials / Flexible ──────────────── */}
       {snap.hasExpenses && (
         <div className="rounded-xl bg-white border border-gray-100 shadow-sm p-5">
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-4">
-            Where your money went
+            Spending breakdown
           </p>
 
           {/* Stacked bar */}
-          <div className="mb-4 flex h-3 w-full overflow-hidden rounded-full bg-gray-100">
+          <div className="mb-4 flex h-8 w-full overflow-hidden rounded-lg bg-gray-100">
             {snap.buckets
               .filter((b) => b.amount > 0)
               .map((b) => (
                 <div
                   key={b.key}
-                  className={`${BUCKET_COLORS[b.key]} transition-all`}
+                  className={`${BUCKET_COLORS[b.key]} flex items-center justify-center text-white text-xs font-semibold transition-all`}
                   style={{ width: `${b.pct}%` }}
                   title={`${b.label}: ${fmt(b.amount)}`}
-                />
+                >
+                  {b.pct > 15 && b.label}
+                </div>
               ))}
           </div>
 
@@ -228,10 +182,17 @@ export default function SnapshotView({
                     </div>
                     <span className="text-xs text-gray-400 tabular-nums w-8 text-right">{b.pct}%</span>
                   </div>
-                  <p className="text-xs text-gray-400 mt-0.5">{b.description}</p>
                 </div>
               </div>
             ))}
+          </div>
+          
+          <div className="mt-4 pt-4 border-t border-gray-100">
+            <div className="flex justify-between text-sm">
+              <span className="font-medium text-gray-700">Total Spending</span>
+              <span className="font-semibold text-gray-900">{fmt(snap.coreExpenses)}</span>
+            </div>
+            <p className="text-xs text-gray-400 mt-1">Excludes transfers and debt payments</p>
           </div>
         </div>
       )}
