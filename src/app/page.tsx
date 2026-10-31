@@ -5,9 +5,9 @@ import Hero from "@/components/Hero";
 import LandingHeader from "@/components/LandingHeader";
 import { HeroDemo } from "@/components/landing/HeroDemo";
 
-// â”€â”€ SEO metadata â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── SEO metadata ─────────────────────────────────────────────────────────────
 export const metadata: Metadata = {
-  title: "networth.online â€“ Know Where Your Money Actually Goes",
+  title: "networth.online – Know Where Your Money Actually Goes",
   description:
     "Upload your bank statement PDF and instantly see your net worth, spending breakdown, savings rate, and AI-powered insights. No bank login. Any major bank. Under 60 seconds.",
   keywords: [
@@ -21,7 +21,7 @@ export const metadata: Metadata = {
     "personal finance app no bank login",
   ],
   openGraph: {
-    title: "networth.online â€“ Know Where Your Money Actually Goes",
+    title: "networth.online – Know Where Your Money Actually Goes",
     description:
       "Upload a bank statement PDF and get your net worth, spending breakdown, savings rate, and AI insights in under 60 seconds. No bank login required.",
     url: "https://networth.online",
@@ -33,13 +33,13 @@ export const metadata: Metadata = {
         url: "https://networth.online/opengraph-image",
         width: 1200,
         height: 630,
-        alt: "networth.online â€“ Know Where Your Money Actually Goes",
+        alt: "networth.online – Know Where Your Money Actually Goes",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "networth.online â€“ Know Where Your Money Actually Goes",
+    title: "networth.online – Know Where Your Money Actually Goes",
     description:
       "Upload a bank statement PDF and get AI-powered financial insights in under 60 seconds. No bank login required.",
     images: ["https://networth.online/opengraph-image"],
@@ -49,7 +49,7 @@ export const metadata: Metadata = {
   },
 };
 
-// â”€â”€ JSON-LD structured data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── JSON-LD structured data ───────────────────────────────────────────────────
 const appJsonLd = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
@@ -70,11 +70,11 @@ const appJsonLd = {
     "@type": "Offer",
     price: "0",
     priceCurrency: "CAD",
-    description: "Free to start â€” upload your first statement at no cost",
+    description: "Free to start — upload your first statement at no cost",
   },
 };
 
-// â”€â”€ FAQ data (also used for FAQPage JSON-LD rich results) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── FAQ data (also used for FAQPage JSON-LD rich results) ────────────────────
 const faqs = [
   {
     q: "Do I need to connect my bank account?",
@@ -86,7 +86,7 @@ const faqs = [
   },
   {
     q: "Is my data private and secure?",
-    a: "Yes. Your uploaded statement is stored encrypted in Google Cloud and is only accessible to your account â€” it is never visible to other users or third parties. Your data is never sold or shared.",
+    a: "Yes. Your uploaded statement is stored encrypted in Google Cloud and is only accessible to your account — it is never visible to other users or third parties. Your data is never sold or shared.",
   },
   {
     q: "How much does it cost?",
@@ -94,7 +94,7 @@ const faqs = [
   },
   {
     q: "How long does the analysis take?",
-    a: "Under 60 seconds. Our AI reads and categorises every transaction in your statement, computes your net worth and savings rate, and generates personalised insights â€” all within about a minute of uploading.",
+    a: "Under 60 seconds. Our AI reads and categorises every transaction in your statement, computes your net worth and savings rate, and generates personalised insights — all within about a minute of uploading.",
   },
   {
     q: "Can I upload statements for multiple accounts?",
@@ -117,7 +117,7 @@ const trustItems = [
   "Data never sold or shared",
 ];
 
-// â”€â”€ Testimonials â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Testimonials ──────────────────────────────────────────────────────────────
 const testimonials = [
   {
     quote: "I knew I was spending too much on food but seeing $847/month in one place made it real. Changed my habits in a week.",
@@ -142,7 +142,7 @@ const testimonials = [
   },
 ];
 
-// â”€â”€ Security badges â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Security badges ───────────────────────────────────────────────────────────
 const securityBadges = [
   {
     icon: (
@@ -178,11 +178,11 @@ const securityBadges = [
       </svg>
     ),
     title: "Your data is never sold",
-    body: "We don't sell, share, or monetise your financial data. Our business model is a simple subscription â€” your data is the product we protect, not the product we sell.",
+    body: "We don't sell, share, or monetise your financial data. Our business model is a simple subscription — your data is the product we protect, not the product we sell.",
   },
 ];
 
-// â”€â”€ Social proof stats â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Social proof stats ────────────────────────────────────────────────────────
 const socialStats = [
   { value: "10,000+", label: "statements analyzed" },
   { value: "15+",     label: "banks & credit unions" },
@@ -190,7 +190,7 @@ const socialStats = [
   { value: "Free",    label: "to upload your first statement" },
 ];
 
-// â”€â”€ Pricing plans â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Pricing plans ─────────────────────────────────────────────────────────────
 const pricingFeatures = [
   { label: "Upload statements",            free: "Up to 5 / month",  pro: "Unlimited" },
   { label: "Statement history",            free: "Full (unlimited)",    pro: "Unlimited" },
@@ -205,7 +205,7 @@ const pricingFeatures = [
   { label: "Data export (CSV)",            free: false,              pro: true },
 ];
 
-// â”€â”€ "What you'll discover" insight examples â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── "What you'll discover" insight examples ───────────────────────────────────
 const insightExamples = [
   {
     badge: "High Priority",
@@ -216,7 +216,7 @@ const insightExamples = [
   {
     badge: "Worth Reviewing",
     badgeColor: "bg-amber-100 text-amber-700",
-    title: "April has 3 paydays â€” $3,600 more than usual",
+    title: "April has 3 paydays — $3,600 more than usual",
     body: "Bi-weekly salary sometimes produces an extra payday. We flag these in advance so you can plan around the windfall.",
   },
   {
@@ -227,7 +227,7 @@ const insightExamples = [
   },
 ];
 
-// â”€â”€ How it works steps â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── How it works steps ────────────────────────────────────────────────────────
 const steps = [
   {
     n: "1",
@@ -236,22 +236,22 @@ const steps = [
   },
   {
     n: "2",
-    title: "Drop it here â€” we do the rest",
+    title: "Drop it here — we do the rest",
     body: "We parse every transaction, categorise your spending automatically, and detect recurring patterns. No manual tagging. No setup.",
   },
   {
     n: "3",
     title: "Get your financial picture in seconds",
-    body: "Net worth, savings rate, spending breakdown, upcoming bills, and AI insights â€” all from one statement. Upload more months to unlock trends.",
+    body: "Net worth, savings rate, spending breakdown, upcoming bills, and AI insights — all from one statement. Upload more months to unlock trends.",
   },
 ];
 
-// â”€â”€ V2 Landing Page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── V2 Landing Page ───────────────────────────────────────────────────────────
 
 function LandingV2() {
   return (
     <>
-      {/* JSON-LD â€” invisible to users, visible to search engines */}
+      {/* JSON-LD — invisible to users, visible to search engines */}
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(appJsonLd) }}
@@ -268,7 +268,7 @@ function LandingV2() {
         <LandingHeader />
         <main>
 
-          {/* â”€â”€ Hero (Clear Value Prop) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── Hero (Clear Value Prop) ──────────────────────────────────────────── */}
           <section className="relative overflow-hidden bg-gradient-to-b from-purple-50 to-white py-16 md:py-24" aria-label="Hero">
             <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
               <div className="grid gap-12 lg:grid-cols-2 lg:gap-16 items-center">
@@ -294,7 +294,7 @@ function LandingV2() {
                       href="/upload"
                       className="inline-flex items-center justify-center gap-2 rounded-lg bg-purple-600 px-8 py-4 font-semibold text-white shadow-lg transition hover:bg-purple-700 hover:shadow-xl text-lg"
                     >
-                      Try it free â€” Upload a statement
+                      Try it free — Upload a statement
                       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                       </svg>
@@ -313,7 +313,7 @@ function LandingV2() {
             </div>
           </section>
 
-          {/* â”€â”€ How It Works â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── How It Works ────────────────────────────────────────────────────── */}
           <section className="py-16 md:py-24 bg-white" aria-labelledby="how-heading">
             <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
               <div className="text-center max-w-2xl mx-auto mb-12">
@@ -338,7 +338,7 @@ function LandingV2() {
             </div>
           </section>
 
-          {/* â”€â”€ Key Features â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── Key Features ─────────────────────────────────────────────────────── */}
           <section className="py-16 md:py-24 bg-gray-50" aria-labelledby="features-heading">
             <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
               <div className="text-center max-w-2xl mx-auto mb-12">
@@ -430,7 +430,7 @@ function LandingV2() {
             </div>
           </section>
 
-          {/* â”€â”€ Security (ONE Section) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── Security (ONE Section) ────────────────────────────────────────────── */}
           <section className="py-16 md:py-24 bg-white" aria-labelledby="security-heading">
             <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 text-center">
               <div className="inline-flex items-center gap-2 rounded-full border border-green-200 bg-green-50 px-4 py-2 text-sm font-semibold text-green-700 mb-6">
@@ -502,7 +502,7 @@ function LandingV2() {
             </div>
           </section>
 
-          {/* â”€â”€ Pricing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── Pricing ──────────────────────────────────────────────────────────── */}
           <section className="py-16 md:py-24 bg-gray-50" aria-labelledby="pricing-heading">
             <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
               <div className="text-center max-w-2xl mx-auto mb-12">
@@ -648,7 +648,7 @@ function LandingV2() {
             </div>
           </section>
 
-          {/* â”€â”€ FAQ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── FAQ ──────────────────────────────────────────────────────────────── */}
           <section className="py-16 md:py-24 bg-white" aria-labelledby="faq-heading">
             <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
               <h2 id="faq-heading" className="text-3xl font-bold text-gray-900 md:text-4xl text-center mb-12">
@@ -665,7 +665,7 @@ function LandingV2() {
             </div>
           </section>
 
-          {/* â”€â”€ Final CTA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── Final CTA ────────────────────────────────────────────────────────── */}
           <section className="py-16 md:py-24 bg-gradient-to-b from-purple-50 to-white" aria-labelledby="final-cta-heading">
             <div className="mx-auto max-w-3xl px-4 text-center sm:px-6 lg:px-8">
               <h2 id="final-cta-heading" className="text-3xl font-bold text-gray-900 md:text-4xl">
@@ -690,12 +690,12 @@ function LandingV2() {
 
         </main>
 
-        {/* â”€â”€ Footer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* ── Footer ──────────────────────────────────────────────────────────── */}
         <footer className="border-t border-gray-100 bg-white">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-400">
             <span>
               <span className="font-semibold text-purple-600">networth.online</span>
-              {" "}â€” Upload bank statements. See everything.
+              {" "}— Upload bank statements. See everything.
             </span>
             <div className="flex gap-5">
               <Link href="/login" className="hover:text-gray-600 transition">Log in</Link>
@@ -710,7 +710,7 @@ function LandingV2() {
   );
 }
 
-// â”€â”€ V1 Landing Page (Original) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── V1 Landing Page (Original) ───────────────────────────────────────────────
 
 export default async function Home({ searchParams }: { searchParams?: Promise<{ v?: string }> }) {
   const params = (await searchParams) ?? {};
@@ -721,7 +721,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
 
   return (
     <>
-      {/* JSON-LD â€” invisible to users, visible to search engines */}
+      {/* JSON-LD — invisible to users, visible to search engines */}
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(appJsonLd) }}
@@ -738,10 +738,10 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
         <LandingHeader />
         <main>
 
-          {/* â”€â”€ Hero â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── Hero ──────────────────────────────────────────────────────── */}
           <Hero />
 
-          {/* â”€â”€ Trust bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── Trust bar ─────────────────────────────────────────────────── */}
           <div className="border-y border-gray-100 bg-gray-50 py-4">
             <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
               <ul className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-10">
@@ -757,7 +757,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
             </div>
           </div>
 
-          {/* â”€â”€ Social proof stats â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── Social proof stats ────────────────────────────────────────── */}
           <div className="bg-white py-10 border-b border-gray-100">
             <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
               <dl className="grid grid-cols-2 gap-6 sm:grid-cols-4">
@@ -771,7 +771,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
             </div>
           </div>
 
-          {/* â”€â”€ What you'll discover â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── What you'll discover ──────────────────────────────────────── */}
           <section className="py-16 md:py-24 bg-white" aria-labelledby="discover-heading">
             <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
               <div className="text-center max-w-2xl mx-auto">
@@ -803,7 +803,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
             </div>
           </section>
 
-          {/* â”€â”€ Testimonials â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── Testimonials ─────────────────────────────────────────────── */}
           <section className="py-16 md:py-24 bg-gray-50" aria-labelledby="testimonials-heading">
             <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
               <div className="text-center max-w-xl mx-auto">
@@ -838,7 +838,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
             </div>
           </section>
 
-          {/* â”€â”€ How it works â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── How it works ──────────────────────────────────────────────── */}
           <section className="py-16 md:py-24 bg-gray-50" aria-labelledby="how-heading">
             <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
               <div className="text-center max-w-xl mx-auto">
@@ -863,7 +863,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
             </div>
           </section>
 
-          {/* â”€â”€ How we protect your data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── How we protect your data ─────────────────────────────────── */}
           <section className="py-16 md:py-24 bg-white" aria-labelledby="security-heading">
             <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
               <div className="text-center max-w-xl mx-auto">
@@ -900,11 +900,11 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
               {/* Visual trust badges */}
               <div className="mt-8 flex flex-wrap justify-center gap-3">
                 {[
-                  { label: "Hosted on Google Cloud", icon: "â˜ï¸" },
-                  { label: "Firebase / Firestore",    icon: "ðŸ”¥" },
-                  { label: "SSL / TLS Encrypted",     icon: "ðŸ”’" },
-                  { label: "No bank credentials",     icon: "ðŸš«" },
-                  { label: "No ads. No data selling", icon: "ðŸ›¡ï¸" },
+                  { label: "Hosted on Google Cloud", icon: "☁️" },
+                  { label: "Firebase / Firestore",    icon: "🔥" },
+                  { label: "SSL / TLS Encrypted",     icon: "🔒" },
+                  { label: "No bank credentials",     icon: "🚫" },
+                  { label: "No ads. No data selling", icon: "🛡️" },
                 ].map((b) => (
                   <span
                     key={b.label}
@@ -920,13 +920,13 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
                 <p className="text-sm text-purple-900">
                   <span className="font-semibold">Compare this to bank aggregators:</span>{" "}
                   Apps like Mint or Credit Karma require your banking username and password. 
-                  We don&apos;t â€” and we never will. A PDF is all we need.
+                  We don&apos;t — and we never will. A PDF is all we need.
                 </p>
               </div>
             </div>
           </section>
 
-          {/* â”€â”€ Pricing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── Pricing ──────────────────────────────────────────────────── */}
           <section className="py-16 md:py-24 bg-gray-50" aria-labelledby="pricing-heading">
             <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
               <div className="text-center max-w-xl mx-auto">
@@ -962,7 +962,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
                           </svg>
                         )}
                         <span className={f.free === false ? "text-gray-400" : "text-gray-700"}>
-                          {f.free === true ? f.label : f.free === false ? f.label : `${f.label} â€” ${f.free}`}
+                          {f.free === true ? f.label : f.free === false ? f.label : `${f.label} — ${f.free}`}
                         </span>
                       </li>
                     ))}
@@ -972,7 +972,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
                       href="/upload"
                       className="block w-full rounded-lg border border-gray-300 bg-white px-4 py-3 text-center text-sm font-semibold text-gray-700 hover:bg-gray-50 transition"
                     >
-                      Upload your first statement â†’
+                      Upload your first statement →
                     </Link>
                   </div>
                 </div>
@@ -989,7 +989,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
                     <p className="mt-2 text-4xl font-extrabold text-gray-900">$9.99</p>
                     <p className="mt-1 text-sm text-gray-400">per month, cancel any time</p>
                     <p className="mt-4 text-sm text-gray-600">
-                      Unlimited uploads, full history, AI insights, and every planning tool â€” for users who want the complete picture.
+                      Unlimited uploads, full history, AI insights, and every planning tool — for users who want the complete picture.
                     </p>
                   </div>
                   <ul className="mt-6 space-y-3 flex-1">
@@ -999,7 +999,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
                           <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                         </svg>
                         <span className="text-gray-700">
-                          {f.pro === true ? f.label : `${f.label} â€” ${f.pro}`}
+                          {f.pro === true ? f.label : `${f.label} — ${f.pro}`}
                         </span>
                       </li>
                     ))}
@@ -1009,7 +1009,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
                       href="/signup"
                       className="block w-full rounded-lg bg-purple-600 px-4 py-3 text-center text-sm font-semibold text-white hover:bg-purple-700 transition shadow-md"
                     >
-                      Get started with Pro â†’
+                      Get started with Pro →
                     </Link>
                     <p className="mt-2 text-center text-xs text-gray-400">No credit card required to try for free first</p>
                   </div>
@@ -1018,7 +1018,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
             </div>
           </section>
 
-          {/* â”€â”€ FAQ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── FAQ ──────────────────────────────────────────────────────── */}
           <section className="py-16 md:py-24 bg-gray-50" aria-labelledby="faq-heading">
             <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
               <h2 id="faq-heading" className="text-2xl font-bold text-gray-900 md:text-3xl text-center mb-10">
@@ -1035,7 +1035,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
             </div>
           </section>
 
-          {/* â”€â”€ Bottom CTA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── Bottom CTA ────────────────────────────────────────────────── */}
           <section className="py-16 md:py-24 bg-white" aria-labelledby="cta-heading">
             <div className="mx-auto max-w-2xl px-4 text-center sm:px-6 lg:px-8">
               <h2 id="cta-heading" className="text-2xl font-bold text-gray-900 md:text-3xl">
@@ -1050,10 +1050,10 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
                   href="/upload"
                   className="inline-flex items-center gap-2 rounded-lg bg-purple-600 px-8 py-4 font-semibold text-white shadow-md transition hover:bg-purple-700 hover:shadow-lg text-base"
                 >
-                  Upload your first statement â†’
+                  Upload your first statement →
                 </Link>
                 <p className="mt-3 text-xs text-gray-400">
-                  PDF &nbsp;Â·&nbsp; Any major bank &nbsp;Â·&nbsp; Results in under 60 seconds
+                  PDF &nbsp;·&nbsp; Any major bank &nbsp;·&nbsp; Results in under 60 seconds
                 </p>
               </div>
             </div>
@@ -1061,7 +1061,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
 
         </main>
 
-        {/* â”€â”€ Footer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* ── Footer ──────────────────────────────────────────────────────── */}
         <footer className="border-t border-gray-100 bg-white">
           {/* AI accuracy note */}
           <div className="border-b border-gray-100 bg-gray-50 py-3">
@@ -1077,7 +1077,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-400">
             <span>
               <span className="font-semibold text-purple-600">networth.online</span>
-              &nbsp;â€” No bank login. No credentials. No ads.
+              &nbsp;— No bank login. No credentials. No ads.
             </span>
             <div className="flex gap-5">
               <Link href="/login" className="hover:text-gray-600 transition">Log in</Link>
