@@ -256,11 +256,11 @@ export function computeStatementSnapshot(data: ParsedStatementData): StatementSn
   // Filter out transfers and non-core income categories to match signed-in dashboard
   const incomeTxns = data.income?.transactions ?? [];
   const filteredIncomeTxns = incomeTxns.filter((txn) => {
-    const src = (txn.source ?? "").trim();
+    const src = (txn.source ?? (txn as { description?: string }).description ?? "").trim();
     // Exclude transfers (same regex as financial profile)
     if (INCOME_TRANSFER_RE.test(src)) return false;
     // Exclude non-core categories (Transfer, Transfer In, Other)
-    const cat = (txn.category ?? "").trim().toLowerCase();
+    const cat = (txn.category ?? "Other").trim().toLowerCase();
     if (cat === "transfer" || cat === "transfer in" || cat === "other") return false;
     return true;
   });
