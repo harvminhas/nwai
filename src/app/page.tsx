@@ -86,7 +86,7 @@ const faqs = [
   },
   {
     q: "Is my data private and secure?",
-    a: "Yes. We never ask for your bank login. Your PDF is deleted from our servers as soon as it has been read; we keep only the extracted figures, with account numbers masked, encrypted and private to your account. Your data is never sold or shared.",
+    a: "Yes. We never ask for your bank login. Your statement is deleted from our servers as soon as it has been read; we keep only the extracted figures, with account numbers masked, encrypted and private to your account. Your data is never sold or shared.",
   },
   {
     q: "How much does it cost?",
@@ -113,7 +113,7 @@ const faqJsonLd = {
 };
 const trustItems = [
   "No bank login or credentials",
-  "Your PDF is deleted right after it's read",
+  "Your statement is deleted after reading",
   "Data never sold or shared",
 ];
 
@@ -160,7 +160,7 @@ const securityBadges = [
       </svg>
     ),
     title: "We don't keep your statement",
-    body: "Your PDF is deleted as soon as it has been read. Only the extracted figures are kept, with account numbers masked, private to your account.",
+    body: "Your statement is deleted as soon as it has been read. Only the extracted figures are kept, with account numbers masked, private to your account.",
   },
   {
     icon: (
@@ -293,7 +293,7 @@ function LandingV2() {
                     </li>
                     <li className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-gray-200">
                       <svg className="h-4 w-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                      Your PDF is deleted right after it&apos;s read
+                      Your statement is deleted after reading
                     </li>
                   </ul>
                   <div className="mt-8 flex flex-col sm:flex-row gap-4 items-start">
@@ -475,7 +475,7 @@ function LandingV2() {
                   <div>
                     <h3 className="font-semibold text-gray-900">Statements aren&apos;t stored</h3>
                     <p className="mt-1 text-sm text-gray-600">
-                      Your PDF is deleted right after it&apos;s read. We keep only the numbers, with account numbers masked, encrypted and private to you.
+                      Your statement is deleted right after it&apos;s read. We keep only the numbers, with account numbers masked, encrypted and private to you.
                     </p>
                   </div>
                 </div>
