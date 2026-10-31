@@ -158,6 +158,12 @@ export function generateIncomeReviews(
   // Group by source to avoid duplicate reviews for same source
   const seenSources = new Set<string>();
   const allSources: string[] = [];
+  // Per-source prefixes of every reviewed income item (ids look like income_<source>_<date>)
+  const reviewedPrefixes = new Set<string>();
+  for (const id of reviewedIds) {
+    const m = /^(income_.+_)\d{4}-\d{2}-\d{2}$/.exec(id);
+    if (m) reviewedPrefixes.add(m[1]);
+  }
   
   // First pass: collect all unique sources
   for (const txn of incomeTxns) {
@@ -211,8 +217,11 @@ export function generateIncomeReviews(
     // Build review ID
     const reviewId = `income_${source.toLowerCase().replace(/[^a-z0-9]+/g, "_")}_${txn.date}`;
     
-    // Skip if already reviewed
-    if (reviewedIds.has(reviewId)) continue;
+    // Skip if this source was already reviewed on ANY date. Answers are per
+    // source, so skipping one deposit must not resurface the same source via
+    // another deposit date.
+    const sourcePrefix = `income_${source.toLowerCase().replace(/[^a-z0-9]+/g, "_")}_`;
+    if (reviewedIds.has(reviewId) || reviewedPrefixes.has(sourcePrefix)) continue;
     
     let reason: "possible_transfer" | "possible_refund" | "ambiguous_category" | null = null;
     let suggestedCategory: string | undefined;
