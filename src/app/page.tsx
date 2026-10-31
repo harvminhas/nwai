@@ -86,7 +86,7 @@ const faqs = [
   },
   {
     q: "Is my data private and secure?",
-    a: "Yes. We never ask for your bank login. Your statement is deleted from our servers as soon as it has been read; we keep only the extracted figures, with account numbers masked, encrypted and private to your account. Your data is never sold or shared.",
+    a: "Yes. We never ask for your bank login. Your statement is deleted once we've read the transactions, and no personal details are kept. Your data is never sold or shared.",
   },
   {
     q: "How much does it cost?",
@@ -160,7 +160,7 @@ const securityBadges = [
       </svg>
     ),
     title: "We don't keep your statement",
-    body: "Your statement is deleted as soon as it has been read. Only the extracted figures are kept, with account numbers masked, private to your account.",
+    body: "Your statement is deleted once we've read the transactions. No personal details are kept.",
   },
   {
     icon: (
@@ -475,7 +475,7 @@ function LandingV2() {
                   <div>
                     <h3 className="font-semibold text-gray-900">Statements aren&apos;t stored</h3>
                     <p className="mt-1 text-sm text-gray-600">
-                      Your statement is deleted right after it&apos;s read. We keep only the numbers, with account numbers masked, encrypted and private to you.
+                      Your statement is deleted once we&apos;ve read the transactions. No personal details are kept.
                     </p>
                   </div>
                 </div>
