@@ -881,14 +881,14 @@ function SavingsDrawerContent({
                               const priorMonthShort = acc.priorActualMonth ? formatMonth(acc.priorActualMonth) : '';
                               const currentMonthShort = acc.currentActualMonth ? formatMonth(acc.currentActualMonth) : '';
                               
-                              // For current: show "End of X" if it matches the month, otherwise "Current (X)"
+                              // For current: show "End of X" if it matches the month, otherwise "Latest (X)"
                               let currentLabel: string;
                               if (acc.currentActualMonth === month.month) {
                                 currentLabel = `End of ${formatMonthYear(month.month).split(' ')[0]}`;
                               } else if (acc.currentCarriedForward) {
-                                currentLabel = `Current (${currentMonthShort})`;
+                                currentLabel = `Latest (${currentMonthShort})`;
                               } else {
-                                currentLabel = 'Current';
+                                currentLabel = 'Latest';
                               }
                               
                               // For prior: show month if it's not the immediately previous month
@@ -1007,14 +1007,14 @@ function SavingsDrawerContent({
                               const priorMonthShort = acc.priorActualMonth ? formatMonth(acc.priorActualMonth) : '';
                               const currentMonthShort = acc.currentActualMonth ? formatMonth(acc.currentActualMonth) : '';
                               
-                              // For current: show "End of X" if it matches the month, otherwise "Current (X)"
+                              // For current: show "End of X" if it matches the month, otherwise "Latest (X)"
                               let currentLabel: string;
                               if (acc.currentActualMonth === month.month) {
                                 currentLabel = `End of ${formatMonthYear(month.month).split(' ')[0]}`;
                               } else if (acc.currentCarriedForward) {
-                                currentLabel = `Current (${currentMonthShort})`;
+                                currentLabel = `Latest (${currentMonthShort})`;
                               } else {
-                                currentLabel = 'Current';
+                                currentLabel = 'Latest';
                               }
                               
                               // For prior: show month if it's not the immediately previous month

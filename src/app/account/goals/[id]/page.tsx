@@ -1328,7 +1328,20 @@ export default function GoalDetailPage() {
           ) : isNw ? (
             <>
               <p className="text-4xl font-bold tabular-nums text-gray-900">{fmtShort(Math.max(0, netWorthState), hcLocal)}</p>
-              <p className="text-sm text-gray-500 mt-1">current net worth{fiTarget > 0 ? ` · FI target ${fmtShort(fiTarget, hcLocal)}` : ""}</p>
+              <p className="text-sm text-gray-500 mt-1">
+                {(() => {
+                  const latestYM = history.length > 0 ? history[history.length - 1].yearMonth : null;
+                  if (latestYM) {
+                    try {
+                      const formatted = new Date(latestYM + "-01").toLocaleDateString("en-US", { month: "short", year: "numeric" });
+                      return `net worth as of ${formatted}${fiTarget > 0 ? ` · FI target ${fmtShort(fiTarget, hcLocal)}` : ""}`;
+                    } catch {
+                      return `latest net worth${fiTarget > 0 ? ` · FI target ${fmtShort(fiTarget, hcLocal)}` : ""}`;
+                    }
+                  }
+                  return `latest net worth${fiTarget > 0 ? ` · FI target ${fmtShort(fiTarget, hcLocal)}` : ""}`;
+                })()}
+              </p>
             </>
           ) : (
             <>

@@ -407,7 +407,7 @@ export default function GoalsPage() {
   const [monthlyExpenses, setMonthlyExpenses]         = useState(0);
   const [typicalDebtPayments, setTypicalDebtPayments] = useState(0);
   const [monthsTracked, setMonthsTracked]             = useState(0);
-  const [history, setHistory]                         = useState<{ debtTotal: number }[]>([]);
+  const [history, setHistory]                         = useState<{ yearMonth: string; debtTotal: number; netWorth?: number }[]>([]);
   const [emergencyFund, setEmergencyFund]           = useState<EmergencyFundMetrics | null>(null);
   const [rates, setRates]                     = useState<AccountRateEntry[]>([]);
   const [loading, setLoading]                 = useState(true);
@@ -1512,7 +1512,20 @@ export default function GoalsPage() {
                     </div>
                     <div className="mt-5">
                       <p className="text-4xl font-bold tabular-nums text-gray-900">{fmtShort(netWorth, hc)}</p>
-                      <p className="text-sm text-gray-500 mt-1">current net worth</p>
+                      <p className="text-sm text-gray-500 mt-1">
+                        {(() => {
+                          const latestYM = history.length > 0 ? history[history.length - 1].yearMonth : null;
+                          if (latestYM) {
+                            try {
+                              const formatted = new Date(latestYM + "-01").toLocaleDateString("en-US", { month: "short", year: "numeric" });
+                              return `net worth as of ${formatted}`;
+                            } catch {
+                              return "latest net worth";
+                            }
+                          }
+                          return "latest net worth";
+                        })()}
+                      </p>
                     </div>
                     {fiTarget > 0 && (
                       <div className="mt-5 pb-6">
