@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { buildIncomeSummary } from "@/lib/incomeSummary";
+import { getRangeMonths } from "@/lib/rangeUtils";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +28,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // Load financial profile (single source of truth for transaction data)
     const profile = await getFinancialProfile(decoded.uid, db);
 
+    // Get available months from profile (same as dashboard money-coach route)
+    const availableMonths = profile.monthlyHistory.map(m => m.yearMonth).sort();
+    const rangeMonths = getRangeMonths("3mo", availableMonths);
+
     // Load income deposit reviews
     const incomeReviewsSnap = await db
       .collection(`users/${decoded.uid}/reviews`)
@@ -37,12 +42,13 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       incomeDepositReviews.set(doc.id, doc.get("classification"));
     });
 
-    // Build income summary
+    // Build income summary with consistent month selection (last 3 complete calendar months)
     const summary = buildIncomeSummary(
       profile.incomeTxns,
       profile.accountSnapshots,
       profile.homeCurrency,
-      incomeDepositReviews
+      incomeDepositReviews,
+      rangeMonths
     );
 
     return NextResponse.json(summary);
