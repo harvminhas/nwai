@@ -7,9 +7,9 @@
  */
 
 import type { ParsedStatementData, ExpenseCategory } from "./types";
-import { isCoreExcluded } from "./spendingMetrics";
-import { SCHEDULED_DEBT_TYPES } from "./debtUtils";
+import { isCoreExcluded, INCOME_TRANSFER_RE } from "./spendingMetrics";
 import { isDebtServicingExpense } from "./debtServicing";
+import { getCategoryBucket, type MoneyCoachBucket } from "./moneyCoachBuckets";
 
 // ── Account classification ────────────────────────────────────────────────────
 
@@ -40,72 +40,59 @@ export function balanceLabelFor(type: string): string {
   return "Account Balance";
 }
 
-// ── Spending buckets ──────────────────────────────────────────────────────────
-
-/** Category names that belong in the "Committed obligations" bucket. */
-const COMMITTED_RE =
-  /^(installment servicing|housing|mortgage payment|loan payment|student loan)$/i;
-/** Revolving settlement — not discretionary lifestyle spend (mirrors core exclusion). */
-const CARD_SETTLEMENT_RE = /^(card servicing|credit card payment|line of credit)$/i;
-/** Categories that are transfers or savings moves — not discretionary. */
-const TRANSFERS_RE  = /^(transfers|transfers & payments|investments & savings|transfer in)$/i;
-/** Interest charges — excluded from discretionary (same as CORE_EXCLUDE_RE). */
-const INTEREST_RE   = /^interest$/i;
+// ── Spending buckets (Fixed/Essentials/Flexible) ──────────────────────────────
 
 export interface SpendingBucket {
-  key:         "committed" | "transfers_savings" | "discretionary";
+  key:         MoneyCoachBucket;
   label:       string;
-  description: string;
   amount:      number;
-  /** Percentage of total outflows (not discretionary — total). */
+  /** Percentage of core spending (excl. transfers). */
   pct:         number;
 }
 
-function bucketFor(categoryName: string): SpendingBucket["key"] {
-  const n = categoryName.trim();
-  if (COMMITTED_RE.test(n))          return "committed";
-  if (CARD_SETTLEMENT_RE.test(n))    return "transfers_savings";
-  if (/^debt payments$/i.test(n))    return "transfers_savings"; // legacy ambiguous bucket
-  if (TRANSFERS_RE.test(n))          return "transfers_savings";
-  if (INTEREST_RE.test(n))           return "transfers_savings"; // interest excluded like a transfer
-  return "discretionary";
-}
-
+/**
+ * Build Fixed/Essentials/Flexible breakdown using the same category-to-bucket
+ * mapping as the signed-in Spending page (moneyCoachBuckets.ts).
+ */
 function buildBuckets(
   categories: ExpenseCategory[],
-  total: number,
+  coreExpenses: number,
 ): SpendingBucket[] {
-  const sums: Record<SpendingBucket["key"], number> = {
-    committed:          0,
-    transfers_savings:  0,
-    discretionary:      0,
+  const sums: Record<"fixed" | "essentials" | "flexible", number> = {
+    fixed:       0,
+    essentials:  0,
+    flexible:    0,
   };
+  
   for (const cat of categories) {
-    sums[bucketFor(cat.name)] += cat.amount;
+    // Skip non-core categories (transfers, interest, etc.) - same as financial profile
+    if (isCoreExcluded(cat.name.trim(), { forAggregateLabel: true })) continue;
+    
+    const bucket = getCategoryBucket(cat.name.trim());
+    if (bucket === "fixed" || bucket === "essentials" || bucket === "flexible") {
+      sums[bucket] += cat.amount;
+    }
   }
 
-  const safe = total > 0 ? total : 1;
+  const safe = coreExpenses > 0 ? coreExpenses : 1;
   return [
     {
-      key:         "committed",
-      label:       "Committed Obligations",
-      description: "Installment debt, mortgage, housing",
-      amount:      sums.committed,
-      pct:         Math.round((sums.committed / safe) * 100),
+      key:    "fixed",
+      label:  "Fixed",
+      amount: sums.fixed,
+      pct:    Math.round((sums.fixed / safe) * 100),
     },
     {
-      key:         "transfers_savings",
-      label:       "Transfers & Savings",
-      description: "Investments, inter-account transfers",
-      amount:      sums.transfers_savings,
-      pct:         Math.round((sums.transfers_savings / safe) * 100),
+      key:    "essentials",
+      label:  "Essentials",
+      amount: sums.essentials,
+      pct:    Math.round((sums.essentials / safe) * 100),
     },
     {
-      key:         "discretionary",
-      label:       "Discretionary Spending",
-      description: "Shopping, dining, groceries, entertainment",
-      amount:      sums.discretionary,
-      pct:         Math.round((sums.discretionary / safe) * 100),
+      key:    "flexible",
+      label:  "Flexible",
+      amount: sums.flexible,
+      pct:    Math.round((sums.flexible / safe) * 100),
     },
   ];
 }
@@ -149,20 +136,18 @@ function buildHighlights(
   categories: ExpenseCategory[],
   buckets:    SpendingBucket[],
   incomeTotal: number,
-  expenseTotal: number,
+  coreExpenses: number,
 ): StatementHighlight[] {
   const highlights: StatementHighlight[] = [];
-  const committed   = buckets.find((b) => b.key === "committed");
-  const savings_bucket = buckets.find((b) => b.key === "transfers_savings");
-  const discretionary = buckets.find((b) => b.key === "discretionary");
+  const fixed = buckets.find((b) => b.key === "fixed");
 
-  // 1. Debt / committed obligation share
-  if (committed && committed.amount > 0 && expenseTotal > 0) {
-    const pct = committed.pct;
+  // 1. Fixed costs share (housing, debt, etc.)
+  if (fixed && fixed.amount > 0 && coreExpenses > 0) {
+    const pct = fixed.pct;
     highlights.push({
-      icon: "💸",
-      text: `Debt & housing obligations make up ${pct}% of your outflows — ${fmtAmt(committed.amount)}/mo`,
-      type: pct > 40 ? "warning" : "neutral",
+      icon: "🏠",
+      text: `Fixed costs (housing, debt, subscriptions) are ${pct}% of spending — ${fmtAmt(fixed.amount)}/mo`,
+      type: pct > 50 ? "warning" : "neutral",
     });
   }
 
@@ -179,36 +164,16 @@ function buildHighlights(
     });
   }
 
-  // 3. Top discretionary category
-  const discCats = categories.filter((c) => bucketFor(c.name) === "discretionary" && c.amount > 0);
-  discCats.sort((a, b) => b.amount - a.amount);
-  if (discCats.length > 0) {
-    const top = discCats[0];
+  // 3. Top flexible category
+  const flexibleCats = categories
+    .filter((c) => !isCoreExcluded(c.name.trim(), { forAggregateLabel: true }))
+    .filter((c) => getCategoryBucket(c.name.trim()) === "flexible" && c.amount > 0);
+  flexibleCats.sort((a, b) => b.amount - a.amount);
+  if (flexibleCats.length > 0) {
+    const top = flexibleCats[0];
     highlights.push({
-      icon: "🛍️",
-      text: `${top.name} was your #1 discretionary expense at ${fmtAmt(top.amount)}`,
-      type: "neutral",
-    });
-  }
-
-  // 4. Grocery / food spend (informational if not already top)
-  if (discCats.length > 1) {
-    const grocery = categories.find((c) => /^groceries$/i.test(c.name));
-    if (grocery && grocery.amount > 0 && grocery.name !== discCats[0].name) {
-      highlights.push({
-        icon: "🛒",
-        text: `Grocery spend: ${fmtAmt(grocery.amount)} this month`,
-        type: "neutral",
-      });
-    }
-  }
-
-  // 5. Transfers dominating (signal that this might not be a primary chequing account)
-  const tfr = savings_bucket;
-  if (tfr && tfr.amount > 0 && expenseTotal > 0 && tfr.pct > 30) {
-    highlights.push({
-      icon: "🔄",
-      text: `${tfr.pct}% of outflows are transfers or savings moves — not counted as spending`,
+      icon: "🎭",
+      text: `${top.name} was your #1 flexible expense at ${fmtAmt(top.amount)}`,
       type: "neutral",
     });
   }
@@ -251,9 +216,6 @@ export interface StatementSnapshot {
   expenseTotal:         number;
   /** Expenses excluding transfers, Card Servicing, and interest (matches coreExpensesTotal). */
   coreExpenses:         number;
-  /** Discretionary bucket only (excl. transfers, debt, investments, housing).
-   *  Used for the "Where your money went" visualisation only. */
-  discretionaryTotal:   number;
   minDebtPayments:      number;
   hasIncome:            boolean;
   hasExpenses:          boolean;
@@ -290,20 +252,32 @@ export function computeStatementSnapshot(data: ParsedStatementData): StatementSn
     ? (absBalance > 0 ? "text-red-600" : "text-gray-900")
     : (balance >= 0   ? "text-gray-900" : "text-red-600");
 
-  // ── Raw totals ───────────────────────────────────────────────────────────
-  const incomeTotal  = data.income?.total  ?? 0;
+  // ── Income filtering (matches financial profile logic) ───────────────────
+  // Filter out transfers and non-core income categories to match signed-in dashboard
+  const incomeTxns = data.income?.transactions ?? [];
+  const filteredIncomeTxns = incomeTxns.filter((txn) => {
+    const src = (txn.source ?? "").trim();
+    // Exclude transfers (same regex as financial profile)
+    if (INCOME_TRANSFER_RE.test(src)) return false;
+    // Exclude non-core categories (Transfer, Transfer In, Other)
+    const cat = (txn.category ?? "").trim().toLowerCase();
+    if (cat === "transfer" || cat === "transfer in" || cat === "other") return false;
+    return true;
+  });
+  const incomeTotal = filteredIncomeTxns.reduce((sum, txn) => sum + txn.amount, 0);
+
+  // ── Expense totals ───────────────────────────────────────────────────────
   const expenseTotal = data.expenses?.total ?? 0;
   const categories   = data.expenses?.categories ?? [];
-
-  // ── Buckets ──────────────────────────────────────────────────────────────
-  const buckets = buildBuckets(categories, expenseTotal);
-  const discretionaryTotal = buckets.find((b) => b.key === "discretionary")?.amount ?? 0;
 
   // ── Core expenses — matches financial profile's coreExpensesTotal exactly ─
   // Uses isCoreExcluded (single source of truth) — category rows only (aggregate-safe).
   const coreExpenses = categories
     .filter((c) => !isCoreExcluded(c.name.trim(), { forAggregateLabel: true }))
     .reduce((sum, c) => sum + c.amount, 0);
+
+  // ── Buckets (Fixed/Essentials/Flexible) ──────────────────────────────────
+  const buckets = buildBuckets(categories, coreExpenses);
 
   // ── Min debt payments ────────────────────────────────────────────────────
   const minDebtPayments = estimateMinDebtPayments(categories, data);
@@ -338,7 +312,7 @@ export function computeStatementSnapshot(data: ParsedStatementData): StatementSn
   const savingsRateWithDebt = savingsUnavailableReason ? null : calcRate(incomeTotal, coreExpenses + minDebtPayments);
 
   // ── Highlights ───────────────────────────────────────────────────────────
-  const highlights = buildHighlights(categories, buckets, incomeTotal, expenseTotal);
+  const highlights = buildHighlights(categories, buckets, incomeTotal, coreExpenses);
 
   return {
     accountType:  acct.type,
@@ -352,7 +326,6 @@ export function computeStatementSnapshot(data: ParsedStatementData): StatementSn
     incomeTotal,
     expenseTotal,
     coreExpenses,
-    discretionaryTotal,
     minDebtPayments,
     hasIncome:   incomeTotal > 0,
     hasExpenses: expenseTotal > 0,
