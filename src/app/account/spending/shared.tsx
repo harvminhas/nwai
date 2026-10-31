@@ -147,7 +147,7 @@ export function CategoryPicker({ anchorRef, current, onSelect, onClose, headerHi
                 >
                   <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
                   <span className="flex-1">{parent}</span>
-                  {isActivePar && <span className="text-xs text-gray-400">current</span>}
+                  {isActivePar && <span className="text-xs text-gray-400">latest</span>}
                 </button>
                 {hasSubs && (
                   <button
@@ -179,7 +179,7 @@ export function CategoryPicker({ anchorRef, current, onSelect, onClose, headerHi
                       >
                         <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: subColor }} />
                         <span className="flex-1">{sub}</span>
-                        {isActiveSub && <span className="text-xs text-gray-400">current</span>}
+                        {isActiveSub && <span className="text-xs text-gray-400">latest</span>}
                       </button>
                     );
                   })}
@@ -204,7 +204,7 @@ export function CategoryPicker({ anchorRef, current, onSelect, onClose, headerHi
               }`}>
               <span className="h-2 w-2 shrink-0 rounded-full bg-green-400" />
               <span className="flex-1">{cat}</span>
-              {isActive && <span className="text-xs text-gray-400">current</span>}
+              {isActive && <span className="text-xs text-gray-400">latest</span>}
             </button>
           );
         })}
