@@ -180,9 +180,9 @@ function LandingV2() {
                   </ul>
                   <div className="mt-8 flex flex-col sm:flex-row gap-4 items-start">
                     <Link
-                      href="/upload"
+                      href="/signup"
                       className="inline-flex items-center justify-center gap-2 rounded-lg bg-purple-600 px-8 py-4 font-semibold text-white shadow-lg transition hover:bg-purple-700 hover:shadow-xl text-lg"
-                    >
+                      Create your free account
                       Try it free — Upload a statement
                       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
@@ -457,7 +457,7 @@ function LandingV2() {
                   </ul>
                   <div className="mt-8">
                     <Link
-                      href="/upload"
+                      href="/signup"
                       className="block w-full rounded-lg border-2 border-gray-300 bg-white px-6 py-3 text-center font-semibold text-gray-700 hover:bg-gray-50 transition"
                     >
                       Start free
@@ -561,13 +561,13 @@ function LandingV2() {
                 Ready to understand your money?
               </h2>
               <p className="mt-4 text-lg text-gray-600">
-                Upload your first statement for free. No bank login. No credit card. See results in under 60 seconds.
+                Sign up free, then upload your first statement. No bank login. No credit card. See results in under 60 seconds.
               </p>
               <div className="mt-8">
                 <Link
-                  href="/upload"
+                  href="/signup"
                   className="inline-flex items-center gap-2 rounded-lg bg-purple-600 px-8 py-4 font-semibold text-white shadow-lg transition hover:bg-purple-700 hover:shadow-xl text-lg"
-                >
+              Create your free account
                   Try it free now
                   <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
@@ -588,7 +588,7 @@ function LandingV2() {
             </span>
             <div className="flex gap-5">
               <Link href="/login" className="hover:text-gray-600 transition">Log in</Link>
-              <Link href="/upload" className="hover:text-gray-600 transition">Upload</Link>
+              <Link href="/signup" className="hover:text-gray-600 transition">Sign up</Link>
               <Link href="/privacy" className="hover:text-gray-600 transition">Privacy</Link>
               <Link href="/terms" className="hover:text-gray-600 transition">Terms</Link>
             </div>
