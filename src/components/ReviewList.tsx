@@ -397,6 +397,15 @@ function IncomeClassificationReviewCard({
   submitting: boolean;
   onClassify: (item: any, classification: ReviewClassification) => void;
 }) {
+  // Map internal reason codes to human-readable labels
+  const reasonLabels: Record<string, string> = {
+    "possible_transfer": "Possible transfer",
+    "possible_refund": "Possible refund",
+    "ambiguous_category": "Unclear category",
+  };
+  
+  const reasonDisplay = item.reason ? (reasonLabels[item.reason] || item.reason) : null;
+  
   return (
     <div
       className={`rounded-lg border border-gray-200 bg-white p-4 transition-all duration-300 ${
@@ -411,10 +420,10 @@ function IncomeClassificationReviewCard({
           <span>{item.date}</span>
           <span className="text-gray-400">•</span>
           <span>CA${Math.abs(item.amount).toLocaleString()}</span>
-          {item.reason && (
+          {reasonDisplay && (
             <>
               <span className="text-gray-400">•</span>
-              <span className="text-orange-600">{item.reason}</span>
+              <span className="text-orange-600">{reasonDisplay}</span>
             </>
           )}
         </div>
