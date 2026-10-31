@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import AuthRedirect from "@/components/AuthRedirect";
-import Hero from "@/components/Hero";
 import LandingHeader from "@/components/LandingHeader";
 import { HeroDemo } from "@/components/landing/HeroDemo";
 
@@ -299,7 +298,7 @@ function LandingV2() {
                   </div>
                   <h3 className="text-lg font-semibold text-gray-900">Ask AI</h3>
                   <p className="mt-2 text-sm text-gray-600 leading-relaxed flex-1">
-                    Chat about your finances. Ask questions like "Where can I cut spending?" or "Am I saving enough?" 50 free answers per month.
+                    Chat about your finances. Ask questions like &quot;Where can I cut spending?&quot; or &quot;Am I saving enough?&quot; 50 free answers per month.
                   </p>
                 </div>
 
@@ -371,7 +370,7 @@ function LandingV2() {
                   <div>
                     <h3 className="font-semibold text-gray-900">Never sold or shared</h3>
                     <p className="mt-1 text-sm text-gray-600">
-                      We don't sell your data. Our business model is simple: you pay for the service, not with your data.
+                      We don&apos;t sell your data. Our business model is simple: you pay for the service, not with your data.
                     </p>
                   </div>
                 </div>
@@ -384,7 +383,7 @@ function LandingV2() {
                   <div>
                     <h3 className="font-semibold text-gray-900">Works with any bank</h3>
                     <p className="mt-1 text-sm text-gray-600">
-                      TD, RBC, Chase, Wells Fargo, Bank of America, and most major banks. If it's a PDF, it works.
+                      TD, RBC, Chase, Wells Fargo, Bank of America, and most major banks. If it&apos;s a PDF, it works.
                     </p>
                   </div>
                 </div>
