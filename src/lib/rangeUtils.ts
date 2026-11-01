@@ -8,7 +8,7 @@ export type TimeRange = "3mo" | "12mo" | "ytd";
 
 export interface RangeInfo {
   months: string[]; // YYYY-MM format, oldest first
-  label: string; // e.g. "avg · This year"
+  label: string; // e.g. "avg Â· This year"
   periodLabel: string; // e.g. "Last 3 months"
 }
 
@@ -23,9 +23,9 @@ export function getCurrentMonth(): string {
 /**
  * Format a list of months for display, handling cross-year cases.
  * Examples:
- * - ["2026-02", "2026-03", "2026-08"] → "Feb, Mar and Aug 2026"
- * - ["2025-12", "2026-01", "2026-02"] → "Dec 2025, Jan and Feb 2026"
- * - ["2026-08"] → "Aug 2026"
+ * - ["2026-02", "2026-03", "2026-08"] â†’ "Feb, Mar and Aug 2026"
+ * - ["2025-12", "2026-01", "2026-02"] â†’ "Dec 2025, Jan and Feb 2026"
+ * - ["2026-08"] â†’ "Aug 2026"
  */
 export function formatMonthList(months: string[]): string {
   if (months.length === 0) return "";
@@ -142,15 +142,15 @@ export function getRangeInfo(range: TimeRange, availableMonths: string[]): Range
   
   switch (range) {
     case "3mo":
-      label = "avg · Last 3 months";
+      label = "avg Â· Last 3 months";
       periodLabel = "Last 3 months";
       break;
     case "12mo":
-      label = "avg · 12-month";
+      label = "avg Â· 12-month";
       periodLabel = "12-month average";
       break;
     case "ytd":
-      label = "avg · This year";
+      label = "avg Â· This year";
       periodLabel = "This year";
       break;
   }
@@ -188,7 +188,7 @@ export interface ResolvedWindowMonths {
 }
 
 /**
- * Format account name as "Bank Type •••1234"
+ * Format account name as "Bank Type â€¢â€¢â€¢1234"
  */
 function formatAccountName(acc: { name?: string; slug: string; type: string }): string {
   if (!acc.name) return acc.slug;
@@ -198,7 +198,7 @@ function formatAccountName(acc: { name?: string; slug: string; type: string }): 
   const last4 = parts[parts.length - 1].slice(-4);
   const bank = acc.name.split(' ')[0]; // First word is typically the bank
   
-  return `${bank} ${acc.type} •••${last4}`;
+  return `${bank} ${acc.type} â€¢â€¢â€¢${last4}`;
 }
 
 /**
@@ -654,7 +654,7 @@ export function resolveWindowMonths(
       const ACTIVE_WINDOW_DAYS = 60;
       
       // Filter to transactional accounts (checking and credit only)
-      const transactionalAccounts = accountSnapshots.filter(a => {
+      const transactionalAccounts = (accountSnapshots ?? []).filter(a => {
         const type = a.accountType.toLowerCase();
         return type === 'checking' || type === 'chequing' || type === 'credit';
       });
@@ -715,7 +715,7 @@ export function resolveWindowMonths(
               }
             }
             
-            // Format: "Bank Type •••1234: Sep and Oct (statements through Mon DD)"
+            // Format: "Bank Type â€¢â€¢â€¢1234: Sep and Oct (statements through Mon DD)"
             const accountName = formatAccountName(acc);
             const coverageThrough = formatCoverageThrough(acc.coverageEndStr);
             const monthsNeeded = accountMissingMonths.length > 0 
