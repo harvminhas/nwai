@@ -225,7 +225,7 @@ export function getLatestCompleteMonth(
   accountSnapshots: Array<{ 
     accountType: string; 
     statementMonth: string;
-    statementDate: string;
+    statementDate?: string;
     accountName?: string;
     slug: string;
   }>
@@ -253,7 +253,10 @@ export function getLatestCompleteMonth(
   const latestBySlug = new Map<string, typeof transactionalAccounts[0]>();
   for (const acc of transactionalAccounts) {
     const existing = latestBySlug.get(acc.slug);
-    if (!existing || acc.statementDate > existing.statementDate) {
+    const accDate = parseStatementDate(acc.statementDate, acc.statementMonth);
+    const existingDate = existing ? parseStatementDate(existing.statementDate, existing.statementMonth) : null;
+    
+    if (!existing || (existingDate && accDate > existingDate)) {
       latestBySlug.set(acc.slug, acc);
     }
   }
@@ -262,21 +265,26 @@ export function getLatestCompleteMonth(
   
   // Find the newest statement date across all accounts
   const newestDate = latestStatements
-    .map(a => new Date(a.statementDate + 'T00:00:00').getTime())
+    .map(a => parseStatementDate(a.statementDate, a.statementMonth).getTime())
     .reduce((max, d) => Math.max(max, d), 0);
   
   const cutoffDate = newestDate - (ACTIVE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   
   // Filter to active accounts (have statement within last 60 days of newest)
   const activeAccounts = latestStatements
-    .filter(a => new Date(a.statementDate + 'T00:00:00').getTime() >= cutoffDate)
-    .map(a => ({
-      slug: a.slug,
-      name: a.accountName,
-      type: a.accountType,
-      coverageEnd: new Date(a.statementDate + 'T00:00:00'),
-      coverageEndStr: a.statementDate,
-    }));
+    .filter(a => parseStatementDate(a.statementDate, a.statementMonth).getTime() >= cutoffDate)
+    .map(a => {
+      const coverageEnd = parseStatementDate(a.statementDate, a.statementMonth);
+      // Format coverage end as YYYY-MM-DD for display
+      const coverageEndStr = coverageEnd.toISOString().split('T')[0];
+      return {
+        slug: a.slug,
+        name: a.accountName,
+        type: a.accountType,
+        coverageEnd,
+        coverageEndStr,
+      };
+    });
   
   if (activeAccounts.length === 0) {
     return {
@@ -388,13 +396,47 @@ function getPreviousMonth(yearMonth: string): string {
 }
 
 /**
+ * Parse a statement date string robustly, handling various formats.
+ * Falls back to end of statementMonth if date is invalid.
+ */
+function parseStatementDate(statementDate: string | undefined, statementMonth: string): Date {
+  if (!statementDate) {
+    // Fall back to last day of statement month
+    const [year, month] = statementMonth.split('-').map(Number);
+    return new Date(year, month, 0); // Last day of the month
+  }
+  
+  // Try to parse the date
+  // Handle formats: "YYYY-MM-DD", "YYYY-MM-DDTHH:MM:SS", or full ISO timestamp
+  let dateStr = statementDate;
+  
+  // If it's already an ISO timestamp with time, extract just the date part
+  if (dateStr.includes('T')) {
+    dateStr = dateStr.split('T')[0];
+  }
+  
+  // Parse as YYYY-MM-DD
+  const parsed = new Date(dateStr + 'T00:00:00');
+  
+  // Check if valid
+  if (isNaN(parsed.getTime())) {
+    // Invalid date, fall back to end of statement month
+    const [year, month] = statementMonth.split('-').map(Number);
+    return new Date(year, month, 0);
+  }
+  
+  return parsed;
+}
+
+/**
  * Helper to check if a month is complete based on account coverage.
  */
 function isMonthComplete(
   month: string,
   accountSnapshots: Array<{ 
-    accountType: string; 
-    statementDate: string;
+    accountType: string;
+    statementMonth: string;
+    statementDate?: string;
     slug: string;
   }>
 ): boolean {
@@ -413,7 +455,10 @@ function isMonthComplete(
   const latestBySlug = new Map<string, typeof transactionalAccounts[0]>();
   for (const acc of transactionalAccounts) {
     const existing = latestBySlug.get(acc.slug);
-    if (!existing || acc.statementDate > existing.statementDate) {
+    const accDate = parseStatementDate(acc.statementDate, acc.statementMonth);
+    const existingDate = existing ? parseStatementDate(existing.statementDate, existing.statementMonth) : null;
+    
+    if (!existing || (existingDate && accDate > existingDate)) {
       latestBySlug.set(acc.slug, acc);
     }
   }
@@ -422,14 +467,14 @@ function isMonthComplete(
   
   // Find newest statement date
   const newestDate = latestStatements
-    .map(a => new Date(a.statementDate + 'T00:00:00').getTime())
+    .map(a => parseStatementDate(a.statementDate, a.statementMonth).getTime())
     .reduce((max, d) => Math.max(max, d), 0);
   
   const cutoffDate = newestDate - (ACTIVE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   
   // Filter to active accounts
   const activeAccounts = latestStatements
-    .filter(a => new Date(a.statementDate + 'T00:00:00').getTime() >= cutoffDate);
+    .filter(a => parseStatementDate(a.statementDate, a.statementMonth).getTime() >= cutoffDate);
   
   if (activeAccounts.length === 0) return false;
   
@@ -439,7 +484,7 @@ function isMonthComplete(
   const monthEnd = new Date(year, mon - 1, lastDayOfMonth);
   const graceDate = new Date(monthEnd.getTime() - (GRACE_DAYS * 24 * 60 * 60 * 1000));
   
-  return activeAccounts.every(acc => new Date(acc.statementDate + 'T00:00:00') >= graceDate);
+  return activeAccounts.every(acc => parseStatementDate(acc.statementDate, acc.statementMonth) >= graceDate);
 }
 
 /**
@@ -464,7 +509,7 @@ export function resolveWindowMonths(
   accountSnapshots?: Array<{ 
     accountType: string; 
     statementMonth: string;
-    statementDate: string; 
+    statementDate?: string; 
     accountName?: string;
     slug: string;
   }>
@@ -482,16 +527,22 @@ export function resolveWindowMonths(
   
   // Find all complete months with data
   let completeMonths: string[];
-  if (accountSnapshots && accountSnapshots.length > 0) {
+  let hasAccountSnapshots = accountSnapshots && accountSnapshots.length > 0;
+  
+  if (hasAccountSnapshots) {
     completeMonths = availableMonths.filter(month => 
-      isMonthComplete(month, accountSnapshots)
+      isMonthComplete(month, accountSnapshots!)
     );
   } else {
     // No account snapshots - all months with data are considered complete
     completeMonths = availableMonths;
   }
   
-  if (completeMonths.length === 0) {
+  // If no complete months, fall back to available months to avoid showing $0
+  // We'll still compute and return missing info
+  const monthsToUse = completeMonths.length > 0 ? completeMonths : availableMonths;
+  
+  if (monthsToUse.length === 0) {
     return {
       months: [],
       actualCount: 0,
@@ -508,9 +559,9 @@ export function resolveWindowMonths(
   switch (range) {
     case "3mo": {
       requestedCount = 3;
-      selectedMonths = completeMonths.slice(-3);
-      windowEnd = completeMonths[completeMonths.length - 1];
-      // Window starts 3 months before the latest complete month
+      selectedMonths = monthsToUse.slice(-3);
+      windowEnd = monthsToUse[monthsToUse.length - 1];
+      // Window starts 3 months before the latest month
       const [year, month] = windowEnd.split('-').map(Number);
       const startDate = new Date(year, month - 4, 1); // -3 months + current = -4 for start
       windowStart = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}`;
@@ -519,8 +570,8 @@ export function resolveWindowMonths(
     
     case "12mo": {
       requestedCount = 12;
-      selectedMonths = completeMonths.slice(-12);
-      windowEnd = completeMonths[completeMonths.length - 1];
+      selectedMonths = monthsToUse.slice(-12);
+      windowEnd = monthsToUse[monthsToUse.length - 1];
       // Window starts 12 months before
       const [year, month] = windowEnd.split('-').map(Number);
       const startDate = new Date(year, month - 13, 1);
@@ -529,12 +580,12 @@ export function resolveWindowMonths(
     }
     
     case "ytd": {
-      // All complete months from January of the latest year through latest complete month
-      const latestMonth = completeMonths[completeMonths.length - 1];
+      // All months from January of the latest year through latest month
+      const latestMonth = monthsToUse[monthsToUse.length - 1];
       const [latestYear, latestMonthNum] = latestMonth.split("-").map(Number);
       const janOfYear = `${latestYear}-01`;
       
-      selectedMonths = completeMonths.filter(m => m >= janOfYear && m <= latestMonth);
+      selectedMonths = monthsToUse.filter(m => m >= janOfYear && m <= latestMonth);
       // requestedCount is total months from Jan to latest (e.g. Jan-Jun = 6)
       requestedCount = latestMonthNum; // Month number is the count (June = 6)
       windowStart = janOfYear;
@@ -552,9 +603,11 @@ export function resolveWindowMonths(
   
   const actualCount = selectedMonths.length;
   
-  // Find missing months within the window
+  // Find missing months within the window and get missing account details
   const missingMonthsInWindow: string[] = [];
-  if (windowStart && accountSnapshots && accountSnapshots.length > 0) {
+  let missingAccountDetails: string[] = [];
+  
+  if (windowStart && hasAccountSnapshots) {
     // Get current calendar month
     const now = new Date();
     const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -573,13 +626,13 @@ export function resolveWindowMonths(
       const nextDate = new Date(y, m, 1);
       currentCheck = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}`;
     }
-  }
-  
-  // Get missing account details for the missing months
-  let missingAccountDetails: string[] = [];
-  if (missingMonthsInWindow.length > 0 && accountSnapshots) {
-    const { latestCompleteMonth, missingAccounts } = getLatestCompleteMonth(accountSnapshots);
-    missingAccountDetails = missingAccounts;
+    
+    // Get missing account details
+    // If we had to fall back to availableMonths, get missing info for all of them
+    if (completeMonths.length === 0 || missingMonthsInWindow.length > 0) {
+      const { latestCompleteMonth, missingAccounts } = getLatestCompleteMonth(accountSnapshots!);
+      missingAccountDetails = missingAccounts;
+    }
   }
   
   // Generate note if we have fewer months than requested
@@ -593,7 +646,7 @@ export function resolveWindowMonths(
     actualCount,
     requestedCount,
     note,
-    anchorMonth: completeMonths[completeMonths.length - 1],
+    anchorMonth: monthsToUse[monthsToUse.length - 1],
     missingMonths: missingMonthsInWindow.length > 0 ? missingMonthsInWindow : undefined,
     missingAccounts: missingAccountDetails.length > 0 ? missingAccountDetails : undefined,
   };
