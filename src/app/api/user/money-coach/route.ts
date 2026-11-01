@@ -23,8 +23,8 @@ export async function GET(req: NextRequest) {
     // Get range parameter
     const url = new URL(req.url);
     const rangeParam = url.searchParams.get("range") as TimeRange | null;
-    const range: TimeRange = rangeParam && ["3mo", "12mo", "ytd"].includes(rangeParam)
-      ? rangeParam
+    const range: TimeRange = rangeParam && (["3mo", "12mo", "ytd"].includes(rangeParam) || rangeParam.startsWith("month:"))
+      ? rangeParam as TimeRange
       : "3mo";
 
     const { auth, db } = getFirebaseAdmin();
@@ -77,6 +77,7 @@ export async function GET(req: NextRequest) {
         missingMonths: windowResult.missingMonths,
         missingAccounts: windowResult.missingAccounts,
         months: windowResult.months,
+        accountSnapshots: profile.accountSnapshots, // For month dropdown completeness check
       },
     });
   } catch (error) {
