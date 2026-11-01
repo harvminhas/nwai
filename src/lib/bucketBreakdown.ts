@@ -15,6 +15,7 @@ import { computeScheduledDebtPayments } from "./debtPayments";
 import { merchantSlug } from "./applyRules";
 import { normalizeMerchantName, detectRecurringMonthlyAmount, resolveMerchantAlias, resolveCanonicalMerchantSlug } from "./merchantUtils";
 import { getLastCompleteMonth, getCurrentMonth } from "./monthAnchor";
+import { computeAverageBuckets } from "./monthlyBucketComputation";
 
 export interface MerchantTransaction {
   date: string;
@@ -392,9 +393,27 @@ export function computeBucketBreakdown(
     reason: "Moving your own money isn't spending",
   });
 
+  // USE SHARED COMPUTATION for monthly average to ensure card and drawer match
+  // This is the SINGLE SOURCE OF TRUTH for bucket totals
+  const { averages } = computeAverageBuckets(
+    months,
+    expenseTxns,
+    accountSnapshots,
+    debtPaymentHistory,
+    userReviews,
+    fxRates,
+    homeCurrency
+  );
+  const correctMonthlyAverage = averages[bucket];
+
+  // Recalculate percentages using the correct total from shared computation
+  categories.forEach(c => {
+    c.pctOfBucket = correctMonthlyAverage > 0 ? (c.amount / correctMonthlyAverage) * 100 : 0;
+  });
+
   return {
     bucket,
-    monthlyAverage: totalAmount,
+    monthlyAverage: correctMonthlyAverage, // Use shared computation result
     categories,
     notCountedHere,
   };
