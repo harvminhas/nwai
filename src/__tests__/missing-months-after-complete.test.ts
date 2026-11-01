@@ -218,4 +218,58 @@ describe("Missing months calculation (after newest complete month)", () => {
       expect(result.missingMonths).toEqual(["2026-07", "2026-08", "2026-09", "2026-10"]);
     });
   });
+
+  it("lists all accounts missing coverage for latest finished month", () => {
+    withTestDate('2026-11-01', () => {
+      // Complete through Aug, missing Sep and Oct
+      // Account A (checking) has statements through Aug 31
+      // Account B (credit) has statements through Sep 30
+      // Both should be listed with which months they need
+      const monthlyHistory = [
+        { yearMonth: "2026-08" },
+      ];
+      
+      const accountSnapshots = [
+        // Account A: checking through Aug 31 (missing Sep and Oct)
+        { 
+          accountType: "Checking", 
+          statementMonth: "2026-08", 
+          statementDate: "2026-08-31", 
+          accountName: "TD Everyday Chequing",
+          slug: "td-checking-1234" 
+        },
+        // Account B: credit through Sep 30 (missing only Oct)
+        { 
+          accountType: "Credit", 
+          statementMonth: "2026-09", 
+          statementDate: "2026-09-30", 
+          accountName: "CIBC Dividend Visa",
+          slug: "cibc-credit-5678" 
+        },
+      ];
+
+      const result = resolveWindowMonths("3mo", monthlyHistory, accountSnapshots);
+
+      // Complete months: Aug only (checking has Aug, credit has Sep but checking doesn't)
+      expect(result.months).toEqual(["2026-08"]);
+      
+      // Missing months: Sep and Oct
+      expect(result.missingMonths).toEqual(["2026-09", "2026-10"]);
+      
+      // Both accounts should be listed with their needed months
+      expect(result.missingAccounts).toBeDefined();
+      expect(result.missingAccounts?.length).toBe(2);
+      
+      // Account A needs Sep and Oct
+      expect(result.missingAccounts?.[0]).toContain("TD Checking");
+      expect(result.missingAccounts?.[0]).toContain("Sep and Oct");
+      expect(result.missingAccounts?.[0]).toContain("through Aug 31");
+      
+      // Account B needs only Oct
+      expect(result.missingAccounts?.[1]).toContain("CIBC Credit");
+      expect(result.missingAccounts?.[1]).toContain("Oct");
+      expect(result.missingAccounts?.[1]).not.toContain("Sep and Oct"); // Should not include Sep
+      expect(result.missingAccounts?.[1]).toContain("through Sep 30");
+    });
+  });
 });

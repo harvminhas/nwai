@@ -210,6 +210,28 @@ function formatCoverageThrough(dateStr: string): string {
 }
 
 /**
+ * Format missing months as short list (e.g., "Sep and Oct", "Oct")
+ */
+function formatMissingMonthsShort(months: string[]): string {
+  if (months.length === 0) return '';
+  if (months.length === 1) {
+    const [year, month] = months[0].split('-');
+    const date = new Date(parseInt(year), parseInt(month) - 1);
+    return date.toLocaleDateString('en-US', { month: 'short' });
+  }
+  
+  // Multiple months: format as "Mon, Mon and Mon"
+  const monthNames = months.map(ym => {
+    const [year, month] = ym.split('-');
+    const date = new Date(parseInt(year), parseInt(month) - 1);
+    return date.toLocaleDateString('en-US', { month: 'short' });
+  });
+  
+  const lastMonth = monthNames.pop();
+  return `${monthNames.join(', ')} and ${lastMonth}`;
+}
+
+/**
  * Determine the latest complete month based on actual statement coverage dates.
  * 
  * A month M is complete when every active checking/credit account's coverage end date
@@ -626,9 +648,86 @@ export function resolveWindowMonths(
         currentCheck = getNextMonth(currentCheck);
       }
       
-      // Get missing account details for these months
-      const { latestCompleteMonth, missingAccounts } = getLatestCompleteMonth(accountSnapshots!);
-      missingAccountDetails = missingAccounts;
+      // Compute missing account details against the LATEST missing month
+      // (all accounts that don't reach lastFinishedMonth with grace)
+      const GRACE_DAYS = 7;
+      const ACTIVE_WINDOW_DAYS = 60;
+      
+      // Filter to transactional accounts (checking and credit only)
+      const transactionalAccounts = accountSnapshots.filter(a => {
+        const type = a.accountType.toLowerCase();
+        return type === 'checking' || type === 'chequing' || type === 'credit';
+      });
+      
+      if (transactionalAccounts.length > 0) {
+        // Group by slug and take latest statement per account
+        const latestBySlug = new Map<string, typeof transactionalAccounts[0]>();
+        for (const acc of transactionalAccounts) {
+          const existing = latestBySlug.get(acc.slug);
+          const accDate = parseStatementDate(acc.statementDate, acc.statementMonth);
+          const existingDate = existing ? parseStatementDate(existing.statementDate, existing.statementMonth) : null;
+          
+          if (!existing || (existingDate && accDate > existingDate)) {
+            latestBySlug.set(acc.slug, acc);
+          }
+        }
+        
+        const latestStatements = Array.from(latestBySlug.values());
+        
+        // Find newest statement date
+        const newestDate = latestStatements
+          .map(a => parseStatementDate(a.statementDate, a.statementMonth).getTime())
+          .reduce((max, d) => Math.max(max, d), 0);
+        
+        const cutoffDate = newestDate - (ACTIVE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+        
+        // Filter to active accounts
+        const activeAccounts = latestStatements
+          .filter(a => parseStatementDate(a.statementDate, a.statementMonth).getTime() >= cutoffDate)
+          .map(a => {
+            const coverageEnd = parseStatementDate(a.statementDate, a.statementMonth);
+            const coverageEndStr = coverageEnd.toISOString().split('T')[0];
+            return {
+              slug: a.slug,
+              name: a.accountName,
+              type: a.accountType,
+              coverageEnd,
+              coverageEndStr,
+            };
+          });
+        
+        // Check each active account against the LATEST finished month
+        const [lastYear, lastMon] = lastFinishedMonth.split('-').map(Number);
+        const lastMonthEnd = new Date(lastYear, lastMon, 0); // Last day of the month
+        const lastGraceDate = new Date(lastMonthEnd.getTime() - (GRACE_DAYS * 24 * 60 * 60 * 1000));
+        
+        for (const acc of activeAccounts) {
+          if (acc.coverageEnd < lastGraceDate) {
+            // This account doesn't reach the latest finished month
+            // Determine which missing months it needs
+            const accountMissingMonths: string[] = [];
+            for (const missingMonth of missingMonthsInWindow) {
+              const [y, m] = missingMonth.split('-').map(Number);
+              const monthEnd = new Date(y, m, 0);
+              const graceDate = new Date(monthEnd.getTime() - (GRACE_DAYS * 24 * 60 * 60 * 1000));
+              if (acc.coverageEnd < graceDate) {
+                accountMissingMonths.push(missingMonth);
+              }
+            }
+            
+            // Format: "Bank Type •••1234: Sep and Oct (statements through Mon DD)"
+            const accountName = formatAccountName(acc);
+            const coverageThrough = formatCoverageThrough(acc.coverageEndStr);
+            const monthsNeeded = accountMissingMonths.length > 0 
+              ? formatMissingMonthsShort(accountMissingMonths) 
+              : '';
+            
+            if (monthsNeeded) {
+              missingAccountDetails.push(`${accountName}: ${monthsNeeded} (${coverageThrough})`);
+            }
+          }
+        }
+      }
     }
   }
   
