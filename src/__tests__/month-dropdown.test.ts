@@ -170,4 +170,44 @@ describe('Month dropdown', () => {
     const decMonth = months.find(m => m.yearMonth === '2025-12');
     expect(decMonth?.label).toBe('Dec 2025');
   });
+
+  it('month selection produces different values from 3mo when data differs', () => {
+    (globalThis as any).__TEST_NOW__ = new Date('2026-11-01T00:00:00');
+    
+    // Create history with varying data across months
+    const monthlyHistory = [
+      { yearMonth: '2026-08', totalSpending: 1000 },
+      { yearMonth: '2026-09', totalSpending: 2000 },
+      { yearMonth: '2026-10', totalSpending: 3000 },
+    ];
+    
+    const accountSnapshots = [
+      {
+        accountType: 'checking',
+        statementMonth: '2026-10',
+        statementDate: '2026-10-31',
+        slug: 'td-checking-1234',
+      },
+    ];
+    
+    // Select single month (October)
+    const singleMonth = resolveWindowMonths('month:2026-10', monthlyHistory, accountSnapshots);
+    
+    // Select 3mo range
+    const threeMonths = resolveWindowMonths('3mo', monthlyHistory, accountSnapshots);
+    
+    // Verify they resolve to different month sets
+    expect(singleMonth.months).toEqual(['2026-10']);
+    expect(threeMonths.months).toEqual(['2026-08', '2026-09', '2026-10']);
+    
+    // Verify counts are different
+    expect(singleMonth.actualCount).toBe(1);
+    expect(threeMonths.actualCount).toBe(3);
+    
+    // Verify they don't fall back to same value
+    expect(singleMonth.months).not.toEqual(threeMonths.months);
+    expect(singleMonth.actualCount).not.toEqual(threeMonths.actualCount);
+    
+    delete (globalThis as any).__TEST_NOW__;
+  });
 });
