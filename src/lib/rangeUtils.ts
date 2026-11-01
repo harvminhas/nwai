@@ -133,8 +133,24 @@ export interface ResolvedWindowMonths {
   note?: string;
   /** Latest complete month used as anchor */
   anchorMonth?: string;
-  /** Account names missing from the anchor month (if any) */
+  /** Account names missing from a newer month (if any) */
   missingAccounts?: string[];
+  /** The YYYY-MM month that is missing (if missingAccounts is populated) */
+  missingMonth?: string;
+}
+
+/**
+ * Format account name as "Bank Type •••1234"
+ */
+function formatAccountName(acc: { name?: string; slug: string; type: string }): string {
+  if (!acc.name) return acc.slug;
+  
+  // Extract bank name and last 4 digits from slug (format: bank-type-id)
+  const parts = acc.slug.split('-');
+  const last4 = parts[parts.length - 1].slice(-4);
+  const bank = acc.name.split(' ')[0]; // First word is typically the bank
+  
+  return `${bank} ${acc.type} •••${last4}`;
 }
 
 /**
@@ -145,7 +161,7 @@ export interface ResolvedWindowMonths {
  * Loans, investments, mortgages don't block completeness.
  * 
  * @param accountSnapshots - All account snapshots with their statement months
- * @returns Latest complete month in YYYY-MM format, or undefined if no complete months exist
+ * @returns Latest complete month in YYYY-MM format, missing accounts, and missing month
  */
 export function getLatestCompleteMonth(
   accountSnapshots: Array<{ 
@@ -154,11 +170,11 @@ export function getLatestCompleteMonth(
     accountName?: string;
     slug: string;
   }>
-): { latestCompleteMonth: string | undefined; missingAccounts: string[] } {
-  // Filter to transactional accounts (checking and credit)
+): { latestCompleteMonth: string | undefined; missingAccounts: string[]; missingMonth?: string } {
+  // Filter to transactional accounts (checking and credit only - NOT savings)
   const transactionalAccounts = accountSnapshots.filter(a => {
     const type = a.accountType.toLowerCase();
-    return type === 'checking' || type === 'chequing' || type === 'credit' || type === 'savings';
+    return type === 'checking' || type === 'chequing' || type === 'credit';
   });
   
   if (transactionalAccounts.length === 0) {
@@ -167,11 +183,12 @@ export function getLatestCompleteMonth(
     return {
       latestCompleteMonth: allMonths.length > 0 ? allMonths[allMonths.length - 1] : undefined,
       missingAccounts: [],
+      missingMonth: undefined,
     };
   }
   
   // Group accounts by slug to get the latest statement month for each
-  const latestByAccount = new Map<string, { month: string; name?: string; type: string }>();
+  const latestByAccount = new Map<string, { month: string; name?: string; type: string; slug: string }>();
   for (const acc of transactionalAccounts) {
     const existing = latestByAccount.get(acc.slug);
     if (!existing || acc.statementMonth > existing.month) {
@@ -179,6 +196,7 @@ export function getLatestCompleteMonth(
         month: acc.statementMonth,
         name: acc.accountName,
         type: acc.accountType,
+        slug: acc.slug,
       });
     }
   }
@@ -191,10 +209,14 @@ export function getLatestCompleteMonth(
     return {
       latestCompleteMonth: undefined,
       missingAccounts: [],
+      missingMonth: undefined,
     };
   }
   
   // Work backwards from the latest month to find the first complete one
+  let latestIncompleteMonth: string | undefined;
+  let missingFromLatest: string[] = [];
+  
   for (let i = sortedMonths.length - 1; i >= 0; i--) {
     const candidateMonth = sortedMonths[i];
     
@@ -215,20 +237,52 @@ export function getLatestCompleteMonth(
       const info = latestByAccount.get(slug)!;
       if (info.month < candidateMonth) {
         // This account doesn't have a statement for this month yet
-        accountsMissingThisMonth.push(info.name || slug);
+        accountsMissingThisMonth.push(formatAccountName(info));
       }
     }
     
     // If no accounts are missing for this month, it's complete
     if (accountsMissingThisMonth.length === 0) {
+      const anchor = candidateMonth;
+      
+      // Check if the calendar has moved past the anchor
+      const now = new Date();
+      const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const lastFullCalendarMonth = getPreviousMonth(currentMonth);
+      
+      if (lastFullCalendarMonth > anchor) {
+        // Calendar has moved past - check what's missing for the last full calendar month
+        const missingForCurrentMonth: string[] = [];
+        
+        // Active accounts = those that had statements in the anchor month
+        for (const [slug, info] of latestByAccount.entries()) {
+          if (info.month === anchor && info.month < lastFullCalendarMonth) {
+            // This account was active in anchor but doesn't have the latest month
+            missingForCurrentMonth.push(formatAccountName(info));
+          }
+        }
+        
+        if (missingForCurrentMonth.length > 0) {
+          return {
+            latestCompleteMonth: anchor,
+            missingAccounts: missingForCurrentMonth,
+            missingMonth: lastFullCalendarMonth,
+          };
+        }
+      }
+      
+      // Return the complete anchor with missing accounts from skipped later month (if any)
       return {
-        latestCompleteMonth: candidateMonth,
-        missingAccounts: [],
+        latestCompleteMonth: anchor,
+        missingAccounts: latestIncompleteMonth ? missingFromLatest : [],
+        missingMonth: latestIncompleteMonth,
       };
     }
     
-    // If this is the latest month and it's incomplete, record which accounts are missing
+    // If this is the latest month and it's incomplete, record it
     if (i === sortedMonths.length - 1) {
+      latestIncompleteMonth = candidateMonth;
+      missingFromLatest = accountsMissingThisMonth;
       // Continue to check earlier months
       continue;
     }
@@ -238,6 +292,7 @@ export function getLatestCompleteMonth(
   return {
     latestCompleteMonth: undefined,
     missingAccounts: [],
+    missingMonth: undefined,
   };
 }
 
@@ -293,13 +348,15 @@ export function resolveWindowMonths(
   // Determine the anchor month (latest complete month)
   let latestMonth: string;
   let missingAccounts: string[] = [];
+  let missingMonth: string | undefined;
   
   if (accountSnapshots && accountSnapshots.length > 0) {
-    const { latestCompleteMonth, missingAccounts: missing } = getLatestCompleteMonth(accountSnapshots);
+    const { latestCompleteMonth, missingAccounts: missing, missingMonth: missingMo } = getLatestCompleteMonth(accountSnapshots);
     
     if (latestCompleteMonth) {
       latestMonth = latestCompleteMonth;
       missingAccounts = missing;
+      missingMonth = missingMo;
     } else {
       // No complete month found - fall back to latest available month
       latestMonth = availableMonths[availableMonths.length - 1];
@@ -387,5 +444,6 @@ export function resolveWindowMonths(
     note,
     anchorMonth: latestMonth,
     missingAccounts: missingAccounts.length > 0 ? missingAccounts : undefined,
+    missingMonth,
   };
 }

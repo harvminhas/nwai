@@ -108,19 +108,30 @@ function MissingStatementsModal({
   isOpen,
   missingAccounts,
   windowBasis,
+  missingMonth,
   onUpload,
   onDismiss,
 }: { 
   isOpen: boolean;
   missingAccounts: string[];
   windowBasis: string;
+  missingMonth?: string;
   onUpload: () => void;
   onDismiss: () => void;
 }) {
   if (!isOpen) return null;
 
-  // Get the missing month name (current calendar month)
-  const missingMonth = new Date().toLocaleString('en-US', { month: 'long' });
+  // Format the missing month name (e.g. "October 2026")
+  const formatMissingMonth = (ym: string | undefined): string => {
+    if (!ym) {
+      return new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    }
+    const [year, month] = ym.split('-');
+    const date = new Date(parseInt(year), parseInt(month) - 1);
+    return date.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  };
+  
+  const missingMonthName = formatMissingMonth(missingMonth);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
@@ -157,7 +168,7 @@ function MissingStatementsModal({
 
           {/* Message */}
           <p className="text-gray-700 mb-3">
-            Your numbers are based on <span className="font-medium">{windowBasis}</span>. Upload {missingMonth} statements for these accounts to get updated numbers:
+            Your numbers are based on <span className="font-medium">{windowBasis}</span>. Upload {missingMonthName} statements for these accounts to get updated numbers:
           </p>
 
           {/* Account list */}
@@ -784,6 +795,7 @@ export default function DashboardPage() {
   const [showMissingStatementsModal, setShowMissingStatementsModal] = useState(false);
   const [missingAccounts, setMissingAccounts] = useState<string[]>([]);
   const [windowBasis, setWindowBasis] = useState<string>("");
+  const [missingMonth, setMissingMonth] = useState<string | undefined>();
   
   // Range state - default to 3mo, sync with URL
   const [range, setRange] = useState<TimeRange>(() => {
@@ -856,6 +868,7 @@ export default function DashboardPage() {
             if (!dismissData.isDismissed) {
               setMissingAccounts(data.window.missingAccounts);
               setWindowBasis(formatWindowBasis(data.window.months, undefined, false));
+              setMissingMonth(data.window.missingMonth);
               setShowMissingStatementsModal(true);
             }
           }
@@ -1101,6 +1114,7 @@ export default function DashboardPage() {
         isOpen={showMissingStatementsModal}
         missingAccounts={missingAccounts}
         windowBasis={windowBasis}
+        missingMonth={missingMonth}
         onUpload={handleUploadStatements}
         onDismiss={handleDismissMissingStatements}
       />
