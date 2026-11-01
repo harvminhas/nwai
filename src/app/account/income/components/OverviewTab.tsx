@@ -6,10 +6,11 @@ import { formatCurrency } from "@/lib/currencyUtils";
 
 interface OverviewTabProps {
   summary: IncomeSummary;
+  windowNote?: string;
   onReviewComplete?: () => void;
 }
 
-export function OverviewTab({ summary }: OverviewTabProps) {
+export function OverviewTab({ summary, windowNote }: OverviewTabProps) {
   const { currentMonth, currentMonthRegular, currentMonthBonus, typicalMonthly, whatChanged, currency, last3Months } = summary;
   
   const hasCurrentMonthData = currentMonthRegular > 0 || currentMonthBonus > 0;
@@ -92,6 +93,9 @@ export function OverviewTab({ summary }: OverviewTabProps) {
                 ? `${progressPercent}% received · average monthly income from ${last3MonthsFormatted} ${last3Year}`
                 : `${progressPercent}% received · still below typical month`}
             </p>
+            {windowNote && (
+              <p className="mt-1 text-xs text-gray-400">{windowNote}</p>
+            )}
           </>
         ) : (
           <>
@@ -125,6 +129,9 @@ export function OverviewTab({ summary }: OverviewTabProps) {
             <p className="text-2xl font-bold text-gray-900 tabular-nums">
               {formatCurrency(typicalMonthly, currency, undefined, true)}
             </p>
+            {windowNote && (
+              <p className="mt-1 text-xs text-gray-400">{windowNote}</p>
+            )}
           </div>
           
           <div className="text-right">

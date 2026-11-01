@@ -24,6 +24,44 @@ function rangeToWindow(range: TimeRange): "last3" | "12month" | "ytd" {
   }
 }
 
+// Format window basis for display
+function formatWindowBasis(months: string[] | undefined, note?: string): string {
+  if (!months || months.length === 0) return "";
+  
+  const formatMonth = (ym: string) => {
+    const [year, month] = ym.split("-");
+    const date = new Date(parseInt(year), parseInt(month) - 1);
+    return date.toLocaleDateString("en-US", { month: "short" });
+  };
+  
+  const formatYear = (ym: string) => {
+    return ym.split("-")[0];
+  };
+  
+  const firstMonth = months[0];
+  const lastMonth = months[months.length - 1];
+  const firstYear = formatYear(firstMonth);
+  const lastYear = formatYear(lastMonth);
+  
+  let basis = "";
+  if (firstMonth === lastMonth) {
+    // Single month
+    basis = `${formatMonth(firstMonth)} ${firstYear}`;
+  } else if (firstYear === lastYear) {
+    // Same year
+    basis = `${formatMonth(firstMonth)}–${formatMonth(lastMonth)} ${firstYear}`;
+  } else {
+    // Different years
+    basis = `${formatMonth(firstMonth)} ${firstYear}–${formatMonth(lastMonth)} ${lastYear}`;
+  }
+  
+  if (note) {
+    basis += ` · ${note}`;
+  }
+  
+  return `Based on ${basis}`;
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 interface MoneyCoachBucket {
@@ -52,11 +90,79 @@ interface MoneyCoachBreakdown {
   };
   homeCurrency?: string;
   gapReconciliation?: GapReconciliation;
+  window?: {
+    actualMonthsUsed: number;
+    requestedMonths: number;
+    note?: string;
+    anchorMonth?: string;
+    missingAccounts?: string[];
+    months: string[];
+  };
 }
 
 // Note: AI answer rendering moved to shared AiAnswer component
 
 // ── Components ─────────────────────────────────────────────────────────────────
+
+function MissingStatementsNudge({ 
+  missingAccounts,
+  onDismiss,
+}: { 
+  missingAccounts: string[];
+  onDismiss: () => void;
+}) {
+  const router = useRouter();
+
+  return (
+    <div className="mb-6 rounded-xl border-2 border-amber-200 bg-amber-50 p-4 shadow-sm">
+      <div className="flex items-start gap-3">
+        <div className="flex-shrink-0">
+          <svg className="h-5 w-5 text-amber-600" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+          </svg>
+        </div>
+        <div className="flex-1 min-w-0">
+          <h3 className="text-sm font-semibold text-gray-900">
+            Missing statements for {new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' })}
+          </h3>
+          <p className="mt-1 text-sm text-gray-700">
+            Upload statements for these accounts to see updated numbers:
+          </p>
+          <ul className="mt-2 space-y-1">
+            {missingAccounts.map((account, i) => (
+              <li key={i} className="text-sm text-gray-900">
+                • {account}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={() => router.push('/upload')}
+              className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-700"
+            >
+              Upload statement
+            </button>
+            <button
+              onClick={onDismiss}
+              className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-50"
+            >
+              Skip for now
+            </button>
+          </div>
+        </div>
+        <button
+          onClick={onDismiss}
+          className="flex-shrink-0 text-gray-400 hover:text-gray-600"
+          aria-label="Close"
+        >
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function QuestionBox({ 
   onAsk, 
@@ -390,6 +496,11 @@ function WhereMoneyGoes({
                 <span className="text-sm font-medium text-gray-400">/mo</span>
               </p>
               <p className="mt-1 text-xs text-gray-500">{rangeLabel} · take-home</p>
+              {breakdown.window && breakdown.window.months && (
+                <p className="mt-1 text-xs text-gray-400">
+                  {formatWindowBasis(breakdown.window.months, breakdown.window.note)}
+                </p>
+              )}
               
               <div className="mt-4 h-2 w-full rounded-full bg-gray-100">
                 <div className="h-full w-full rounded-full bg-purple-600" />
@@ -582,6 +693,11 @@ function WhereMoneyGoes({
                     {rangeLabel} · {Math.round(bucket.pctOfIncome)}% of take-home
                     {bucket.bucket === "savings" && ` · target ${bucket.targetPct}%`}
                   </p>
+                  {breakdown.window && breakdown.window.months && (
+                    <p className="mt-1 text-xs text-gray-400">
+                      {formatWindowBasis(breakdown.window.months, breakdown.window.note)}
+                    </p>
+                  )}
                   
                   <div className="relative mt-4 h-2 w-full rounded-full bg-gray-100">
                     <div 
@@ -639,6 +755,8 @@ export default function DashboardPage() {
   const [currency, setCurrency] = useState("USD");
   const [activeDrawer, setActiveDrawer] = useState<DrawerType | null>(null);
   const [unreviewedCount, setUnreviewedCount] = useState(0);
+  const [showMissingStatementsNudge, setShowMissingStatementsNudge] = useState(false);
+  const [missingAccounts, setMissingAccounts] = useState<string[]>([]);
   
   // Range state - default to 3mo, sync with URL
   const [range, setRange] = useState<TimeRange>(() => {
@@ -700,6 +818,22 @@ export default function DashboardPage() {
         const data = await coachRes.json();
         setBreakdown(data);
         setCurrency(data.homeCurrency || "USD");
+        
+        // Check for missing accounts and dismissal status
+        if (data.window?.missingAccounts && data.window.missingAccounts.length > 0) {
+          const dismissRes = await fetch("/api/user/missing-statements-dismiss", { 
+            headers: buildHeaders(tok) 
+          });
+          if (dismissRes.ok) {
+            const dismissData = await dismissRes.json();
+            if (!dismissData.isDismissed) {
+              setMissingAccounts(data.window.missingAccounts);
+              setShowMissingStatementsNudge(true);
+            }
+          }
+        } else {
+          setShowMissingStatementsNudge(false);
+        }
       }
       
       if (suggestionsRes.ok) {
@@ -816,6 +950,20 @@ export default function DashboardPage() {
     }, 100);
   };
 
+  const handleDismissMissingStatements = async () => {
+    if (!token) return;
+    
+    try {
+      await fetch("/api/user/missing-statements-dismiss", {
+        method: "POST",
+        headers: buildHeaders(token),
+      });
+      setShowMissingStatementsNudge(false);
+    } catch (error) {
+      console.error("Failed to dismiss missing statements nudge:", error);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -859,6 +1007,14 @@ export default function DashboardPage() {
               token={token}
             />
           </div>
+        )}
+
+        {/* Missing Statements Nudge */}
+        {showMissingStatementsNudge && missingAccounts.length > 0 && (
+          <MissingStatementsNudge
+            missingAccounts={missingAccounts}
+            onDismiss={handleDismissMissingStatements}
+          />
         )}
 
         {/* Debt Review List */}

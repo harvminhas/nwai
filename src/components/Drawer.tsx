@@ -529,6 +529,9 @@ function BucketDrawerContent({
           {fmt(breakdown.monthlyAverage)}
         </p>
         <p className="mt-1 text-xs text-gray-500">{data.basisLabel}</p>
+        {data.windowNote && (
+          <p className="mt-1 text-xs text-gray-400">{data.windowNote}</p>
+        )}
       </div>
 
       {/* 3-Month Trend Sparkline */}
@@ -767,6 +770,9 @@ function SavingsDrawerContent({
             {fmt(monthlyAverage.total)}
           </p>
           <p className="mt-1 text-xs text-gray-500">{basisLabel}</p>
+          {data.windowNote && (
+            <p className="mt-1 text-xs text-gray-400">{data.windowNote}</p>
+          )}
         </div>
       </div>
 

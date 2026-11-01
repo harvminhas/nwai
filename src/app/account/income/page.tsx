@@ -23,6 +23,7 @@ function IncomePageContent() {
   const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [summary, setSummary] = useState<IncomeSummary | null>(null);
+  const [windowNote, setWindowNote] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -47,6 +48,7 @@ function IncomePageContent() {
 
       const data = await res.json();
       setSummary(data);
+      setWindowNote(data.window?.note);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load income data");
     } finally {
@@ -132,7 +134,7 @@ function IncomePageContent() {
       <div>
         {activeTab === "overview" && (
           <div className="space-y-6">
-            <OverviewTab summary={summary} onReviewComplete={handleReviewComplete} />
+            <OverviewTab summary={summary} windowNote={windowNote} onReviewComplete={handleReviewComplete} />
             
             {/* Income deposit reviews (unusual deposits) */}
             <ReviewList
