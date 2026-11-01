@@ -21,6 +21,54 @@ export function getCurrentMonth(): string {
 }
 
 /**
+ * Format a list of months for display, handling cross-year cases.
+ * Examples:
+ * - ["2026-02", "2026-03", "2026-08"] → "Feb, Mar and Aug 2026"
+ * - ["2025-12", "2026-01", "2026-02"] → "Dec 2025, Jan and Feb 2026"
+ * - ["2026-08"] → "Aug 2026"
+ */
+export function formatMonthList(months: string[]): string {
+  if (months.length === 0) return "";
+  if (months.length === 1) {
+    const [year, month] = months[0].split('-');
+    const date = new Date(parseInt(year), parseInt(month) - 1);
+    return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  }
+  
+  // Group by year
+  const byYear = new Map<string, string[]>();
+  for (const ym of months) {
+    const [year, month] = ym.split('-');
+    if (!byYear.has(year)) byYear.set(year, []);
+    byYear.get(year)!.push(month);
+  }
+  
+  // Format each year group
+  const yearGroups: string[] = [];
+  for (const [year, monthNums] of Array.from(byYear.entries()).sort()) {
+    const monthNames = monthNums.map(m => {
+      const date = new Date(parseInt(year), parseInt(m) - 1);
+      return date.toLocaleDateString('en-US', { month: 'short' });
+    });
+    
+    if (monthNames.length === 1) {
+      yearGroups.push(`${monthNames[0]} ${year}`);
+    } else {
+      const lastMonth = monthNames.pop();
+      yearGroups.push(`${monthNames.join(', ')} and ${lastMonth} ${year}`);
+    }
+  }
+  
+  if (yearGroups.length === 1) {
+    return yearGroups[0];
+  }
+  
+  // Join year groups
+  const lastGroup = yearGroups.pop();
+  return `${yearGroups.join(', ')}, ${lastGroup}`;
+}
+
+/**
  * Get the last N complete months (excluding current month).
  */
 export function getLastNCompleteMonths(n: number): string[] {
@@ -133,10 +181,10 @@ export interface ResolvedWindowMonths {
   note?: string;
   /** Latest complete month used as anchor */
   anchorMonth?: string;
-  /** Account names missing from a newer month (if any) */
+  /** Missing months within the window (YYYY-MM format) */
+  missingMonths?: string[];
+  /** Account names missing with their coverage details */
   missingAccounts?: string[];
-  /** The YYYY-MM month that is missing (if missingAccounts is populated) */
-  missingMonth?: string;
 }
 
 /**
@@ -340,23 +388,75 @@ function getPreviousMonth(yearMonth: string): string {
 }
 
 /**
- * Resolve window months for a given time range, using the latest COMPLETE month as the anchor.
+ * Helper to check if a month is complete based on account coverage.
+ */
+function isMonthComplete(
+  month: string,
+  accountSnapshots: Array<{ 
+    accountType: string; 
+    statementDate: string;
+    slug: string;
+  }>
+): boolean {
+  const GRACE_DAYS = 7;
+  const ACTIVE_WINDOW_DAYS = 60;
+  
+  // Filter to transactional accounts (checking and credit only)
+  const transactionalAccounts = accountSnapshots.filter(a => {
+    const type = a.accountType.toLowerCase();
+    return type === 'checking' || type === 'chequing' || type === 'credit';
+  });
+
+  if (transactionalAccounts.length === 0) return true;
+  
+  // Group by slug and take latest statement per account
+  const latestBySlug = new Map<string, typeof transactionalAccounts[0]>();
+  for (const acc of transactionalAccounts) {
+    const existing = latestBySlug.get(acc.slug);
+    if (!existing || acc.statementDate > existing.statementDate) {
+      latestBySlug.set(acc.slug, acc);
+    }
+  }
+  
+  const latestStatements = Array.from(latestBySlug.values());
+  
+  // Find newest statement date
+  const newestDate = latestStatements
+    .map(a => new Date(a.statementDate + 'T00:00:00').getTime())
+    .reduce((max, d) => Math.max(max, d), 0);
+  
+  const cutoffDate = newestDate - (ACTIVE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  
+  // Filter to active accounts
+  const activeAccounts = latestStatements
+    .filter(a => new Date(a.statementDate + 'T00:00:00').getTime() >= cutoffDate);
+  
+  if (activeAccounts.length === 0) return false;
+  
+  // Check if all active accounts cover this month
+  const [year, mon] = month.split('-').map(Number);
+  const lastDayOfMonth = new Date(year, mon, 0).getDate();
+  const monthEnd = new Date(year, mon - 1, lastDayOfMonth);
+  const graceDate = new Date(monthEnd.getTime() - (GRACE_DAYS * 24 * 60 * 60 * 1000));
+  
+  return activeAccounts.every(acc => new Date(acc.statementDate + 'T00:00:00') >= graceDate);
+}
+
+/**
+ * Resolve window months for a given time range.
  * 
- * A month is complete when all active checking and credit accounts have statement coverage.
- * Partial months are excluded from all calculations.
+ * Returns the last N COMPLETE months that have data, even if non-consecutive.
+ * A month is complete when all active checking and credit accounts have coverage.
  * 
  * Behavior:
- * - 3-month window: latest 3 calendar months ending at the latest complete month
- * - 12-month window: latest 12 calendar months ending at the latest complete month
- * - YTD: January through the latest complete month in the current year
- * 
- * If a month in the window has no data, we skip it and average over only the months present.
- * Returns the actual months used and metadata for displaying a note like "2 of 3 months".
+ * - 3mo: last 3 complete months with data
+ * - 12mo: last 12 complete months with data
+ * - ytd: all complete months with data from Jan through latest complete month in current year
  * 
  * @param range - Time range to resolve
  * @param monthlyHistory - Monthly history entries with data
- * @param accountSnapshots - Account snapshots to determine completeness (optional for backwards compatibility)
- * @returns Resolved months with actual count and optional UI note
+ * @param accountSnapshots - Account snapshots to determine completeness
+ * @returns Resolved months with missing month details
  */
 export function resolveWindowMonths(
   range: TimeRange,
@@ -380,77 +480,65 @@ export function resolveWindowMonths(
     };
   }
   
-  // Determine the anchor month (latest complete month)
-  let latestMonth: string;
-  let missingAccounts: string[] = [];
-  let missingMonth: string | undefined;
-  
+  // Find all complete months with data
+  let completeMonths: string[];
   if (accountSnapshots && accountSnapshots.length > 0) {
-    const { latestCompleteMonth, missingAccounts: missing, missingMonth: missingMo } = getLatestCompleteMonth(accountSnapshots);
-    
-    if (latestCompleteMonth) {
-      latestMonth = latestCompleteMonth;
-      missingAccounts = missing;
-      missingMonth = missingMo;
-    } else {
-      // No complete month found - fall back to latest available month
-      latestMonth = availableMonths[availableMonths.length - 1];
-    }
+    completeMonths = availableMonths.filter(month => 
+      isMonthComplete(month, accountSnapshots)
+    );
   } else {
-    // No account snapshots provided - use latest available month
-    latestMonth = availableMonths[availableMonths.length - 1];
+    // No account snapshots - all months with data are considered complete
+    completeMonths = availableMonths;
   }
   
-  const [latestYear, latestMonthNum] = latestMonth.split("-").map(Number);
+  if (completeMonths.length === 0) {
+    return {
+      months: [],
+      actualCount: 0,
+      requestedCount: 0,
+    };
+  }
   
-  // Generate target calendar months based on the range
-  let targetMonths: string[];
+  // Select months based on range
+  let selectedMonths: string[];
   let requestedCount: number;
+  let windowStart: string | undefined;
+  let windowEnd: string;
   
   switch (range) {
     case "3mo": {
       requestedCount = 3;
-      targetMonths = [];
-      for (let i = 2; i >= 0; i--) {
-        const date = new Date(latestYear, latestMonthNum - 1 - i, 1);
-        const ym = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-        targetMonths.push(ym);
-      }
+      selectedMonths = completeMonths.slice(-3);
+      windowEnd = completeMonths[completeMonths.length - 1];
+      // Window starts 3 months before the latest complete month
+      const [year, month] = windowEnd.split('-').map(Number);
+      const startDate = new Date(year, month - 4, 1); // -3 months + current = -4 for start
+      windowStart = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}`;
       break;
     }
     
     case "12mo": {
       requestedCount = 12;
-      targetMonths = [];
-      for (let i = 11; i >= 0; i--) {
-        const date = new Date(latestYear, latestMonthNum - 1 - i, 1);
-        const ym = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-        targetMonths.push(ym);
-      }
+      selectedMonths = completeMonths.slice(-12);
+      windowEnd = completeMonths[completeMonths.length - 1];
+      // Window starts 12 months before
+      const [year, month] = windowEnd.split('-').map(Number);
+      const startDate = new Date(year, month - 13, 1);
+      windowStart = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}`;
       break;
     }
     
     case "ytd": {
-      // YTD uses the year of the latest uploaded statement
-      const [latestYearNum] = latestMonth.split("-").map(Number);
-      const startMonth = `${latestYearNum}-01`;
+      // All complete months from January of the latest year through latest complete month
+      const latestMonth = completeMonths[completeMonths.length - 1];
+      const [latestYear, latestMonthNum] = latestMonth.split("-").map(Number);
+      const janOfYear = `${latestYear}-01`;
       
-      targetMonths = [];
-      let year = latestYearNum;
-      let month = 1;
-      
-      while (true) {
-        const ym = `${year}-${String(month).padStart(2, "0")}`;
-        if (ym > latestMonth) break;
-        targetMonths.push(ym);
-        
-        month++;
-        if (month > 12) {
-          break; // YTD never crosses year boundary
-        }
-      }
-      
-      requestedCount = targetMonths.length;
+      selectedMonths = completeMonths.filter(m => m >= janOfYear && m <= latestMonth);
+      // requestedCount is total months from Jan to latest (e.g. Jan-Jun = 6)
+      requestedCount = latestMonthNum; // Month number is the count (June = 6)
+      windowStart = janOfYear;
+      windowEnd = latestMonth;
       break;
     }
     
@@ -462,23 +550,51 @@ export function resolveWindowMonths(
       };
   }
   
-  // Filter to only months that have data AND are <= anchor month (exclude partial future months)
-  const monthsWithData = targetMonths.filter(m => availableMonths.includes(m) && m <= latestMonth);
-  const actualCount = monthsWithData.length;
+  const actualCount = selectedMonths.length;
   
-  // Generate note if we're missing months
+  // Find missing months within the window
+  const missingMonthsInWindow: string[] = [];
+  if (windowStart && accountSnapshots && accountSnapshots.length > 0) {
+    // Get current calendar month
+    const now = new Date();
+    const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const lastFinishedMonth = getPreviousMonth(currentYearMonth);
+    
+    // Check all months between windowStart and the latest finished month
+    const checkEnd = windowEnd > lastFinishedMonth ? lastFinishedMonth : windowEnd;
+    
+    let currentCheck = windowStart;
+    while (currentCheck <= checkEnd) {
+      if (!selectedMonths.includes(currentCheck) && currentCheck <= lastFinishedMonth) {
+        missingMonthsInWindow.push(currentCheck);
+      }
+      // Advance to next month
+      const [y, m] = currentCheck.split('-').map(Number);
+      const nextDate = new Date(y, m, 1);
+      currentCheck = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}`;
+    }
+  }
+  
+  // Get missing account details for the missing months
+  let missingAccountDetails: string[] = [];
+  if (missingMonthsInWindow.length > 0 && accountSnapshots) {
+    const { latestCompleteMonth, missingAccounts } = getLatestCompleteMonth(accountSnapshots);
+    missingAccountDetails = missingAccounts;
+  }
+  
+  // Generate note if we have fewer months than requested
   let note: string | undefined;
   if (actualCount < requestedCount && actualCount > 0) {
     note = `${actualCount} of ${requestedCount} months`;
   }
-  
+
   return {
-    months: monthsWithData,
+    months: selectedMonths,
     actualCount,
     requestedCount,
     note,
-    anchorMonth: latestMonth,
-    missingAccounts: missingAccounts.length > 0 ? missingAccounts : undefined,
-    missingMonth,
+    anchorMonth: completeMonths[completeMonths.length - 1],
+    missingMonths: missingMonthsInWindow.length > 0 ? missingMonthsInWindow : undefined,
+    missingAccounts: missingAccountDetails.length > 0 ? missingAccountDetails : undefined,
   };
 }

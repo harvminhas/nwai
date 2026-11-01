@@ -6,7 +6,7 @@ import { buildIncomeSummary } from "@/lib/incomeSummary";
 import { computeBucketBreakdown, compute3MonthTrend, type TimeWindow } from "@/lib/bucketBreakdown";
 import { computeWindowSavings } from "@/lib/savingsCalculations";
 import { formatMonthYear } from "@/lib/dateFormatting";
-import { resolveWindowMonths, type TimeRange } from "@/lib/rangeUtils";
+import { resolveWindowMonths, formatMonthList, type TimeRange } from "@/lib/rangeUtils";
 import type { MoneyCoachBucket } from "@/lib/moneyCoachBuckets";
 import type { IncomeDrawerData, BucketDrawerData, SavingsDrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
 
@@ -216,7 +216,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
         windowSavings,
         homeCurrency: profile.homeCurrency,
         basisLabel: windowResult.months.length > 0
-          ? `Monthly average, ${formatMonthYear(windowResult.months[0]).split(' ')[0]}–${formatMonthYear(windowResult.months[windowResult.months.length - 1])}`
+          ? `Monthly average, ${formatMonthList(windowResult.months)}`
           : "No data",
         windowNote: windowResult.note,
       };
@@ -263,7 +263,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       trend,
       homeCurrency: profile.homeCurrency,
       basisLabel: windowResult.months.length > 0 
-        ? `Monthly average, ${formatMonthYear(windowResult.months[0]).split(' ')[0]}–${formatMonthYear(windowResult.months[windowResult.months.length - 1])}` 
+        ? `Monthly average, ${formatMonthList(windowResult.months)}` 
         : "No data",
       windowNote: windowResult.note,
     };

@@ -12,6 +12,7 @@ import { Drawer, type DrawerType } from "@/components/Drawer";
 import { ReviewList } from "@/components/ReviewList";
 import { RangeSwitch } from "@/components/RangeSwitch";
 import type { TimeRange } from "@/lib/rangeUtils";
+import { formatMonthList } from "@/lib/rangeUtils";
 import type { GapReconciliation } from "@/lib/gapReconciliation";
 import { AiAnswer } from "@/components/AiAnswer";
 
@@ -24,42 +25,17 @@ function rangeToWindow(range: TimeRange): "last3" | "12month" | "ytd" {
   }
 }
 
-// Format window basis for display
-function formatWindowBasis(months: string[] | undefined, note?: string, includePrefix: boolean = true): string {
+// Format window basis for display with exact months
+function formatWindowBasis(months: string[] | undefined, note?: string): string {
   if (!months || months.length === 0) return "";
   
-  const formatMonth = (ym: string) => {
-    const [year, month] = ym.split("-");
-    const date = new Date(parseInt(year), parseInt(month) - 1);
-    return date.toLocaleDateString("en-US", { month: "short" });
-  };
-  
-  const formatYear = (ym: string) => {
-    return ym.split("-")[0];
-  };
-  
-  const firstMonth = months[0];
-  const lastMonth = months[months.length - 1];
-  const firstYear = formatYear(firstMonth);
-  const lastYear = formatYear(lastMonth);
-  
-  let basis = "";
-  if (firstMonth === lastMonth) {
-    // Single month
-    basis = `${formatMonth(firstMonth)} ${firstYear}`;
-  } else if (firstYear === lastYear) {
-    // Same year
-    basis = `${formatMonth(firstMonth)}–${formatMonth(lastMonth)} ${firstYear}`;
-  } else {
-    // Different years
-    basis = `${formatMonth(firstMonth)} ${firstYear}–${formatMonth(lastMonth)} ${lastYear}`;
-  }
+  let basis = `Based on ${formatMonthList(months)}`;
   
   if (note) {
     basis += ` · ${note}`;
   }
   
-  return includePrefix ? `Based on ${basis}` : basis;
+  return basis;
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -95,6 +71,7 @@ interface MoneyCoachBreakdown {
     requestedMonths: number;
     note?: string;
     anchorMonth?: string;
+    missingMonths?: string[];
     missingAccounts?: string[];
     months: string[];
   };
@@ -106,32 +83,28 @@ interface MoneyCoachBreakdown {
 
 function MissingStatementsModal({ 
   isOpen,
+  missingMonths,
   missingAccounts,
   windowBasis,
-  missingMonth,
+  range,
   onUpload,
   onDismiss,
 }: { 
   isOpen: boolean;
+  missingMonths: string[];
   missingAccounts: string[];
   windowBasis: string;
-  missingMonth?: string;
+  range: TimeRange;
   onUpload: () => void;
   onDismiss: () => void;
 }) {
   if (!isOpen) return null;
 
-  // Format the missing month name (e.g. "October 2026")
-  const formatMissingMonth = (ym: string | undefined): string => {
-    if (!ym) {
-      return new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
-    }
-    const [year, month] = ym.split('-');
-    const date = new Date(parseInt(year), parseInt(month) - 1);
-    return date.toLocaleString('en-US', { month: 'long', year: 'numeric' });
-  };
+  // Format missing months list
+  const missingMonthsText = formatMonthList(missingMonths);
   
-  const missingMonthName = formatMissingMonth(missingMonth);
+  // Range label for context
+  const rangeLabel = range === '3mo' ? '3-month' : range === '12mo' ? '12-month' : 'year-to-date';
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
@@ -163,22 +136,27 @@ function MissingStatementsModal({
 
           {/* Title */}
           <h2 id="missing-statements-title" className="text-xl font-bold text-gray-900 mb-3">
-            Refresh your numbers
+            Complete your {rangeLabel} view
           </h2>
 
           {/* Message */}
           <p className="text-gray-700 mb-3">
-            Your numbers are based on <span className="font-medium">{windowBasis}</span>. Upload statements covering <span className="font-medium">{missingMonthName}</span> for these accounts to get updated numbers:
+            Your numbers are based on <span className="font-medium">{windowBasis}</span>. Upload <span className="font-medium">{missingMonthsText}</span> statements for a complete {rangeLabel} average.
           </p>
 
-          {/* Account list */}
-          <ul className="mb-6 space-y-2 text-sm">
-            {missingAccounts.map((account, i) => (
-              <li key={i} className="text-gray-900">
-                • {account}
-              </li>
-            ))}
-          </ul>
+          {/* Account coverage details */}
+          {missingAccounts.length > 0 && (
+            <>
+              <p className="text-sm text-gray-600 mb-2">Missing coverage for:</p>
+              <ul className="mb-6 space-y-2 text-sm">
+                {missingAccounts.map((account, i) => (
+                  <li key={i} className="text-gray-900">
+                    • {account}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
 
           {/* Actions */}
           <div className="flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
@@ -465,6 +443,8 @@ function WhereMoneyGoes({
   range,
   onRangeChange,
   rangeLoading,
+  hasMissingStatements,
+  onOpenMissingStatements,
 }: { 
   breakdown: MoneyCoachBreakdown; 
   currency: string;
@@ -473,6 +453,8 @@ function WhereMoneyGoes({
   range: TimeRange;
   onRangeChange: (range: TimeRange) => void;
   rangeLoading: boolean;
+  hasMissingStatements: boolean;
+  onOpenMissingStatements: () => void;
 }) {
   const { coverage, incomeAmount, incomeBasisLabel, rangeLabel, buckets } = breakdown;
   const [showExternalAccountsPopover, setShowExternalAccountsPopover] = useState(false);
@@ -494,7 +476,21 @@ function WhereMoneyGoes({
     <section className="mt-10">
       {/* Section Header with Range Switch */}
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-gray-900">Where Your Money Goes</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-lg font-semibold text-gray-900">Where Your Money Goes</h2>
+          {hasMissingStatements && (
+            <button
+              onClick={onOpenMissingStatements}
+              className="text-amber-600 hover:text-amber-700 transition-colors"
+              title="Statements missing for this period"
+              aria-label="View missing statements"
+            >
+              <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+              </svg>
+            </button>
+          )}
+        </div>
         <RangeSwitch value={range} onChange={onRangeChange} />
       </div>
       
@@ -793,9 +789,10 @@ export default function DashboardPage() {
   const [activeDrawer, setActiveDrawer] = useState<DrawerType | null>(null);
   const [unreviewedCount, setUnreviewedCount] = useState(0);
   const [showMissingStatementsModal, setShowMissingStatementsModal] = useState(false);
+  const [hasMissingStatements, setHasMissingStatements] = useState(false);
+  const [missingMonths, setMissingMonths] = useState<string[]>([]);
   const [missingAccounts, setMissingAccounts] = useState<string[]>([]);
   const [windowBasis, setWindowBasis] = useState<string>("");
-  const [missingMonth, setMissingMonth] = useState<string | undefined>();
   
   // Range state - default to 3mo, sync with URL
   const [range, setRange] = useState<TimeRange>(() => {
@@ -858,21 +855,33 @@ export default function DashboardPage() {
         setBreakdown(data);
         setCurrency(data.homeCurrency || "USD");
         
-        // Check for missing accounts and dismissal status
-        if (data.window?.missingAccounts && data.window.missingAccounts.length > 0 && data.window.months) {
-          const dismissRes = await fetch("/api/user/missing-statements-dismiss", { 
+        // Check for missing months and dismissal status
+        const hasMissingMonths = data.window?.missingMonths && data.window.missingMonths.length > 0;
+        const hasMissingAccounts = data.window?.missingAccounts && data.window.missingAccounts.length > 0;
+        const missingStatementsPresent = (hasMissingMonths || hasMissingAccounts) && data.window?.months;
+        
+        // Always update missing statements data if present
+        if (missingStatementsPresent) {
+          setHasMissingStatements(true);
+          setMissingMonths(data.window.missingMonths || []);
+          setMissingAccounts(data.window.missingAccounts || []);
+          setWindowBasis(formatMonthList(data.window.months));
+          
+          // Check if modal should be forced open via URL param
+          const forceOpen = searchParams.get('nudge') === '1';
+          
+          // Check dismissal status to decide whether to auto-show modal
+          const dismissRes = await fetch(`/api/user/missing-statements-dismiss?range=${selectedRange}`, { 
             headers: buildHeaders(tok) 
           });
           if (dismissRes.ok) {
             const dismissData = await dismissRes.json();
-            if (!dismissData.isDismissed) {
-              setMissingAccounts(data.window.missingAccounts);
-              setWindowBasis(formatWindowBasis(data.window.months, undefined, false));
-              setMissingMonth(data.window.missingMonth);
+            if (!dismissData.isDismissed || forceOpen) {
               setShowMissingStatementsModal(true);
             }
           }
         } else {
+          setHasMissingStatements(false);
           setShowMissingStatementsModal(false);
         }
       }
@@ -995,9 +1004,10 @@ export default function DashboardPage() {
     if (!token) return;
     
     try {
-      await fetch("/api/user/missing-statements-dismiss", {
+      await fetch(`/api/user/missing-statements-dismiss?range=${range}`, {
         method: "POST",
         headers: buildHeaders(token),
+        body: JSON.stringify({ range }),
       });
       setShowMissingStatementsModal(false);
     } catch (error) {
@@ -1007,6 +1017,10 @@ export default function DashboardPage() {
 
   const handleUploadStatements = () => {
     router.push('/upload');
+  };
+
+  const handleOpenMissingStatementsModal = () => {
+    setShowMissingStatementsModal(true);
   };
 
   if (loading) {
@@ -1080,6 +1094,8 @@ export default function DashboardPage() {
             range={range}
             onRangeChange={handleRangeChange}
             rangeLoading={rangeLoading}
+            hasMissingStatements={hasMissingStatements}
+            onOpenMissingStatements={handleOpenMissingStatementsModal}
           />
         ) : (
           <div className="mx-auto mt-16 max-w-2xl rounded-2xl border-2 border-dashed border-purple-200 bg-purple-50/30 p-12 text-center">
@@ -1112,9 +1128,10 @@ export default function DashboardPage() {
       {/* Missing Statements Modal */}
       <MissingStatementsModal
         isOpen={showMissingStatementsModal}
+        missingMonths={missingMonths}
         missingAccounts={missingAccounts}
         windowBasis={windowBasis}
-        missingMonth={missingMonth}
+        range={range}
         onUpload={handleUploadStatements}
         onDismiss={handleDismissMissingStatements}
       />

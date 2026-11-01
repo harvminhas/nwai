@@ -93,7 +93,7 @@ describe("Window Resolution Consistency", () => {
   });
 
   it("multiple missing months: uses only available months and shows note", () => {
-    // User has only Sep statement in the last 3 months
+    // User has Jun and Sep statements (Jul and Aug missing)
     const monthlyHistory = [
       { yearMonth: "2024-06" },
       // Jul and Aug missing
@@ -102,11 +102,11 @@ describe("Window Resolution Consistency", () => {
 
     const result = resolveWindowMonths("3mo", monthlyHistory);
 
-    // Target window is Jul-Aug-Sep, only Sep has data
-    expect(result.months).toEqual(["2024-09"]);
-    expect(result.actualCount).toBe(1);
+    // Last 3 complete months with data: Jun and Sep (only 2 available)
+    expect(result.months).toEqual(["2024-06", "2024-09"]);
+    expect(result.actualCount).toBe(2);
     expect(result.requestedCount).toBe(3);
-    expect(result.note).toBe("1 of 3 months");
+    expect(result.note).toBe("2 of 3 months");
   });
 
   it("no data: returns empty result", () => {
@@ -246,15 +246,17 @@ describe("Window Resolution Consistency", () => {
     ];
 
     const accountSnapshots = [
-      { accountType: "checking", statementMonth: "2024-09", accountName: "TD Checking", slug: "td-checking" },
-      { accountType: "credit", statementMonth: "2024-09", accountName: "TD Visa", slug: "td-visa" },
-      { accountType: "credit", statementMonth: "2024-10", accountName: "TD Visa", slug: "td-visa" }, // Oct credit uploaded
+      { accountType: "checking", statementMonth: "2024-08", statementDate: "2024-08-31", accountName: "TD Checking", slug: "td-checking" },
+      { accountType: "credit", statementMonth: "2024-08", statementDate: "2024-08-24", accountName: "TD Visa", slug: "td-visa" },
+      { accountType: "checking", statementMonth: "2024-09", statementDate: "2024-09-30", accountName: "TD Checking", slug: "td-checking" },
+      { accountType: "credit", statementMonth: "2024-09", statementDate: "2024-09-24", accountName: "TD Visa", slug: "td-visa" },
+      { accountType: "credit", statementMonth: "2024-10", statementDate: "2024-10-24", accountName: "TD Visa", slug: "td-visa" }, // Oct credit uploaded, checking missing
     ];
 
     const result = resolveWindowMonths("3mo", monthlyHistory, accountSnapshots);
 
-    // Oct is incomplete, so anchor is Sep
-    // Window: Jul-Aug-Sep, but Jul doesn't exist
+    // Oct is incomplete (checking missing), complete months: Aug, Sep
+    // Last 3 complete: Aug, Sep (only 2 available)
     expect(result.months).toEqual(["2024-08", "2024-09"]);
     expect(result.actualCount).toBe(2);
     expect(result.requestedCount).toBe(3);
@@ -271,15 +273,17 @@ describe("Window Resolution Consistency", () => {
     ];
 
     const accountSnapshots = [
-      { accountType: "checking", statementMonth: "2024-09", accountName: "TD Checking", slug: "td-checking" },
-      { accountType: "credit", statementMonth: "2024-09", accountName: "TD Visa", slug: "td-visa" },
-      { accountType: "loan", statementMonth: "2024-10", accountName: "Car Loan", slug: "car-loan" }, // Loans don't block
+      { accountType: "checking", statementMonth: "2024-08", statementDate: "2024-08-31", accountName: "TD Checking", slug: "td-checking" },
+      { accountType: "credit", statementMonth: "2024-08", statementDate: "2024-08-24", accountName: "TD Visa", slug: "td-visa" },
+      { accountType: "checking", statementMonth: "2024-09", statementDate: "2024-09-30", accountName: "TD Checking", slug: "td-checking" },
+      { accountType: "credit", statementMonth: "2024-09", statementDate: "2024-09-24", accountName: "TD Visa", slug: "td-visa" },
+      { accountType: "loan", statementMonth: "2024-10", statementDate: "2024-10-31", accountName: "Car Loan", slug: "car-loan" }, // Loans don't block
     ];
 
     const result = resolveWindowMonths("3mo", monthlyHistory, accountSnapshots);
 
-    // Oct loan doesn't make Oct complete (loans don't block)
-    // Anchor remains Sep
+    // Oct loan doesn't make Oct complete (loans don't block checking/credit requirement)
+    // Complete months: Aug, Sep
     expect(result.months).toEqual(["2024-08", "2024-09"]);
     expect(result.actualCount).toBe(2);
     expect(result.anchorMonth).toBe("2024-09");
@@ -294,16 +298,16 @@ describe("Window Resolution Consistency", () => {
     ];
 
     const accountSnapshots = [
-      { accountType: "checking", statementMonth: "2024-07", accountName: "TD Checking", slug: "td-checking" },
-      { accountType: "checking", statementMonth: "2024-09", accountName: "TD Checking", slug: "td-checking" },
-      { accountType: "credit", statementMonth: "2024-07", accountName: "TD Visa", slug: "td-visa" },
-      { accountType: "credit", statementMonth: "2024-09", accountName: "TD Visa", slug: "td-visa" },
+      { accountType: "checking", statementMonth: "2024-07", statementDate: "2024-07-31", accountName: "TD Checking", slug: "td-checking" },
+      { accountType: "checking", statementMonth: "2024-09", statementDate: "2024-09-30", accountName: "TD Checking", slug: "td-checking" },
+      { accountType: "credit", statementMonth: "2024-07", statementDate: "2024-07-24", accountName: "TD Visa", slug: "td-visa" },
+      { accountType: "credit", statementMonth: "2024-09", statementDate: "2024-09-24", accountName: "TD Visa", slug: "td-visa" },
     ];
 
     const result = resolveWindowMonths("3mo", monthlyHistory, accountSnapshots);
 
-    // Target window Jul-Aug-Sep, anchor is Sep (complete)
-    // Aug is missing, so only Jul and Sep included
+    // Complete months: Jul, Sep
+    // Last 3 complete with data: Jul, Sep (only 2 available)
     expect(result.months).toEqual(["2024-07", "2024-09"]);
     expect(result.actualCount).toBe(2);
     expect(result.requestedCount).toBe(3);
@@ -319,11 +323,11 @@ describe("Window Resolution Consistency", () => {
     ];
 
     const accountSnapshots = [
-      { accountType: "checking", statementMonth: "2024-09", accountName: "TD Checking", slug: "td-checking" },
-      { accountType: "credit", statementMonth: "2024-09", accountName: "TD Visa", slug: "td-visa" },
-      { accountType: "checking", statementMonth: "2024-10", accountName: "TD Checking", slug: "td-checking" },
-      { accountType: "credit", statementMonth: "2024-10", accountName: "TD Visa", slug: "td-visa" },
-      { accountType: "investment", statementMonth: "2024-10", accountName: "TFSA", slug: "tfsa" }, // Doesn't block
+      { accountType: "checking", statementMonth: "2024-09", statementDate: "2024-09-30", accountName: "TD Checking", slug: "td-checking" },
+      { accountType: "credit", statementMonth: "2024-09", statementDate: "2024-09-24", accountName: "TD Visa", slug: "td-visa" },
+      { accountType: "checking", statementMonth: "2024-10", statementDate: "2024-10-31", accountName: "TD Checking", slug: "td-checking" },
+      { accountType: "credit", statementMonth: "2024-10", statementDate: "2024-10-24", accountName: "TD Visa", slug: "td-visa" },
+      { accountType: "investment", statementMonth: "2024-10", statementDate: "2024-10-31", accountName: "TFSA", slug: "tfsa" }, // Doesn't block
     ];
 
     const result = resolveWindowMonths("3mo", monthlyHistory, accountSnapshots);

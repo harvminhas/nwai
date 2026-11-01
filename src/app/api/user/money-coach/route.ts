@@ -74,6 +74,7 @@ export async function GET(req: NextRequest) {
         requestedMonths: windowResult.requestedCount,
         note: windowResult.note,
         anchorMonth: windowResult.anchorMonth,
+        missingMonths: windowResult.missingMonths,
         missingAccounts: windowResult.missingAccounts,
         months: windowResult.months,
       },
