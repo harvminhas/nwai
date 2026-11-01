@@ -188,17 +188,38 @@ export interface ResolvedWindowMonths {
 }
 
 /**
- * Format account name as "Bank Type •••1234"
+ * Format account name for display with last 4 digits.
+ * Shared by missing statements modal, Assets page, and Liabilities page.
+ * 
+ * @param acc - Account with name (accountName), slug, and type
+ * @returns Formatted label like "The Bank of Nova Scotia TFSA •••1009" or "TD credit •••1009"
  */
-function formatAccountName(acc: { name?: string; slug: string; type: string }): string {
-  if (!acc.name) return acc.slug;
-  
-  // Extract bank name and last 4 digits from slug (format: bank-type-id)
+export function formatAccountName(acc: { name?: string; slug: string; type: string }): string {
+  // Extract last 4 digits from slug (format: bank-type-id)
   const parts = acc.slug.split('-');
   const last4 = parts[parts.length - 1].slice(-4);
-  const bank = acc.name.split(' ')[0]; // First word is typically the bank
   
-  return `${bank} ${acc.type} •••${last4}`;
+  if (acc.name) {
+    // Use full account name if available (e.g., "The Bank of Nova Scotia TFSA")
+    return `${acc.name} •••${last4}`;
+  }
+  
+  // Fall back to bank name from slug + type + last 4
+  const bankFromSlug = parts[0]; // First part of slug is normalized bank name
+  const displayBank = bankFromSlug.charAt(0).toUpperCase() + bankFromSlug.slice(1); // Capitalize
+  return `${displayBank} ${acc.type} •••${last4}`;
+}
+
+/**
+ * Extract last 4 digits from account slug for display.
+ * 
+ * @param slug - Account slug (format: bank-type-id)
+ * @returns Last 4 digits formatted as "•••1234"
+ */
+export function formatAccountLast4(slug: string): string {
+  const parts = slug.split('-');
+  const last4 = parts[parts.length - 1].slice(-4);
+  return `•••${last4}`;
 }
 
 /**

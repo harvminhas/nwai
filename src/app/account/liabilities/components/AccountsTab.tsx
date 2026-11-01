@@ -5,6 +5,7 @@ import type { DebtsSummary, DebtAccount } from "@/lib/debtsSummary";
 import type { ManualLiability } from "@/lib/types";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { AccountDrawer, type AccountDrawerData } from "@/components/AccountDrawer";
+import { formatAccountLast4 } from "@/lib/rangeUtils";
 
 interface AccountsTabProps {
   summary: DebtsSummary;
@@ -200,6 +201,7 @@ function DebtAccountRow({
       <div className="flex-1">
         <div className="flex items-center gap-2 mb-1">
           <span className="font-medium text-gray-900">{account.bankName}</span>
+          <span className="text-xs text-gray-400 font-normal">{formatAccountLast4(account.slug)}</span>
         </div>
         {account.accountName && (
           <p className="text-sm text-gray-600">{account.accountName}</p>

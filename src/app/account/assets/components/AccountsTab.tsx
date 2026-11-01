@@ -5,6 +5,7 @@ import type { AssetsSummary, AssetAccount } from "@/lib/assetsSummary";
 import type { ManualAsset } from "@/lib/types";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { AccountDrawer, type AccountDrawerData } from "@/components/AccountDrawer";
+import { formatAccountLast4 } from "@/lib/rangeUtils";
 
 interface AccountsTabProps {
   summary: AssetsSummary;
@@ -181,6 +182,7 @@ function AccountRow({
       <div className="flex-1">
         <div className="flex items-center gap-2 mb-1">
           <span className="font-medium text-gray-900">{account.bankName}</span>
+          <span className="text-xs text-gray-400 font-normal">{formatAccountLast4(account.slug)}</span>
           {account.isStale && (
             <span className="px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-800 rounded">
               Stale
