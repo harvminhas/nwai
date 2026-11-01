@@ -50,31 +50,73 @@ describe("Window resolution with non-consecutive months", () => {
     expect(result.requestedCount).toBe(3);
   });
 
-  it("should list missing months within the window", () => {
-    // Complete months: Feb, Mar, Aug
-    // Window for 3mo: Jun-Aug (3 months before Aug)
-    // Missing: Jun, Jul
+  it("should list missing months AFTER newest complete month (injected now = 2026-11-01)", () => {
+    // Inject "now" as Nov 1, 2026
+    (globalThis as any).__TEST_NOW__ = new Date('2026-11-01T00:00:00');
+    
+    // Complete months: Jun, Jul, Aug
+    // Latest finished month: Oct 2026 (Nov is current, unfinished)
+    // Missing: Sep, Oct (finished months AFTER newest complete Aug)
     const monthlyHistory = [
-      { yearMonth: "2026-02" },
-      { yearMonth: "2026-03" },
+      { yearMonth: "2026-06" },
+      { yearMonth: "2026-07" },
       { yearMonth: "2026-08" },
     ];
     
     const accountSnapshots = [
-      { accountType: "Checking", statementMonth: "2026-02", statementDate: "2026-02-28", slug: "td-checking-1234" },
-      { accountType: "Credit", statementMonth: "2026-02", statementDate: "2026-02-24", slug: "cibc-credit-5678" },
-      { accountType: "Checking", statementMonth: "2026-03", statementDate: "2026-03-31", slug: "td-checking-1234" },
-      { accountType: "Credit", statementMonth: "2026-03", statementDate: "2026-03-24", slug: "cibc-credit-5678" },
+      { accountType: "Checking", statementMonth: "2026-06", statementDate: "2026-06-30", slug: "td-checking-1234" },
+      { accountType: "Credit", statementMonth: "2026-06", statementDate: "2026-06-24", slug: "cibc-credit-5678" },
+      { accountType: "Checking", statementMonth: "2026-07", statementDate: "2026-07-31", slug: "td-checking-1234" },
+      { accountType: "Credit", statementMonth: "2026-07", statementDate: "2026-07-24", slug: "cibc-credit-5678" },
       { accountType: "Checking", statementMonth: "2026-08", statementDate: "2026-08-31", slug: "td-checking-1234" },
       { accountType: "Credit", statementMonth: "2026-08", statementDate: "2026-08-24", slug: "cibc-credit-5678" },
     ];
 
     const result = resolveWindowMonths("3mo", monthlyHistory, accountSnapshots);
 
-    // Missing months should be listed
+    // Should return Jun, Jul, Aug as window
+    expect(result.months).toEqual(["2026-06", "2026-07", "2026-08"]);
+    
+    // Missing months should be Sep and Oct (AFTER newest complete, up to latest finished)
     expect(result.missingMonths).toBeDefined();
-    expect(result.missingMonths).toContain("2026-06");
-    expect(result.missingMonths).toContain("2026-07");
+    expect(result.missingMonths).toEqual(["2026-09", "2026-10"]);
+    
+    // Clean up
+    delete (globalThis as any).__TEST_NOW__;
+  });
+
+  it("should return no missing months when complete through latest finished month", () => {
+    // Inject "now" as Nov 1, 2026
+    (globalThis as any).__TEST_NOW__ = new Date('2026-11-01T00:00:00');
+    
+    // Complete months: Aug, Sep, Oct (through latest finished month)
+    // Latest finished month: Oct 2026
+    // Missing: none
+    const monthlyHistory = [
+      { yearMonth: "2026-08" },
+      { yearMonth: "2026-09" },
+      { yearMonth: "2026-10" },
+    ];
+    
+    const accountSnapshots = [
+      { accountType: "Checking", statementMonth: "2026-08", statementDate: "2026-08-31", slug: "td-checking-1234" },
+      { accountType: "Credit", statementMonth: "2026-08", statementDate: "2026-08-24", slug: "cibc-credit-5678" },
+      { accountType: "Checking", statementMonth: "2026-09", statementDate: "2026-09-30", slug: "td-checking-1234" },
+      { accountType: "Credit", statementMonth: "2026-09", statementDate: "2026-09-24", slug: "cibc-credit-5678" },
+      { accountType: "Checking", statementMonth: "2026-10", statementDate: "2026-10-31", slug: "td-checking-1234" },
+      { accountType: "Credit", statementMonth: "2026-10", statementDate: "2026-10-24", slug: "cibc-credit-5678" },
+    ];
+
+    const result = resolveWindowMonths("3mo", monthlyHistory, accountSnapshots);
+
+    // Should return Aug, Sep, Oct as window
+    expect(result.months).toEqual(["2026-08", "2026-09", "2026-10"]);
+    
+    // No missing months (newest complete IS latest finished)
+    expect(result.missingMonths).toBeUndefined();
+    
+    // Clean up
+    delete (globalThis as any).__TEST_NOW__;
   });
 
   it("should take last 12 complete months even if sparse", () => {

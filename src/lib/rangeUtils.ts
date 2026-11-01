@@ -603,33 +603,30 @@ export function resolveWindowMonths(
   
   const actualCount = selectedMonths.length;
   
-  // Find missing months within the window and get missing account details
+  // Find missing months AFTER the newest complete month and get missing account details
   const missingMonthsInWindow: string[] = [];
   let missingAccountDetails: string[] = [];
   
-  if (windowStart && hasAccountSnapshots) {
-    // Get current calendar month
-    const now = new Date();
+  if (hasAccountSnapshots) {
+    // Get current calendar month (allow injection for testing via global)
+    const now = (globalThis as any).__TEST_NOW__ || new Date();
     const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const lastFinishedMonth = getPreviousMonth(currentYearMonth);
     
-    // Check all months between windowStart and the latest finished month
-    const checkEnd = windowEnd > lastFinishedMonth ? lastFinishedMonth : windowEnd;
+    // Find missing months AFTER the newest complete month up to latest finished month
+    const newestCompleteMonth = completeMonths.length > 0 
+      ? completeMonths[completeMonths.length - 1] 
+      : undefined;
     
-    let currentCheck = windowStart;
-    while (currentCheck <= checkEnd) {
-      if (!selectedMonths.includes(currentCheck) && currentCheck <= lastFinishedMonth) {
+    if (newestCompleteMonth && newestCompleteMonth < lastFinishedMonth) {
+      // List all finished months after the newest complete month
+      let currentCheck = getNextMonth(newestCompleteMonth);
+      while (currentCheck <= lastFinishedMonth) {
         missingMonthsInWindow.push(currentCheck);
+        currentCheck = getNextMonth(currentCheck);
       }
-      // Advance to next month
-      const [y, m] = currentCheck.split('-').map(Number);
-      const nextDate = new Date(y, m, 1);
-      currentCheck = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}`;
-    }
-    
-    // Get missing account details
-    // If we had to fall back to availableMonths, get missing info for all of them
-    if (completeMonths.length === 0 || missingMonthsInWindow.length > 0) {
+      
+      // Get missing account details for these months
       const { latestCompleteMonth, missingAccounts } = getLatestCompleteMonth(accountSnapshots!);
       missingAccountDetails = missingAccounts;
     }
