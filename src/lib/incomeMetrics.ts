@@ -45,6 +45,8 @@ export interface DetailedIncomeMetrics extends IncomeMetrics {
   windowLabel: string;
   /** Months used in this window */
   windowMonths: string[];
+  /** Optional note like "2 of 3 months" when data is sparse */
+  windowNote?: string;
   /** Regular income sources (excluding one-offs) */
   regularSources: IncomeSource[];
   /** One-off income (bonuses, unusual amounts) */

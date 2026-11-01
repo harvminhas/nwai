@@ -3,7 +3,7 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { loadUserReviewContext } from "@/lib/userReviewContext";
 import { computeMoneyCoachBreakdown } from "@/lib/moneyCoach";
-import { getRangeMonths, type TimeRange } from "@/lib/rangeUtils";
+import { resolveWindowMonths, type TimeRange } from "@/lib/rangeUtils";
 import { computeGapReconciliation } from "@/lib/gapReconciliation";
 
 export const dynamic = "force-dynamic";
@@ -32,9 +32,8 @@ export async function GET(req: NextRequest) {
 
     const profile = await getFinancialProfile(decoded.uid, db);
     
-    // Get available months from profile
-    const availableMonths = profile.monthlyHistory.map(m => m.yearMonth).sort();
-    const rangeMonths = getRangeMonths(range, availableMonths);
+    // Use shared window resolution helper
+    const windowResult = resolveWindowMonths(range, profile.monthlyHistory);
 
     // Load all user review context (income, debt, savings)
     const reviewContext = await loadUserReviewContext(decoded.uid, db);
@@ -46,7 +45,7 @@ export async function GET(req: NextRequest) {
       profile.accountSnapshots, 
       profile.homeCurrency || "CAD",
       reviewContext.incomeDepositReviews,
-      rangeMonths,
+      windowResult.months,
       reviewContext.savingsConfirmedItems
     );
     
@@ -70,6 +69,11 @@ export async function GET(req: NextRequest) {
       ...breakdown,
       homeCurrency: profile.homeCurrency,
       gapReconciliation,
+      window: {
+        actualMonthsUsed: windowResult.actualCount,
+        requestedMonths: windowResult.requestedCount,
+        note: windowResult.note,
+      },
     });
   } catch (error) {
     console.error("Money coach error:", error);

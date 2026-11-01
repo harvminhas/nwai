@@ -22,6 +22,8 @@ export interface IncomeDrawerData {
     hasData: boolean;
   }[];
   homeCurrency: string;
+  /** Optional note like "2 of 3 months" when data is sparse */
+  windowNote?: string;
 }
 
 export interface BucketDrawerData {
@@ -35,6 +37,8 @@ export interface BucketDrawerData {
   };
   homeCurrency: string;
   basisLabel: string;
+  /** Optional note like "2 of 3 months" when data is sparse */
+  windowNote?: string;
 }
 
 export interface SavingsDrawerData {
@@ -44,6 +48,8 @@ export interface SavingsDrawerData {
   windowSavings: WindowSavingsResult;
   homeCurrency: string;
   basisLabel: string;
+  /** Optional note like "2 of 3 months" when data is sparse */
+  windowNote?: string;
 }
 
 export type DrawerData = IncomeDrawerData | BucketDrawerData | SavingsDrawerData;
