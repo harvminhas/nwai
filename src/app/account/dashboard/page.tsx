@@ -508,7 +508,7 @@ function WhereMoneyGoes({
           )}
         </div>
         <div className="flex items-center gap-2">
-          <RangeSwitch value={range.startsWith("month:") ? "3mo" : range} onChange={onRangeChange} />
+          <RangeSwitch value={range} onChange={onRangeChange} />
           <MonthDropdown 
             months={selectableMonths}
             selectedMonth={range.startsWith("month:") ? range.substring(6) : null}
