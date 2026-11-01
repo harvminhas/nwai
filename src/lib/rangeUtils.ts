@@ -363,7 +363,8 @@ export function resolveWindowMonths(
   monthlyHistory: Array<{ yearMonth: string }>,
   accountSnapshots?: Array<{ 
     accountType: string; 
-    statementMonth: string; 
+    statementMonth: string;
+    statementDate: string; 
     accountName?: string;
     slug: string;
   }>
