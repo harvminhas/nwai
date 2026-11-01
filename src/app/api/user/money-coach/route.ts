@@ -32,8 +32,8 @@ export async function GET(req: NextRequest) {
 
     const profile = await getFinancialProfile(decoded.uid, db);
     
-    // Use shared window resolution helper
-    const windowResult = resolveWindowMonths(range, profile.monthlyHistory);
+    // Use shared window resolution helper with account snapshots for completeness check
+    const windowResult = resolveWindowMonths(range, profile.monthlyHistory, profile.accountSnapshots);
 
     // Load all user review context (income, debt, savings)
     const reviewContext = await loadUserReviewContext(decoded.uid, db);
@@ -73,6 +73,9 @@ export async function GET(req: NextRequest) {
         actualMonthsUsed: windowResult.actualCount,
         requestedMonths: windowResult.requestedCount,
         note: windowResult.note,
+        anchorMonth: windowResult.anchorMonth,
+        missingAccounts: windowResult.missingAccounts,
+        months: windowResult.months,
       },
     });
   } catch (error) {

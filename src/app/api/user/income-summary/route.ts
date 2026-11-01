@@ -28,8 +28,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // Load financial profile (single source of truth for transaction data)
     const profile = await getFinancialProfile(decoded.uid, db);
 
-    // Use shared window resolution helper (3-month window)
-    const windowResult = resolveWindowMonths("3mo", profile.monthlyHistory);
+    // Use shared window resolution helper (3-month window) with account snapshots for completeness check
+    const windowResult = resolveWindowMonths("3mo", profile.monthlyHistory, profile.accountSnapshots);
 
     // Load income deposit reviews
     const incomeReviewsSnap = await db

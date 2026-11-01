@@ -43,8 +43,8 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
     // Convert TimeWindow to TimeRange
     const timeRange: TimeRange = window === "last3" ? "3mo" : window === "12month" ? "12mo" : "ytd";
     
-    // Use shared window resolution helper
-    const windowResult = resolveWindowMonths(timeRange, profile.monthlyHistory);
+    // Use shared window resolution helper with account snapshots for completeness check
+    const windowResult = resolveWindowMonths(timeRange, profile.monthlyHistory, profile.accountSnapshots);
 
     // Income drawer data
     if (bucket === "income") {

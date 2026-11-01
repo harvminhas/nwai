@@ -236,4 +236,101 @@ describe("Window Resolution Consistency", () => {
     expect(result.requestedCount).toBe(12);
     expect(result.note).toBeUndefined();
   });
+
+  it("partial October excluded when checking account has no statement", () => {
+    // User uploaded Sep checking and Oct credit, but not Oct checking
+    const monthlyHistory = [
+      { yearMonth: "2024-08" },
+      { yearMonth: "2024-09" },
+      { yearMonth: "2024-10" }, // Partial - only credit has it
+    ];
+
+    const accountSnapshots = [
+      { accountType: "checking", statementMonth: "2024-09", accountName: "TD Checking", slug: "td-checking" },
+      { accountType: "credit", statementMonth: "2024-09", accountName: "TD Visa", slug: "td-visa" },
+      { accountType: "credit", statementMonth: "2024-10", accountName: "TD Visa", slug: "td-visa" }, // Oct credit uploaded
+    ];
+
+    const result = resolveWindowMonths("3mo", monthlyHistory, accountSnapshots);
+
+    // Oct is incomplete, so anchor is Sep
+    // Window: Jul-Aug-Sep, but Jul doesn't exist
+    expect(result.months).toEqual(["2024-08", "2024-09"]);
+    expect(result.actualCount).toBe(2);
+    expect(result.requestedCount).toBe(3);
+    expect(result.note).toBe("2 of 3 months");
+    expect(result.anchorMonth).toBe("2024-09");
+  });
+
+  it("loan-only October doesn't block or advance anchor", () => {
+    // User uploaded Sep checking + credit, Oct loan only
+    const monthlyHistory = [
+      { yearMonth: "2024-08" },
+      { yearMonth: "2024-09" },
+      { yearMonth: "2024-10" }, // Loan only
+    ];
+
+    const accountSnapshots = [
+      { accountType: "checking", statementMonth: "2024-09", accountName: "TD Checking", slug: "td-checking" },
+      { accountType: "credit", statementMonth: "2024-09", accountName: "TD Visa", slug: "td-visa" },
+      { accountType: "loan", statementMonth: "2024-10", accountName: "Car Loan", slug: "car-loan" }, // Loans don't block
+    ];
+
+    const result = resolveWindowMonths("3mo", monthlyHistory, accountSnapshots);
+
+    // Oct loan doesn't make Oct complete (loans don't block)
+    // Anchor remains Sep
+    expect(result.months).toEqual(["2024-08", "2024-09"]);
+    expect(result.actualCount).toBe(2);
+    expect(result.anchorMonth).toBe("2024-09");
+  });
+
+  it("August missing gives Jul+Sep average", () => {
+    // User has Jul and Sep statements, Aug missing
+    const monthlyHistory = [
+      { yearMonth: "2024-07" },
+      // Aug missing
+      { yearMonth: "2024-09" },
+    ];
+
+    const accountSnapshots = [
+      { accountType: "checking", statementMonth: "2024-07", accountName: "TD Checking", slug: "td-checking" },
+      { accountType: "checking", statementMonth: "2024-09", accountName: "TD Checking", slug: "td-checking" },
+      { accountType: "credit", statementMonth: "2024-07", accountName: "TD Visa", slug: "td-visa" },
+      { accountType: "credit", statementMonth: "2024-09", accountName: "TD Visa", slug: "td-visa" },
+    ];
+
+    const result = resolveWindowMonths("3mo", monthlyHistory, accountSnapshots);
+
+    // Target window Jul-Aug-Sep, anchor is Sep (complete)
+    // Aug is missing, so only Jul and Sep included
+    expect(result.months).toEqual(["2024-07", "2024-09"]);
+    expect(result.actualCount).toBe(2);
+    expect(result.requestedCount).toBe(3);
+    expect(result.note).toBe("2 of 3 months");
+    expect(result.anchorMonth).toBe("2024-09");
+  });
+
+  it("investment account doesn't block completeness", () => {
+    // User has Oct checking + investment (no Oct credit yet)
+    const monthlyHistory = [
+      { yearMonth: "2024-09" },
+      { yearMonth: "2024-10" },
+    ];
+
+    const accountSnapshots = [
+      { accountType: "checking", statementMonth: "2024-09", accountName: "TD Checking", slug: "td-checking" },
+      { accountType: "credit", statementMonth: "2024-09", accountName: "TD Visa", slug: "td-visa" },
+      { accountType: "checking", statementMonth: "2024-10", accountName: "TD Checking", slug: "td-checking" },
+      { accountType: "credit", statementMonth: "2024-10", accountName: "TD Visa", slug: "td-visa" },
+      { accountType: "investment", statementMonth: "2024-10", accountName: "TFSA", slug: "tfsa" }, // Doesn't block
+    ];
+
+    const result = resolveWindowMonths("3mo", monthlyHistory, accountSnapshots);
+
+    // Oct is complete (both checking and credit have statements)
+    // Investment doesn't block
+    expect(result.anchorMonth).toBe("2024-10");
+    expect(result.months).toContain("2024-10");
+  });
 });
