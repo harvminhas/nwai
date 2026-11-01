@@ -11,17 +11,24 @@ import { getSignColor } from "@/lib/colorHelpers";
 import { Drawer, type DrawerType } from "@/components/Drawer";
 import { ReviewList } from "@/components/ReviewList";
 import { RangeSwitch } from "@/components/RangeSwitch";
+import { MonthDropdown } from "@/components/MonthDropdown";
 import type { TimeRange } from "@/lib/rangeUtils";
-import { formatMonthList } from "@/lib/rangeUtils";
+import { formatMonthList, getSelectableMonths, type SelectableMonth } from "@/lib/rangeUtils";
 import type { GapReconciliation } from "@/lib/gapReconciliation";
 import { AiAnswer } from "@/components/AiAnswer";
 
 // Convert TimeRange to Drawer's TimeWindow format
 function rangeToWindow(range: TimeRange): "last3" | "12month" | "ytd" {
+  if (range.startsWith("month:")) {
+    // Single month selections use last3 format (drawer uses actual months array anyway)
+    return "last3";
+  }
+  
   switch (range) {
     case "3mo": return "last3";
     case "12mo": return "12month";
     case "ytd": return "ytd";
+    default: return "last3";
   }
 }
 
@@ -74,6 +81,13 @@ interface MoneyCoachBreakdown {
     missingMonths?: string[];
     missingAccounts?: string[];
     months: string[];
+    accountSnapshots?: Array<{
+      accountType: string;
+      statementMonth: string;
+      statementDate?: string;
+      accountName?: string;
+      slug: string;
+    }>;
   };
 }
 
@@ -445,6 +459,7 @@ function WhereMoneyGoes({
   rangeLoading,
   hasMissingStatements,
   onOpenMissingStatements,
+  selectableMonths,
 }: { 
   breakdown: MoneyCoachBreakdown; 
   currency: string;
@@ -455,6 +470,7 @@ function WhereMoneyGoes({
   rangeLoading: boolean;
   hasMissingStatements: boolean;
   onOpenMissingStatements: () => void;
+  selectableMonths: SelectableMonth[];
 }) {
   const { coverage, incomeAmount, incomeBasisLabel, rangeLabel, buckets } = breakdown;
   const [showExternalAccountsPopover, setShowExternalAccountsPopover] = useState(false);
@@ -491,7 +507,14 @@ function WhereMoneyGoes({
             </button>
           )}
         </div>
-        <RangeSwitch value={range} onChange={onRangeChange} />
+        <div className="flex items-center gap-2">
+          <RangeSwitch value={range.startsWith("month:") ? "3mo" : range} onChange={onRangeChange} />
+          <MonthDropdown 
+            months={selectableMonths}
+            selectedMonth={range.startsWith("month:") ? range.substring(6) : null}
+            onChange={onRangeChange}
+          />
+        </div>
       </div>
       
       {/* Coverage Note */}
@@ -793,11 +816,14 @@ export default function DashboardPage() {
   const [missingMonths, setMissingMonths] = useState<string[]>([]);
   const [missingAccounts, setMissingAccounts] = useState<string[]>([]);
   const [windowBasis, setWindowBasis] = useState<string>("");
+  const [selectableMonths, setSelectableMonths] = useState<SelectableMonth[]>([]);
   
-  // Range state - default to 3mo, sync with URL
+  // Range state - default to 3mo, always (don't persist month selections)
   const [range, setRange] = useState<TimeRange>(() => {
     const param = searchParams.get("range");
+    // Support range selections and month: selections, but default to 3mo
     if (param === "12mo" || param === "ytd") return param;
+    if (param?.startsWith("month:")) return param as TimeRange;
     return "3mo";
   });
   const [rangeLoading, setRangeLoading] = useState(false);
@@ -854,6 +880,12 @@ export default function DashboardPage() {
         const data = await coachRes.json();
         setBreakdown(data);
         setCurrency(data.homeCurrency || "USD");
+        
+        // Compute selectable months for the Month dropdown
+        if (data.window?.accountSnapshots) {
+          const months = getSelectableMonths(data.window.accountSnapshots);
+          setSelectableMonths(months);
+        }
         
         // Check for missing months and dismissal status
         const hasMissingMonths = data.window?.missingMonths && data.window.missingMonths.length > 0;
@@ -1096,6 +1128,7 @@ export default function DashboardPage() {
             rangeLoading={rangeLoading}
             hasMissingStatements={hasMissingStatements}
             onOpenMissingStatements={handleOpenMissingStatementsModal}
+            selectableMonths={selectableMonths}
           />
         ) : (
           <div className="mx-auto mt-16 max-w-2xl rounded-2xl border-2 border-dashed border-purple-200 bg-purple-50/30 p-12 text-center">

@@ -77,6 +77,7 @@ export async function GET(req: NextRequest) {
         missingMonths: windowResult.missingMonths,
         missingAccounts: windowResult.missingAccounts,
         months: windowResult.months,
+        accountSnapshots: profile.accountSnapshots, // For month dropdown completeness check
       },
     });
   } catch (error) {
