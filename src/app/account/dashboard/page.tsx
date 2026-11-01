@@ -168,11 +168,11 @@ function MissingStatementsModal({
 
           {/* Message */}
           <p className="text-gray-700 mb-3">
-            Your numbers are based on <span className="font-medium">{windowBasis}</span>. Upload {missingMonthName} statements for these accounts to get updated numbers:
+            Your numbers are based on <span className="font-medium">{windowBasis}</span>. Upload statements covering <span className="font-medium">{missingMonthName}</span> for these accounts to get updated numbers:
           </p>
 
           {/* Account list */}
-          <ul className="mb-6 space-y-2">
+          <ul className="mb-6 space-y-2 text-sm">
             {missingAccounts.map((account, i) => (
               <li key={i} className="text-gray-900">
                 • {account}

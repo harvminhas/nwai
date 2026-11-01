@@ -74,6 +74,8 @@ export interface AccountSnapshot {
    */
   parsedDebts?: number;
   statementMonth: string; // YYYY-MM of the statement this balance came from
+  /** Statement/period end date (YYYY-MM-DD) - used for coverage completeness checks */
+  statementDate: string;
   interestRate: number | null;
   /**
    * ISO 4217 currency code from the statement (e.g. "CAD", "USD").
@@ -409,6 +411,7 @@ export async function extractAllTransactions(
       parsedAssets: parsed.assets,
       parsedDebts:  parsed.debts,
       statementMonth: stmtYm,
+      statementDate: parsed.statementDate,
       interestRate: typeof parsed.interestRate === "number" ? parsed.interestRate : null,
       currency: inferCurrencyFromBankName(parsed.bankName, parsed.currency),
       paymentsMade: typeof parsed.paymentsMade === "number" && parsed.paymentsMade > 0 ? parsed.paymentsMade : undefined,

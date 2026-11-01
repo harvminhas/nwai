@@ -641,18 +641,26 @@ export async function buildAndCacheFinancialProfile(
   const slugsInSnapshots  = new Set(accountSnapshots.map((s) => s.slug));
   const snapshotOnlyAccts: AccountSnapshot[] = balanceSnapshots
     .filter((s) => !slugsInSnapshots.has(s.accountSlug))
-    .map((s) => ({
-      slug:         s.accountSlug,
-      bankName:     s.accountName,
-      accountId:    "",
-      accountName:  s.accountName,
-      accountType:  s.accountType,
-      balance:      s.balance,
-      parsedAssets: Math.max(0, s.balance),
-      parsedDebts:  Math.max(0, -s.balance),
-      statementMonth: s.yearMonth,
-      interestRate: null,
-    }));
+    .map((s) => {
+      // Use last day of month as statement date for manual snapshots
+      const [year, month] = s.yearMonth.split('-').map(Number);
+      const lastDay = new Date(year, month, 0).getDate();
+      const statementDate = `${s.yearMonth}-${String(lastDay).padStart(2, '0')}`;
+      
+      return {
+        slug:         s.accountSlug,
+        bankName:     s.accountName,
+        accountId:    "",
+        accountName:  s.accountName,
+        accountType:  s.accountType,
+        balance:      s.balance,
+        parsedAssets: Math.max(0, s.balance),
+        parsedDebts:  Math.max(0, -s.balance),
+        statementMonth: s.yearMonth,
+        statementDate,
+        interestRate: null,
+      };
+    });
   const mergedSnapshots = [...accountSnapshotsWithOverrides, ...snapshotOnlyAccts].map((s) => {
     const override = currencyOverrides.get(s.slug);
     return override ? { ...s, currency: override } : s;

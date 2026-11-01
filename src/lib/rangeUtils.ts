@@ -154,29 +154,43 @@ function formatAccountName(acc: { name?: string; slug: string; type: string }): 
 }
 
 /**
- * Determine the latest complete month based on statement coverage.
+ * Format statement coverage as "through Mon D"
+ */
+function formatCoverageThrough(dateStr: string): string {
+  const date = new Date(dateStr + 'T00:00:00');
+  return `through ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+}
+
+/**
+ * Determine the latest complete month based on actual statement coverage dates.
  * 
- * A month is complete when every active checking and credit account has statement coverage.
- * An account is active if it had a statement in the prior month OR appears in the current month.
- * Loans, investments, mortgages don't block completeness.
+ * A month M is complete when every active checking/credit account's coverage end date
+ * is >= the last day of M minus 7 days grace (since card cycles close mid-month).
+ * Only months fully in the past qualify.
  * 
- * @param accountSnapshots - All account snapshots with their statement months
- * @returns Latest complete month in YYYY-MM format, missing accounts, and missing month
+ * An account is active if it has a statement within ~60 days of the newest statement.
+ * 
+ * @param accountSnapshots - All account snapshots with their coverage dates
+ * @returns Latest complete month, missing accounts with their coverage, and missing month
  */
 export function getLatestCompleteMonth(
   accountSnapshots: Array<{ 
     accountType: string; 
-    statementMonth: string; 
+    statementMonth: string;
+    statementDate: string;
     accountName?: string;
     slug: string;
   }>
 ): { latestCompleteMonth: string | undefined; missingAccounts: string[]; missingMonth?: string } {
-  // Filter to transactional accounts (checking and credit only - NOT savings)
+  const GRACE_DAYS = 7; // Credit cards can close mid-month
+  const ACTIVE_WINDOW_DAYS = 60; // Account is active if statement within last 60 days
+  
+  // Filter to transactional accounts (checking and credit only)
   const transactionalAccounts = accountSnapshots.filter(a => {
     const type = a.accountType.toLowerCase();
     return type === 'checking' || type === 'chequing' || type === 'credit';
   });
-  
+
   if (transactionalAccounts.length === 0) {
     // No transactional accounts - use latest statement month from any account
     const allMonths = accountSnapshots.map(a => a.statementMonth).sort();
@@ -187,25 +201,36 @@ export function getLatestCompleteMonth(
     };
   }
   
-  // Group accounts by slug to get the latest statement month for each
-  const latestByAccount = new Map<string, { month: string; name?: string; type: string; slug: string }>();
+  // Group by slug and take latest statement per account
+  const latestBySlug = new Map<string, typeof transactionalAccounts[0]>();
   for (const acc of transactionalAccounts) {
-    const existing = latestByAccount.get(acc.slug);
-    if (!existing || acc.statementMonth > existing.month) {
-      latestByAccount.set(acc.slug, {
-        month: acc.statementMonth,
-        name: acc.accountName,
-        type: acc.accountType,
-        slug: acc.slug,
-      });
+    const existing = latestBySlug.get(acc.slug);
+    if (!existing || acc.statementDate > existing.statementDate) {
+      latestBySlug.set(acc.slug, acc);
     }
   }
   
-  // Get all unique months across all accounts
-  const allMonths = new Set(Array.from(latestByAccount.values()).map(a => a.month));
-  const sortedMonths = Array.from(allMonths).sort();
+  const latestStatements = Array.from(latestBySlug.values());
   
-  if (sortedMonths.length === 0) {
+  // Find the newest statement date across all accounts
+  const newestDate = latestStatements
+    .map(a => new Date(a.statementDate + 'T00:00:00').getTime())
+    .reduce((max, d) => Math.max(max, d), 0);
+  
+  const cutoffDate = newestDate - (ACTIVE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  
+  // Filter to active accounts (have statement within last 60 days of newest)
+  const activeAccounts = latestStatements
+    .filter(a => new Date(a.statementDate + 'T00:00:00').getTime() >= cutoffDate)
+    .map(a => ({
+      slug: a.slug,
+      name: a.accountName,
+      type: a.accountType,
+      coverageEnd: new Date(a.statementDate + 'T00:00:00'),
+      coverageEndStr: a.statementDate,
+    }));
+  
+  if (activeAccounts.length === 0) {
     return {
       latestCompleteMonth: undefined,
       missingAccounts: [],
@@ -213,87 +238,96 @@ export function getLatestCompleteMonth(
     };
   }
   
-  // Work backwards from the latest month to find the first complete one
-  let latestIncompleteMonth: string | undefined;
-  let missingFromLatest: string[] = [];
+  // Start from the earliest coverage end, work forward to find the latest complete month
+  const now = new Date();
+  const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   
-  for (let i = sortedMonths.length - 1; i >= 0; i--) {
-    const candidateMonth = sortedMonths[i];
-    
-    // Determine which accounts were active in the prior month
-    const priorMonth = getPreviousMonth(candidateMonth);
-    const accountsActiveInPriorOrCurrent = new Set<string>();
-    
-    // An account is relevant if it has a statement in the prior month OR in this month
-    for (const [slug, info] of latestByAccount.entries()) {
-      if (info.month === priorMonth || info.month === candidateMonth || info.month > candidateMonth) {
-        accountsActiveInPriorOrCurrent.add(slug);
-      }
-    }
-    
-    // Check which of these active accounts have statements for this candidate month
-    const accountsMissingThisMonth: string[] = [];
-    for (const slug of accountsActiveInPriorOrCurrent) {
-      const info = latestByAccount.get(slug)!;
-      if (info.month < candidateMonth) {
-        // This account doesn't have a statement for this month yet
-        accountsMissingThisMonth.push(formatAccountName(info));
-      }
-    }
-    
-    // If no accounts are missing for this month, it's complete
-    if (accountsMissingThisMonth.length === 0) {
-      const anchor = candidateMonth;
-      
-      // Check if the calendar has moved past the anchor
-      const now = new Date();
-      const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      const lastFullCalendarMonth = getPreviousMonth(currentMonth);
-      
-      if (lastFullCalendarMonth > anchor) {
-        // Calendar has moved past - check what's missing for the last full calendar month
-        const missingForCurrentMonth: string[] = [];
-        
-        // Active accounts = those that had statements in the anchor month
-        for (const [slug, info] of latestByAccount.entries()) {
-          if (info.month === anchor && info.month < lastFullCalendarMonth) {
-            // This account was active in anchor but doesn't have the latest month
-            missingForCurrentMonth.push(formatAccountName(info));
-          }
-        }
-        
-        if (missingForCurrentMonth.length > 0) {
-          return {
-            latestCompleteMonth: anchor,
-            missingAccounts: missingForCurrentMonth,
-            missingMonth: lastFullCalendarMonth,
-          };
-        }
-      }
-      
-      // Return the complete anchor with missing accounts from skipped later month (if any)
-      return {
-        latestCompleteMonth: anchor,
-        missingAccounts: latestIncompleteMonth ? missingFromLatest : [],
-        missingMonth: latestIncompleteMonth,
-      };
-    }
-    
-    // If this is the latest month and it's incomplete, record it
-    if (i === sortedMonths.length - 1) {
-      latestIncompleteMonth = candidateMonth;
-      missingFromLatest = accountsMissingThisMonth;
-      // Continue to check earlier months
-      continue;
+  // Generate candidate months from earliest coverage to last full calendar month
+  const earliestCoverage = Math.min(...activeAccounts.map(a => a.coverageEnd.getTime()));
+  const earliestDate = new Date(earliestCoverage);
+  const startYear = earliestDate.getFullYear();
+  const startMonth = earliestDate.getMonth() + 1;
+  
+  const lastFullCalendarMonth = getPreviousMonth(currentYearMonth);
+  const [endYear, endMonth] = lastFullCalendarMonth.split('-').map(Number);
+  
+  const candidateMonths: string[] = [];
+  for (let y = startYear; y <= endYear; y++) {
+    const mStart = (y === startYear) ? startMonth : 1;
+    const mEnd = (y === endYear) ? endMonth : 12;
+    for (let m = mStart; m <= mEnd; m++) {
+      candidateMonths.push(`${y}-${String(m).padStart(2, '0')}`);
     }
   }
   
-  // No complete month found
+  // Work backwards to find the latest complete month
+  let latestCompleteMonth: string | undefined;
+  for (let i = candidateMonths.length - 1; i >= 0; i--) {
+    const month = candidateMonths[i];
+    const [year, mon] = month.split('-').map(Number);
+    const lastDayOfMonth = new Date(year, mon, 0).getDate();
+    const monthEnd = new Date(year, mon - 1, lastDayOfMonth);
+    const graceDate = new Date(monthEnd.getTime() - (GRACE_DAYS * 24 * 60 * 60 * 1000));
+    
+    // Check if every active account covers this month (within grace period)
+    const allCovered = activeAccounts.every(acc => acc.coverageEnd >= graceDate);
+    
+    if (allCovered) {
+      latestCompleteMonth = month;
+      break;
+    }
+  }
+  
+  if (!latestCompleteMonth) {
+    return {
+      latestCompleteMonth: undefined,
+      missingAccounts: [],
+      missingMonth: undefined,
+    };
+  }
+  
+  // Check if there's a month after the anchor that's past but incomplete
+  const nextMonth = getNextMonth(latestCompleteMonth);
+  if (nextMonth > lastFullCalendarMonth) {
+    // No past month after anchor to nudge for
+    return {
+      latestCompleteMonth,
+      missingAccounts: [],
+      missingMonth: undefined,
+    };
+  }
+  
+  // Check which active accounts are missing the next month
+  const [nextYear, nextMon] = nextMonth.split('-').map(Number);
+  const nextMonthEnd = new Date(nextYear, nextMon, 0);
+  const nextGraceDate = new Date(nextMonthEnd.getTime() - (GRACE_DAYS * 24 * 60 * 60 * 1000));
+  
+  const missingAccounts = activeAccounts
+    .filter(acc => acc.coverageEnd < nextGraceDate)
+    .map(acc => `${formatAccountName(acc)} (statements ${formatCoverageThrough(acc.coverageEndStr)})`);
+  
+  if (missingAccounts.length === 0) {
+    return {
+      latestCompleteMonth,
+      missingAccounts: [],
+      missingMonth: undefined,
+    };
+  }
+  
   return {
-    latestCompleteMonth: undefined,
-    missingAccounts: [],
-    missingMonth: undefined,
+    latestCompleteMonth,
+    missingAccounts,
+    missingMonth: nextMonth,
   };
+}
+
+/**
+ * Get the next month in YYYY-MM format.
+ */
+function getNextMonth(yearMonth: string): string {
+  const [year, month] = yearMonth.split('-').map(Number);
+  const nextDate = new Date(year, month, 1); // month is 0-indexed, so this is actually next month
+  return `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}`;
 }
 
 /**
