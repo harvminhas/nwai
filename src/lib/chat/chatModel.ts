@@ -1,7 +1,7 @@
 /**
  * Shared configuration for the Ask (chat) feature model.
  * 
- * Uses gemini-2.5-flash-lite with thinking disabled to reduce costs.
+ * Uses gemini-3.5-flash-lite (2.5 Flash-Lite is closed to new API users) to reduce costs.
  * Statement extraction (gemini-provider.ts) uses a different model.
  */
 
@@ -19,12 +19,8 @@ export function getChatModel(apiKey: string, systemContext: string): GenerativeM
   const genAI = new GoogleGenerativeAI(apiKey);
   
   return genAI.getGenerativeModel({
-    model: "gemini-2.5-flash-lite",
+    model: "gemini-3.5-flash-lite",
     systemInstruction: systemContext,
     tools: CHAT_TOOLS,
-    generationConfig: {
-      // Disable thinking to reduce token costs (SDK type doesn't include this yet)
-      thinkingConfig: { thinkingBudget: 0 },
-    } as any,
   });
 }
