@@ -42,7 +42,8 @@ function SpendingPageContent() {
 
   const loadData = async (tok: string) => {
     try {
-      const res = await fetch("/api/user/spending-summary", {
+      const rangeParam = searchParams.get("range") || "3mo";
+      const res = await fetch(`/api/user/spending-summary?range=${rangeParam}`, {
         headers: { Authorization: `Bearer ${tok}` },
       });
 
@@ -106,6 +107,14 @@ function SpendingPageContent() {
     );
   }
 
+  const rangeParam = searchParams.get("range") || "3mo";
+  const rangeLabel = rangeParam.startsWith("month:") 
+    ? `Viewing ${rangeParam.substring(6)}`
+    : rangeParam === "3mo" ? "Last 3 months" 
+    : rangeParam === "12mo" ? "12-month average" 
+    : rangeParam === "ytd" ? "This year" 
+    : "Last 3 months";
+
   return (
     <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8">
       <div className="mb-6">
@@ -115,6 +124,7 @@ function SpendingPageContent() {
           </Link>
           <h1 className="text-2xl font-semibold text-neutral-900">Spending</h1>
         </div>
+        <p className="text-sm text-gray-500 ml-9">{rangeLabel}</p>
       </div>
 
       <div className="mb-6">

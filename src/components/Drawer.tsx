@@ -6,6 +6,8 @@ import type { DrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
 import { formatMonthYear } from "@/lib/dateFormatting";
 import { getSignColor, getSignBgColor } from "@/lib/colorHelpers";
 import { ReviewList } from "./ReviewList";
+import type { TimeRange } from "@/lib/rangeUtils";
+import { formatMonthName } from "@/lib/rangeUtils";
 
 export type DrawerType = "income" | "fixed" | "essentials" | "flexible" | "savings";
 
@@ -15,35 +17,30 @@ interface DrawerProps {
   onClose: () => void;
   token: string | null;
   currency: string;
-  initialWindow?: TimeWindow; // Sync with dashboard range
+  initialRange?: TimeRange; // Sync with dashboard range
 }
 
-type TimeWindow = "last3" | "12month" | "ytd";
-
-const WINDOW_LABELS: Record<TimeWindow, string> = {
-  last3: "Last 3 months",
-  "12month": "12-month avg",
-  ytd: "This year",
-};
-
-// Convert TimeWindow to URL range parameter
-function windowToRange(window: TimeWindow): string {
-  switch (window) {
-    case "last3": return "3mo";
-    case "12month": return "12mo";
-    case "ytd": return "ytd";
+function getRangeLabel(range: TimeRange): string {
+  if (range.startsWith("month:")) {
+    return formatMonthName(range.substring(6));
+  }
+  switch (range) {
+    case "3mo": return "Last 3 months";
+    case "12mo": return "12-month avg";
+    case "ytd": return "This year";
+    default: return "Last 3 months";
   }
 }
 
-export function Drawer({ type, isOpen, onClose, token, currency, initialWindow }: DrawerProps) {
-  const [window, setWindow] = useState<TimeWindow>(initialWindow || "last3");
+export function Drawer({ type, isOpen, onClose, token, currency, initialRange }: DrawerProps) {
+  const [range, setRange] = useState<TimeRange>(initialRange || "3mo");
   
-  // Reset window when initialWindow changes
+  // Reset range when initialRange changes
   useEffect(() => {
-    if (initialWindow) {
-      setWindow(initialWindow);
+    if (initialRange) {
+      setRange(initialRange);
     }
-  }, [initialWindow]);
+  }, [initialRange]);
   const [data, setData] = useState<DrawerData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -54,7 +51,7 @@ export function Drawer({ type, isOpen, onClose, token, currency, initialWindow }
     setLoading(true);
     setError(null);
     
-    fetch(`/api/user/dashboard-drawers?window=${window}&bucket=${type}`, {
+    fetch(`/api/user/dashboard-drawers?range=${range}&bucket=${type}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(async (res) => {
@@ -89,7 +86,7 @@ export function Drawer({ type, isOpen, onClose, token, currency, initialWindow }
       .finally(() => {
         setLoading(false);
       });
-  }, [isOpen, type, window, token]);
+  }, [isOpen, type, range, token]);
 
   if (!isOpen) return null;
 
@@ -123,22 +120,11 @@ export function Drawer({ type, isOpen, onClose, token, currency, initialWindow }
             </button>
           </div>
 
-          {/* Basis Switch */}
-          <div className="mt-4 flex gap-2">
-            {(["last3", "12month", "ytd"] as TimeWindow[]).map((w) => (
-              <button
-                key={w}
-                onClick={() => setWindow(w)}
-                disabled={loading}
-                className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-                  window === w
-                    ? "bg-purple-600 text-white"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                } disabled:opacity-50 disabled:cursor-not-allowed`}
-              >
-                {WINDOW_LABELS[w]}
-              </button>
-            ))}
+          {/* Range Label (read-only) */}
+          <div className="mt-3">
+            <p className="text-sm text-gray-600">
+              {getRangeLabel(range)}
+            </p>
           </div>
           
           {/* Link to full page */}
@@ -146,8 +132,8 @@ export function Drawer({ type, isOpen, onClose, token, currency, initialWindow }
             <div className="mt-3">
               <Link
                 href={type === "income" 
-                  ? `/account/income?range=${windowToRange(window)}`
-                  : `/account/spending?range=${windowToRange(window)}`
+                  ? `/account/income?range=${range}`
+                  : `/account/spending?range=${range}`
                 }
                 className="text-sm font-medium text-purple-600 hover:text-purple-700 hover:underline"
               >
@@ -172,7 +158,7 @@ export function Drawer({ type, isOpen, onClose, token, currency, initialWindow }
               <button
                 onClick={() => {
                   setError(null);
-                  setWindow("last3");
+                  setRange("3mo");
                 }}
                 className="mt-4 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
               >

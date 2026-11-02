@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { buildIncomeSummary } from "@/lib/incomeSummary";
-import { resolveWindowMonths } from "@/lib/rangeUtils";
+import { resolveWindowMonths, type TimeRange } from "@/lib/rangeUtils";
 
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/user/income-summary
+ * GET /api/user/income-summary?range=3mo
  * 
  * Returns unified income summary used by:
  * - Income page (Overview, Trends, Sources tabs)
@@ -25,11 +25,19 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const { auth, db } = getFirebaseAdmin();
     const decoded = await auth.verifyIdToken(token);
 
+    // Get range parameter
+    const { searchParams } = new URL(req.url);
+    const rangeParam = searchParams.get("range");
+    const isValidMonth = rangeParam?.startsWith("month:") && rangeParam.length > 6;
+    const range: TimeRange = rangeParam && (["3mo", "12mo", "ytd"].includes(rangeParam) || isValidMonth)
+      ? rangeParam as TimeRange
+      : "3mo";
+
     // Load financial profile (single source of truth for transaction data)
     const profile = await getFinancialProfile(decoded.uid, db);
 
-    // Use shared window resolution helper (3-month window) with account snapshots for completeness check
-    const windowResult = resolveWindowMonths("3mo", profile.monthlyHistory, profile.accountSnapshots);
+    // Use shared window resolution helper with account snapshots for completeness check
+    const windowResult = resolveWindowMonths(range, profile.monthlyHistory, profile.accountSnapshots);
 
     // Load income deposit reviews
     const incomeReviewsSnap = await db

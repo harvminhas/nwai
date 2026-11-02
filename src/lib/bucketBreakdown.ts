@@ -289,39 +289,12 @@ export function computeBucketBreakdown(
     }
 
     // Convert to sorted merchant array (top merchants first)
-    const merchants = Array.from(merchantMap.entries())
+    // ALWAYS use monthly average to match the category header
+    const allMerchants = Array.from(merchantMap.entries())
       .map(([slug, data]) => {
-        const subMonthlyAmt = subscriptionMonthlyAmount.get(slug);
-        
-        // Check for user-set cadence
-        const userCadence = merchantCadence?.[slug];
-        
-        // Detect recurring monthly amount from transaction history
-        const recurringAmt = detectRecurringMonthlyAmount(
-          data.txns.map(t => ({ txMonth: t.txMonth, amount: Math.abs(t.amount) })),
-          2 // Minimum 2 months to detect pattern
-        );
-        
-        // Determine if this is a recurring fixed item
-        const isRecurring = !!(subMonthlyAmt || recurringAmt || (userCadence === "monthly" && recurringAmt !== null));
-        
-        // Display amount logic:
-        // - Recurring items (subscriptions, insurance, etc.): show actual monthly charge
-        // - Non-recurring items: show actual period total (NOT average)
-        let displayAmount: number;
-        if (subMonthlyAmt) {
-          // Subscription with known monthly rate
-          displayAmount = subMonthlyAmt;
-        } else if (userCadence === "monthly" && recurringAmt) {
-          // User marked as monthly + detected recurring pattern
-          displayAmount = recurringAmt;
-        } else if (recurringAmt) {
-          // Auto-detected recurring monthly charge (insurance, utilities, etc.)
-          displayAmount = recurringAmt;
-        } else {
-          // Non-recurring - show actual period total
-          displayAmount = data.total;
-        }
+        // Use monthly average for ALL merchants to match category total
+        // This ensures merchant list sums to category amount
+        const monthlyAvg = data.total / (months.length || 1);
         
         // Build transaction list for expandable detail view
         const transactions: MerchantTransaction[] = data.txns.map(t => ({
@@ -334,15 +307,33 @@ export function computeBucketBreakdown(
         
         return {
           merchant: data.displayName,
-          amount: displayAmount,
+          amount: monthlyAvg,
           accountSlug: data.txns[0].accountSlug,
           accountLabel: data.txns[0].accountLabel,
           txCount: data.txns.length,
           transactions,
         };
       })
-      .sort((a, b) => b.amount - a.amount)
-      .slice(0, 10); // Top 10 merchants per category (increased from 5)
+      .sort((a, b) => b.amount - a.amount);
+    
+    // Top 10 merchants
+    const topMerchants = allMerchants.slice(0, 10);
+    
+    // Add "Other" row if there are more than 10 merchants
+    const merchants: MerchantBreakdown[] = [...topMerchants];
+    if (allMerchants.length > 10) {
+      const topMerchantsSum = topMerchants.reduce((sum, m) => sum + m.amount, 0);
+      const otherAmount = avgMonthly - topMerchantsSum;
+      const otherCount = allMerchants.length - 10;
+      
+      if (otherAmount > 0.01) { // Only add if meaningful amount
+        merchants.push({
+          merchant: `Other (${otherCount} ${otherCount === 1 ? 'merchant' : 'merchants'})`,
+          amount: otherAmount,
+          txCount: allMerchants.slice(10).reduce((sum, m) => sum + (m.txCount || 0), 0),
+        });
+      }
+    }
 
     categories.push({
       category,

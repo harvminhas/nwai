@@ -37,7 +37,8 @@ function IncomePageContent() {
 
   const loadData = async (tok: string) => {
     try {
-      const res = await fetch("/api/user/income-summary", {
+      const rangeParam = searchParams.get("range") || "3mo";
+      const res = await fetch(`/api/user/income-summary?range=${rangeParam}`, {
         headers: { Authorization: `Bearer ${tok}` },
       });
 
@@ -101,13 +102,21 @@ function IncomePageContent() {
     );
   }
 
+  const rangeParam = searchParams.get("range") || "3mo";
+  const rangeLabel = rangeParam.startsWith("month:") 
+    ? `Viewing ${rangeParam.substring(6)}`
+    : rangeParam === "3mo" ? "Last 3 months" 
+    : rangeParam === "12mo" ? "12-month average" 
+    : rangeParam === "ytd" ? "This year" 
+    : "Last 3 months";
+
   return (
     <div className="mx-auto max-w-5xl px-4 pt-4 pb-12 sm:py-8 space-y-6">
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold text-gray-900">Income</h1>
         <p className="text-sm text-gray-500">
-          Track income sources, trends, and reliability
+          Track income sources, trends, and reliability · {rangeLabel}
         </p>
       </div>
 
