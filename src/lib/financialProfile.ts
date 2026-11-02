@@ -61,7 +61,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "66"; // Account numbers masked to last 4 digits only
+const SCHEMA_VERSION = "67"; // statementHistory (all statements per account) for month completeness
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
