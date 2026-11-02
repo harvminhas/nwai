@@ -3,7 +3,7 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { loadUserReviewContext } from "@/lib/userReviewContext";
 import { buildIncomeSummary } from "@/lib/incomeSummary";
-import { computeBucketBreakdown, compute3MonthTrend, type TimeWindow } from "@/lib/bucketBreakdown";
+import { computeBucketBreakdown, compute3MonthTrend } from "@/lib/bucketBreakdown";
 import { computeWindowSavings } from "@/lib/savingsCalculations";
 import { formatMonthYear } from "@/lib/dateFormatting";
 import { resolveWindowMonths, formatMonthList, formatMonthName, type TimeRange } from "@/lib/rangeUtils";
@@ -187,7 +187,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
 
       const response: IncomeDrawerData = {
         type: "income",
-        window,
+        range,
         metrics,
         chartData: last12Months,
         homeCurrency: profile.homeCurrency,
@@ -213,7 +213,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       
       const response: SavingsDrawerData = {
         type: "savings",
-        window,
+        range,
         windowSavings,
         homeCurrency: profile.homeCurrency,
         basisLabel: windowResult.months.length > 0
@@ -259,7 +259,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
     const response: BucketDrawerData = {
       type: "bucket",
       bucket,
-      window,
+      range,
       breakdown,
       trend,
       homeCurrency: profile.homeCurrency,
