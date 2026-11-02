@@ -7,7 +7,7 @@ import { formatMonthYear } from "@/lib/dateFormatting";
 import { getSignColor, getSignBgColor } from "@/lib/colorHelpers";
 import { ReviewList } from "./ReviewList";
 import type { TimeRange } from "@/lib/rangeUtils";
-import { formatMonthName } from "@/lib/rangeUtils";
+import { formatMonthName, formatAccountLast4, formatMonthList } from "@/lib/rangeUtils";
 
 export type DrawerType = "income" | "fixed" | "essentials" | "flexible" | "savings";
 
@@ -487,6 +487,7 @@ function BucketDrawerContent({
   type: DrawerType;
 }) {
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+  const [expandedMerchant, setExpandedMerchant] = useState<string | null>(null);
 
   const fmt = (amount: number) =>
     new Intl.NumberFormat("en-US", {
@@ -614,17 +615,80 @@ function BucketDrawerContent({
                         Top merchants
                       </p>
                       <div className="space-y-1">
-                        {category.merchants.map((merchant, mIdx) => (
-                          <div
-                            key={mIdx}
-                            className="flex items-center justify-between text-xs"
-                          >
-                            <span className="text-gray-700">{merchant.merchant}</span>
-                            <span className="font-medium text-gray-900">
-                              {fmt(merchant.amount)}
-                            </span>
-                          </div>
-                        ))}
+                        {category.merchants.map((merchant, mIdx) => {
+                          const merchantKey = `${category.category}-${mIdx}`;
+                          const isMerchantExpanded = expandedMerchant === merchantKey;
+                          const hasTransactions = merchant.transactions && merchant.transactions.length > 0;
+                          
+                          // Calculate period total from transactions
+                          const periodTotal = hasTransactions && merchant.transactions
+                            ? merchant.transactions.reduce((sum, t) => sum + t.amount, 0)
+                            : 0;
+                          
+                          return (
+                            <div key={mIdx} className="border-b border-gray-200 last:border-b-0">
+                              <button
+                                onClick={() => setExpandedMerchant(isMerchantExpanded ? null : merchantKey)}
+                                disabled={!hasTransactions}
+                                className={`w-full flex items-center justify-between text-xs py-2 ${
+                                  hasTransactions ? 'hover:bg-gray-100 cursor-pointer' : ''
+                                }`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  {hasTransactions && (
+                                    <svg
+                                      className={`w-3 h-3 text-gray-400 transition-transform ${
+                                        isMerchantExpanded ? 'rotate-90' : ''
+                                      }`}
+                                      fill="none"
+                                      viewBox="0 0 24 24"
+                                      stroke="currentColor"
+                                    >
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                    </svg>
+                                  )}
+                                  <span className="text-gray-700">{merchant.merchant}</span>
+                                </div>
+                                <span className="font-medium text-gray-900">
+                                  {fmt(merchant.amount)}
+                                </span>
+                              </button>
+                              
+                              {/* Expanded Transactions */}
+                              {isMerchantExpanded && hasTransactions && merchant.transactions && (
+                                <div className="pl-5 pr-2 pb-2 space-y-1">
+                                  {merchant.transactions
+                                    .sort((a, b) => b.date.localeCompare(a.date)) // Newest first
+                                    .map((txn, txIdx) => (
+                                      <div key={txIdx} className="flex items-start justify-between text-[11px] text-gray-600 py-1">
+                                        <div className="flex-1 min-w-0">
+                                          <div className="flex items-center gap-2">
+                                            <span className="font-mono text-gray-500">
+                                              {formatMonthYear(txn.date)}
+                                            </span>
+                                            <span className="truncate">{txn.description}</span>
+                                          </div>
+                                          {txn.accountSlug && (
+                                            <div className="text-gray-400 mt-0.5">
+                                              {formatAccountLast4(txn.accountSlug)}
+                                            </div>
+                                          )}
+                                        </div>
+                                        <span className="ml-2 font-medium text-gray-700 shrink-0">
+                                          {fmt(txn.amount)}
+                                        </span>
+                                      </div>
+                                    ))
+                                  }
+                                  <div className="pt-1 mt-1 border-t border-gray-200 text-[11px] text-gray-500">
+                                    {merchant.txCount} {merchant.txCount === 1 ? 'transaction' : 'transactions'} · {fmt(periodTotal)} total
+                                    {data.range && !data.range.startsWith('month:') && ` over ${data.range === '3mo' ? '3 months' : data.range === '12mo' ? '12 months' : 'this year'}`}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   )}

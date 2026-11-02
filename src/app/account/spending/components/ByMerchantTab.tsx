@@ -8,6 +8,7 @@ import type { Plan } from "@/app/api/user/plans/route";
 import { useConfirm } from "@/components/useConfirm";
 import { useToast } from "@/components/useToast";
 import { getFirebaseClient } from "@/lib/firebase";
+import { formatAccountLast4 } from "@/lib/rangeUtils";
 
 type SortMode = "total" | "frequency" | "recent";
 
@@ -278,17 +279,24 @@ export function ByMerchantTab({ summary }: ByMerchantTabProps) {
                               return (
                                 <div
                                   key={idx}
-                                  className="px-12 py-2 flex items-center justify-between text-xs"
+                                  className="px-12 py-2 flex items-start justify-between text-xs"
                                 >
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-gray-600">{formatDate(txn.date)}</span>
-                                    {planName && (
-                                      <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-700">
-                                        {planName}
-                                      </span>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-mono text-gray-500">{formatDate(txn.date)}</span>
+                                      {planName && (
+                                        <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-700">
+                                          {planName}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {txn.accountSlug && (
+                                      <div className="text-gray-400 mt-0.5">
+                                        {formatAccountLast4(txn.accountSlug)}
+                                      </div>
                                     )}
                                   </div>
-                                  <div className="text-gray-900 font-medium">
+                                  <div className="ml-2 text-gray-900 font-medium shrink-0">
                                     {formatCurrency(txn.amount, summary.currency)}
                                   </div>
                                 </div>

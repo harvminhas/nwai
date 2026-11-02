@@ -7,6 +7,7 @@ import type { MoneyCoachBucket } from "@/lib/moneyCoachBuckets";
 import { formatMonth, formatMonthYear } from "@/lib/dateFormatting";
 import { formatCurrency, getCurrencySymbol } from "@/lib/currencyUtils";
 import { getSignColor } from "@/lib/colorHelpers";
+import { formatAccountLast4 } from "@/lib/rangeUtils";
 
 interface TrendsTabProps {
   summary: SpendingSummary;
@@ -18,6 +19,7 @@ export function TrendsTab({ summary }: TrendsTabProps) {
   const [selected3MonthCategory, setSelected3MonthCategory] = useState<string | null>(null);
   const [selectedMonthBucket, setSelectedMonthBucket] = useState<MoneyCoachBucket>("fixed");
   const [selected3MonthBucket, setSelected3MonthBucket] = useState<MoneyCoachBucket>("fixed");
+  const [expandedMerchant, setExpandedMerchant] = useState<string | null>(null);
   const { monthlyHistory, currency } = summary;
 
   // Chart data
@@ -401,18 +403,66 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                           }
                           
                           return (
-                            <div className="pl-4 pb-3 space-y-2">
+                            <div className="pl-4 pb-3 space-y-1">
                               {categoryMerchants.map(merchant => {
                                 const monthTxns = merchant.transactions.filter(t => t.txMonth === selectedMonth);
                                 if (monthTxns.length === 0) return null;
                                 const monthTotal = monthTxns.reduce((s, t) => s + t.amount, 0);
+                                const merchantKey = `month-${merchant.merchantSlug}`;
+                                const isMerchantExpanded = expandedMerchant === merchantKey;
                                 
                                 return (
-                                  <div key={merchant.merchantSlug} className="text-xs">
-                                    <div className="flex items-center justify-between text-gray-700">
-                                      <span>{merchant.merchant}</span>
-                                      <span className="font-medium">{formatCurrency(monthTotal, currency)}</span>
-                                    </div>
+                                  <div key={merchant.merchantSlug} className="border-b border-gray-100 last:border-b-0">
+                                    <button
+                                      onClick={() => setExpandedMerchant(isMerchantExpanded ? null : merchantKey)}
+                                      className="w-full flex items-center justify-between text-xs py-2 hover:bg-gray-50"
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        <svg
+                                          className={`w-3 h-3 text-gray-400 transition-transform ${
+                                            isMerchantExpanded ? 'rotate-90' : ''
+                                          }`}
+                                          fill="none"
+                                          viewBox="0 0 24 24"
+                                          stroke="currentColor"
+                                        >
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                        </svg>
+                                        <span className="text-gray-700">{merchant.merchant}</span>
+                                      </div>
+                                      <span className="font-medium text-gray-700">{formatCurrency(monthTotal, currency)}</span>
+                                    </button>
+                                    
+                                    {isMerchantExpanded && (
+                                      <div className="pl-5 pr-2 pb-2 space-y-1">
+                                        {monthTxns
+                                          .sort((a, b) => b.date.localeCompare(a.date))
+                                          .map((txn, txIdx) => (
+                                            <div key={txIdx} className="flex items-start justify-between text-[11px] text-gray-600 py-1">
+                                              <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2">
+                                                  <span className="font-mono text-gray-500">
+                                                    {formatMonthYear(txn.date)}
+                                                  </span>
+                                                  <span className="truncate">{txn.merchant}</span>
+                                                </div>
+                                                {txn.accountSlug && (
+                                                  <div className="text-gray-400 mt-0.5">
+                                                    {formatAccountLast4(txn.accountSlug)}
+                                                  </div>
+                                                )}
+                                              </div>
+                                              <span className="ml-2 font-medium text-gray-700 shrink-0">
+                                                {formatCurrency(txn.amount, currency)}
+                                              </span>
+                                            </div>
+                                          ))
+                                        }
+                                        <div className="pt-1 mt-1 border-t border-gray-200 text-[11px] text-gray-500">
+                                          {monthTxns.length} {monthTxns.length === 1 ? 'transaction' : 'transactions'} · {formatCurrency(monthTotal, currency)} total
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
                                 );
                               })}
@@ -587,7 +637,7 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                     }
                     
                     return (
-                      <div className="px-6 pb-3 space-y-2">
+                      <div className="px-6 pb-3 space-y-1">
                         <p className="text-xs text-gray-500 mb-2">Last 3 months</p>
                         {categoryMerchants.map(merchant => {
                           const last3Txns = merchant.transactions.filter(t => 
@@ -595,13 +645,61 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                           );
                           if (last3Txns.length === 0) return null;
                           const total = last3Txns.reduce((s, t) => s + t.amount, 0);
+                          const merchantKey = `3mo-${merchant.merchantSlug}`;
+                          const isMerchantExpanded = expandedMerchant === merchantKey;
                           
                           return (
-                            <div key={merchant.merchantSlug} className="text-xs">
-                              <div className="flex items-center justify-between text-gray-700">
-                                <span>{merchant.merchant}</span>
-                                <span className="font-medium">{formatCurrency(total, currency)}</span>
-                              </div>
+                            <div key={merchant.merchantSlug} className="border-b border-gray-100 last:border-b-0">
+                              <button
+                                onClick={() => setExpandedMerchant(isMerchantExpanded ? null : merchantKey)}
+                                className="w-full flex items-center justify-between text-xs py-2 hover:bg-gray-50"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <svg
+                                    className={`w-3 h-3 text-gray-400 transition-transform ${
+                                      isMerchantExpanded ? 'rotate-90' : ''
+                                    }`}
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    stroke="currentColor"
+                                  >
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                  </svg>
+                                  <span className="text-gray-700">{merchant.merchant}</span>
+                                </div>
+                                <span className="font-medium text-gray-700">{formatCurrency(total, currency)}</span>
+                              </button>
+                              
+                              {isMerchantExpanded && (
+                                <div className="pl-5 pr-2 pb-2 space-y-1">
+                                  {last3Txns
+                                    .sort((a, b) => b.date.localeCompare(a.date))
+                                    .map((txn, txIdx) => (
+                                      <div key={txIdx} className="flex items-start justify-between text-[11px] text-gray-600 py-1">
+                                        <div className="flex-1 min-w-0">
+                                          <div className="flex items-center gap-2">
+                                            <span className="font-mono text-gray-500">
+                                              {formatMonthYear(txn.date)}
+                                            </span>
+                                            <span className="truncate">{txn.merchant}</span>
+                                          </div>
+                                          {txn.accountSlug && (
+                                            <div className="text-gray-400 mt-0.5">
+                                              {formatAccountLast4(txn.accountSlug)}
+                                            </div>
+                                          )}
+                                        </div>
+                                        <span className="ml-2 font-medium text-gray-700 shrink-0">
+                                          {formatCurrency(txn.amount, currency)}
+                                        </span>
+                                      </div>
+                                    ))
+                                  }
+                                  <div className="pt-1 mt-1 border-t border-gray-200 text-[11px] text-gray-500">
+                                    {last3Txns.length} {last3Txns.length === 1 ? 'transaction' : 'transactions'} · {formatCurrency(total, currency)} total over 3 months
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           );
                         })}

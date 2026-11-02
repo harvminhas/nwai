@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import type { SpendingSummary, CategorySummary, MerchantSummary, SpendingTransaction } from "@/lib/spendingSummary";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { formatDate } from "@/lib/dateFormatting";
+import { formatAccountLast4 } from "@/lib/rangeUtils";
 
 type BucketFilter = "all" | "fixed" | "essentials" | "flexible";
 
@@ -230,20 +231,33 @@ export function WhereItGoesTab({ summary }: WhereItGoesTabProps) {
 
                             {/* Transaction list (when merchant expanded) */}
                             {isMerchantExpanded && (
-                              <div className="bg-white border-t border-gray-100">
+                              <div className="bg-white border-t border-gray-100 px-20 py-2 space-y-1">
                                 {merchant.transactions
                                   .sort((a, b) => b.date.localeCompare(a.date))
                                   .map((txn, idx) => (
                                     <div
                                       key={idx}
-                                      className="px-20 py-2 flex items-center justify-between text-xs"
+                                      className="py-1 flex items-start justify-between text-xs"
                                     >
-                                      <div className="text-gray-600">{formatDate(txn.date)}</div>
-                                      <div className="text-gray-900 font-medium">
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-mono text-gray-500">{formatDate(txn.date)}</span>
+                                          <span className="truncate text-gray-700">{txn.merchant}</span>
+                                        </div>
+                                        {txn.accountSlug && (
+                                          <div className="text-gray-400 mt-0.5">
+                                            {formatAccountLast4(txn.accountSlug)}
+                                          </div>
+                                        )}
+                                      </div>
+                                      <div className="ml-2 text-gray-900 font-medium shrink-0">
                                         {formatCurrency(txn.amount, summary.currency)}
                                       </div>
                                     </div>
                                   ))}
+                                <div className="pt-1 mt-1 border-t border-gray-200 text-[11px] text-gray-500">
+                                  {merchant.transactions.length} {merchant.transactions.length === 1 ? 'transaction' : 'transactions'} · {formatCurrency(merchant.total, summary.currency)} total
+                                </div>
                               </div>
                             )}
                           </div>

@@ -327,10 +327,20 @@ export function computeBucketBreakdown(
       const otherCount = allMerchants.length - 10;
       
       if (otherAmount > 0.01) { // Only add if meaningful amount
+        // Collect all transactions from merchants 11+
+        const otherMerchants = allMerchants.slice(10);
+        const otherTransactions: MerchantTransaction[] = [];
+        otherMerchants.forEach(m => {
+          if (m.transactions) {
+            otherTransactions.push(...m.transactions);
+          }
+        });
+        
         merchants.push({
           merchant: `Other (${otherCount} ${otherCount === 1 ? 'merchant' : 'merchants'})`,
           amount: otherAmount,
-          txCount: allMerchants.slice(10).reduce((sum, m) => sum + (m.txCount || 0), 0),
+          txCount: otherMerchants.reduce((sum, m) => sum + (m.txCount || 0), 0),
+          transactions: otherTransactions,
         });
       }
     }
