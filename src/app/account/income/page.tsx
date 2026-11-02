@@ -37,7 +37,8 @@ function IncomePageContent() {
 
   const loadData = async (tok: string) => {
     try {
-      const res = await fetch("/api/user/income-summary", {
+      const rangeParam = searchParams.get("range") || "3mo";
+      const res = await fetch(`/api/user/income-summary?range=${rangeParam}`, {
         headers: { Authorization: `Bearer ${tok}` },
       });
 

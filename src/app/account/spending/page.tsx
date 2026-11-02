@@ -42,7 +42,8 @@ function SpendingPageContent() {
 
   const loadData = async (tok: string) => {
     try {
-      const res = await fetch("/api/user/spending-summary", {
+      const rangeParam = searchParams.get("range") || "3mo";
+      const res = await fetch(`/api/user/spending-summary?range=${rangeParam}`, {
         headers: { Authorization: `Bearer ${tok}` },
       });
 

@@ -6,14 +6,14 @@ import { buildIncomeSummary } from "@/lib/incomeSummary";
 import { computeBucketBreakdown, compute3MonthTrend, type TimeWindow } from "@/lib/bucketBreakdown";
 import { computeWindowSavings } from "@/lib/savingsCalculations";
 import { formatMonthYear } from "@/lib/dateFormatting";
-import { resolveWindowMonths, formatMonthList, type TimeRange } from "@/lib/rangeUtils";
+import { resolveWindowMonths, formatMonthList, formatMonthName, type TimeRange } from "@/lib/rangeUtils";
 import type { MoneyCoachBucket } from "@/lib/moneyCoachBuckets";
 import type { IncomeDrawerData, BucketDrawerData, SavingsDrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
 
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/user/dashboard-drawers?window=last3&bucket=fixed
+ * GET /api/user/dashboard-drawers?range=3mo&bucket=fixed
  * Returns detailed drawer data for income or a specific bucket.
  */
 export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerData | BucketDrawerData | SavingsDrawerData | DrawerErrorResponse>> {
@@ -27,7 +27,11 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
     const decoded = await auth.verifyIdToken(token);
 
     const { searchParams } = new URL(req.url);
-    const window = (searchParams.get("window") as TimeWindow) || "last3";
+    const rangeParam = searchParams.get("range");
+    const isValidMonth = rangeParam?.startsWith("month:") && rangeParam.length > 6;
+    const range: TimeRange = rangeParam && (["3mo", "12mo", "ytd"].includes(rangeParam) || isValidMonth)
+      ? rangeParam as TimeRange
+      : "3mo";
     const bucket = searchParams.get("bucket") as MoneyCoachBucket | "income" | null;
 
     if (!bucket) {
@@ -39,12 +43,9 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
 
     // Load all user review context (income, debt, savings)
     const reviewContext = await loadUserReviewContext(decoded.uid, db);
-
-    // Convert TimeWindow to TimeRange
-    const timeRange: TimeRange = window === "last3" ? "3mo" : window === "12month" ? "12mo" : "ytd";
     
     // Use shared window resolution helper with account snapshots for completeness check
-    const windowResult = resolveWindowMonths(timeRange, profile.monthlyHistory, profile.accountSnapshots);
+    const windowResult = resolveWindowMonths(range, profile.monthlyHistory, profile.accountSnapshots);
 
     // Income drawer data
     if (bucket === "income") {
@@ -163,7 +164,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
         currentBasisLabel: windowResult.note || `last ${windowResult.actualCount} months`,
         currentDiffersFromAverage: false,
         windowAmount: windowResult.actualCount > 0 ? Math.round(windowTotal / windowResult.actualCount) : 0,
-        windowLabel: window === "last3" ? "last 3 months" : window === "ytd" ? "year-to-date" : "12-month avg",
+        windowLabel: range.startsWith("month:") ? formatMonthName(range.substring(6)) : (range === "3mo" ? "last 3 months" : range === "ytd" ? "year-to-date" : "12-month avg"),
         windowMonths: windowResult.months,
         windowNote: windowResult.note,
         sourcesList, // New: transaction-level source groups for the window

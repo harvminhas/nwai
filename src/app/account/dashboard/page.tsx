@@ -17,20 +17,6 @@ import { formatMonthList, getSelectableMonths, type SelectableMonth } from "@/li
 import type { GapReconciliation } from "@/lib/gapReconciliation";
 import { AiAnswer } from "@/components/AiAnswer";
 
-// Convert TimeRange to Drawer's TimeWindow format
-function rangeToWindow(range: TimeRange): "last3" | "12month" | "ytd" {
-  if (range.startsWith("month:")) {
-    // Single month selections use last3 format (drawer uses actual months array anyway)
-    return "last3";
-  }
-  
-  switch (range) {
-    case "3mo": return "last3";
-    case "12mo": return "12month";
-    case "ytd": return "ytd";
-    default: return "last3";
-  }
-}
 
 // Format window basis for display with exact months
 function formatWindowBasis(months: string[] | undefined, note?: string): string {
@@ -1155,7 +1141,7 @@ export default function DashboardPage() {
         onClose={closeDrawer}
         token={token}
         currency={currency}
-        initialWindow={rangeToWindow(range)}
+        initialRange={range}
       />
 
       {/* Missing Statements Modal */}

@@ -23,7 +23,8 @@ export async function GET(req: NextRequest) {
     // Get range parameter
     const url = new URL(req.url);
     const rangeParam = url.searchParams.get("range") as TimeRange | null;
-    const range: TimeRange = rangeParam && (["3mo", "12mo", "ytd"].includes(rangeParam) || rangeParam.startsWith("month:"))
+    const isValidMonth = rangeParam?.startsWith("month:") && rangeParam.length > 6;
+    const range: TimeRange = rangeParam && (["3mo", "12mo", "ytd"].includes(rangeParam) || isValidMonth)
       ? rangeParam as TimeRange
       : "3mo";
 
