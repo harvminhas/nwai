@@ -5,6 +5,7 @@ import { loadUserReviewContext } from "@/lib/userReviewContext";
 import { computeMoneyCoachBreakdown } from "@/lib/moneyCoach";
 import { resolveWindowMonths, type TimeRange } from "@/lib/rangeUtils";
 import { computeGapReconciliation } from "@/lib/gapReconciliation";
+import { getCompletenessDebugInfo } from "@/lib/completenessDebug";
 
 export const dynamic = "force-dynamic";
 
@@ -20,9 +21,10 @@ export async function GET(req: NextRequest) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
     
-    // Get range parameter
+    // Get range parameter and debug flag
     const url = new URL(req.url);
     const rangeParam = url.searchParams.get("range") as TimeRange | null;
+    const debugCompleteness = url.searchParams.get("debugCompleteness") === "1";
     const isValidMonth = rangeParam?.startsWith("month:") && rangeParam.length > 6;
     const range: TimeRange = rangeParam && (["3mo", "12mo", "ytd"].includes(rangeParam) || isValidMonth)
       ? rangeParam as TimeRange
@@ -32,6 +34,17 @@ export async function GET(req: NextRequest) {
     const decoded = await auth.verifyIdToken(token);
 
     const profile = await getFinancialProfile(decoded.uid, db);
+    
+    // If debug mode, return diagnostic info instead of normal response
+    if (debugCompleteness) {
+      const debugInfo = getCompletenessDebugInfo(profile.accountSnapshots);
+      return Response.json({ 
+        debug: true,
+        accounts: debugInfo,
+        totalAccounts: debugInfo.length,
+        monthlyHistory: profile.monthlyHistory.map(m => m.yearMonth),
+      });
+    }
     
     // Use shared window resolution helper with account snapshots for completeness check
     const windowResult = resolveWindowMonths(range, profile.monthlyHistory, profile.accountSnapshots);
