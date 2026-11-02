@@ -815,7 +815,7 @@ export function resolveWindowMonths(
   
   const actualCount = selectedMonths.length;
   
-  // Find missing months AFTER the newest complete month and get missing account details
+  // Find missing months and get missing account details
   // Skip for single-month selections (disabled months already show what's missing)
   const missingMonthsInWindow: string[] = [];
   let missingAccountDetails: string[] = [];
@@ -828,18 +828,30 @@ export function resolveWindowMonths(
     const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const lastFinishedMonth = getPreviousMonth(currentYearMonth);
     
-    // Find missing months AFTER the newest complete month up to latest finished month
+    // Determine which months to check for missing accounts
     const newestCompleteMonth = completeMonths.length > 0 
       ? completeMonths[completeMonths.length - 1] 
       : undefined;
     
     if (newestCompleteMonth && newestCompleteMonth < lastFinishedMonth) {
-      // List all finished months after the newest complete month
+      // Case 1: We have complete months - check for gaps AFTER the newest complete
       let currentCheck = getNextMonth(newestCompleteMonth);
       while (currentCheck <= lastFinishedMonth) {
         missingMonthsInWindow.push(currentCheck);
         currentCheck = getNextMonth(currentCheck);
       }
+    } else if (!newestCompleteMonth && monthsToUse.length > 0) {
+      // Case 2: NO complete months, but we're using incomplete months (fallback)
+      // Report which accounts are missing for the months we're actually showing
+      // This ensures the dropdown and nudge agree on completeness
+      for (const month of selectedMonths) {
+        if (!isMonthComplete(month, accountSnapshots!)) {
+          missingMonthsInWindow.push(month);
+        }
+      }
+    }
+    
+    if (missingMonthsInWindow.length > 0) {
       
       // Compute missing account details using closing day assignment rule
       const ACTIVE_WINDOW_DAYS = 60;
