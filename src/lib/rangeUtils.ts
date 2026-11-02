@@ -286,7 +286,7 @@ function formatMissingMonthsShort(months: string[]): string {
  * - Oct 15 → September
  * - Oct 16 → October
  */
-function getAssignedMonth(closingDate: Date): string {
+export function getAssignedMonth(closingDate: Date): string {
   const day = closingDate.getDate();
   
   if (day <= 15) {
@@ -561,7 +561,7 @@ function getPreviousMonth(yearMonth: string): string {
  * Parse a statement date string robustly, handling various formats.
  * Falls back to end of statementMonth if date is invalid.
  */
-function parseStatementDate(statementDate: string | undefined, statementMonth: string): Date {
+export function parseStatementDate(statementDate: string | undefined, statementMonth: string): Date {
   if (!statementDate) {
     // Fall back to last day of statement month
     const [year, month] = statementMonth.split('-').map(Number);
