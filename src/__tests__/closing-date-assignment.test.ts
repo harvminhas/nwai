@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { getSelectableMonths, getLatestCompleteMonth } from '../lib/rangeUtils';
+import { getSelectableMonths, getLatestCompleteMonth, resolveWindowMonths } from '../lib/rangeUtils';
 
 describe('Closing date assignment rule', () => {
   it('statement closing on 15th counts for previous month', () => {
@@ -261,5 +261,64 @@ describe('Closing date assignment rule', () => {
     expect(sepMonth?.isComplete).toBe(false);
     expect(sepMonth?.missingAccounts.length).toBe(1);
     expect(sepMonth?.missingAccounts[0]).toContain('TD Checking');
+  });
+
+  it('REGRESSION: current month must never be complete, even with statements (Nov 2, 2026)', () => {
+    // Bug: dashboard showed "Based on Sep, Oct and Nov 2026" on Nov 2
+    // Root cause: no current month guard in resolveWindowMonths/isMonthComplete
+    const now = new Date('2026-11-02T00:00:00');
+    (globalThis as any).__TEST_NOW__ = now;
+    
+    const accountSnapshots = [
+      // October statements (complete)
+      {
+        accountType: 'checking',
+        statementMonth: '2026-10',
+        statementDate: '2026-10-31',
+        accountName: 'TD Checking',
+        slug: 'td-checking-1234',
+      },
+      {
+        accountType: 'credit',
+        statementMonth: '2026-10',
+        statementDate: '2026-10-21',
+        accountName: 'Amex',
+        slug: 'amex-credit-5678',
+      },
+      // November statements (exist but current month!)
+      {
+        accountType: 'checking',
+        statementMonth: '2026-11',
+        statementDate: '2026-11-01', // 1st → Oct (but this is edge case)
+        accountName: 'TD Checking',
+        slug: 'td-checking-1234',
+      },
+    ];
+    
+    const months = getSelectableMonths(accountSnapshots, now);
+    
+    // November must NEVER appear as selectable (it's the current month)
+    const novMonth = months.find(m => m.yearMonth === '2026-11');
+    expect(novMonth).toBeUndefined();
+    
+    // October should be complete
+    const octMonth = months.find(m => m.yearMonth === '2026-10');
+    expect(octMonth?.isComplete).toBe(true);
+    
+    // Test resolveWindowMonths directly
+    const monthlyHistory = [
+      { yearMonth: '2026-09' },
+      { yearMonth: '2026-10' },
+      { yearMonth: '2026-11' }, // This exists in data
+    ];
+    
+    const resolved = resolveWindowMonths('3mo', monthlyHistory, accountSnapshots);
+    
+    // Should NOT include November (current month)
+    expect(resolved.months).not.toContain('2026-11');
+    // Should include September and October (both past)
+    expect(resolved.months.length).toBeLessThanOrEqual(2);
+    
+    delete (globalThis as any).__TEST_NOW__;
   });
 });

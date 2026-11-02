@@ -595,7 +595,7 @@ function parseStatementDate(statementDate: string | undefined, statementMonth: s
  * Uses the closing day rule: ≤15 = previous month, ≥16 = current month.
  * 
  * A month M is complete when every active account has at least one statement
- * assigned to month M or later.
+ * assigned to month M, and M is strictly before the current month.
  */
 function isMonthComplete(
   month: string,
@@ -606,6 +606,13 @@ function isMonthComplete(
     slug: string;
   }>
 ): boolean {
+  // Never consider current or future months complete
+  const now = (globalThis as any).__TEST_NOW__ || new Date();
+  const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  if (month >= currentYearMonth) {
+    return false;
+  }
+  
   const ACTIVE_WINDOW_DAYS = 60;
   
   // Filter to transactional accounts (checking and credit only)
@@ -689,8 +696,15 @@ export function resolveWindowMonths(
     slug: string;
   }>
 ): ResolvedWindowMonths {
-  // Get all available months sorted
-  const availableMonths = monthlyHistory.map(m => m.yearMonth).sort();
+  // Get current month - never include current or future months
+  const now = (globalThis as any).__TEST_NOW__ || new Date();
+  const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  
+  // Get all available months sorted, excluding current and future months
+  const availableMonths = monthlyHistory
+    .map(m => m.yearMonth)
+    .filter(m => m < currentYearMonth)  // Only past months
+    .sort();
   
   if (availableMonths.length === 0) {
     return {
