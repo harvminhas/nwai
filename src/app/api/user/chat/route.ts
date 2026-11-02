@@ -16,19 +16,18 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import type { Part } from "@google/generative-ai";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { loadUserReviewContext } from "@/lib/userReviewContext";
 import { resolvePlan } from "@/app/api/user/plan/route";
 import { resolveAccess } from "@/lib/access/resolveAccess";
-import { CHAT_TOOLS } from "@/lib/chat/tools";
 import { executeTool } from "@/lib/chat/executor";
 import type { ToolParams } from "@/lib/chat/executor";
 import { buildChatContext } from "@/lib/chat/context";
 import { cleanAIAnswer } from "@/lib/chat/answerPostProcessor";
 import { checkAIUsageLimit, incrementAIUsage, getLimitReachedMessage } from "@/lib/aiUsageLimit";
+import { getChatModel } from "@/lib/chat/chatModel";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -108,13 +107,8 @@ export async function POST(req: NextRequest) {
   // ── 6. Build compact system context ───────────────────────────────────────
   const systemContext = buildChatContext(profile);
 
-  // ── 7. Set up Gemini model with tools ─────────────────────────────────────
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",
-    systemInstruction: systemContext,
-    tools: CHAT_TOOLS,
-  });
+  // ── 7. Set up Gemini model with tools (cost-optimized lite model) ─────────
+  const model = getChatModel(apiKey, systemContext);
 
   // Convert history to Gemini format (max last 20 turns).
   // Gemini requires history to start with a 'user' turn — drop any leading model messages.
@@ -137,6 +131,18 @@ export async function POST(req: NextRequest) {
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const result   = await chat.sendMessage(pendingParts);
     const response = result.response;
+
+    // Log token usage for this round
+    const usage = response.usageMetadata;
+    if (usage) {
+      console.log(
+        `[chat] round=${round + 1} tokens: ` +
+        `prompt=${usage.promptTokenCount ?? 0} ` +
+        `candidates=${usage.candidatesTokenCount ?? 0} ` +
+        `thoughts=${(usage as any).thoughtsTokenCount ?? 0} ` +
+        `total=${usage.totalTokenCount ?? 0}`
+      );
+    }
 
     // Check for function calls in this round
     const functionCalls = response.functionCalls();
