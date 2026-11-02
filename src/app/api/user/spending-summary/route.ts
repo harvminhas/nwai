@@ -32,7 +32,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const profile = await getFinancialProfile(decoded.uid, db);
     
     // Resolve range to months
-    const windowResult = resolveWindowMonths(range, profile.monthlyHistory, profile.accountSnapshots);
+    const windowResult = resolveWindowMonths(range, profile.monthlyHistory, profile.statementHistory);
     
     // Load user debt payment reviews
     const reviewsSnap = await db.collection(`users/${decoded.uid}/debtPaymentReviews`).get();

@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
     
     // If debug mode, return diagnostic info instead of normal response
     if (debugCompleteness) {
-      const debugInfo = getCompletenessDebugInfo(profile.accountSnapshots);
+      const debugInfo = getCompletenessDebugInfo(profile.statementHistory);
       return Response.json({ 
         debug: true,
         accounts: debugInfo,
@@ -46,8 +46,8 @@ export async function GET(req: NextRequest) {
       });
     }
     
-    // Use shared window resolution helper with account snapshots for completeness check
-    const windowResult = resolveWindowMonths(range, profile.monthlyHistory, profile.accountSnapshots);
+    // Use shared window resolution helper with statement history for completeness check
+    const windowResult = resolveWindowMonths(range, profile.monthlyHistory, profile.statementHistory);
 
     // Load all user review context (income, debt, savings)
     const reviewContext = await loadUserReviewContext(decoded.uid, db);
@@ -91,7 +91,7 @@ export async function GET(req: NextRequest) {
         missingMonths: windowResult.missingMonths,
         missingAccounts: windowResult.missingAccounts,
         months: windowResult.months,
-        accountSnapshots: profile.accountSnapshots, // For month dropdown completeness check
+        statementHistory: profile.statementHistory, // For month dropdown completeness check
       },
     });
   } catch (error) {

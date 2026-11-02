@@ -5,7 +5,7 @@
  * or vice versa. Shows per-account statement data with assigned months.
  */
 
-import type { AccountSnapshot } from './extractTransactions';
+import type { StatementHistoryEntry } from './financialProfile';
 
 /**
  * Parse a statement date, handling various formats and fallbacks.
@@ -77,14 +77,14 @@ interface AccountDebugInfo {
  * Get diagnostic information about statement assignments for all accounts.
  * Shows which statements exist, their closing dates, and which months they're assigned to.
  */
-export function getCompletenessDebugInfo(accountSnapshots: AccountSnapshot[]): AccountDebugInfo[] {
+export function getCompletenessDebugInfo(statementHistory: StatementHistoryEntry[]): AccountDebugInfo[] {
   // Group by account slug
-  const bySlug = new Map<string, AccountSnapshot[]>();
-  for (const acc of accountSnapshots) {
-    if (!bySlug.has(acc.slug)) {
-      bySlug.set(acc.slug, []);
+  const bySlug = new Map<string, StatementHistoryEntry[]>();
+  for (const stmt of statementHistory) {
+    if (!bySlug.has(stmt.slug)) {
+      bySlug.set(stmt.slug, []);
     }
-    bySlug.get(acc.slug)!.push(acc);
+    bySlug.get(stmt.slug)!.push(stmt);
   }
   
   const result: AccountDebugInfo[] = [];
@@ -105,7 +105,7 @@ export function getCompletenessDebugInfo(accountSnapshots: AccountSnapshot[]): A
         parsedDate: parsedDate.toISOString().split('T')[0],
         closingDay: parsedDate.getDate(),
         assignedMonth,
-        usedFallback: !stmt.statementDate,
+        usedFallback: false, // statementDate is always present in StatementHistoryEntry
       });
     }
     
@@ -113,7 +113,7 @@ export function getCompletenessDebugInfo(accountSnapshots: AccountSnapshot[]): A
     statementDebugInfo.sort((a, b) => b.parsedDate.localeCompare(a.parsedDate));
     
     result.push({
-      accountName: firstStmt.accountName || 'Unknown',
+      accountName: slug,  // Use slug as account name (StatementHistoryEntry doesn't have accountName)
       accountSlug: slug,
       accountType: firstStmt.accountType,
       statements: statementDebugInfo,

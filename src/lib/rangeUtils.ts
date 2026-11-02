@@ -305,10 +305,10 @@ export function getAssignedMonth(closingDate: Date): string {
  */
 function getTypicalClosingDay(
   accountSlug: string,
-  accountSnapshots: Array<{ slug: string; statementDate?: string; statementMonth: string }>
+  statementHistory: Array<{ slug: string; statementDate: string; statementMonth: string }>
 ): number | undefined {
   // Find all statements for this account
-  const accountStatements = accountSnapshots.filter(a => a.slug === accountSlug);
+  const accountStatements = statementHistory.filter(s => s.slug === accountSlug);
   if (accountStatements.length === 0) return undefined;
   
   // Get the most recent statement with a date
@@ -331,14 +331,14 @@ function getTypicalClosingDay(
  * 
  * An account is active if it has a statement within ~60 days of the newest statement.
  * 
- * @param accountSnapshots - All account snapshots with their statement dates
+ * @param statementHistory - Complete statement history (ALL statements, not just latest per account)
  * @returns Latest complete month, missing accounts with expected statement info, and missing month
  */
 export function getLatestCompleteMonth(
-  accountSnapshots: Array<{ 
+  statementHistory: Array<{ 
     accountType: string; 
     statementMonth: string;
-    statementDate?: string;
+    statementDate: string;
     accountName?: string;
     slug: string;
   }>
@@ -346,14 +346,14 @@ export function getLatestCompleteMonth(
   const ACTIVE_WINDOW_DAYS = 60; // Account is active if statement within last 60 days
   
   // Filter to transactional accounts (checking and credit only)
-  const transactionalAccounts = (accountSnapshots ?? []).filter(a => {
-    const type = a.accountType.toLowerCase();
+  const transactionalStatements = (statementHistory ?? []).filter(s => {
+    const type = s.accountType.toLowerCase();
     return type === 'checking' || type === 'chequing' || type === 'credit';
   });
 
-  if (transactionalAccounts.length === 0) {
+  if (transactionalStatements.length === 0) {
     // No transactional accounts - use latest statement month from any account
-    const allMonths = accountSnapshots.map(a => a.statementMonth).sort();
+    const allMonths = statementHistory.map(s => s.statementMonth).sort();
     return {
       latestCompleteMonth: allMonths.length > 0 ? allMonths[allMonths.length - 1] : undefined,
       missingAccounts: [],
@@ -362,19 +362,19 @@ export function getLatestCompleteMonth(
   }
   
   // Find the newest statement date across all accounts to determine active window
-  const newestDate = transactionalAccounts
-    .map(a => parseStatementDate(a.statementDate, a.statementMonth).getTime())
+  const newestDate = transactionalStatements
+    .map(s => parseStatementDate(s.statementDate, s.statementMonth).getTime())
     .reduce((max, d) => Math.max(max, d), 0);
   
   const cutoffDate = newestDate - (ACTIVE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   
   // Group by slug - keep ALL statements per account
-  const statementsBySlug = new Map<string, typeof transactionalAccounts>();
-  for (const acc of transactionalAccounts) {
-    if (!statementsBySlug.has(acc.slug)) {
-      statementsBySlug.set(acc.slug, []);
+  const statementsBySlug = new Map<string, typeof transactionalStatements>();
+  for (const stmt of transactionalStatements) {
+    if (!statementsBySlug.has(stmt.slug)) {
+      statementsBySlug.set(stmt.slug, []);
     }
-    statementsBySlug.get(acc.slug)!.push(acc);
+    statementsBySlug.get(stmt.slug)!.push(stmt);
   }
   
   // Filter to active accounts (those with at least one statement within 60 days of newest)
@@ -514,7 +514,7 @@ export function getLatestCompleteMonth(
     if (!months.has(nextMonth)) {
       // This account doesn't have a statement for nextMonth
       const latest = accountLatestClosing.get(slug)!;
-      const typicalDay = getTypicalClosingDay(slug, accountSnapshots);
+      const typicalDay = getTypicalClosingDay(slug, statementHistory);
       const expectedClosingDate = typicalDay 
         ? `around ${formatMonthName(nextMonth)} ${typicalDay}`
         : `in ${formatMonthName(nextMonth)}`;
@@ -599,10 +599,10 @@ export function parseStatementDate(statementDate: string | undefined, statementM
  */
 function isMonthComplete(
   month: string,
-  accountSnapshots: Array<{ 
+  statementHistory: Array<{ 
     accountType: string;
     statementMonth: string;
-    statementDate?: string;
+    statementDate: string;
     slug: string;
   }>
 ): boolean {
@@ -616,7 +616,7 @@ function isMonthComplete(
   const ACTIVE_WINDOW_DAYS = 60;
   
   // Filter to transactional accounts (checking and credit only)
-  const transactionalAccounts = (accountSnapshots ?? []).filter(a => {
+  const transactionalAccounts = (statementHistory ?? []).filter(a => {
     const type = a.accountType.toLowerCase();
     return type === 'checking' || type === 'chequing' || type === 'credit';
   });
@@ -682,16 +682,16 @@ function isMonthComplete(
  * 
  * @param range - Time range to resolve
  * @param monthlyHistory - Monthly history entries with data
- * @param accountSnapshots - Account snapshots to determine completeness
+ * @param statementHistory - Complete statement history (ALL statements, not just latest per account)
  * @returns Resolved months with missing month details
  */
 export function resolveWindowMonths(
   range: TimeRange,
   monthlyHistory: Array<{ yearMonth: string }>,
-  accountSnapshots?: Array<{ 
+  statementHistory?: Array<{ 
     accountType: string; 
     statementMonth: string;
-    statementDate?: string; 
+    statementDate: string; 
     accountName?: string;
     slug: string;
   }>
@@ -716,14 +716,14 @@ export function resolveWindowMonths(
   
   // Find all complete months with data
   let completeMonths: string[];
-  let hasAccountSnapshots = accountSnapshots && accountSnapshots.length > 0;
+  let hasStatementHistory = statementHistory && statementHistory.length > 0;
   
-  if (hasAccountSnapshots) {
+  if (hasStatementHistory) {
     completeMonths = availableMonths.filter(month => 
-      isMonthComplete(month, accountSnapshots!)
+      isMonthComplete(month, statementHistory!)
     );
   } else {
-    // No account snapshots - all months with data are considered complete
+    // No statement history - all months with data are considered complete
     completeMonths = availableMonths;
   }
   
@@ -822,7 +822,7 @@ export function resolveWindowMonths(
   
   const isSingleMonth = range.startsWith("month:");
   
-  if (hasAccountSnapshots && !isSingleMonth) {
+  if (hasStatementHistory && !isSingleMonth) {
     // Get current calendar month (allow injection for testing via global)
     const now = (globalThis as any).__TEST_NOW__ || new Date();
     const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -845,7 +845,7 @@ export function resolveWindowMonths(
       // Report which accounts are missing for the months we're actually showing
       // This ensures the dropdown and nudge agree on completeness
       for (const month of selectedMonths) {
-        if (!isMonthComplete(month, accountSnapshots!)) {
+        if (!isMonthComplete(month, statementHistory!)) {
           missingMonthsInWindow.push(month);
         }
       }
@@ -857,21 +857,21 @@ export function resolveWindowMonths(
       const ACTIVE_WINDOW_DAYS = 60;
       
       // Filter to transactional accounts (checking and credit only)
-      const transactionalAccounts = (accountSnapshots ?? []).filter(a => {
-        const type = a.accountType.toLowerCase();
+      const transactionalStatements = (statementHistory ?? []).filter(s => {
+        const type = s.accountType.toLowerCase();
         return type === 'checking' || type === 'chequing' || type === 'credit';
       });
       
-      if (transactionalAccounts.length > 0) {
+      if (transactionalStatements.length > 0) {
         // Group by slug and take latest statement per account
-        const latestBySlug = new Map<string, typeof transactionalAccounts[0]>();
-        for (const acc of transactionalAccounts) {
-          const existing = latestBySlug.get(acc.slug);
-          const accDate = parseStatementDate(acc.statementDate, acc.statementMonth);
+        const latestBySlug = new Map<string, typeof transactionalStatements[0]>();
+        for (const stmt of transactionalStatements) {
+          const existing = latestBySlug.get(stmt.slug);
+          const stmtDate = parseStatementDate(stmt.statementDate, stmt.statementMonth);
           const existingDate = existing ? parseStatementDate(existing.statementDate, existing.statementMonth) : null;
           
-          if (!existing || (existingDate && accDate > existingDate)) {
-            latestBySlug.set(acc.slug, acc);
+          if (!existing || (existingDate && stmtDate > existingDate)) {
+            latestBySlug.set(stmt.slug, stmt);
           }
         }
         
@@ -954,15 +954,15 @@ export interface SelectableMonth {
  * Get list of last 12 finished months with completeness status.
  * Used by the Month dropdown to show which months are selectable.
  * 
- * @param accountSnapshots - Account snapshots to check completeness
+ * @param statementHistory - Complete statement history (ALL statements, not just latest per account)
  * @param nowOverride - Optional date override for testing
  * @returns Array of selectable months, newest first
  */
 export function getSelectableMonths(
-  accountSnapshots?: Array<{ 
+  statementHistory?: Array<{ 
     accountType: string; 
     statementMonth: string;
-    statementDate?: string;
+    statementDate: string;
     accountName?: string;
     slug: string;
   }>,
@@ -982,28 +982,28 @@ export function getSelectableMonths(
     let isComplete = true;
     const missingAccounts: string[] = [];
     
-    if (accountSnapshots && accountSnapshots.length > 0) {
+    if (statementHistory && statementHistory.length > 0) {
       const ACTIVE_WINDOW_DAYS = 60;
       
       // Filter to transactional accounts
-      const transactionalAccounts = accountSnapshots.filter(a => {
-        const type = a.accountType.toLowerCase();
+      const transactionalStatements = statementHistory.filter(s => {
+        const type = s.accountType.toLowerCase();
         return type === 'checking' || type === 'chequing' || type === 'credit';
       });
       
-      if (transactionalAccounts.length > 0) {
+      if (transactionalStatements.length > 0) {
         // Group by slug - keep ALL statements per account
-        const statementsBySlug = new Map<string, typeof transactionalAccounts>();
-        for (const acc of transactionalAccounts) {
-          if (!statementsBySlug.has(acc.slug)) {
-            statementsBySlug.set(acc.slug, []);
+        const statementsBySlug = new Map<string, typeof transactionalStatements>();
+        for (const stmt of transactionalStatements) {
+          if (!statementsBySlug.has(stmt.slug)) {
+            statementsBySlug.set(stmt.slug, []);
           }
-          statementsBySlug.get(acc.slug)!.push(acc);
+          statementsBySlug.get(stmt.slug)!.push(stmt);
         }
         
         // Find the newest statement across all accounts
-        const allStatementDates = transactionalAccounts.map(a => 
-          parseStatementDate(a.statementDate, a.statementMonth).getTime()
+        const allStatementDates = transactionalStatements.map(s => 
+          parseStatementDate(s.statementDate, s.statementMonth).getTime()
         );
         const newestDate = Math.max(...allStatementDates);
         const cutoffDate = newestDate - (ACTIVE_WINDOW_DAYS * 24 * 60 * 60 * 1000);

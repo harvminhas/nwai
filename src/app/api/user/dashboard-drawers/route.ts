@@ -45,7 +45,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
     const reviewContext = await loadUserReviewContext(decoded.uid, db);
     
     // Use shared window resolution helper with account snapshots for completeness check
-    const windowResult = resolveWindowMonths(range, profile.monthlyHistory, profile.accountSnapshots);
+    const windowResult = resolveWindowMonths(range, profile.monthlyHistory, profile.statementHistory);
 
     // Income drawer data
     if (bucket === "income") {

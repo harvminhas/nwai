@@ -79,6 +79,19 @@ export interface AccountBalanceHistory {
   entries:     { yearMonth: string; balance: number; derived?: boolean; sourceStatement?: string }[];
 }
 
+/**
+ * Single statement record for completeness checking.
+ * Contains the minimal info needed to determine which month a statement covers.
+ */
+export interface StatementHistoryEntry {
+  slug: string;
+  accountType: string;
+  /** Statement closing date (YYYY-MM-DD) */
+  statementDate: string;
+  /** Statement month label (YYYY-MM) - for fallback when date is invalid */
+  statementMonth: string;
+}
+
 // ── types ──────────────────────────────────────────────────────────────────────
 
 export interface MonthlyHistoryEntry {
@@ -161,6 +174,12 @@ export interface FinancialProfileCache {
   incomeTxns: IncomeTxnRecord[];
   /** Latest balance snapshot per account */
   accountSnapshots: AccountSnapshot[];
+  /**
+   * Complete statement history — ALL statements for ALL accounts (not just latest).
+   * Used for completeness checking: a month is complete when every active account
+   * has at least one statement assigned to that month.
+   */
+  statementHistory: StatementHistoryEntry[];
   /** All distinct transaction months, sorted ascending (derived from monthlyHistory) */
   allTxMonths: string[];
   /** Latest month that has at least one transaction */
@@ -1103,6 +1122,44 @@ export async function buildAndCacheFinancialProfile(
     };
   });
 
+  // ── Build complete statement history (ALL statements, not just latest) ──────
+  // Used for completeness checking: a month is complete when every active account
+  // has at least one statement assigned to that month.
+  const statementHistory: StatementHistoryEntry[] = [];
+  for (const doc of confirmedDocs) {
+    const d = doc.data();
+    const parsed = d.parsedData as ParsedStatementData | undefined;
+    if (!parsed) continue;
+
+    const ym = (d.yearMonth as string | undefined) ?? (parsed.statementDate ?? "").slice(0, 7);
+    if (!ym) continue;
+
+    // Use same slug resolution as balance history
+    const rawSlug = (d.accountSlug as string | undefined) || getAccountSlug(parsed);
+    const normalizedId = normalizeAccountId(parsed.accountId);
+    let slug = (normalizedId !== "unknown" && /^\d{4}$/.test(normalizedId))
+      ? normalizedId
+      : rawSlug;
+
+    if (!/^\d{4}$/.test(slug)) {
+      const label = parsed.accountName ?? parsed.bankName ?? slug;
+      const dedupeKey = labelDedupeKey(label, parsed.accountType ?? "other");
+      const canonical = slugByLabelKey.get(dedupeKey);
+      if (canonical) {
+        slug = canonical;
+      } else {
+        slugByLabelKey.set(dedupeKey, slug);
+      }
+    }
+
+    statementHistory.push({
+      slug,
+      accountType: parsed.accountType ?? "other",
+      statementDate: parsed.statementDate ?? `${ym}-28`, // fallback to mid-month
+      statementMonth: ym,
+    });
+  }
+
   // Fetch FX rates for any non-home currencies present in snapshots OR transactions.
   const currencySet = new Set<string>([
     ...mergedSnapshots.map((s) => (s.currency ?? "CAD").toUpperCase()),
@@ -1337,6 +1394,7 @@ export async function buildAndCacheFinancialProfile(
     expenseTxns,
     incomeTxns,
     accountSnapshots: mergedSnapshots,
+    statementHistory,
     allTxMonths,
     latestTxMonth,
     manualAssets,

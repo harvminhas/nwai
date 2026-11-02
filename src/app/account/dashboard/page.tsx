@@ -67,10 +67,10 @@ interface MoneyCoachBreakdown {
     missingMonths?: string[];
     missingAccounts?: string[];
     months: string[];
-    accountSnapshots?: Array<{
+    statementHistory?: Array<{
       accountType: string;
       statementMonth: string;
-      statementDate?: string;
+      statementDate: string;
       accountName?: string;
       slug: string;
     }>;
@@ -868,8 +868,8 @@ export default function DashboardPage() {
         setCurrency(data.homeCurrency || "USD");
         
         // Compute selectable months for the Month dropdown
-        if (data.window?.accountSnapshots) {
-          const months = getSelectableMonths(data.window.accountSnapshots);
+        if (data.window?.statementHistory) {
+          const months = getSelectableMonths(data.window.statementHistory);
           setSelectableMonths(months);
         }
         

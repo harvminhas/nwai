@@ -7,7 +7,6 @@
 
 import type { UserStatementSummary } from "./types";
 import { buildAccountSlug, getAccountSlug } from "./accountSlug";
-import { getAssignedMonth, parseStatementDate } from "./rangeUtils";
 
 export interface CoverageMonth {
   yearMonth: string;
@@ -139,12 +138,7 @@ export function computeStatementCoverage(
     
     // Use canonical slug from accountSlug.ts (primarily last 4 digits)
     const slug = getAccountSlug(stmt);
-    
-    // Apply the same closing-date assignment rule as rangeUtils (15th cutoff)
-    // Derive statementMonth as fallback for parseStatementDate (in case date is invalid)
-    const statementMonth = stmt.statementDate.slice(0, 7);
-    const closingDate = parseStatementDate(stmt.statementDate, statementMonth);
-    const yearMonth = getAssignedMonth(closingDate);
+    const yearMonth = stmt.statementDate.slice(0, 7);
     
     if (!accountMap.has(slug)) {
       accountMap.set(slug, {
