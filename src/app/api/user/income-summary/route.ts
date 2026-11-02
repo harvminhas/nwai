@@ -37,7 +37,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const profile = await getFinancialProfile(decoded.uid, db);
 
     // Use shared window resolution helper with account snapshots for completeness check
-    const windowResult = resolveWindowMonths(range, profile.monthlyHistory, profile.accountSnapshots);
+    const windowResult = resolveWindowMonths(range, profile.monthlyHistory, profile.statementHistory);
 
     // Load income deposit reviews
     const incomeReviewsSnap = await db

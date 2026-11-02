@@ -40,7 +40,7 @@ describe('Month dropdown', () => {
     const now = new Date('2026-11-01T00:00:00');
     
     const accountSnapshots = [
-      // Checking has statements through Sep
+      // Checking: Sep 30 statement → assigned to Sep (30 ≥ 16)
       {
         accountType: 'checking',
         statementMonth: '2026-09',
@@ -48,11 +48,19 @@ describe('Month dropdown', () => {
         accountName: 'TD Checking',
         slug: 'td-checking-1234',
       },
-      // Credit has statements through Oct
+      // Checking: Oct 31 statement → assigned to Oct
+      {
+        accountType: 'checking',
+        statementMonth: '2026-10',
+        statementDate: '2026-10-31',
+        accountName: 'TD Checking',
+        slug: 'td-checking-1234',
+      },
+      // Credit: Oct 21 statement → assigned to Oct (21 ≥ 16)
       {
         accountType: 'credit',
         statementMonth: '2026-10',
-        statementDate: '2026-10-31',
+        statementDate: '2026-10-21',
         accountName: 'CIBC Visa',
         slug: 'cibc-credit-5678',
       },
@@ -60,19 +68,18 @@ describe('Month dropdown', () => {
     
     const months = getSelectableMonths(accountSnapshots, now);
     
-    // Oct should be incomplete (checking is missing)
+    // Oct should be complete (both accounts have statements assigned to Oct)
     const octMonth = months.find(m => m.yearMonth === '2026-10');
     expect(octMonth).toBeDefined();
-    expect(octMonth?.isComplete).toBe(false);
-    expect(octMonth?.missingAccounts.length).toBeGreaterThan(0);
-    expect(octMonth?.missingAccounts[0]).toContain('TD Checking');
-    expect(octMonth?.missingAccounts[0]).toContain('1234');
+    expect(octMonth?.isComplete).toBe(true);
+    expect(octMonth?.missingAccounts).toEqual([]);
     
-    // Sep should be complete (both have it)
+    // Sep should be incomplete (credit card is missing - Oct 21 doesn't count for Sep)
     const sepMonth = months.find(m => m.yearMonth === '2026-09');
     expect(sepMonth).toBeDefined();
-    expect(sepMonth?.isComplete).toBe(true);
-    expect(sepMonth?.missingAccounts).toEqual([]);
+    expect(sepMonth?.isComplete).toBe(false);
+    expect(sepMonth?.missingAccounts.length).toBeGreaterThan(0);
+    expect(sepMonth?.missingAccounts[0]).toContain('CIBC Visa');
   });
   
   it('single-month selection resolves to one month', () => {
@@ -124,6 +131,33 @@ describe('Month dropdown', () => {
     ];
     
     const accountSnapshots = [
+      // August statements
+      {
+        accountType: 'checking',
+        statementMonth: '2026-08',
+        statementDate: '2026-08-31',
+        slug: 'td-checking-1234',
+      },
+      {
+        accountType: 'credit',
+        statementMonth: '2026-08',
+        statementDate: '2026-08-31',
+        slug: 'cibc-credit-5678',
+      },
+      // September statements
+      {
+        accountType: 'checking',
+        statementMonth: '2026-09',
+        statementDate: '2026-09-30',
+        slug: 'td-checking-1234',
+      },
+      {
+        accountType: 'credit',
+        statementMonth: '2026-09',
+        statementDate: '2026-09-30',
+        slug: 'cibc-credit-5678',
+      },
+      // October statements
       {
         accountType: 'checking',
         statementMonth: '2026-10',
@@ -182,6 +216,21 @@ describe('Month dropdown', () => {
     ];
     
     const accountSnapshots = [
+      // August statement
+      {
+        accountType: 'checking',
+        statementMonth: '2026-08',
+        statementDate: '2026-08-31',
+        slug: 'td-checking-1234',
+      },
+      // September statement
+      {
+        accountType: 'checking',
+        statementMonth: '2026-09',
+        statementDate: '2026-09-30',
+        slug: 'td-checking-1234',
+      },
+      // October statement
       {
         accountType: 'checking',
         statementMonth: '2026-10',
