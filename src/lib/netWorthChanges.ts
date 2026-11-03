@@ -110,7 +110,7 @@ export async function generateNetWorthChanges(
         balance: isActive ? snap.balance : 0, // Exclude inactive accounts
         label: snap.accountName || `${snap.bankName} ${snap.accountType}`,
         type: snap.accountType,
-        currency: snap.currency,
+        currency: snap.currency || "CAD",
       });
     }
   }
