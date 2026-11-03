@@ -47,6 +47,18 @@ function NetWorthPageContent() {
       if (last12.length > 0 && !selectedMonth) {
         setSelectedMonth(last12[last12.length - 1].month);
       }
+
+      // Update netWorthLastViewedAt to clear the badge count
+      await fetch("/api/user/profile", {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${tok}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          netWorthLastViewedAt: new Date().toISOString(),
+        }),
+      }).catch(err => console.error("Failed to update netWorthLastViewedAt:", err));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load net worth data");
     } finally {

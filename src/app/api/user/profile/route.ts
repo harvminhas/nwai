@@ -22,7 +22,9 @@ export async function GET(req: NextRequest) {
   if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const userDoc = await db.collection("users").doc(access.targetUid).get();
-  const confirmedCountry = (userDoc.data()?.country as Country | undefined) ?? null;
+  const userData = userDoc.data();
+  const confirmedCountry = (userData?.country as Country | undefined) ?? null;
+  const netWorthLastViewedAt = userData?.netWorthLastViewedAt as string | undefined;
 
   // Auto-detect from bank names if not yet confirmed
   let detectedCountry: Country = "US";
@@ -33,7 +35,7 @@ export async function GET(req: NextRequest) {
     // no statements yet — default to US
   }
 
-  return NextResponse.json({ confirmedCountry, detectedCountry });
+  return NextResponse.json({ confirmedCountry, detectedCountry, netWorthLastViewedAt });
 }
 
 // ── PATCH ─────────────────────────────────────────────────────────────────────
@@ -43,37 +45,52 @@ export async function PATCH(req: NextRequest) {
   const access = await resolveAccess(req, db);
   if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  let body: { country?: unknown };
+  let body: { country?: unknown; netWorthLastViewedAt?: string };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const country = body.country;
-  if (!country || !ALLOWED_COUNTRIES.includes(country as Country)) {
-    return NextResponse.json(
-      { error: `country must be one of: ${ALLOWED_COUNTRIES.join(", ")}` },
-      { status: 400 },
-    );
+  const updates: Record<string, any> = {};
+
+  // Handle country update
+  if (body.country !== undefined) {
+    const country = body.country;
+    if (!ALLOWED_COUNTRIES.includes(country as Country)) {
+      return NextResponse.json(
+        { error: `country must be one of: ${ALLOWED_COUNTRIES.join(", ")}` },
+        { status: 400 },
+      );
+    }
+    updates.country = country as Country;
+  }
+
+  // Handle netWorthLastViewedAt update
+  if (body.netWorthLastViewedAt !== undefined) {
+    updates.netWorthLastViewedAt = body.netWorthLastViewedAt;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
   }
 
   const batch = db.batch();
 
   batch.set(
     db.collection("users").doc(access.targetUid),
-    { country: country as Country },
+    updates,
     { merge: true },
   );
 
-  // Invalidate external cards cache so the pipeline regenerates with the
-  // new country on the next dashboard load — not doing this would leave
-  // wrong-country cards in place until global data is refreshed.
-  batch.delete(
-    db.doc(`users/${access.targetUid}/externalCardsMeta/v1`),
-  );
+  // Invalidate external cards cache if country was updated
+  if (updates.country) {
+    batch.delete(
+      db.doc(`users/${access.targetUid}/externalCardsMeta/v1`),
+    );
+  }
 
   await batch.commit();
 
-  return NextResponse.json({ ok: true, country });
+  return NextResponse.json({ ok: true, ...updates });
 }

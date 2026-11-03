@@ -19,12 +19,57 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
   const router = useRouter();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [user, setUser] = useState<any>(null);
+  const [newChangesCount, setNewChangesCount] = useState<number>(0);
   const features = getFeatureFlags();
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, setUser);
   }, []);
+
+  // Fetch new changes count
+  useEffect(() => {
+    if (!user) return;
+
+    const fetchNewChangesCount = async () => {
+      try {
+        const token = await user.getIdToken();
+        
+        // Get user's last viewed timestamp
+        const userRes = await fetch("/api/user/profile", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        
+        if (!userRes.ok) return;
+        const userData = await userRes.json();
+        const lastViewed = userData.netWorthLastViewedAt;
+
+        // Get all changes
+        const changesRes = await fetch("/api/user/net-worth-changes", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        
+        if (!changesRes.ok) return;
+        const changesData = await changesRes.json();
+        
+        // Count items created after lastViewed
+        let count = 0;
+        for (const monthSummary of (changesData.changes || [])) {
+          for (const item of (monthSummary.items || [])) {
+            if (!lastViewed || item.generatedAt > lastViewed) {
+              count++;
+            }
+          }
+        }
+        
+        setNewChangesCount(count);
+      } catch (err) {
+        console.error("Failed to fetch new changes count:", err);
+      }
+    };
+
+    fetchNewChangesCount();
+  }, [user]);
 
   const handleSignOut = async () => {
     const { auth } = getFirebaseClient();
@@ -178,8 +223,8 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
                 <div className="hidden h-8 w-48 animate-pulse rounded-full border border-gray-200 bg-gray-100 sm:block" />
               ) : (
                 <Link
-                  href="/account/assets"
-                  className="hidden items-center gap-2.5 whitespace-nowrap rounded-full border border-gray-200 bg-white px-3.5 py-1.5 text-[13px] transition-colors hover:border-gray-300 sm:flex"
+                  href="/account/net-worth"
+                  className="hidden items-center gap-2.5 whitespace-nowrap rounded-full border border-gray-200 bg-white px-3.5 py-1.5 text-[13px] transition-colors hover:border-gray-300 sm:flex relative"
                 >
                   <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Net worth</span>
                   <span className="font-bold tabular-nums text-gray-900">{fmt(netWorth, currency)}</span>
@@ -189,6 +234,11 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
                     >
                       {monthlyChange > 0 ? "▲" : "▼"}
                       {fmt(Math.abs(monthlyChange), currency)}
+                    </span>
+                  )}
+                  {newChangesCount > 0 && (
+                    <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-purple-600 px-1.5 text-[10px] font-bold text-white">
+                      {newChangesCount}
                     </span>
                   )}
                 </Link>
