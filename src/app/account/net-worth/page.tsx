@@ -203,9 +203,11 @@ function NetWorthPageContent() {
     label: string;
     amount: number;
     accountSlug: string;
+    isBaseline?: boolean; // First appearance of account (not a real change)
   }
   
   const breakdownLines: BreakdownLine[] = [];
+  const baselineLines: BreakdownLine[] = [];
   
   if (previousData) {
     // Build maps of current and previous account values
@@ -229,28 +231,45 @@ function NetWorthPageContent() {
       // Determine category (assets are positive, debts are negative)
       const category = currentValue >= 0 || previousValue >= 0 ? "assets" : "debts";
       
-      breakdownLines.push({
+      // Check if this is a first appearance (baseline)
+      const isBaseline = previous === undefined && current !== undefined;
+      
+      const line: BreakdownLine = {
         category,
-        label: current?.label || previous?.label || slug,
+        label: isBaseline 
+          ? `${current.label} (first statement)` 
+          : (current?.label || previous?.label || slug),
         amount: change,
         accountSlug: slug,
-      });
+        isBaseline,
+      };
+      
+      if (isBaseline) {
+        baselineLines.push(line);
+      } else {
+        breakdownLines.push(line);
+      }
     }
     
     // Verify the sum equals the net worth change (should be exact by construction)
-    const computedTotal = breakdownLines.reduce((sum, line) => sum + line.amount, 0);
+    const realChangeTotal = breakdownLines.reduce((sum, line) => sum + line.amount, 0);
+    const baselineTotal = baselineLines.reduce((sum, line) => sum + line.amount, 0);
+    const computedTotal = realChangeTotal + baselineTotal;
     const actualChange = selectedData.change || 0;
     const roundingDiff = actualChange - computedTotal;
     
     // Only plug sub-$1 rounding differences
     if (Math.abs(roundingDiff) >= 1.0) {
       console.error(`What moved it breakdown doesn't add up: computed ${computedTotal}, actual ${actualChange}, diff ${roundingDiff}`);
-    } else if (Math.abs(roundingDiff) > 0.01 && breakdownLines.length > 0) {
-      // Apply sub-$1 rounding difference to largest line
-      const largestLine = breakdownLines.reduce((max, line) => 
-        Math.abs(line.amount) > Math.abs(max.amount) ? line : max
-      );
-      largestLine.amount += roundingDiff;
+    } else if (Math.abs(roundingDiff) > 0.01 && (breakdownLines.length > 0 || baselineLines.length > 0)) {
+      // Apply sub-$1 rounding difference to largest line (prefer real changes over baselines)
+      const allLines = [...breakdownLines, ...baselineLines];
+      if (allLines.length > 0) {
+        const largestLine = allLines.reduce((max, line) => 
+          Math.abs(line.amount) > Math.abs(max.amount) ? line : max
+        );
+        largestLine.amount += roundingDiff;
+      }
     }
   }
 
@@ -360,7 +379,12 @@ function NetWorthPageContent() {
         {selectedData.change !== null && (
           <div className="mb-4 p-4 bg-gray-50 rounded-lg">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-700">Total Change</span>
+              <span className="text-sm font-medium text-gray-700">
+                Total Change
+                {baselineLines.length > 0 && (
+                  <span className="ml-2 text-xs text-gray-500">(includes {baselineLines.length} baseline{baselineLines.length > 1 ? 's' : ''})</span>
+                )}
+              </span>
               <span className={`text-lg font-bold ${
                 selectedData.change > 0 ? "text-green-600" : 
                 selectedData.change < 0 ? "text-red-600" : "text-gray-900"
@@ -372,35 +396,88 @@ function NetWorthPageContent() {
           </div>
         )}
 
-        {breakdownLines.length > 0 ? (
-          <div className="space-y-2">
-            {breakdownLines.map((line, idx) => {
-              const accountPage = line.accountSlug 
-                ? line.category === "debts" 
-                  ? `/account/liabilities`
-                  : `/account/assets`
-                : null;
-              
-              const lineContent = (
-                <div className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-                  <span className="text-sm text-gray-700">{line.label}</span>
-                  <span className={`text-sm font-semibold ${
-                    line.amount > 0 ? "text-green-600" : line.amount < 0 ? "text-red-600" : "text-gray-900"
+        {(breakdownLines.length > 0 || baselineLines.length > 0) ? (
+          <div className="space-y-4">
+            {/* Real changes */}
+            {breakdownLines.length > 0 && (
+              <div className="space-y-2">
+                {breakdownLines.map((line, idx) => {
+                  const accountPage = line.accountSlug 
+                    ? line.category === "debts" 
+                      ? `/account/liabilities`
+                      : `/account/assets`
+                    : null;
+                  
+                  const lineContent = (
+                    <div className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                      <span className="text-sm text-gray-700">{line.label}</span>
+                      <span className={`text-sm font-semibold ${
+                        line.amount > 0 ? "text-green-600" : line.amount < 0 ? "text-red-600" : "text-gray-900"
+                      }`}>
+                        {line.amount > 0 ? "+" : ""}
+                        {formatCurrency(line.amount, currency)}
+                      </span>
+                    </div>
+                  );
+                  
+                  return accountPage ? (
+                    <Link key={idx} href={accountPage} className="block hover:bg-gray-50 -mx-2 px-2 rounded transition-colors">
+                      {lineContent}
+                    </Link>
+                  ) : (
+                    <div key={idx}>{lineContent}</div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Real change subtotal (if baselines exist) */}
+            {baselineLines.length > 0 && breakdownLines.length > 0 && (
+              <div className="py-2 border-t-2 border-gray-300">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-700">Real Change</span>
+                  <span className={`text-sm font-bold ${
+                    breakdownLines.reduce((sum, line) => sum + line.amount, 0) > 0 ? "text-green-600" : 
+                    breakdownLines.reduce((sum, line) => sum + line.amount, 0) < 0 ? "text-red-600" : "text-gray-900"
                   }`}>
-                    {line.amount > 0 ? "+" : ""}
-                    {formatCurrency(line.amount, currency)}
+                    {breakdownLines.reduce((sum, line) => sum + line.amount, 0) > 0 ? "+" : ""}
+                    {formatCurrency(breakdownLines.reduce((sum, line) => sum + line.amount, 0), currency)}
                   </span>
                 </div>
-              );
-              
-              return accountPage ? (
-                <Link key={idx} href={accountPage} className="block hover:bg-gray-50 -mx-2 px-2 rounded transition-colors">
-                  {lineContent}
-                </Link>
-              ) : (
-                <div key={idx}>{lineContent}</div>
-              );
-            })}
+              </div>
+            )}
+
+            {/* Baseline section */}
+            {baselineLines.length > 0 && (
+              <div className="space-y-2 pt-2 border-t border-gray-200">
+                <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">First Statements (Baseline)</div>
+                {baselineLines.map((line, idx) => {
+                  const accountPage = line.accountSlug 
+                    ? line.category === "debts" 
+                      ? `/account/liabilities`
+                      : `/account/assets`
+                    : null;
+                  
+                  const lineContent = (
+                    <div className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                      <span className="text-sm text-gray-600 italic">{line.label}</span>
+                      <span className="text-sm text-gray-600 italic">
+                        {line.amount > 0 ? "+" : ""}
+                        {formatCurrency(line.amount, currency)}
+                      </span>
+                    </div>
+                  );
+                  
+                  return accountPage ? (
+                    <Link key={idx} href={accountPage} className="block hover:bg-gray-50 -mx-2 px-2 rounded transition-colors">
+                      {lineContent}
+                    </Link>
+                  ) : (
+                    <div key={idx}>{lineContent}</div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         ) : (
           <p className="text-sm text-gray-500 text-center py-4">
