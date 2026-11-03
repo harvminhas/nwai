@@ -49,6 +49,7 @@ function NetWorthPageContent() {
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<MonthlyNetWorthData[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+  const [viewMonth, setViewMonth] = useState<string | null>(null); // For interactive header
   const [filterType, setFilterType] = useState<FilterType>("all");
   const [currency, setCurrency] = useState<string>("CAD");
 
@@ -178,6 +179,10 @@ function NetWorthPageContent() {
   }
 
   const latestMonth = data[data.length - 1];
+  const viewData = viewMonth 
+    ? data.find(d => d.yearMonth === viewMonth) || latestMonth 
+    : latestMonth;
+  const isViewingLatest = !viewMonth || viewMonth === latestMonth.yearMonth;
   const selectedData = data.find(d => d.yearMonth === selectedMonth) || latestMonth;
 
   // Helper to categorize items by filter type
@@ -295,20 +300,35 @@ function NetWorthPageContent() {
             </p>
           </div>
           <div className="text-right">
-            <div className="text-3xl font-bold text-gray-900 tabular-nums">
-              {formatCurrency(latestMonth.netWorth, currency)}
+            <div className="flex items-center justify-end gap-2 mb-1">
+              <div className="text-3xl font-bold text-gray-900 tabular-nums">
+                {formatCurrency(viewData.netWorth, currency)}
+              </div>
+              {!isViewingLatest && (
+                <button
+                  onClick={() => setViewMonth(null)}
+                  className="text-xs text-purple-600 hover:text-purple-700 font-medium underline"
+                >
+                  Back to latest
+                </button>
+              )}
             </div>
-            {latestMonth.change !== null && (
+            {!isViewingLatest && (
+              <div className="text-xs text-gray-500 mb-1">
+                as of {new Date(viewData.yearMonth + "-15").toLocaleDateString("en-US", { month: "short", year: "numeric" })}
+              </div>
+            )}
+            {viewData.change !== null && (
               <div className={`text-sm font-medium ${
-                latestMonth.change > 0 ? "text-green-600" : 
-                latestMonth.change < 0 ? "text-red-600" : "text-gray-500"
+                viewData.change > 0 ? "text-green-600" : 
+                viewData.change < 0 ? "text-red-600" : "text-gray-500"
               }`}>
-                {latestMonth.change > 0 ? "+" : ""}
-                {formatCurrency(latestMonth.change, currency)}
-                {latestMonth.changePercent !== null && (
+                {viewData.change > 0 ? "+" : ""}
+                {formatCurrency(viewData.change, currency)}
+                {viewData.changePercent !== null && (
                   <span className="ml-1">
-                    ({latestMonth.changePercent > 0 ? "+" : ""}
-                    {latestMonth.changePercent.toFixed(1)}%)
+                    ({viewData.changePercent > 0 ? "+" : ""}
+                    {viewData.changePercent.toFixed(1)}%)
                   </span>
                 )}
                 <span className="text-gray-400 ml-2">vs last month</span>
@@ -327,7 +347,10 @@ function NetWorthPageContent() {
             {data.map((monthData) => {
               const maxValue = Math.max(...data.map(d => Math.abs(d.netWorth)));
               const height = maxValue > 0 ? (Math.abs(monthData.netWorth) / maxValue) * 100 : 0;
-              const isSelected = monthData.yearMonth === selectedMonth;
+              const isSelectedForFeed = monthData.yearMonth === selectedMonth;
+              const isSelectedForView = viewMonth 
+                ? monthData.yearMonth === viewMonth 
+                : monthData.yearMonth === latestMonth.yearMonth;
               const isPositive = monthData.netWorth >= 0;
               
               // Check for event markers
@@ -337,7 +360,10 @@ function NetWorthPageContent() {
               return (
                 <button
                   key={monthData.yearMonth}
-                  onClick={() => setSelectedMonth(monthData.yearMonth)}
+                  onClick={() => {
+                    setSelectedMonth(monthData.yearMonth);
+                    setViewMonth(monthData.yearMonth);
+                  }}
                   className="flex-1 flex flex-col items-center justify-end group relative"
                   style={{ height: "100%" }}
                 >
@@ -356,14 +382,14 @@ function NetWorthPageContent() {
                   <div className="flex-1 flex items-end w-full">
                     <div
                       className={`w-full transition-all ${
-                        isSelected 
-                          ? isPositive ? "bg-green-600" : "bg-red-600"
+                        isSelectedForView 
+                          ? isPositive ? "bg-green-600 ring-2 ring-green-800 ring-offset-2" : "bg-red-600 ring-2 ring-red-800 ring-offset-2"
                           : isPositive ? "bg-green-400 group-hover:bg-green-500" : "bg-red-400 group-hover:bg-red-500"
                       }`}
                       style={{ height: `${height}%` }}
                     />
                   </div>
-                  <div className={`text-xs mt-2 ${isSelected ? "font-semibold text-gray-900" : "text-gray-500"}`}>
+                  <div className={`text-xs mt-2 ${isSelectedForView ? "font-semibold text-gray-900" : "text-gray-500"}`}>
                     {formatMonthLabel(monthData.yearMonth)}
                   </div>
                 </button>
