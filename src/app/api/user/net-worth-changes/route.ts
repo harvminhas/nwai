@@ -35,11 +35,21 @@ export async function GET(req: NextRequest) {
   const month = url.searchParams.get("month") || undefined;
 
   try {
-    const changes = await getNetWorthChanges(decoded.uid, db, {
+    let changes = await getNetWorthChanges(decoded.uid, db, {
       month,
       startMonth,
       endMonth,
     });
+
+    // If no changes exist for this user, generate them first (idempotent)
+    if (changes.length === 0) {
+      await generateNetWorthChanges(decoded.uid, db);
+      changes = await getNetWorthChanges(decoded.uid, db, {
+        month,
+        startMonth,
+        endMonth,
+      });
+    }
 
     return NextResponse.json({ changes });
   } catch (err) {
