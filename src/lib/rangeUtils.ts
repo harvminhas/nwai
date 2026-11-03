@@ -341,14 +341,28 @@ export function getLatestCompleteMonth(
     statementDate: string;
     accountName?: string;
     slug: string;
-  }>
+  }>,
+  accountStatusMap?: Map<string, { status: string; statusDate: string }>
 ): { latestCompleteMonth: string | undefined; missingAccounts: string[]; missingMonth?: string } {
   const ACTIVE_WINDOW_DAYS = 60; // Account is active if statement within last 60 days
   
   // Filter to transactional accounts (checking and credit only)
+  // AND exclude accounts that are currently paid_off or closed
   const transactionalStatements = (statementHistory ?? []).filter(s => {
     const type = s.accountType.toLowerCase();
-    return type === 'checking' || type === 'chequing' || type === 'credit';
+    if (!(type === 'checking' || type === 'chequing' || type === 'credit')) {
+      return false;
+    }
+    
+    // Exclude currently paid-off/closed accounts
+    if (accountStatusMap) {
+      const status = accountStatusMap.get(s.slug);
+      if (status && (status.status === 'paid_off' || status.status === 'closed')) {
+        return false;
+      }
+    }
+    
+    return true;
   });
 
   if (transactionalStatements.length === 0) {
@@ -604,7 +618,8 @@ function isMonthComplete(
     statementMonth: string;
     statementDate: string;
     slug: string;
-  }>
+  }>,
+  accountStatusMap?: Map<string, { status: string; statusDate: string }>
 ): boolean {
   // Never consider current or future months complete
   const now = (globalThis as any).__TEST_NOW__ || new Date();
@@ -616,9 +631,25 @@ function isMonthComplete(
   const ACTIVE_WINDOW_DAYS = 60;
   
   // Filter to transactional accounts (checking and credit only)
+  // AND exclude accounts that were paid off or closed before or during this month
   const transactionalAccounts = (statementHistory ?? []).filter(a => {
     const type = a.accountType.toLowerCase();
-    return type === 'checking' || type === 'chequing' || type === 'credit';
+    if (!(type === 'checking' || type === 'chequing' || type === 'credit')) {
+      return false;
+    }
+    
+    // Exclude paid-off/closed accounts
+    if (accountStatusMap) {
+      const status = accountStatusMap.get(a.slug);
+      if (status && (status.status === 'paid_off' || status.status === 'closed')) {
+        // If account was closed/paid off before or during this month, don't require it
+        if (status.statusDate <= month) {
+          return false;
+        }
+      }
+    }
+    
+    return true;
   });
 
   if (transactionalAccounts.length === 0) return true;
@@ -694,7 +725,8 @@ export function resolveWindowMonths(
     statementDate: string; 
     accountName?: string;
     slug: string;
-  }>
+  }>,
+  accountStatusMap?: Map<string, { status: string; statusDate: string }>
 ): ResolvedWindowMonths {
   // Get current month - never include current or future months
   const now = (globalThis as any).__TEST_NOW__ || new Date();
@@ -720,7 +752,7 @@ export function resolveWindowMonths(
   
   if (hasStatementHistory) {
     completeMonths = availableMonths.filter(month => 
-      isMonthComplete(month, statementHistory!)
+      isMonthComplete(month, statementHistory!, accountStatusMap)
     );
   } else {
     // No statement history - all months with data are considered complete
@@ -845,7 +877,7 @@ export function resolveWindowMonths(
       // Report which accounts are missing for the months we're actually showing
       // This ensures the dropdown and nudge agree on completeness
       for (const month of selectedMonths) {
-        if (!isMonthComplete(month, statementHistory!)) {
+        if (!isMonthComplete(month, statementHistory!, accountStatusMap)) {
           missingMonthsInWindow.push(month);
         }
       }
@@ -856,10 +888,22 @@ export function resolveWindowMonths(
       // Compute missing account details using closing day assignment rule
       const ACTIVE_WINDOW_DAYS = 60;
       
-      // Filter to transactional accounts (checking and credit only)
+      // Filter to transactional accounts (checking and credit only) AND exclude paid-off/closed accounts
       const transactionalStatements = (statementHistory ?? []).filter(s => {
         const type = s.accountType.toLowerCase();
-        return type === 'checking' || type === 'chequing' || type === 'credit';
+        if (!(type === 'checking' || type === 'chequing' || type === 'credit')) {
+          return false;
+        }
+        
+        // Exclude accounts that are currently paid-off/closed
+        if (accountStatusMap) {
+          const status = accountStatusMap.get(s.slug);
+          if (status && (status.status === 'paid_off' || status.status === 'closed')) {
+            return false;
+          }
+        }
+        
+        return true;
       });
       
       if (transactionalStatements.length > 0) {
@@ -966,7 +1010,8 @@ export function getSelectableMonths(
     accountName?: string;
     slug: string;
   }>,
-  nowOverride?: Date
+  nowOverride?: Date,
+  accountStatusMap?: Map<string, { status: string; statusDate: string }>
 ): SelectableMonth[] {
   const now = nowOverride || new Date();
   const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -985,10 +1030,24 @@ export function getSelectableMonths(
     if (statementHistory && statementHistory.length > 0) {
       const ACTIVE_WINDOW_DAYS = 60;
       
-      // Filter to transactional accounts
+      // Filter to transactional accounts AND exclude paid-off/closed accounts for this specific month
       const transactionalStatements = statementHistory.filter(s => {
         const type = s.accountType.toLowerCase();
-        return type === 'checking' || type === 'chequing' || type === 'credit';
+        if (!(type === 'checking' || type === 'chequing' || type === 'credit')) {
+          return false;
+        }
+        
+        // Exclude accounts that were paid-off/closed before or during this month
+        if (accountStatusMap) {
+          const status = accountStatusMap.get(s.slug);
+          if (status && (status.status === 'paid_off' || status.status === 'closed')) {
+            if (status.statusDate <= yearMonth) {
+              return false;
+            }
+          }
+        }
+        
+        return true;
       });
       
       if (transactionalStatements.length > 0) {

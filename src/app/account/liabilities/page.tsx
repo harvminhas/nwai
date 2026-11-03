@@ -127,7 +127,20 @@ function LiabilitiesPageContent() {
       <div>
         {activeTab === "overview" && <OverviewTab summary={summary} />}
         {activeTab === "trends" && <TrendsTab summary={summary} />}
-        {activeTab === "accounts" && <AccountsTab summary={summary} />}
+        {activeTab === "accounts" && (
+          <AccountsTab 
+            summary={summary}
+            onRefresh={async () => {
+              const { auth } = getFirebaseClient();
+              const user = auth.currentUser;
+              if (user) {
+                setLoading(true);
+                const tok = await user.getIdToken();
+                await loadData(tok);
+              }
+            }}
+          />
+        )}
       </div>
     </div>
   );

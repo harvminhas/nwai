@@ -869,7 +869,13 @@ export default function DashboardPage() {
         
         // Compute selectable months for the Month dropdown
         if (data.window?.statementHistory) {
-          const months = getSelectableMonths(data.window.statementHistory);
+          // Build account status map to exclude paid-off/closed accounts
+          const accountStatusMap = data.window.accountStatusRecords 
+            ? new Map(
+                data.window.accountStatusRecords.map((r: any) => [r.accountSlug, { status: r.status, statusDate: r.statusDate }])
+              )
+            : undefined;
+          const months = getSelectableMonths(data.window.statementHistory, undefined, accountStatusMap);
           setSelectableMonths(months);
         }
         

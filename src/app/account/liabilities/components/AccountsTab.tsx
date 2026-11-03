@@ -6,15 +6,53 @@ import type { ManualLiability } from "@/lib/types";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { AccountDrawer, type AccountDrawerData } from "@/components/AccountDrawer";
 import { formatAccountLast4 } from "@/lib/rangeUtils";
+import { getFirebaseClient } from "@/lib/firebase";
 
 interface AccountsTabProps {
   summary: DebtsSummary;
+  onRefresh?: () => void;
 }
 
-export function AccountsTab({ summary }: AccountsTabProps) {
+export function AccountsTab({ summary, onRefresh }: AccountsTabProps) {
   const { groups, currency, payoffEstimates, monthlyHistory } = summary;
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
   const [drawerData, setDrawerData] = useState<AccountDrawerData | null>(null);
+  const [statusUpdating, setStatusUpdating] = useState<string | null>(null);
+
+  const handleStatusChange = async (accountSlug: string, status: "open" | "paid_off" | "closed") => {
+    setStatusUpdating(accountSlug);
+    try {
+      const { auth } = getFirebaseClient();
+      const user = auth.currentUser;
+      if (!user) return;
+
+      const token = await user.getIdToken();
+      const statusDate = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+
+      const res = await fetch("/api/user/account-status", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ accountSlug, status, statusDate }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to update account status");
+      }
+
+      // Refresh the data
+      if (onRefresh) {
+        onRefresh();
+      }
+    } catch (err) {
+      console.error("Failed to update account status:", err);
+      alert("Failed to update account status. Please try again.");
+    } finally {
+      setStatusUpdating(null);
+    }
+  };
 
   const handleAccountClick = (account: DebtAccount) => {
     const payoff = payoffEstimates.find(e => e.accountSlug === account.slug);
@@ -148,6 +186,8 @@ export function AccountsTab({ summary }: AccountsTabProps) {
                       currency={currency}
                       payoff={payoff}
                       onClick={() => handleAccountClick(acc)}
+                      onStatusChange={handleStatusChange}
+                      isUpdating={statusUpdating === acc.slug}
                     />
                   );
                 })}
@@ -186,49 +226,121 @@ function DebtAccountRow({
   account, 
   currency, 
   payoff,
-  onClick
+  onClick,
+  onStatusChange,
+  isUpdating
 }: { 
   account: DebtAccount; 
   currency: string;
   payoff?: { accountSlug: string; monthsToPayoff: number | null; payoffDate: string | null };
   onClick?: () => void;
+  onStatusChange?: (slug: string, status: "open" | "paid_off" | "closed") => void;
+  isUpdating?: boolean;
 }) {
+  const [showMenu, setShowMenu] = useState(false);
+
+  const handleMenuClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShowMenu(!showMenu);
+  };
+
+  const handleStatusClick = (e: React.MouseEvent, status: "open" | "paid_off" | "closed") => {
+    e.stopPropagation();
+    setShowMenu(false);
+    if (onStatusChange) {
+      onStatusChange(account.slug, status);
+    }
+  };
+
   return (
-    <button
-      onClick={onClick}
-      className="w-full flex items-start justify-between py-3 border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors rounded px-2 -mx-2 text-left"
-    >
-      <div className="flex-1">
-        <div className="flex items-center gap-2 mb-1">
-          <span className="font-medium text-gray-900">{account.bankName}</span>
-          <span className="text-xs text-gray-400 font-normal">{formatAccountLast4(account.slug)}</span>
-        </div>
-        {account.accountName && (
-          <p className="text-sm text-gray-600">{account.accountName}</p>
-        )}
-        <div className="flex gap-4 mt-2 text-xs text-gray-500">
-          {account.interestRate !== null && (
-            <span>{account.interestRate.toFixed(2)}% APR</span>
+    <div className="relative">
+      <button
+        onClick={onClick}
+        className="w-full flex items-start justify-between py-3 border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors rounded px-2 -mx-2 text-left"
+        disabled={isUpdating}
+      >
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="font-medium text-gray-900">{account.bankName}</span>
+            <span className="text-xs text-gray-400 font-normal">{formatAccountLast4(account.slug)}</span>
+          </div>
+          {account.accountName && (
+            <p className="text-sm text-gray-600">{account.accountName}</p>
           )}
-          {account.monthlyPayment !== null && (
-            <span>Payment: {formatCurrency(account.monthlyPayment, currency)}/mo</span>
+          <div className="flex gap-4 mt-2 text-xs text-gray-500">
+            {account.interestRate !== null && (
+              <span>{account.interestRate.toFixed(2)}% APR</span>
+            )}
+            {account.monthlyPayment !== null && (
+              <span>Payment: {formatCurrency(account.monthlyPayment, currency)}/mo</span>
+            )}
+          </div>
+          {payoff?.payoffDate && (
+            <p className="text-xs text-green-600 mt-1">
+              Payoff: {formatPayoffDate(payoff.payoffDate)} ({payoff.monthsToPayoff} months)
+            </p>
           )}
         </div>
-        {payoff?.payoffDate && (
-          <p className="text-xs text-green-600 mt-1">
-            Payoff: {formatPayoffDate(payoff.payoffDate)} ({payoff.monthsToPayoff} months)
-          </p>
-        )}
-      </div>
-      <div className="text-right">
-        <p className="text-base font-semibold text-gray-900 tabular-nums">
-          {formatCurrency(account.balance, currency)}
-        </p>
-        <p className="text-xs text-gray-500 capitalize mt-1">
-          {account.accountType.replace("_", " ")}
-        </p>
-      </div>
-    </button>
+        <div className="flex items-start gap-2">
+          <div className="text-right">
+            <p className="text-base font-semibold text-gray-900 tabular-nums">
+              {formatCurrency(account.balance, currency)}
+            </p>
+            <p className="text-xs text-gray-500 capitalize mt-1">
+              {account.accountType.replace("_", " ")}
+            </p>
+          </div>
+          {onStatusChange && (
+            <button
+              onClick={handleMenuClick}
+              disabled={isUpdating}
+              className="p-1 hover:bg-gray-200 rounded transition-colors"
+            >
+              {isUpdating ? (
+                <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+              ) : (
+                <svg className="w-5 h-5 text-gray-600" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+                </svg>
+              )}
+            </button>
+          )}
+        </div>
+      </button>
+
+      {/* Dropdown Menu */}
+      {showMenu && (
+        <>
+          <div 
+            className="fixed inset-0 z-10" 
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowMenu(false);
+            }}
+          />
+          <div className="absolute right-2 top-12 z-20 w-48 bg-white border border-gray-200 rounded-lg shadow-lg py-1">
+            <button
+              onClick={(e) => handleStatusClick(e, "paid_off")}
+              className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+            >
+              Mark as Paid Off
+            </button>
+            <button
+              onClick={(e) => handleStatusClick(e, "closed")}
+              className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+            >
+              Mark as Closed
+            </button>
+            <button
+              onClick={(e) => handleStatusClick(e, "open")}
+              className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+            >
+              Reopen
+            </button>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

@@ -39,6 +39,7 @@ import { getFxRatesForCurrencies } from "./fxRates";
 import { splitDebtPayments } from "./debtUtils";
 import type { SubscriptionRecord } from "./insights/types";
 import type { ExternalAccountLabel } from "./externalAccounts";
+import { getAllAccountStatuses, isAccountActive, type AccountStatusRecord } from "./accountStatus";
 
 // ── Balance snapshot shape (mirrors /api/user/balance-snapshots) ──────────────
 export interface BalanceSnapshot {
@@ -249,6 +250,11 @@ export interface FinancialProfileCache {
    * Loaded from users/{uid}/externalAccounts for fraud review.
    */
   externalAccountLabels: ExternalAccountLabel[];
+  /**
+   * Account status records (paid_off, closed).
+   * Used to exclude debt accounts from net worth and completeness checks.
+   */
+  accountStatusRecords: AccountStatusRecord[];
 }
 
 /** Stored APR / payment-frequency override for a single account. */
@@ -366,7 +372,7 @@ export async function buildAndCacheFinancialProfile(
   db: Firestore.Firestore,
 ): Promise<FinancialProfileCache> {
   // Fetch all data sources in parallel — same collections the assets page uses.
-  const [txData, rulesSnap, txnOverridesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap, backfillsSnap, cashCommitmentsSnap, manualLiabSnap, accountRatesSnap, goalsSnap, allSubsSnap, merchantCadenceSnap, externalAccountsSnap, userDocSnap] =
+  const [txData, rulesSnap, txnOverridesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap, backfillsSnap, cashCommitmentsSnap, manualLiabSnap, accountRatesSnap, goalsSnap, allSubsSnap, merchantCadenceSnap, externalAccountsSnap, userDocSnap, accountStatusMap] =
     await Promise.all([
       extractAllTransactions(uid, db),
       db.collection(`users/${uid}/categoryRules`).get(),
@@ -388,6 +394,7 @@ export async function buildAndCacheFinancialProfile(
       db.collection(`users/${uid}/merchantCadence`).get(),
       db.collection(`users/${uid}/externalAccounts`).get(),
       db.collection("users").doc(uid).get(),
+      getAllAccountStatuses(uid, db),
     ]);
   // Split all subscriptions into confirmed (for Upcoming/profile) vs all (for category mapping).
   const confirmedSubsSnap = {
@@ -1328,6 +1335,10 @@ export async function buildAndCacheFinancialProfile(
       }
 
       for (const { acct, sorted } of debtEntries) {
+        // Exclude paid-off/closed debts from net worth calculation
+        const isActive = isAccountActive(acct.slug, h.yearMonth, accountStatusMap);
+        if (!isActive) continue;
+
         let bal: number | null = null;
         for (const e of sorted) {
           if (e.yearMonth <= h.yearMonth) bal = e.balance;
@@ -1411,6 +1422,7 @@ export async function buildAndCacheFinancialProfile(
     debtPaymentHistory,
     cashCommitmentEntries,
     externalAccountLabels,
+    accountStatusRecords: Array.from(accountStatusMap.values()),
   };
 
   // Persist — JSON round-trip strips `undefined` fields (Firestore rejects them).

@@ -47,7 +47,11 @@ export async function GET(req: NextRequest) {
     }
     
     // Use shared window resolution helper with statement history for completeness check
-    const windowResult = resolveWindowMonths(range, profile.monthlyHistory, profile.statementHistory);
+    // Pass account status map to exclude paid-off/closed accounts from completeness checks
+    const accountStatusMap = new Map(
+      profile.accountStatusRecords.map(r => [r.accountSlug, { status: r.status, statusDate: r.statusDate }])
+    );
+    const windowResult = resolveWindowMonths(range, profile.monthlyHistory, profile.statementHistory, accountStatusMap);
 
     // Load all user review context (income, debt, savings)
     const reviewContext = await loadUserReviewContext(decoded.uid, db);
@@ -92,6 +96,7 @@ export async function GET(req: NextRequest) {
         missingAccounts: windowResult.missingAccounts,
         months: windowResult.months,
         statementHistory: profile.statementHistory, // For month dropdown completeness check
+        accountStatusRecords: profile.accountStatusRecords, // For excluding paid-off/closed accounts
       },
     });
   } catch (error) {

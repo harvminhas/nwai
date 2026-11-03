@@ -17,6 +17,8 @@ import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
 import { inferCurrencyFromBankName } from "@/lib/currencyUtils";
 import type { ParsedStatementData } from "@/lib/types";
 import { maskAccountNumbersInParsedData } from "@/lib/accountMasking";
+import { detectDebtPayoff, shouldAutoMarkPayoff, shouldPromptPayoff } from "@/lib/debtPayoffDetection";
+import { setAccountStatus } from "@/lib/accountStatus";
 
 export const maxDuration = 120;
 
@@ -392,6 +394,72 @@ export async function POST(request: NextRequest) {
         inferredCurrency,
       }),
     });
+
+    // ── Debt Payoff Detection ──
+    // After statement is successfully parsed and saved, check if this debt account has been paid off.
+    // Strong signals → auto-mark as paid_off with undo option.
+    // Weak signals → flag for user confirmation prompt.
+    if (userId && slug && maskedParsedData.accountType && 
+        ["credit_card", "line_of_credit", "loan", "mortgage"].includes(maskedParsedData.accountType)) {
+      try {
+        // Fetch previous statements for this account, sorted by date
+        const previousStatementsSnap = await db
+          .collection("statements")
+          .where("userId", "==", userId)
+          .where("accountSlug", "==", slug)
+          .where("status", "==", "completed")
+          .get();
+
+        const previousStatements: ParsedStatementData[] = previousStatementsSnap.docs
+          .filter(d => d.id !== statementId) // Exclude current statement
+          .map(d => d.data().parsedData as ParsedStatementData)
+          .filter(Boolean)
+          .sort((a, b) => (a.statementDate || "").localeCompare(b.statementDate || ""));
+
+        if (previousStatements.length > 0) {
+          const detection = detectDebtPayoff(parsedData, previousStatements, slug);
+
+          if (shouldAutoMarkPayoff(detection)) {
+            // Strong signal - auto-mark as paid off
+            const statusDate = parsedData.statementDate || new Date().toISOString().split("T")[0];
+            await setAccountStatus(
+              userId,
+              {
+                accountSlug: slug,
+                status: "paid_off",
+                statusDate,
+                statusSource: "auto",
+                updatedAt: new Date().toISOString(),
+                detectionReason: detection.reason,
+              },
+              db
+            );
+            
+            // Add undo info to statement so UI can show "Undo" option
+            await statementRef.update({
+              payoffDetected: true,
+              payoffAutoMarked: true,
+              payoffReason: detection.reason,
+            });
+
+            console.log(`[parse] Auto-marked account ${slug} as paid_off: ${detection.reason}`);
+          } else if (shouldPromptPayoff(detection)) {
+            // Weak signal - flag for user confirmation
+            await statementRef.update({
+              payoffDetected: true,
+              payoffAutoMarked: false,
+              payoffReason: detection.reason,
+              payoffPromptNeeded: true,
+            });
+            
+            console.log(`[parse] Flagged account ${slug} for payoff confirmation: ${detection.reason}`);
+          }
+        }
+      } catch (e) {
+        // Don't fail the parse if debt detection fails
+        console.error("[parse] debt payoff detection failed:", e);
+      }
+    }
 
     // Mark older statements for the same account+month as superseded.
     // Also clear stale setup flags on sibling statements for the same account —
