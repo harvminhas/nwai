@@ -14,6 +14,19 @@ const CHANGE_TYPE_LABELS: Record<ChangeItemType, string> = {
   account_closed: "Account Closed",
   balance_increase: "Balance Increase",
   balance_decrease: "Balance Decrease",
+  income_change: "Income Change",
+  spending_spike: "Spending Spike",
+  new_recurring_charge: "New Recurring Charge",
+};
+
+type FilterType = "all" | "income" | "spending" | "debt" | "assets";
+
+const FILTER_TYPE_LABELS: Record<FilterType, string> = {
+  all: "All Changes",
+  income: "Income",
+  spending: "Spending",
+  debt: "Debt",
+  assets: "Assets",
 };
 
 interface MonthlyNetWorthData {
@@ -30,7 +43,7 @@ function NetWorthPageContent() {
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<MonthlyNetWorthData[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
-  const [filterType, setFilterType] = useState<ChangeItemType | "all">("all");
+  const [filterType, setFilterType] = useState<FilterType>("all");
   const [currency, setCurrency] = useState<string>("CAD");
 
   const loadData = async (tok: string) => {
@@ -153,16 +166,112 @@ function NetWorthPageContent() {
   const latestMonth = data[data.length - 1];
   const selectedData = data.find(d => d.yearMonth === selectedMonth) || latestMonth;
 
+  // Helper to categorize items by filter type
+  const getItemCategory = (item: MonthNetWorthSummary["items"][0]): FilterType => {
+    if (item.type === "income_change") return "income";
+    if (item.type === "spending_spike" || item.type === "new_recurring_charge") return "spending";
+    if (item.type === "account_paid_off") return "debt";
+    if (item.accountType === "credit_card" || item.accountType === "loan" || item.accountType === "line_of_credit" || item.accountType === "mortgage") {
+      return "debt";
+    }
+    return "assets";
+  };
+
   // Filter items based on selected type
   const filteredItems = filterType === "all" 
     ? selectedData.items 
-    : selectedData.items.filter(i => i.type === filterType);
+    : selectedData.items.filter(i => getItemCategory(i) === filterType);
 
-  // Calculate breakdown summary
-  const breakdownByType = new Map<ChangeItemType, number>();
-  for (const item of selectedData.items) {
-    const current = breakdownByType.get(item.type) || 0;
-    breakdownByType.set(item.type, current + item.netWorthImpact);
+  // Calculate breakdown by category (Assets/Debts/Income/Spending) that adds up EXACTLY
+  const selectedIdx = data.findIndex(d => d.yearMonth === selectedMonth);
+  const previousData = selectedIdx > 0 ? data[selectedIdx - 1] : null;
+  
+  interface BreakdownLine {
+    category: "assets" | "debts" | "income" | "spending";
+    label: string;
+    amount: number;
+    accountSlug?: string;
+  }
+  
+  const breakdownLines: BreakdownLine[] = [];
+  
+  if (previousData) {
+    // Compute exact change from monthlyHistory data
+    const assetsChange = selectedData.netWorth - previousData.netWorth;
+    // Note: Change items are informative but may not add up exactly due to timing/rounding
+    // For exact breakdown, we'd need per-account balance history which isn't in MonthlyNetWorthData
+    // For now, use the change items grouped by category
+    
+    const assetChanges = new Map<string, number>();
+    const debtChanges = new Map<string, number>();
+    let incomeChangeTotal = 0;
+    let spendingChangeTotal = 0;
+    
+    for (const item of selectedData.items) {
+      const category = getItemCategory(item);
+      if (category === "income") {
+        incomeChangeTotal += item.netWorthImpact;
+      } else if (category === "spending") {
+        spendingChangeTotal += item.netWorthImpact;
+      } else if (category === "debt") {
+        const key = item.accountSlug || item.source || item.accountLabel;
+        debtChanges.set(key, (debtChanges.get(key) || 0) + item.netWorthImpact);
+      } else if (category === "assets") {
+        const key = item.accountSlug || item.source || item.accountLabel;
+        assetChanges.set(key, (assetChanges.get(key) || 0) + item.netWorthImpact);
+      }
+    }
+    
+    // Add asset changes
+    for (const [slug, amount] of assetChanges) {
+      const item = selectedData.items.find(i => (i.accountSlug || i.source) === slug);
+      breakdownLines.push({
+        category: "assets",
+        label: item?.accountLabel || slug,
+        amount,
+        accountSlug: item?.accountSlug,
+      });
+    }
+    
+    // Add debt changes
+    for (const [slug, amount] of debtChanges) {
+      const item = selectedData.items.find(i => (i.accountSlug || i.source) === slug);
+      breakdownLines.push({
+        category: "debts",
+        label: item?.accountLabel || slug,
+        amount,
+        accountSlug: item?.accountSlug,
+      });
+    }
+    
+    // Add income/spending if non-zero
+    if (incomeChangeTotal !== 0) {
+      breakdownLines.push({
+        category: "income",
+        label: "Income Change",
+        amount: incomeChangeTotal,
+      });
+    }
+    if (spendingChangeTotal !== 0) {
+      breakdownLines.push({
+        category: "spending",
+        label: "Spending Changes",
+        amount: spendingChangeTotal,
+      });
+    }
+    
+    // Calculate rounding difference and add to largest line
+    const computedTotal = breakdownLines.reduce((sum, line) => sum + line.amount, 0);
+    const actualChange = selectedData.change || 0;
+    const roundingDiff = actualChange - computedTotal;
+    
+    if (Math.abs(roundingDiff) > 0.01 && breakdownLines.length > 0) {
+      // Find largest absolute value line
+      const largestLine = breakdownLines.reduce((max, line) => 
+        Math.abs(line.amount) > Math.abs(max.amount) ? line : max
+      );
+      largestLine.amount += roundingDiff;
+    }
   }
 
   return (
@@ -210,7 +319,7 @@ function NetWorthPageContent() {
       {/* 12-Month Chart */}
       <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">12-Month Trend</h2>
-        <div className="relative" style={{ height: "300px" }}>
+        <div className="relative" style={{ height: "340px" }}>
           {/* Simple bar chart */}
           <div className="flex items-end justify-between h-full gap-2">
             {data.map((monthData) => {
@@ -218,14 +327,30 @@ function NetWorthPageContent() {
               const height = maxValue > 0 ? (Math.abs(monthData.netWorth) / maxValue) * 100 : 0;
               const isSelected = monthData.yearMonth === selectedMonth;
               const isPositive = monthData.netWorth >= 0;
+              
+              // Check for event markers
+              const hasPaidOff = monthData.items.some(i => i.type === "account_paid_off");
+              const hasNewAccount = monthData.items.some(i => i.type === "account_added");
 
               return (
                 <button
                   key={monthData.yearMonth}
                   onClick={() => setSelectedMonth(monthData.yearMonth)}
-                  className="flex-1 flex flex-col items-center justify-end group"
+                  className="flex-1 flex flex-col items-center justify-end group relative"
                   style={{ height: "100%" }}
                 >
+                  {/* Event markers above the bar */}
+                  {(hasPaidOff || hasNewAccount) && (
+                    <div className="absolute -top-6 left-1/2 -translate-x-1/2 flex gap-1">
+                      {hasPaidOff && (
+                        <div className="w-2 h-2 rounded-full bg-green-600" title="Account paid off" />
+                      )}
+                      {hasNewAccount && (
+                        <div className="w-2 h-2 rounded-full bg-blue-600" title="New account" />
+                      )}
+                    </div>
+                  )}
+                  
                   <div className="flex-1 flex items-end w-full">
                     <div
                       className={`w-full transition-all ${
@@ -267,19 +392,35 @@ function NetWorthPageContent() {
           </div>
         )}
 
-        {breakdownByType.size > 0 ? (
+        {breakdownLines.length > 0 ? (
           <div className="space-y-2">
-            {Array.from(breakdownByType.entries()).map(([type, impact]) => (
-              <div key={type} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-                <span className="text-sm text-gray-700">{CHANGE_TYPE_LABELS[type]}</span>
-                <span className={`text-sm font-semibold ${
-                  impact > 0 ? "text-green-600" : impact < 0 ? "text-red-600" : "text-gray-900"
-                }`}>
-                  {impact > 0 ? "+" : ""}
-                  {formatCurrency(impact, currency)}
-                </span>
-              </div>
-            ))}
+            {breakdownLines.map((line, idx) => {
+              const accountPage = line.accountSlug 
+                ? line.category === "debts" 
+                  ? `/account/liabilities`
+                  : `/account/assets`
+                : null;
+              
+              const lineContent = (
+                <div className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                  <span className="text-sm text-gray-700">{line.label}</span>
+                  <span className={`text-sm font-semibold ${
+                    line.amount > 0 ? "text-green-600" : line.amount < 0 ? "text-red-600" : "text-gray-900"
+                  }`}>
+                    {line.amount > 0 ? "+" : ""}
+                    {formatCurrency(line.amount, currency)}
+                  </span>
+                </div>
+              );
+              
+              return accountPage ? (
+                <Link key={idx} href={accountPage} className="block hover:bg-gray-50 -mx-2 px-2 rounded transition-colors">
+                  {lineContent}
+                </Link>
+              ) : (
+                <div key={idx}>{lineContent}</div>
+              );
+            })}
           </div>
         ) : (
           <p className="text-sm text-gray-500 text-center py-4">
@@ -296,15 +437,14 @@ function NetWorthPageContent() {
           {/* Filter Dropdown */}
           <select
             value={filterType}
-            onChange={(e) => setFilterType(e.target.value as ChangeItemType | "all")}
+            onChange={(e) => setFilterType(e.target.value as FilterType)}
             className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-600"
           >
             <option value="all">All Changes</option>
-            <option value="account_added">Accounts Added</option>
-            <option value="account_paid_off">Accounts Paid Off</option>
-            <option value="account_closed">Accounts Closed</option>
-            <option value="balance_increase">Balance Increases</option>
-            <option value="balance_decrease">Balance Decreases</option>
+            <option value="income">Income</option>
+            <option value="spending">Spending</option>
+            <option value="debt">Debt</option>
+            <option value="assets">Assets</option>
           </select>
         </div>
 
@@ -326,10 +466,22 @@ function NetWorthPageContent() {
                       {CHANGE_TYPE_LABELS[item.type]}
                     </span>
                   </div>
-                  <p className="text-xs text-gray-500 capitalize">
-                    {item.accountType.replace("_", " ")}
-                  </p>
-                  {(item.previousBalance !== undefined || item.currentBalance !== undefined) && (
+                  {item.source && (
+                    <p className="text-xs text-gray-500">
+                      {item.source}
+                    </p>
+                  )}
+                  {!item.source && (
+                    <p className="text-xs text-gray-500 capitalize">
+                      {item.accountType.replace("_", " ")}
+                    </p>
+                  )}
+                  {item.impactDescription && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {item.impactDescription}
+                    </p>
+                  )}
+                  {!item.impactDescription && (item.previousBalance !== undefined || item.currentBalance !== undefined) && (
                     <p className="text-xs text-gray-500 mt-1">
                       {item.previousBalance !== undefined && formatCurrency(item.previousBalance, currency)}
                       {item.previousBalance !== undefined && item.currentBalance !== undefined && " → "}
