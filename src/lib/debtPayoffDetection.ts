@@ -89,7 +89,7 @@ export function detectDebtPayoff(
   // Check transaction descriptions and statement text if available
   const allText = [
     ...(currentStatement.expenses?.transactions ?? []).map(t => (t.merchant ?? "").toLowerCase()),
-    ...(currentStatement.income?.transactions ?? []).map(t => (t.description ?? "").toLowerCase()),
+    ...(currentStatement.income?.transactions ?? []).map(t => (t.source ?? "").toLowerCase()),
   ].join(" ");
 
   for (const indicator of textIndicators) {

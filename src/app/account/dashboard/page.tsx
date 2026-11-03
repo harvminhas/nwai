@@ -871,7 +871,7 @@ export default function DashboardPage() {
         if (data.window?.statementHistory) {
           // Build account status map to exclude paid-off/closed accounts
           const accountStatusMap = data.window.accountStatusRecords 
-            ? new Map(
+            ? new Map<string, { status: string; statusDate: string }>(
                 data.window.accountStatusRecords.map((r: any) => [r.accountSlug, { status: r.status, statusDate: r.statusDate }])
               )
             : undefined;

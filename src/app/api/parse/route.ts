@@ -419,7 +419,11 @@ export async function POST(request: NextRequest) {
         if (previousStatements.length > 0) {
           const detection = detectDebtPayoff(parsedData, previousStatements, slug);
 
-          if (shouldAutoMarkPayoff(detection)) {
+          // Get current account status
+          const statusDoc = await db.doc(`users/${userId}/accountStatus/${slug}`).get();
+          const currentStatus = statusDoc.exists ? statusDoc.data() as any : null;
+
+          if (shouldAutoMarkPayoff(detection, currentStatus)) {
             // Strong signal - auto-mark as paid off
             const statusDate = parsedData.statementDate || new Date().toISOString().split("T")[0];
             await setAccountStatus(
@@ -443,7 +447,7 @@ export async function POST(request: NextRequest) {
             });
 
             console.log(`[parse] Auto-marked account ${slug} as paid_off: ${detection.reason}`);
-          } else if (shouldPromptPayoff(detection)) {
+          } else if (shouldPromptPayoff(detection, currentStatus)) {
             // Weak signal - flag for user confirmation
             await statementRef.update({
               payoffDetected: true,
