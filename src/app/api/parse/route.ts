@@ -19,6 +19,7 @@ import type { ParsedStatementData } from "@/lib/types";
 import { maskAccountNumbersInParsedData } from "@/lib/accountMasking";
 import { detectDebtPayoff, shouldAutoMarkPayoff, shouldPromptPayoff } from "@/lib/debtPayoffDetection";
 import { setAccountStatus } from "@/lib/accountStatus";
+import { generateNetWorthChanges } from "@/lib/netWorthChanges";
 
 export const maxDuration = 120;
 
@@ -507,6 +508,12 @@ export async function POST(request: NextRequest) {
     // The client's next data fetch will always see fresh data.
     if (userId) {
       await invalidateFinancialProfileCache(userId, db);
+    }
+
+    // Generate net worth changes feed — fire-and-forget, idempotent.
+    if (userId) {
+      generateNetWorthChanges(userId, db)
+        .catch((e) => console.error("[netWorthChanges] generation failed:", e));
     }
 
     // Fire insight event — fire-and-forget, never blocks the parse response.

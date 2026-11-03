@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { setAccountStatus, getAccountStatus, type AccountStatus } from "@/lib/accountStatus";
 import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
+import { generateNetWorthChanges } from "@/lib/netWorthChanges";
 
 function authToken(req: NextRequest): string | null {
   const h = req.headers.get("authorization");
@@ -57,6 +58,10 @@ export async function POST(req: NextRequest) {
 
   // Invalidate financial profile cache so changes take effect immediately
   await invalidateFinancialProfileCache(decoded.uid, db);
+
+  // Regenerate net worth changes feed (fire-and-forget)
+  generateNetWorthChanges(decoded.uid, db)
+    .catch((e) => console.error("[netWorthChanges] regeneration after status change failed:", e));
 
   return NextResponse.json({ success: true });
 }
