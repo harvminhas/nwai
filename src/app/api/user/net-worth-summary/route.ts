@@ -55,6 +55,12 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Get last 12 months for the net worth page chart
+    const last12Months = sortedHistory.slice(0, 12).reverse().map(m => ({
+      yearMonth: m.yearMonth,
+      netWorth: m.netWorth,
+    }));
+
     return NextResponse.json({
       // Original fields (required by nav pill)
       netWorth,
@@ -67,6 +73,8 @@ export async function GET(req: NextRequest) {
       changePercent,
       latestMonth: currentMonth?.yearMonth ?? null,
       trend,
+      // Monthly history for net worth page chart
+      monthlyHistory: last12Months,
     });
   } catch (err) {
     console.error("Net worth summary error:", err);

@@ -16,36 +16,81 @@ const CHANGE_TYPE_LABELS: Record<ChangeItemType, string> = {
   balance_decrease: "Balance Decrease",
 };
 
+interface MonthlyNetWorthData {
+  yearMonth: string;
+  netWorth: number;
+  change: number | null;
+  changePercent: number | null;
+  items: MonthNetWorthSummary["items"];
+}
+
 function NetWorthPageContent() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<MonthNetWorthSummary[]>([]);
+  const [data, setData] = useState<MonthlyNetWorthData[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<ChangeItemType | "all">("all");
+  const [currency, setCurrency] = useState<string>("CAD");
 
   const loadData = async (tok: string) => {
     try {
-      // Get last 12 months of data
-      const res = await fetch("/api/user/net-worth-changes", {
+      // Fetch net worth data from same source as nav pill (getFinancialProfile)
+      const summaryRes = await fetch("/api/user/net-worth-summary", {
         headers: { Authorization: `Bearer ${tok}` },
       });
 
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({ error: "Failed to load net worth data" }));
+      if (!summaryRes.ok) {
+        const errorData = await summaryRes.json().catch(() => ({ error: "Failed to load net worth data" }));
         throw new Error(errorData.error || "Failed to load net worth data");
       }
 
-      const result = await res.json();
-      const changes = (result.changes || []) as MonthNetWorthSummary[];
-      
-      // Take last 12 months
-      const last12 = changes.slice(0, 12).reverse(); // Reverse to show oldest first
-      setData(last12);
+      const summary = await summaryRes.json();
+      const monthlyHistory = (summary.monthlyHistory || []) as Array<{ yearMonth: string; netWorth: number }>;
+      setCurrency(summary.currency || "CAD");
+
+      if (monthlyHistory.length === 0) {
+        setError("No net worth data available yet. Upload some statements to get started.");
+        setLoading(false);
+        return;
+      }
+
+      // Fetch change items (may be empty for existing users)
+      const changesRes = await fetch("/api/user/net-worth-changes", {
+        headers: { Authorization: `Bearer ${tok}` },
+      });
+
+      const changesData = await changesRes.json().catch(() => ({ changes: [] }));
+      const changes = (changesData.changes || []) as MonthNetWorthSummary[];
+
+      // Build change items map by month
+      const changesByMonth = new Map<string, MonthNetWorthSummary["items"]>();
+      for (const change of changes) {
+        changesByMonth.set(change.month, change.items);
+      }
+
+      // Build final data structure: net worth values from profile, change items from feed
+      const combinedData: MonthlyNetWorthData[] = monthlyHistory.map((month, idx) => {
+        const prevMonth = idx > 0 ? monthlyHistory[idx - 1] : null;
+        const change = prevMonth ? month.netWorth - prevMonth.netWorth : null;
+        const changePercent = prevMonth && prevMonth.netWorth !== 0 
+          ? (change! / Math.abs(prevMonth.netWorth)) * 100 
+          : null;
+
+        return {
+          yearMonth: month.yearMonth,
+          netWorth: month.netWorth,
+          change,
+          changePercent,
+          items: changesByMonth.get(month.yearMonth) || [],
+        };
+      });
+
+      setData(combinedData);
 
       // Select most recent month by default
-      if (last12.length > 0 && !selectedMonth) {
-        setSelectedMonth(last12[last12.length - 1].month);
+      if (combinedData.length > 0 && !selectedMonth) {
+        setSelectedMonth(combinedData[combinedData.length - 1].yearMonth);
       }
 
       // Update netWorthLastViewedAt to clear the badge count
@@ -89,17 +134,24 @@ function NetWorthPageContent() {
     );
   }
 
-  if (error || data.length === 0) {
+  if (error) {
     return (
       <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8">
-        <p className="text-red-600">{error || "No net worth data available yet. Upload some statements to get started."}</p>
+        <p className="text-red-600">{error}</p>
+      </div>
+    );
+  }
+
+  if (data.length === 0) {
+    return (
+      <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8">
+        <p className="text-gray-600">No net worth data available yet. Upload some statements to get started.</p>
       </div>
     );
   }
 
   const latestMonth = data[data.length - 1];
-  const selectedData = data.find(d => d.month === selectedMonth) || latestMonth;
-  const currency = selectedData.currency;
+  const selectedData = data.find(d => d.yearMonth === selectedMonth) || latestMonth;
 
   // Filter items based on selected type
   const filteredItems = filterType === "all" 
@@ -164,13 +216,13 @@ function NetWorthPageContent() {
             {data.map((monthData) => {
               const maxValue = Math.max(...data.map(d => Math.abs(d.netWorth)));
               const height = maxValue > 0 ? (Math.abs(monthData.netWorth) / maxValue) * 100 : 0;
-              const isSelected = monthData.month === selectedMonth;
+              const isSelected = monthData.yearMonth === selectedMonth;
               const isPositive = monthData.netWorth >= 0;
 
               return (
                 <button
-                  key={monthData.month}
-                  onClick={() => setSelectedMonth(monthData.month)}
+                  key={monthData.yearMonth}
+                  onClick={() => setSelectedMonth(monthData.yearMonth)}
                   className="flex-1 flex flex-col items-center justify-end group"
                   style={{ height: "100%" }}
                 >
@@ -185,7 +237,7 @@ function NetWorthPageContent() {
                     />
                   </div>
                   <div className={`text-xs mt-2 ${isSelected ? "font-semibold text-gray-900" : "text-gray-500"}`}>
-                    {formatMonthLabel(monthData.month)}
+                    {formatMonthLabel(monthData.yearMonth)}
                   </div>
                 </button>
               );
@@ -197,7 +249,7 @@ function NetWorthPageContent() {
       {/* What Moved It Breakdown */}
       <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">
-          What Moved It: {formatMonthLabel(selectedData.month)}
+          What Moved It: {formatMonthLabel(selectedData.yearMonth)}
         </h2>
         
         {selectedData.change !== null && (
@@ -215,19 +267,25 @@ function NetWorthPageContent() {
           </div>
         )}
 
-        <div className="space-y-2">
-          {Array.from(breakdownByType.entries()).map(([type, impact]) => (
-            <div key={type} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-              <span className="text-sm text-gray-700">{CHANGE_TYPE_LABELS[type]}</span>
-              <span className={`text-sm font-semibold ${
-                impact > 0 ? "text-green-600" : impact < 0 ? "text-red-600" : "text-gray-900"
-              }`}>
-                {impact > 0 ? "+" : ""}
-                {formatCurrency(impact, currency)}
-              </span>
-            </div>
-          ))}
-        </div>
+        {breakdownByType.size > 0 ? (
+          <div className="space-y-2">
+            {Array.from(breakdownByType.entries()).map(([type, impact]) => (
+              <div key={type} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                <span className="text-sm text-gray-700">{CHANGE_TYPE_LABELS[type]}</span>
+                <span className={`text-sm font-semibold ${
+                  impact > 0 ? "text-green-600" : impact < 0 ? "text-red-600" : "text-gray-900"
+                }`}>
+                  {impact > 0 ? "+" : ""}
+                  {formatCurrency(impact, currency)}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500 text-center py-4">
+            No detailed breakdown available yet. Change items will appear here after processing statements.
+          </p>
+        )}
       </div>
 
       {/* Changes Feed */}
@@ -252,7 +310,10 @@ function NetWorthPageContent() {
 
         {filteredItems.length === 0 ? (
           <p className="text-sm text-gray-500 text-center py-8">
-            No changes for {formatMonthLabel(selectedData.month)}
+            {selectedData.items.length === 0 
+              ? `No detailed changes available yet for ${formatMonthLabel(selectedData.yearMonth)}`
+              : `No ${filterType === "all" ? "" : filterType.replace(/_/g, " ") + " "}changes for ${formatMonthLabel(selectedData.yearMonth)}`
+            }
           </p>
         ) : (
           <div className="space-y-3">
@@ -270,9 +331,9 @@ function NetWorthPageContent() {
                   </p>
                   {(item.previousBalance !== undefined || item.currentBalance !== undefined) && (
                     <p className="text-xs text-gray-500 mt-1">
-                      {item.previousBalance !== undefined && formatCurrency(item.previousBalance, item.currency)}
+                      {item.previousBalance !== undefined && formatCurrency(item.previousBalance, currency)}
                       {item.previousBalance !== undefined && item.currentBalance !== undefined && " → "}
-                      {item.currentBalance !== undefined && formatCurrency(item.currentBalance, item.currency)}
+                      {item.currentBalance !== undefined && formatCurrency(item.currentBalance, currency)}
                     </p>
                   )}
                 </div>
@@ -281,7 +342,7 @@ function NetWorthPageContent() {
                   item.netWorthImpact < 0 ? "text-red-600" : "text-gray-900"
                 }`}>
                   {item.netWorthImpact > 0 ? "+" : ""}
-                  {formatCurrency(item.netWorthImpact, item.currency)}
+                  {formatCurrency(item.netWorthImpact, currency)}
                 </div>
               </div>
             ))}
