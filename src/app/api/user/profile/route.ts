@@ -10,6 +10,7 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import { detectCountry } from "@/lib/external/registry";
 import { getFinancialProfile } from "@/lib/financialProfile";
+import { getNetWorthChanges } from "@/lib/netWorthChanges";
 
 const ALLOWED_COUNTRIES = ["CA", "US"] as const;
 type Country = (typeof ALLOWED_COUNTRIES)[number];
@@ -67,8 +68,30 @@ export async function PATCH(req: NextRequest) {
   }
 
   // Handle netWorthLastViewedAt update
+  // Set to max(now, newest generatedAt) to avoid race conditions
   if (body.netWorthLastViewedAt !== undefined) {
-    updates.netWorthLastViewedAt = body.netWorthLastViewedAt;
+    const now = new Date();
+    let maxTimestamp = now;
+    
+    try {
+      // Get all changes to find the newest generatedAt
+      const changes = await getNetWorthChanges(access.targetUid, db, {});
+      for (const change of changes) {
+        for (const item of change.items) {
+          if (item.generatedAt) {
+            const itemDate = new Date(item.generatedAt);
+            if (itemDate > maxTimestamp) {
+              maxTimestamp = itemDate;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch changes for timestamp:", err);
+      // Fall back to now
+    }
+    
+    updates.netWorthLastViewedAt = maxTimestamp.toISOString();
   }
 
   if (Object.keys(updates).length === 0) {

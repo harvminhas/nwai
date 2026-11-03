@@ -27,7 +27,7 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
     return onAuthStateChanged(auth, setUser);
   }, []);
 
-  // Fetch new changes count
+  // Fetch new changes count - refetch on pathname change and when user changes
   useEffect(() => {
     if (!user) return;
 
@@ -35,16 +35,7 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
       try {
         const token = await user.getIdToken();
         
-        // Get user's last viewed timestamp
-        const userRes = await fetch("/api/user/profile", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        
-        if (!userRes.ok) return;
-        const userData = await userRes.json();
-        const lastViewed = userData.netWorthLastViewedAt;
-
-        // Get all changes
+        // Get changes with server-computed newCount
         const changesRes = await fetch("/api/user/net-worth-changes", {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -52,24 +43,25 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
         if (!changesRes.ok) return;
         const changesData = await changesRes.json();
         
-        // Count items created after lastViewed
-        let count = 0;
-        for (const monthSummary of (changesData.changes || [])) {
-          for (const item of (monthSummary.items || [])) {
-            if (!lastViewed || item.generatedAt > lastViewed) {
-              count++;
-            }
-          }
-        }
-        
-        setNewChangesCount(count);
+        // Use server-side count
+        setNewChangesCount(changesData.newCount ?? 0);
       } catch (err) {
         console.error("Failed to fetch new changes count:", err);
       }
     };
 
     fetchNewChangesCount();
-  }, [user]);
+  }, [user, pathname]); // Refetch on pathname change
+
+  // Listen for networth-viewed event to clear count immediately
+  useEffect(() => {
+    const handleNetworthViewed = () => {
+      setNewChangesCount(0);
+    };
+
+    window.addEventListener('networth-viewed', handleNetworthViewed);
+    return () => window.removeEventListener('networth-viewed', handleNetworthViewed);
+  }, []);
 
   const handleSignOut = async () => {
     const { auth } = getFirebaseClient();
@@ -238,7 +230,7 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
                   )}
                   {newChangesCount > 0 && (
                     <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-purple-600 px-1.5 text-[10px] font-bold text-white">
-                      {newChangesCount}
+                      {newChangesCount > 9 ? '9+' : newChangesCount}
                     </span>
                   )}
                 </Link>

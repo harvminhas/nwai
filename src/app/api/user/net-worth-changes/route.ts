@@ -59,7 +59,36 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    return NextResponse.json({ changes });
+    // Compute new items count for badge
+    const userDoc = await db.collection("users").doc(decoded.uid).get();
+    const userData = userDoc.exists ? userDoc.data() ?? {} : {};
+    const netWorthLastViewedAt = userData.netWorthLastViewedAt;
+
+    let newCount = 0;
+    if (netWorthLastViewedAt) {
+      // Count items generated after last viewed
+      const lastViewedDate = new Date(netWorthLastViewedAt);
+      for (const change of changes) {
+        for (const item of change.items) {
+          if (item.generatedAt && new Date(item.generatedAt) > lastViewedDate) {
+            newCount++;
+          }
+        }
+      }
+    } else {
+      // No lastViewed: count items in latest complete month only
+      // (prevents 108-item badge on first visit)
+      // Filter out current calendar month (incomplete by definition)
+      const now = new Date();
+      const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const completeMonths = changes.filter(c => c.month < currentMonth);
+      if (completeMonths.length > 0) {
+        const latestCompleteMonth = completeMonths.sort((a, b) => b.month.localeCompare(a.month))[0];
+        newCount = latestCompleteMonth.items.length;
+      }
+    }
+
+    return NextResponse.json({ changes, newCount });
   } catch (err) {
     console.error("[net-worth-changes GET]", err);
     return NextResponse.json({ error: "Failed to fetch changes" }, { status: 500 });

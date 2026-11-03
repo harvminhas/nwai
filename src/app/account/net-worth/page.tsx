@@ -128,6 +128,9 @@ function NetWorthPageContent() {
           netWorthLastViewedAt: new Date().toISOString(),
         }),
       }).catch(err => console.error("Failed to update netWorthLastViewedAt:", err));
+
+      // Dispatch event to immediately clear nav badge
+      window.dispatchEvent(new Event('networth-viewed'));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load net worth data");
     } finally {
