@@ -96,39 +96,52 @@ export async function generateNetWorthChanges(
     return; // No data to process
   }
 
-  // Track accounts seen each month and their balances
+  // Use the same carry-forward logic as financialProfile
+  // Get account balance history (already computed with carry-forward)
+  const accountBalances = profile.accountBalanceHistory;
+  
+  // Build a map of account balances by month using carry-forward
   const accountsByMonth = new Map<string, Map<string, {
     balance: number;
     label: string;
     type: string;
     currency: string;
+    slug: string;
   }>>();
-
-  // Build account snapshots by month
-  for (const snap of profile.accountSnapshots) {
-    const month = snap.statementMonth;
-    if (!month) continue;
-
-    // Check if account was active in this month
-    const isActive = isAccountActive(snap.slug, month, accountStatusMap);
+  
+  // For each month, compute carried-forward balances
+  for (const month of allMonths) {
+    const monthMap = new Map<string, {
+      balance: number;
+      label: string;
+      type: string;
+      currency: string;
+      slug: string;
+    }>();
     
-    if (!accountsByMonth.has(month)) {
-      accountsByMonth.set(month, new Map());
-    }
-
-    const monthAccounts = accountsByMonth.get(month)!;
-    
-    // Store or update if this is the latest snapshot for this account in this month
-    const existing = monthAccounts.get(snap.slug);
-    if (!existing || !snap.statementDate || 
-        (existing && snap.statementDate > (accountsByMonth.get(month)?.get(snap.slug) as any)?.statementDate)) {
-      monthAccounts.set(snap.slug, {
-        balance: isActive ? snap.balance : 0, // Exclude inactive accounts
-        label: snap.accountName || `${snap.bankName} ${snap.accountType}`,
-        type: snap.accountType,
-        currency: snap.currency || "CAD",
+    for (const acct of accountBalances) {
+      // Check if account was active (not paid off/closed) in this month
+      const isActive = isAccountActive(acct.slug, month, accountStatusMap);
+      
+      // Carry forward last known balance (same logic as financialProfile)
+      let bal: number | null = null;
+      for (const e of acct.entries) {
+        if (e.yearMonth <= month) bal = e.balance;
+        else break;
+      }
+      
+      if (bal === null) continue;
+      
+      monthMap.set(acct.slug, {
+        balance: isActive ? bal : 0, // Exclude inactive accounts from net worth
+        label: acct.label,
+        type: acct.accountType,
+        currency: acct.currency,
+        slug: acct.slug,
       });
     }
+    
+    accountsByMonth.set(month, monthMap);
   }
 
   // Read existing items to preserve their generatedAt timestamps

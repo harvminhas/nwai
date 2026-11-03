@@ -55,10 +55,11 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Get last 12 months for the net worth page chart
+    // Get last 12 months for the net worth page chart and breakdown
     const last12Months = sortedHistory.slice(0, 12).reverse().map(m => ({
       yearMonth: m.yearMonth,
       netWorth: m.netWorth,
+      byAccount: m.byAccount || [], // Per-account contributions for What moved it
     }));
 
     return NextResponse.json({

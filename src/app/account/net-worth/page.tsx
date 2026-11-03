@@ -35,6 +35,12 @@ interface MonthlyNetWorthData {
   change: number | null;
   changePercent: number | null;
   items: MonthNetWorthSummary["items"];
+  byAccount: Array<{
+    slug: string;
+    label: string;
+    type: string;
+    value: number;
+  }>;
 }
 
 function NetWorthPageContent() {
@@ -59,7 +65,11 @@ function NetWorthPageContent() {
       }
 
       const summary = await summaryRes.json();
-      const monthlyHistory = (summary.monthlyHistory || []) as Array<{ yearMonth: string; netWorth: number }>;
+      const monthlyHistory = (summary.monthlyHistory || []) as Array<{ 
+        yearMonth: string; 
+        netWorth: number;
+        byAccount: Array<{ slug: string; label: string; type: string; value: number }>;
+      }>;
       setCurrency(summary.currency || "CAD");
 
       if (monthlyHistory.length === 0) {
@@ -96,6 +106,7 @@ function NetWorthPageContent() {
           change,
           changePercent,
           items: changesByMonth.get(month.yearMonth) || [],
+          byAccount: month.byAccount || [],
         };
       });
 
@@ -182,73 +193,60 @@ function NetWorthPageContent() {
     ? selectedData.items 
     : selectedData.items.filter(i => getItemCategory(i) === filterType);
 
-  // Calculate breakdown by category (Assets/Debts/Income/Spending) that adds up EXACTLY
+  // Calculate breakdown using per-account contributions (byAccount)
+  // This adds up EXACTLY by construction since it uses the same carry-forward logic
   const selectedIdx = data.findIndex(d => d.yearMonth === selectedMonth);
   const previousData = selectedIdx > 0 ? data[selectedIdx - 1] : null;
   
   interface BreakdownLine {
-    category: "assets" | "debts" | "income" | "spending";
+    category: "assets" | "debts";
     label: string;
     amount: number;
-    accountSlug?: string;
+    accountSlug: string;
   }
   
   const breakdownLines: BreakdownLine[] = [];
   
   if (previousData) {
-    // Compute exact change from monthlyHistory data
-    const assetsChange = selectedData.netWorth - previousData.netWorth;
-    // Note: Change items are informative but may not add up exactly due to timing/rounding
-    // For exact breakdown, we'd need per-account balance history which isn't in MonthlyNetWorthData
-    // For now, use the change items grouped by category
+    // Build maps of current and previous account values
+    const currentBySlug = new Map(selectedData.byAccount.map(a => [a.slug, a]));
+    const previousBySlug = new Map(previousData.byAccount.map(a => [a.slug, a]));
     
-    // Only show account balance deltas and paid-off events
-    // Income and spending are already reflected in account balances (no double counting)
-    const assetChanges = new Map<string, number>();
-    const debtChanges = new Map<string, number>();
+    // Get all account slugs from both months
+    const allSlugs = new Set([...currentBySlug.keys(), ...previousBySlug.keys()]);
     
-    for (const item of selectedData.items) {
-      const category = getItemCategory(item);
-      // Only process account-based changes (assets and debts)
-      // Skip income_change and spending_spike items (they're already in account balances)
-      if (category === "debt") {
-        const key = item.accountSlug || item.source || item.accountLabel;
-        debtChanges.set(key, (debtChanges.get(key) || 0) + item.netWorthImpact);
-      } else if (category === "assets") {
-        const key = item.accountSlug || item.source || item.accountLabel;
-        assetChanges.set(key, (assetChanges.get(key) || 0) + item.netWorthImpact);
-      }
-    }
-    
-    // Add asset changes
-    for (const [slug, amount] of assetChanges) {
-      const item = selectedData.items.find(i => (i.accountSlug || i.source) === slug);
+    for (const slug of allSlugs) {
+      const current = currentBySlug.get(slug);
+      const previous = previousBySlug.get(slug);
+      
+      const currentValue = current?.value ?? 0;
+      const previousValue = previous?.value ?? 0;
+      const change = currentValue - previousValue;
+      
+      // Skip zero changes
+      if (Math.abs(change) < 0.01) continue;
+      
+      // Determine category (assets are positive, debts are negative)
+      const category = currentValue >= 0 || previousValue >= 0 ? "assets" : "debts";
+      
       breakdownLines.push({
-        category: "assets",
-        label: item?.accountLabel || slug,
-        amount,
-        accountSlug: item?.accountSlug,
+        category,
+        label: current?.label || previous?.label || slug,
+        amount: change,
+        accountSlug: slug,
       });
     }
     
-    // Add debt changes (including paid-off)
-    for (const [slug, amount] of debtChanges) {
-      const item = selectedData.items.find(i => (i.accountSlug || i.source) === slug);
-      breakdownLines.push({
-        category: "debts",
-        label: item?.accountLabel || slug,
-        amount,
-        accountSlug: item?.accountSlug,
-      });
-    }
-    
-    // Calculate rounding difference and add to largest line
+    // Verify the sum equals the net worth change (should be exact by construction)
     const computedTotal = breakdownLines.reduce((sum, line) => sum + line.amount, 0);
     const actualChange = selectedData.change || 0;
     const roundingDiff = actualChange - computedTotal;
     
-    if (Math.abs(roundingDiff) > 0.01 && breakdownLines.length > 0) {
-      // Find largest absolute value line
+    // Only plug sub-$1 rounding differences
+    if (Math.abs(roundingDiff) >= 1.0) {
+      console.error(`What moved it breakdown doesn't add up: computed ${computedTotal}, actual ${actualChange}, diff ${roundingDiff}`);
+    } else if (Math.abs(roundingDiff) > 0.01 && breakdownLines.length > 0) {
+      // Apply sub-$1 rounding difference to largest line
       const largestLine = breakdownLines.reduce((max, line) => 
         Math.abs(line.amount) > Math.abs(max.amount) ? line : max
       );

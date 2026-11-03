@@ -124,6 +124,18 @@ export interface MonthlyHistoryEntry {
   totalDebts: number;
   /** Net worth = totalAssets − totalDebts for this month. */
   netWorth: number;
+  /**
+   * Per-account contributions to net worth for this month.
+   * Uses same carry-forward, FX, and paid-off exclusion logic as netWorth.
+   * For assets: Math.max(0, balance). For debts: -Math.abs(balance).
+   * Used by What moved it breakdown to show exact account-level changes.
+   */
+  byAccount?: Array<{
+    slug: string;
+    label: string;
+    type: string;
+    value: number; // In home currency; assets positive, debts negative
+  }>;
 }
 
 export interface FinancialProfileCache {
@@ -1323,6 +1335,7 @@ export async function buildAndCacheFinancialProfile(
     for (const h of monthlyHistory) {
       let ta = 0;
       let td = 0;
+      const accountContributions: Array<{ slug: string; label: string; type: string; value: number }> = [];
 
       for (const { acct, sorted } of assetEntries) {
         let bal: number | null = null;
@@ -1331,7 +1344,14 @@ export async function buildAndCacheFinancialProfile(
           else break;
         }
         if (bal === null) continue;
-        ta += Math.max(0, toHome(bal, acct.currency)); // positive balances only
+        const value = Math.max(0, toHome(bal, acct.currency)); // positive balances only
+        ta += value;
+        accountContributions.push({
+          slug: acct.slug,
+          label: acct.label,
+          type: acct.accountType,
+          value, // Assets are positive
+        });
       }
 
       for (const { acct, sorted } of debtEntries) {
@@ -1345,13 +1365,21 @@ export async function buildAndCacheFinancialProfile(
           else break;
         }
         if (bal === null) continue;
-        td += Math.abs(toHome(bal, acct.currency)); // abs — same as liabilities page
+        const absValue = Math.abs(toHome(bal, acct.currency)); // abs — same as liabilities page
+        td += absValue;
+        accountContributions.push({
+          slug: acct.slug,
+          label: acct.label,
+          type: acct.accountType,
+          value: -absValue, // Debts are negative
+        });
       }
 
       ta += manualAssetsTotal;
       h.totalAssets = ta;
       h.totalDebts  = td;
       h.netWorth    = ta - td;
+      h.byAccount   = accountContributions;
     }
   }
 
