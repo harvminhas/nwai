@@ -605,13 +605,13 @@ export function parseStatementDate(statementDate: string | undefined, statementM
 }
 
 /**
- * Helper to check if a month is complete based on statement assignments.
+ * Check if a month is complete based on statement assignments.
  * Uses the closing day rule: ≤15 = previous month, ≥16 = current month.
  * 
  * A month M is complete when every active account has at least one statement
  * assigned to month M, and M is strictly before the current month.
  */
-function isMonthComplete(
+export function isMonthComplete(
   month: string,
   statementHistory: Array<{ 
     accountType: string;

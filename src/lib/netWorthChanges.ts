@@ -8,6 +8,7 @@
 import type { Firestore } from "firebase-admin/firestore";
 import { getFinancialProfile, type FinancialProfileCache } from "./financialProfile";
 import { isAccountActive } from "./accountStatus";
+import { isMonthComplete as isCompleteMonth } from "./rangeUtils";
 
 export type ChangeItemType =
   | "account_added"
@@ -65,31 +66,6 @@ export interface MonthNetWorthSummary {
   generatedAt: string;
 }
 
-/**
- * Check if a month is complete (has statements from all active accounts).
- * Only complete months are used for income/spending spike detection.
- */
-function isMonthComplete(month: string, profile: FinancialProfileCache): boolean {
-  // Get all active accounts in this month
-  const activeAccountSlugs = new Set<string>();
-  for (const snap of profile.accountSnapshots) {
-    if (snap.statementMonth && snap.statementMonth <= month) {
-      activeAccountSlugs.add(snap.slug);
-    }
-  }
-
-  // Check if we have statements for all active accounts in this month
-  const monthStatements = profile.statementHistory.filter(s => s.statementMonth === month);
-  const monthAccountSlugs = new Set(monthStatements.map(s => s.slug));
-
-  for (const slug of activeAccountSlugs) {
-    if (!monthAccountSlugs.has(slug)) {
-      return false; // Missing statement for an active account
-    }
-  }
-
-  return activeAccountSlugs.size > 0; // Must have at least one account
-}
 
 /**
  * Generate net worth change items for a user's complete financial history.
@@ -262,12 +238,12 @@ export async function generateNetWorthChanges(
     }
 
     // 4. Detect income changes (complete months only)
-    if (isMonthComplete(month, profile) && previousMonthAccounts) {
+    if (isCompleteMonth(month, profile.statementHistory, accountStatusMap) && previousMonthAccounts) {
       const monthHistory = profile.monthlyHistory.find(h => h.yearMonth === month);
       if (monthHistory) {
         // Get prior 3 complete months' income
         const priorMonths = profile.monthlyHistory
-          .filter(h => h.yearMonth < month && isMonthComplete(h.yearMonth, profile))
+          .filter(h => h.yearMonth < month && isCompleteMonth(h.yearMonth, profile.statementHistory, accountStatusMap))
           .slice(-3);
 
         if (priorMonths.length >= 3) {
@@ -295,7 +271,7 @@ export async function generateNetWorthChanges(
     }
 
     // 5. Detect spending spikes (complete months only)
-    if (isMonthComplete(month, profile) && previousMonthAccounts) {
+    if (isCompleteMonth(month, profile.statementHistory, accountStatusMap) && previousMonthAccounts) {
       // Get this month's expenses
       const monthExpenses = profile.expenseTxns.filter(t => t.txMonth === month);
       
@@ -308,7 +284,7 @@ export async function generateNetWorthChanges(
 
       // Get prior 6 complete months' expenses by category
       const priorMonths = profile.monthlyHistory
-        .filter(h => h.yearMonth < month && isMonthComplete(h.yearMonth, profile))
+        .filter(h => h.yearMonth < month && isCompleteMonth(h.yearMonth, profile.statementHistory, accountStatusMap))
         .slice(-6);
 
       if (priorMonths.length >= 6) {
@@ -344,7 +320,7 @@ export async function generateNetWorthChanges(
     }
 
     // 6. Detect new recurring charges (complete months only)
-    if (isMonthComplete(month, profile) && previousMonthAccounts) {
+    if (isCompleteMonth(month, profile.statementHistory, accountStatusMap) && previousMonthAccounts) {
       // Check if any subscriptions started in this month
       for (const sub of profile.confirmedSubscriptions) {
         const firstDate = sub.firstSeenAt;
