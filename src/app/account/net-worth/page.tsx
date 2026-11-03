@@ -202,18 +202,16 @@ function NetWorthPageContent() {
     // For exact breakdown, we'd need per-account balance history which isn't in MonthlyNetWorthData
     // For now, use the change items grouped by category
     
+    // Only show account balance deltas and paid-off events
+    // Income and spending are already reflected in account balances (no double counting)
     const assetChanges = new Map<string, number>();
     const debtChanges = new Map<string, number>();
-    let incomeChangeTotal = 0;
-    let spendingChangeTotal = 0;
     
     for (const item of selectedData.items) {
       const category = getItemCategory(item);
-      if (category === "income") {
-        incomeChangeTotal += item.netWorthImpact;
-      } else if (category === "spending") {
-        spendingChangeTotal += item.netWorthImpact;
-      } else if (category === "debt") {
+      // Only process account-based changes (assets and debts)
+      // Skip income_change and spending_spike items (they're already in account balances)
+      if (category === "debt") {
         const key = item.accountSlug || item.source || item.accountLabel;
         debtChanges.set(key, (debtChanges.get(key) || 0) + item.netWorthImpact);
       } else if (category === "assets") {
@@ -233,7 +231,7 @@ function NetWorthPageContent() {
       });
     }
     
-    // Add debt changes
+    // Add debt changes (including paid-off)
     for (const [slug, amount] of debtChanges) {
       const item = selectedData.items.find(i => (i.accountSlug || i.source) === slug);
       breakdownLines.push({
@@ -241,22 +239,6 @@ function NetWorthPageContent() {
         label: item?.accountLabel || slug,
         amount,
         accountSlug: item?.accountSlug,
-      });
-    }
-    
-    // Add income/spending if non-zero
-    if (incomeChangeTotal !== 0) {
-      breakdownLines.push({
-        category: "income",
-        label: "Income Change",
-        amount: incomeChangeTotal,
-      });
-    }
-    if (spendingChangeTotal !== 0) {
-      breakdownLines.push({
-        category: "spending",
-        label: "Spending Changes",
-        amount: spendingChangeTotal,
       });
     }
     
