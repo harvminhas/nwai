@@ -519,44 +519,6 @@ function WhereMoneyGoes({
         </div>
       )}
 
-      {/* Net Worth Badge */}
-      {netWorthSummary && (
-        <Link 
-          href="/account/net-worth"
-          className="block mb-6 p-4 bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-200 rounded-xl hover:shadow-md transition-all"
-        >
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-medium text-purple-600 uppercase tracking-wide mb-1">Net Worth</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {formatCurrency(netWorthSummary.current, currency)}
-              </p>
-            </div>
-            {netWorthSummary.change !== null && (
-              <div className="text-right">
-                <p className={`text-sm font-semibold ${
-                  netWorthSummary.trend === "up" ? "text-green-600" : 
-                  netWorthSummary.trend === "down" ? "text-red-600" : "text-gray-500"
-                }`}>
-                  {netWorthSummary.change > 0 ? "+" : ""}
-                  {formatCurrency(netWorthSummary.change, currency)}
-                  {netWorthSummary.changePercent !== null && (
-                    <span className="ml-1">
-                      ({netWorthSummary.changePercent > 0 ? "+" : ""}
-                      {netWorthSummary.changePercent.toFixed(1)}%)
-                    </span>
-                  )}
-                </p>
-                <p className="text-xs text-gray-500 mt-0.5">vs last month</p>
-              </div>
-            )}
-            <svg className="w-5 h-5 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-          </div>
-        </Link>
-      )}
-
       {/* Five Bucket Cards - with subtle loading state */}
       <div className={`grid gap-4 sm:grid-cols-2 lg:grid-cols-5 transition-opacity ${rangeLoading ? 'opacity-60' : 'opacity-100'}`}>
             {/* Income Card */}
