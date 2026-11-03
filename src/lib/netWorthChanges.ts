@@ -14,17 +14,20 @@ export type ChangeItemType =
   | "account_paid_off"
   | "account_closed"
   | "balance_increase"
-  | "balance_decrease";
+  | "balance_decrease"
+  | "income_change"
+  | "spending_spike"
+  | "new_recurring_charge";
 
 export interface NetWorthChangeItem {
-  /** Deterministic ID: month+type+accountSlug */
+  /** Deterministic ID: month+type+accountSlug (or month+type+source for non-account items) */
   id: string;
   /** Month this change applies to (YYYY-MM) */
   month: string;
   /** Type of change */
   type: ChangeItemType;
-  /** Account slug this change relates to */
-  accountSlug: string;
+  /** Account slug this change relates to (for account-based changes) */
+  accountSlug?: string;
   /** Human-readable account label */
   accountLabel: string;
   /** Account type (checking, credit_card, etc.) */
@@ -37,6 +40,10 @@ export interface NetWorthChangeItem {
   previousBalance?: number;
   /** Current balance (for balance changes) */
   currentBalance?: number;
+  /** Source tag (e.g., "Salary", "Netflix", "Groceries") */
+  source?: string;
+  /** Impact description (e.g., "~$500 over 6-month avg") */
+  impactDescription?: string;
   /** When this change item was first created (preserved across regenerations) */
   generatedAt: string;
 }
@@ -56,6 +63,32 @@ export interface MonthNetWorthSummary {
   items: NetWorthChangeItem[];
   /** When this summary was generated */
   generatedAt: string;
+}
+
+/**
+ * Check if a month is complete (has statements from all active accounts).
+ * Only complete months are used for income/spending spike detection.
+ */
+function isMonthComplete(month: string, profile: FinancialProfileCache): boolean {
+  // Get all active accounts in this month
+  const activeAccountSlugs = new Set<string>();
+  for (const snap of profile.accountSnapshots) {
+    if (snap.statementMonth && snap.statementMonth <= month) {
+      activeAccountSlugs.add(snap.slug);
+    }
+  }
+
+  // Check if we have statements for all active accounts in this month
+  const monthStatements = profile.statementHistory.filter(s => s.statementMonth === month);
+  const monthAccountSlugs = new Set(monthStatements.map(s => s.slug));
+
+  for (const slug of activeAccountSlugs) {
+    if (!monthAccountSlugs.has(slug)) {
+      return false; // Missing statement for an active account
+    }
+  }
+
+  return activeAccountSlugs.size > 0; // Must have at least one account
 }
 
 /**
@@ -222,6 +255,113 @@ export async function generateNetWorthChanges(
             currency: acc.currency,
             previousBalance: prevAcc.balance,
             currentBalance: acc.balance,
+            generatedAt: getGeneratedAt(id),
+          });
+        }
+      }
+    }
+
+    // 4. Detect income changes (complete months only)
+    if (isMonthComplete(month, profile) && previousMonthAccounts) {
+      const monthHistory = profile.monthlyHistory.find(h => h.yearMonth === month);
+      if (monthHistory) {
+        // Get prior 3 complete months' income
+        const priorMonths = profile.monthlyHistory
+          .filter(h => h.yearMonth < month && isMonthComplete(h.yearMonth, profile))
+          .slice(-3);
+
+        if (priorMonths.length >= 3) {
+          const priorIncomeAvg = priorMonths.reduce((sum, h) => sum + h.incomeTotal, 0) / priorMonths.length;
+          const incomeDiff = monthHistory.incomeTotal - priorIncomeAvg;
+          const incomeChangePct = priorIncomeAvg > 0 ? (incomeDiff / priorIncomeAvg) * 100 : 0;
+
+          if (Math.abs(incomeDiff) >= 300 && Math.abs(incomeChangePct) >= 15) {
+            const id = createItemId(month, "income_change", "income");
+            items.push({
+              id,
+              month,
+              type: "income_change",
+              accountLabel: incomeChangePct > 0 ? "Income Increase" : "Income Decrease",
+              accountType: "income",
+              netWorthImpact: incomeDiff,
+              currency,
+              source: "Income",
+              impactDescription: `${incomeChangePct > 0 ? "+" : ""}${incomeChangePct.toFixed(0)}% vs 3-month avg`,
+              generatedAt: getGeneratedAt(id),
+            });
+          }
+        }
+      }
+    }
+
+    // 5. Detect spending spikes (complete months only)
+    if (isMonthComplete(month, profile) && previousMonthAccounts) {
+      // Get this month's expenses
+      const monthExpenses = profile.expenseTxns.filter(t => t.txMonth === month);
+      
+      // Group by category
+      const categoryTotals = new Map<string, number>();
+      for (const txn of monthExpenses) {
+        const current = categoryTotals.get(txn.category) || 0;
+        categoryTotals.set(txn.category, current + txn.amount);
+      }
+
+      // Get prior 6 complete months' expenses by category
+      const priorMonths = profile.monthlyHistory
+        .filter(h => h.yearMonth < month && isMonthComplete(h.yearMonth, profile))
+        .slice(-6);
+
+      if (priorMonths.length >= 6) {
+        const priorMonthsList = priorMonths.map(h => h.yearMonth);
+        const priorExpenses = profile.expenseTxns.filter(t => priorMonthsList.includes(t.txMonth));
+
+        for (const [category, monthTotal] of categoryTotals) {
+          // Calculate 6-month average for this category
+          const priorCategoryTxns = priorExpenses.filter(t => t.category === category);
+          const priorCategoryTotal = priorCategoryTxns.reduce((sum, t) => sum + t.amount, 0);
+          const priorCategoryAvg = priorCategoryTotal / 6;
+
+          const diff = monthTotal - priorCategoryAvg;
+          const diffPct = priorCategoryAvg > 0 ? (diff / priorCategoryAvg) * 100 : 0;
+
+          if (diff >= 300 && diffPct >= 30) {
+            const id = createItemId(month, "spending_spike", category.toLowerCase().replace(/\s+/g, "_"));
+            items.push({
+              id,
+              month,
+              type: "spending_spike",
+              accountLabel: `${category} Spike`,
+              accountType: "spending",
+              netWorthImpact: -diff, // Spending spike reduces net worth
+              currency,
+              source: category,
+              impactDescription: `~$${Math.round(diff)} over 6-month avg`,
+              generatedAt: getGeneratedAt(id),
+            });
+          }
+        }
+      }
+    }
+
+    // 6. Detect new recurring charges (complete months only)
+    if (isMonthComplete(month, profile) && previousMonthAccounts) {
+      // Check if any subscriptions started in this month
+      for (const sub of profile.confirmedSubscriptions) {
+        const firstDate = sub.firstSeenAt;
+        if (firstDate && firstDate.startsWith(month)) {
+          const id = createItemId(month, "new_recurring_charge", sub.merchantSlug);
+          const subAmount = sub.amount ?? sub.suggestedAmount;
+          const frequency = sub.frequency ?? sub.suggestedFrequency;
+          items.push({
+            id,
+            month,
+            type: "new_recurring_charge",
+            accountLabel: `New: ${sub.name}`,
+            accountType: "subscription",
+            netWorthImpact: -subAmount, // New recurring charge reduces net worth
+            currency,
+            source: sub.name,
+            impactDescription: `${frequency || "recurring"} charge`,
             generatedAt: getGeneratedAt(id),
           });
         }
