@@ -19,11 +19,48 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
   const router = useRouter();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [user, setUser] = useState<any>(null);
+  const [newChangesCount, setNewChangesCount] = useState<number>(0);
   const features = getFeatureFlags();
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, setUser);
+  }, []);
+
+  // Fetch new changes count - refetch on pathname change and when user changes
+  useEffect(() => {
+    if (!user) return;
+
+    const fetchNewChangesCount = async () => {
+      try {
+        const token = await user.getIdToken();
+        
+        // Get changes with server-computed newCount
+        const changesRes = await fetch("/api/user/net-worth-changes", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        
+        if (!changesRes.ok) return;
+        const changesData = await changesRes.json();
+        
+        // Use server-side count
+        setNewChangesCount(changesData.newCount ?? 0);
+      } catch (err) {
+        console.error("Failed to fetch new changes count:", err);
+      }
+    };
+
+    fetchNewChangesCount();
+  }, [user, pathname]); // Refetch on pathname change
+
+  // Listen for networth-viewed event to clear count immediately
+  useEffect(() => {
+    const handleNetworthViewed = () => {
+      setNewChangesCount(0);
+    };
+
+    window.addEventListener('networth-viewed', handleNetworthViewed);
+    return () => window.removeEventListener('networth-viewed', handleNetworthViewed);
   }, []);
 
   const handleSignOut = async () => {
@@ -178,8 +215,8 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
                 <div className="hidden h-8 w-48 animate-pulse rounded-full border border-gray-200 bg-gray-100 sm:block" />
               ) : (
                 <Link
-                  href="/account/assets"
-                  className="hidden items-center gap-2.5 whitespace-nowrap rounded-full border border-gray-200 bg-white px-3.5 py-1.5 text-[13px] transition-colors hover:border-gray-300 sm:flex"
+                  href="/account/net-worth"
+                  className="hidden items-center gap-2.5 whitespace-nowrap rounded-full border border-gray-200 bg-white px-3.5 py-1.5 text-[13px] transition-colors hover:border-gray-300 sm:flex relative"
                 >
                   <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Net worth</span>
                   <span className="font-bold tabular-nums text-gray-900">{fmt(netWorth, currency)}</span>
@@ -189,6 +226,11 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
                     >
                       {monthlyChange > 0 ? "▲" : "▼"}
                       {fmt(Math.abs(monthlyChange), currency)}
+                    </span>
+                  )}
+                  {newChangesCount > 0 && (
+                    <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-purple-600 px-1.5 text-[10px] font-bold text-white">
+                      {newChangesCount > 9 ? '9+' : newChangesCount}
                     </span>
                   )}
                 </Link>

@@ -32,7 +32,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const profile = await getFinancialProfile(decoded.uid, db);
     
     // Resolve range to months
-    const windowResult = resolveWindowMonths(range, profile.monthlyHistory, profile.statementHistory);
+    // Pass account status map to exclude paid-off/closed accounts from completeness checks
+    const accountStatusMap = new Map(
+      profile.accountStatusRecords.map(r => [r.accountSlug, { status: r.status, statusDate: r.statusDate }])
+    );
+    const windowResult = resolveWindowMonths(range, profile.monthlyHistory, profile.statementHistory, accountStatusMap);
     
     // Load user debt payment reviews
     const reviewsSnap = await db.collection(`users/${decoded.uid}/debtPaymentReviews`).get();

@@ -37,7 +37,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const profile = await getFinancialProfile(decoded.uid, db);
 
     // Use shared window resolution helper with account snapshots for completeness check
-    const windowResult = resolveWindowMonths(range, profile.monthlyHistory, profile.statementHistory);
+    // Pass account status map to exclude paid-off/closed accounts from completeness checks
+    const accountStatusMap = new Map(
+      profile.accountStatusRecords.map(r => [r.accountSlug, { status: r.status, statusDate: r.statusDate }])
+    );
+    const windowResult = resolveWindowMonths(range, profile.monthlyHistory, profile.statementHistory, accountStatusMap);
 
     // Load income deposit reviews
     const incomeReviewsSnap = await db

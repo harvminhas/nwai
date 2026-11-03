@@ -39,10 +39,43 @@ export async function GET(req: NextRequest) {
       ? (currentMonth?.netWorth ?? 0) - previousMonth.netWorth 
       : 0;
 
+    // Calculate additional fields for badge count feature
+    const changePercent = previousMonth && previousMonth.netWorth !== 0
+      ? (monthlyChange / Math.abs(previousMonth.netWorth)) * 100
+      : null;
+
+    let trend: "up" | "down" | "flat" | null = null;
+    if (previousMonth) {
+      if (Math.abs(monthlyChange) < 1) {
+        trend = "flat";
+      } else if (monthlyChange > 0) {
+        trend = "up";
+      } else {
+        trend = "down";
+      }
+    }
+
+    // Get last 12 months for the net worth page chart and breakdown
+    const last12Months = sortedHistory.slice(0, 12).reverse().map(m => ({
+      yearMonth: m.yearMonth,
+      netWorth: m.netWorth,
+      byAccount: m.byAccount || [], // Per-account contributions for What moved it
+    }));
+
     return NextResponse.json({
+      // Original fields (required by nav pill)
       netWorth,
       monthlyChange,
       currency: homeCurrency,
+      // Additional fields for badge functionality
+      current: netWorth,
+      previousMonth: previousMonth?.netWorth ?? null,
+      change: monthlyChange,
+      changePercent,
+      latestMonth: currentMonth?.yearMonth ?? null,
+      trend,
+      // Monthly history for net worth page chart
+      monthlyHistory: last12Months,
     });
   } catch (err) {
     console.error("Net worth summary error:", err);

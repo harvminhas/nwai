@@ -39,6 +39,7 @@ import { getFxRatesForCurrencies } from "./fxRates";
 import { splitDebtPayments } from "./debtUtils";
 import type { SubscriptionRecord } from "./insights/types";
 import type { ExternalAccountLabel } from "./externalAccounts";
+import { getAllAccountStatuses, isAccountActive, type AccountStatusRecord } from "./accountStatus";
 
 // ── Balance snapshot shape (mirrors /api/user/balance-snapshots) ──────────────
 export interface BalanceSnapshot {
@@ -61,7 +62,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "67"; // statementHistory (all statements per account) for month completeness
+const SCHEMA_VERSION = "68"; // byAccount per-account contributions for What moved it breakdown
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -123,6 +124,18 @@ export interface MonthlyHistoryEntry {
   totalDebts: number;
   /** Net worth = totalAssets − totalDebts for this month. */
   netWorth: number;
+  /**
+   * Per-account contributions to net worth for this month.
+   * Uses same carry-forward, FX, and paid-off exclusion logic as netWorth.
+   * For assets: Math.max(0, balance). For debts: -Math.abs(balance).
+   * Used by What moved it breakdown to show exact account-level changes.
+   */
+  byAccount?: Array<{
+    slug: string;
+    label: string;
+    type: string;
+    value: number; // In home currency; assets positive, debts negative
+  }>;
 }
 
 export interface FinancialProfileCache {
@@ -249,6 +262,11 @@ export interface FinancialProfileCache {
    * Loaded from users/{uid}/externalAccounts for fraud review.
    */
   externalAccountLabels: ExternalAccountLabel[];
+  /**
+   * Account status records (paid_off, closed).
+   * Used to exclude debt accounts from net worth and completeness checks.
+   */
+  accountStatusRecords: AccountStatusRecord[];
 }
 
 /** Stored APR / payment-frequency override for a single account. */
@@ -366,7 +384,7 @@ export async function buildAndCacheFinancialProfile(
   db: Firestore.Firestore,
 ): Promise<FinancialProfileCache> {
   // Fetch all data sources in parallel — same collections the assets page uses.
-  const [txData, rulesSnap, txnOverridesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap, backfillsSnap, cashCommitmentsSnap, manualLiabSnap, accountRatesSnap, goalsSnap, allSubsSnap, merchantCadenceSnap, externalAccountsSnap, userDocSnap] =
+  const [txData, rulesSnap, txnOverridesSnap, completedSnap, manualAssetsSnap, balanceSnapshotsSnap, currencyOverridesSnap, transferPrefsSnap, cashIncomeSnap, incomeCatRulesSnap, debtTagsSnap, backfillsSnap, cashCommitmentsSnap, manualLiabSnap, accountRatesSnap, goalsSnap, allSubsSnap, merchantCadenceSnap, externalAccountsSnap, userDocSnap, accountStatusMap] =
     await Promise.all([
       extractAllTransactions(uid, db),
       db.collection(`users/${uid}/categoryRules`).get(),
@@ -388,6 +406,7 @@ export async function buildAndCacheFinancialProfile(
       db.collection(`users/${uid}/merchantCadence`).get(),
       db.collection(`users/${uid}/externalAccounts`).get(),
       db.collection("users").doc(uid).get(),
+      getAllAccountStatuses(uid, db),
     ]);
   // Split all subscriptions into confirmed (for Upcoming/profile) vs all (for category mapping).
   const confirmedSubsSnap = {
@@ -1316,6 +1335,7 @@ export async function buildAndCacheFinancialProfile(
     for (const h of monthlyHistory) {
       let ta = 0;
       let td = 0;
+      const accountContributions: Array<{ slug: string; label: string; type: string; value: number }> = [];
 
       for (const { acct, sorted } of assetEntries) {
         let bal: number | null = null;
@@ -1324,23 +1344,42 @@ export async function buildAndCacheFinancialProfile(
           else break;
         }
         if (bal === null) continue;
-        ta += Math.max(0, toHome(bal, acct.currency)); // positive balances only
+        const value = Math.max(0, toHome(bal, acct.currency)); // positive balances only
+        ta += value;
+        accountContributions.push({
+          slug: acct.slug,
+          label: acct.label,
+          type: acct.accountType,
+          value, // Assets are positive
+        });
       }
 
       for (const { acct, sorted } of debtEntries) {
+        // Exclude paid-off/closed debts from net worth calculation
+        const isActive = isAccountActive(acct.slug, h.yearMonth, accountStatusMap);
+        if (!isActive) continue;
+
         let bal: number | null = null;
         for (const e of sorted) {
           if (e.yearMonth <= h.yearMonth) bal = e.balance;
           else break;
         }
         if (bal === null) continue;
-        td += Math.abs(toHome(bal, acct.currency)); // abs — same as liabilities page
+        const absValue = Math.abs(toHome(bal, acct.currency)); // abs — same as liabilities page
+        td += absValue;
+        accountContributions.push({
+          slug: acct.slug,
+          label: acct.label,
+          type: acct.accountType,
+          value: -absValue, // Debts are negative
+        });
       }
 
       ta += manualAssetsTotal;
       h.totalAssets = ta;
       h.totalDebts  = td;
       h.netWorth    = ta - td;
+      h.byAccount   = accountContributions;
     }
   }
 
@@ -1411,6 +1450,7 @@ export async function buildAndCacheFinancialProfile(
     debtPaymentHistory,
     cashCommitmentEntries,
     externalAccountLabels,
+    accountStatusRecords: Array.from(accountStatusMap.values()),
   };
 
   // Persist — JSON round-trip strips `undefined` fields (Firestore rejects them).

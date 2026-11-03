@@ -803,6 +803,12 @@ export default function DashboardPage() {
   const [missingAccounts, setMissingAccounts] = useState<string[]>([]);
   const [windowBasis, setWindowBasis] = useState<string>("");
   const [selectableMonths, setSelectableMonths] = useState<SelectableMonth[]>([]);
+  const [netWorthSummary, setNetWorthSummary] = useState<{
+    current: number;
+    change: number | null;
+    changePercent: number | null;
+    trend: "up" | "down" | "flat" | null;
+  } | null>(null);
   
   // Range state - default to 3mo, always (don't persist month selections)
   const [range, setRange] = useState<TimeRange>(() => {
@@ -855,11 +861,12 @@ export default function DashboardPage() {
       setLoading(true);
     }
     try {
-      const [coachRes, suggestionsRes, anomaliesRes, savedAnswersRes] = await Promise.all([
+      const [coachRes, suggestionsRes, anomaliesRes, savedAnswersRes, netWorthRes] = await Promise.all([
         fetch(`/api/user/money-coach?range=${selectedRange}`, { headers: buildHeaders(tok) }),
         fetch("/api/user/ai-ask", { headers: buildHeaders(tok) }),
         fetch("/api/user/debt-payment-anomalies", { headers: buildHeaders(tok) }),
         fetch("/api/user/saved-answers", { headers: buildHeaders(tok) }),
+        fetch("/api/user/net-worth-summary", { headers: buildHeaders(tok) }),
       ]);
       
       if (coachRes.ok) {
@@ -869,7 +876,13 @@ export default function DashboardPage() {
         
         // Compute selectable months for the Month dropdown
         if (data.window?.statementHistory) {
-          const months = getSelectableMonths(data.window.statementHistory);
+          // Build account status map to exclude paid-off/closed accounts
+          const accountStatusMap = data.window.accountStatusRecords 
+            ? new Map<string, { status: string; statusDate: string }>(
+                data.window.accountStatusRecords.map((r: any) => [r.accountSlug, { status: r.status, statusDate: r.statusDate }])
+              )
+            : undefined;
+          const months = getSelectableMonths(data.window.statementHistory, undefined, accountStatusMap);
           setSelectableMonths(months);
         }
         
@@ -921,6 +934,16 @@ export default function DashboardPage() {
       if (savedAnswersRes.ok) {
         const data = await savedAnswersRes.json();
         setSavedAnswersCount(data.savedAnswers?.length || 0);
+      }
+
+      if (netWorthRes.ok) {
+        const data = await netWorthRes.json();
+        setNetWorthSummary({
+          current: data.current || 0,
+          change: data.change,
+          changePercent: data.changePercent,
+          trend: data.trend,
+        });
       }
     } catch (error) {
       console.error("Failed to load dashboard data:", error);
