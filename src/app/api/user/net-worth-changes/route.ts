@@ -10,6 +10,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getNetWorthChanges, generateNetWorthChanges } from "@/lib/netWorthChanges";
 
+// Must match GENERATOR_VERSION in netWorthChanges.ts
+const CURRENT_GENERATOR_VERSION = 2;
+
 export const dynamic = "force-dynamic";
 
 function authToken(req: NextRequest): string | null {
@@ -41,8 +44,13 @@ export async function GET(req: NextRequest) {
       endMonth,
     });
 
-    // If no changes exist for this user, generate them first (idempotent)
-    if (changes.length === 0) {
+    // Regenerate if:
+    // 1. No changes exist (first time), OR
+    // 2. Any existing change has missing/old generatorVersion (stale logic)
+    const needsRegeneration = changes.length === 0 || 
+      changes.some(c => !c.generatorVersion || c.generatorVersion < CURRENT_GENERATOR_VERSION);
+
+    if (needsRegeneration) {
       await generateNetWorthChanges(decoded.uid, db);
       changes = await getNetWorthChanges(decoded.uid, db, {
         month,

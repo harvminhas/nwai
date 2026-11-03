@@ -64,7 +64,12 @@ export interface MonthNetWorthSummary {
   items: NetWorthChangeItem[];
   /** When this summary was generated */
   generatedAt: string;
+  /** Generator version - bump to force regeneration of all existing feed docs */
+  generatorVersion?: number;
 }
+
+/** Current generator version - bump when logic changes to force regeneration */
+const GENERATOR_VERSION = 2;
 
 
 /**
@@ -171,31 +176,51 @@ export async function generateNetWorthChanges(
     if (previousMonthAccounts) {
       // Detect changes from previous month
       
-      // 1. Check for new accounts
+      // 1. Check for truly new accounts (not first-time uploads)
+      // Evidence required: account wasn't in previous month AND either:
+      //   a) First balance is small (< $100) indicating newly opened, OR
+      //   b) First appearance is well after earliest upload batch (not part of initial history)
+      const earliestMonth = allMonths[0];
+      const monthsSinceEarliest = allMonths.indexOf(month);
+      
       for (const [slug, acc] of currentAccounts) {
         if (!previousMonthAccounts.has(slug)) {
-          const id = createItemId(month, "account_added", slug);
-          items.push({
-            id,
-            month,
-            type: "account_added",
-            accountSlug: slug,
-            accountLabel: acc.label,
-            accountType: acc.type,
-            netWorthImpact: acc.balance,
-            currency: acc.currency,
-            currentBalance: acc.balance,
-            generatedAt: getGeneratedAt(id),
-          });
+          // Account appeared for first time - check if it's truly new
+          const isSmallBalance = Math.abs(acc.balance) < 100;
+          const isLateAppearance = monthsSinceEarliest > 2; // More than 2 months after earliest
+          
+          // Only emit account_added if we have evidence it's truly new
+          // (not just first statement upload for an existing account)
+          if (isSmallBalance && isLateAppearance) {
+            const id = createItemId(month, "account_added", slug);
+            items.push({
+              id,
+              month,
+              type: "account_added",
+              accountSlug: slug,
+              accountLabel: acc.label,
+              accountType: acc.type,
+              netWorthImpact: acc.balance,
+              currency: acc.currency,
+              currentBalance: acc.balance,
+              generatedAt: getGeneratedAt(id),
+            });
+          }
+          // Otherwise, skip emitting account_added (it's likely a first upload, not a new account)
         }
       }
 
-      // 2. Check for removed accounts (paid off or closed)
-      for (const [slug, prevAcc] of previousMonthAccounts) {
-        if (!currentAccounts.has(slug)) {
-          const status = accountStatusMap.get(slug);
+      // 2. Check for closed/paid-off accounts - ONLY from accountStatus records
+      // Never infer from absence (carry-forward means accounts don't disappear)
+      for (const [slug, status] of accountStatusMap) {
+        // Check if account was just paid off or closed in this month
+        if (status.statusDate.startsWith(month) && 
+            (status.status === "paid_off" || status.status === "closed")) {
+          const prevAcc = previousMonthAccounts.get(slug);
+          if (!prevAcc) continue; // Account wasn't in previous month, skip
+          
           const type: ChangeItemType = 
-            status?.status === "paid_off" ? "account_paid_off" : "account_closed";
+            status.status === "paid_off" ? "account_paid_off" : "account_closed";
           
           const id = createItemId(month, type, slug);
           items.push({
@@ -358,6 +383,7 @@ export async function generateNetWorthChanges(
       currency,
       items,
       generatedAt: new Date().toISOString(),
+      generatorVersion: GENERATOR_VERSION,
     });
 
     previousMonthAccounts = currentAccounts;
