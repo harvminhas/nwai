@@ -17,6 +17,8 @@ export type ChangeItemType =
   | "balance_decrease";
 
 export interface NetWorthChangeItem {
+  /** Deterministic ID: month+type+accountSlug */
+  id: string;
   /** Month this change applies to (YYYY-MM) */
   month: string;
   /** Type of change */
@@ -35,7 +37,7 @@ export interface NetWorthChangeItem {
   previousBalance?: number;
   /** Current balance (for balance changes) */
   currentBalance?: number;
-  /** When this change item was generated */
+  /** When this change item was first created (preserved across regenerations) */
   generatedAt: string;
 }
 
@@ -115,6 +117,31 @@ export async function generateNetWorthChanges(
     }
   }
 
+  // Read existing items to preserve their generatedAt timestamps
+  const existingItemsMap = new Map<string, string>(); // id -> generatedAt
+  try {
+    const existingSnap = await db.collection(`users/${uid}/netWorthChanges`).get();
+    for (const doc of existingSnap.docs) {
+      const summary = doc.data() as MonthNetWorthSummary;
+      for (const item of summary.items || []) {
+        if (item.id && item.generatedAt) {
+          existingItemsMap.set(item.id, item.generatedAt);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Failed to read existing items:", err);
+  }
+
+  // Helper to create item with preserved or new generatedAt
+  const createItemId = (month: string, type: ChangeItemType, accountSlug: string): string => {
+    return `${month}_${type}_${accountSlug}`;
+  };
+
+  const getGeneratedAt = (id: string): string => {
+    return existingItemsMap.get(id) || new Date().toISOString();
+  };
+
   // Generate change items for each month
   const summaries: MonthNetWorthSummary[] = [];
   let previousMonthAccounts: Map<string, { balance: number; label: string; type: string; currency: string }> | null = null;
@@ -123,7 +150,6 @@ export async function generateNetWorthChanges(
   for (const month of allMonths) {
     const currentAccounts = accountsByMonth.get(month) || new Map();
     const items: NetWorthChangeItem[] = [];
-    const generatedAt = new Date().toISOString();
 
     // Calculate current net worth
     let currentNetWorth = 0;
@@ -139,7 +165,9 @@ export async function generateNetWorthChanges(
       // 1. Check for new accounts
       for (const [slug, acc] of currentAccounts) {
         if (!previousMonthAccounts.has(slug)) {
+          const id = createItemId(month, "account_added", slug);
           items.push({
+            id,
             month,
             type: "account_added",
             accountSlug: slug,
@@ -148,7 +176,7 @@ export async function generateNetWorthChanges(
             netWorthImpact: acc.balance,
             currency: acc.currency,
             currentBalance: acc.balance,
-            generatedAt,
+            generatedAt: getGeneratedAt(id),
           });
         }
       }
@@ -160,7 +188,9 @@ export async function generateNetWorthChanges(
           const type: ChangeItemType = 
             status?.status === "paid_off" ? "account_paid_off" : "account_closed";
           
+          const id = createItemId(month, type, slug);
           items.push({
+            id,
             month,
             type,
             accountSlug: slug,
@@ -169,7 +199,7 @@ export async function generateNetWorthChanges(
             netWorthImpact: -prevAcc.balance, // Removing a debt increases net worth
             currency: prevAcc.currency,
             previousBalance: prevAcc.balance,
-            generatedAt,
+            generatedAt: getGeneratedAt(id),
           });
         }
       }
@@ -179,9 +209,12 @@ export async function generateNetWorthChanges(
         const prevAcc = previousMonthAccounts.get(slug);
         if (prevAcc && prevAcc.balance !== acc.balance) {
           const balanceChange = acc.balance - prevAcc.balance;
+          const type: ChangeItemType = balanceChange > 0 ? "balance_increase" : "balance_decrease";
+          const id = createItemId(month, type, slug);
           items.push({
+            id,
             month,
-            type: balanceChange > 0 ? "balance_increase" : "balance_decrease",
+            type,
             accountSlug: slug,
             accountLabel: acc.label,
             accountType: acc.type,
@@ -189,7 +222,7 @@ export async function generateNetWorthChanges(
             currency: acc.currency,
             previousBalance: prevAcc.balance,
             currentBalance: acc.balance,
-            generatedAt,
+            generatedAt: getGeneratedAt(id),
           });
         }
       }
@@ -208,7 +241,7 @@ export async function generateNetWorthChanges(
       changePercent,
       currency,
       items,
-      generatedAt,
+      generatedAt: new Date().toISOString(),
     });
 
     previousMonthAccounts = currentAccounts;
