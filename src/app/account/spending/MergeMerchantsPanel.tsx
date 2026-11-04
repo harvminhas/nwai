@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { pairKey, normaliseName } from "@/lib/sourceMappings";
+import { findRelatedMerchants } from "@/lib/merchantDuplicates";
 
 export interface MerchantOption {
   name: string;
@@ -123,6 +124,15 @@ export function MergeMerchantsPanel({
     const members = same ? same.members.filter((m) => m.slug !== target.slug) : [];
     return members.filter((m) => known.has(m.slug));
   }, [target, clusters, allMerchants]);
+
+  // Names that share a real word with this merchant but are not confident enough
+  // to tick for you, e.g. "ESSO CIRCLE K" and "CHERRYCREST ESSO". Offered, unticked.
+  const relatedForTarget = useMemo(() => {
+    if (!target) return [];
+    const already = new Set(groupsForTarget.map((m) => m.slug));
+    already.add(target.slug);
+    return findRelatedMerchants(target, allMerchants).filter((m) => !already.has(m.slug));
+  }, [target, groupsForTarget, allMerchants]);
 
   const searchResults = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -345,11 +355,11 @@ export function MergeMerchantsPanel({
               <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
                 Fold in
               </label>
-              {groupsForTarget.length === 0 ? (
+              {groupsForTarget.length === 0 && relatedForTarget.length === 0 ? (
                 <p className="mb-4 rounded-lg bg-neutral-50 px-3 py-3 text-sm text-neutral-600">
                   Nothing else looks like this one. Search below to find a name to fold in.
                 </p>
-              ) : (
+              ) : groupsForTarget.length === 0 ? null : (
                 <div className="mb-4 space-y-1">
                   {groupsForTarget.map((m) => (
                     <label
@@ -376,6 +386,37 @@ export function MergeMerchantsPanel({
                 </div>
               )}
 
+              {relatedForTarget.length > 0 && (
+                <div className="mb-4">
+                  <p className="mb-1 text-xs text-neutral-500">
+                    Shares a name with this one. Tick any that are the same place.
+                  </p>
+                  <div className="space-y-1">
+                    {relatedForTarget.map((m) => (
+                      <label
+                        key={m.slug}
+                        className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 hover:bg-neutral-50"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={chosen.has(m.slug)}
+                          onChange={() => toggle(m.slug)}
+                          className="h-4 w-4 rounded border-neutral-300 text-purple-600"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-medium text-neutral-900">{m.name}</div>
+                          <div className="text-xs text-neutral-500">
+                            {m.category} - {m.txCount} transaction{m.txCount === 1 ? "" : "s"}
+                          </div>
+                        </div>
+                        <div className="text-sm font-semibold text-neutral-900 tabular-nums">
+                          {formatAmount(m.total, currency)}
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="rounded-lg border border-neutral-200 p-3">
                 <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
                   Or find another merchant
