@@ -1165,6 +1165,7 @@ export default function AccountDetailPage() {
             currency={currency}
             onPointSelect={handleTxMonthSelect}
             header={balanceHeader}
+            showMonthDetail={false}
           />
         ) : (
           <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">{balanceHeader}</div>
