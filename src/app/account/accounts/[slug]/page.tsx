@@ -1133,7 +1133,7 @@ export default function AccountDetailPage() {
               <div key={a.id} className="rounded-lg bg-white p-3 shadow-sm">
                 <p className="text-xs text-gray-500 truncate">{a.label}</p>
                 <p className="font-bold text-gray-900">{fmt(a.value, homeCurrency)}</p>
-                <Link href="/account/assets" className="text-xs text-purple-500 hover:underline">Edit →</Link>
+                <Link href={`/account/assets/${a.id}`} className="text-xs text-purple-500 hover:underline">Open</Link>
               </div>
             ))}
             <div className="rounded-lg bg-white p-3 shadow-sm">
@@ -1157,7 +1157,7 @@ export default function AccountDetailPage() {
             <p className="mt-0.5 text-sm text-gray-600">Link an asset to calculate your true equity.</p>
           </div>
           <Link
-            href={`/account/assets?link=${slug}&category=${accountType === "mortgage" ? "property" : "vehicle"}`}
+            href={`/account/assets?tab=accounts&add=1&link=${slug}&category=${accountType === "mortgage" ? "property" : "vehicle"}`}
             className="shrink-0 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
           >
             Add asset
@@ -1578,7 +1578,7 @@ export default function AccountDetailPage() {
       </> /* end overview tab */}
 
       {/* ── HISTORY TAB ──────────────────────────────────────────────────── */}
-      {activeTab === "history" && stmtHistory.length > 0 && (
+      {activeTab === "history" && (
         <div className="space-y-4">
 
           {/* Balance over time chart */}
@@ -1587,7 +1587,9 @@ export default function AccountDetailPage() {
           )}
 
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <p className="text-sm text-gray-500">{stmtHistory.length} entr{stmtHistory.length !== 1 ? "ies" : "y"}</p>
+            {stmtHistory.length > 0 && (
+              <p className="text-sm text-gray-500">{stmtHistory.length} entr{stmtHistory.length !== 1 ? "ies" : "y"}</p>
+            )}
             <div className="flex items-center gap-2">
               {baselineMonth && (
                 <button onClick={() => handleSetBaseline(baselineMonth)} className="text-xs text-purple-600 hover:underline">
@@ -1629,6 +1631,7 @@ export default function AccountDetailPage() {
               Trend starts from <span className="font-medium text-gray-600">{shortMonth(baselineMonth)}</span>.
             </p>
           )}
+          {stmtHistory.length > 0 ? (<>
           <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
             <table className="w-full text-sm">
               <thead>
@@ -1831,6 +1834,14 @@ export default function AccountDetailPage() {
           <p className="text-xs text-gray-400">
             <span className="font-medium text-gray-500">Set baseline</span> to exclude older months from the trend chart.
           </p>
+          </>) : (
+          <div className="rounded-xl border-2 border-dashed border-gray-200 bg-gray-50/60 p-8 text-center">
+            <p className="font-medium text-gray-900">No history yet</p>
+            <p className="mt-1 text-sm text-gray-500">
+              Import a CSV to backfill this account before the monthly PDF arrives, or record a balance by hand.
+            </p>
+          </div>
+          )}
         </div>
       )}
 

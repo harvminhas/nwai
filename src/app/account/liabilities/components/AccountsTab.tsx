@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { DebtsSummary, DebtAccount } from "@/lib/debtsSummary";
 import type { ManualLiability } from "@/lib/types";
 import { formatCurrency } from "@/lib/currencyUtils";
-import { AccountDrawer, type AccountDrawerData } from "@/components/AccountDrawer";
+import Link from "next/link";
 import { formatAccountLast4 } from "@/lib/rangeUtils";
 import { getFirebaseClient } from "@/lib/firebase";
 
@@ -14,9 +14,8 @@ interface AccountsTabProps {
 }
 
 export function AccountsTab({ summary, onRefresh }: AccountsTabProps) {
-  const { groups, currency, payoffEstimates, monthlyHistory } = summary;
+  const { groups, currency, payoffEstimates } = summary;
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
-  const [drawerData, setDrawerData] = useState<AccountDrawerData | null>(null);
   const [statusUpdating, setStatusUpdating] = useState<string | null>(null);
 
   const handleStatusChange = async (accountSlug: string, status: "open" | "paid_off" | "closed") => {
@@ -52,71 +51,6 @@ export function AccountsTab({ summary, onRefresh }: AccountsTabProps) {
     } finally {
       setStatusUpdating(null);
     }
-  };
-
-  const handleAccountClick = (account: DebtAccount) => {
-    const payoff = payoffEstimates.find(e => e.accountSlug === account.slug);
-    
-    // Find balance history for this account from accountBalanceHistory
-    const accountHistory = summary.accountBalanceHistory?.find(h => h.slug === account.slug);
-    
-    // Build 12-month series from monthlyHistory template
-    const last12Months = monthlyHistory.slice(-12);
-    
-    const balanceHistory = last12Months.map(m => {
-      // Find balance entry for this month
-      const entry = accountHistory?.entries.find(e => e.yearMonth === m.month);
-      
-      return {
-        month: m.month,
-        monthLabel: m.monthLabel,
-        balance: entry?.balance ?? null, // Use actual balance (already negative for debts)
-        derived: entry?.derived,
-        sourceStatement: entry?.sourceStatement,
-      };
-    });
-    
-    // Build transactions list for this account
-    const accountExpenses = summary.expenseTxns
-      .filter(t => t.accountSlug === account.slug)
-      .map(t => ({
-        date: t.date,
-        description: t.merchant,
-        amount: t.amount,
-        txMonth: t.txMonth,
-        isIncome: false,
-      }));
-    
-    const accountIncome = summary.incomeTxns
-      .filter(t => t.accountSlug === account.slug)
-      .map(t => ({
-        date: t.date,
-        description: t.source,
-        amount: t.amount,
-        txMonth: t.txMonth,
-        isIncome: true,
-      }));
-    
-    const transactions = [...accountExpenses, ...accountIncome];
-
-    setDrawerData({
-      accountName: account.accountName || account.accountType,
-      bankName: account.bankName,
-      accountType: account.accountType,
-      balance: account.balance,
-      currency,
-      statementMonth: account.statementMonth,
-      isDebt: true,
-      interestRate: account.interestRate,
-      monthlyPayment: account.monthlyPayment,
-      balanceHistory: balanceHistory.filter(h => h.balance !== null) as any, // Filter out gaps for now
-      transactions,
-      payoffInfo: payoff?.payoffDate ? {
-        monthsToPayoff: payoff.monthsToPayoff || 0,
-        payoffDate: payoff.payoffDate,
-        totalInterest: 0, // Would need to calculate from payoff estimates
-      } : undefined,
-    });
   };
 
   if (groups.length === 0) {
@@ -185,7 +119,6 @@ export function AccountsTab({ summary, onRefresh }: AccountsTabProps) {
                       account={acc} 
                       currency={currency}
                       payoff={payoff}
-                      onClick={() => handleAccountClick(acc)}
                       onStatusChange={handleStatusChange}
                       isUpdating={statusUpdating === acc.slug}
                     />
@@ -212,12 +145,6 @@ export function AccountsTab({ summary, onRefresh }: AccountsTabProps) {
         );
       })}
       
-      {/* Account Drawer */}
-      <AccountDrawer
-        isOpen={drawerData !== null}
-        onClose={() => setDrawerData(null)}
-        data={drawerData}
-      />
     </div>
   );
 }
@@ -226,14 +153,12 @@ function DebtAccountRow({
   account, 
   currency, 
   payoff,
-  onClick,
   onStatusChange,
   isUpdating
 }: { 
   account: DebtAccount; 
   currency: string;
   payoff?: { accountSlug: string; monthsToPayoff: number | null; payoffDate: string | null };
-  onClick?: () => void;
   onStatusChange?: (slug: string, status: "open" | "paid_off" | "closed") => void;
   isUpdating?: boolean;
 }) {
@@ -254,34 +179,33 @@ function DebtAccountRow({
 
   return (
     <div className="relative">
-      <button
-        onClick={onClick}
-        className="w-full flex items-start justify-between py-3 border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors rounded px-2 -mx-2 text-left"
-        disabled={isUpdating}
-      >
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="font-medium text-gray-900">{account.bankName}</span>
-            <span className="text-xs text-gray-400 font-normal">{formatAccountLast4(account.slug)}</span>
-          </div>
-          {account.accountName && (
-            <p className="text-sm text-gray-600">{account.accountName}</p>
-          )}
-          <div className="flex gap-4 mt-2 text-xs text-gray-500">
-            {account.interestRate !== null && (
-              <span>{account.interestRate.toFixed(2)}% APR</span>
+      <div className="flex items-start justify-between rounded px-2 py-3 -mx-2 border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors">
+        <Link
+          href={`/account/accounts/${account.slug}`}
+          className={`flex flex-1 items-start justify-between gap-3 text-left ${isUpdating ? "pointer-events-none opacity-60" : ""}`}
+        >
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="font-medium text-gray-900">{account.bankName}</span>
+              <span className="text-xs text-gray-400 font-normal">{formatAccountLast4(account.slug)}</span>
+            </div>
+            {account.accountName && (
+              <p className="text-sm text-gray-600">{account.accountName}</p>
             )}
-            {account.monthlyPayment !== null && (
-              <span>Payment: {formatCurrency(account.monthlyPayment, currency)}/mo</span>
+            <div className="flex gap-4 mt-2 text-xs text-gray-500">
+              {account.interestRate !== null && (
+                <span>{account.interestRate.toFixed(2)}% APR</span>
+              )}
+              {account.monthlyPayment !== null && (
+                <span>Payment: {formatCurrency(account.monthlyPayment, currency)}/mo</span>
+              )}
+            </div>
+            {payoff?.payoffDate && (
+              <p className="text-xs text-green-600 mt-1">
+                Payoff: {formatPayoffDate(payoff.payoffDate)} ({payoff.monthsToPayoff} months)
+              </p>
             )}
           </div>
-          {payoff?.payoffDate && (
-            <p className="text-xs text-green-600 mt-1">
-              Payoff: {formatPayoffDate(payoff.payoffDate)} ({payoff.monthsToPayoff} months)
-            </p>
-          )}
-        </div>
-        <div className="flex items-start gap-2">
           <div className="text-right">
             <p className="text-base font-semibold text-gray-900 tabular-nums">
               {formatCurrency(account.balance, currency)}
@@ -290,24 +214,24 @@ function DebtAccountRow({
               {account.accountType.replace("_", " ")}
             </p>
           </div>
-          {onStatusChange && (
-            <button
-              onClick={handleMenuClick}
-              disabled={isUpdating}
-              className="p-1 hover:bg-gray-200 rounded transition-colors"
-            >
-              {isUpdating ? (
-                <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
-              ) : (
-                <svg className="w-5 h-5 text-gray-600" fill="currentColor" viewBox="0 0 20 20">
-                  <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
-                </svg>
-              )}
-            </button>
-          )}
-        </div>
-      </button>
-
+        </Link>
+        {onStatusChange && (
+          <button
+            onClick={handleMenuClick}
+            disabled={isUpdating}
+            className="ml-1 shrink-0 p-1 hover:bg-gray-200 rounded transition-colors"
+            aria-label="Change account status"
+          >
+            {isUpdating ? (
+              <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+            ) : (
+              <svg className="w-5 h-5 text-gray-600" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+              </svg>
+            )}
+          </button>
+        )}
+      </div>
       {/* Dropdown Menu */}
       {showMenu && (
         <>
