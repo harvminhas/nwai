@@ -92,6 +92,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [showMergePanel, setShowMergePanel] = useState(false);
+  const [mergeFor, setMergeFor] = useState<{ name: string; slug: string; total: number; txCount: number; category: string } | null>(null);
 
   const category = searchParams.get("category") || "";
   const merchant = searchParams.get("merchant") || "";
@@ -334,7 +335,10 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             )}
           </div>
           <button
-            onClick={() => setShowMergePanel(true)}
+            onClick={() => {
+              setMergeFor(null);
+              setShowMergePanel(true);
+            }}
             className="px-4 py-2 bg-white border border-neutral-300 text-neutral-700 rounded-lg text-sm font-medium hover:bg-neutral-50 whitespace-nowrap"
           >
             Merge merchants
@@ -878,7 +882,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-neutral-900">{item.name}</div>
                     <div className="text-xs text-neutral-500" style={{ fontSize: "12px" }}>
-                      {item.category} · {item.txCount} transaction{item.txCount !== 1 ? 's' : ''}
+                      {item.subLabel ?? `${item.category} · ${item.txCount} transaction${item.txCount !== 1 ? "s" : ""}`}
                     </div>
                   </div>
                   
@@ -888,7 +892,24 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                         {formatCurrency(item.total, data.currency)}
                       </div>
                     </div>
-                    
+
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMergeFor({
+                          name: item.name,
+                          slug: item.slug,
+                          total: item.total,
+                          txCount: item.txCount ?? 0,
+                          category: item.category ?? "",
+                        });
+                        setShowMergePanel(true);
+                      }}
+                      className="rounded-md border border-neutral-200 px-2 py-1 text-xs font-medium text-neutral-600 hover:border-purple-300 hover:text-purple-700"
+                    >
+                      Merge
+                    </button>
+
                     <svg className="w-5 h-5 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>
@@ -982,9 +1003,12 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       {showMergePanel && (
         <MergeMerchantsPanel
           token={token}
-          onClose={() => setShowMergePanel(false)}
-          onMergeComplete={() => {
+          initialMerchant={mergeFor}
+          onClose={() => {
             setShowMergePanel(false);
+            setMergeFor(null);
+          }}
+          onMergeComplete={() => {
             loadData();
           }}
           currency={data?.currency || "usd"}

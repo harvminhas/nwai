@@ -910,14 +910,15 @@ export async function GET(req: NextRequest) {
         });
       }
 
-      // Build merchant map keyed by category + canonical slug
-      // (a merchant can appear in multiple categories, show one row per merchant-in-category)
+      // One row per merchant, whichever categories it was charged in. A merged
+      // merchant used to show once per category, which made a successful merge
+      // look like it had done nothing.
       const merchantMap = new Map<string, {
         name: string;
         canonicalSlug: string;
-        parentCategory: string;
         total: number;
-        transactions: Array<{ date: string; merchant: string; category: string; amount: number; accountLabel?: string }>;
+        categories: Map<string, number>;
+        txCount: number;
       }>();
 
       // Filter to window months, exclude core-excluded categories and Debt
@@ -936,29 +937,24 @@ export async function GET(req: NextRequest) {
         // 2. Then apply slug and canonical resolution (aliasing)
         const slug = merchantSlug(resolvedMerchant);
         const canonical = resolveCanonicalMerchantSlug(slug);
-        const key = `${parent}::${canonical}`; // Key by category + canonical slug
+        if (!canonical) return;
 
-        if (!merchantMap.has(key)) {
+        if (!merchantMap.has(canonical)) {
           // Use same display name resolution as category branch
-          const displayName = resolveMerchantAlias(slug, resolvedMerchant);
-          merchantMap.set(key, {
-            name: displayName,
+          merchantMap.set(canonical, {
+            name: resolveMerchantAlias(slug, resolvedMerchant),
             canonicalSlug: canonical,
-            parentCategory: parent,
             total: 0,
-            transactions: [],
+            categories: new Map(),
+            txCount: 0,
           });
         }
 
-        const entry = merchantMap.get(key)!;
-        entry.total += Math.abs(t.amount);
-        entry.transactions.push({
-          date: t.date,
-          merchant: t.merchant,
-          category: t.category,
-          amount: Math.abs(t.amount),
-          accountLabel: t.accountLabel,
-        });
+        const entry = merchantMap.get(canonical)!;
+        const amount = Math.abs(t.amount);
+        entry.total += amount;
+        entry.txCount += 1;
+        entry.categories.set(parent, (entry.categories.get(parent) ?? 0) + amount);
       });
 
       // Filter merchants by query (case-insensitive substring match on display name or canonical slug)
@@ -968,25 +964,27 @@ export async function GET(req: NextRequest) {
         return displayNameLower.includes(query) || canonicalLower.includes(query);
       });
 
-      // Rank by total, then by category (so same merchant in multiple categories shows together)
       const rankedItems: RankedItem[] = matchedMerchants
-        .map(m => ({
-          name: m.name,
-          slug: m.canonicalSlug,
-          category: m.parentCategory,
-          total: m.total,
-          share: 0, // Not meaningful in search context
-          trend: 0,
-          monthlySeries: [],
-          subLabel: `${m.transactions.length} transaction${m.transactions.length !== 1 ? 's' : ''}`,
-          txCount: m.transactions.length,
-        }))
-        .sort((a, b) => {
-          // Sort by total desc, then category asc (groups same merchant together)
-          if (b.total !== a.total) return b.total - a.total;
-          return a.category.localeCompare(b.category);
-        });
-
+        .map(m => {
+          const ordered = [...m.categories.entries()].sort((a, b) => b[1] - a[1]);
+          const primary = ordered[0]?.[0] ?? "Other";
+          // Spell out the split only when the charges really did land in more
+          // than one category, so a single-category merchant stays plain.
+          const where =
+            ordered.length > 1 ? ordered.map(([c]) => c).join(" + ") : primary;
+          return {
+            name: m.name,
+            slug: m.canonicalSlug,
+            category: primary,
+            total: m.total,
+            share: 0, // Not meaningful in search context
+            trend: 0,
+            monthlySeries: [],
+            subLabel: `${where} \u00b7 ${m.txCount} transaction${m.txCount !== 1 ? "s" : ""}`,
+            txCount: m.txCount,
+          };
+        })
+        .sort((a, b) => b.total - a.total);
       const totalMatched = rankedItems.reduce((sum, item) => sum + item.total, 0);
 
       return NextResponse.json({

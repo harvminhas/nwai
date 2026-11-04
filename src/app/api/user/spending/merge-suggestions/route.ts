@@ -8,8 +8,7 @@ import { merchantSlug } from "@/lib/applyRules";
 import { resolveCanonicalMerchantSlug } from "@/lib/merchantUtils";
 import { isCoreExcluded } from "@/lib/spendingMetrics";
 import { buildMerchantAliasResolver } from "@/lib/merchantAliases";
-import { normalizeMerchantForSimilarity } from "@/lib/merchantSimilarity";
-import { normaliseName } from "@/lib/sourceMappings";
+import { findDuplicateGroups } from "@/lib/merchantDuplicates";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +18,7 @@ interface MerchantMember {
   total: number;
   txCount: number;
   category: string;
+  categories: string[];
 }
 
 interface MergeCluster {
@@ -26,6 +26,15 @@ interface MergeCluster {
   suggestedName: string;
 }
 
+/**
+ * GET /api/user/spending/merge-suggestions
+ *
+ * Merges waiting to be made: merchants that look like the same place under
+ * different names. Grouped by merchant, not by merchant + category, so a single
+ * merchant that simply appears in two categories is never offered as a merge.
+ *
+ * Add ?all=1 to also return every merchant, for the panel's manual picker.
+ */
 export async function GET(req: NextRequest) {
   const { db } = getFirebaseAdmin();
   const access = await resolveAccess(req, db);
@@ -33,91 +42,92 @@ export async function GET(req: NextRequest) {
 
   try {
     const profile = await getFinancialProfile(access.targetUid, db);
-    
+
     const accountStatusMap = new Map(
       profile.accountStatusRecords.map(r => [r.accountSlug, { status: r.status, statusDate: r.statusDate }])
     );
-    
+
     const windowResult = resolveWindowMonths(
       "12mo",
       profile.monthlyHistory,
       profile.statementHistory,
       accountStatusMap
     );
-    
+
     const windowMonths = windowResult.months;
 
-    // Load source mappings to exclude already-merged merchants
+    // Load source mappings so already-merged names resolve to their canonical
     const mappingsSnap = await db.collection(`users/${access.targetUid}/sourceMappings`).get();
     const mappings = mappingsSnap.docs.map(doc => doc.data() as { canonical: string; alias: string; status?: string; type?: string });
     const aliasResolver = buildMerchantAliasResolver(mappings);
 
-    // Build merchant map (after alias resolution, grouped by category + canonical)
-    const merchantMap = new Map<string, MerchantMember>();
-    
+    // One entry per canonical merchant, across every category it appears in
+    const merchantMap = new Map<string, {
+      names: Map<string, number>;
+      slug: string;
+      total: number;
+      txCount: number;
+      categories: Map<string, number>;
+    }>();
+
     profile.expenseTxns
       .filter(t => {
         if (!windowMonths.includes(t.txMonth)) return false;
         if (isCoreExcluded(t.category)) return false;
-        const parent = getParentCategory(t.category);
-        if (parent === "Debt") return false;
-        return true;
+        return getParentCategory(t.category) !== "Debt";
       })
       .forEach(t => {
         const resolvedMerchant = aliasResolver.resolve(t.merchant);
-        const slug = merchantSlug(resolvedMerchant);
-        const canonical = resolveCanonicalMerchantSlug(slug);
-        const parent = getParentCategory(t.category);
-        const key = `${parent}::${canonical}`;
+        const slug = resolveCanonicalMerchantSlug(merchantSlug(resolvedMerchant));
+        if (!slug) return;
 
-        if (!merchantMap.has(key)) {
-          merchantMap.set(key, {
-            name: resolvedMerchant,
-            slug: canonical,
+        if (!merchantMap.has(slug)) {
+          merchantMap.set(slug, {
+            names: new Map(),
+            slug,
             total: 0,
             txCount: 0,
-            category: parent,
+            categories: new Map(),
           });
         }
 
-        const entry = merchantMap.get(key)!;
-        entry.total += Math.abs(t.amount);
+        const entry = merchantMap.get(slug)!;
+        const amount = Math.abs(t.amount);
+        entry.total += amount;
         entry.txCount += 1;
+        entry.names.set(resolvedMerchant, (entry.names.get(resolvedMerchant) ?? 0) + 1);
+        const parent = getParentCategory(t.category);
+        entry.categories.set(parent, (entry.categories.get(parent) ?? 0) + amount);
       });
 
-    const merchants = Array.from(merchantMap.values());
+    const merchants: MerchantMember[] = Array.from(merchantMap.values()).map(m => {
+      const orderedCategories = [...m.categories.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
+      // Most frequently seen spelling is the readable name
+      const name = [...m.names.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? m.slug;
+      return {
+        name,
+        slug: m.slug,
+        total: m.total,
+        txCount: m.txCount,
+        category: orderedCategories[0] ?? "Other",
+        categories: orderedCategories,
+      };
+    });
 
-    // Group by normalized name for similarity detection
-    const normalizedGroups = new Map<string, MerchantMember[]>();
-    for (const m of merchants) {
-      const normalized = normalizeMerchantForSimilarity(m.name);
-      if (!normalizedGroups.has(normalized)) {
-        normalizedGroups.set(normalized, []);
-      }
-      normalizedGroups.get(normalized)!.push(m);
-    }
+    const clusters: MergeCluster[] = findDuplicateGroups(merchants, { maxGroups: 40 }).map(group => ({
+      members: [...group.members].sort((a, b) => b.total - a.total),
+      suggestedName: group.suggestedName,
+    }));
 
-    // Build clusters from groups with 2+ members
-    const clusters: MergeCluster[] = Array.from(normalizedGroups.values())
-      .filter(group => group.length >= 2)
-      .map(group => {
-        // Suggested name: longest member name, title-cased
-        const longest = group.reduce((a, b) => a.name.length > b.name.length ? a : b);
-        const suggestedName = normaliseName(longest.name);
-        
-        return {
-          members: group.sort((a, b) => b.total - a.total),
-          suggestedName,
-        };
-      })
-      .sort((a, b) => {
-        const aTotal = a.members.reduce((sum, m) => sum + m.total, 0);
-        const bTotal = b.members.reduce((sum, m) => sum + m.total, 0);
-        return bTotal - aTotal;
-      })
-      .slice(0, 25); // Top 25 clusters
+    const includeAll = req.nextUrl.searchParams.get("all") === "1";
 
-    return NextResponse.json({ clusters, currency: profile.homeCurrency });
+    return NextResponse.json({
+      clusters,
+      currency: profile.homeCurrency,
+      ...(includeAll
+        ? { merchants: merchants.sort((a, b) => b.total - a.total) }
+        : {}),
+    });
   } catch (err) {
     console.error("[merge-suggestions GET]", err);
     return NextResponse.json(
