@@ -48,6 +48,8 @@ export function MergeMerchantsPanel({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState<string | null>(null);
+  const [undoIds, setUndoIds] = useState<string[]>([]);
+  const [undoing, setUndoing] = useState(false);
 
   // The group being worked on, and the name everything folds into
   const [target, setTarget] = useState<MerchantOption | null>(initialMerchant);
@@ -151,6 +153,27 @@ export function MergeMerchantsPanel({
     setChosen(next);
   };
 
+  const undo = async () => {
+    if (undoIds.length === 0 || undoing) return;
+    setUndoing(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/user/source-mappings", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: undoIds }),
+      });
+      if (!res.ok) throw new Error("Could not undo the merge");
+      setDone("Undone. Those names are separate again.");
+      setUndoIds([]);
+      onMergeComplete();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not undo the merge");
+    } finally {
+      setUndoing(false);
+    }
+  };
+
   const save = async () => {
     if (!target || chosen.size === 0) return;
     setSaving(true);
@@ -182,6 +205,9 @@ export function MergeMerchantsPanel({
         `Merged ${aliases.length + 1} names into "${suggestedName}". Category totals are unchanged.`
       );
       setChosen(new Set());
+
+      // The API keys each mapping by its pairKey, so the same ids undo this merge
+      setUndoIds(mappings.map((m) => m.pairKey.replace(/[|\/]/g, "_")));
 
       // Drop the group that was just merged so it is not offered again
       const mergedSlugs = new Set(aliases.map((m) => m.slug));
@@ -229,8 +255,17 @@ export function MergeMerchantsPanel({
           )}
 
           {done && (
-            <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-              {done}
+            <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+              <span>{done}</span>
+              {undoIds.length > 0 && (
+                <button
+                  onClick={undo}
+                  disabled={undoing}
+                  className="whitespace-nowrap text-xs font-semibold text-emerald-900 underline hover:no-underline disabled:opacity-50"
+                >
+                  {undoing ? "Undoing…" : "Undo"}
+                </button>
+              )}
             </div>
           )}
 

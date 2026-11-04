@@ -58,3 +58,30 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({ saved: incoming.length });
 }
+/**
+ * DELETE /api/user/source-mappings?ids=a,b,c — undo merges.
+ * Body may also be { ids: string[] }. Only confirmed alias rows are removed.
+ */
+export async function DELETE(request: NextRequest) {
+  const uid = await getUid(request);
+  if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const urlIds = request.nextUrl.searchParams.get("ids");
+  const body = await request.json().catch(() => ({}));
+  const ids: string[] = Array.isArray(body?.ids)
+    ? body.ids
+    : (urlIds ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+
+  if (ids.length === 0) {
+    return NextResponse.json({ error: "No ids provided" }, { status: 400 });
+  }
+
+  const { db } = getFirebaseAdmin();
+  const batch = db.batch();
+  for (const id of ids) {
+    batch.delete(db.doc(`users/${uid}/sourceMappings/${id}`));
+  }
+  await batch.commit();
+
+  return NextResponse.json({ removed: ids.length });
+}
