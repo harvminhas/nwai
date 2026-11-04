@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { ReactNode, useState } from "react";
 import {
   ResponsiveContainer,
   LineChart,
@@ -89,10 +89,19 @@ export default function NetWorthChart({
   history,
   isDebt = false,
   currency = "USD",
+  onPointSelect,
+  header,
+  showMonthDetail = true,
 }: {
   history: { yearMonth: string; netWorth: number; totalAssets?: number; totalDebts?: number; expensesTotal?: number; isEstimate?: boolean }[];
   isDebt?: boolean;
   currency?: string;
+  /** Called when a real (non-estimated) month is picked, so a page can load that month. */
+  onPointSelect?: (ym: string) => void;
+  /** Optional headline block (balance, month, deltas) rendered above the chart. */
+  header?: ReactNode;
+  /** Show the click-a-point month detail panel. Off where the page has its own header. */
+  showMonthDetail?: boolean;
 }) {
   const [range, setRange] = useState(3);
   const [selectedYm, setSelectedYm] = useState<string | null>(null);
@@ -151,10 +160,15 @@ export default function NetWorthChart({
 
   function handleSelect(ym: string) {
     setSelectedYm((prev) => prev === ym ? null : ym);
+    if (onPointSelect) {
+      const pt = data.find((p) => p.yearMonth === ym);
+      if (pt && !pt.isEstimate) onPointSelect(ym);
+    }
   }
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
+      {header}
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
@@ -269,7 +283,9 @@ export default function NetWorthChart({
         </ResponsiveContainer>
       </div>
 
-      <p className="mt-2 mb-1 text-xs text-gray-400">Click a point to see details</p>
+      {showMonthDetail && (
+        <p className="mt-2 mb-1 text-xs text-gray-400">Click a point to see details</p>
+      )}
 
       {hasEstimates && (
         <p className="mt-1 text-xs text-gray-400">
@@ -279,7 +295,7 @@ export default function NetWorthChart({
       )}
 
       {/* Month detail panel */}
-      {selPt && (
+      {showMonthDetail && selPt && (
         <div className="mt-4 rounded-lg border border-purple-100 bg-purple-50/40 p-4">
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">

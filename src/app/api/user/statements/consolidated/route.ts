@@ -216,8 +216,13 @@ export async function GET(request: NextRequest) {
       ? Array.from(yearMonths).sort().reverse()[0]!
       : null;
     const latestTxYM = profile.latestTxMonth ?? null;
+    // For a single-account view, default to that account's own latest statement.
+    // profile.latestTxMonth is global, so it often points at a month this account has no
+    // statement for - which left the detail page showing zero transactions on load.
     const month = useCurrent
-      ? (latestTxYM ?? latestStatementYM ?? null)
+      ? (accountFilter
+          ? (latestStatementYM ?? latestTxYM ?? null)
+          : (latestTxYM ?? latestStatementYM ?? null))
       : monthParam!;
 
     if (!month || !/^\d{4}-\d{2}$/.test(month)) {

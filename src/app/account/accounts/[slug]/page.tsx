@@ -15,6 +15,9 @@ import type { PaymentFrequency } from "@/app/api/user/account-rates/route";
 import { CategoryPicker, categoryColor } from "@/app/account/spending/shared";
 import { useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 import CashflowHeatmap from "@/components/CashflowHeatmap";
+import AccountSwitcher from "@/components/AccountSwitcher";
+import { debtGroup } from "@/lib/debtsSummary";
+import { accountGroup } from "@/lib/assetsSummary";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -25,6 +28,20 @@ const PAYMENT_FREQ_OPTIONS: { value: PaymentFrequency; label: string; perYear: n
   { value: "monthly",      label: "Monthly",      perYear: 12 },
 ];
 
+const DEBT_GROUP_LABEL: Record<string, string> = {
+  mortgage: "Mortgage",
+  credit_card: "Credit Cards",
+  loc: "Line of Credit",
+  other: "Other Loans",
+};
+
+const ASSET_GROUP_LABEL: Record<string, string> = {
+  cash: "Cash",
+  investments: "Investments",
+  registered: "Registered",
+  property: "Property",
+  other: "Other Assets",
+};
 const TYPE_LABEL: Record<string, string> = {
   checking: "Checking", savings: "Savings", credit: "Credit Card",
   mortgage: "Mortgage", investment: "Investment", loan: "Loan", other: "Other",
@@ -321,7 +338,7 @@ function FlowSections({
   const hiddenIncome = incomeRows.length - collapsedRows;
 
   return (
-    <div className="mt-4 space-y-3">
+    <div className={`mt-4 grid items-start gap-3 ${hasOutflow && hasIncoming ? "sm:grid-cols-2" : ""}`}>
 
       {/* ── Outflow ───────────────────────────────────────────────────── */}
       {hasOutflow && (
@@ -403,7 +420,9 @@ function FlowSections({
 
       {/* ── Subscriptions ─────────────────────────────────────────────── */}
       {subscriptions.length > 0 && (
-        <SubscriptionsCard subscriptions={subscriptions} />
+        <div className={hasOutflow && hasIncoming ? "sm:col-span-2" : ""}>
+          <SubscriptionsCard subscriptions={subscriptions} />
+        </div>
       )}
     </div>
   );
@@ -521,18 +540,37 @@ export default function AccountDetailPage() {
       const acctHistory: StatementHistoryEntry[] = json.accountStatementHistory?.[slug] ?? [];
       setStmtHistory(acctHistory);
 
-      // Ensure txMonth points to a real (non-carry-forward) month in this account's history.
-      // json.yearMonth is the latest month with *any* transactions globally, but this account
-      // may not have an uploaded statement for that month (carry-forward). Default to the
-      // most recent real month so the correct pill is highlighted on load.
+      // The API now returns this account's own latest statement month, so the transactions
+      // and the header always agree. Only fall back to the newest real month when the API
+      // handed back a month this account has no real statement for (carry-forward only).
       const realForAccount = acctHistory
         .filter(e => !e.isCarryForward && !e.isManualSnapshot)
         .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth));
-      if (realForAccount.length > 0) {
+      const apiMonthHasReal = realForAccount.some(e => e.yearMonth === json.yearMonth);
+      if (!apiMonthHasReal && realForAccount.length > 0) {
         const latestReal = realForAccount[0].yearMonth;
         setTxMonth(latestReal);
-        const cfMonth = latestReal;
-        loadCashflow(token, cfMonth);
+        loadCashflow(token, latestReal);
+        // Reload that month so the balance, KPI cards and transaction list all match.
+        setTxLoading(true);
+        try {
+          const mres = await fetch(
+            `/api/user/statements/consolidated?account=${encodeURIComponent(slug)}&month=${encodeURIComponent(latestReal)}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          const mjson = await mres.json().catch(() => ({}));
+          if (mres.ok && mjson.data) {
+            setData(mjson.data as ParsedStatementData);
+            if (mjson.previousMonth !== undefined) setPreviousMonth(mjson.previousMonth);
+            if (mjson.yearMonth) setYearMonth(mjson.yearMonth);
+            setTxData((mjson.data as ParsedStatementData | null)?.expenses ?? null);
+            setTxIncomeData((mjson.data as ParsedStatementData | null)?.income ?? null);
+            setTxPayments(mjson.paymentsMade ?? 0);
+          }
+        } finally { setTxLoading(false); }
+      } else if (json.yearMonth) {
+        setTxMonth(json.yearMonth);
+        loadCashflow(token, json.yearMonth);
       }
 
       const monthMap = new Map<string, { yearMonth: string; netWorth: number; isEstimate: boolean; priority: number }>();
@@ -874,7 +912,7 @@ export default function AccountDetailPage() {
     </div>
   );
   if (error || !data || !yearMonth) return (
-    <div className="mx-auto max-w-4xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
+    <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
       <div className="rounded-lg border border-gray-200 bg-white p-8 text-center">
         <p className="text-gray-800">{error || "No data for this account."}</p>
         <Link href="/account/accounts" className="mt-4 inline-block text-purple-600 hover:underline">Back to accounts</Link>
@@ -901,7 +939,6 @@ export default function AccountDetailPage() {
   // Investment accounts contain fund transactions the parser surfaces as "expenses" — exclude entirely.
   const hasSpending = !isInvestment && (hasActualExpenses || hasActualSubs);
   // Savings Rate is only meaningful on a checking account with both income and expenses
-  const showSavingsRate = !isInvestment && accountType === "checking" && hasActualIncome && hasActualExpenses;
 
   // "Spent this month" = all expense transactions on this account, matching ExpensesCard below.
   const spentThisMonth = data.expenses?.total ?? 0;
@@ -937,8 +974,67 @@ export default function AccountDetailPage() {
   const txns = txData?.transactions ?? [];
   const incomeTxns = txIncomeData?.transactions ?? [];
 
+  // Balance headline for the top-left of the chart - the same pattern as Spending.
+  // Uses this account's own month history, not the profile-wide previous month.
+  const headerYm = txMonth ?? yearMonth;
+  const headerPoint = headerYm ? [...history].reverse().find((h) => h.yearMonth === headerYm) : null;
+  const headerBalance = isDebtAccount
+    ? Math.abs(headerPoint?.netWorth ?? data.netWorth ?? 0)
+    : (headerPoint?.netWorth ?? data.netWorth ?? 0);
+  const prevPoint = headerYm ? [...history].reverse().find((h) => h.yearMonth < headerYm) : null;
+  const prevBalance = prevPoint ? (isDebtAccount ? Math.abs(prevPoint.netWorth) : prevPoint.netWorth) : null;
+  const headerDelta = prevBalance !== null ? headerBalance - prevBalance : null;
+  const headerDeltaGood = headerDelta !== null ? (isDebtAccount ? headerDelta < 0 : headerDelta > 0) : null;
+  const prevLabel = prevPoint ? shortMonth(prevPoint.yearMonth) : "previous month";
+
+  const balanceHeader = (
+    <div className="mb-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">
+            {isDebtAccount ? "Outstanding balance" : isInvestment ? "Portfolio value" : "Balance"}
+          </p>
+          <div className="flex flex-wrap items-baseline gap-2">
+            <p className="text-3xl font-bold text-gray-900 tabular-nums tracking-tight break-all">{fmt(headerBalance, currency)}</p>
+            {headerYm && <span className="text-xs text-gray-500">{monthLabel(headerYm)}</span>}
+          </div>
+          {headerDelta === null ? (
+            <p className="mt-1 text-xs text-gray-400">First month tracked</p>
+          ) : headerDelta === 0 ? (
+            <p className="mt-1 text-xs text-gray-400">No change vs {prevLabel}</p>
+          ) : (
+            <p className={`mt-1 text-xs font-medium ${headerDeltaGood ? "text-green-600" : "text-red-500"}`}>
+              {headerDelta > 0 ? "\u2191" : "\u2193"} {fmt(Math.abs(headerDelta), currency)} vs {prevLabel}
+              {isDebtAccount ? (headerDelta < 0 ? " (paid down)" : " (more debt)") : ""}
+            </p>
+          )}
+          {isForeignCurrency && homeEquivalent != null && fxRate != null && (
+            <p className="mt-1 text-[10px] text-gray-400">1 {currency} = {fxRate.toFixed(4)} {homeCurrency}</p>
+          )}
+        </div>
+        {!isInvestment && (hasActualIncome || hasActualExpenses) && (
+          <div className="flex shrink-0 gap-6 text-right">
+            {hasActualIncome && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">In</p>
+                <p className="mt-0.5 text-sm font-bold text-green-600 tabular-nums">{fmt(data.income?.total ?? 0, currency)}</p>
+              </div>
+            )}
+            {hasActualExpenses && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Out</p>
+                <p className="mt-0.5 text-sm font-bold text-red-500 tabular-nums">{fmt(spentThisMonth, currency)}</p>
+                {spentThisMonthCount > 0 && <p className="text-[10px] text-gray-400">{spentThisMonthCount} transactions</p>}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
   return (
-    <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
+    <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
 
       {/* Toast notification */}
       {toast && (
@@ -951,10 +1047,21 @@ export default function AccountDetailPage() {
       )}
 
       {/* Breadcrumb */}
-      <div className="mb-3 flex items-center gap-2 text-sm text-gray-500">
-        <Link href={isDebtAccount ? "/account/liabilities?tab=accounts" : "/account/assets?tab=accounts"} className="hover:text-purple-600">Accounts</Link>
-        <span>/</span>
-        <span className="font-medium text-gray-700">{data.accountName ?? data.bankName ?? slug}</span>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm text-gray-500">
+          <Link href={isDebtAccount ? "/account/liabilities?tab=accounts" : "/account/assets?tab=accounts"} className="hover:text-purple-600">
+            {isDebtAccount ? "Debts" : "Assets"}
+          </Link>
+          <span>/</span>
+          <Link href={isDebtAccount ? `/account/liabilities/category/${debtGroup(accountType, data.accountName)}` : `/account/assets/category/${accountGroup(accountType, data.accountName)}`} className="hover:text-purple-600">
+            {isDebtAccount
+              ? DEBT_GROUP_LABEL[debtGroup(accountType, data.accountName)]
+              : ASSET_GROUP_LABEL[accountGroup(accountType, data.accountName)]}
+          </Link>
+          <span>/</span>
+          <span className="font-medium text-gray-700">{data.accountName ?? data.bankName ?? slug}</span>
+        </div>
+        <AccountSwitcher />
       </div>
 
       {/* Account header */}
@@ -1049,19 +1156,22 @@ export default function AccountDetailPage() {
           </div>
         </div>
       )}
-      {/* Month pills */}
-      {realMonths.length > 1 && (
-        <div className="-mx-1 flex gap-1 overflow-x-auto pb-0.5 scrollbar-none mt-2">
-          {realMonths.map((e) => (
-            <button key={e.yearMonth} onClick={() => handleTxMonthSelect(e.yearMonth)}
-              className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium transition ${
-                txMonth === e.yearMonth ? "bg-purple-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200"
-              }`}>
-              {shortMonth(e.yearMonth)} {e.yearMonth.slice(2, 4)}
-            </button>
-          ))}
-        </div>
-      )}
+      {/* Balance headline + the one line chart on this page, same pattern as Spending */}
+      <div className="mt-4">
+        {correctedHistory.length >= 2 ? (
+          <NetWorthChart
+            history={correctedHistory}
+            isDebt={isDebtAccount}
+            currency={currency}
+            onPointSelect={handleTxMonthSelect}
+            header={balanceHeader}
+            showMonthDetail={false}
+          />
+        ) : (
+          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">{balanceHeader}</div>
+        )}
+      </div>
+
 
       {/* Tab bar */}
       <div className="mt-5 mb-6 flex border-b border-gray-200">
@@ -1133,7 +1243,7 @@ export default function AccountDetailPage() {
               <div key={a.id} className="rounded-lg bg-white p-3 shadow-sm">
                 <p className="text-xs text-gray-500 truncate">{a.label}</p>
                 <p className="font-bold text-gray-900">{fmt(a.value, homeCurrency)}</p>
-                <Link href="/account/assets" className="text-xs text-purple-500 hover:underline">Edit →</Link>
+                <Link href={`/account/assets/${a.id}`} className="text-xs text-purple-500 hover:underline">Open</Link>
               </div>
             ))}
             <div className="rounded-lg bg-white p-3 shadow-sm">
@@ -1157,7 +1267,7 @@ export default function AccountDetailPage() {
             <p className="mt-0.5 text-sm text-gray-600">Link an asset to calculate your true equity.</p>
           </div>
           <Link
-            href={`/account/assets?link=${slug}&category=${accountType === "mortgage" ? "property" : "vehicle"}`}
+            href={`/account/assets?tab=accounts&add=1&link=${slug}&category=${accountType === "mortgage" ? "property" : "vehicle"}`}
             className="shrink-0 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
           >
             Add asset
@@ -1168,21 +1278,7 @@ export default function AccountDetailPage() {
       {/* ── KPI cards ────────────────────────────────────────────────────────── */}
       {isDebtAccount ? (
         /* Debt-specific KPIs: Outstanding Balance | Paid Down | Interest Rate */
-        <div className="grid grid-cols-3 gap-4 mb-6">
-          {/* Outstanding Balance */}
-          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Outstanding Balance</p>
-            <p className="mt-2 font-bold text-xl text-gray-900 break-all leading-tight md:text-2xl">{fmt(outstandingDebt, currency)}</p>
-            {paidDown !== null && paidDown !== 0 && (
-              <p className={`mt-1.5 text-xs font-medium ${paidDown > 0 ? "text-green-600" : "text-red-500"}`}>
-                {paidDown > 0 ? "↓" : "↑"} {fmt(Math.abs(paidDown), currency)} {paidDown > 0 ? "paid down" : "more debt"} vs prev month
-              </p>
-            )}
-            {paidDown === null && (
-              <p className="mt-1.5 text-xs text-gray-400">First month tracked</p>
-            )}
-          </div>
-
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mb-6">
           {/* Payments Made / Paid Down */}
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
@@ -1284,22 +1380,8 @@ export default function AccountDetailPage() {
           )}
         </div>
       ) : isInvestment ? (
-        /* Investment account KPIs: Portfolio Value · Change · Return Rate */
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-6">
-          {/* Portfolio Value */}
-          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Portfolio Value</p>
-            <p className="mt-2 font-bold text-xl text-gray-900 break-all leading-tight md:text-2xl">{fmt(data.netWorth ?? 0, currency)}</p>
-            {(() => {
-              const delta = previousMonth != null ? (data.netWorth ?? 0) - previousMonth.netWorth : null;
-              if (delta === null) return <p className="mt-1.5 text-xs text-gray-400">First month tracked</p>;
-              if (delta === 0)    return <p className="mt-1.5 text-xs text-gray-400">No change</p>;
-              const abs = Math.abs(delta);
-              const label = abs >= 1000 ? `${delta > 0 ? "+" : "−"}${CURRENCY_SYMBOL[currency] ?? "$"}${Math.round(abs / 1000)}k` : `${delta > 0 ? "+" : "−"}${fmt(abs, currency)}`;
-              return <p className={`mt-1.5 text-xs font-medium ${delta > 0 ? "text-green-600" : "text-red-500"}`}>{delta > 0 ? "↑" : "↓"} {label} vs last month</p>;
-            })()}
-          </div>
-
+        /* Investment KPIs: contributions and return rate - value now lives on the chart */
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mb-6">
           {/* Contributions this period (income = contributions/transfers in) */}
           {(data.income?.total ?? 0) > 0 && (
             <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -1334,114 +1416,7 @@ export default function AccountDetailPage() {
             </div>
           )}
         </div>
-      ) : (
-        /* Checking / savings hero card — mirrors Today page net worth card */
-        <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden mb-6">
-          <div className="px-5 pt-5 pb-4">
-            {/* Top row: balance left, funds incoming/outgoing right */}
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Balance</p>
-                <p className="text-3xl font-bold text-gray-900 tabular-nums tracking-tight break-all">{fmt(data.netWorth ?? 0, currency)}</p>
-                {/* Delta vs last month */}
-                {(() => {
-                  const delta = previousMonth != null ? (data.netWorth ?? 0) - previousMonth.netWorth : null;
-                  if (delta === null) return <p className="mt-1 text-xs text-gray-400">First month tracked</p>;
-                  if (delta === 0)    return <p className="mt-1 text-xs text-gray-400">No change vs last month</p>;
-                  const abs = Math.abs(delta);
-                  const label = abs >= 1000
-                    ? `${delta > 0 ? "+" : "−"}${CURRENCY_SYMBOL[currency] ?? "$"}${Math.round(abs / 1000)}k`
-                    : `${delta > 0 ? "+" : "−"}${fmt(abs, currency)}`;
-                  return <p className={`mt-1 text-xs font-medium ${delta > 0 ? "text-green-600" : "text-red-500"}`}>{delta > 0 ? "↑" : "↓"} {label} vs last month</p>;
-                })()}
-                {/* FX conversion note */}
-                {isForeignCurrency && homeEquivalent != null && fxRate != null && (
-                  <p className="text-[10px] text-gray-400 mt-1">
-                    1 {currency} = {fxRate.toFixed(4)} {homeCurrency}
-                  </p>
-                )}
-              </div>
-
-              {/* Funds Incoming / Outgoing — desktop */}
-              {(hasActualIncome || hasActualExpenses) && (
-                <div className="hidden sm:flex gap-5 shrink-0 text-right">
-                  {hasActualIncome && (
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Funds Incoming</p>
-                      <p className="mt-0.5 text-base font-bold text-green-600 tabular-nums">{fmt(data.income?.total ?? 0, currency)}</p>
-                    </div>
-                  )}
-                  {hasActualExpenses && (
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Funds Outgoing</p>
-                      <p className="mt-0.5 text-base font-bold text-red-500 tabular-nums">{fmt(spentThisMonth, currency)}</p>
-                      {spentThisMonthCount > 0 && (
-                        <p className="text-[10px] text-gray-400">{spentThisMonthCount} transactions</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Mobile: funds incoming/outgoing as a row below the balance */}
-            {(hasActualIncome || hasActualExpenses) && (
-              <div className="sm:hidden mt-3 flex gap-5 border-t border-gray-100 pt-3">
-                {hasActualIncome && (
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Funds Incoming</p>
-                    <p className="mt-0.5 text-sm font-bold text-green-600 tabular-nums">{fmt(data.income?.total ?? 0, currency)}</p>
-                  </div>
-                )}
-                {hasActualExpenses && (
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Funds Outgoing</p>
-                    <p className="mt-0.5 text-sm font-bold text-red-500 tabular-nums">{fmt(spentThisMonth, currency)}</p>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* ── Brief account insight strip ──────────────────────────────────── */}
-          {(() => {
-            const income  = data.income?.total  ?? 0;
-            const expense = spentThisMonth;
-            const balance = data.netWorth ?? 0;
-            const delta   = previousMonth != null ? balance - previousMonth.netWorth : null;
-
-            // Pick the single most useful insight for this account
-            let dot  = "bg-gray-400";
-            let text = "";
-
-            if (income > 0 && expense > 0) {
-              const net = income - expense;
-              if (net > 0) {
-                dot  = "bg-green-400";
-                text = `Net ${fmt(net, currency)} coming in this period — ${Math.round((net / income) * 100)}% of incoming funds retained.`;
-              } else {
-                dot  = "bg-amber-400";
-                text = `Outgoing exceeds incoming by ${fmt(Math.abs(net), currency)} this period.`;
-              }
-            } else if (delta !== null && delta !== 0) {
-              dot  = delta > 0 ? "bg-green-400" : "bg-red-400";
-              text = `Balance ${delta > 0 ? "grew" : "dropped"} ${fmt(Math.abs(delta), currency)} vs last month.`;
-            } else if (statementCount === 1) {
-              dot  = "bg-blue-400";
-              text = "First statement uploaded. Upload more months to see trends.";
-            }
-
-            if (!text) return null;
-            return (
-              <div className="flex items-center gap-3 border-t border-gray-100 px-5 py-3">
-                <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
-                <p className="text-sm text-gray-600">{text}</p>
-              </div>
-            );
-          })()}
-        </div>
-      )}
-
+      ) : null}
 
       {/* ── Payment frequency strip (debt accounts only) ─────────────────── */}
       {isDebtAccount && (
@@ -1578,16 +1553,13 @@ export default function AccountDetailPage() {
       </> /* end overview tab */}
 
       {/* ── HISTORY TAB ──────────────────────────────────────────────────── */}
-      {activeTab === "history" && stmtHistory.length > 0 && (
+      {activeTab === "history" && (
         <div className="space-y-4">
 
-          {/* Balance over time chart */}
-          {correctedHistory.length >= 2 && (
-            <NetWorthChart history={correctedHistory} isDebt={isDebtAccount} currency={currency} />
-          )}
-
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <p className="text-sm text-gray-500">{stmtHistory.length} entr{stmtHistory.length !== 1 ? "ies" : "y"}</p>
+            {stmtHistory.length > 0 && (
+              <p className="text-sm text-gray-500">{stmtHistory.length} entr{stmtHistory.length !== 1 ? "ies" : "y"}</p>
+            )}
             <div className="flex items-center gap-2">
               {baselineMonth && (
                 <button onClick={() => handleSetBaseline(baselineMonth)} className="text-xs text-purple-600 hover:underline">
@@ -1606,13 +1578,6 @@ export default function AccountDetailPage() {
               >
                 + Update balance
               </button>
-              <Link
-                href="/account/debug"
-                className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-400 hover:border-amber-300 hover:bg-amber-50 hover:text-amber-600 transition"
-                title="Open parse debugger"
-              >
-                🔍 Debug parse
-              </Link>
             </div>
           </div>
 
@@ -1629,6 +1594,7 @@ export default function AccountDetailPage() {
               Trend starts from <span className="font-medium text-gray-600">{shortMonth(baselineMonth)}</span>.
             </p>
           )}
+          {stmtHistory.length > 0 ? (<>
           <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
             <table className="w-full text-sm">
               <thead>
@@ -1831,6 +1797,14 @@ export default function AccountDetailPage() {
           <p className="text-xs text-gray-400">
             <span className="font-medium text-gray-500">Set baseline</span> to exclude older months from the trend chart.
           </p>
+          </>) : (
+          <div className="rounded-xl border-2 border-dashed border-gray-200 bg-gray-50/60 p-8 text-center">
+            <p className="font-medium text-gray-900">No history yet</p>
+            <p className="mt-1 text-sm text-gray-500">
+              Import a CSV to backfill this account before the monthly PDF arrives, or record a balance by hand.
+            </p>
+          </div>
+          )}
         </div>
       )}
 

@@ -270,7 +270,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       {/* Breadcrumb */}
       <div className="mb-6">
         <div className="flex items-center gap-2 text-sm mb-2">
-          <Link href="/account" className="text-neutral-500 hover:text-neutral-700">
+          <Link href="/account/overview" className="text-neutral-500 hover:text-neutral-700">
             ←
           </Link>
           {data.breadcrumb.map((crumb, idx) => (

@@ -287,7 +287,7 @@ function NetWorthPageContent() {
       {/* Header */}
       <div className="mb-6">
         <div className="flex items-center gap-2 mb-1">
-          <Link href="/account" className="text-sm text-gray-500 hover:text-gray-700">
+          <Link href="/account/overview" className="text-sm text-gray-500 hover:text-gray-700">
             Account
           </Link>
           <span className="text-gray-400">/</span>
