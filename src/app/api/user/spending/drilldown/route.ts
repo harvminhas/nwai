@@ -416,11 +416,11 @@ export async function GET(req: NextRequest) {
         subLabel: "loans only", // UI will replace trend with this
       };
 
+      // Debt must always stay on the list: card payments and one-offs live inside it
+      // even when no loan payment was made in the period, so it has to remain clickable.
       if (debtRowIndex >= 0) {
-        // Replace existing Debt row
         rankedItems[debtRowIndex] = debtRow;
-      } else if (actualDebt.loanTotal > 0) {
-        // Insert Debt row if it doesn't exist but has real loan payments
+      } else {
         rankedItems.push(debtRow);
       }
 
