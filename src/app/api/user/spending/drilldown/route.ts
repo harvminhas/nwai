@@ -417,13 +417,8 @@ export async function GET(req: NextRequest) {
       };
 
       if (debtRowIndex >= 0) {
-        if (actualDebt.loanTotal > 0) {
-          // Replace the summary row (scheduled commitments) with the loan payments actually made
-          rankedItems[debtRowIndex] = debtRow;
-        } else {
-          // Nothing is counted under Debt: no loan payments, and cards are never added
-          rankedItems.splice(debtRowIndex, 1);
-        }
+        // Replace existing Debt row
+        rankedItems[debtRowIndex] = debtRow;
       } else if (actualDebt.loanTotal > 0) {
         // Insert Debt row if it doesn't exist but has real loan payments
         rankedItems.push(debtRow);
