@@ -20,6 +20,8 @@ interface RankedItem {
   trend: number;
   monthlySeries: MonthlySeries[];
   subLabel?: string;
+  extras?: Array<{ yearMonth: string; amount: number }>;
+  kind?: "loan" | "card";
 }
 
 interface CadenceStats {
@@ -40,6 +42,15 @@ interface DebtExcluded {
   inactiveAccounts: number;
 }
 
+interface DebtGroup {
+  key: string;
+  label: string;
+  counted: boolean;
+  total: number;
+  subLabel: string;
+  items: RankedItem[];
+}
+
 interface DrilldownData {
   level: "all" | "category" | "merchant";
   breadcrumb: { label: string; href?: string }[];
@@ -55,6 +66,9 @@ interface DrilldownData {
   basis?: "actual";
   excluded?: DebtExcluded;
   currency: string;
+  groups?: DebtGroup[];
+  oneOffTotal?: number;
+  oneOffLabel?: string;
 }
 
 function formatMonthLabel(yearMonth: string): string {
@@ -287,17 +301,50 @@ export function DrilldownView({ token }: DrilldownViewProps) {
           )}
         </div>
 
-        {/* "What you actually paid" caption for Debt category level */}
+        {/* Debt level 2 caption */}
         {data.kind === "debt" && data.level === "category" && data.basis === "actual" && (
           <div className="text-xs text-neutral-500 mt-1">
-            What you actually paid, including any extra or one-off payments
+            What you actually paid in regular monthly payments. One-off payments are shown below and not included.
           </div>
         )}
 
-        {/* Inactive accounts note for Debt category level */}
-        {data.kind === "debt" && data.level === "category" && data.excluded && data.excluded.inactiveAccounts > 0 && (
+        {/* Level 1 (All spending) caption */}
+        {data.level === "all" && (
           <div className="text-xs text-neutral-500 mt-1">
-            {data.excluded.inactiveAccounts} account{data.excluded.inactiveAccounts !== 1 ? "s" : ""} had no payments in this period
+            Purchases plus loan payments. Card payments and one-off payments are shown inside Debt and not added.
+          </div>
+        )}
+
+        {/* Three-box strip for Debt level 2 */}
+        {data.kind === "debt" && data.level === "category" && data.groups && (
+          <div className="flex gap-2 mt-3">
+            <div className="flex-1 border border-green-200 bg-green-50 rounded-lg p-3">
+              <div className="text-xs text-green-700 font-medium mb-1">Added to spending</div>
+              <div className="text-lg font-semibold text-green-900 tabular-nums">
+                {formatCurrency(data.total, data.currency)}
+              </div>
+              <div className="text-xs text-green-600 mt-0.5">
+                loan payments, 12 months
+              </div>
+            </div>
+            <div className="flex-1 border border-neutral-200 bg-neutral-50 rounded-lg p-3">
+              <div className="text-xs text-neutral-600 font-medium mb-1">Shown, not added</div>
+              <div className="text-lg font-semibold text-neutral-700 tabular-nums">
+                {formatCurrency(data.groups.find(g => g.key === "cards")?.total || 0, data.currency)}
+              </div>
+              <div className="text-xs text-neutral-500 mt-0.5">
+                card payments, same 12 months
+              </div>
+            </div>
+            <div className="flex-1 border border-neutral-200 bg-neutral-50 rounded-lg p-3">
+              <div className="text-xs text-neutral-600 font-medium mb-1">Set aside as info</div>
+              <div className="text-lg font-semibold text-neutral-700 tabular-nums">
+                {formatCurrency(data.oneOffTotal || 0, data.currency)}
+              </div>
+              <div className="text-xs text-neutral-500 mt-0.5">
+                one-off and extra payments
+              </div>
+            </div>
           </div>
         )}
 
@@ -561,10 +608,118 @@ export function DrilldownView({ token }: DrilldownViewProps) {
               );
             })}
           </div>
+        ) : data.groups ? (
+          // Grouped view for Debt level 2
+          <div className="space-y-6">
+            {data.groups.map((group) => (
+              <div key={group.key}>
+                <div className="mb-3 flex items-center gap-2">
+                  <div className="text-xs uppercase tracking-wide font-semibold text-neutral-700">
+                    {group.label}
+                  </div>
+                  <div className="text-xs text-neutral-500">· {group.subLabel}</div>
+                </div>
+                
+                <div className="space-y-2">
+                  {group.items.map((item) => {
+                    const isCounted = group.counted;
+                    const textColor = isCounted ? "text-neutral-900" : "text-neutral-500";
+                    const barColor = isCounted ? "bg-emerald-500" : "bg-neutral-300";
+                    
+                    return (
+                      <div key={item.slug}>
+                        <div
+                          className={`flex items-center gap-3 p-3 rounded-lg transition-colors ${
+                            isCounted ? "hover:bg-neutral-50 cursor-pointer" : "hover:bg-neutral-50 cursor-pointer opacity-75"
+                          }`}
+                          onClick={() => handleItemClick(item)}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <div>
+                                <div className={`font-medium ${textColor}`}>{item.name}</div>
+                                {item.subLabel && (
+                                  <div className="text-xs text-neutral-400" style={{ fontSize: "12px" }}>
+                                    {item.subLabel}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <div className="w-full bg-neutral-100 rounded-full h-1.5 mb-1">
+                              <div 
+                                className={`${barColor} h-1.5 rounded-full`}
+                                style={{ width: `${Math.min(item.share * 100, 100)}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                              <div className={`font-semibold ${textColor} tabular-nums`}>
+                                {formatCurrency(item.total, data.currency)}
+                              </div>
+                            </div>
+                            
+                            <svg className="w-5 h-5 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                          </div>
+                        </div>
+                        
+                        {/* Extras as indented sub-rows */}
+                        {item.extras && item.extras.length > 0 && item.extras.map((extra) => {
+                          const [year, month] = extra.yearMonth.split("-");
+                          const monthLabel = new Date(parseInt(year), parseInt(month) - 1).toLocaleDateString("en-US", { 
+                            month: "short", 
+                            year: "numeric" 
+                          });
+                          
+                          return (
+                            <div key={extra.yearMonth} className="ml-8 flex items-center gap-2 p-2 text-xs text-neutral-500">
+                              <div>{monthLabel} · extra</div>
+                              <div className="flex-1"></div>
+                              <div className="px-2 py-0.5 bg-neutral-100 rounded text-neutral-600 text-[11px]">once</div>
+                              <div className="tabular-nums font-medium w-20 text-right">{formatCurrency(extra.amount, data.currency)}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+                
+                {/* Group subtotal */}
+                <div className="mt-3 pt-2 border-t border-neutral-100 text-xs text-neutral-600 flex justify-between">
+                  <div>{group.counted ? "Loans added to spending" : "Cards, not added"}</div>
+                  <div className="font-semibold tabular-nums">{formatCurrency(group.total, data.currency)}</div>
+                </div>
+              </div>
+            ))}
+            
+            {/* Info note for cards */}
+            <div className="flex gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <svg className="w-5 h-5 text-blue-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+              </svg>
+              <div className="text-sm text-blue-900">
+                Card payments are listed, but not added. The purchases on those cards are already counted under Groceries, Dining and the rest — adding the payment too would count the same money twice. One-off payments never affect the total.
+              </div>
+            </div>
+            
+            {/* One-off total line */}
+            {data.oneOffTotal && data.oneOffTotal > 0 && (
+              <div className="flex justify-between items-center p-3 bg-neutral-50 rounded-lg">
+                <div className="text-sm text-neutral-700">{data.oneOffLabel || "One-off payments"}</div>
+                <div className="font-semibold text-neutral-900 tabular-nums">{formatCurrency(data.oneOffTotal, data.currency)}</div>
+              </div>
+            )}
+          </div>
         ) : (
+          // Regular ranked items view
           <div className="space-y-2">
             {displayedItems.map((item, idx) => {
               const isOther = item.slug === "other";
+              const isDebt = item.slug === "debt";
               const isClickable = !isOther;
               
               return (
@@ -608,9 +763,14 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                       <div className="font-semibold text-neutral-900 tabular-nums">
                         {formatCurrency(item.displayTotal, data.currency)}
                       </div>
-                      {!selectedMonth && item.trend !== 0 && Math.round(Math.abs(item.trend)) !== 0 && (
+                      {!selectedMonth && !isDebt && item.trend !== 0 && Math.round(Math.abs(item.trend)) !== 0 && (
                         <div className={`text-xs tabular-nums ${item.trend > 0 ? "text-red-600" : "text-green-600"}`}>
                           {item.trend > 0 ? "↑" : "↓"} {formatCurrency(Math.abs(item.trend), data.currency)}/mo vs avg
+                        </div>
+                      )}
+                      {isDebt && item.subLabel && (
+                        <div className="text-xs text-neutral-500">
+                          {item.subLabel}
                         </div>
                       )}
                     </div>
@@ -624,6 +784,13 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                 </div>
               );
             })}
+            
+            {/* Note under level 1 (All spending) */}
+            {data.level === "all" && (
+              <div className="mt-4 p-3 bg-neutral-50 rounded-lg text-sm text-neutral-600">
+                The Debt row is loan payments only — mortgage, car, home equity line. Card payments sit inside it as information, because those purchases already appear in the category rows above. One-off payments are listed inside Debt too and never add to the total.
+              </div>
+            )}
           </div>
         )}
       </div>
