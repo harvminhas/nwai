@@ -348,57 +348,79 @@ function NetWorthPageContent() {
         <div className="relative" style={{ height: "340px" }}>
           {/* Simple bar chart */}
           <div className="flex items-end justify-between h-full gap-2">
-            {data.map((monthData) => {
-              const maxValue = Math.max(...data.map(d => Math.abs(d.netWorth)));
-              const height = maxValue > 0 ? (Math.abs(monthData.netWorth) / maxValue) * 100 : 0;
-              const isSelectedForFeed = monthData.yearMonth === selectedMonth;
-              const isSelectedForView = viewMonth 
-                ? monthData.yearMonth === viewMonth 
-                : monthData.yearMonth === latestMonth.yearMonth;
-              const isPositive = monthData.netWorth >= 0;
+            {(() => {
+              // Calculate baseline and range for better scaling
+              const values = data.map(d => d.netWorth);
+              const minValue = Math.min(...values);
+              const maxValue = Math.max(...values);
+              const range = maxValue - minValue;
               
-              // Check for event markers
-              const hasPaidOff = monthData.items.some(i => i.type === "account_paid_off");
-              const hasNewAccount = monthData.items.some(i => i.type === "account_added");
+              // Baseline: 10% below min, but with sensible floor
+              // If range is tiny relative to values, use a percentage-based floor
+              const rangeIsSmall = range < Math.abs(minValue) * 0.05;
+              const baseline = rangeIsSmall && minValue > 0
+                ? minValue * 0.95  // 5% below for small ranges on large positive values
+                : minValue - Math.max(range * 0.1, 1000); // 10% margin or $1k minimum
+              
+              const effectiveRange = maxValue - baseline;
+              
+              return data.map((monthData) => {
+                // Scale from baseline, with minimum 3% visible height
+                const normalizedValue = monthData.netWorth - baseline;
+                const heightPercent = effectiveRange > 0 
+                  ? Math.max(3, (normalizedValue / effectiveRange) * 100)
+                  : 3;
+                
+                const isSelectedForFeed = monthData.yearMonth === selectedMonth;
+                const isSelectedForView = viewMonth 
+                  ? monthData.yearMonth === viewMonth 
+                  : monthData.yearMonth === latestMonth.yearMonth;
+                const isPositive = monthData.netWorth >= 0;
+                
+                // Check for event markers
+                const hasPaidOff = monthData.items.some(i => i.type === "account_paid_off");
+                const hasNewAccount = monthData.items.some(i => i.type === "account_added");
 
-              return (
-                <button
-                  key={monthData.yearMonth}
-                  onClick={() => {
-                    setSelectedMonth(monthData.yearMonth);
-                    setViewMonth(monthData.yearMonth);
-                  }}
-                  className="flex-1 flex flex-col items-center justify-end group relative"
-                  style={{ height: "100%" }}
-                >
-                  {/* Event markers above the bar */}
-                  {(hasPaidOff || hasNewAccount) && (
-                    <div className="absolute -top-6 left-1/2 -translate-x-1/2 flex gap-1">
-                      {hasPaidOff && (
-                        <div className="w-2 h-2 rounded-full bg-green-600" title="Account paid off" />
-                      )}
-                      {hasNewAccount && (
-                        <div className="w-2 h-2 rounded-full bg-blue-600" title="New account" />
-                      )}
+                return (
+                  <button
+                    key={monthData.yearMonth}
+                    onClick={() => {
+                      setSelectedMonth(monthData.yearMonth);
+                      setViewMonth(monthData.yearMonth);
+                    }}
+                    className="flex-1 flex flex-col items-center justify-end group relative"
+                    style={{ height: "100%" }}
+                    title={formatCurrency(monthData.netWorth, currency)}
+                  >
+                    {/* Event markers above the bar */}
+                    {(hasPaidOff || hasNewAccount) && (
+                      <div className="absolute -top-6 left-1/2 -translate-x-1/2 flex gap-1">
+                        {hasPaidOff && (
+                          <div className="w-2 h-2 rounded-full bg-green-600" title="Account paid off" />
+                        )}
+                        {hasNewAccount && (
+                          <div className="w-2 h-2 rounded-full bg-blue-600" title="New account" />
+                        )}
+                      </div>
+                    )}
+                    
+                    <div className="flex-1 flex items-end w-full">
+                      <div
+                        className={`w-full transition-all ${
+                          isSelectedForView 
+                            ? isPositive ? "bg-green-600 ring-2 ring-green-800 ring-offset-2" : "bg-red-600 ring-2 ring-red-800 ring-offset-2"
+                            : isPositive ? "bg-green-400 group-hover:bg-green-500" : "bg-red-400 group-hover:bg-red-500"
+                        }`}
+                        style={{ height: `${heightPercent}%` }}
+                      />
                     </div>
-                  )}
-                  
-                  <div className="flex-1 flex items-end w-full">
-                    <div
-                      className={`w-full transition-all ${
-                        isSelectedForView 
-                          ? isPositive ? "bg-green-600 ring-2 ring-green-800 ring-offset-2" : "bg-red-600 ring-2 ring-red-800 ring-offset-2"
-                          : isPositive ? "bg-green-400 group-hover:bg-green-500" : "bg-red-400 group-hover:bg-red-500"
-                      }`}
-                      style={{ height: `${height}%` }}
-                    />
-                  </div>
-                  <div className={`text-xs mt-2 ${isSelectedForView ? "font-semibold text-gray-900" : "text-gray-500"}`}>
-                    {formatMonthLabel(monthData.yearMonth)}
-                  </div>
-                </button>
-              );
-            })}
+                    <div className={`text-xs mt-2 ${isSelectedForView ? "font-semibold text-gray-900" : "text-gray-500"}`}>
+                      {formatMonthLabel(monthData.yearMonth)}
+                    </div>
+                  </button>
+                );
+              });
+            })()}
           </div>
         </div>
       </div>
