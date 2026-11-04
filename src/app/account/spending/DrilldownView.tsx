@@ -174,31 +174,21 @@ export function DrilldownView({ token }: DrilldownViewProps) {
     comparison: data.comparisonSeries?.[idx]?.amount || 0,
   }));
 
-  // Calculate y-axis domain (scaled to this level's range, never below zero)
-  const yAxisDomain: [number, number] = (() => {
-    const allValues = data.monthlySeries.map(m => m.amount);
-    
-    // Handle all-zero case
-    if (allValues.every(v => v === 0)) {
-      return [0, 1000];
-    }
-    
-    const minValue = Math.min(...allValues);
-    const maxValue = Math.max(...allValues);
-    const range = maxValue - minValue;
-    
-    // Handle flat or tiny range
-    const rangeIsSmall = range < Math.abs(minValue) * 0.05;
-    const baseline = rangeIsSmall && minValue > 0
-      ? minValue * 0.95
-      : minValue - Math.max(range * 0.1, 1000);
-    const ceiling = maxValue + Math.max(range * 0.05, 500);
-    
-    // Clamp baseline to never go below zero (spend is always positive)
-    const clampedBaseline = Math.max(0, Math.floor(baseline / 1000) * 1000);
-    
-    return [clampedBaseline, Math.ceil(ceiling / 1000) * 1000];
-  })();
+  // Magnitude-aware 'nice' domain calculation
+  const niceDomain = (values: number[]): [number, number] => {
+    const max = Math.max(...values, 0);
+    if (max === 0) return [0, 100];
+    const min = Math.min(...values);
+    const pad = Math.max((max - min) * 0.15, max * 0.08);
+    const lo = Math.max(0, min - pad);
+    const hi = max + pad;
+    const rawStep = (hi - lo) / 4;
+    const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= rawStep) ?? 10 * mag;
+    return [Math.floor(lo / step) * step, Math.ceil(hi / step) * step];
+  };
+  
+  const yAxisDomain = niceDomain(data.monthlySeries.map(m => m.amount));
 
   return (
     <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8">
@@ -261,30 +251,22 @@ export function DrilldownView({ token }: DrilldownViewProps) {
         {/* Line 2: Stats row */}
         <div className="flex gap-6 mb-4">
           <div>
+            <div className="text-xs uppercase text-neutral-500 mb-0.5">Average</div>
+            <div className="text-sm text-neutral-900 tabular-nums">
+              {formatCurrency(data.avgPerMonth, data.currency)}/mo
+            </div>
+          </div>
+          <div>
             <div className="text-xs uppercase text-neutral-500 mb-0.5">
-              {selectedMonth ? formatMonthLabel(selectedMonth) : "Average"}
+              {selectedMonth ? formatMonthLabel(selectedMonth) : "Last month"}
             </div>
             <div className="text-sm text-neutral-900 tabular-nums">
               {formatCurrency(
-                selectedMonth 
+                selectedMonth
                   ? (chartData.find(d => d.yearMonth === selectedMonth)?.amount || 0)
-                  : data.avgPerMonth, 
+                  : (data.monthlySeries[data.monthlySeries.length - 1]?.amount || 0),
                 data.currency
-              )}{!selectedMonth && "/mo"}
-            </div>
-          </div>
-          <div>
-            <div className="text-xs uppercase text-neutral-500 mb-0.5">Last month</div>
-            <div className="text-sm text-neutral-900 tabular-nums">
-              {formatCurrency(data.monthlySeries[data.monthlySeries.length - 1]?.amount || 0, data.currency)}
-            </div>
-          </div>
-          <div>
-            <div className="text-xs uppercase text-neutral-500 mb-0.5">Share of spending</div>
-            <div className="text-sm text-neutral-900 tabular-nums">
-              {data.comparisonSeries ? 
-                `${((data.total / data.comparisonSeries.reduce((sum, m) => sum + m.amount, 0)) * 100).toFixed(1)}%` 
-                : "—"}
+              )}
             </div>
           </div>
           {data.level === "merchant" && data.otherCategoriesTotal && data.otherCategoriesTotal > 0 && (
@@ -475,16 +457,16 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                             </span>
                           </div>
                         </div>
-                        <div className="w-full bg-neutral-100 rounded-full h-0.5">
+                        <div className="w-full bg-neutral-100 rounded-full h-[3px]">
                           <div 
-                            className="bg-emerald-500 h-0.5 rounded-full"
+                            className="bg-emerald-500 h-[3px] rounded-full"
                             style={{ width: `${acc.share * 100}%` }}
                           ></div>
                         </div>
                       </div>
                     ))}
                     {data.accounts.length > 3 && (
-                      <div className="text-neutral-500" style={{ fontSize: "11px" }}>
+                      <div className="text-neutral-500 mt-1" style={{ fontSize: "11px" }}>
                         +{data.accounts.length - 3} more
                       </div>
                     )}
