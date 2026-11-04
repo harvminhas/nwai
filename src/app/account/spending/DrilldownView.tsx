@@ -22,6 +22,8 @@ interface RankedItem {
   subLabel?: string;
   extras?: Array<{ yearMonth: string; amount: number }>;
   kind?: "loan" | "card";
+  category?: string;
+  txCount?: number;
 }
 
 interface CadenceStats {
@@ -52,7 +54,7 @@ interface DebtGroup {
 }
 
 interface DrilldownData {
-  level: "all" | "category" | "merchant";
+  level: "all" | "category" | "merchant" | "search";
   breadcrumb: { label: string; href?: string }[];
   total: number;
   avgPerMonth: number;
@@ -69,6 +71,7 @@ interface DrilldownData {
   groups?: DebtGroup[];
   oneOffTotal?: number;
   oneOffLabel?: string;
+  query?: string;
 }
 
 function formatMonthLabel(yearMonth: string): string {
@@ -90,8 +93,11 @@ export function DrilldownView({ token }: DrilldownViewProps) {
 
   const category = searchParams.get("category") || "";
   const merchant = searchParams.get("merchant") || "";
+  const searchQuery = searchParams.get("q") || "";
   
-  const level = merchant ? "merchant" : category ? "category" : "all";
+  const level = merchant ? "merchant" : category ? "category" : searchQuery ? "search" : "all";
+  
+  const [searchInput, setSearchInput] = useState(searchQuery);
 
   const loadData = async () => {
     setLoading(true);
@@ -101,6 +107,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       const params = new URLSearchParams({ level });
       if (category) params.set("category", category);
       if (merchant) params.set("merchant", merchant);
+      if (searchQuery) params.set("q", searchQuery);
 
       const res = await fetch(`/api/user/spending/drilldown?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -128,7 +135,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
 
   useEffect(() => {
     loadData();
-  }, [token, level, category, merchant]);
+  }, [token, level, category, merchant, searchQuery]);
 
   if (loading) {
     return (
@@ -151,6 +158,9 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       router.push(`/account/spending?category=${encodeURIComponent(item.name)}`);
     } else if (level === "category") {
       router.push(`/account/spending?category=${encodeURIComponent(category)}&merchant=${encodeURIComponent(item.slug)}`);
+    } else if (level === "search" && item.category) {
+      // From search results, navigate to merchant detail with both category and merchant
+      router.push(`/account/spending?category=${encodeURIComponent(item.category)}&merchant=${encodeURIComponent(item.slug)}`);
     }
   };
 
@@ -262,10 +272,62 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             </div>
           ))}
         </div>
-        <Link href="/account/spending?view=classic" className="text-xs text-neutral-500 hover:text-neutral-700 ml-7">
-          Classic view →
-        </Link>
       </div>
+
+      {/* Merchant Search (All spending level only) */}
+      {data.level === "all" && (
+        <div className="mb-6">
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Search merchants..."
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && searchInput.trim().length >= 2) {
+                  const url = new URL(window.location.href);
+                  url.searchParams.set("q", searchInput.trim());
+                  router.push(url.pathname + url.search);
+                } else if (e.key === "Escape") {
+                  setSearchInput("");
+                  const url = new URL(window.location.href);
+                  url.searchParams.delete("q");
+                  router.push(url.pathname + url.search);
+                }
+              }}
+              className="w-full px-4 py-2 pl-10 border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            />
+            <svg
+              className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-neutral-400"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+              />
+            </svg>
+            {searchInput && (
+              <button
+                onClick={() => {
+                  setSearchInput("");
+                  const url = new URL(window.location.href);
+                  url.searchParams.delete("q");
+                  router.push(url.pathname + url.search);
+                }}
+                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Debt Payment Review List */}
       <div className="mb-6">
@@ -790,7 +852,12 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                     <div className="flex items-center gap-2 mb-1">
                       <div>
                         <div className="font-medium text-neutral-900">{item.name}</div>
-                        {item.subLabel && (
+                        {item.category && data.level === "search" && (
+                          <div className="text-xs text-neutral-500" style={{ fontSize: "12px" }}>
+                            {item.category}
+                          </div>
+                        )}
+                        {item.subLabel && data.level !== "search" && (
                           <div className="text-xs text-neutral-500" style={{ fontSize: "12px" }}>
                             {item.subLabel}
                           </div>

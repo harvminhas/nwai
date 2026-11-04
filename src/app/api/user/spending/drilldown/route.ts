@@ -252,8 +252,9 @@ export async function GET(req: NextRequest) {
   const level = url.searchParams.get("level") || "all";
   const categoryParam = url.searchParams.get("category") || "";
   const merchantParam = url.searchParams.get("merchant") || "";
+  const searchQuery = url.searchParams.get("q") || "";
 
-  if (!["all", "category", "merchant"].includes(level)) {
+  if (!["all", "category", "merchant", "search"].includes(level)) {
     return NextResponse.json({ error: "Invalid level" }, { status: 400 });
   }
 
@@ -693,7 +694,7 @@ export async function GET(req: NextRequest) {
         accounts,
         currency: profile.homeCurrency,
       });
-    } else {
+    } else if (level === "merchant") {
       // Level 3: Merchant → Transactions (scoped to parent category)
       const parentCategory = categoryParam;
 
@@ -870,6 +871,107 @@ export async function GET(req: NextRequest) {
         accounts,
         otherCategoriesTotal: otherCategoriesTotal > 0 ? otherCategoriesTotal : undefined,
         currency: profile.homeCurrency,
+      });
+    } else if (level === "search") {
+      // Level 4: Search across all merchants
+      const query = searchQuery.trim().toLowerCase();
+      
+      if (query.length < 2) {
+        return NextResponse.json({
+          level: "search",
+          breadcrumb: [
+            { label: "All spending", href: "/account/spending" },
+            { label: "Search" },
+          ],
+          total: 0,
+          avgPerMonth: 0,
+          monthlySeries: [],
+          rankedItems: [],
+          currency: profile.homeCurrency,
+          query,
+        });
+      }
+
+      // Build merchant map from profile.expenseTxns, across all non-Debt categories
+      const merchantMap = new Map<string, {
+        name: string;
+        canonicalSlug: string;
+        parentCategory: string;
+        total: number;
+        transactions: Array<{ date: string; merchant: string; category: string; amount: number; accountLabel?: string }>;
+      }>();
+
+      // Filter to window months, exclude core-excluded categories and Debt
+      const scopedTxns = profile.expenseTxns.filter(t => {
+        if (!windowMonths.includes(t.txMonth)) return false;
+        if (isCoreExcluded(t.category)) return false;
+        const parent = getParentCategory(t.category);
+        if (parent === "Debt") return false; // Debt is not searchable
+        return true;
+      });
+
+      scopedTxns.forEach(t => {
+        const parent = getParentCategory(t.category);
+        const slug = merchantSlug(t.merchant);
+        const canonical = resolveCanonicalMerchantSlug(t.merchant);
+
+        if (!merchantMap.has(canonical)) {
+          merchantMap.set(canonical, {
+            name: t.merchant,
+            canonicalSlug: canonical,
+            parentCategory: parent,
+            total: 0,
+            transactions: [],
+          });
+        }
+
+        const entry = merchantMap.get(canonical)!;
+        entry.total += Math.abs(t.amount);
+        entry.transactions.push({
+          date: t.date,
+          merchant: t.merchant,
+          category: t.category,
+          amount: Math.abs(t.amount),
+          accountLabel: t.accountLabel,
+        });
+      });
+
+      // Filter merchants by query (case-insensitive substring match on name or canonical slug)
+      const matchedMerchants = Array.from(merchantMap.values()).filter(m => {
+        const nameLower = m.name.toLowerCase();
+        const canonicalLower = m.canonicalSlug.toLowerCase();
+        return nameLower.includes(query) || canonicalLower.includes(query);
+      });
+
+      // Rank by total
+      const rankedItems: RankedItem[] = matchedMerchants
+        .map(m => ({
+          name: m.name,
+          slug: m.canonicalSlug,
+          category: m.parentCategory,
+          total: m.total,
+          share: 0, // Not meaningful in search context
+          trend: 0,
+          monthlySeries: [],
+          subLabel: `${m.transactions.length} transaction${m.transactions.length !== 1 ? 's' : ''}`,
+          txCount: m.transactions.length,
+        }))
+        .sort((a, b) => b.total - a.total);
+
+      const totalMatched = rankedItems.reduce((sum, item) => sum + item.total, 0);
+
+      return NextResponse.json({
+        level: "search",
+        breadcrumb: [
+          { label: "All spending", href: "/account/spending" },
+          { label: `Search: "${query}"` },
+        ],
+        total: totalMatched,
+        avgPerMonth: totalMatched / windowMonths.length,
+        monthlySeries: [], // No chart for search
+        rankedItems,
+        currency: profile.homeCurrency,
+        query,
       });
     }
   } catch (err) {
