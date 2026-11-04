@@ -249,19 +249,20 @@ export async function GET(req: NextRequest) {
         }
 
         const merchData = merchantMap.get(canonicalSlug)!;
-        merchData.total += txn.amount;
+        const absAmount = Math.abs(txn.amount);
+        merchData.total += absAmount;
         merchData.transactions.push({
           date: txn.date,
           merchant: canonicalName,
           category: txn.category,
-          amount: txn.amount,
+          amount: absAmount,
           accountLabel: txn.accountLabel,
         });
 
         // Add to monthly series
         const monthIdx = windowMonths.indexOf(txn.txMonth);
         if (monthIdx >= 0) {
-          merchData.monthlySeries[monthIdx].amount += txn.amount;
+          merchData.monthlySeries[monthIdx].amount += absAmount;
         }
       }
 
@@ -363,17 +364,17 @@ export async function GET(req: NextRequest) {
       const merchantMonthlySeries: MonthlySeries[] = windowMonths.map(ym => {
         const monthTotal = scopedTxns
           .filter(txn => txn.txMonth === ym)
-          .reduce((sum, txn) => sum + txn.amount, 0);
+          .reduce((sum, txn) => sum + Math.abs(txn.amount), 0);
         return { yearMonth: ym, amount: monthTotal };
       });
 
-      const merchantTotal = scopedTxns.reduce((sum, t) => sum + t.amount, 0);
+      const merchantTotal = scopedTxns.reduce((sum, t) => sum + Math.abs(t.amount), 0);
       const merchantAvg = merchantTotal / windowMonths.length;
 
       // Calculate spend in other parent categories
       const otherCategoriesTotal = allMerchantTxns
         .filter(t => getParentCategory(t.category) !== parentCategory)
-        .reduce((sum, t) => sum + t.amount, 0);
+        .reduce((sum, t) => sum + Math.abs(t.amount), 0);
 
       // Build category comparison series (same as category level)
       const categoryMonthlySeries: MonthlySeries[] = windowMonths.map(ym => {
@@ -391,14 +392,17 @@ export async function GET(req: NextRequest) {
       // Transaction list (newest first, scoped to this parent category)
       const rankedItems: RankedItem[] = scopedTxns
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-        .map(txn => ({
-          name: `${new Date(txn.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })} • ${txn.accountLabel || ""}`,
-          slug: `${txn.date}-${txn.amount}`,
-          total: txn.amount,
-          share: merchantTotal > 0 ? txn.amount / merchantTotal : 0,
-          trend: 0,
-          monthlySeries: [],
-        }));
+        .map(txn => {
+          const absAmount = Math.abs(txn.amount);
+          return {
+            name: `${new Date(txn.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })} • ${txn.accountLabel || ""}`,
+            slug: `${txn.date}-${txn.amount}`,
+            total: absAmount,
+            share: merchantTotal > 0 ? absAmount / merchantTotal : 0,
+            trend: 0,
+            monthlySeries: [],
+          };
+        });
 
       // Verify invariant: sum(transactions shown) === header total
       const txnSum = rankedItems.reduce((sum, item) => sum + item.total, 0);
@@ -409,7 +413,7 @@ export async function GET(req: NextRequest) {
         date: t.date,
         merchant: merchantName,
         category: t.category,
-        amount: t.amount,
+        amount: Math.abs(t.amount),
       })), merchantName);
 
       return NextResponse.json({
