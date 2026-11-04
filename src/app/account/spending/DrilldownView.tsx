@@ -19,6 +19,7 @@ interface RankedItem {
   share: number;
   trend: number;
   monthlySeries: MonthlySeries[];
+  subLabel?: string;
 }
 
 interface CadenceStats {
@@ -47,6 +48,7 @@ interface DrilldownData {
   accounts?: AccountBreakdown[];
   otherCategoriesTotal?: number;
   kind?: "debt";
+  actualPaidTotal?: number;
   currency: string;
 }
 
@@ -280,6 +282,13 @@ export function DrilldownView({ token }: DrilldownViewProps) {
           )}
         </div>
 
+        {/* Actual paid vs scheduled note for Debt */}
+        {data.kind === "debt" && data.level === "merchant" && data.actualPaidTotal !== undefined && (
+          <div className="text-xs text-neutral-500 mt-1">
+            Actually paid {formatCurrency(data.actualPaidTotal, data.currency)} in these 12 months
+          </div>
+        )}
+
         <div 
           style={{ height: "200px", position: "relative" }}
           onClick={(e) => {
@@ -506,7 +515,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
               ? "Categories" 
               : level === "category" 
                 ? (data.kind === "debt" ? "Debt accounts" : "Merchants")
-                : "Transactions"}
+                : (data.kind === "debt" ? "Monthly schedule" : "Transactions")}
             {selectedMonth && level !== "merchant" && (
               <span className="ml-2 text-sm font-normal text-neutral-500">
                 — {formatMonthLabel(selectedMonth)} only
@@ -546,12 +555,6 @@ export function DrilldownView({ token }: DrilldownViewProps) {
               const isOther = item.slug === "other";
               const isClickable = !isOther;
               
-              // Parse debt account sub-label if present
-              const isDebt = data.kind === "debt" && level === "category";
-              const nameParts = isDebt ? item.name.split("|") : [item.name];
-              const displayName = nameParts[0];
-              const subLabel = nameParts[1];
-              
               return (
                 <div
                   key={item.slug}
@@ -563,10 +566,10 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
                       <div>
-                        <div className="font-medium text-neutral-900">{displayName}</div>
-                        {subLabel && (
+                        <div className="font-medium text-neutral-900">{item.name}</div>
+                        {item.subLabel && (
                           <div className="text-xs text-neutral-500" style={{ fontSize: "12px" }}>
-                            {subLabel}
+                            {item.subLabel}
                           </div>
                         )}
                       </div>

@@ -32,6 +32,7 @@ interface RankedItem {
   share: number;
   trend: number;
   monthlySeries: MonthlySeries[];
+  subLabel?: string;
 }
 
 interface CadenceStats {
@@ -60,6 +61,27 @@ interface DrilldownResponse {
   otherCategoriesTotal?: number;
   kind?: "debt";
   currency: string;
+  actualPaidTotal?: number;
+}
+
+// Helper to compute Debt category monthly series (used at both level 2 and level 3)
+function computeDebtCategoryMonthlySeries(
+  windowMonths: string[],
+  monthByYm: Map<string, any>,
+  categories: any[]
+): MonthlySeries[] {
+  const childCategories = categories
+    .filter(cat => getParentCategory(cat.category) === "Debt")
+    .map(cat => cat.category);
+  
+  return windowMonths.map(ym => {
+    const monthData = monthByYm.get(ym);
+    const monthTotal = childCategories.reduce((sum, childCat) => {
+      const catInMonth = monthData?.categories.find((c: any) => c.category === childCat);
+      return sum + (catInMonth?.amount || 0);
+    }, 0);
+    return { yearMonth: ym, amount: monthTotal };
+  });
 }
 
 export async function GET(req: NextRequest) {
@@ -213,14 +235,16 @@ export async function GET(req: NextRequest) {
       }
 
       // Build category monthly series (sum of all child categories)
-      const categoryMonthlySeries: MonthlySeries[] = windowMonths.map(ym => {
-        const monthData = monthByYm.get(ym);
-        const monthTotal = childCategories.reduce((sum, childCat) => {
-          const catInMonth = monthData?.categories.find(c => c.category === childCat);
-          return sum + (catInMonth?.amount || 0);
-        }, 0);
-        return { yearMonth: ym, amount: monthTotal };
-      });
+      const categoryMonthlySeries: MonthlySeries[] = parentCategory === "Debt"
+        ? computeDebtCategoryMonthlySeries(windowMonths, monthByYm, summary.categories)
+        : windowMonths.map(ym => {
+            const monthData = monthByYm.get(ym);
+            const monthTotal = childCategories.reduce((sum, childCat) => {
+              const catInMonth = monthData?.categories.find(c => c.category === childCat);
+              return sum + (catInMonth?.amount || 0);
+            }, 0);
+            return { yearMonth: ym, amount: monthTotal };
+          });
 
       const categoryTotal = categoryMonthlySeries.reduce((sum, m) => sum + m.amount, 0);
       const categoryAvg = categoryTotal / windowMonths.length;
@@ -254,14 +278,10 @@ export async function GET(req: NextRequest) {
           const last3Avg = last3.reduce((sum, m) => sum + m.amount, 0) / 3;
           const trend = last3Avg - avg;
 
-          // Encode sub-label in name with separator for UI parsing
-          const estMarker = payment.isEstimated ? "est. " : "";
-          const subLabel = `${estMarker}${payment.method}`;
-          const accountName = payment.accountName || payment.accountSlug;
-
           return {
-            name: `${accountName}|${subLabel}`, // Use | separator for sub-label
+            name: payment.accountName || payment.accountSlug,
             slug: payment.accountSlug,
+            subLabel: payment.method, // Use method verbatim (already includes qualifiers)
             total: accountTotal,
             share: categoryTotal > 0 ? accountTotal / categoryTotal : 0,
             trend,
@@ -418,34 +438,7 @@ export async function GET(req: NextRequest) {
           return NextResponse.json({ error: "Account not found" }, { status: 404 });
         }
 
-        // Get payment history for this account, filtered to window months
-        const paymentHistory = profile.debtPaymentHistory.filter(
-          entry => entry.accountSlug === accountSlug && windowMonths.includes(entry.statementMonth)
-        );
-
-        // Helper for FX conversion
-        const home = profile.homeCurrency.toUpperCase();
-        function toHome(amount: number, currency?: string): number {
-          const cur = (currency ?? home).toUpperCase();
-          if (cur === home) return amount;
-          const rate = (profile.fxRates || {})[cur];
-          return rate ? amount * rate : amount;
-        }
-
-        // Build monthly series from payment history
-        const monthlySeries: MonthlySeries[] = windowMonths.map(ym => {
-          const entry = paymentHistory.find(e => e.statementMonth === ym);
-          return {
-            yearMonth: ym,
-            amount: entry ? toHome(entry.paymentsMade, entry.currency) : 0,
-          };
-        });
-
-        const total = monthlySeries.reduce((sum, m) => sum + m.amount, 0);
-        const avgPerMonth = total / windowMonths.length;
-
-        // Build transaction rows from payment history
-        // Use scheduled payment method as a placeholder since method isn't in DebtPaymentHistoryEntry
+        // Get scheduled payments (call once and reuse)
         const scheduledPayments = computeScheduledDebtPayments(
           profile.accountSnapshots,
           profile.debtPaymentHistory,
@@ -453,66 +446,82 @@ export async function GET(req: NextRequest) {
           profile.fxRates || {},
           profile.homeCurrency
         );
+        
         const scheduled = scheduledPayments.find(p => p.accountSlug === accountSlug);
-        const methodLabel = scheduled?.method || "payment";
+        if (!scheduled) {
+          return NextResponse.json({ error: "Account not found in scheduled payments" }, { status: 404 });
+        }
 
-        const rankedItems: RankedItem[] = paymentHistory
-          .sort((a, b) => b.statementMonth.localeCompare(a.statementMonth)) // Newest first
-          .map(entry => {
-            const amount = toHome(entry.paymentsMade, entry.currency);
-            const [year, month] = entry.statementMonth.split("-");
+        // Compute Debt category monthly series using shared helper
+        const categoryMonthlySeries = computeDebtCategoryMonthlySeries(
+          windowMonths,
+          monthByYm,
+          summary.categories
+        );
+        const categoryTotal = categoryMonthlySeries.reduce((sum, m) => sum + m.amount, 0);
+
+        // Use SAME proportional allocation as level 2 (ensures totals match exactly)
+        const sumOfPayments = scheduledPayments.reduce((sum, p) => sum + p.amount, 0);
+        const proportion = sumOfPayments > 0 ? scheduled.amount / sumOfPayments : 0;
+        
+        // Derive header and monthly series from proportional allocation
+        const monthlySeries: MonthlySeries[] = categoryMonthlySeries.map(m => ({
+          yearMonth: m.yearMonth,
+          amount: m.amount * proportion,
+        }));
+        
+        const total = categoryTotal * proportion;
+        const avgPerMonth = total / windowMonths.length;
+
+        // Rows = one per month in the window, showing allocated amount
+        const rankedItems: RankedItem[] = windowMonths
+          .map((ym, idx) => {
+            const [year, month] = ym.split("-");
             const monthLabel = new Date(parseInt(year), parseInt(month) - 1).toLocaleDateString("en-US", { 
               month: "short", 
               year: "numeric" 
             });
             
             return {
-              name: `${monthLabel} • ${methodLabel}`,
-              slug: entry.statementMonth,
-              total: amount,
-              share: total > 0 ? amount / total : 0,
+              name: monthLabel,
+              slug: ym,
+              total: monthlySeries[idx].amount,
+              share: total > 0 ? monthlySeries[idx].amount / total : 0,
               trend: 0,
               monthlySeries: [],
             };
-          });
+          })
+          .reverse(); // Newest first
 
-        // If no payment history, show scheduled amount
-        if (rankedItems.length === 0) {
-          const scheduledPayments = computeScheduledDebtPayments(
-            profile.accountSnapshots,
-            profile.debtPaymentHistory,
-            userReviews,
-            profile.fxRates || {},
-            profile.homeCurrency
+        // Calculate actual paid total from history (if differs from scheduled)
+        const paymentHistory = profile.debtPaymentHistory.filter(
+          entry => entry.accountSlug === accountSlug && windowMonths.includes(entry.statementMonth)
+        );
+        
+        let actualPaidTotal: number | undefined;
+        if (paymentHistory.length > 0) {
+          const home = profile.homeCurrency.toUpperCase();
+          const toHome = (amount: number, currency?: string): number => {
+            const cur = (currency ?? home).toUpperCase();
+            if (cur === home) return amount;
+            const rate = (profile.fxRates || {})[cur];
+            return rate ? amount * rate : amount;
+          };
+          
+          const actualTotal = paymentHistory.reduce(
+            (sum, entry) => sum + toHome(entry.paymentsMade, entry.currency),
+            0
           );
-          const scheduled = scheduledPayments.find(p => p.accountSlug === accountSlug);
-          if (scheduled) {
-            rankedItems.push({
-              name: `Scheduled • ${scheduled.method}`,
-              slug: "scheduled",
-              total: scheduled.amount,
-              share: 1,
-              trend: 0,
-              monthlySeries: [],
-            });
+          
+          // Only include if differs by more than $1
+          if (Math.abs(actualTotal - total) > 1) {
+            actualPaidTotal = actualTotal;
           }
         }
 
-        // Build comparison series (all Debt category)
-        const categoryMonthlySeries: MonthlySeries[] = windowMonths.map(ym => {
-          const monthData = monthByYm.get(ym);
-          const childCategories = summary.categories
-            .filter(cat => getParentCategory(cat.category) === "Debt")
-            .map(cat => cat.category);
-          const monthTotal = childCategories.reduce((sum, childCat) => {
-            const catInMonth = monthData?.categories.find(c => c.category === childCat);
-            return sum + (catInMonth?.amount || 0);
-          }, 0);
-          return { yearMonth: ym, amount: monthTotal };
-        });
-
         return NextResponse.json({
           level: "merchant",
+          kind: "debt" as const,
           breadcrumb: [
             { label: "All spending", href: "/account/spending" },
             { label: "Debt", href: "/account/spending?category=Debt" },
@@ -523,6 +532,7 @@ export async function GET(req: NextRequest) {
           monthlySeries,
           comparisonSeries: categoryMonthlySeries,
           rankedItems,
+          actualPaidTotal,
           currency: profile.homeCurrency,
         });
       }
