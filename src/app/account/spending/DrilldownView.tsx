@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import { formatCurrency, getCurrencySymbol } from "@/lib/currencyUtils";
+import { ReviewList } from "@/components/ReviewList";
 
 interface MonthlySeries {
   yearMonth: string;
@@ -60,34 +61,39 @@ export function DrilldownView({ token }: DrilldownViewProps) {
   
   const level = merchant ? "merchant" : category ? "category" : "all";
 
-  useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
-      setError(null);
+  const loadData = async () => {
+    setLoading(true);
+    setError(null);
 
-      try {
-        const params = new URLSearchParams({ level });
-        if (category) params.set("category", category);
-        if (merchant) params.set("merchant", merchant);
+    try {
+      const params = new URLSearchParams({ level });
+      if (category) params.set("category", category);
+      if (merchant) params.set("merchant", merchant);
 
-        const res = await fetch(`/api/user/spending/drilldown?${params}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+      const res = await fetch(`/api/user/spending/drilldown?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
-        if (!res.ok) {
-          const errorData = await res.json().catch(() => ({ error: "Failed to load data" }));
-          throw new Error(errorData.error || "Failed to load data");
-        }
-
-        const result = await res.json();
-        setData(result);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load data");
-      } finally {
-        setLoading(false);
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ error: "Failed to load data" }));
+        throw new Error(errorData.error || "Failed to load data");
       }
-    };
 
+      const result = await res.json();
+      setData(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load data");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReviewComplete = async () => {
+    // Refetch data after user classifies a debt payment
+    await loadData();
+  };
+
+  useEffect(() => {
     loadData();
   }, [token, level, category, merchant]);
 
@@ -199,6 +205,15 @@ export function DrilldownView({ token }: DrilldownViewProps) {
         <Link href="/account/spending?view=classic" className="text-xs text-neutral-500 hover:text-neutral-700 ml-7">
           Classic view →
         </Link>
+      </div>
+
+      {/* Debt Payment Review List */}
+      <div className="mb-6">
+        <ReviewList
+          token={token}
+          reviewType="debt_payment"
+          onReviewComplete={handleReviewComplete}
+        />
       </div>
 
       {/* Header Card */}
