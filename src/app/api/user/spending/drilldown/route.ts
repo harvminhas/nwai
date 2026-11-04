@@ -38,6 +38,14 @@ interface CadenceStats {
   sentence?: string;
 }
 
+interface AccountBreakdown {
+  label: string;
+  slug: string;
+  total: number;
+  share: number;
+  count: number;
+}
+
 interface DrilldownResponse {
   level: "all" | "category" | "merchant";
   breadcrumb: { label: string; href?: string }[];
@@ -47,6 +55,7 @@ interface DrilldownResponse {
   comparisonSeries?: MonthlySeries[];
   rankedItems: RankedItem[];
   cadence?: CadenceStats;
+  accounts?: AccountBreakdown[];
   otherCategoriesTotal?: number;
   currency: string;
 }
@@ -313,9 +322,10 @@ export async function GET(req: NextRequest) {
         });
       }
 
-      // Cadence stats
+      // Cadence stats and account breakdown
       const allTxns = Array.from(merchantMap.values()).flatMap(m => m.transactions);
       const cadence = computeCadenceStats(allTxns, parentCategory);
+      const accounts = computeAccountsBreakdown(scopedTxns, categoryTotal);
 
       return NextResponse.json({
         level: "category",
@@ -329,6 +339,7 @@ export async function GET(req: NextRequest) {
         comparisonSeries: allSpendingMonthlySeries,
         rankedItems,
         cadence,
+        accounts,
         currency: profile.homeCurrency,
       });
     } else {
@@ -408,13 +419,14 @@ export async function GET(req: NextRequest) {
       const txnSum = rankedItems.reduce((sum, item) => sum + item.total, 0);
       // txnSum should equal merchantTotal
 
-      // Cadence stats
+      // Cadence stats and account breakdown
       const cadence = computeCadenceStats(scopedTxns.map(t => ({
         date: t.date,
         merchant: merchantName,
         category: t.category,
         amount: Math.abs(t.amount),
       })), merchantName);
+      const accounts = computeAccountsBreakdown(scopedTxns, merchantTotal);
 
       return NextResponse.json({
         level: "merchant",
@@ -429,6 +441,7 @@ export async function GET(req: NextRequest) {
         comparisonSeries: categoryMonthlySeries,
         rankedItems,
         cadence,
+        accounts,
         otherCategoriesTotal: otherCategoriesTotal > 0 ? otherCategoriesTotal : undefined,
         currency: profile.homeCurrency,
       });
@@ -494,4 +507,35 @@ function computeCadenceStats(
   }
 
   return { dayOfWeek, sentence };
+}
+
+function computeAccountsBreakdown(
+  transactions: Array<{ accountLabel?: string; accountSlug?: string; amount: number }>,
+  levelTotal: number
+): AccountBreakdown[] {
+  const accountMap = new Map<string, { label: string; total: number; count: number }>();
+
+  for (const txn of transactions) {
+    const slug = txn.accountSlug || "unknown";
+    const label = txn.accountLabel || "Unknown Account";
+    const absAmount = Math.abs(txn.amount);
+
+    if (!accountMap.has(slug)) {
+      accountMap.set(slug, { label, total: 0, count: 0 });
+    }
+
+    const acc = accountMap.get(slug)!;
+    acc.total += absAmount;
+    acc.count += 1;
+  }
+
+  return Array.from(accountMap.entries())
+    .map(([slug, data]) => ({
+      label: data.label,
+      slug,
+      total: data.total,
+      share: levelTotal > 0 ? data.total / levelTotal : 0,
+      count: data.count,
+    }))
+    .sort((a, b) => b.total - a.total);
 }

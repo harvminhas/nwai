@@ -27,6 +27,14 @@ interface CadenceStats {
   sentence?: string;
 }
 
+interface AccountBreakdown {
+  label: string;
+  slug: string;
+  total: number;
+  share: number;
+  count: number;
+}
+
 interface DrilldownData {
   level: "all" | "category" | "merchant";
   breadcrumb: { label: string; href?: string }[];
@@ -36,6 +44,7 @@ interface DrilldownData {
   comparisonSeries?: MonthlySeries[];
   rankedItems: RankedItem[];
   cadence?: CadenceStats;
+  accounts?: AccountBreakdown[];
   otherCategoriesTotal?: number;
   currency: string;
 }
@@ -389,33 +398,66 @@ export function DrilldownView({ token }: DrilldownViewProps) {
           </div>
         )}
 
-        {/* When strip - only at category and merchant levels */}
-        {data.cadence && level !== "all" && data.cadence.dayOfWeek && (
+        {/* When and Where - only at category and merchant levels */}
+        {level !== "all" && (data.cadence?.dayOfWeek || data.accounts) && (
           <div className="mt-4 pt-4 border-t border-neutral-200">
-            <div className="flex items-center justify-between gap-4">
-              <div className="text-sm text-neutral-600">
-                {data.cadence.sentence || ""}
-              </div>
-              <div className="flex gap-1.5 flex-shrink-0">
-                {data.cadence.dayOfWeek.map(d => {
-                  const maxCount = Math.max(...(data.cadence?.dayOfWeek || []).map(dow => dow.count));
-                  const intensity = maxCount > 0 ? d.count / maxCount : 0;
-                  return (
-                    <div key={d.day} className="flex flex-col items-center" style={{ width: "32px" }}>
-                      <div 
-                        className="w-full h-6 rounded flex items-center justify-center text-xs font-medium"
-                        style={{
-                          backgroundColor: intensity > 0 ? `rgba(16, 185, 129, ${0.2 + intensity * 0.6})` : "#f3f4f6",
-                          color: intensity > 0.3 ? "#fff" : "#6b7280",
-                        }}
-                      >
-                        {d.day[0]}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Weekday cadence (left) */}
+              {data.cadence?.dayOfWeek && (
+                <div className="flex items-center justify-between gap-4">
+                  <div className="text-sm text-neutral-600 flex-1">
+                    {data.cadence.sentence || ""}
+                  </div>
+                  <div className="flex gap-1.5 flex-shrink-0">
+                    {data.cadence.dayOfWeek.map(d => {
+                      const maxCount = Math.max(...(data.cadence?.dayOfWeek || []).map(dow => dow.count));
+                      const intensity = maxCount > 0 ? d.count / maxCount : 0;
+                      return (
+                        <div key={d.day} className="flex flex-col items-center" style={{ width: "32px" }}>
+                          <div 
+                            className="w-full h-6 rounded flex items-center justify-center text-xs font-medium"
+                            style={{
+                              backgroundColor: intensity > 0 ? `rgba(16, 185, 129, ${0.2 + intensity * 0.6})` : "#f3f4f6",
+                              color: intensity > 0.3 ? "#fff" : "#6b7280",
+                            }}
+                          >
+                            {d.day[0]}
+                          </div>
+                          <div className="text-xs text-neutral-400 mt-0.5">{d.count}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Account breakdown (right) */}
+              {data.accounts && data.accounts.length > 0 && (
+                <div>
+                  <div className="text-xs text-neutral-500 mb-2">Where it was charged</div>
+                  <div className="space-y-1.5">
+                    {data.accounts.slice(0, 3).map((acc) => (
+                      <div key={acc.slug} className="relative">
+                        <div 
+                          className="absolute inset-0 bg-emerald-50 rounded"
+                          style={{ width: `${acc.share * 100}%` }}
+                        ></div>
+                        <div className="relative flex items-center justify-between px-2 py-1 text-xs">
+                          <span className="text-neutral-700 truncate">{acc.label}</span>
+                          <span className="text-neutral-900 font-medium tabular-nums ml-2">
+                            {formatCurrency(acc.total, data.currency)} · {Math.round(acc.share * 100)}%
+                          </span>
+                        </div>
                       </div>
-                      <div className="text-xs text-neutral-400 mt-0.5">{d.count}</div>
-                    </div>
-                  );
-                })}
-              </div>
+                    ))}
+                    {data.accounts.length > 3 && (
+                      <div className="text-xs text-neutral-500 px-2">
+                        +{data.accounts.length - 3} more
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
