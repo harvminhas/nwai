@@ -89,10 +89,13 @@ export default function NetWorthChart({
   history,
   isDebt = false,
   currency = "USD",
+  onPointSelect,
 }: {
   history: { yearMonth: string; netWorth: number; totalAssets?: number; totalDebts?: number; expensesTotal?: number; isEstimate?: boolean }[];
   isDebt?: boolean;
   currency?: string;
+  /** Called when a real (non-estimated) month is picked, so a page can load that month. */
+  onPointSelect?: (ym: string) => void;
 }) {
   const [range, setRange] = useState(3);
   const [selectedYm, setSelectedYm] = useState<string | null>(null);
@@ -151,6 +154,10 @@ export default function NetWorthChart({
 
   function handleSelect(ym: string) {
     setSelectedYm((prev) => prev === ym ? null : ym);
+    if (onPointSelect) {
+      const pt = data.find((p) => p.yearMonth === ym);
+      if (pt && !pt.isEstimate) onPointSelect(ym);
+    }
   }
 
   return (

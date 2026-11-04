@@ -62,99 +62,6 @@ function monthLabel(yearMonth: string): string {
   return new Date(parseInt(y, 10), parseInt(m, 10) - 1, 1)
     .toLocaleDateString("en-US", { month: "long", year: "numeric" });
 }
-/**
- * Balance trend across the months we have statements for, drawn above the
- * month pills. Clicking a point selects that month, same as a pill.
- */
-function MonthTrendChart({
-  points,
-  selected,
-  currency,
-  onSelect,
-}: {
-  points: { yearMonth: string; netWorth: number }[];
-  selected: string | null;
-  currency: string;
-  onSelect: (ym: string) => void;
-}) {
-  const [hover, setHover] = useState<string | null>(null);
-
-  if (points.length < 2) return null;
-
-  const W = 640;
-  const H = 140;
-  const padX = 8;
-  const padY = 16;
-  const values = points.map((p) => p.netWorth);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = max - min || Math.abs(max) || 1;
-  const stepX = points.length > 1 ? (W - padX * 2) / (points.length - 1) : 0;
-  const x = (i: number) => padX + i * stepX;
-  const y = (v: number) => padY + (1 - (v - min) / span) * (H - padY * 2);
-
-  const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.netWorth).toFixed(1)}`).join(" ");
-  const area = `${line} L${x(points.length - 1).toFixed(1)},${H - padY} L${x(0).toFixed(1)},${H - padY} Z`;
-
-  const selIndex = points.findIndex((p) => p.yearMonth === selected);
-  const hovIndex = points.findIndex((p) => p.yearMonth === (hover ?? selected));
-  const active = hovIndex >= 0 ? hovIndex : selIndex;
-  const last = points[points.length - 1];
-  const first = points[0];
-  const change = last.netWorth - first.netWorth;
-
-  return (
-    <div className="mt-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-      <div className="mb-2 flex items-baseline justify-between gap-3">
-        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Balance trend</p>
-        <p className="text-xs text-gray-500">
-          <span className={`font-semibold ${change > 0 ? "text-green-600" : change < 0 ? "text-red-500" : "text-gray-500"}`}>
-            {change > 0 ? "+" : change < 0 ? "-" : ""}{fmt(Math.abs(change), currency)}
-          </span>{" "}
-          since {shortMonth(first.yearMonth)}
-        </p>
-      </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="h-32 w-full" preserveAspectRatio="none" role="img" aria-label="Balance by month">
-        <defs>
-          <linearGradient id="monthTrendFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#a855f7" stopOpacity="0.18" />
-            <stop offset="100%" stopColor="#a855f7" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        <path d={area} fill="url(#monthTrendFill)" />
-        <path d={line} fill="none" stroke="#a855f7" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-        {active >= 0 && (
-          <>
-            <line x1={x(active)} y1={padY / 2} x2={x(active)} y2={H - padY} stroke="#d8b4fe" strokeWidth="1" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
-            <circle cx={x(active)} cy={y(points[active].netWorth)} r="3.5" fill="#fff" stroke="#a855f7" strokeWidth="2" vectorEffect="non-scaling-stroke" />
-          </>
-        )}
-        {points.map((p, i) => (
-          <rect
-            key={p.yearMonth}
-            x={x(i) - stepX / 2}
-            y={0}
-            width={stepX || W}
-            height={H}
-            fill="transparent"
-            className="cursor-pointer"
-            onMouseEnter={() => setHover(p.yearMonth)}
-            onMouseLeave={() => setHover(null)}
-            onClick={() => onSelect(p.yearMonth)}
-          />
-        ))}
-      </svg>
-      <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-gray-400">
-        <span>{shortMonth(first.yearMonth)}</span>
-        <span className="truncate text-center font-medium text-gray-700">
-          {active >= 0 ? `${shortMonth(points[active].yearMonth)} · ${fmt(points[active].netWorth, currency)}` : ""}
-        </span>
-        <span>{shortMonth(last.yearMonth)}</span>
-      </div>
-      <p className="mt-2 text-center text-[10px] text-gray-400">Click a point to open that month</p>
-    </div>
-  );
-}
 function shortMonth(yearMonth: string): string {
   const [y, m] = yearMonth.split("-");
   if (!m) return yearMonth;
@@ -1172,14 +1079,16 @@ export default function AccountDetailPage() {
           </div>
         </div>
       )}
-      {/* Balance trend + month pills */}
-      {realMonths.length > 1 && (
-        <MonthTrendChart
-          points={[...realMonths].reverse().map((e) => ({ yearMonth: e.yearMonth, netWorth: e.netWorth }))}
-          selected={txMonth}
-          currency={currency}
-          onSelect={handleTxMonthSelect}
-        />
+      {/* Balance over time - the one line chart on this page, and the month selector */}
+      {correctedHistory.length >= 2 && (
+        <div className="mt-4">
+          <NetWorthChart
+            history={correctedHistory}
+            isDebt={isDebtAccount}
+            currency={currency}
+            onPointSelect={handleTxMonthSelect}
+          />
+        </div>
       )}
 
 
@@ -1701,11 +1610,6 @@ export default function AccountDetailPage() {
       {activeTab === "history" && (
         <div className="space-y-4">
 
-          {/* Balance over time chart */}
-          {correctedHistory.length >= 2 && (
-            <NetWorthChart history={correctedHistory} isDebt={isDebtAccount} currency={currency} />
-          )}
-
           <div className="flex items-center justify-between gap-3 flex-wrap">
             {stmtHistory.length > 0 && (
               <p className="text-sm text-gray-500">{stmtHistory.length} entr{stmtHistory.length !== 1 ? "ies" : "y"}</p>
@@ -1728,13 +1632,6 @@ export default function AccountDetailPage() {
               >
                 + Update balance
               </button>
-              <Link
-                href="/account/debug"
-                className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-400 hover:border-amber-300 hover:bg-amber-50 hover:text-amber-600 transition"
-                title="Open parse debugger"
-              >
-                🔍 Debug parse
-              </Link>
             </div>
           </div>
 
