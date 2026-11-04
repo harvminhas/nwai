@@ -121,6 +121,15 @@ export function DrilldownView({ token }: DrilldownViewProps) {
     }
   };
 
+  // Consolidated month selection helper (toggles on re-click)
+  const setMonthForYearMonth = (ym: string) => {
+    if (selectedMonth === ym) {
+      setSelectedMonth(null);
+    } else {
+      setSelectedMonth(ym);
+    }
+  };
+
   // When month is selected, show that month's values
   const displayedItems = selectedMonth && level !== "merchant"
     ? data.rankedItems
@@ -240,23 +249,10 @@ export function DrilldownView({ token }: DrilldownViewProps) {
           )}
         </div>
 
-        <div style={{ height: "200px" }}>
+        <div style={{ height: "200px", position: "relative" }}>
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
               data={chartData}
-              onClick={(e: any) => {
-                if (e?.activeLabel) {
-                  const month = e.activeLabel;
-                  const matchedData = chartData.find(d => d.month === month);
-                  if (matchedData) {
-                    if (selectedMonth === matchedData.yearMonth) {
-                      setSelectedMonth(null);
-                    } else {
-                      setSelectedMonth(matchedData.yearMonth);
-                    }
-                  }
-                }
-              }}
               margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
             >
               <defs>
@@ -325,21 +321,64 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                 dot={(props: any) => {
                   const isSelected = selectedMonth === props.payload.yearMonth;
                   return (
-                    <circle
-                      cx={props.cx}
-                      cy={props.cy}
-                      r={isSelected ? 5 : 3}
-                      fill={isSelected ? "#059669" : "#10b981"}
-                      stroke="#fff"
-                      strokeWidth={2}
+                    <g
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMonthForYearMonth(props.payload.yearMonth);
+                      }}
                       style={{ cursor: "pointer" }}
-                    />
+                    >
+                      {/* Transparent hit area */}
+                      <circle
+                        cx={props.cx}
+                        cy={props.cy}
+                        r={10}
+                        fill="transparent"
+                      />
+                      {/* Visible dot */}
+                      <circle
+                        cx={props.cx}
+                        cy={props.cy}
+                        r={isSelected ? 5 : 3}
+                        fill={isSelected ? "#059669" : "#10b981"}
+                        stroke="#fff"
+                        strokeWidth={2}
+                      />
+                    </g>
                   );
                 }}
                 activeDot={{ r: 5 }}
               />
             </ComposedChart>
           </ResponsiveContainer>
+          
+          {/* Transparent click layer for selecting nearest month */}
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              pointerEvents: "auto",
+            }}
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              const offsetX = e.clientX - rect.left;
+              const chartWidth = rect.width;
+              
+              // Map click position to nearest month (accounting for margins)
+              const marginLeft = 10;
+              const marginRight = 10;
+              const plotWidth = chartWidth - marginLeft - marginRight;
+              const relativeX = Math.max(0, Math.min(plotWidth, offsetX - marginLeft));
+              const index = Math.round((relativeX / plotWidth) * (chartData.length - 1));
+              
+              if (index >= 0 && index < chartData.length) {
+                setMonthForYearMonth(chartData[index].yearMonth);
+              }
+            }}
+          />
         </div>
 
         {data.comparisonSeries && (
