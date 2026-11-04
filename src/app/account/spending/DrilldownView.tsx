@@ -174,12 +174,9 @@ export function DrilldownView({ token }: DrilldownViewProps) {
     comparison: data.comparisonSeries?.[idx]?.amount || 0,
   }));
 
-  // Calculate y-axis domain (don't start at 0, like net worth page)
+  // Calculate y-axis domain (scaled to this level's range, never below zero)
   const yAxisDomain: [number, number] = (() => {
-    const allValues = [
-      ...data.monthlySeries.map(m => m.amount),
-      ...(data.comparisonSeries?.map(m => m.amount) || []),
-    ];
+    const allValues = data.monthlySeries.map(m => m.amount);
     
     // Handle all-zero case
     if (allValues.every(v => v === 0)) {
@@ -197,7 +194,10 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       : minValue - Math.max(range * 0.1, 1000);
     const ceiling = maxValue + Math.max(range * 0.05, 500);
     
-    return [Math.floor(baseline / 1000) * 1000, Math.ceil(ceiling / 1000) * 1000];
+    // Clamp baseline to never go below zero (spend is always positive)
+    const clampedBaseline = Math.max(0, Math.floor(baseline / 1000) * 1000);
+    
+    return [clampedBaseline, Math.ceil(ceiling / 1000) * 1000];
   })();
 
   return (
@@ -237,19 +237,13 @@ export function DrilldownView({ token }: DrilldownViewProps) {
 
       {/* Header Card */}
       <div className="bg-white rounded-2xl border border-neutral-200 p-6 mb-6 shadow-sm">
-        <div className="flex items-start justify-between mb-4">
-          <div>
-            <div className="text-3xl font-bold text-neutral-900 mb-1">
+        {/* Line 1: Total + period + reset */}
+        <div className="flex items-start justify-between mb-3">
+          <div className="flex items-baseline gap-2">
+            <div className="text-3xl font-bold text-neutral-900">
               {formatCurrency(data.total, data.currency)}
             </div>
-            <div className="text-sm text-neutral-500">
-              {formatCurrency(data.avgPerMonth, data.currency)}/mo average
-            </div>
-            {data.level === "merchant" && data.otherCategoriesTotal && data.otherCategoriesTotal > 0 && (
-              <div className="text-xs text-neutral-400 mt-1">
-                Also {formatCurrency(data.otherCategoriesTotal, data.currency)} in other categories
-              </div>
-            )}
+            <div className="text-xs text-neutral-500">last 12 months</div>
           </div>
           {selectedMonth && (
             <button
@@ -261,6 +255,45 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
             </button>
+          )}
+        </div>
+
+        {/* Line 2: Stats row */}
+        <div className="flex gap-6 mb-4">
+          <div>
+            <div className="text-xs uppercase text-neutral-500 mb-0.5">
+              {selectedMonth ? formatMonthLabel(selectedMonth) : "Average"}
+            </div>
+            <div className="text-sm text-neutral-900 tabular-nums">
+              {formatCurrency(
+                selectedMonth 
+                  ? (chartData.find(d => d.yearMonth === selectedMonth)?.amount || 0)
+                  : data.avgPerMonth, 
+                data.currency
+              )}{!selectedMonth && "/mo"}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs uppercase text-neutral-500 mb-0.5">Last month</div>
+            <div className="text-sm text-neutral-900 tabular-nums">
+              {formatCurrency(data.monthlySeries[data.monthlySeries.length - 1]?.amount || 0, data.currency)}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs uppercase text-neutral-500 mb-0.5">Share of spending</div>
+            <div className="text-sm text-neutral-900 tabular-nums">
+              {data.comparisonSeries ? 
+                `${((data.total / data.comparisonSeries.reduce((sum, m) => sum + m.amount, 0)) * 100).toFixed(1)}%` 
+                : "—"}
+            </div>
+          </div>
+          {data.level === "merchant" && data.otherCategoriesTotal && data.otherCategoriesTotal > 0 && (
+            <div>
+              <div className="text-xs uppercase text-neutral-500 mb-0.5">Other categories</div>
+              <div className="text-sm text-neutral-900 tabular-nums">
+                {formatCurrency(data.otherCategoriesTotal, data.currency)}
+              </div>
+            </div>
           )}
         </div>
 
@@ -316,12 +349,12 @@ export function DrilldownView({ token }: DrilldownViewProps) {
               <Tooltip 
                 content={({ active, payload }) => {
                   if (active && payload && payload[0]) {
-                    const data = payload[0].payload;
+                    const dataPoint = payload[0].payload;
                     return (
                       <div className="bg-white border border-neutral-200 rounded-lg shadow-lg px-3 py-2">
-                        <p className="text-xs text-neutral-600 mb-1">{data.month}</p>
+                        <p className="text-xs text-neutral-600 mb-1">{dataPoint.month}</p>
                         <p className="text-sm font-semibold text-neutral-900">
-                          {formatCurrency(data.amount, "CAD")}
+                          {formatCurrency(dataPoint.amount, data.currency)}
                         </p>
                       </div>
                     );
@@ -329,16 +362,6 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                   return null;
                 }}
               />
-              {data.comparisonSeries && (
-                <Line 
-                  type="monotone" 
-                  dataKey="comparison" 
-                  stroke="#d1d5db" 
-                  strokeWidth={1}
-                  strokeDasharray="3 3"
-                  dot={false}
-                />
-              )}
               <Area 
                 type="monotone" 
                 dataKey="amount" 
@@ -385,45 +408,48 @@ export function DrilldownView({ token }: DrilldownViewProps) {
           </ResponsiveContainer>
         </div>
 
+        {/* Comparison caption */}
         {data.comparisonSeries && (
-          <div className="mt-3 flex items-center gap-4 text-xs">
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-0.5 bg-emerald-500"></div>
-              <span className="text-neutral-600">{level === "category" ? category : data.breadcrumb[1]?.label}</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-0.5 bg-neutral-300 border-dashed border-t"></div>
-              <span className="text-neutral-400">{level === "category" ? "All spending" : category}</span>
-            </div>
+          <div className="mt-3 text-xs text-neutral-500">
+            {level === "category" ? (
+              <>
+                {formatCurrency(data.total, data.currency)} is {((data.total / data.comparisonSeries.reduce((sum, m) => sum + m.amount, 0)) * 100).toFixed(1)}% of the {formatCurrency(data.comparisonSeries.reduce((sum, m) => sum + m.amount, 0), data.currency)} you spent in these 12 months.
+              </>
+            ) : (
+              <>
+                {formatCurrency(data.total, data.currency)} is {((data.total / data.comparisonSeries.reduce((sum, m) => sum + m.amount, 0)) * 100).toFixed(1)}% of your {formatCurrency(data.comparisonSeries.reduce((sum, m) => sum + m.amount, 0), data.currency)} in {data.breadcrumb[1]?.label}.
+              </>
+            )}
           </div>
         )}
 
         {/* When and Where - only at category and merchant levels */}
         {level !== "all" && (data.cadence?.dayOfWeek || data.accounts) && (
           <div className="mt-4 pt-4 border-t border-neutral-200">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Weekday cadence (left) */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:divide-x divide-neutral-200">
+              {/* When it's charged */}
               {data.cadence?.dayOfWeek && (
-                <div className="flex items-center justify-between gap-4">
-                  <div className="text-sm text-neutral-600 flex-1">
+                <div className="lg:pr-6">
+                  <div className="text-xs uppercase text-neutral-500 mb-3">When it&apos;s charged</div>
+                  <div className="text-sm text-neutral-600 mb-3">
                     {data.cadence.sentence || ""}
                   </div>
-                  <div className="flex gap-1.5 flex-shrink-0">
+                  <div className="flex gap-2">
                     {data.cadence.dayOfWeek.map(d => {
                       const maxCount = Math.max(...(data.cadence?.dayOfWeek || []).map(dow => dow.count));
-                      const intensity = maxCount > 0 ? d.count / maxCount : 0;
+                      const heightPercent = maxCount > 0 ? (d.count / maxCount) * 100 : 0;
+                      const isBusiest = d.count === maxCount && maxCount > 0;
                       return (
-                        <div key={d.day} className="flex flex-col items-center" style={{ width: "32px" }}>
-                          <div 
-                            className="w-full h-6 rounded flex items-center justify-center text-xs font-medium"
-                            style={{
-                              backgroundColor: intensity > 0 ? `rgba(16, 185, 129, ${0.2 + intensity * 0.6})` : "#f3f4f6",
-                              color: intensity > 0.3 ? "#fff" : "#6b7280",
-                            }}
-                          >
+                        <div key={d.day} className="flex-1 flex flex-col items-center gap-1">
+                          <div className="w-full h-12 bg-neutral-100 rounded-sm relative flex items-end">
+                            <div 
+                              className="w-full bg-emerald-500 rounded-sm"
+                              style={{ height: `${heightPercent}%` }}
+                            ></div>
+                          </div>
+                          <div className={`text-xs ${isBusiest ? "text-neutral-900 font-medium" : "text-neutral-500"}`} style={{ fontSize: "11px" }}>
                             {d.day[0]}
                           </div>
-                          <div className="text-xs text-neutral-400 mt-0.5">{d.count}</div>
                         </div>
                       );
                     })}
@@ -431,27 +457,34 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                 </div>
               )}
 
-              {/* Account breakdown (right) */}
+              {/* Where it was charged */}
               {data.accounts && data.accounts.length > 0 && (
-                <div>
-                  <div className="text-xs text-neutral-500 mb-2">Where it was charged</div>
-                  <div className="space-y-1.5">
+                <div className="lg:pl-6">
+                  <div className="text-xs uppercase text-neutral-500 mb-3">Where it was charged</div>
+                  <div className="space-y-2.5">
                     {data.accounts.slice(0, 3).map((acc) => (
-                      <div key={acc.slug} className="relative">
-                        <div 
-                          className="absolute inset-0 bg-emerald-50 rounded"
-                          style={{ width: `${acc.share * 100}%` }}
-                        ></div>
-                        <div className="relative flex items-center justify-between px-2 py-1 text-xs">
-                          <span className="text-neutral-700 truncate">{acc.label}</span>
-                          <span className="text-neutral-900 font-medium tabular-nums ml-2">
-                            {formatCurrency(acc.total, data.currency)} · {Math.round(acc.share * 100)}%
-                          </span>
+                      <div key={acc.slug}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-sm text-neutral-800 truncate flex-1">{acc.label}</span>
+                          <div className="flex items-center gap-3 ml-3 tabular-nums">
+                            <span className="text-sm text-neutral-900 w-20 text-right">
+                              {formatCurrency(acc.total, data.currency)}
+                            </span>
+                            <span className="text-sm text-neutral-500 w-10 text-right">
+                              {Math.round(acc.share * 100)}%
+                            </span>
+                          </div>
+                        </div>
+                        <div className="w-full bg-neutral-100 rounded-full h-0.5">
+                          <div 
+                            className="bg-emerald-500 h-0.5 rounded-full"
+                            style={{ width: `${acc.share * 100}%` }}
+                          ></div>
                         </div>
                       </div>
                     ))}
                     {data.accounts.length > 3 && (
-                      <div className="text-xs text-neutral-500 px-2">
+                      <div className="text-neutral-500" style={{ fontSize: "11px" }}>
                         +{data.accounts.length - 3} more
                       </div>
                     )}
