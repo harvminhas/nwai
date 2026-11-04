@@ -13,6 +13,7 @@ import { WhereItGoesTab } from "./components/WhereItGoesTab";
 import { ByMerchantTab } from "./components/ByMerchantTab";
 import { SubscriptionsTab } from "./components/SubscriptionsTab";
 import { CashTab } from "./components/CashTab";
+import { DrilldownView } from "./DrilldownView";
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -32,6 +33,9 @@ function SpendingPageContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
+
+  const viewMode = searchParams.get("view");
+  const showClassicView = viewMode === "classic";
 
   useEffect(() => {
     const tabParam = searchParams.get("tab");
@@ -76,13 +80,19 @@ function SpendingPageContent() {
         return;
       }
 
-      setLoading(true);
-      setError(null);
       const tok = await user.getIdToken();
       setToken(tok);
-      await loadData(tok);
+
+      // Only load classic view data if in classic mode
+      if (showClassicView) {
+        setLoading(true);
+        setError(null);
+        await loadData(tok);
+      } else {
+        setLoading(false);
+      }
     });
-  }, [router]);
+  }, [router, showClassicView]);
 
   const handleTabChange = (tabId: TabId) => {
     setActiveTab(tabId);
@@ -90,6 +100,11 @@ function SpendingPageContent() {
     url.searchParams.set("tab", tabId);
     window.history.pushState({}, "", url);
   };
+
+  // Show drill-down view by default
+  if (!showClassicView && token) {
+    return <DrilldownView token={token} />;
+  }
 
   if (loading) {
     return (
@@ -124,7 +139,12 @@ function SpendingPageContent() {
           </Link>
           <h1 className="text-2xl font-semibold text-neutral-900">Spending</h1>
         </div>
-        <p className="text-sm text-gray-500 ml-9">{rangeLabel}</p>
+        <div className="flex items-center justify-between ml-9">
+          <p className="text-sm text-gray-500">{rangeLabel}</p>
+          <Link href="/account/spending" className="text-xs text-neutral-500 hover:text-neutral-700">
+            ← Drill-down view
+          </Link>
+        </div>
       </div>
 
       <div className="mb-6">
