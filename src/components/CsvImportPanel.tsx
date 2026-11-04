@@ -75,6 +75,7 @@ export default function CsvImportPanel({ idToken, initialFile, onReset, onImport
     skippedByGapFilter: number;
     skippedByDuplicate: number;
     months: number;
+    monthLabels: string[];
   } | null>(null);
   const [error, setError]                 = useState<string | null>(null);
 
@@ -128,11 +129,24 @@ export default function CsvImportPanel({ idToken, initialFile, onReset, onImport
       const res  = await fetch("/api/user/csv-import", { method: "POST", headers: { Authorization: `Bearer ${idToken}` }, body: fd });
       const json = await res.json();
       if (!res.ok) { setError(json.error ?? "Import failed"); return; }
+      // Nothing written is a failure, not a success: say so instead of showing
+      // a green "Import complete" card over an unchanged account.
+      if (!json.monthsCreated) {
+        setError(
+          json.skippedByDuplicate > 0
+            ? `Nothing new to import — all ${json.skippedByDuplicate} rows are already saved.`
+            : "Import ran but no months were saved. Please try again.",
+        );
+        setPreview(null);
+        onImportComplete?.();
+        return;
+      }
       setImportResult({
         imported: json.imported,
         skippedByGapFilter: json.skippedByGapFilter ?? 0,
         skippedByDuplicate: json.skippedByDuplicate ?? 0,
         months: json.monthsCreated,
+        monthLabels: ((json.months as string[] | undefined) ?? []).map(fmtShortMonth),
       });
       setPreview(null);
       onImportComplete?.();
@@ -162,7 +176,12 @@ export default function CsvImportPanel({ idToken, initialFile, onReset, onImport
           <div>
             <p className="font-semibold text-gray-900">Import complete</p>
             {importResult.months > 0 && (
-              <p className="text-xs text-gray-500">{importResult.months} month{importResult.months !== 1 ? "s" : ""} updated</p>
+              <p className="text-xs text-gray-500">
+                {importResult.monthLabels.length > 0
+                  ? importResult.monthLabels.join(", ")
+                  : `${importResult.months} month${importResult.months !== 1 ? "s" : ""}`}
+                {" "}saved
+              </p>
             )}
           </div>
         </div>
