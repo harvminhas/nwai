@@ -8,12 +8,13 @@ import { getFirebaseClient } from "@/lib/firebase";
 import type { DebtsSummary } from "@/lib/debtsSummary";
 import { OverviewTab } from "./components/OverviewTab";
 import { TrendsTab } from "./components/TrendsTab";
-import { AccountsTab } from "./components/AccountsTab";
+import { CategoriesTab } from "./components/CategoriesTab";
+import AccountSwitcher from "@/components/AccountSwitcher";
 
 const TABS = [
+  { id: "accounts", label: "Accounts" },
   { id: "overview", label: "Overview" },
   { id: "trends", label: "Trends" },
-  { id: "accounts", label: "Accounts" },
 ] as const;
 type TabId = typeof TABS[number]["id"];
 
@@ -27,7 +28,7 @@ interface AutoMarkedAccount {
 function LiabilitiesPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [activeTab, setActiveTab] = useState<TabId>("overview");
+  const [activeTab, setActiveTab] = useState<TabId>("accounts");
   const [summary, setSummary] = useState<DebtsSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -157,15 +158,18 @@ function LiabilitiesPageContent() {
   return (
     <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8">
       {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-center gap-2 mb-1">
-          <Link href="/account" className="text-sm text-gray-500 hover:text-gray-700">
-            Account
-          </Link>
-          <span className="text-gray-400">/</span>
-          <span className="text-sm font-medium text-gray-900">Debts</span>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <Link href="/account/overview" className="text-sm text-gray-500 hover:text-gray-700">
+              Account
+            </Link>
+            <span className="text-gray-400">/</span>
+            <span className="text-sm font-medium text-gray-900">Debts</span>
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">Debts</h1>
         </div>
-        <h1 className="text-2xl font-bold text-gray-900">Debts</h1>
+        <AccountSwitcher />
       </div>
 
       {/* Auto-marked Payoff Undo Banners */}
@@ -222,18 +226,7 @@ function LiabilitiesPageContent() {
         {activeTab === "overview" && <OverviewTab summary={summary} />}
         {activeTab === "trends" && <TrendsTab summary={summary} />}
         {activeTab === "accounts" && (
-          <AccountsTab 
-            summary={summary}
-            onRefresh={async () => {
-              const { auth } = getFirebaseClient();
-              const user = auth.currentUser;
-              if (user) {
-                setLoading(true);
-                const tok = await user.getIdToken();
-                await loadData(tok);
-              }
-            }}
-          />
+          <CategoriesTab summary={summary} />
         )}
       </div>
     </div>

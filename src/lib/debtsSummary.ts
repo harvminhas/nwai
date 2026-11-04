@@ -91,7 +91,7 @@ export interface DebtsSummary {
 
 const DEBT_TYPES = new Set(["mortgage", "credit", "credit_card", "loc", "line_of_credit", "loan", "auto_loan", "student_loan", "personal_loan", "other_debt"]);
 
-function debtGroup(accountType: string, accountName?: string): DebtGroup["type"] {
+export function debtGroup(accountType: string, accountName?: string): DebtGroup["type"] {
   // Use the actual account type from the snapshot
   if (accountType === "mortgage") return "mortgage";
   if (accountType === "line_of_credit" || accountType === "loc") return "loc";

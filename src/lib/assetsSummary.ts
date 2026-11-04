@@ -79,7 +79,7 @@ const REGISTERED_NAME_KEYWORDS = [
   "retirement savings plan"
 ];
 
-function accountGroup(accountType: string, accountName?: string): AssetGroup["type"] {
+export function accountGroup(accountType: string, accountName?: string): AssetGroup["type"] {
   if (accountType === "checking" || accountType === "savings") return "cash";
   if (REGISTERED_TYPES.has(accountType)) return "registered";
   

@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { formatCurrency } from "@/lib/currencyUtils";
+import AccountSwitcher from "@/components/AccountSwitcher";
 import type { ManualAsset, AssetCategory } from "@/lib/types";
 import type { DebtsSummary, DebtAccount } from "@/lib/debtsSummary";
 
@@ -180,10 +181,17 @@ export default function ManualAssetPage() {
         </div>
       )}
 
-      <div className="mb-3 flex items-center gap-2 text-sm text-gray-500">
-        <Link href="/account/assets?tab=accounts" className="hover:text-purple-600">Assets</Link>
-        <span>/</span>
-        <span className="font-medium text-gray-700">{asset.label}</span>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm text-gray-500">
+          <Link href="/account/assets?tab=accounts" className="hover:text-purple-600">Assets</Link>
+          <span>/</span>
+          <Link href={`/account/assets/category/${asset.category === "property" ? "property" : "other"}`} className="hover:text-purple-600">
+            {asset.category === "property" ? "Property" : "Other Assets"}
+          </Link>
+          <span>/</span>
+          <span className="font-medium text-gray-700">{asset.label}</span>
+        </div>
+        <AccountSwitcher />
       </div>
 
       <div className="mb-1 flex flex-wrap items-center gap-2">

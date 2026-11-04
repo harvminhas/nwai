@@ -15,6 +15,9 @@ import type { PaymentFrequency } from "@/app/api/user/account-rates/route";
 import { CategoryPicker, categoryColor } from "@/app/account/spending/shared";
 import { useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 import CashflowHeatmap from "@/components/CashflowHeatmap";
+import AccountSwitcher from "@/components/AccountSwitcher";
+import { debtGroup } from "@/lib/debtsSummary";
+import { accountGroup } from "@/lib/assetsSummary";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -25,6 +28,20 @@ const PAYMENT_FREQ_OPTIONS: { value: PaymentFrequency; label: string; perYear: n
   { value: "monthly",      label: "Monthly",      perYear: 12 },
 ];
 
+const DEBT_GROUP_LABEL: Record<string, string> = {
+  mortgage: "Mortgage",
+  credit_card: "Credit Cards",
+  loc: "Line of Credit",
+  other: "Other Loans",
+};
+
+const ASSET_GROUP_LABEL: Record<string, string> = {
+  cash: "Cash",
+  investments: "Investments",
+  registered: "Registered",
+  property: "Property",
+  other: "Other Assets",
+};
 const TYPE_LABEL: Record<string, string> = {
   checking: "Checking", savings: "Savings", credit: "Credit Card",
   mortgage: "Mortgage", investment: "Investment", loan: "Loan", other: "Other",
@@ -951,10 +968,21 @@ export default function AccountDetailPage() {
       )}
 
       {/* Breadcrumb */}
-      <div className="mb-3 flex items-center gap-2 text-sm text-gray-500">
-        <Link href={isDebtAccount ? "/account/liabilities?tab=accounts" : "/account/assets?tab=accounts"} className="hover:text-purple-600">Accounts</Link>
-        <span>/</span>
-        <span className="font-medium text-gray-700">{data.accountName ?? data.bankName ?? slug}</span>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm text-gray-500">
+          <Link href={isDebtAccount ? "/account/liabilities?tab=accounts" : "/account/assets?tab=accounts"} className="hover:text-purple-600">
+            {isDebtAccount ? "Debts" : "Assets"}
+          </Link>
+          <span>/</span>
+          <Link href={isDebtAccount ? `/account/liabilities/category/${debtGroup(accountType, data.accountName)}` : `/account/assets/category/${accountGroup(accountType, data.accountName)}`} className="hover:text-purple-600">
+            {isDebtAccount
+              ? DEBT_GROUP_LABEL[debtGroup(accountType, data.accountName)]
+              : ASSET_GROUP_LABEL[accountGroup(accountType, data.accountName)]}
+          </Link>
+          <span>/</span>
+          <span className="font-medium text-gray-700">{data.accountName ?? data.bankName ?? slug}</span>
+        </div>
+        <AccountSwitcher />
       </div>
 
       {/* Account header */}
