@@ -171,3 +171,55 @@ export function findDuplicateGroups<T extends DuplicateCandidate>(
     })
     .slice(0, maxGroups);
 }
+
+/** Words too generic to suggest a match on their own. */
+const NOISE_WORDS = new Set([
+  // places and business words that say what a merchant is, not who it is
+  "city", "town", "county", "village", "region", "district",
+  "store", "stores", "shop", "shops", "market", "plaza", "mall", "centre", "center",
+  "location", "branch", "station", "online", "payment", "purchase", "pos",
+  "service", "services", "group", "company", "holdings", "enterprise", "enterprises",
+  "food", "foods", "restaurant", "restaurants", "grocery", "pharmacy", "express",
+  "inc", "ltd", "llc", "corp", "co", "com", "ca", "canada", "the", "and", "for",
+  // everyday words that recur across unrelated brands, so sharing one proves nothing
+  "queen", "dairy", "pizza", "burger", "chicken", "coffee", "cafe", "bar", "grill",
+  "mart", "gas", "fuel", "car", "auto", "wash", "tire", "tires", "oil", "parts",
+  "super", "plus", "fresh", "value", "dollar", "best", "golden", "lucky", "happy",
+  "royal", "grand", "star", "sun", "garden", "house", "home", "world", "global",
+]);
+
+/** Meaningful words in a merchant name, shared-name bait removed. */
+function nameWords(name: string): string[] {
+  return normalisedWords(name).filter((w) => w.length >= 4 && !NOISE_WORDS.has(w));
+}
+
+/**
+ * Merchants that share a meaningful word with this one, loosest first match.
+ *
+ * Deliberately looser than areSimilarMerchants: "ESSO CIRCLE K" and
+ * "CHERRYCREST ESSO" are the same brand but share no opening word, so the
+ * confident rules refuse them. The panel offers these unticked, for the user
+ * to confirm, rather than silently merging or showing nothing at all.
+ */
+export function findRelatedMerchants<T extends DuplicateCandidate>(
+  target: T,
+  items: T[],
+  options?: { max?: number }
+): T[] {
+  const max = options?.max ?? 8;
+  const targetWords = new Set(nameWords(target.name));
+  if (targetWords.size === 0) return [];
+
+  const scored: Array<{ item: T; shared: number }> = [];
+  for (const item of items) {
+    if (!item.slug || item.slug === target.slug) continue;
+    const shared = nameWords(item.name).filter((w) => targetWords.has(w)).length;
+    if (shared === 0) continue;
+    scored.push({ item, shared });
+  }
+
+  return scored
+    .sort((a, b) => b.shared - a.shared || (b.item.total ?? 0) - (a.item.total ?? 0))
+    .slice(0, max)
+    .map((s) => s.item);
+}
