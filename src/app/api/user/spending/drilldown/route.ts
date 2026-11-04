@@ -221,7 +221,33 @@ export async function GET(req: NextRequest) {
     // Build lookup map for monthlyHistory (arrays may not align with windowMonths)
     const monthByYm = new Map(summary.monthlyHistory.map(m => [m.yearMonth, m]));
 
-    // Compute all-spending monthly series once (aligned with windowMonths)
+    // Compute actual debt payments ONCE for entire request (reused across all levels)
+    const actualDebt = computeActualDebtPayments(
+      profile.debtPaymentHistory,
+      profile.accountSnapshots,
+      windowMonths,
+      profile.fxRates || {},
+      profile.homeCurrency
+    );
+
+    // Derive scheduled debt per month from summary (synthetic "Loan payments" category)
+    const scheduledDebtPerMonth = windowMonths.map(ym => {
+      const monthData = monthByYm.get(ym);
+      const loanPaymentsCat = monthData?.categories.find(c => c.category === "Loan payments");
+      return loanPaymentsCat?.amount || 0;
+    });
+
+    // Build debt-adjusted all-spending series: original - scheduled + actual
+    // (so sum of rows equals header total at level=all)
+    const adjustedAllSeries: MonthlySeries[] = windowMonths.map((ym, idx) => ({
+      yearMonth: ym,
+      amount: Math.max(0, (monthByYm.get(ym)?.total || 0) - scheduledDebtPerMonth[idx] + actualDebt.monthlySeries[idx].amount),
+    }));
+
+    const adjustedAllTotal = adjustedAllSeries.reduce((sum, m) => sum + m.amount, 0);
+    const adjustedAllAvg = adjustedAllTotal / windowMonths.length;
+
+    // Keep original unadjusted series for non-Debt categories' comparison
     const allSpendingMonthlySeries: MonthlySeries[] = windowMonths.map(ym => ({
       yearMonth: ym,
       amount: monthByYm.get(ym)?.total || 0,
@@ -263,7 +289,7 @@ export async function GET(req: NextRequest) {
       });
 
       // Rank parent categories
-      const rankedItems: RankedItem[] = Array.from(parentCategoryMap.entries())
+      let rankedItems: RankedItem[] = Array.from(parentCategoryMap.entries())
         .map(([parent, data]) => {
           const catAvg = data.total / windowMonths.length;
           const last3 = data.monthlySeries.slice(-3);
@@ -274,45 +300,47 @@ export async function GET(req: NextRequest) {
             name: parent,
             slug: parent.toLowerCase().replace(/\s+/g, "-"),
             total: data.total,
-            share: allTotal > 0 ? data.total / allTotal : 0,
+            share: adjustedAllTotal > 0 ? data.total / adjustedAllTotal : 0,
             trend,
             monthlySeries: data.monthlySeries,
           };
-        })
-        .sort((a, b) => b.total - a.total);
+        });
 
       // Override Debt row with actual payments (so parent equals child header)
+      // Use the actualDebt computed once for entire request
       const debtRowIndex = rankedItems.findIndex(item => item.name === "Debt");
+      
+      const catAvg = actualDebt.total / windowMonths.length;
+      const last3 = actualDebt.monthlySeries.slice(-3);
+      const last3Avg = last3.reduce((sum, m) => sum + m.amount, 0) / 3;
+      const trend = last3Avg - catAvg;
+
+      const debtRow: RankedItem = {
+        name: "Debt",
+        slug: "debt",
+        total: actualDebt.total, // Real payments (matches Debt category header)
+        share: adjustedAllTotal > 0 ? actualDebt.total / adjustedAllTotal : 0,
+        trend,
+        monthlySeries: actualDebt.monthlySeries,
+      };
+
       if (debtRowIndex >= 0) {
-        const actualDebt = computeActualDebtPayments(
-          profile.debtPaymentHistory,
-          profile.accountSnapshots,
-          windowMonths,
-          profile.fxRates || {},
-          profile.homeCurrency
-        );
-
-        const catAvg = actualDebt.total / windowMonths.length;
-        const last3 = actualDebt.monthlySeries.slice(-3);
-        const last3Avg = last3.reduce((sum, m) => sum + m.amount, 0) / 3;
-        const trend = last3Avg - catAvg;
-
-        rankedItems[debtRowIndex] = {
-          name: "Debt",
-          slug: "debt",
-          total: actualDebt.total, // Real payments (matches Debt category header)
-          share: allTotal > 0 ? actualDebt.total / allTotal : 0,
-          trend,
-          monthlySeries: actualDebt.monthlySeries,
-        };
+        // Replace existing Debt row
+        rankedItems[debtRowIndex] = debtRow;
+      } else if (actualDebt.total > 0) {
+        // Insert Debt row if it doesn't exist but has real payments
+        rankedItems.push(debtRow);
       }
+
+      // Sort by total after Debt override/insertion
+      rankedItems.sort((a, b) => b.total - a.total);
 
       return NextResponse.json({
         level: "all",
         breadcrumb: [{ label: "All spending" }],
-        total: allTotal,
-        avgPerMonth: allAvg,
-        monthlySeries: allSpendingMonthlySeries,
+        total: adjustedAllTotal,
+        avgPerMonth: adjustedAllAvg,
+        monthlySeries: adjustedAllSeries,
         rankedItems,
         currency: profile.homeCurrency,
       });
@@ -344,15 +372,8 @@ export async function GET(req: NextRequest) {
 
       // Special handling for Debt category (actual cash paid, not scheduled commitments)
       if (parentCategory === "Debt") {
-        // Compute actual debt payments from payment history
-        const actualDebt = computeActualDebtPayments(
-          profile.debtPaymentHistory,
-          profile.accountSnapshots,
-          windowMonths,
-          profile.fxRates || {},
-          profile.homeCurrency
-        );
-
+        // Use actualDebt computed once for entire request
+        
         // Get scheduled payments for method labels (fallback only)
         const scheduledPayments = computeScheduledDebtPayments(
           profile.accountSnapshots,
@@ -429,7 +450,7 @@ export async function GET(req: NextRequest) {
           total: actualDebt.total, // Real payments total (same as sum of rows)
           avgPerMonth: actualDebt.total / windowMonths.length,
           monthlySeries: actualDebt.monthlySeries, // Real per-month payments
-          comparisonSeries: allSpendingMonthlySeries,
+          comparisonSeries: adjustedAllSeries, // Debt-adjusted all-spending (for accurate % comparison)
           rankedItems,
           excluded,
           currency: profile.homeCurrency,
@@ -569,15 +590,8 @@ export async function GET(req: NextRequest) {
           return NextResponse.json({ error: "Account not found" }, { status: 404 });
         }
 
-        // Compute actual debt payments
-        const actualDebt = computeActualDebtPayments(
-          profile.debtPaymentHistory,
-          profile.accountSnapshots,
-          windowMonths,
-          profile.fxRates || {},
-          profile.homeCurrency
-        );
-
+        // Use actualDebt computed once for entire request
+        
         // Find this account in actual payments
         const accountData = actualDebt.accounts.find(a => a.accountSlug === accountSlug);
         if (!accountData) {
