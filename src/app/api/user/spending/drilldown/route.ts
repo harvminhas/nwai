@@ -48,6 +48,12 @@ interface AccountBreakdown {
   count: number;
 }
 
+interface DebtExcluded {
+  oneOffTotal: number;
+  oneOffCount: number;
+  paidInFullCards: number;
+}
+
 interface DrilldownResponse {
   level: "all" | "category" | "merchant";
   breadcrumb: { label: string; href?: string }[];
@@ -62,6 +68,7 @@ interface DrilldownResponse {
   kind?: "debt";
   currency: string;
   actualPaidTotal?: number;
+  excluded?: DebtExcluded;
 }
 
 // Helper to compute Debt category monthly series (used at both level 2 and level 3)
@@ -249,7 +256,7 @@ export async function GET(req: NextRequest) {
       const categoryTotal = categoryMonthlySeries.reduce((sum, m) => sum + m.amount, 0);
       const categoryAvg = categoryTotal / windowMonths.length;
 
-      // Special handling for Debt category (no merchants, only scheduled payments to debt accounts)
+      // Special handling for Debt category (payments to debt accounts, including paid-in-full cards)
       if (parentCategory === "Debt") {
         const scheduledPayments = computeScheduledDebtPayments(
           profile.accountSnapshots,
@@ -259,13 +266,71 @@ export async function GET(req: NextRequest) {
           profile.homeCurrency
         );
 
-        const sumOfPayments = scheduledPayments.reduce((sum, p) => sum + p.amount, 0);
+        // Helper for FX conversion
+        const home = profile.homeCurrency.toUpperCase();
+        const toHome = (amount: number, currency?: string): number => {
+          const cur = (currency ?? home).toUpperCase();
+          if (cur === home) return amount;
+          const rate = (profile.fxRates || {})[cur];
+          return rate ? amount * rate : amount;
+        };
 
-        // Build debt account rows
-        // Allocate proportionally so rows add up exactly to the header total (which comes from
-        // the shared summary's categoryMonthlySeries), not from recomputed scheduled amounts
-        const rankedItems: RankedItem[] = scheduledPayments.map(payment => {
-          const proportion = sumOfPayments > 0 ? payment.amount / sumOfPayments : 0;
+        // Build combined account list: scheduled + payment-history-only accounts
+        interface DebtAccountEntry {
+          accountSlug: string;
+          accountName?: string;
+          weight: number; // For proportional allocation
+          method: string;
+        }
+
+        const debtAccountMap = new Map<string, DebtAccountEntry>();
+
+        // 1. Add all scheduled payments
+        scheduledPayments.forEach(payment => {
+          debtAccountMap.set(payment.accountSlug, {
+            accountSlug: payment.accountSlug,
+            accountName: payment.accountName,
+            weight: payment.amount,
+            method: payment.method,
+          });
+        });
+
+        // 2. Scan for debt accounts with payment history but not in scheduled list
+        const debtTypes = ["credit", "credit_card", "mortgage", "loan", "auto_loan", "student_loan", "personal_loan", "line_of_credit"];
+        profile.accountSnapshots
+          .filter(acc => debtTypes.includes(acc.accountType) && !debtAccountMap.has(acc.slug))
+          .forEach(acc => {
+            // Check if this account has any payment history in windowMonths
+            const payments = profile.debtPaymentHistory.filter(
+              entry => entry.accountSlug === acc.slug && windowMonths.includes(entry.statementMonth)
+            );
+            
+            if (payments.length > 0) {
+              // Calculate median monthly payment as weight
+              const amounts = payments.map(p => toHome(p.paymentsMade, p.currency)).sort((a, b) => a - b);
+              const median = amounts.length > 0
+                ? (amounts.length % 2 === 0
+                    ? (amounts[amounts.length / 2 - 1] + amounts[amounts.length / 2]) / 2
+                    : amounts[Math.floor(amounts.length / 2)])
+                : 0;
+              
+              if (median > 0) {
+                debtAccountMap.set(acc.slug, {
+                  accountSlug: acc.slug,
+                  accountName: acc.accountName,
+                  weight: median,
+                  method: "usual payment", // Derived label for payment-history accounts
+                });
+              }
+            }
+          });
+
+        const allDebtAccounts = Array.from(debtAccountMap.values());
+        const totalWeight = allDebtAccounts.reduce((sum, acc) => sum + acc.weight, 0);
+
+        // Build debt account rows with proportional allocation
+        const rankedItems: RankedItem[] = allDebtAccounts.map(account => {
+          const proportion = totalWeight > 0 ? account.weight / totalWeight : 0;
           const accountTotal = categoryTotal * proportion;
           
           const monthlySeries: MonthlySeries[] = categoryMonthlySeries.map(m => ({
@@ -279,15 +344,35 @@ export async function GET(req: NextRequest) {
           const trend = last3Avg - avg;
 
           return {
-            name: payment.accountName || payment.accountSlug,
-            slug: payment.accountSlug,
-            subLabel: payment.method, // Use method verbatim (already includes qualifiers)
+            name: account.accountName || account.accountSlug,
+            slug: account.accountSlug,
+            subLabel: account.method,
             total: accountTotal,
             share: categoryTotal > 0 ? accountTotal / categoryTotal : 0,
             trend,
             monthlySeries,
           };
         }).sort((a, b) => b.total - a.total);
+
+        // Calculate excluded info
+        const oneOffTotal = scheduledPayments.reduce((sum, p) => {
+          return sum + (p.unreviewedAnomalies?.reduce((s, a) => s + a.amount, 0) || 0);
+        }, 0);
+        const oneOffCount = scheduledPayments.reduce((sum, p) => {
+          return sum + (p.unreviewedAnomalies?.length || 0);
+        }, 0);
+        
+        // Count paid-in-full cards: debt accounts with no balance and no payment activity
+        const paidInFullCards = profile.accountSnapshots.filter(acc => {
+          if (!debtTypes.includes(acc.accountType)) return false;
+          if (acc.balance !== 0) return false; // Has balance
+          if (debtAccountMap.has(acc.slug)) return false; // Has activity in window
+          return true;
+        }).length;
+
+        const excluded: DebtExcluded | undefined = (oneOffTotal > 0 || oneOffCount > 0 || paidInFullCards > 0)
+          ? { oneOffTotal, oneOffCount, paidInFullCards }
+          : undefined;
 
         return NextResponse.json({
           level: "category",
@@ -301,6 +386,7 @@ export async function GET(req: NextRequest) {
           monthlySeries: categoryMonthlySeries,
           comparisonSeries: allSpendingMonthlySeries,
           rankedItems,
+          excluded,
           currency: profile.homeCurrency,
         });
       }
@@ -438,7 +524,16 @@ export async function GET(req: NextRequest) {
           return NextResponse.json({ error: "Account not found" }, { status: 404 });
         }
 
-        // Get scheduled payments (call once and reuse)
+        // Helper for FX conversion
+        const home = profile.homeCurrency.toUpperCase();
+        const toHome = (amount: number, currency?: string): number => {
+          const cur = (currency ?? home).toUpperCase();
+          if (cur === home) return amount;
+          const rate = (profile.fxRates || {})[cur];
+          return rate ? amount * rate : amount;
+        };
+
+        // Build SAME combined account list as level 2 (ensures matching totals)
         const scheduledPayments = computeScheduledDebtPayments(
           profile.accountSnapshots,
           profile.debtPaymentHistory,
@@ -446,10 +541,52 @@ export async function GET(req: NextRequest) {
           profile.fxRates || {},
           profile.homeCurrency
         );
-        
-        const scheduled = scheduledPayments.find(p => p.accountSlug === accountSlug);
-        if (!scheduled) {
-          return NextResponse.json({ error: "Account not found in scheduled payments" }, { status: 404 });
+
+        interface DebtAccountEntry {
+          accountSlug: string;
+          weight: number;
+        }
+
+        const debtAccountMap = new Map<string, DebtAccountEntry>();
+
+        // 1. Add all scheduled payments
+        scheduledPayments.forEach(payment => {
+          debtAccountMap.set(payment.accountSlug, {
+            accountSlug: payment.accountSlug,
+            weight: payment.amount,
+          });
+        });
+
+        // 2. Add payment-history-only accounts
+        const debtTypes = ["credit", "credit_card", "mortgage", "loan", "auto_loan", "student_loan", "personal_loan", "line_of_credit"];
+        profile.accountSnapshots
+          .filter(acc => debtTypes.includes(acc.accountType) && !debtAccountMap.has(acc.slug))
+          .forEach(acc => {
+            const payments = profile.debtPaymentHistory.filter(
+              entry => entry.accountSlug === acc.slug && windowMonths.includes(entry.statementMonth)
+            );
+            
+            if (payments.length > 0) {
+              const amounts = payments.map(p => toHome(p.paymentsMade, p.currency)).sort((a, b) => a - b);
+              const median = amounts.length > 0
+                ? (amounts.length % 2 === 0
+                    ? (amounts[amounts.length / 2 - 1] + amounts[amounts.length / 2]) / 2
+                    : amounts[Math.floor(amounts.length / 2)])
+                : 0;
+              
+              if (median > 0) {
+                debtAccountMap.set(acc.slug, {
+                  accountSlug: acc.slug,
+                  weight: median,
+                });
+              }
+            }
+          });
+
+        // Look up this account in combined list
+        const accountEntry = debtAccountMap.get(accountSlug);
+        if (!accountEntry) {
+          return NextResponse.json({ error: "Account not found in debt breakdown" }, { status: 404 });
         }
 
         // Compute Debt category monthly series using shared helper
@@ -460,9 +597,9 @@ export async function GET(req: NextRequest) {
         );
         const categoryTotal = categoryMonthlySeries.reduce((sum, m) => sum + m.amount, 0);
 
-        // Use SAME proportional allocation as level 2 (ensures totals match exactly)
-        const sumOfPayments = scheduledPayments.reduce((sum, p) => sum + p.amount, 0);
-        const proportion = sumOfPayments > 0 ? scheduled.amount / sumOfPayments : 0;
+        // Use SAME proportional allocation as level 2 with SAME weights
+        const totalWeight = Array.from(debtAccountMap.values()).reduce((sum, acc) => sum + acc.weight, 0);
+        const proportion = totalWeight > 0 ? accountEntry.weight / totalWeight : 0;
         
         // Derive header and monthly series from proportional allocation
         const monthlySeries: MonthlySeries[] = categoryMonthlySeries.map(m => ({

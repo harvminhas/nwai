@@ -36,6 +36,12 @@ interface AccountBreakdown {
   count: number;
 }
 
+interface DebtExcluded {
+  oneOffTotal: number;
+  oneOffCount: number;
+  paidInFullCards: number;
+}
+
 interface DrilldownData {
   level: "all" | "category" | "merchant";
   breadcrumb: { label: string; href?: string }[];
@@ -49,6 +55,7 @@ interface DrilldownData {
   otherCategoriesTotal?: number;
   kind?: "debt";
   actualPaidTotal?: number;
+  excluded?: DebtExcluded;
   currency: string;
 }
 
@@ -281,6 +288,26 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             </div>
           )}
         </div>
+
+        {/* Excluded items for Debt category level */}
+        {data.kind === "debt" && data.level === "category" && data.excluded && (
+          (data.excluded.oneOffTotal > 0 || data.excluded.oneOffCount > 0 || data.excluded.paidInFullCards > 0) && (
+            <div className="text-xs text-neutral-500 mt-1">
+              Not in the monthly total:{" "}
+              {data.excluded.oneOffCount > 0 && (
+                <>
+                  {formatCurrency(data.excluded.oneOffTotal, data.currency)} in {data.excluded.oneOffCount} one-off payment{data.excluded.oneOffCount !== 1 ? "s" : ""}
+                </>
+              )}
+              {data.excluded.oneOffCount > 0 && data.excluded.paidInFullCards > 0 && " · "}
+              {data.excluded.paidInFullCards > 0 && (
+                <>
+                  {data.excluded.paidInFullCards} card{data.excluded.paidInFullCards !== 1 ? "s" : ""} paid in full
+                </>
+              )}
+            </div>
+          )
+        )}
 
         {/* Actual paid vs scheduled note for Debt */}
         {data.kind === "debt" && data.level === "merchant" && data.actualPaidTotal !== undefined && (
