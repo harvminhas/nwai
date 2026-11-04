@@ -5,8 +5,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
-import { formatCurrency } from "@/lib/currencyUtils";
+import { formatCurrency, getCurrencySymbol } from "@/lib/currencyUtils";
 import type { MonthNetWorthSummary, ChangeItemType } from "@/lib/netWorthChanges";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Area, ComposedChart, Dot } from "recharts";
 
 const CHANGE_TYPE_LABELS: Record<ChangeItemType, string> = {
   account_added: "Account Added",
@@ -346,60 +347,117 @@ function NetWorthPageContent() {
       <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">12-Month Trend</h2>
         <div className="relative" style={{ height: "340px" }}>
-          {/* Simple bar chart */}
-          <div className="flex items-end justify-between h-full gap-2">
-            {data.map((monthData) => {
-              const maxValue = Math.max(...data.map(d => Math.abs(d.netWorth)));
-              const height = maxValue > 0 ? (Math.abs(monthData.netWorth) / maxValue) * 100 : 0;
-              const isSelectedForFeed = monthData.yearMonth === selectedMonth;
-              const isSelectedForView = viewMonth 
-                ? monthData.yearMonth === viewMonth 
-                : monthData.yearMonth === latestMonth.yearMonth;
-              const isPositive = monthData.netWorth >= 0;
-              
-              // Check for event markers
-              const hasPaidOff = monthData.items.some(i => i.type === "account_paid_off");
-              const hasNewAccount = monthData.items.some(i => i.type === "account_added");
-
-              return (
-                <button
-                  key={monthData.yearMonth}
-                  onClick={() => {
-                    setSelectedMonth(monthData.yearMonth);
-                    setViewMonth(monthData.yearMonth);
-                  }}
-                  className="flex-1 flex flex-col items-center justify-end group relative"
-                  style={{ height: "100%" }}
-                >
-                  {/* Event markers above the bar */}
-                  {(hasPaidOff || hasNewAccount) && (
-                    <div className="absolute -top-6 left-1/2 -translate-x-1/2 flex gap-1">
-                      {hasPaidOff && (
-                        <div className="w-2 h-2 rounded-full bg-green-600" title="Account paid off" />
-                      )}
-                      {hasNewAccount && (
-                        <div className="w-2 h-2 rounded-full bg-blue-600" title="New account" />
-                      )}
-                    </div>
-                  )}
-                  
-                  <div className="flex-1 flex items-end w-full">
-                    <div
-                      className={`w-full transition-all ${
-                        isSelectedForView 
-                          ? isPositive ? "bg-green-600 ring-2 ring-green-800 ring-offset-2" : "bg-red-600 ring-2 ring-red-800 ring-offset-2"
-                          : isPositive ? "bg-green-400 group-hover:bg-green-500" : "bg-red-400 group-hover:bg-red-500"
-                      }`}
-                      style={{ height: `${height}%` }}
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart
+              data={data.map(d => ({
+                month: formatMonthLabel(d.yearMonth),
+                yearMonth: d.yearMonth,
+                netWorth: d.netWorth,
+                hasPaidOff: d.items.some(i => i.type === "account_paid_off"),
+                hasNewAccount: d.items.some(i => i.type === "account_added"),
+              }))}
+              onClick={(e: any) => {
+                if (e?.activeLabel) {
+                  const month = e.activeLabel;
+                  const matchedData = data.find(d => formatMonthLabel(d.yearMonth) === month);
+                  if (matchedData) {
+                    setSelectedMonth(matchedData.yearMonth);
+                    setViewMonth(matchedData.yearMonth);
+                  }
+                }
+              }}
+              margin={{ top: 20, right: 10, left: 10, bottom: 0 }}
+            >
+              <defs>
+                <linearGradient id="netWorthGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.15}/>
+                  <stop offset="95%" stopColor="#10b981" stopOpacity={0.02}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+              <XAxis 
+                dataKey="month" 
+                tick={{ fontSize: 12, fill: "#6b7280" }}
+                axisLine={{ stroke: "#e5e7eb" }}
+                tickLine={{ stroke: "#e5e7eb" }}
+              />
+              <YAxis 
+                domain={(() => {
+                  const values = data.map(d => d.netWorth);
+                  const minValue = Math.min(...values);
+                  const maxValue = Math.max(...values);
+                  const range = maxValue - minValue;
+                  const rangeIsSmall = range < Math.abs(minValue) * 0.05;
+                  const baseline = rangeIsSmall && minValue > 0
+                    ? minValue * 0.95
+                    : minValue - Math.max(range * 0.1, 1000);
+                  const ceiling = maxValue + Math.max(range * 0.05, 500);
+                  return [Math.floor(baseline / 1000) * 1000, Math.ceil(ceiling / 1000) * 1000];
+                })()}
+                tick={{ fontSize: 12, fill: "#6b7280" }}
+                axisLine={{ stroke: "#e5e7eb" }}
+                tickLine={{ stroke: "#e5e7eb" }}
+                tickFormatter={(value: number) => {
+                  const sym = getCurrencySymbol(currency);
+                  const abs = Math.abs(value);
+                  if (abs >= 1_000_000) return `${sym}${(value / 1_000_000).toFixed(1)}M`;
+                  if (abs >= 1_000) return `${sym}${Math.round(value / 1_000)}k`;
+                  return `${sym}${value}`;
+                }}
+              />
+              <Tooltip 
+                content={({ active, payload }) => {
+                  if (active && payload && payload[0]) {
+                    const data = payload[0].payload;
+                    return (
+                      <div className="bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2">
+                        <p className="text-xs text-gray-600 mb-1">{data.month}</p>
+                        <p className="text-sm font-semibold text-gray-900">
+                          {formatCurrency(data.netWorth, currency)}
+                        </p>
+                        {(data.hasPaidOff || data.hasNewAccount) && (
+                          <div className="mt-1 flex gap-2 text-xs">
+                            {data.hasPaidOff && <span className="text-green-600">● Paid off</span>}
+                            {data.hasNewAccount && <span className="text-blue-600">● New account</span>}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+                  return null;
+                }}
+              />
+              <Area 
+                type="monotone" 
+                dataKey="netWorth" 
+                fill="url(#netWorthGradient)" 
+                stroke="none"
+              />
+              <Line 
+                type="monotone" 
+                dataKey="netWorth" 
+                stroke="#10b981" 
+                strokeWidth={2}
+                dot={(props: any) => {
+                  const isSelected = viewMonth 
+                    ? props.payload.yearMonth === viewMonth 
+                    : props.payload.yearMonth === latestMonth.yearMonth;
+                  return (
+                    <circle
+                      cx={props.cx}
+                      cy={props.cy}
+                      r={isSelected ? 6 : 4}
+                      fill={isSelected ? "#059669" : "#10b981"}
+                      stroke="#fff"
+                      strokeWidth={isSelected ? 3 : 2}
+                      style={{ cursor: "pointer" }}
                     />
-                  </div>
-                  <div className={`text-xs mt-2 ${isSelectedForView ? "font-semibold text-gray-900" : "text-gray-500"}`}>
-                    {formatMonthLabel(monthData.yearMonth)}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+                  );
+                }}
+                activeDot={{ r: 6, fill: "#059669", stroke: "#fff", strokeWidth: 2 }}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
         </div>
       </div>
 
