@@ -249,7 +249,24 @@ export function DrilldownView({ token }: DrilldownViewProps) {
           )}
         </div>
 
-        <div style={{ height: "200px", position: "relative" }}>
+        <div 
+          style={{ height: "200px", position: "relative" }}
+          onClick={(e) => {
+            // Only handle clicks that bubble up from chart (not from dots, which stopPropagation)
+            const rect = e.currentTarget.getBoundingClientRect();
+            const offsetX = e.clientX - rect.left;
+            const chartWidth = rect.width;
+            
+            // Map click position to nearest month
+            // Since ResponsiveContainer doesn't expose plot area bounds, we map across full width
+            // and clamp the index (plot starts after y-axis, but clamping handles edge cases)
+            const relativeX = offsetX / chartWidth;
+            const index = Math.round(relativeX * (chartData.length - 1));
+            const clampedIndex = Math.max(0, Math.min(chartData.length - 1, index));
+            
+            setMonthForYearMonth(chartData[clampedIndex].yearMonth);
+          }}
+        >
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
               data={chartData}
@@ -351,34 +368,6 @@ export function DrilldownView({ token }: DrilldownViewProps) {
               />
             </ComposedChart>
           </ResponsiveContainer>
-          
-          {/* Transparent click layer for selecting nearest month */}
-          <div
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              pointerEvents: "auto",
-            }}
-            onClick={(e) => {
-              const rect = e.currentTarget.getBoundingClientRect();
-              const offsetX = e.clientX - rect.left;
-              const chartWidth = rect.width;
-              
-              // Map click position to nearest month (accounting for margins)
-              const marginLeft = 10;
-              const marginRight = 10;
-              const plotWidth = chartWidth - marginLeft - marginRight;
-              const relativeX = Math.max(0, Math.min(plotWidth, offsetX - marginLeft));
-              const index = Math.round((relativeX / plotWidth) * (chartData.length - 1));
-              
-              if (index >= 0 && index < chartData.length) {
-                setMonthForYearMonth(chartData[index].yearMonth);
-              }
-            }}
-          />
         </div>
 
         {data.comparisonSeries && (
