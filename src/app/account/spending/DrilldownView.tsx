@@ -354,6 +354,37 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             </div>
           </div>
         )}
+
+        {/* When strip - only at category and merchant levels */}
+        {data.cadence && level !== "all" && data.cadence.dayOfWeek && (
+          <div className="mt-4 pt-4 border-t border-neutral-200">
+            <div className="flex items-center justify-between gap-4">
+              <div className="text-sm text-neutral-600">
+                {data.cadence.sentence || ""}
+              </div>
+              <div className="flex gap-1.5 flex-shrink-0">
+                {data.cadence.dayOfWeek.map(d => {
+                  const maxCount = Math.max(...(data.cadence?.dayOfWeek || []).map(dow => dow.count));
+                  const intensity = maxCount > 0 ? d.count / maxCount : 0;
+                  return (
+                    <div key={d.day} className="flex flex-col items-center" style={{ width: "32px" }}>
+                      <div 
+                        className="w-full h-6 rounded flex items-center justify-center text-xs font-medium"
+                        style={{
+                          backgroundColor: intensity > 0 ? `rgba(16, 185, 129, ${0.2 + intensity * 0.6})` : "#f3f4f6",
+                          color: intensity > 0.3 ? "#fff" : "#6b7280",
+                        }}
+                      >
+                        {d.day[0]}
+                      </div>
+                      <div className="text-xs text-neutral-400 mt-0.5">{d.count}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Ranked List Card */}
@@ -448,36 +479,6 @@ export function DrilldownView({ token }: DrilldownViewProps) {
           </div>
         )}
       </div>
-
-      {/* When Strip */}
-      {data.cadence && level !== "all" && data.cadence.dayOfWeek && (
-        <div className="bg-white rounded-2xl border border-neutral-200 p-6 shadow-sm">
-          {data.cadence.sentence && (
-            <p className="text-sm text-neutral-600 mb-3">{data.cadence.sentence}</p>
-          )}
-          
-          <div className="flex gap-2">
-              {data.cadence.dayOfWeek.map(d => {
-                const maxCount = Math.max(...(data.cadence?.dayOfWeek || []).map(dow => dow.count));
-                const intensity = maxCount > 0 ? d.count / maxCount : 0;
-                return (
-                  <div key={d.day} className="flex-1 text-center">
-                    <div 
-                      className="h-8 rounded flex items-center justify-center text-xs font-medium"
-                      style={{
-                        backgroundColor: intensity > 0 ? `rgba(16, 185, 129, ${0.2 + intensity * 0.6})` : "#f3f4f6",
-                        color: intensity > 0.3 ? "#fff" : "#6b7280",
-                      }}
-                    >
-                      {d.day[0]}
-                    </div>
-                    <div className="text-xs text-neutral-400 mt-1">{d.count}</div>
-                  </div>
-                );
-              })}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
