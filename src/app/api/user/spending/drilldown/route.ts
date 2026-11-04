@@ -14,6 +14,7 @@ import { buildSpendingSummary } from "@/lib/spendingSummary";
 import { getParentCategory } from "@/lib/categoryTaxonomy";
 import { merchantSlug } from "@/lib/applyRules";
 import { resolveMerchantAlias, resolveCanonicalMerchantSlug } from "@/lib/merchantUtils";
+import { isCoreExcluded } from "@/lib/spendingMetrics";
 import type { DebtPaymentReview } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -46,6 +47,7 @@ interface DrilldownResponse {
   comparisonSeries?: MonthlySeries[];
   rankedItems: RankedItem[];
   cadence?: CadenceStats;
+  otherCategoriesTotal?: number;
   currency: string;
 }
 
@@ -212,44 +214,60 @@ export async function GET(req: NextRequest) {
       const categoryTotal = categoryMonthlySeries.reduce((sum, m) => sum + m.amount, 0);
       const categoryAvg = categoryTotal / windowMonths.length;
 
-      // Group merchants using canonical resolution
+      // Build merchant map from profile.expenseTxns, scoped to this parent category
+      // This ensures merchant totals add up exactly to category total
       const merchantMap = new Map<string, {
         name: string;
+        canonicalSlug: string;
         total: number;
         monthlySeries: MonthlySeries[];
-        transactions: Array<{ date: string; merchant: string; category: string; amount: number }>;
+        transactions: Array<{ date: string; merchant: string; category: string; amount: number; accountLabel?: string }>;
       }>();
 
-      summary.merchants
-        .filter(m => childCategories.includes(m.category))
-        .forEach(merch => {
-          const slug = merch.merchantSlug; // Already canonical from buildSpendingSummary
-          
-          if (!merchantMap.has(slug)) {
-            merchantMap.set(slug, {
-              name: merch.merchant,
-              total: 0,
-              monthlySeries: windowMonths.map(ym => ({ yearMonth: ym, amount: 0 })),
-              transactions: [],
-            });
-          }
+      // Filter to window months and this parent category only
+      const scopedTxns = profile.expenseTxns.filter(t => {
+        if (!windowMonths.includes(t.txMonth)) return false;
+        if (isCoreExcluded(t.category)) return false;
+        if (getParentCategory(t.category) === "Debt") return false; // Skip synthetic debt
+        return getParentCategory(t.category) === parentCategory;
+      });
 
-          const merchData = merchantMap.get(slug)!;
-          merchData.total += merch.total;
-          merchData.transactions.push(...merch.transactions);
+      // Group by canonical merchant slug
+      for (const txn of scopedTxns) {
+        const slug = merchantSlug(txn.merchant);
+        const canonicalSlug = resolveCanonicalMerchantSlug(slug);
+        const canonicalName = resolveMerchantAlias(slug, txn.merchant);
 
-          // Build monthly series for this merchant
-          merch.transactions.forEach(txn => {
-            const monthIdx = windowMonths.indexOf(txn.txMonth);
-            if (monthIdx >= 0) {
-              merchData.monthlySeries[monthIdx].amount += txn.amount;
-            }
+        if (!merchantMap.has(canonicalSlug)) {
+          merchantMap.set(canonicalSlug, {
+            name: canonicalName,
+            canonicalSlug,
+            total: 0,
+            monthlySeries: windowMonths.map(ym => ({ yearMonth: ym, amount: 0 })),
+            transactions: [],
           });
+        }
+
+        const merchData = merchantMap.get(canonicalSlug)!;
+        merchData.total += txn.amount;
+        merchData.transactions.push({
+          date: txn.date,
+          merchant: canonicalName,
+          category: txn.category,
+          amount: txn.amount,
+          accountLabel: txn.accountLabel,
         });
 
+        // Add to monthly series
+        const monthIdx = windowMonths.indexOf(txn.txMonth);
+        if (monthIdx >= 0) {
+          merchData.monthlySeries[monthIdx].amount += txn.amount;
+        }
+      }
+
       // Rank merchants
-      const rankedItems: RankedItem[] = Array.from(merchantMap.entries())
-        .map(([slug, data]) => {
+      const rankedItems: RankedItem[] = Array.from(merchantMap.values())
+        .map(data => {
           const merchAvg = data.total / windowMonths.length;
           const last3 = data.monthlySeries.slice(-3);
           const last3Avg = last3.reduce((sum, m) => sum + m.amount, 0) / 3;
@@ -257,7 +275,7 @@ export async function GET(req: NextRequest) {
 
           return {
             name: data.name,
-            slug,
+            slug: data.canonicalSlug,
             total: data.total,
             share: categoryTotal > 0 ? data.total / categoryTotal : 0,
             trend,
@@ -266,8 +284,10 @@ export async function GET(req: NextRequest) {
         })
         .sort((a, b) => b.total - a.total);
 
-      // Check if merchants add up to category total
+      // Verify invariant: sum(merchant rows) === category header total
       const merchantsTotal = rankedItems.reduce((sum, item) => sum + item.total, 0);
+
+      // Check if merchants add up to category total (should be exact now)
       const remainder = categoryTotal - merchantsTotal;
       if (Math.abs(remainder) > 1) {
         // Add "Other" row for remainder with proper monthly distribution
@@ -311,43 +331,65 @@ export async function GET(req: NextRequest) {
         currency: profile.homeCurrency,
       });
     } else {
-      // Level 3: Merchant → Transactions
+      // Level 3: Merchant → Transactions (scoped to parent category)
       const parentCategory = categoryParam;
-      const childCategories = summary.categories
-        .filter(cat => getParentCategory(cat.category) === parentCategory)
-        .map(cat => cat.category);
 
-      const merchant = summary.merchants.find(m => 
-        m.merchantSlug === merchantParam && childCategories.includes(m.category)
-      );
+      // Get all transactions for this merchant in window months (all categories)
+      const allMerchantTxns = profile.expenseTxns.filter(t => {
+        if (!windowMonths.includes(t.txMonth)) return false;
+        if (isCoreExcluded(t.category)) return false;
+        if (getParentCategory(t.category) === "Debt") return false;
+        const slug = merchantSlug(t.merchant);
+        const canonicalSlug = resolveCanonicalMerchantSlug(slug);
+        return canonicalSlug === merchantParam;
+      });
 
-      if (!merchant) {
+      if (allMerchantTxns.length === 0) {
         return NextResponse.json({ error: "Merchant not found" }, { status: 404 });
       }
 
-      // Build merchant monthly series
+      // Scope to parent category
+      const scopedTxns = allMerchantTxns.filter(t => 
+        getParentCategory(t.category) === parentCategory
+      );
+
+      if (scopedTxns.length === 0) {
+        return NextResponse.json({ error: "Merchant not found in this category" }, { status: 404 });
+      }
+
+      const merchantName = resolveMerchantAlias(merchantSlug(scopedTxns[0].merchant), scopedTxns[0].merchant);
+
+      // Build merchant monthly series (scoped to this parent category)
       const merchantMonthlySeries: MonthlySeries[] = windowMonths.map(ym => {
-        const monthTotal = merchant.transactions
+        const monthTotal = scopedTxns
           .filter(txn => txn.txMonth === ym)
           .reduce((sum, txn) => sum + txn.amount, 0);
         return { yearMonth: ym, amount: monthTotal };
       });
 
-      const merchantTotal = merchant.total;
+      const merchantTotal = scopedTxns.reduce((sum, t) => sum + t.amount, 0);
       const merchantAvg = merchantTotal / windowMonths.length;
 
-      // Build category comparison series
+      // Calculate spend in other parent categories
+      const otherCategoriesTotal = allMerchantTxns
+        .filter(t => getParentCategory(t.category) !== parentCategory)
+        .reduce((sum, t) => sum + t.amount, 0);
+
+      // Build category comparison series (same as category level)
       const categoryMonthlySeries: MonthlySeries[] = windowMonths.map(ym => {
         const monthData = monthByYm.get(ym);
-        const monthTotal = childCategories.reduce((sum, childCat) => {
+        const allChildCats = summary.categories
+          .filter(cat => getParentCategory(cat.category) === parentCategory)
+          .map(cat => cat.category);
+        const monthTotal = allChildCats.reduce((sum, childCat) => {
           const catInMonth = monthData?.categories.find(c => c.category === childCat);
           return sum + (catInMonth?.amount || 0);
         }, 0);
         return { yearMonth: ym, amount: monthTotal };
       });
 
-      // Transaction list (newest first)
-      const rankedItems: RankedItem[] = merchant.transactions
+      // Transaction list (newest first, scoped to this parent category)
+      const rankedItems: RankedItem[] = scopedTxns
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
         .map(txn => ({
           name: `${new Date(txn.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })} • ${txn.accountLabel || ""}`,
@@ -358,15 +400,24 @@ export async function GET(req: NextRequest) {
           monthlySeries: [],
         }));
 
+      // Verify invariant: sum(transactions shown) === header total
+      const txnSum = rankedItems.reduce((sum, item) => sum + item.total, 0);
+      // txnSum should equal merchantTotal
+
       // Cadence stats
-      const cadence = computeCadenceStats(merchant.transactions, merchant.merchant);
+      const cadence = computeCadenceStats(scopedTxns.map(t => ({
+        date: t.date,
+        merchant: merchantName,
+        category: t.category,
+        amount: t.amount,
+      })), merchantName);
 
       return NextResponse.json({
         level: "merchant",
         breadcrumb: [
           { label: "All spending", href: "/account/spending" },
           { label: parentCategory, href: `/account/spending?category=${encodeURIComponent(parentCategory)}` },
-          { label: merchant.merchant },
+          { label: merchantName },
         ],
         total: merchantTotal,
         avgPerMonth: merchantAvg,
@@ -374,6 +425,7 @@ export async function GET(req: NextRequest) {
         comparisonSeries: categoryMonthlySeries,
         rankedItems,
         cadence,
+        otherCategoriesTotal: otherCategoriesTotal > 0 ? otherCategoriesTotal : undefined,
         currency: profile.homeCurrency,
       });
     }

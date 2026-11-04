@@ -36,6 +36,7 @@ interface DrilldownData {
   comparisonSeries?: MonthlySeries[];
   rankedItems: RankedItem[];
   cadence?: CadenceStats;
+  otherCategoriesTotal?: number;
   currency: string;
 }
 
@@ -235,6 +236,11 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             <div className="text-sm text-neutral-500">
               {formatCurrency(data.avgPerMonth, data.currency)}/mo average
             </div>
+            {data.level === "merchant" && data.otherCategoriesTotal && data.otherCategoriesTotal > 0 && (
+              <div className="text-xs text-neutral-400 mt-1">
+                Also {formatCurrency(data.otherCategoriesTotal, data.currency)} in other categories
+              </div>
+            )}
           </div>
           {selectedMonth && (
             <button
