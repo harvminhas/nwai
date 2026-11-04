@@ -376,51 +376,60 @@ export function DrilldownView({ token }: DrilldownViewProps) {
           </div>
         ) : (
           <div className="space-y-2">
-            {displayedItems.map((item, idx) => (
-              <div
-                key={item.slug}
-                className="flex items-center gap-3 p-3 rounded-lg hover:bg-neutral-50 transition-colors cursor-pointer"
-                onClick={() => handleItemClick(item)}
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="font-medium text-neutral-900">{item.name}</span>
-                    {!selectedMonth && item.monthlySeries.length > 0 && (
-                      <div className="flex-shrink-0" style={{ width: "60px", height: "20px" }}>
-                        <ResponsiveContainer width="100%" height="100%">
-                          <ComposedChart data={item.monthlySeries.map(m => ({ amount: m.amount }))}>
-                            <Line type="monotone" dataKey="amount" stroke="#10b981" strokeWidth={1} dot={false} />
-                          </ComposedChart>
-                        </ResponsiveContainer>
-                      </div>
-                    )}
-                  </div>
-                  <div className="w-full bg-neutral-100 rounded-full h-1.5 mb-1">
-                    <div 
-                      className="bg-emerald-500 h-1.5 rounded-full" 
-                      style={{ width: `${Math.min(item.displayShare * 100, 100)}%` }}
-                    ></div>
-                  </div>
-                </div>
-                
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
-                    <div className="font-semibold text-neutral-900 tabular-nums">
-                      {formatCurrency(item.displayTotal, data.currency)}
+            {displayedItems.map((item, idx) => {
+              const isOther = item.slug === "other";
+              const isClickable = !isOther;
+              
+              return (
+                <div
+                  key={item.slug}
+                  className={`flex items-center gap-3 p-3 rounded-lg transition-colors ${
+                    isClickable ? "hover:bg-neutral-50 cursor-pointer" : "cursor-default"
+                  }`}
+                  onClick={() => isClickable && handleItemClick(item)}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium text-neutral-900">{item.name}</span>
+                      {!selectedMonth && item.monthlySeries.length > 0 && !isOther && (
+                        <div className="flex-shrink-0" style={{ width: "60px", height: "20px" }}>
+                          <ResponsiveContainer width="100%" height="100%">
+                            <ComposedChart data={item.monthlySeries.map(m => ({ amount: m.amount }))}>
+                              <Line type="monotone" dataKey="amount" stroke="#10b981" strokeWidth={1} dot={false} />
+                            </ComposedChart>
+                          </ResponsiveContainer>
+                        </div>
+                      )}
                     </div>
-                    {!selectedMonth && item.trend !== 0 && (
-                      <div className={`text-xs tabular-nums ${item.trend > 0 ? "text-red-600" : "text-green-600"}`}>
-                        {item.trend > 0 ? "+" : "−"}{formatCurrency(Math.abs(item.trend), data.currency)}/mo
-                      </div>
-                    )}
+                    <div className="w-full bg-neutral-100 rounded-full h-1.5 mb-1">
+                      <div 
+                        className="bg-emerald-500 h-1.5 rounded-full" 
+                        style={{ width: `${Math.min(item.displayShare * 100, 100)}%` }}
+                      ></div>
+                    </div>
                   </div>
                   
-                  <svg className="w-5 h-5 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <div className="font-semibold text-neutral-900 tabular-nums">
+                        {formatCurrency(item.displayTotal, data.currency)}
+                      </div>
+                      {!selectedMonth && item.trend !== 0 && (
+                        <div className={`text-xs tabular-nums ${item.trend > 0 ? "text-red-600" : "text-green-600"}`}>
+                          {item.trend > 0 ? "+" : "−"}{formatCurrency(Math.abs(item.trend), data.currency)}/mo
+                        </div>
+                      )}
+                    </div>
+                    
+                    {isClickable && (
+                      <svg className="w-5 h-5 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
