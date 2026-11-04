@@ -19,6 +19,9 @@ interface RankedItem {
   share: number;
   trend: number;
   monthlySeries: MonthlySeries[];
+  subLabel?: string;
+  extras?: Array<{ yearMonth: string; amount: number }>;
+  kind?: "loan" | "card";
 }
 
 interface CadenceStats {
@@ -35,6 +38,19 @@ interface AccountBreakdown {
   count: number;
 }
 
+interface DebtExcluded {
+  inactiveAccounts: number;
+}
+
+interface DebtGroup {
+  key: string;
+  label: string;
+  counted: boolean;
+  total: number;
+  subLabel: string;
+  items: RankedItem[];
+}
+
 interface DrilldownData {
   level: "all" | "category" | "merchant";
   breadcrumb: { label: string; href?: string }[];
@@ -46,7 +62,13 @@ interface DrilldownData {
   cadence?: CadenceStats;
   accounts?: AccountBreakdown[];
   otherCategoriesTotal?: number;
+  kind?: "debt";
+  basis?: "actual";
+  excluded?: DebtExcluded;
   currency: string;
+  groups?: DebtGroup[];
+  oneOffTotal?: number;
+  oneOffLabel?: string;
 }
 
 function formatMonthLabel(yearMonth: string): string {
@@ -82,6 +104,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
 
       const res = await fetch(`/api/user/spending/drilldown?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
       });
 
       if (!res.ok) {
@@ -151,7 +174,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             displayShare: 0, // Will be computed after filtering
           };
         })
-        .filter(item => item.displayTotal > 0)
+        .filter(item => item.displayTotal > 0 || item.slug === "debt")
         .sort((a, b) => b.displayTotal - a.displayTotal)
         .map((item, idx, arr) => {
           const monthTotal = arr.reduce((sum, i) => sum + i.displayTotal, 0);
@@ -189,6 +212,34 @@ export function DrilldownView({ token }: DrilldownViewProps) {
   };
   
   const yAxisDomain = niceDomain(data.monthlySeries.map(m => m.amount));
+
+  // Debt groups, narrowed to the selected month when one is picked
+  const groupsForDisplay = (data.groups || []).map((group) => {
+    if (!selectedMonth) return group;
+    const items = group.items
+      .map((item) => {
+        const monthAmount = item.monthlySeries.find((m) => m.yearMonth === selectedMonth)?.amount || 0;
+        return { ...item, total: monthAmount };
+      })
+      .filter((item) => item.total > 0);
+    const total = items.reduce((sum, item) => sum + item.total, 0);
+    return {
+      ...group,
+      total,
+      items: items.map((item) => ({ ...item, share: total > 0 ? item.total / total : 0 })),
+    };
+  });
+
+  const debtPeriodLabel = selectedMonth ? "that month" : "the last 12 months";
+  const debtLoanShown = groupsForDisplay.find((g) => g.key === "loans")?.total || 0;
+  const debtCardShown = groupsForDisplay.find((g) => g.key === "cards")?.total || 0;
+  const debtOneOffShown = groupsForDisplay.reduce((sum, g) => {
+    return sum + g.items.reduce((s2, item) => {
+      const extras = item.extras || [];
+      const filtered = selectedMonth ? extras.filter((e) => e.yearMonth === selectedMonth) : extras;
+      return s2 + filtered.reduce((s3, e) => s3 + e.amount, 0);
+    }, 0);
+  }, 0);
 
   return (
     <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8">
@@ -278,6 +329,49 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             </div>
           )}
         </div>
+
+        {/* Debt level 2 caption */}
+        {data.kind === "debt" && data.level === "category" && data.basis === "actual" && (
+          <div className="text-xs text-neutral-500 mt-1">
+            What you actually paid in regular monthly payments. One-off payments are shown below and not included.
+          </div>
+        )}
+
+        {/* Level 1 (All spending) caption */}
+        {data.level === "all" && (
+          <div className="text-xs text-neutral-500 mt-1">
+            Purchases plus loan payments. Card payments and one-off payments are shown inside Debt and not added.
+          </div>
+        )}
+
+        {/* Two-box strip for Debt level 2 */}
+        {data.kind === "debt" && data.level === "category" && data.groups && (
+          <div className="flex gap-2 mt-3">
+            <div className="flex-1 border border-green-200 bg-green-50 rounded-lg p-3">
+              <div className="text-xs text-green-700 font-medium mb-1">Regular payments</div>
+              <div className="text-lg font-semibold text-green-900 tabular-nums">
+                {formatCurrency(selectedMonth ? debtLoanShown : data.total, data.currency)}
+              </div>
+              <div className="text-xs text-green-700 mt-1 leading-snug">
+                Loan payments, counted in spending.
+              </div>
+              {debtCardShown > 0 && (
+                <div className="text-xs text-neutral-600 mt-1 leading-snug">
+                  Credit cards add {formatCurrency(debtCardShown, data.currency)} of estimated payments, shown below. Those purchases are already counted, so they are not added again.
+                </div>
+              )}
+            </div>
+            <div className="flex-1 border border-neutral-200 bg-neutral-50 rounded-lg p-3">
+              <div className="text-xs text-neutral-700 font-medium mb-1">One-off payments</div>
+              <div className="text-lg font-semibold text-neutral-700 tabular-nums">
+                {formatCurrency(debtOneOffShown, data.currency)}
+              </div>
+              <div className="text-xs text-neutral-600 mt-1 leading-snug">
+                Not counted over {debtPeriodLabel} — already in your spending.
+              </div>
+            </div>
+          </div>
+        )}
 
         <div 
           style={{ height: "200px", position: "relative" }}
@@ -501,7 +595,11 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       <div className="bg-white rounded-2xl border border-neutral-200 p-6 mb-6 shadow-sm">
         <div className="mb-4">
           <h2 className="text-lg font-semibold text-neutral-900">
-            {level === "all" ? "Categories" : level === "category" ? "Merchants" : "Transactions"}
+            {level === "all" 
+              ? "Categories" 
+              : level === "category" 
+                ? (data.kind === "debt" ? "Debt accounts" : "Merchants")
+                : (data.kind === "debt" ? "Monthly schedule" : "Transactions")}
             {selectedMonth && level !== "merchant" && (
               <span className="ml-2 text-sm font-normal text-neutral-500">
                 — {formatMonthLabel(selectedMonth)} only
@@ -513,7 +611,38 @@ export function DrilldownView({ token }: DrilldownViewProps) {
           )}
         </div>
         
-        {level === "merchant" ? (
+        {level === "merchant" && data.kind === "debt" ? (
+          // Monthly schedule for a single debt account (regular payments + one-offs)
+          <div className="space-y-1">
+            <div className="flex items-center gap-3 px-2 pb-2 text-xs uppercase tracking-wide text-neutral-500">
+              <div className="w-24">Month</div>
+              <div className="flex-1">Regular payment</div>
+              <div className="w-32 text-right">Amount</div>
+            </div>
+            {data.rankedItems.map((item, idx) => (
+              <div key={idx}>
+                <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-neutral-50">
+                  <div className="text-sm text-neutral-600 w-24">{item.name}</div>
+                  <div className="flex-1 text-xs text-neutral-500">{item.subLabel || "Regular payment"}</div>
+                  <div className="text-sm font-semibold text-neutral-900 tabular-nums w-32 text-right">
+                    {formatCurrency(item.total, data.currency)}
+                  </div>
+                </div>
+                {item.extras && item.extras.map((extra) => (
+                  <div key={`${idx}-${extra.yearMonth}`} className="ml-8 flex items-center gap-2 px-2 py-1.5 text-xs text-neutral-500">
+                    <div>{item.name} · extra</div>
+                    <div className="flex-1"></div>
+                    <div className="px-2 py-0.5 bg-neutral-100 rounded text-neutral-600 text-[11px]">once</div>
+                    <div className="tabular-nums font-medium w-32 text-right">{formatCurrency(extra.amount, data.currency)}</div>
+                  </div>
+                ))}
+              </div>
+            ))}
+            <div className="mt-3 p-3 bg-neutral-50 rounded-lg text-sm text-neutral-600">
+              Only the regular payment is counted. One-off payments appear here and in the Debt list, and never add to the total.
+            </div>
+          </div>
+        ) : level === "merchant" ? (
           // Transaction list with columns
           <div className="space-y-1">
             {data.rankedItems.map((item, idx) => {
@@ -535,10 +664,118 @@ export function DrilldownView({ token }: DrilldownViewProps) {
               );
             })}
           </div>
+        ) : data.groups ? (
+          // Grouped view for Debt level 2
+          <div className="space-y-6">
+            {groupsForDisplay.map((group) => (
+              <div key={group.key}>
+                <div className="mb-3 flex items-center gap-2">
+                  <div className="text-xs uppercase tracking-wide font-semibold text-neutral-700">
+                    {group.label}
+                  </div>
+                  <div className="text-xs text-neutral-500">· {group.subLabel}</div>
+                </div>
+                
+                <div className="space-y-2">
+                  {group.items.map((item) => {
+                    const isCounted = group.counted;
+                    const textColor = isCounted ? "text-neutral-900" : "text-neutral-500";
+                    const barColor = isCounted ? "bg-emerald-500" : "bg-neutral-300";
+                    
+                    return (
+                      <div key={item.slug}>
+                        <div
+                          className={`flex items-center gap-3 p-3 rounded-lg transition-colors ${
+                            isCounted ? "hover:bg-neutral-50 cursor-pointer" : "hover:bg-neutral-50 cursor-pointer opacity-75"
+                          }`}
+                          onClick={() => handleItemClick(item)}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <div>
+                                <div className={`font-medium ${textColor}`}>{item.name}</div>
+                                {item.subLabel && (
+                                  <div className="text-xs text-neutral-400" style={{ fontSize: "12px" }}>
+                                    {item.subLabel}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <div className="w-full bg-neutral-100 rounded-full h-1.5 mb-1">
+                              <div 
+                                className={`${barColor} h-1.5 rounded-full`}
+                                style={{ width: `${Math.min(item.share * 100, 100)}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                              <div className={`font-semibold ${textColor} tabular-nums`}>
+                                {formatCurrency(item.total, data.currency)}
+                              </div>
+                            </div>
+                            
+                            <svg className="w-5 h-5 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                          </div>
+                        </div>
+                        
+                        {/* Extras as indented sub-rows */}
+                        {item.extras && item.extras.length > 0 && item.extras.map((extra) => {
+                          const [year, month] = extra.yearMonth.split("-");
+                          const monthLabel = new Date(parseInt(year), parseInt(month) - 1).toLocaleDateString("en-US", { 
+                            month: "short", 
+                            year: "numeric" 
+                          });
+                          
+                          return (
+                            <div key={extra.yearMonth} className="ml-8 flex items-center gap-2 p-2 text-xs text-neutral-500">
+                              <div>{monthLabel} · extra</div>
+                              <div className="flex-1"></div>
+                              <div className="px-2 py-0.5 bg-neutral-100 rounded text-neutral-600 text-[11px]">once</div>
+                              <div className="tabular-nums font-medium w-20 text-right">{formatCurrency(extra.amount, data.currency)}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+                
+                {/* Group subtotal */}
+                <div className="mt-3 pt-2 border-t border-neutral-100 text-xs text-neutral-600 flex justify-between">
+                  <div>{group.counted ? (selectedMonth ? "Loans that month, added" : "Loans added to spending") : (selectedMonth ? "Cards that month, not added" : "Cards, not added")}</div>
+                  <div className="font-semibold tabular-nums">{formatCurrency(group.total, data.currency)}</div>
+                </div>
+              </div>
+            ))}
+            
+            {/* Info note for cards */}
+            <div className="flex gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <svg className="w-5 h-5 text-blue-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+              </svg>
+              <div className="text-sm text-blue-900">
+                Card payments are estimated from what you actually paid. Their purchases are already counted under Groceries, Dining and the rest, so the payment itself is not added again.
+              </div>
+            </div>
+            
+            {/* One-off total line */}
+            {data.oneOffTotal && data.oneOffTotal > 0 && (
+              <div className="flex justify-between items-center p-3 bg-neutral-50 rounded-lg">
+                <div className="text-sm text-neutral-700">{data.oneOffLabel || "One-off payments"}</div>
+                <div className="font-semibold text-neutral-900 tabular-nums">{formatCurrency(data.oneOffTotal, data.currency)}</div>
+              </div>
+            )}
+          </div>
         ) : (
+          // Regular ranked items view
           <div className="space-y-2">
             {displayedItems.map((item, idx) => {
               const isOther = item.slug === "other";
+              const isDebt = item.slug === "debt";
               const isClickable = !isOther;
               
               return (
@@ -551,7 +788,14 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="font-medium text-neutral-900">{item.name}</span>
+                      <div>
+                        <div className="font-medium text-neutral-900">{item.name}</div>
+                        {item.subLabel && (
+                          <div className="text-xs text-neutral-500" style={{ fontSize: "12px" }}>
+                            {item.subLabel}
+                          </div>
+                        )}
+                      </div>
                       {!selectedMonth && item.monthlySeries.length > 0 && !isOther && (
                         <div className="flex-shrink-0" style={{ width: "60px", height: "20px" }}>
                           <ResponsiveContainer width="100%" height="100%">
@@ -575,9 +819,14 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                       <div className="font-semibold text-neutral-900 tabular-nums">
                         {formatCurrency(item.displayTotal, data.currency)}
                       </div>
-                      {!selectedMonth && item.trend !== 0 && Math.round(Math.abs(item.trend)) !== 0 && (
+                      {!selectedMonth && !isDebt && item.trend !== 0 && Math.round(Math.abs(item.trend)) !== 0 && (
                         <div className={`text-xs tabular-nums ${item.trend > 0 ? "text-red-600" : "text-green-600"}`}>
                           {item.trend > 0 ? "↑" : "↓"} {formatCurrency(Math.abs(item.trend), data.currency)}/mo vs avg
+                        </div>
+                      )}
+                      {isDebt && item.subLabel && (
+                        <div className="text-xs text-neutral-500">
+                          {item.subLabel}
                         </div>
                       )}
                     </div>
@@ -591,6 +840,13 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                 </div>
               );
             })}
+            
+            {/* Note under level 1 (All spending) */}
+            {data.level === "all" && (
+              <div className="mt-4 p-3 bg-neutral-50 rounded-lg text-sm text-neutral-600">
+                The Debt row is loan payments only — mortgage, car, home equity line. Card payments sit inside it as information, because those purchases already appear in the category rows above. One-off payments are listed inside Debt too and never add to the total.
+              </div>
+            )}
           </div>
         )}
       </div>
