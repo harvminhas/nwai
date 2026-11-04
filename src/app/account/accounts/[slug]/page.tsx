@@ -146,11 +146,12 @@ function MonthTrendChart({
       </svg>
       <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-gray-400">
         <span>{shortMonth(first.yearMonth)}</span>
-        <span className="truncate text-center font-medium text-gray-600">
-          {active >= 0 ? `${shortMonth(points[active].yearMonth)}: ${fmt(points[active].netWorth, currency)}` : ""}
+        <span className="truncate text-center font-medium text-gray-700">
+          {active >= 0 ? `${shortMonth(points[active].yearMonth)} · ${fmt(points[active].netWorth, currency)}` : ""}
         </span>
         <span>{shortMonth(last.yearMonth)}</span>
       </div>
+      <p className="mt-2 text-center text-[10px] text-gray-400">Click a point to open that month</p>
     </div>
   );
 }
@@ -1180,18 +1181,7 @@ export default function AccountDetailPage() {
           onSelect={handleTxMonthSelect}
         />
       )}
-      {realMonths.length > 1 && (
-        <div className="-mx-1 flex gap-1 overflow-x-auto pb-0.5 scrollbar-none mt-2">
-          {realMonths.map((e) => (
-            <button key={e.yearMonth} onClick={() => handleTxMonthSelect(e.yearMonth)}
-              className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium transition ${
-                txMonth === e.yearMonth ? "bg-purple-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200"
-              }`}>
-              {shortMonth(e.yearMonth)} {e.yearMonth.slice(2, 4)}
-            </button>
-          ))}
-        </div>
-      )}
+
 
       {/* Tab bar */}
       <div className="mt-5 mb-6 flex border-b border-gray-200">
