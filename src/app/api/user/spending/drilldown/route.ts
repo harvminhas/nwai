@@ -16,6 +16,7 @@ import { merchantSlug } from "@/lib/applyRules";
 import { resolveMerchantAlias, resolveCanonicalMerchantSlug } from "@/lib/merchantUtils";
 import { isCoreExcluded } from "@/lib/spendingMetrics";
 import { computeScheduledDebtPayments } from "@/lib/debtPayments";
+import { classifyDebtAccount } from "@/lib/debtPaymentKinds";
 import type { DebtPaymentReview } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -156,7 +157,6 @@ function computeActualDebtPayments(
 
   // Build per-account regular/extra splits
   const accounts = Array.from(accountMap.entries()).map(([slug, data]) => {
-    const { classifyDebtAccount } = require("@/lib/debtPaymentKinds");
     const kind: "loan" | "card" = data.accountType 
       ? classifyDebtAccount(data.accountType)
       : "loan"; // Default to loan if account not found (safer)
