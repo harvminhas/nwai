@@ -49,9 +49,7 @@ interface AccountBreakdown {
 }
 
 interface DebtExcluded {
-  oneOffTotal: number;
-  oneOffCount: number;
-  paidInFullCards: number;
+  inactiveAccounts: number;
 }
 
 interface DrilldownResponse {
@@ -66,29 +64,92 @@ interface DrilldownResponse {
   accounts?: AccountBreakdown[];
   otherCategoriesTotal?: number;
   kind?: "debt";
+  basis?: "actual";
   currency: string;
-  actualPaidTotal?: number;
   excluded?: DebtExcluded;
 }
 
-// Helper to compute Debt category monthly series (used at both level 2 and level 3)
-function computeDebtCategoryMonthlySeries(
+// Helper to compute actual debt payments (real cash paid, not scheduled commitments)
+// Used at level=all (to override Debt row), level=category (Debt header), and level=merchant (account detail)
+function computeActualDebtPayments(
+  debtPaymentHistory: Array<{ accountSlug: string; statementMonth: string; paymentsMade: number; currency: string }>,
+  accountSnapshots: Array<{ slug: string; accountName?: string; accountType: string }>,
   windowMonths: string[],
-  monthByYm: Map<string, any>,
-  categories: any[]
-): MonthlySeries[] {
-  const childCategories = categories
-    .filter(cat => getParentCategory(cat.category) === "Debt")
-    .map(cat => cat.category);
-  
-  return windowMonths.map(ym => {
-    const monthData = monthByYm.get(ym);
-    const monthTotal = childCategories.reduce((sum, childCat) => {
-      const catInMonth = monthData?.categories.find((c: any) => c.category === childCat);
-      return sum + (catInMonth?.amount || 0);
-    }, 0);
-    return { yearMonth: ym, amount: monthTotal };
+  fxRates: Record<string, number>,
+  homeCurrency: string
+): {
+  total: number;
+  monthlySeries: MonthlySeries[];
+  accounts: Array<{
+    accountSlug: string;
+    accountName?: string;
+    total: number;
+    monthlySeries: MonthlySeries[];
+    paymentCount: number;
+  }>;
+} {
+  const home = homeCurrency.toUpperCase();
+  const toHome = (amount: number, currency?: string): number => {
+    const cur = (currency ?? home).toUpperCase();
+    if (cur === home) return amount;
+    const rate = fxRates[cur];
+    return rate ? amount * rate : amount;
+  };
+
+  // Group by account
+  const accountMap = new Map<string, {
+    accountName?: string;
+    payments: Array<{ yearMonth: string; amount: number }>;
+  }>();
+
+  debtPaymentHistory
+    .filter(entry => windowMonths.includes(entry.statementMonth))
+    .forEach(entry => {
+      const amount = toHome(entry.paymentsMade, entry.currency);
+      if (amount === 0) return; // Skip zero payments
+
+      if (!accountMap.has(entry.accountSlug)) {
+        const account = accountSnapshots.find(a => a.slug === entry.accountSlug);
+        accountMap.set(entry.accountSlug, {
+          accountName: account?.accountName,
+          payments: [],
+        });
+      }
+
+      accountMap.get(entry.accountSlug)!.payments.push({
+        yearMonth: entry.statementMonth,
+        amount,
+      });
+    });
+
+  // Build per-account totals and series
+  const accounts = Array.from(accountMap.entries()).map(([slug, data]) => {
+    const monthlySeries: MonthlySeries[] = windowMonths.map(ym => {
+      const payment = data.payments.find(p => p.yearMonth === ym);
+      return { yearMonth: ym, amount: payment?.amount || 0 };
+    });
+
+    const total = monthlySeries.reduce((sum, m) => sum + m.amount, 0);
+
+    return {
+      accountSlug: slug,
+      accountName: data.accountName,
+      total,
+      monthlySeries,
+      paymentCount: data.payments.length,
+    };
   });
+
+  // Aggregate monthly series across all accounts
+  const aggregateMonthlySeries: MonthlySeries[] = windowMonths.map((ym, idx) => ({
+    yearMonth: ym,
+    amount: accounts.reduce((sum, acc) => sum + acc.monthlySeries[idx].amount, 0),
+  }));
+
+  // Total must equal sum of account totals (invariant: single accumulation point)
+  const total = accounts.reduce((sum, acc) => sum + acc.total, 0);
+
+  return { total, monthlySeries: aggregateMonthlySeries, accounts };
 }
 
 export async function GET(req: NextRequest) {
@@ -220,6 +281,32 @@ export async function GET(req: NextRequest) {
         })
         .sort((a, b) => b.total - a.total);
 
+      // Override Debt row with actual payments (so parent equals child header)
+      const debtRowIndex = rankedItems.findIndex(item => item.name === "Debt");
+      if (debtRowIndex >= 0) {
+        const actualDebt = computeActualDebtPayments(
+          profile.debtPaymentHistory,
+          profile.accountSnapshots,
+          windowMonths,
+          profile.fxRates || {},
+          profile.homeCurrency
+        );
+
+        const catAvg = actualDebt.total / windowMonths.length;
+        const last3 = actualDebt.monthlySeries.slice(-3);
+        const last3Avg = last3.reduce((sum, m) => sum + m.amount, 0) / 3;
+        const trend = last3Avg - catAvg;
+
+        rankedItems[debtRowIndex] = {
+          name: "Debt",
+          slug: "debt",
+          total: actualDebt.total, // Real payments (matches Debt category header)
+          share: allTotal > 0 ? actualDebt.total / allTotal : 0,
+          trend,
+          monthlySeries: actualDebt.monthlySeries,
+        };
+      }
+
       return NextResponse.json({
         level: "all",
         breadcrumb: [{ label: "All spending" }],
@@ -242,22 +329,31 @@ export async function GET(req: NextRequest) {
       }
 
       // Build category monthly series (sum of all child categories)
-      const categoryMonthlySeries: MonthlySeries[] = parentCategory === "Debt"
-        ? computeDebtCategoryMonthlySeries(windowMonths, monthByYm, summary.categories)
-        : windowMonths.map(ym => {
-            const monthData = monthByYm.get(ym);
-            const monthTotal = childCategories.reduce((sum, childCat) => {
-              const catInMonth = monthData?.categories.find(c => c.category === childCat);
-              return sum + (catInMonth?.amount || 0);
-            }, 0);
-            return { yearMonth: ym, amount: monthTotal };
-          });
+      // Note: Debt is handled separately above and returns early, so this never runs for Debt
+      const categoryMonthlySeries: MonthlySeries[] = windowMonths.map(ym => {
+        const monthData = monthByYm.get(ym);
+        const monthTotal = childCategories.reduce((sum, childCat) => {
+          const catInMonth = monthData?.categories.find(c => c.category === childCat);
+          return sum + (catInMonth?.amount || 0);
+        }, 0);
+        return { yearMonth: ym, amount: monthTotal };
+      });
 
       const categoryTotal = categoryMonthlySeries.reduce((sum, m) => sum + m.amount, 0);
       const categoryAvg = categoryTotal / windowMonths.length;
 
-      // Special handling for Debt category (payments to debt accounts, including paid-in-full cards)
+      // Special handling for Debt category (actual cash paid, not scheduled commitments)
       if (parentCategory === "Debt") {
+        // Compute actual debt payments from payment history
+        const actualDebt = computeActualDebtPayments(
+          profile.debtPaymentHistory,
+          profile.accountSnapshots,
+          windowMonths,
+          profile.fxRates || {},
+          profile.homeCurrency
+        );
+
+        // Get scheduled payments for method labels (fallback only)
         const scheduledPayments = computeScheduledDebtPayments(
           profile.accountSnapshots,
           profile.debtPaymentHistory,
@@ -266,124 +362,73 @@ export async function GET(req: NextRequest) {
           profile.homeCurrency
         );
 
-        // Helper for FX conversion
-        const home = profile.homeCurrency.toUpperCase();
-        const toHome = (amount: number, currency?: string): number => {
-          const cur = (currency ?? home).toUpperCase();
-          if (cur === home) return amount;
-          const rate = (profile.fxRates || {})[cur];
-          return rate ? amount * rate : amount;
-        };
+        const scheduledMap = new Map(scheduledPayments.map(p => [p.accountSlug, p]));
 
-        // Build combined account list: scheduled + payment-history-only accounts
-        interface DebtAccountEntry {
-          accountSlug: string;
-          accountName?: string;
-          weight: number; // For proportional allocation
-          method: string;
-        }
-
-        const debtAccountMap = new Map<string, DebtAccountEntry>();
-
-        // 1. Add all scheduled payments
-        scheduledPayments.forEach(payment => {
-          debtAccountMap.set(payment.accountSlug, {
-            accountSlug: payment.accountSlug,
-            accountName: payment.accountName,
-            weight: payment.amount,
-            method: payment.method,
-          });
-        });
-
-        // 2. Scan for debt accounts with payment history but not in scheduled list
-        const debtTypes = ["credit", "credit_card", "mortgage", "loan", "auto_loan", "student_loan", "personal_loan", "line_of_credit"];
-        profile.accountSnapshots
-          .filter(acc => debtTypes.includes(acc.accountType) && !debtAccountMap.has(acc.slug))
-          .forEach(acc => {
-            // Check if this account has any payment history in windowMonths
-            const payments = profile.debtPaymentHistory.filter(
-              entry => entry.accountSlug === acc.slug && windowMonths.includes(entry.statementMonth)
-            );
-            
-            if (payments.length > 0) {
-              // Calculate median monthly payment as weight
-              const amounts = payments.map(p => toHome(p.paymentsMade, p.currency)).sort((a, b) => a - b);
-              const median = amounts.length > 0
-                ? (amounts.length % 2 === 0
-                    ? (amounts[amounts.length / 2 - 1] + amounts[amounts.length / 2]) / 2
-                    : amounts[Math.floor(amounts.length / 2)])
-                : 0;
-              
-              if (median > 0) {
-                debtAccountMap.set(acc.slug, {
-                  accountSlug: acc.slug,
-                  accountName: acc.accountName,
-                  weight: median,
-                  method: "usual payment", // Derived label for payment-history accounts
-                });
-              }
-            }
-          });
-
-        const allDebtAccounts = Array.from(debtAccountMap.values());
-        const totalWeight = allDebtAccounts.reduce((sum, acc) => sum + acc.weight, 0);
-
-        // Build debt account rows with proportional allocation
-        const rankedItems: RankedItem[] = allDebtAccounts.map(account => {
-          const proportion = totalWeight > 0 ? account.weight / totalWeight : 0;
-          const accountTotal = categoryTotal * proportion;
-          
-          const monthlySeries: MonthlySeries[] = categoryMonthlySeries.map(m => ({
-            yearMonth: m.yearMonth,
-            amount: m.amount * proportion,
-          }));
-
-          const avg = accountTotal / windowMonths.length;
-          const last3 = monthlySeries.slice(-3);
+        // Build debt account rows from actual payments
+        // Header total and row totals computed from single accumulation (actualDebt.total)
+        const rankedItems: RankedItem[] = actualDebt.accounts.map(account => {
+          const total = account.total; // From actualDebt helper
+          const avg = total / windowMonths.length;
+          const last3 = account.monthlySeries.slice(-3);
           const last3Avg = last3.reduce((sum, m) => sum + m.amount, 0) / 3;
           const trend = last3Avg - avg;
+
+          // SubLabel: prefer payment count (fact), or 'usual payment' when scheduled matches
+          const scheduled = scheduledMap.get(account.accountSlug);
+          let subLabel: string;
+          if (scheduled) {
+            const medianPayment = [...account.monthlySeries.map(m => m.amount)].filter(a => a > 0).sort((a, b) => a - b);
+            const median = medianPayment.length > 0
+              ? (medianPayment.length % 2 === 0
+                  ? (medianPayment[medianPayment.length / 2 - 1] + medianPayment[medianPayment.length / 2]) / 2
+                  : medianPayment[Math.floor(medianPayment.length / 2)])
+              : 0;
+            
+            if (median > 0 && Math.abs(scheduled.amount - median) / median < 0.05) {
+              subLabel = "usual payment";
+            } else {
+              subLabel = account.paymentCount === 1 ? "1 payment" : `${account.paymentCount} payments`;
+            }
+          } else {
+            subLabel = account.paymentCount === 1 ? "1 payment" : `${account.paymentCount} payments`;
+          }
 
           return {
             name: account.accountName || account.accountSlug,
             slug: account.accountSlug,
-            subLabel: account.method,
-            total: accountTotal,
-            share: categoryTotal > 0 ? accountTotal / categoryTotal : 0,
+            subLabel,
+            total,
+            share: actualDebt.total > 0 ? total / actualDebt.total : 0,
             trend,
-            monthlySeries,
+            monthlySeries: account.monthlySeries,
           };
         }).sort((a, b) => b.total - a.total);
 
-        // Calculate excluded info
-        const oneOffTotal = scheduledPayments.reduce((sum, p) => {
-          return sum + (p.unreviewedAnomalies?.reduce((s, a) => s + a.amount, 0) || 0);
-        }, 0);
-        const oneOffCount = scheduledPayments.reduce((sum, p) => {
-          return sum + (p.unreviewedAnomalies?.length || 0);
-        }, 0);
-        
-        // Count paid-in-full cards: debt accounts with no balance and no payment activity
-        const paidInFullCards = profile.accountSnapshots.filter(acc => {
+        // Count inactive accounts: debt accounts with no balance and no payments in window
+        const debtTypes = ["credit", "credit_card", "mortgage", "loan", "auto_loan", "student_loan", "personal_loan", "line_of_credit"];
+        const activeAccounts = new Set(actualDebt.accounts.map(a => a.accountSlug));
+        const inactiveAccounts = profile.accountSnapshots.filter(acc => {
           if (!debtTypes.includes(acc.accountType)) return false;
-          if (acc.balance !== 0) return false; // Has balance
-          if (debtAccountMap.has(acc.slug)) return false; // Has activity in window
+          if (acc.balance !== 0) return false;
+          if (activeAccounts.has(acc.slug)) return false;
           return true;
         }).length;
 
-        const excluded: DebtExcluded | undefined = (oneOffTotal > 0 || oneOffCount > 0 || paidInFullCards > 0)
-          ? { oneOffTotal, oneOffCount, paidInFullCards }
+        const excluded: DebtExcluded | undefined = inactiveAccounts > 0
+          ? { inactiveAccounts }
           : undefined;
 
         return NextResponse.json({
           level: "category",
           kind: "debt" as const,
+          basis: "actual" as const,
           breadcrumb: [
             { label: "All spending", href: "/account/spending" },
             { label: "Debt" },
           ],
-          total: categoryTotal,
-          avgPerMonth: categoryAvg,
-          monthlySeries: categoryMonthlySeries,
+          total: actualDebt.total, // Real payments total (same as sum of rows)
+          avgPerMonth: actualDebt.total / windowMonths.length,
+          monthlySeries: actualDebt.monthlySeries, // Real per-month payments
           comparisonSeries: allSpendingMonthlySeries,
           rankedItems,
           excluded,
@@ -514,7 +559,7 @@ export async function GET(req: NextRequest) {
       // Level 3: Merchant → Transactions (scoped to parent category)
       const parentCategory = categoryParam;
 
-      // Special handling for Debt account drill-down
+      // Special handling for Debt account drill-down (actual payments)
       if (parentCategory === "Debt") {
         const accountSlug = merchantParam; // It's an account slug, not a merchant
         
@@ -523,6 +568,27 @@ export async function GET(req: NextRequest) {
         if (!account) {
           return NextResponse.json({ error: "Account not found" }, { status: 404 });
         }
+
+        // Compute actual debt payments
+        const actualDebt = computeActualDebtPayments(
+          profile.debtPaymentHistory,
+          profile.accountSnapshots,
+          windowMonths,
+          profile.fxRates || {},
+          profile.homeCurrency
+        );
+
+        // Find this account in actual payments
+        const accountData = actualDebt.accounts.find(a => a.accountSlug === accountSlug);
+        if (!accountData) {
+          return NextResponse.json({ error: "Account not found in payment history" }, { status: 404 });
+        }
+
+        // Header total and monthly series from actual payments
+        // (same accumulation as level 2 row ensures they match)
+        const total = accountData.total;
+        const monthlySeries = accountData.monthlySeries;
+        const avgPerMonth = total / windowMonths.length;
 
         // Helper for FX conversion
         const home = profile.homeCurrency.toUpperCase();
@@ -533,132 +599,45 @@ export async function GET(req: NextRequest) {
           return rate ? amount * rate : amount;
         };
 
-        // Build SAME combined account list as level 2 (ensures matching totals)
-        const scheduledPayments = computeScheduledDebtPayments(
-          profile.accountSnapshots,
-          profile.debtPaymentHistory,
-          userReviews,
-          profile.fxRates || {},
-          profile.homeCurrency
+        // Rows = months with payments, newest first
+        const paymentHistory = profile.debtPaymentHistory.filter(
+          entry => entry.accountSlug === accountSlug && windowMonths.includes(entry.statementMonth)
         );
 
-        interface DebtAccountEntry {
-          accountSlug: string;
-          weight: number;
-        }
-
-        const debtAccountMap = new Map<string, DebtAccountEntry>();
-
-        // 1. Add all scheduled payments
-        scheduledPayments.forEach(payment => {
-          debtAccountMap.set(payment.accountSlug, {
-            accountSlug: payment.accountSlug,
-            weight: payment.amount,
-          });
+        // Count payments per month for subLabel
+        const paymentsPerMonth = new Map<string, number>();
+        paymentHistory.forEach(entry => {
+          paymentsPerMonth.set(entry.statementMonth, (paymentsPerMonth.get(entry.statementMonth) || 0) + 1);
         });
 
-        // 2. Add payment-history-only accounts
-        const debtTypes = ["credit", "credit_card", "mortgage", "loan", "auto_loan", "student_loan", "personal_loan", "line_of_credit"];
-        profile.accountSnapshots
-          .filter(acc => debtTypes.includes(acc.accountType) && !debtAccountMap.has(acc.slug))
-          .forEach(acc => {
-            const payments = profile.debtPaymentHistory.filter(
-              entry => entry.accountSlug === acc.slug && windowMonths.includes(entry.statementMonth)
-            );
-            
-            if (payments.length > 0) {
-              const amounts = payments.map(p => toHome(p.paymentsMade, p.currency)).sort((a, b) => a - b);
-              const median = amounts.length > 0
-                ? (amounts.length % 2 === 0
-                    ? (amounts[amounts.length / 2 - 1] + amounts[amounts.length / 2]) / 2
-                    : amounts[Math.floor(amounts.length / 2)])
-                : 0;
-              
-              if (median > 0) {
-                debtAccountMap.set(acc.slug, {
-                  accountSlug: acc.slug,
-                  weight: median,
-                });
-              }
-            }
-          });
-
-        // Look up this account in combined list
-        const accountEntry = debtAccountMap.get(accountSlug);
-        if (!accountEntry) {
-          return NextResponse.json({ error: "Account not found in debt breakdown" }, { status: 404 });
-        }
-
-        // Compute Debt category monthly series using shared helper
-        const categoryMonthlySeries = computeDebtCategoryMonthlySeries(
-          windowMonths,
-          monthByYm,
-          summary.categories
-        );
-        const categoryTotal = categoryMonthlySeries.reduce((sum, m) => sum + m.amount, 0);
-
-        // Use SAME proportional allocation as level 2 with SAME weights
-        const totalWeight = Array.from(debtAccountMap.values()).reduce((sum, acc) => sum + acc.weight, 0);
-        const proportion = totalWeight > 0 ? accountEntry.weight / totalWeight : 0;
-        
-        // Derive header and monthly series from proportional allocation
-        const monthlySeries: MonthlySeries[] = categoryMonthlySeries.map(m => ({
-          yearMonth: m.yearMonth,
-          amount: m.amount * proportion,
-        }));
-        
-        const total = categoryTotal * proportion;
-        const avgPerMonth = total / windowMonths.length;
-
-        // Rows = one per month in the window, showing allocated amount
-        const rankedItems: RankedItem[] = windowMonths
-          .map((ym, idx) => {
-            const [year, month] = ym.split("-");
+        const rankedItems: RankedItem[] = monthlySeries
+          .filter(m => m.amount > 0) // Skip months with no payment
+          .map(m => {
+            const [year, month] = m.yearMonth.split("-");
             const monthLabel = new Date(parseInt(year), parseInt(month) - 1).toLocaleDateString("en-US", { 
               month: "short", 
               year: "numeric" 
             });
+
+            const paymentCount = paymentsPerMonth.get(m.yearMonth) || 1;
+            const subLabel = paymentCount > 1 ? `${paymentCount} payments` : undefined;
             
             return {
               name: monthLabel,
-              slug: ym,
-              total: monthlySeries[idx].amount,
-              share: total > 0 ? monthlySeries[idx].amount / total : 0,
+              slug: m.yearMonth,
+              subLabel,
+              total: m.amount,
+              share: total > 0 ? m.amount / total : 0,
               trend: 0,
               monthlySeries: [],
             };
           })
           .reverse(); // Newest first
 
-        // Calculate actual paid total from history (if differs from scheduled)
-        const paymentHistory = profile.debtPaymentHistory.filter(
-          entry => entry.accountSlug === accountSlug && windowMonths.includes(entry.statementMonth)
-        );
-        
-        let actualPaidTotal: number | undefined;
-        if (paymentHistory.length > 0) {
-          const home = profile.homeCurrency.toUpperCase();
-          const toHome = (amount: number, currency?: string): number => {
-            const cur = (currency ?? home).toUpperCase();
-            if (cur === home) return amount;
-            const rate = (profile.fxRates || {})[cur];
-            return rate ? amount * rate : amount;
-          };
-          
-          const actualTotal = paymentHistory.reduce(
-            (sum, entry) => sum + toHome(entry.paymentsMade, entry.currency),
-            0
-          );
-          
-          // Only include if differs by more than $1
-          if (Math.abs(actualTotal - total) > 1) {
-            actualPaidTotal = actualTotal;
-          }
-        }
-
         return NextResponse.json({
           level: "merchant",
           kind: "debt" as const,
+          basis: "actual" as const,
           breadcrumb: [
             { label: "All spending", href: "/account/spending" },
             { label: "Debt", href: "/account/spending?category=Debt" },
@@ -667,9 +646,8 @@ export async function GET(req: NextRequest) {
           total,
           avgPerMonth,
           monthlySeries,
-          comparisonSeries: categoryMonthlySeries,
+          comparisonSeries: actualDebt.monthlySeries, // All Debt actual payments
           rankedItems,
-          actualPaidTotal,
           currency: profile.homeCurrency,
         });
       }
