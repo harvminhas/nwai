@@ -16,6 +16,11 @@ export interface ParsedRow {
   isExpense: boolean;    // true = money out, false = money in
   rawAmount: number;     // signed
   category: string;      // expense category (see SYSTEM_PROMPT for valid values)
+  /**
+   * Running account balance shown on this row by the bank, when the CSV has a
+   * balance column. Null/undefined when the export has no balance column.
+   */
+  balance?: number | null;
 }
 
 export interface CsvParseResult {
@@ -35,7 +40,7 @@ const SYSTEM_PROMPT = `You are a bank CSV transaction parser. Extract all transa
 Return ONLY a JSON object — no markdown, no explanation, no code fences.
 Format:
 {
-  "transactions": [ { "date": "YYYY-MM-DD", "description": string, "amount": number (always positive), "isExpense": boolean, "category": string } ],
+  "transactions": [ { "date": "YYYY-MM-DD", "description": string, "amount": number (always positive), "isExpense": boolean, "category": string, "balance": number or null } ],
   "closingBalance": number or null
 }
 
@@ -73,15 +78,23 @@ Use the most specific category or subtype. Parent categories and their subtypes:
 - "Other"                 -- anything else. No subtypes.
 Use a subtype (e.g. "Gas") when confident. Fall back to the parent (e.g. "Transportation") when unsure.
 
+Rules for balance (per transaction):
+- If the CSV has a running balance column, copy the balance shown on that exact row into "balance" (signed as displayed).
+- If the CSV has no balance column, set "balance" to null on every row.
+
 Rules for closingBalance:
 - If the CSV has a running balance column, set closingBalance to the balance on the transaction row with the MOST RECENT DATE (the highest date value) — regardless of which physical row position it appears at in the file (CSVs may be sorted newest-first or oldest-first)
 - If no balance column exists, set closingBalance to null
 - Always return closingBalance as a positive number (absolute value of the balance shown)`;
 
 export async function parseCSV(csvText: string, accountType?: string): Promise<CsvParseResult> {
-  // Truncate to keep token usage reasonable
+  // Truncate to keep token usage reasonable. Keep the first couple of lines
+  // (banks that emit a header/preamble put it at the top) plus the LAST rows,
+  // because exports are often newest-first and the recent rows are what we need.
   const lines = csvText.split("\n");
-  const truncated = lines.slice(0, MAX_ROWS).join("\n");
+  const truncated = lines.length <= MAX_ROWS
+    ? csvText
+    : [...lines.slice(0, 2), ...lines.slice(lines.length - (MAX_ROWS - 2))].join("\n");
 
   const isDebtType = accountType ? ["credit", "loan", "mortgage"].includes(accountType.toLowerCase()) : false;
   const accountTypeNote = accountType
@@ -122,7 +135,7 @@ export async function parseCSV(csvText: string, accountType?: string): Promise<C
     "Income",
   ]);
 
-  type AiRow = { date?: string; description?: string; amount?: number; isExpense?: boolean; category?: string };
+  type AiRow = { date?: string; description?: string; amount?: number; isExpense?: boolean; category?: string; balance?: number | null };
   type AiResponse = { transactions?: AiRow[]; closingBalance?: number | null };
   let aiResponse: AiResponse;
   try {
@@ -154,6 +167,7 @@ export async function parseCSV(csvText: string, accountType?: string): Promise<C
       isExpense,
       rawAmount: isExpense ? -amount : amount,
       category,
+      balance: typeof item.balance === "number" && Number.isFinite(item.balance) ? item.balance : null,
     });
   }
 
