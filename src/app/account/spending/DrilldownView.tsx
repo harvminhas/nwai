@@ -104,6 +104,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
 
       const res = await fetch(`/api/user/spending/drilldown?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
       });
 
       if (!res.ok) {
@@ -173,7 +174,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             displayShare: 0, // Will be computed after filtering
           };
         })
-        .filter(item => item.displayTotal > 0)
+        .filter(item => item.displayTotal > 0 || item.slug === "debt")
         .sort((a, b) => b.displayTotal - a.displayTotal)
         .map((item, idx, arr) => {
           const monthTotal = arr.reduce((sum, i) => sum + i.displayTotal, 0);
