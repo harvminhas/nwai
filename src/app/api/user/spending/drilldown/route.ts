@@ -115,10 +115,13 @@ export async function GET(req: NextRequest) {
       windowMonths
     );
 
-    // Compute all-spending monthly series once
-    const allSpendingMonthlySeries: MonthlySeries[] = summary.monthlyHistory.map(m => ({
-      yearMonth: m.yearMonth,
-      amount: m.total,
+    // Build lookup map for monthlyHistory (arrays may not align with windowMonths)
+    const monthByYm = new Map(summary.monthlyHistory.map(m => [m.yearMonth, m]));
+
+    // Compute all-spending monthly series once (aligned with windowMonths)
+    const allSpendingMonthlySeries: MonthlySeries[] = windowMonths.map(ym => ({
+      yearMonth: ym,
+      amount: monthByYm.get(ym)?.total || 0,
     }));
 
     const allTotal = allSpendingMonthlySeries.reduce((sum, m) => sum + m.amount, 0);
@@ -147,8 +150,9 @@ export async function GET(req: NextRequest) {
         parentData.childCategories.add(cat.category);
 
         // Add this category's monthly amounts to parent's series
-        summary.monthlyHistory.forEach((month, idx) => {
-          const catInMonth = month.categories.find(c => c.category === cat.category);
+        windowMonths.forEach((ym, idx) => {
+          const month = monthByYm.get(ym);
+          const catInMonth = month?.categories.find(c => c.category === cat.category);
           if (catInMonth) {
             parentData.monthlySeries[idx].amount += catInMonth.amount;
           }
@@ -196,10 +200,10 @@ export async function GET(req: NextRequest) {
       }
 
       // Build category monthly series (sum of all child categories)
-      const categoryMonthlySeries: MonthlySeries[] = windowMonths.map((ym, idx) => {
-        const monthData = summary.monthlyHistory[idx];
+      const categoryMonthlySeries: MonthlySeries[] = windowMonths.map(ym => {
+        const monthData = monthByYm.get(ym);
         const monthTotal = childCategories.reduce((sum, childCat) => {
-          const catInMonth = monthData.categories.find(c => c.category === childCat);
+          const catInMonth = monthData?.categories.find(c => c.category === childCat);
           return sum + (catInMonth?.amount || 0);
         }, 0);
         return { yearMonth: ym, amount: monthTotal };
@@ -333,10 +337,10 @@ export async function GET(req: NextRequest) {
       const merchantAvg = merchantTotal / windowMonths.length;
 
       // Build category comparison series
-      const categoryMonthlySeries: MonthlySeries[] = windowMonths.map((ym, idx) => {
-        const monthData = summary.monthlyHistory[idx];
+      const categoryMonthlySeries: MonthlySeries[] = windowMonths.map(ym => {
+        const monthData = monthByYm.get(ym);
         const monthTotal = childCategories.reduce((sum, childCat) => {
-          const catInMonth = monthData.categories.find(c => c.category === childCat);
+          const catInMonth = monthData?.categories.find(c => c.category === childCat);
           return sum + (catInMonth?.amount || 0);
         }, 0);
         return { yearMonth: ym, amount: monthTotal };
@@ -375,7 +379,10 @@ export async function GET(req: NextRequest) {
     }
   } catch (err) {
     console.error("[drilldown GET]", err);
-    return NextResponse.json({ error: "Failed to load drilldown data" }, { status: 500 });
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Failed to load drilldown data" },
+      { status: 500 }
+    );
   }
 }
 
