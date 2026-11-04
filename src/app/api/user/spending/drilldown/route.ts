@@ -17,6 +17,7 @@ import { resolveMerchantAlias, resolveCanonicalMerchantSlug } from "@/lib/mercha
 import { isCoreExcluded } from "@/lib/spendingMetrics";
 import { computeScheduledDebtPayments } from "@/lib/debtPayments";
 import { classifyDebtAccount } from "@/lib/debtPaymentKinds";
+import { buildMerchantAliasResolver } from "@/lib/merchantAliases";
 import type { DebtPaymentReview } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -252,8 +253,9 @@ export async function GET(req: NextRequest) {
   const level = url.searchParams.get("level") || "all";
   const categoryParam = url.searchParams.get("category") || "";
   const merchantParam = url.searchParams.get("merchant") || "";
+  const searchQuery = url.searchParams.get("q") || "";
 
-  if (!["all", "category", "merchant"].includes(level)) {
+  if (!["all", "category", "merchant", "search"].includes(level)) {
     return NextResponse.json({ error: "Invalid level" }, { status: 400 });
   }
 
@@ -287,8 +289,12 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Load user debt payment reviews
-    const reviewsSnap = await db.collection(`users/${access.targetUid}/debtPaymentReviews`).get();
+    // Load user debt payment reviews and source mappings
+    const [reviewsSnap, mappingsSnap] = await Promise.all([
+      db.collection(`users/${access.targetUid}/debtPaymentReviews`).get(),
+      db.collection(`users/${access.targetUid}/sourceMappings`).get(),
+    ]);
+    
     const userReviews: DebtPaymentReview[] = reviewsSnap.docs.map((doc) => ({
       txFingerprint: doc.id,
       accountSlug: doc.get("accountSlug"),
@@ -297,6 +303,10 @@ export async function GET(req: NextRequest) {
       amount: doc.get("amount"),
       reviewedAt: doc.get("reviewedAt"),
     }));
+
+    // Build merchant alias resolver from source mappings
+    const mappings = mappingsSnap.docs.map(doc => doc.data() as { canonical: string; alias: string; status?: string; type?: string });
+    const aliasResolver = buildMerchantAliasResolver(mappings);
 
     // Build spending summary using shared function (handles currency conversion, debt payments, etc.)
     const summary = buildSpendingSummary(
@@ -592,11 +602,14 @@ export async function GET(req: NextRequest) {
         return getParentCategory(t.category) === parentCategory;
       });
 
-      // Group by canonical merchant slug
+      // Group by canonical merchant slug (after resolving aliases)
       for (const txn of scopedTxns) {
-        const slug = merchantSlug(txn.merchant);
+        // 1. Resolve alias to canonical name first (merging)
+        const resolvedMerchant = aliasResolver.resolve(txn.merchant);
+        // 2. Then apply slug and canonical resolution (aliasing)
+        const slug = merchantSlug(resolvedMerchant);
         const canonicalSlug = resolveCanonicalMerchantSlug(slug);
-        const canonicalName = resolveMerchantAlias(slug, txn.merchant);
+        const canonicalName = resolveMerchantAlias(slug, resolvedMerchant);
 
         if (!merchantMap.has(canonicalSlug)) {
           merchantMap.set(canonicalSlug, {
@@ -693,7 +706,7 @@ export async function GET(req: NextRequest) {
         accounts,
         currency: profile.homeCurrency,
       });
-    } else {
+    } else if (level === "merchant") {
       // Level 3: Merchant → Transactions (scoped to parent category)
       const parentCategory = categoryParam;
 
@@ -773,11 +786,15 @@ export async function GET(req: NextRequest) {
       }
 
       // Get all transactions for this merchant in window months (all categories)
+      // Match after resolving aliases, so both canonical and alias slugs work
       const allMerchantTxns = profile.expenseTxns.filter(t => {
         if (!windowMonths.includes(t.txMonth)) return false;
         if (isCoreExcluded(t.category)) return false;
         if (getParentCategory(t.category) === "Debt") return false;
-        const slug = merchantSlug(t.merchant);
+        // 1. Resolve alias to canonical name first
+        const resolvedMerchant = aliasResolver.resolve(t.merchant);
+        // 2. Then apply slug and canonical resolution
+        const slug = merchantSlug(resolvedMerchant);
         const canonicalSlug = resolveCanonicalMerchantSlug(slug);
         return canonicalSlug === merchantParam;
       });
@@ -795,7 +812,9 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "Merchant not found in this category" }, { status: 404 });
       }
 
-      const merchantName = resolveMerchantAlias(merchantSlug(scopedTxns[0].merchant), scopedTxns[0].merchant);
+      // Use resolved merchant name (after alias resolution) for display
+      const resolvedFirstMerchant = aliasResolver.resolve(scopedTxns[0].merchant);
+      const merchantName = resolveMerchantAlias(merchantSlug(resolvedFirstMerchant), resolvedFirstMerchant);
 
       // Build merchant monthly series (scoped to this parent category)
       const merchantMonthlySeries: MonthlySeries[] = windowMonths.map(ym => {
@@ -870,6 +889,116 @@ export async function GET(req: NextRequest) {
         accounts,
         otherCategoriesTotal: otherCategoriesTotal > 0 ? otherCategoriesTotal : undefined,
         currency: profile.homeCurrency,
+      });
+    } else if (level === "search") {
+      // Level 4: Search across all merchants
+      const query = searchQuery.trim().toLowerCase();
+      
+      if (query.length < 2) {
+        return NextResponse.json({
+          level: "search",
+          breadcrumb: [
+            { label: "All spending", href: "/account/spending" },
+            { label: "Search" },
+          ],
+          total: 0,
+          avgPerMonth: 0,
+          monthlySeries: [],
+          rankedItems: [],
+          currency: profile.homeCurrency,
+          query,
+        });
+      }
+
+      // One row per merchant, whichever categories it was charged in. A merged
+      // merchant used to show once per category, which made a successful merge
+      // look like it had done nothing.
+      const merchantMap = new Map<string, {
+        name: string;
+        canonicalSlug: string;
+        total: number;
+        categories: Map<string, number>;
+        txCount: number;
+      }>();
+
+      // Filter to window months, exclude core-excluded categories and Debt
+      const scopedTxns = profile.expenseTxns.filter(t => {
+        if (!windowMonths.includes(t.txMonth)) return false;
+        if (isCoreExcluded(t.category)) return false;
+        const parent = getParentCategory(t.category);
+        if (parent === "Debt") return false; // Debt is not searchable
+        return true;
+      });
+
+      scopedTxns.forEach(t => {
+        const parent = getParentCategory(t.category);
+        // 1. Resolve alias to canonical name first (merging)
+        const resolvedMerchant = aliasResolver.resolve(t.merchant);
+        // 2. Then apply slug and canonical resolution (aliasing)
+        const slug = merchantSlug(resolvedMerchant);
+        const canonical = resolveCanonicalMerchantSlug(slug);
+        if (!canonical) return;
+
+        if (!merchantMap.has(canonical)) {
+          // Use same display name resolution as category branch
+          merchantMap.set(canonical, {
+            name: resolveMerchantAlias(slug, resolvedMerchant),
+            canonicalSlug: canonical,
+            total: 0,
+            categories: new Map(),
+            txCount: 0,
+          });
+        }
+
+        const entry = merchantMap.get(canonical)!;
+        const amount = Math.abs(t.amount);
+        entry.total += amount;
+        entry.txCount += 1;
+        entry.categories.set(parent, (entry.categories.get(parent) ?? 0) + amount);
+      });
+
+      // Filter merchants by query (case-insensitive substring match on display name or canonical slug)
+      const matchedMerchants = Array.from(merchantMap.values()).filter(m => {
+        const displayNameLower = m.name.toLowerCase();
+        const canonicalLower = m.canonicalSlug.toLowerCase();
+        return displayNameLower.includes(query) || canonicalLower.includes(query);
+      });
+
+      const rankedItems: RankedItem[] = matchedMerchants
+        .map(m => {
+          const ordered = [...m.categories.entries()].sort((a, b) => b[1] - a[1]);
+          const primary = ordered[0]?.[0] ?? "Other";
+          // Spell out the split only when the charges really did land in more
+          // than one category, so a single-category merchant stays plain.
+          const where =
+            ordered.length > 1 ? ordered.map(([c]) => c).join(" + ") : primary;
+          return {
+            name: m.name,
+            slug: m.canonicalSlug,
+            category: primary,
+            total: m.total,
+            share: 0, // Not meaningful in search context
+            trend: 0,
+            monthlySeries: [],
+            subLabel: `${where} \u00b7 ${m.txCount} transaction${m.txCount !== 1 ? "s" : ""}`,
+            txCount: m.txCount,
+          };
+        })
+        .sort((a, b) => b.total - a.total);
+      const totalMatched = rankedItems.reduce((sum, item) => sum + item.total, 0);
+
+      return NextResponse.json({
+        level: "search",
+        breadcrumb: [
+          { label: "All spending", href: "/account/spending" },
+          { label: `Search: "${query}"` },
+        ],
+        total: totalMatched,
+        avgPerMonth: totalMatched / windowMonths.length,
+        monthlySeries: [], // No chart for search
+        rankedItems,
+        currency: profile.homeCurrency,
+        query,
       });
     }
   } catch (err) {

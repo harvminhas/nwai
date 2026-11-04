@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import { formatCurrency, getCurrencySymbol } from "@/lib/currencyUtils";
 import { ReviewList } from "@/components/ReviewList";
+import { MergeMerchantsPanel } from "./MergeMerchantsPanel";
 
 interface MonthlySeries {
   yearMonth: string;
@@ -22,6 +23,8 @@ interface RankedItem {
   subLabel?: string;
   extras?: Array<{ yearMonth: string; amount: number }>;
   kind?: "loan" | "card";
+  category?: string;
+  txCount?: number;
 }
 
 interface CadenceStats {
@@ -52,7 +55,7 @@ interface DebtGroup {
 }
 
 interface DrilldownData {
-  level: "all" | "category" | "merchant";
+  level: "all" | "category" | "merchant" | "search";
   breadcrumb: { label: string; href?: string }[];
   total: number;
   avgPerMonth: number;
@@ -69,6 +72,7 @@ interface DrilldownData {
   groups?: DebtGroup[];
   oneOffTotal?: number;
   oneOffLabel?: string;
+  query?: string;
 }
 
 function formatMonthLabel(yearMonth: string): string {
@@ -87,20 +91,32 @@ export function DrilldownView({ token }: DrilldownViewProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+  const [showMergePanel, setShowMergePanel] = useState(false);
+  const [mergeFor, setMergeFor] = useState<{ name: string; slug: string; total: number; txCount: number; category: string } | null>(null);
 
   const category = searchParams.get("category") || "";
   const merchant = searchParams.get("merchant") || "";
+  const searchQuery = searchParams.get("q") || "";
   
-  const level = merchant ? "merchant" : category ? "category" : "all";
+  const level = merchant ? "merchant" : category ? "category" : searchQuery ? "search" : "all";
+  
+  const [searchInput, setSearchInput] = useState(searchQuery);
 
-  const loadData = async () => {
-    setLoading(true);
-    setError(null);
+  // silent: refresh the numbers without unmounting the page. A merge panel on
+  // top of the page must survive its own refresh, otherwise it remounts and
+  // reopens on the merchant that was just merged.
+  const loadData = async (options?: { silent?: boolean }) => {
+    const silent = options?.silent === true;
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
 
     try {
       const params = new URLSearchParams({ level });
       if (category) params.set("category", category);
       if (merchant) params.set("merchant", merchant);
+      if (searchQuery) params.set("q", searchQuery);
 
       const res = await fetch(`/api/user/spending/drilldown?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -115,9 +131,9 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       const result = await res.json();
       setData(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load data");
+      if (!silent) setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -128,7 +144,12 @@ export function DrilldownView({ token }: DrilldownViewProps) {
 
   useEffect(() => {
     loadData();
-  }, [token, level, category, merchant]);
+  }, [token, level, category, merchant, searchQuery]);
+
+  // Keep searchInput in sync with URL query changes
+  useEffect(() => {
+    setSearchInput(searchQuery);
+  }, [searchQuery]);
 
   if (loading) {
     return (
@@ -151,6 +172,9 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       router.push(`/account/spending?category=${encodeURIComponent(item.name)}`);
     } else if (level === "category") {
       router.push(`/account/spending?category=${encodeURIComponent(category)}&merchant=${encodeURIComponent(item.slug)}`);
+    } else if (level === "search" && item.category) {
+      // From search results, navigate to merchant detail with both category and merchant
+      router.push(`/account/spending?category=${encodeURIComponent(item.category)}&merchant=${encodeURIComponent(item.slug)}`);
     }
   };
 
@@ -262,10 +286,76 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             </div>
           ))}
         </div>
-        <Link href="/account/spending?view=classic" className="text-xs text-neutral-500 hover:text-neutral-700 ml-7">
-          Classic view →
-        </Link>
       </div>
+
+      {/* Merchant Search (All spending and search levels) */}
+      {(data.level === "all" || data.level === "search") && (
+        <div className="mb-6 flex items-center justify-between gap-4">
+          <div className="relative w-full max-w-sm">
+            <input
+              type="text"
+              aria-label="Search merchants"
+              placeholder="Search merchants"
+              autoComplete="off"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && searchInput.trim().length >= 2) {
+                  const url = new URL(window.location.href);
+                  url.searchParams.set("q", searchInput.trim());
+                  router.push(url.pathname + url.search);
+                } else if (e.key === "Escape") {
+                  setSearchInput("");
+                  const url = new URL(window.location.href);
+                  url.searchParams.delete("q");
+                  router.push(url.pathname + url.search);
+                }
+              }}
+              className="w-full rounded-full border border-neutral-300 bg-white py-2 pl-9 pr-8 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-purple-500"
+            />
+            <svg
+              className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 transform text-neutral-400"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+              />
+            </svg>
+            {searchInput && (
+              <button
+                onClick={() => {
+                  setSearchInput("");
+                  const url = new URL(window.location.href);
+                  url.searchParams.delete("q");
+                  router.push(url.pathname + url.search);
+                }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 transform text-neutral-400 hover:text-neutral-600"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+          <button
+            onClick={() => {
+              setMergeFor(null);
+              setShowMergePanel(true);
+            }}
+            className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-sm font-medium text-neutral-600 hover:text-purple-700"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-3-3m3 3l-3 3M16 17H4m0 0l3-3m-3 3l3 3" />
+            </svg>
+            Find duplicates
+          </button>
+        </div>
+      )}
 
       {/* Debt Payment Review List */}
       <div className="mb-6">
@@ -277,15 +367,28 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       </div>
 
       {/* Header Card */}
-      <div className="bg-white rounded-2xl border border-neutral-200 p-6 mb-6 shadow-sm">
-        {/* Line 1: Total + period + reset */}
-        <div className="flex items-start justify-between mb-3">
-          <div className="flex items-baseline gap-2">
-            <div className="text-3xl font-bold text-neutral-900">
-              {formatCurrency(data.total, data.currency)}
-            </div>
-            <div className="text-xs text-neutral-500">last 12 months</div>
+      {data.level === "search" ? (
+        // Search results header (no chart)
+        <div className="bg-white rounded-2xl border border-neutral-200 p-6 mb-6 shadow-sm">
+          <div className="text-lg font-semibold text-neutral-900 mb-1">
+            {data.rankedItems.length} merchant{data.rankedItems.length !== 1 ? 's' : ''} match "{data.query}"
           </div>
+          {data.rankedItems.length > 0 && (
+            <div className="text-sm text-neutral-600">
+              Combined total: {formatCurrency(data.total, data.currency)} across 12 months
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-neutral-200 p-6 mb-6 shadow-sm">
+          {/* Line 1: Total + period + reset */}
+          <div className="flex items-start justify-between mb-3">
+            <div className="flex items-baseline gap-2">
+              <div className="text-3xl font-bold text-neutral-900">
+                {formatCurrency(data.total, data.currency)}
+              </div>
+              <div className="text-xs text-neutral-500">last 12 months</div>
+            </div>
           {selectedMonth && (
             <button
               onClick={() => setSelectedMonth(null)}
@@ -589,7 +692,8 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             </div>
           </div>
         )}
-      </div>
+        </div>
+      )}
 
       {/* Ranked List Card */}
       <div className="bg-white rounded-2xl border border-neutral-200 p-6 mb-6 shadow-sm">
@@ -599,7 +703,9 @@ export function DrilldownView({ token }: DrilldownViewProps) {
               ? "Categories" 
               : level === "category" 
                 ? (data.kind === "debt" ? "Debt accounts" : "Merchants")
-                : (data.kind === "debt" ? "Monthly schedule" : "Transactions")}
+                : level === "search"
+                  ? "Merchants"
+                  : (data.kind === "debt" ? "Monthly schedule" : "Transactions")}
             {selectedMonth && level !== "merchant" && (
               <span className="ml-2 text-sm font-normal text-neutral-500">
                 — {formatMonthLabel(selectedMonth)} only
@@ -770,6 +876,59 @@ export function DrilldownView({ token }: DrilldownViewProps) {
               </div>
             )}
           </div>
+        ) : data.level === "search" ? (
+          // Search results view (no bar, no sparkline)
+          data.rankedItems.length === 0 ? (
+            <div className="text-center py-8 text-neutral-500">
+              No merchants match "{data.query}".
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {data.rankedItems.map((item) => (
+                <div
+                  key={`${item.category}-${item.slug}`}
+                  className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-neutral-50 cursor-pointer"
+                  onClick={() => handleItemClick(item)}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-neutral-900">{item.name}</div>
+                    <div className="text-xs text-neutral-500" style={{ fontSize: "12px" }}>
+                      {item.subLabel ?? `${item.category} · ${item.txCount} transaction${item.txCount !== 1 ? "s" : ""}`}
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <div className="font-semibold text-neutral-900 tabular-nums">
+                        {formatCurrency(item.total, data.currency)}
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMergeFor({
+                          name: item.name,
+                          slug: item.slug,
+                          total: item.total,
+                          txCount: item.txCount ?? 0,
+                          category: item.category ?? "",
+                        });
+                        setShowMergePanel(true);
+                      }}
+                      className="rounded-md border border-neutral-200 px-2 py-1 text-xs font-medium text-neutral-600 hover:border-purple-300 hover:text-purple-700"
+                    >
+                      Merge
+                    </button>
+
+                    <svg className="w-5 h-5 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
         ) : (
           // Regular ranked items view
           <div className="space-y-2">
@@ -850,6 +1009,26 @@ export function DrilldownView({ token }: DrilldownViewProps) {
           </div>
         )}
       </div>
+
+      {/* Merge Merchants Panel */}
+      {showMergePanel && (
+        <MergeMerchantsPanel
+          token={token}
+          initialMerchant={mergeFor}
+          onClose={() => {
+            setShowMergePanel(false);
+            setMergeFor(null);
+          }}
+          onMergeComplete={() => {
+            // Forget the row that opened the panel, so it can never reopen
+            // scoped to a merchant that has just been merged.
+            setMergeFor(null);
+            // Refresh in place; a full reload would remount the panel
+            loadData({ silent: true });
+          }}
+          currency={data?.currency || "usd"}
+        />
+      )}
     </div>
   );
 }

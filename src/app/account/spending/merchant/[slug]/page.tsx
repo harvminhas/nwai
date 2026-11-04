@@ -267,7 +267,7 @@ export default function MerchantDetailPage() {
   if (subOnlyRecord) {
     return (
       <div className="mx-auto max-w-2xl lg:max-w-5xl px-4 py-8">
-        <Link href="/account/spending?tab=merchants" className="mb-6 inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
+        <Link href="/account/spending" className="mb-6 inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
           </svg>
@@ -324,7 +324,7 @@ export default function MerchantDetailPage() {
     return (
       <div className="mx-auto max-w-2xl lg:max-w-5xl px-4 py-12 text-center">
         <p className="text-sm text-red-500">{error ?? "Merchant not found."}</p>
-        <Link href="/account/spending?tab=merchants" className="mt-4 inline-block text-sm text-purple-600 hover:underline">← Back to Merchants</Link>
+        <Link href="/account/spending" className="mt-4 inline-block text-sm text-purple-600 hover:underline">← Back to Spending</Link>
       </div>
     );
   }
@@ -577,7 +577,7 @@ export default function MerchantDetailPage() {
       <div className="mx-auto max-w-2xl lg:max-w-5xl space-y-4 px-4 py-6">
 
         {/* Back nav */}
-        <Link href="/account/spending?tab=merchants" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
+        <Link href="/account/spending" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
           </svg>
