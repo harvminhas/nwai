@@ -46,6 +46,7 @@ interface DrilldownData {
   cadence?: CadenceStats;
   accounts?: AccountBreakdown[];
   otherCategoriesTotal?: number;
+  kind?: "debt";
   currency: string;
 }
 
@@ -501,7 +502,11 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       <div className="bg-white rounded-2xl border border-neutral-200 p-6 mb-6 shadow-sm">
         <div className="mb-4">
           <h2 className="text-lg font-semibold text-neutral-900">
-            {level === "all" ? "Categories" : level === "category" ? "Merchants" : "Transactions"}
+            {level === "all" 
+              ? "Categories" 
+              : level === "category" 
+                ? (data.kind === "debt" ? "Debt accounts" : "Merchants")
+                : "Transactions"}
             {selectedMonth && level !== "merchant" && (
               <span className="ml-2 text-sm font-normal text-neutral-500">
                 — {formatMonthLabel(selectedMonth)} only
@@ -541,6 +546,12 @@ export function DrilldownView({ token }: DrilldownViewProps) {
               const isOther = item.slug === "other";
               const isClickable = !isOther;
               
+              // Parse debt account sub-label if present
+              const isDebt = data.kind === "debt" && level === "category";
+              const nameParts = isDebt ? item.name.split("|") : [item.name];
+              const displayName = nameParts[0];
+              const subLabel = nameParts[1];
+              
               return (
                 <div
                   key={item.slug}
@@ -551,7 +562,14 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="font-medium text-neutral-900">{item.name}</span>
+                      <div>
+                        <div className="font-medium text-neutral-900">{displayName}</div>
+                        {subLabel && (
+                          <div className="text-xs text-neutral-500" style={{ fontSize: "12px" }}>
+                            {subLabel}
+                          </div>
+                        )}
+                      </div>
                       {!selectedMonth && item.monthlySeries.length > 0 && !isOther && (
                         <div className="flex-shrink-0" style={{ width: "60px", height: "20px" }}>
                           <ResponsiveContainer width="100%" height="100%">

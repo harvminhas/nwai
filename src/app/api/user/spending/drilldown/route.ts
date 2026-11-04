@@ -15,6 +15,7 @@ import { getParentCategory } from "@/lib/categoryTaxonomy";
 import { merchantSlug } from "@/lib/applyRules";
 import { resolveMerchantAlias, resolveCanonicalMerchantSlug } from "@/lib/merchantUtils";
 import { isCoreExcluded } from "@/lib/spendingMetrics";
+import { computeScheduledDebtPayments } from "@/lib/debtPayments";
 import type { DebtPaymentReview } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -57,6 +58,7 @@ interface DrilldownResponse {
   cadence?: CadenceStats;
   accounts?: AccountBreakdown[];
   otherCategoriesTotal?: number;
+  kind?: "debt";
   currency: string;
 }
 
@@ -223,6 +225,66 @@ export async function GET(req: NextRequest) {
       const categoryTotal = categoryMonthlySeries.reduce((sum, m) => sum + m.amount, 0);
       const categoryAvg = categoryTotal / windowMonths.length;
 
+      // Special handling for Debt category (no merchants, only scheduled payments to debt accounts)
+      if (parentCategory === "Debt") {
+        const scheduledPayments = computeScheduledDebtPayments(
+          profile.accountSnapshots,
+          profile.debtPaymentHistory,
+          userReviews,
+          profile.fxRates || {},
+          profile.homeCurrency
+        );
+
+        const sumOfPayments = scheduledPayments.reduce((sum, p) => sum + p.amount, 0);
+
+        // Build debt account rows
+        // Allocate proportionally so rows add up exactly to the header total (which comes from
+        // the shared summary's categoryMonthlySeries), not from recomputed scheduled amounts
+        const rankedItems: RankedItem[] = scheduledPayments.map(payment => {
+          const proportion = sumOfPayments > 0 ? payment.amount / sumOfPayments : 0;
+          const accountTotal = categoryTotal * proportion;
+          
+          const monthlySeries: MonthlySeries[] = categoryMonthlySeries.map(m => ({
+            yearMonth: m.yearMonth,
+            amount: m.amount * proportion,
+          }));
+
+          const avg = accountTotal / windowMonths.length;
+          const last3 = monthlySeries.slice(-3);
+          const last3Avg = last3.reduce((sum, m) => sum + m.amount, 0) / 3;
+          const trend = last3Avg - avg;
+
+          // Encode sub-label in name with separator for UI parsing
+          const estMarker = payment.isEstimated ? "est. " : "";
+          const subLabel = `${estMarker}${payment.method}`;
+          const accountName = payment.accountName || payment.accountSlug;
+
+          return {
+            name: `${accountName}|${subLabel}`, // Use | separator for sub-label
+            slug: payment.accountSlug,
+            total: accountTotal,
+            share: categoryTotal > 0 ? accountTotal / categoryTotal : 0,
+            trend,
+            monthlySeries,
+          };
+        }).sort((a, b) => b.total - a.total);
+
+        return NextResponse.json({
+          level: "category",
+          kind: "debt" as const,
+          breadcrumb: [
+            { label: "All spending", href: "/account/spending" },
+            { label: "Debt" },
+          ],
+          total: categoryTotal,
+          avgPerMonth: categoryAvg,
+          monthlySeries: categoryMonthlySeries,
+          comparisonSeries: allSpendingMonthlySeries,
+          rankedItems,
+          currency: profile.homeCurrency,
+        });
+      }
+
       // Build merchant map from profile.expenseTxns, scoped to this parent category
       // This ensures merchant totals add up exactly to category total
       const merchantMap = new Map<string, {
@@ -345,6 +407,125 @@ export async function GET(req: NextRequest) {
     } else {
       // Level 3: Merchant → Transactions (scoped to parent category)
       const parentCategory = categoryParam;
+
+      // Special handling for Debt account drill-down
+      if (parentCategory === "Debt") {
+        const accountSlug = merchantParam; // It's an account slug, not a merchant
+        
+        // Find the account in snapshots
+        const account = profile.accountSnapshots.find(a => a.slug === accountSlug);
+        if (!account) {
+          return NextResponse.json({ error: "Account not found" }, { status: 404 });
+        }
+
+        // Get payment history for this account, filtered to window months
+        const paymentHistory = profile.debtPaymentHistory.filter(
+          entry => entry.accountSlug === accountSlug && windowMonths.includes(entry.statementMonth)
+        );
+
+        // Helper for FX conversion
+        const home = profile.homeCurrency.toUpperCase();
+        function toHome(amount: number, currency?: string): number {
+          const cur = (currency ?? home).toUpperCase();
+          if (cur === home) return amount;
+          const rate = (profile.fxRates || {})[cur];
+          return rate ? amount * rate : amount;
+        }
+
+        // Build monthly series from payment history
+        const monthlySeries: MonthlySeries[] = windowMonths.map(ym => {
+          const entry = paymentHistory.find(e => e.statementMonth === ym);
+          return {
+            yearMonth: ym,
+            amount: entry ? toHome(entry.paymentsMade, entry.currency) : 0,
+          };
+        });
+
+        const total = monthlySeries.reduce((sum, m) => sum + m.amount, 0);
+        const avgPerMonth = total / windowMonths.length;
+
+        // Build transaction rows from payment history
+        // Use scheduled payment method as a placeholder since method isn't in DebtPaymentHistoryEntry
+        const scheduledPayments = computeScheduledDebtPayments(
+          profile.accountSnapshots,
+          profile.debtPaymentHistory,
+          userReviews,
+          profile.fxRates || {},
+          profile.homeCurrency
+        );
+        const scheduled = scheduledPayments.find(p => p.accountSlug === accountSlug);
+        const methodLabel = scheduled?.method || "payment";
+
+        const rankedItems: RankedItem[] = paymentHistory
+          .sort((a, b) => b.statementMonth.localeCompare(a.statementMonth)) // Newest first
+          .map(entry => {
+            const amount = toHome(entry.paymentsMade, entry.currency);
+            const [year, month] = entry.statementMonth.split("-");
+            const monthLabel = new Date(parseInt(year), parseInt(month) - 1).toLocaleDateString("en-US", { 
+              month: "short", 
+              year: "numeric" 
+            });
+            
+            return {
+              name: `${monthLabel} • ${methodLabel}`,
+              slug: entry.statementMonth,
+              total: amount,
+              share: total > 0 ? amount / total : 0,
+              trend: 0,
+              monthlySeries: [],
+            };
+          });
+
+        // If no payment history, show scheduled amount
+        if (rankedItems.length === 0) {
+          const scheduledPayments = computeScheduledDebtPayments(
+            profile.accountSnapshots,
+            profile.debtPaymentHistory,
+            userReviews,
+            profile.fxRates || {},
+            profile.homeCurrency
+          );
+          const scheduled = scheduledPayments.find(p => p.accountSlug === accountSlug);
+          if (scheduled) {
+            rankedItems.push({
+              name: `Scheduled • ${scheduled.method}`,
+              slug: "scheduled",
+              total: scheduled.amount,
+              share: 1,
+              trend: 0,
+              monthlySeries: [],
+            });
+          }
+        }
+
+        // Build comparison series (all Debt category)
+        const categoryMonthlySeries: MonthlySeries[] = windowMonths.map(ym => {
+          const monthData = monthByYm.get(ym);
+          const childCategories = summary.categories
+            .filter(cat => getParentCategory(cat.category) === "Debt")
+            .map(cat => cat.category);
+          const monthTotal = childCategories.reduce((sum, childCat) => {
+            const catInMonth = monthData?.categories.find(c => c.category === childCat);
+            return sum + (catInMonth?.amount || 0);
+          }, 0);
+          return { yearMonth: ym, amount: monthTotal };
+        });
+
+        return NextResponse.json({
+          level: "merchant",
+          breadcrumb: [
+            { label: "All spending", href: "/account/spending" },
+            { label: "Debt", href: "/account/spending?category=Debt" },
+            { label: account.accountName || accountSlug },
+          ],
+          total,
+          avgPerMonth,
+          monthlySeries,
+          comparisonSeries: categoryMonthlySeries,
+          rankedItems,
+          currency: profile.homeCurrency,
+        });
+      }
 
       // Get all transactions for this merchant in window months (all categories)
       const allMerchantTxns = profile.expenseTxns.filter(t => {
