@@ -1,6 +1,8 @@
 /**
  * GET /api/user/spending/drilldown?level=all|category|merchant&category=&merchant=
  * Returns 12-month drill-down data for spending page.
+ * 
+ * Uses shared spending data layer to ensure figures match dashboard/spending pages.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -8,7 +10,11 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { resolveWindowMonths } from "@/lib/rangeUtils";
+import { buildSpendingSummary } from "@/lib/spendingSummary";
+import { getParentCategory } from "@/lib/categoryTaxonomy";
 import { merchantSlug } from "@/lib/applyRules";
+import { resolveMerchantAlias, resolveCanonicalMerchantSlug } from "@/lib/merchantUtils";
+import type { DebtPaymentReview } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -22,13 +28,12 @@ interface RankedItem {
   slug: string;
   total: number;
   share: number;
-  trend: number; // avg last 3 months - overall monthly avg
+  trend: number;
   monthlySeries: MonthlySeries[];
 }
 
 interface CadenceStats {
   dayOfWeek?: { day: string; count: number }[];
-  dayOfMonth?: { day: number; count: number }[];
   sentence?: string;
 }
 
@@ -38,7 +43,7 @@ interface DrilldownResponse {
   total: number;
   avgPerMonth: number;
   monthlySeries: MonthlySeries[];
-  comparisonSeries?: MonthlySeries[]; // Parent level for comparison
+  comparisonSeries?: MonthlySeries[];
   rankedItems: RankedItem[];
   cadence?: CadenceStats;
   currency: string;
@@ -61,17 +66,22 @@ export async function GET(req: NextRequest) {
   try {
     const profile = await getFinancialProfile(access.targetUid, db);
     
-    // Get last 12 complete months using the existing utility
-    const resolved = resolveWindowMonths(
-      "12mo",
-      profile.monthlyHistory || [],
-      undefined,
-      undefined
+    // Build account status map exactly as spending-summary does
+    const accountStatusMap = new Map(
+      profile.accountStatusRecords.map(r => [r.accountSlug, { status: r.status, statusDate: r.statusDate }])
     );
     
-    const last12Months = resolved.months;
+    // Get 12 complete months using proper completeness rules
+    const windowResult = resolveWindowMonths(
+      "12mo",
+      profile.monthlyHistory,
+      profile.statementHistory,
+      accountStatusMap
+    );
     
-    if (last12Months.length === 0) {
+    const windowMonths = windowResult.months;
+    
+    if (windowMonths.length === 0) {
       return NextResponse.json({
         level,
         breadcrumb: [{ label: "All spending" }],
@@ -83,65 +93,83 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Filter expense transactions to last 12 months
-    const txns = profile.expenseTxns.filter(t => last12Months.includes(t.txMonth));
+    // Load user debt payment reviews
+    const reviewsSnap = await db.collection(`users/${access.targetUid}/debtPaymentReviews`).get();
+    const userReviews: DebtPaymentReview[] = reviewsSnap.docs.map((doc) => ({
+      txFingerprint: doc.id,
+      accountSlug: doc.get("accountSlug"),
+      classification: doc.get("classification"),
+      date: doc.get("date"),
+      amount: doc.get("amount"),
+      reviewedAt: doc.get("reviewedAt"),
+    }));
 
-    // Build response based on level
+    // Build spending summary using shared function (handles currency conversion, debt payments, etc.)
+    const summary = buildSpendingSummary(
+      profile.expenseTxns,
+      profile.accountSnapshots,
+      profile.debtPaymentHistory,
+      userReviews,
+      profile.fxRates || {},
+      profile.homeCurrency,
+      windowMonths
+    );
+
+    // Compute all-spending monthly series once
+    const allSpendingMonthlySeries: MonthlySeries[] = summary.monthlyHistory.map(m => ({
+      yearMonth: m.yearMonth,
+      amount: m.total,
+    }));
+
+    const allTotal = allSpendingMonthlySeries.reduce((sum, m) => sum + m.amount, 0);
+    const allAvg = allTotal / windowMonths.length;
+
     if (level === "all") {
-      // Level 1: All spending -> Categories
-      const allMonthTotals = new Map<string, number>();
-      
-      for (const txn of txns) {
-        const current = allMonthTotals.get(txn.txMonth) || 0;
-        allMonthTotals.set(txn.txMonth, current + txn.amount);
-      }
+      // Level 1: All spending → Parent Categories
+      // Group by parent category
+      const parentCategoryMap = new Map<string, { 
+        total: number; 
+        monthlySeries: MonthlySeries[];
+        childCategories: Set<string>;
+      }>();
 
-      const monthlySeries: MonthlySeries[] = last12Months.map(ym => ({
-        yearMonth: ym,
-        amount: allMonthTotals.get(ym) || 0,
-      }));
+      summary.categories.forEach(cat => {
+        const parent = getParentCategory(cat.category);
+        if (!parentCategoryMap.has(parent)) {
+          parentCategoryMap.set(parent, {
+            total: 0,
+            monthlySeries: windowMonths.map(ym => ({ yearMonth: ym, amount: 0 })),
+            childCategories: new Set(),
+          });
+        }
+        const parentData = parentCategoryMap.get(parent)!;
+        parentData.total += cat.total;
+        parentData.childCategories.add(cat.category);
 
-      const total = monthlySeries.reduce((sum, m) => sum + m.amount, 0);
-      const avgPerMonth = total / last12Months.length;
-
-      // Group by category
-      const categoryMap = new Map<string, typeof txns>();
-      for (const txn of txns) {
-        const cat = txn.category;
-        const existing = categoryMap.get(cat) || [];
-        existing.push(txn);
-        categoryMap.set(cat, existing);
-      }
-
-      // Rank categories
-      const rankedItems: RankedItem[] = Array.from(categoryMap.entries())
-        .map(([cat, catTxns]) => {
-          const catMonthTotals = new Map<string, number>();
-          for (const txn of catTxns) {
-            const current = catMonthTotals.get(txn.txMonth) || 0;
-            catMonthTotals.set(txn.txMonth, current + txn.amount);
+        // Add this category's monthly amounts to parent's series
+        summary.monthlyHistory.forEach((month, idx) => {
+          const catInMonth = month.categories.find(c => c.category === cat.category);
+          if (catInMonth) {
+            parentData.monthlySeries[idx].amount += catInMonth.amount;
           }
+        });
+      });
 
-          const catSeries: MonthlySeries[] = last12Months.map(ym => ({
-            yearMonth: ym,
-            amount: catMonthTotals.get(ym) || 0,
-          }));
-
-          const catTotal = catSeries.reduce((sum, m) => sum + m.amount, 0);
-          const catAvg = catTotal / last12Months.length;
-          
-          // Trend: avg of last 3 months - overall avg
-          const last3 = catSeries.slice(-3);
+      // Rank parent categories
+      const rankedItems: RankedItem[] = Array.from(parentCategoryMap.entries())
+        .map(([parent, data]) => {
+          const catAvg = data.total / windowMonths.length;
+          const last3 = data.monthlySeries.slice(-3);
           const last3Avg = last3.reduce((sum, m) => sum + m.amount, 0) / 3;
           const trend = last3Avg - catAvg;
 
           return {
-            name: cat,
-            slug: cat.toLowerCase().replace(/\s+/g, "-"),
-            total: catTotal,
-            share: total > 0 ? catTotal / total : 0,
+            name: parent,
+            slug: parent.toLowerCase().replace(/\s+/g, "-"),
+            total: data.total,
+            share: allTotal > 0 ? data.total / allTotal : 0,
             trend,
-            monthlySeries: catSeries,
+            monthlySeries: data.monthlySeries,
           };
         })
         .sort((a, b) => b.total - a.total);
@@ -149,226 +177,188 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({
         level: "all",
         breadcrumb: [{ label: "All spending" }],
-        total,
-        avgPerMonth,
-        monthlySeries,
+        total: allTotal,
+        avgPerMonth: allAvg,
+        monthlySeries: allSpendingMonthlySeries,
         rankedItems,
         currency: profile.homeCurrency,
       });
     } else if (level === "category") {
-      // Level 2: Category -> Merchants
-      const categoryTxns = txns.filter(t => t.category === categoryParam);
-      
-      if (categoryTxns.length === 0) {
+      // Level 2: Category → Merchants
+      // Find all child categories that belong to this parent
+      const parentCategory = categoryParam;
+      const childCategories = summary.categories
+        .filter(cat => getParentCategory(cat.category) === parentCategory)
+        .map(cat => cat.category);
+
+      if (childCategories.length === 0) {
         return NextResponse.json({ error: "Category not found" }, { status: 404 });
       }
 
-      // Build category monthly series
-      const catMonthTotals = new Map<string, number>();
-      for (const txn of categoryTxns) {
-        const current = catMonthTotals.get(txn.txMonth) || 0;
-        catMonthTotals.set(txn.txMonth, current + txn.amount);
-      }
+      // Build category monthly series (sum of all child categories)
+      const categoryMonthlySeries: MonthlySeries[] = windowMonths.map((ym, idx) => {
+        const monthData = summary.monthlyHistory[idx];
+        const monthTotal = childCategories.reduce((sum, childCat) => {
+          const catInMonth = monthData.categories.find(c => c.category === childCat);
+          return sum + (catInMonth?.amount || 0);
+        }, 0);
+        return { yearMonth: ym, amount: monthTotal };
+      });
 
-      const monthlySeries: MonthlySeries[] = last12Months.map(ym => ({
-        yearMonth: ym,
-        amount: catMonthTotals.get(ym) || 0,
-      }));
+      const categoryTotal = categoryMonthlySeries.reduce((sum, m) => sum + m.amount, 0);
+      const categoryAvg = categoryTotal / windowMonths.length;
 
-      const total = monthlySeries.reduce((sum, m) => sum + m.amount, 0);
-      const avgPerMonth = total / last12Months.length;
+      // Group merchants using canonical resolution
+      const merchantMap = new Map<string, {
+        name: string;
+        total: number;
+        monthlySeries: MonthlySeries[];
+        transactions: Array<{ date: string; merchant: string; category: string; amount: number }>;
+      }>();
 
-      // Build comparison series (all spending)
-      const allMonthTotals = new Map<string, number>();
-      for (const txn of txns) {
-        const current = allMonthTotals.get(txn.txMonth) || 0;
-        allMonthTotals.set(txn.txMonth, current + txn.amount);
-      }
-      const comparisonSeries: MonthlySeries[] = last12Months.map(ym => ({
-        yearMonth: ym,
-        amount: allMonthTotals.get(ym) || 0,
-      }));
+      summary.merchants
+        .filter(m => childCategories.includes(m.category))
+        .forEach(merch => {
+          const slug = merch.merchantSlug; // Already canonical from buildSpendingSummary
+          
+          if (!merchantMap.has(slug)) {
+            merchantMap.set(slug, {
+              name: merch.merchant,
+              total: 0,
+              monthlySeries: windowMonths.map(ym => ({ yearMonth: ym, amount: 0 })),
+              transactions: [],
+            });
+          }
 
-      // Group by merchant
-      const merchantMap = new Map<string, typeof categoryTxns>();
-      for (const txn of categoryTxns) {
-        const slug = merchantSlug(txn.merchant);
-        const existing = merchantMap.get(slug) || [];
-        existing.push(txn);
-        merchantMap.set(slug, existing);
-      }
+          const merchData = merchantMap.get(slug)!;
+          merchData.total += merch.total;
+          merchData.transactions.push(...merch.transactions);
+
+          // Build monthly series for this merchant
+          merch.transactions.forEach(txn => {
+            const monthIdx = windowMonths.indexOf(txn.txMonth);
+            if (monthIdx >= 0) {
+              merchData.monthlySeries[monthIdx].amount += txn.amount;
+            }
+          });
+        });
 
       // Rank merchants
       const rankedItems: RankedItem[] = Array.from(merchantMap.entries())
-        .map(([slug, merchTxns]) => {
-          const merchMonthTotals = new Map<string, number>();
-          for (const txn of merchTxns) {
-            const current = merchMonthTotals.get(txn.txMonth) || 0;
-            merchMonthTotals.set(txn.txMonth, current + txn.amount);
-          }
-
-          const merchSeries: MonthlySeries[] = last12Months.map(ym => ({
-            yearMonth: ym,
-            amount: merchMonthTotals.get(ym) || 0,
-          }));
-
-          const merchTotal = merchSeries.reduce((sum, m) => sum + m.amount, 0);
-          const merchAvg = merchTotal / last12Months.length;
-          
-          const last3 = merchSeries.slice(-3);
+        .map(([slug, data]) => {
+          const merchAvg = data.total / windowMonths.length;
+          const last3 = data.monthlySeries.slice(-3);
           const last3Avg = last3.reduce((sum, m) => sum + m.amount, 0) / 3;
           const trend = last3Avg - merchAvg;
 
           return {
-            name: merchTxns[0].merchant,
+            name: data.name,
             slug,
-            total: merchTotal,
-            share: total > 0 ? merchTotal / total : 0,
+            total: data.total,
+            share: categoryTotal > 0 ? data.total / categoryTotal : 0,
             trend,
-            monthlySeries: merchSeries,
+            monthlySeries: data.monthlySeries,
           };
         })
         .sort((a, b) => b.total - a.total);
 
-      // Cadence stats for category
-      const dayOfWeekCounts = new Map<string, number>();
-      const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-      
-      for (const txn of categoryTxns) {
-        const date = new Date(txn.date);
-        const dow = days[date.getDay()];
-        dayOfWeekCounts.set(dow, (dayOfWeekCounts.get(dow) || 0) + 1);
+      // Check if merchants add up to category total
+      const merchantsTotal = rankedItems.reduce((sum, item) => sum + item.total, 0);
+      const remainder = categoryTotal - merchantsTotal;
+      if (Math.abs(remainder) > 1) {
+        // Add "Other" row for remainder
+        rankedItems.push({
+          name: "Other",
+          slug: "other",
+          total: remainder,
+          share: categoryTotal > 0 ? remainder / categoryTotal : 0,
+          trend: 0,
+          monthlySeries: windowMonths.map(() => ({ yearMonth: "", amount: 0 })),
+        });
       }
 
-      const dayOfWeek = days.map(day => ({
-        day,
-        count: dayOfWeekCounts.get(day) || 0,
-      }));
-
-      // Find most common day(s)
-      const maxCount = Math.max(...dayOfWeek.map(d => d.count));
-      const topDays = dayOfWeek.filter(d => d.count >= maxCount * 0.6).map(d => d.day);
-      
-      let sentence: string | undefined;
-      if (topDays.length === 1 && maxCount / categoryTxns.length >= 0.3) {
-        sentence = `Most of your ${categoryParam} happens on ${topDays[0]}`;
-      } else if (topDays.length === 2) {
-        const topCount = dayOfWeek.filter(d => topDays.includes(d.day)).reduce((sum, d) => sum + d.count, 0);
-        if (topCount / categoryTxns.length >= 0.5) {
-          sentence = `Most of your ${categoryParam} happens on ${topDays[0]} and ${topDays[1]}`;
-        }
-      }
+      // Cadence stats
+      const allTxns = Array.from(merchantMap.values()).flatMap(m => m.transactions);
+      const cadence = computeCadenceStats(allTxns, parentCategory);
 
       return NextResponse.json({
         level: "category",
         breadcrumb: [
           { label: "All spending", href: "/account/spending" },
-          { label: categoryParam },
+          { label: parentCategory },
         ],
-        total,
-        avgPerMonth,
-        monthlySeries,
-        comparisonSeries,
+        total: categoryTotal,
+        avgPerMonth: categoryAvg,
+        monthlySeries: categoryMonthlySeries,
+        comparisonSeries: allSpendingMonthlySeries,
         rankedItems,
-        cadence: { dayOfWeek, sentence },
+        cadence,
         currency: profile.homeCurrency,
       });
     } else {
-      // Level 3: Merchant -> Transactions
-      const categoryTxns = txns.filter(t => t.category === categoryParam);
-      const merchantTxns = categoryTxns.filter(t => merchantSlug(t.merchant) === merchantParam);
-      
-      if (merchantTxns.length === 0) {
+      // Level 3: Merchant → Transactions
+      const parentCategory = categoryParam;
+      const childCategories = summary.categories
+        .filter(cat => getParentCategory(cat.category) === parentCategory)
+        .map(cat => cat.category);
+
+      const merchant = summary.merchants.find(m => 
+        m.merchantSlug === merchantParam && childCategories.includes(m.category)
+      );
+
+      if (!merchant) {
         return NextResponse.json({ error: "Merchant not found" }, { status: 404 });
       }
 
       // Build merchant monthly series
-      const merchMonthTotals = new Map<string, number>();
-      for (const txn of merchantTxns) {
-        const current = merchMonthTotals.get(txn.txMonth) || 0;
-        merchMonthTotals.set(txn.txMonth, current + txn.amount);
-      }
+      const merchantMonthlySeries: MonthlySeries[] = windowMonths.map(ym => {
+        const monthTotal = merchant.transactions
+          .filter(txn => txn.txMonth === ym)
+          .reduce((sum, txn) => sum + txn.amount, 0);
+        return { yearMonth: ym, amount: monthTotal };
+      });
 
-      const monthlySeries: MonthlySeries[] = last12Months.map(ym => ({
-        yearMonth: ym,
-        amount: merchMonthTotals.get(ym) || 0,
-      }));
+      const merchantTotal = merchant.total;
+      const merchantAvg = merchantTotal / windowMonths.length;
 
-      const total = monthlySeries.reduce((sum, m) => sum + m.amount, 0);
-      const avgPerMonth = total / last12Months.length;
+      // Build category comparison series
+      const categoryMonthlySeries: MonthlySeries[] = windowMonths.map((ym, idx) => {
+        const monthData = summary.monthlyHistory[idx];
+        const monthTotal = childCategories.reduce((sum, childCat) => {
+          const catInMonth = monthData.categories.find(c => c.category === childCat);
+          return sum + (catInMonth?.amount || 0);
+        }, 0);
+        return { yearMonth: ym, amount: monthTotal };
+      });
 
-      // Build comparison series (category)
-      const catMonthTotals = new Map<string, number>();
-      for (const txn of categoryTxns) {
-        const current = catMonthTotals.get(txn.txMonth) || 0;
-        catMonthTotals.set(txn.txMonth, current + txn.amount);
-      }
-      const comparisonSeries: MonthlySeries[] = last12Months.map(ym => ({
-        yearMonth: ym,
-        amount: catMonthTotals.get(ym) || 0,
-      }));
-
-      // Rank transactions (newest first)
-      const rankedItems: RankedItem[] = merchantTxns
+      // Transaction list (newest first)
+      const rankedItems: RankedItem[] = merchant.transactions
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
         .map(txn => ({
-          name: new Date(txn.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-          slug: txn.date,
+          name: `${new Date(txn.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })} • ${txn.accountLabel || ""}`,
+          slug: `${txn.date}-${txn.amount}`,
           total: txn.amount,
-          share: total > 0 ? txn.amount / total : 0,
+          share: merchantTotal > 0 ? txn.amount / merchantTotal : 0,
           trend: 0,
           monthlySeries: [],
         }));
 
-      // Cadence stats for merchant
-      const dayOfWeekCounts = new Map<string, number>();
-      const dayOfMonthCounts = new Map<number, number>();
-      const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-      
-      for (const txn of merchantTxns) {
-        const date = new Date(txn.date);
-        const dow = days[date.getDay()];
-        const dom = date.getDate();
-        dayOfWeekCounts.set(dow, (dayOfWeekCounts.get(dow) || 0) + 1);
-        dayOfMonthCounts.set(dom, (dayOfMonthCounts.get(dom) || 0) + 1);
-      }
-
-      const dayOfWeek = days.map(day => ({
-        day,
-        count: dayOfWeekCounts.get(day) || 0,
-      }));
-
-      // Check for weekday pattern
-      const maxDowCount = Math.max(...dayOfWeek.map(d => d.count));
-      const topDow = dayOfWeek.find(d => d.count === maxDowCount);
-      
-      // Check for day-of-month pattern
-      const maxDomCount = Math.max(...Array.from(dayOfMonthCounts.values()));
-      const topDom = Array.from(dayOfMonthCounts.entries()).find(([, count]) => count === maxDomCount)?.[0];
-
-      let sentence: string | undefined;
-      const avgAmount = total / merchantTxns.length;
-
-      if (topDom && maxDomCount >= merchantTxns.length * 0.6) {
-        const suffix = topDom === 1 || topDom === 21 || topDom === 31 ? "st" : topDom === 2 || topDom === 22 ? "nd" : topDom === 3 || topDom === 23 ? "rd" : "th";
-        sentence = `Charges on the ${topDom}${suffix} of each month, $${Math.round(avgAmount)}`;
-      } else if (topDow && maxDowCount >= merchantTxns.length * 0.4) {
-        sentence = `Usually ${topDow.day}, about $${Math.round(avgAmount)}`;
-      }
+      // Cadence stats
+      const cadence = computeCadenceStats(merchant.transactions, merchant.merchant);
 
       return NextResponse.json({
         level: "merchant",
         breadcrumb: [
           { label: "All spending", href: "/account/spending" },
-          { label: categoryParam, href: `/account/spending?category=${encodeURIComponent(categoryParam)}` },
-          { label: merchantTxns[0].merchant },
+          { label: parentCategory, href: `/account/spending?category=${encodeURIComponent(parentCategory)}` },
+          { label: merchant.merchant },
         ],
-        total,
-        avgPerMonth,
-        monthlySeries,
-        comparisonSeries,
+        total: merchantTotal,
+        avgPerMonth: merchantAvg,
+        monthlySeries: merchantMonthlySeries,
+        comparisonSeries: categoryMonthlySeries,
         rankedItems,
-        cadence: { dayOfWeek, sentence },
+        cadence,
         currency: profile.homeCurrency,
       });
     }
@@ -376,4 +366,58 @@ export async function GET(req: NextRequest) {
     console.error("[drilldown GET]", err);
     return NextResponse.json({ error: "Failed to load drilldown data" }, { status: 500 });
   }
+}
+
+function computeCadenceStats(
+  transactions: Array<{ date: string; merchant: string; category: string; amount: number }>,
+  label: string
+): CadenceStats {
+  const dayOfWeekCounts = new Map<string, number>();
+  const dayOfMonthCounts = new Map<number, number>();
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  
+  for (const txn of transactions) {
+    const date = new Date(txn.date);
+    const dow = days[date.getDay()];
+    const dom = date.getDate();
+    dayOfWeekCounts.set(dow, (dayOfWeekCounts.get(dow) || 0) + 1);
+    dayOfMonthCounts.set(dom, (dayOfMonthCounts.get(dom) || 0) + 1);
+  }
+
+  const dayOfWeek = days.map(day => ({
+    day,
+    count: dayOfWeekCounts.get(day) || 0,
+  }));
+
+  // Check for clear patterns only
+  const maxDowCount = Math.max(...dayOfWeek.map(d => d.count));
+  const topDow = dayOfWeek.find(d => d.count === maxDowCount);
+  
+  const maxDomCount = Math.max(...Array.from(dayOfMonthCounts.values()), 0);
+  const topDom = Array.from(dayOfMonthCounts.entries()).find(([, count]) => count === maxDomCount)?.[0];
+
+  let sentence: string | undefined;
+  const avgAmount = transactions.reduce((sum, t) => sum + t.amount, 0) / transactions.length;
+
+  // Day-of-month pattern (≥60% threshold)
+  if (topDom && maxDomCount >= transactions.length * 0.6) {
+    const suffix = topDom === 1 || topDom === 21 || topDom === 31 ? "st" 
+      : topDom === 2 || topDom === 22 ? "nd" 
+      : topDom === 3 || topDom === 23 ? "rd" 
+      : "th";
+    sentence = `Charges on the ${topDom}${suffix} of each month, $${Math.round(avgAmount)}`;
+  } 
+  // Weekday pattern (≥40% threshold for single day, ≥50% for two days)
+  else if (topDow && maxDowCount >= transactions.length * 0.4) {
+    sentence = `Usually ${topDow.day}, about $${Math.round(avgAmount)}`;
+  } else {
+    // Check for two-day pattern
+    const sorted = [...dayOfWeek].sort((a, b) => b.count - a.count);
+    const top2Count = sorted[0].count + sorted[1].count;
+    if (top2Count >= transactions.length * 0.5) {
+      sentence = `Most of your ${label} happens on ${sorted[0].day} and ${sorted[1].day}`;
+    }
+  }
+
+  return { dayOfWeek, sentence };
 }
