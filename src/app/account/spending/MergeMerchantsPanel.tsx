@@ -182,6 +182,15 @@ export function MergeMerchantsPanel({
         `Merged ${aliases.length + 1} names into "${suggestedName}". Category totals are unchanged.`
       );
       setChosen(new Set());
+
+      // Drop the group that was just merged so it is not offered again
+      const mergedSlugs = new Set(aliases.map((m) => m.slug));
+      mergedSlugs.add(target.slug);
+      setClusters((prev) =>
+        prev
+          .map((c) => ({ ...c, members: c.members.filter((m) => !mergedSlugs.has(m.slug)) }))
+          .filter((c) => c.members.length > 1)
+      );
       onMergeComplete();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to merge");
