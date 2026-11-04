@@ -162,7 +162,7 @@ export default function ManualAssetPage() {
 
   if (error || !asset) {
     return (
-      <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
+      <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
         <Link href="/account/assets?tab=accounts" className="text-sm text-gray-500 hover:text-purple-600">Assets</Link>
         <p className="mt-4 text-red-600">{error ?? "This asset no longer exists."}</p>
       </div>
@@ -173,7 +173,7 @@ export default function ManualAssetPage() {
   const equity = asset.value - debtBalance;
 
   return (
-    <div className="mx-auto max-w-2xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
+    <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
       {toast && (
         <div className={`fixed bottom-6 left-1/2 z-50 -translate-x-1/2 flex items-center gap-3 rounded-xl px-5 py-3 shadow-lg text-sm font-medium ${toast.ok ? "bg-green-600 text-white" : "bg-red-600 text-white"}`}>
           <span>{toast.ok ? "OK" : "!"}</span>
@@ -228,8 +228,9 @@ export default function ManualAssetPage() {
         )}
       </div>
 
+      <div className="mt-6 grid items-start gap-6 lg:grid-cols-2">
       {/* Linked loan */}
-      <div className="mt-6">
+      <div>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">Linked loan</h2>
         {linkedDebt ? (
           <Link
@@ -270,7 +271,7 @@ export default function ManualAssetPage() {
       </div>
 
       {/* Edit */}
-      <div className="mt-6 rounded-xl border border-gray-200 bg-white p-5">
+      <div className="rounded-xl border border-gray-200 bg-white p-5">
         {!editing ? (
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -360,6 +361,7 @@ export default function ManualAssetPage() {
             </div>
           </div>
         )}
+      </div>
       </div>
     </div>
   );
