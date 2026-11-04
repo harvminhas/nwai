@@ -212,6 +212,33 @@ export function DrilldownView({ token }: DrilldownViewProps) {
   
   const yAxisDomain = niceDomain(data.monthlySeries.map(m => m.amount));
 
+  // Debt groups, narrowed to the selected month when one is picked
+  const groupsForDisplay = (data.groups || []).map((group) => {
+    if (!selectedMonth) return group;
+    const items = group.items
+      .map((item) => {
+        const monthAmount = item.monthlySeries.find((m) => m.yearMonth === selectedMonth)?.amount || 0;
+        return { ...item, total: monthAmount };
+      })
+      .filter((item) => item.total > 0);
+    const total = items.reduce((sum, item) => sum + item.total, 0);
+    return {
+      ...group,
+      total,
+      items: items.map((item) => ({ ...item, share: total > 0 ? item.total / total : 0 })),
+    };
+  });
+
+  const debtLoanShown = groupsForDisplay.find((g) => g.key === "loans")?.total || 0;
+  const debtCardShown = groupsForDisplay.find((g) => g.key === "cards")?.total || 0;
+  const debtOneOffShown = groupsForDisplay.reduce((sum, g) => {
+    return sum + g.items.reduce((s2, item) => {
+      const extras = item.extras || [];
+      const filtered = selectedMonth ? extras.filter((e) => e.yearMonth === selectedMonth) : extras;
+      return s2 + filtered.reduce((s3, e) => s3 + e.amount, 0);
+    }, 0);
+  }, 0);
+
   return (
     <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8">
       {/* Breadcrumb */}
@@ -321,28 +348,28 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             <div className="flex-1 border border-green-200 bg-green-50 rounded-lg p-3">
               <div className="text-xs text-green-700 font-medium mb-1">Added to spending</div>
               <div className="text-lg font-semibold text-green-900 tabular-nums">
-                {formatCurrency(data.total, data.currency)}
+                {formatCurrency(selectedMonth ? debtLoanShown : data.total, data.currency)}
               </div>
               <div className="text-xs text-green-600 mt-0.5">
-                loan payments, 12 months
+                {selectedMonth ? "loan payments that month" : "loan payments, 12 months"}
               </div>
             </div>
             <div className="flex-1 border border-neutral-200 bg-neutral-50 rounded-lg p-3">
               <div className="text-xs text-neutral-600 font-medium mb-1">Shown, not added</div>
               <div className="text-lg font-semibold text-neutral-700 tabular-nums">
-                {formatCurrency(data.groups.find(g => g.key === "cards")?.total || 0, data.currency)}
+                {formatCurrency(debtCardShown, data.currency)}
               </div>
               <div className="text-xs text-neutral-500 mt-0.5">
-                card payments, same 12 months
+                {selectedMonth ? "card payments that month" : "card payments, same 12 months"}
               </div>
             </div>
             <div className="flex-1 border border-neutral-200 bg-neutral-50 rounded-lg p-3">
               <div className="text-xs text-neutral-600 font-medium mb-1">Set aside as info</div>
               <div className="text-lg font-semibold text-neutral-700 tabular-nums">
-                {formatCurrency(data.oneOffTotal || 0, data.currency)}
+                {formatCurrency(debtOneOffShown, data.currency)}
               </div>
               <div className="text-xs text-neutral-500 mt-0.5">
-                one-off and extra payments
+                {selectedMonth ? "one-off payments that month" : "one-off and extra payments"}
               </div>
             </div>
           </div>
@@ -642,7 +669,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
         ) : data.groups ? (
           // Grouped view for Debt level 2
           <div className="space-y-6">
-            {data.groups.map((group) => (
+            {groupsForDisplay.map((group) => (
               <div key={group.key}>
                 <div className="mb-3 flex items-center gap-2">
                   <div className="text-xs uppercase tracking-wide font-semibold text-neutral-700">
@@ -721,7 +748,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                 
                 {/* Group subtotal */}
                 <div className="mt-3 pt-2 border-t border-neutral-100 text-xs text-neutral-600 flex justify-between">
-                  <div>{group.counted ? "Loans added to spending" : "Cards, not added"}</div>
+                  <div>{group.counted ? (selectedMonth ? "Loans that month, added" : "Loans added to spending") : (selectedMonth ? "Cards that month, not added" : "Cards, not added")}</div>
                   <div className="font-semibold tabular-nums">{formatCurrency(group.total, data.currency)}</div>
                 </div>
               </div>
