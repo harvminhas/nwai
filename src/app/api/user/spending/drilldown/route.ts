@@ -444,7 +444,9 @@ export async function GET(req: NextRequest) {
         .filter(cat => getParentCategory(cat.category) === parentCategory)
         .map(cat => cat.category);
 
-      if (childCategories.length === 0) {
+      // Debt comes from payment history, not the summary's scheduled "Loan payments" row,
+      // so it must still open when every card is paid in full.
+      if (childCategories.length === 0 && parentCategory !== "Debt") {
         return NextResponse.json({ error: "Category not found" }, { status: 404 });
       }
 
