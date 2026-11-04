@@ -1015,6 +1015,9 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             setMergeFor(null);
           }}
           onMergeComplete={() => {
+            // Forget the row that opened the panel, so it can never reopen
+            // scoped to a merchant that has just been merged.
+            setMergeFor(null);
             // Refresh in place; a full reload would remount the panel
             loadData({ silent: true });
           }}
