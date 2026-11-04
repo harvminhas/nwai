@@ -423,14 +423,19 @@ export function DrilldownView({ token }: DrilldownViewProps) {
 
       {/* Ranked List Card */}
       <div className="bg-white rounded-2xl border border-neutral-200 p-6 mb-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-neutral-900 mb-4">
-          {level === "all" ? "Categories" : level === "category" ? "Merchants" : "Transactions"}
-          {selectedMonth && level !== "merchant" && (
-            <span className="ml-2 text-sm font-normal text-neutral-500">
-              — {formatMonthLabel(selectedMonth)} only
-            </span>
+        <div className="mb-4">
+          <h2 className="text-lg font-semibold text-neutral-900">
+            {level === "all" ? "Categories" : level === "category" ? "Merchants" : "Transactions"}
+            {selectedMonth && level !== "merchant" && (
+              <span className="ml-2 text-sm font-normal text-neutral-500">
+                — {formatMonthLabel(selectedMonth)} only
+              </span>
+            )}
+          </h2>
+          {!selectedMonth && level !== "merchant" && data.rankedItems.some(item => item.trend !== 0 && Math.round(Math.abs(item.trend)) !== 0) && (
+            <p className="text-xs text-neutral-500 mt-1">Trend compares the last 3 months with the 12-month average.</p>
           )}
-        </h2>
+        </div>
         
         {level === "merchant" ? (
           // Transaction list with columns
@@ -494,9 +499,9 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                       <div className="font-semibold text-neutral-900 tabular-nums">
                         {formatCurrency(item.displayTotal, data.currency)}
                       </div>
-                      {!selectedMonth && item.trend !== 0 && (
+                      {!selectedMonth && item.trend !== 0 && Math.round(Math.abs(item.trend)) !== 0 && (
                         <div className={`text-xs tabular-nums ${item.trend > 0 ? "text-red-600" : "text-green-600"}`}>
-                          {item.trend > 0 ? "+" : "−"}{formatCurrency(Math.abs(item.trend), data.currency)}/mo
+                          {item.trend > 0 ? "↑" : "↓"} {formatCurrency(Math.abs(item.trend), data.currency)}/mo vs avg
                         </div>
                       )}
                     </div>
