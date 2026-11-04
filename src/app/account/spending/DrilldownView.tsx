@@ -115,14 +115,31 @@ export function DrilldownView({ token }: DrilldownViewProps) {
     }
   };
 
-  // Filter ranked items by selected month if active
-  const filteredItems = selectedMonth
-    ? data.rankedItems.filter(item => {
-        if (level === "merchant") return true; // Don't filter transactions
-        const monthData = item.monthlySeries.find(m => m.yearMonth === selectedMonth);
-        return monthData && monthData.amount > 0;
-      })
-    : data.rankedItems;
+  // When month is selected, show that month's values
+  const displayedItems = selectedMonth && level !== "merchant"
+    ? data.rankedItems
+        .map(item => {
+          const monthData = item.monthlySeries.find(m => m.yearMonth === selectedMonth);
+          return {
+            ...item,
+            displayTotal: monthData?.amount || 0,
+            displayShare: 0, // Will be computed after filtering
+          };
+        })
+        .filter(item => item.displayTotal > 0)
+        .sort((a, b) => b.displayTotal - a.displayTotal)
+        .map((item, idx, arr) => {
+          const monthTotal = arr.reduce((sum, i) => sum + i.displayTotal, 0);
+          return {
+            ...item,
+            displayShare: monthTotal > 0 ? item.displayTotal / monthTotal : 0,
+          };
+        })
+    : data.rankedItems.map(item => ({
+        ...item,
+        displayTotal: item.total,
+        displayShare: item.share,
+      }));
 
   // Chart data
   const chartData = data.monthlySeries.map((m, idx) => ({
@@ -132,8 +149,31 @@ export function DrilldownView({ token }: DrilldownViewProps) {
     comparison: data.comparisonSeries?.[idx]?.amount || 0,
   }));
 
-  const maxValue = Math.max(...data.monthlySeries.map(m => m.amount));
-  const yAxisDomain: [number, number] = [0, Math.ceil(maxValue * 1.1 / 1000) * 1000];
+  // Calculate y-axis domain (don't start at 0, like net worth page)
+  const yAxisDomain: [number, number] = (() => {
+    const allValues = [
+      ...data.monthlySeries.map(m => m.amount),
+      ...(data.comparisonSeries?.map(m => m.amount) || []),
+    ];
+    
+    // Handle all-zero case
+    if (allValues.every(v => v === 0)) {
+      return [0, 1000];
+    }
+    
+    const minValue = Math.min(...allValues);
+    const maxValue = Math.max(...allValues);
+    const range = maxValue - minValue;
+    
+    // Handle flat or tiny range
+    const rangeIsSmall = range < Math.abs(minValue) * 0.05;
+    const baseline = rangeIsSmall && minValue > 0
+      ? minValue * 0.95
+      : minValue - Math.max(range * 0.1, 1000);
+    const ceiling = maxValue + Math.max(range * 0.05, 500);
+    
+    return [Math.floor(baseline / 1000) * 1000, Math.ceil(ceiling / 1000) * 1000];
+  })();
 
   return (
     <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8">
@@ -305,79 +345,94 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       <div className="bg-white rounded-2xl border border-neutral-200 p-6 mb-6 shadow-sm">
         <h2 className="text-lg font-semibold text-neutral-900 mb-4">
           {level === "all" ? "Categories" : level === "category" ? "Merchants" : "Transactions"}
-          {selectedMonth && (
+          {selectedMonth && level !== "merchant" && (
             <span className="ml-2 text-sm font-normal text-neutral-500">
-              in {formatMonthLabel(selectedMonth)}
+              — {formatMonthLabel(selectedMonth)} only
             </span>
           )}
         </h2>
         
-        <div className="space-y-2">
-          {filteredItems.map((item, idx) => (
-            <div
-              key={item.slug}
-              className={`flex items-center gap-3 p-3 rounded-lg hover:bg-neutral-50 transition-colors ${
-                level !== "merchant" ? "cursor-pointer" : ""
-              }`}
-              onClick={() => level !== "merchant" && handleItemClick(item)}
-            >
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="font-medium text-neutral-900">{item.name}</span>
-                  {level !== "merchant" && item.monthlySeries.length > 0 && (
-                    <div className="flex-shrink-0" style={{ width: "60px", height: "20px" }}>
-                      <ResponsiveContainer width="100%" height="100%">
-                        <ComposedChart data={item.monthlySeries.map(m => ({ amount: m.amount }))}>
-                          <Line type="monotone" dataKey="amount" stroke="#10b981" strokeWidth={1} dot={false} />
-                        </ComposedChart>
-                      </ResponsiveContainer>
-                    </div>
-                  )}
+        {level === "merchant" ? (
+          // Transaction list with columns
+          <div className="space-y-1">
+            {data.rankedItems.map((item, idx) => {
+              const parts = item.name.split(" • ");
+              const date = parts[0] || "";
+              const account = parts[1] || "";
+              return (
+                <div
+                  key={idx}
+                  className="flex items-center gap-3 p-2 rounded-lg hover:bg-neutral-50"
+                >
+                  <div className="text-sm text-neutral-600 w-20">{date}</div>
+                  <div className="flex-1 text-sm text-neutral-900">{data.breadcrumb[2]?.label}</div>
+                  <div className="text-xs text-neutral-500 w-24 truncate">{account}</div>
+                  <div className="text-sm font-semibold text-neutral-900 tabular-nums w-24 text-right">
+                    {formatCurrency(item.total, data.currency)}
+                  </div>
                 </div>
-                {level !== "merchant" && (
+              );
+            })}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {displayedItems.map((item, idx) => (
+              <div
+                key={item.slug}
+                className="flex items-center gap-3 p-3 rounded-lg hover:bg-neutral-50 transition-colors cursor-pointer"
+                onClick={() => handleItemClick(item)}
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-medium text-neutral-900">{item.name}</span>
+                    {!selectedMonth && item.monthlySeries.length > 0 && (
+                      <div className="flex-shrink-0" style={{ width: "60px", height: "20px" }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <ComposedChart data={item.monthlySeries.map(m => ({ amount: m.amount }))}>
+                            <Line type="monotone" dataKey="amount" stroke="#10b981" strokeWidth={1} dot={false} />
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                      </div>
+                    )}
+                  </div>
                   <div className="w-full bg-neutral-100 rounded-full h-1.5 mb-1">
                     <div 
                       className="bg-emerald-500 h-1.5 rounded-full" 
-                      style={{ width: `${Math.min(item.share * 100, 100)}%` }}
+                      style={{ width: `${Math.min(item.displayShare * 100, 100)}%` }}
                     ></div>
                   </div>
-                )}
-              </div>
-              
-              <div className="flex items-center gap-3">
-                <div className="text-right">
-                  <div className="font-semibold text-neutral-900 tabular-nums">
-                    {formatCurrency(item.total, data.currency)}
-                  </div>
-                  {level !== "merchant" && item.trend !== 0 && (
-                    <div className={`text-xs tabular-nums ${item.trend > 0 ? "text-red-600" : "text-green-600"}`}>
-                      {item.trend > 0 ? "+" : "−"}{formatCurrency(Math.abs(item.trend), data.currency)}/mo
-                    </div>
-                  )}
                 </div>
                 
-                {level !== "merchant" && (
+                <div className="flex items-center gap-3">
+                  <div className="text-right">
+                    <div className="font-semibold text-neutral-900 tabular-nums">
+                      {formatCurrency(item.displayTotal, data.currency)}
+                    </div>
+                    {!selectedMonth && item.trend !== 0 && (
+                      <div className={`text-xs tabular-nums ${item.trend > 0 ? "text-red-600" : "text-green-600"}`}>
+                        {item.trend > 0 ? "+" : "−"}{formatCurrency(Math.abs(item.trend), data.currency)}/mo
+                      </div>
+                    )}
+                  </div>
+                  
                   <svg className="w-5 h-5 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
-                )}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* When Strip */}
-      {data.cadence && level !== "all" && (
+      {data.cadence && level !== "all" && data.cadence.dayOfWeek && (
         <div className="bg-white rounded-2xl border border-neutral-200 p-6 shadow-sm">
-          <h2 className="text-lg font-semibold text-neutral-900 mb-3">When</h2>
-          
-          {data.cadence?.sentence && (
+          {data.cadence.sentence && (
             <p className="text-sm text-neutral-600 mb-3">{data.cadence.sentence}</p>
           )}
           
-          {data.cadence?.dayOfWeek && (
-            <div className="flex gap-2">
+          <div className="flex gap-2">
               {data.cadence.dayOfWeek.map(d => {
                 const maxCount = Math.max(...(data.cadence?.dayOfWeek || []).map(dow => dow.count));
                 const intensity = maxCount > 0 ? d.count / maxCount : 0;
@@ -396,8 +451,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                   </div>
                 );
               })}
-            </div>
-          )}
+          </div>
         </div>
       )}
     </div>

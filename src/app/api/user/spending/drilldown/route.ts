@@ -266,14 +266,25 @@ export async function GET(req: NextRequest) {
       const merchantsTotal = rankedItems.reduce((sum, item) => sum + item.total, 0);
       const remainder = categoryTotal - merchantsTotal;
       if (Math.abs(remainder) > 1) {
-        // Add "Other" row for remainder
+        // Add "Other" row for remainder with proper monthly distribution
+        const otherMonthlySeries: MonthlySeries[] = windowMonths.map((ym, idx) => {
+          const categoryAmount = categoryMonthlySeries[idx].amount;
+          const knownMerchantsAmount = rankedItems.reduce((sum, item) => {
+            return sum + (item.monthlySeries[idx]?.amount || 0);
+          }, 0);
+          return {
+            yearMonth: ym,
+            amount: Math.max(0, categoryAmount - knownMerchantsAmount),
+          };
+        });
+
         rankedItems.push({
           name: "Other",
           slug: "other",
           total: remainder,
           share: categoryTotal > 0 ? remainder / categoryTotal : 0,
           trend: 0,
-          monthlySeries: windowMonths.map(() => ({ yearMonth: "", amount: 0 })),
+          monthlySeries: otherMonthlySeries,
         });
       }
 
