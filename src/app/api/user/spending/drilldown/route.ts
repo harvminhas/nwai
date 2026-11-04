@@ -17,6 +17,7 @@ import { resolveMerchantAlias, resolveCanonicalMerchantSlug } from "@/lib/mercha
 import { isCoreExcluded } from "@/lib/spendingMetrics";
 import { computeScheduledDebtPayments } from "@/lib/debtPayments";
 import { classifyDebtAccount } from "@/lib/debtPaymentKinds";
+import { buildMerchantAliasResolver } from "@/lib/merchantAliases";
 import type { DebtPaymentReview } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -288,8 +289,12 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Load user debt payment reviews
-    const reviewsSnap = await db.collection(`users/${access.targetUid}/debtPaymentReviews`).get();
+    // Load user debt payment reviews and source mappings
+    const [reviewsSnap, mappingsSnap] = await Promise.all([
+      db.collection(`users/${access.targetUid}/debtPaymentReviews`).get(),
+      db.collection(`users/${access.targetUid}/sourceMappings`).get(),
+    ]);
+    
     const userReviews: DebtPaymentReview[] = reviewsSnap.docs.map((doc) => ({
       txFingerprint: doc.id,
       accountSlug: doc.get("accountSlug"),
@@ -298,6 +303,10 @@ export async function GET(req: NextRequest) {
       amount: doc.get("amount"),
       reviewedAt: doc.get("reviewedAt"),
     }));
+
+    // Build merchant alias resolver from source mappings
+    const mappings = mappingsSnap.docs.map(doc => doc.data() as { canonical: string; alias: string; status?: string; type?: string });
+    const aliasResolver = buildMerchantAliasResolver(mappings);
 
     // Build spending summary using shared function (handles currency conversion, debt payments, etc.)
     const summary = buildSpendingSummary(
@@ -593,11 +602,14 @@ export async function GET(req: NextRequest) {
         return getParentCategory(t.category) === parentCategory;
       });
 
-      // Group by canonical merchant slug
+      // Group by canonical merchant slug (after resolving aliases)
       for (const txn of scopedTxns) {
-        const slug = merchantSlug(txn.merchant);
+        // 1. Resolve alias to canonical name first (merging)
+        const resolvedMerchant = aliasResolver.resolve(txn.merchant);
+        // 2. Then apply slug and canonical resolution (aliasing)
+        const slug = merchantSlug(resolvedMerchant);
         const canonicalSlug = resolveCanonicalMerchantSlug(slug);
-        const canonicalName = resolveMerchantAlias(slug, txn.merchant);
+        const canonicalName = resolveMerchantAlias(slug, resolvedMerchant);
 
         if (!merchantMap.has(canonicalSlug)) {
           merchantMap.set(canonicalSlug, {
@@ -774,11 +786,15 @@ export async function GET(req: NextRequest) {
       }
 
       // Get all transactions for this merchant in window months (all categories)
+      // Match after resolving aliases, so both canonical and alias slugs work
       const allMerchantTxns = profile.expenseTxns.filter(t => {
         if (!windowMonths.includes(t.txMonth)) return false;
         if (isCoreExcluded(t.category)) return false;
         if (getParentCategory(t.category) === "Debt") return false;
-        const slug = merchantSlug(t.merchant);
+        // 1. Resolve alias to canonical name first
+        const resolvedMerchant = aliasResolver.resolve(t.merchant);
+        // 2. Then apply slug and canonical resolution
+        const slug = merchantSlug(resolvedMerchant);
         const canonicalSlug = resolveCanonicalMerchantSlug(slug);
         return canonicalSlug === merchantParam;
       });
@@ -796,7 +812,9 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "Merchant not found in this category" }, { status: 404 });
       }
 
-      const merchantName = resolveMerchantAlias(merchantSlug(scopedTxns[0].merchant), scopedTxns[0].merchant);
+      // Use resolved merchant name (after alias resolution) for display
+      const resolvedFirstMerchant = aliasResolver.resolve(scopedTxns[0].merchant);
+      const merchantName = resolveMerchantAlias(merchantSlug(resolvedFirstMerchant), resolvedFirstMerchant);
 
       // Build merchant monthly series (scoped to this parent category)
       const merchantMonthlySeries: MonthlySeries[] = windowMonths.map(ym => {
@@ -913,14 +931,16 @@ export async function GET(req: NextRequest) {
 
       scopedTxns.forEach(t => {
         const parent = getParentCategory(t.category);
-        const slug = merchantSlug(t.merchant);
-        // Use same canonical resolution as category branch: resolveCanonicalMerchantSlug(merchantSlug(...))
+        // 1. Resolve alias to canonical name first (merging)
+        const resolvedMerchant = aliasResolver.resolve(t.merchant);
+        // 2. Then apply slug and canonical resolution (aliasing)
+        const slug = merchantSlug(resolvedMerchant);
         const canonical = resolveCanonicalMerchantSlug(slug);
         const key = `${parent}::${canonical}`; // Key by category + canonical slug
 
         if (!merchantMap.has(key)) {
           // Use same display name resolution as category branch
-          const displayName = resolveMerchantAlias(slug, t.merchant);
+          const displayName = resolveMerchantAlias(slug, resolvedMerchant);
           merchantMap.set(key, {
             name: displayName,
             canonicalSlug: canonical,

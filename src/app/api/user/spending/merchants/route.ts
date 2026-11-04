@@ -6,6 +6,7 @@ import { applyRulesAndRecalculate, merchantSlug, txnKey } from "@/lib/applyRules
 import { normaliseName } from "@/lib/sourceMappings";
 import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
 import { inferCurrencyFromBankName } from "@/lib/currencyUtils";
+import { buildMerchantAliasResolver } from "@/lib/merchantAliases";
 import type { ParsedStatementData, ExpenseTransaction } from "@/lib/types";
 
 export interface MerchantSummary {
@@ -95,30 +96,9 @@ export async function GET(request: NextRequest) {
       if (d.category) txnOverrides.set(doc.id, d.category);
     }
 
-    // Build alias → canonical name map keyed by merchantSlug, then resolve chains
-    // e.g.  "SCOTIALN VSA A6K6W2" → "SCOTIALN VSA" → "SCOTIALN"
-    // should resolve to "SCOTIALN VSA A6K6W2" → "SCOTIALN" directly.
-    const rawAliasMap = new Map<string, string>(); // aliasSlug → canonicalName (one level)
-    for (const doc of mappingsSnap.docs) {
-      const d = doc.data() as { canonical: string; alias: string; status?: string; type?: string };
-      if (d.canonical && d.alias && d.status === "confirmed" && (!d.type || d.type === "expense")) {
-        rawAliasMap.set(merchantSlug(d.alias), d.canonical);
-      }
-    }
-
-    // Resolve full chains so multi-hop merges work
-    const aliasToCanonical = new Map<string, string>();
-    for (const [aliasSlug, firstCanonical] of rawAliasMap) {
-      let current = firstCanonical;
-      const visited = new Set<string>([aliasSlug]);
-      for (let hop = 0; hop < 10; hop++) {
-        const nextCanonical = rawAliasMap.get(merchantSlug(current));
-        if (!nextCanonical || visited.has(merchantSlug(current))) break;
-        visited.add(merchantSlug(current));
-        current = nextCanonical;
-      }
-      aliasToCanonical.set(aliasSlug, current);
-    }
+    // Build merchant alias resolver from source mappings
+    const mappings = mappingsSnap.docs.map(doc => doc.data() as { canonical: string; alias: string; status?: string; type?: string });
+    const aliasResolver = buildMerchantAliasResolver(mappings);
 
     // Load all completed statements
     const stmtSnap = await db
@@ -233,9 +213,8 @@ export async function GET(request: NextRequest) {
 
       for (const txn of txns) {
         // Resolve alias → canonical via confirmed source mappings (slug-based lookup)
-        const canonicalName = aliasToCanonical.get(merchantSlug(txn.merchant));
-        const effectiveMerchant = canonicalName ?? txn.merchant;
-        const txnWithCanonical = canonicalName ? { ...txn, merchant: effectiveMerchant } : txn;
+        const effectiveMerchant = aliasResolver.resolve(txn.merchant);
+        const txnWithCanonical = effectiveMerchant !== txn.merchant ? { ...txn, merchant: effectiveMerchant } : txn;
         // Apply per-transaction override AFTER alias resolution so the key uses the canonical
         // merchant name — exactly the name the PUT route received from the UI.
         const overrideCategory = txnOverrides.get(txnKey(acctSlug, txnWithCanonical));
