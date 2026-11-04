@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import { formatCurrency, getCurrencySymbol } from "@/lib/currencyUtils";
 import { ReviewList } from "@/components/ReviewList";
+import { MergeMerchantsPanel } from "./MergeMerchantsPanel";
 
 interface MonthlySeries {
   yearMonth: string;
@@ -90,6 +91,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+  const [showMergePanel, setShowMergePanel] = useState(false);
 
   const category = searchParams.get("category") || "";
   const merchant = searchParams.get("merchant") || "";
@@ -281,8 +283,8 @@ export function DrilldownView({ token }: DrilldownViewProps) {
 
       {/* Merchant Search (All spending and search levels) */}
       {(data.level === "all" || data.level === "search") && (
-        <div className="mb-6">
-          <div className="relative">
+        <div className="mb-6 flex gap-3">
+          <div className="relative flex-1">
             <input
               type="text"
               placeholder="Search merchants..."
@@ -331,6 +333,12 @@ export function DrilldownView({ token }: DrilldownViewProps) {
               </button>
             )}
           </div>
+          <button
+            onClick={() => setShowMergePanel(true)}
+            className="px-4 py-2 bg-white border border-neutral-300 text-neutral-700 rounded-lg text-sm font-medium hover:bg-neutral-50 whitespace-nowrap"
+          >
+            Merge merchants
+          </button>
         </div>
       )}
 
@@ -969,6 +977,19 @@ export function DrilldownView({ token }: DrilldownViewProps) {
           </div>
         )}
       </div>
+
+      {/* Merge Merchants Panel */}
+      {showMergePanel && (
+        <MergeMerchantsPanel
+          token={token}
+          onClose={() => setShowMergePanel(false)}
+          onMergeComplete={() => {
+            setShowMergePanel(false);
+            loadData();
+          }}
+          currency={data?.currency || "usd"}
+        />
+      )}
     </div>
   );
 }
