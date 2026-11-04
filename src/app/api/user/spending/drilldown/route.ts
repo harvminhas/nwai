@@ -914,12 +914,15 @@ export async function GET(req: NextRequest) {
       scopedTxns.forEach(t => {
         const parent = getParentCategory(t.category);
         const slug = merchantSlug(t.merchant);
-        const canonical = resolveCanonicalMerchantSlug(t.merchant);
+        // Use same canonical resolution as category branch: resolveCanonicalMerchantSlug(merchantSlug(...))
+        const canonical = resolveCanonicalMerchantSlug(slug);
         const key = `${parent}::${canonical}`; // Key by category + canonical slug
 
         if (!merchantMap.has(key)) {
+          // Use same display name resolution as category branch
+          const displayName = resolveMerchantAlias(slug, t.merchant);
           merchantMap.set(key, {
-            name: t.merchant,
+            name: displayName,
             canonicalSlug: canonical,
             parentCategory: parent,
             total: 0,
@@ -938,14 +941,14 @@ export async function GET(req: NextRequest) {
         });
       });
 
-      // Filter merchants by query (case-insensitive substring match on name or canonical slug)
+      // Filter merchants by query (case-insensitive substring match on display name or canonical slug)
       const matchedMerchants = Array.from(merchantMap.values()).filter(m => {
-        const nameLower = m.name.toLowerCase();
+        const displayNameLower = m.name.toLowerCase();
         const canonicalLower = m.canonicalSlug.toLowerCase();
-        return nameLower.includes(query) || canonicalLower.includes(query);
+        return displayNameLower.includes(query) || canonicalLower.includes(query);
       });
 
-      // Rank by total
+      // Rank by total, then by category (so same merchant in multiple categories shows together)
       const rankedItems: RankedItem[] = matchedMerchants
         .map(m => ({
           name: m.name,
@@ -958,7 +961,11 @@ export async function GET(req: NextRequest) {
           subLabel: `${m.transactions.length} transaction${m.transactions.length !== 1 ? 's' : ''}`,
           txCount: m.transactions.length,
         }))
-        .sort((a, b) => b.total - a.total);
+        .sort((a, b) => {
+          // Sort by total desc, then category asc (groups same merchant together)
+          if (b.total !== a.total) return b.total - a.total;
+          return a.category.localeCompare(b.category);
+        });
 
       const totalMatched = rankedItems.reduce((sum, item) => sum + item.total, 0);
 

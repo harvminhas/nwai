@@ -137,6 +137,11 @@ export function DrilldownView({ token }: DrilldownViewProps) {
     loadData();
   }, [token, level, category, merchant, searchQuery]);
 
+  // Keep searchInput in sync with URL query changes
+  useEffect(() => {
+    setSearchInput(searchQuery);
+  }, [searchQuery]);
+
   if (loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
