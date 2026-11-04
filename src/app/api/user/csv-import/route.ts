@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { parseCSV } from "@/lib/csvParser";
 import { buildCsvCoverage, planCsvImport, writeCsvStatementDocs } from "@/lib/csvStatementImport";
+import { runCsvQualityCheck } from "@/lib/csvQa";
 import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
 import { fireInsightEvent } from "@/lib/insights/index";
 
@@ -65,10 +66,24 @@ export async function POST(request: NextRequest) {
 
   const parsed = await parseCSV(csvText, preselectedAccountType);
 
+  // ── Quality check, before anything is written ───────────────────────────
+  // Block only on things that make the import meaningless (unreadable columns,
+  // no transactions, an implausible file); warn on anything suspicious but
+  // still importable.
+  const qa = runCsvQualityCheck({ csvText, parsed });
+
   if (parsed.rows.length === 0) {
     return NextResponse.json({
       error: parsed.errors[0] ?? "No transactions found in CSV",
       parseErrors: parsed.errors,
+      qa,
+    }, { status: 422 });
+  }
+  if (qa.status === "block") {
+    return NextResponse.json({
+      error: qa.checks.find((c) => c.status === "block")?.detail
+        ?? "This file didn't pass the import check.",
+      qa,
     }, { status: 422 });
   }
 
@@ -95,6 +110,7 @@ export async function POST(request: NextRequest) {
     knownAccounts,
     detectedFormat: parsed.detectedFormat,
     parseErrors: parsed.errors,
+    qa,
     sampleTransactions: gapRows.slice(0, 8).map((r) => ({
       date: r.date, description: r.description, amount: r.amount, isExpense: r.isExpense,
     })),

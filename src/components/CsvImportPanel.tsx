@@ -20,6 +20,13 @@ interface SampleTx {
   isExpense: boolean;
 }
 
+interface QaCheck {
+  id: string;
+  label: string;
+  status: "ok" | "warn" | "block";
+  detail: string;
+}
+
 interface Preview {
   totalRows: number;
   gapFilteredRows: number;
@@ -34,6 +41,7 @@ interface Preview {
   detectedFormat: string;
   parseErrors: string[];
   sampleTransactions: SampleTx[];
+  qa?: { status: "ok" | "warn" | "block"; checks: QaCheck[] };
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -328,6 +336,31 @@ export default function CsvImportPanel({ idToken, initialFile, onReset, onImport
               </div>
             </div>
           </div>
+
+          {/* Quality check — what we read out of the file, before anything is saved */}
+          {preview.qa && (
+            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">File check</p>
+              <ul className="space-y-2">
+                {preview.qa.checks.map((c) => (
+                  <li key={c.id} className="flex items-start gap-2.5">
+                    <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+                      c.status === "ok" ? "bg-green-500" : c.status === "warn" ? "bg-amber-400" : "bg-red-500"
+                    }`} />
+                    <div className="min-w-0">
+                      <p className="text-sm text-gray-800">{c.label}</p>
+                      <p className="text-xs text-gray-500 leading-relaxed">{c.detail}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              {preview.qa.status === "warn" && (
+                <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  This file will still import — review the warnings above first.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Account selection — hidden when account is already known from context */}
           {!preselectedAccountSlug && (
