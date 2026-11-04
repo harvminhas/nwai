@@ -274,8 +274,8 @@ export function DrilldownView({ token }: DrilldownViewProps) {
         </div>
       </div>
 
-      {/* Merchant Search (All spending level only) */}
-      {data.level === "all" && (
+      {/* Merchant Search (All spending and search levels) */}
+      {(data.level === "all" || data.level === "search") && (
         <div className="mb-6">
           <div className="relative">
             <input
@@ -339,15 +339,28 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       </div>
 
       {/* Header Card */}
-      <div className="bg-white rounded-2xl border border-neutral-200 p-6 mb-6 shadow-sm">
-        {/* Line 1: Total + period + reset */}
-        <div className="flex items-start justify-between mb-3">
-          <div className="flex items-baseline gap-2">
-            <div className="text-3xl font-bold text-neutral-900">
-              {formatCurrency(data.total, data.currency)}
-            </div>
-            <div className="text-xs text-neutral-500">last 12 months</div>
+      {data.level === "search" ? (
+        // Search results header (no chart)
+        <div className="bg-white rounded-2xl border border-neutral-200 p-6 mb-6 shadow-sm">
+          <div className="text-lg font-semibold text-neutral-900 mb-1">
+            {data.rankedItems.length} merchant{data.rankedItems.length !== 1 ? 's' : ''} match "{data.query}"
           </div>
+          {data.rankedItems.length > 0 && (
+            <div className="text-sm text-neutral-600">
+              Combined total: {formatCurrency(data.total, data.currency)} across 12 months
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-neutral-200 p-6 mb-6 shadow-sm">
+          {/* Line 1: Total + period + reset */}
+          <div className="flex items-start justify-between mb-3">
+            <div className="flex items-baseline gap-2">
+              <div className="text-3xl font-bold text-neutral-900">
+                {formatCurrency(data.total, data.currency)}
+              </div>
+              <div className="text-xs text-neutral-500">last 12 months</div>
+            </div>
           {selectedMonth && (
             <button
               onClick={() => setSelectedMonth(null)}
@@ -651,7 +664,8 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             </div>
           </div>
         )}
-      </div>
+        </div>
+      )}
 
       {/* Ranked List Card */}
       <div className="bg-white rounded-2xl border border-neutral-200 p-6 mb-6 shadow-sm">
@@ -661,7 +675,9 @@ export function DrilldownView({ token }: DrilldownViewProps) {
               ? "Categories" 
               : level === "category" 
                 ? (data.kind === "debt" ? "Debt accounts" : "Merchants")
-                : (data.kind === "debt" ? "Monthly schedule" : "Transactions")}
+                : level === "search"
+                  ? "Merchants"
+                  : (data.kind === "debt" ? "Monthly schedule" : "Transactions")}
             {selectedMonth && level !== "merchant" && (
               <span className="ml-2 text-sm font-normal text-neutral-500">
                 — {formatMonthLabel(selectedMonth)} only
@@ -832,6 +848,42 @@ export function DrilldownView({ token }: DrilldownViewProps) {
               </div>
             )}
           </div>
+        ) : data.level === "search" ? (
+          // Search results view (no bar, no sparkline)
+          data.rankedItems.length === 0 ? (
+            <div className="text-center py-8 text-neutral-500">
+              No merchants match "{data.query}".
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {data.rankedItems.map((item) => (
+                <div
+                  key={`${item.category}-${item.slug}`}
+                  className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-neutral-50 cursor-pointer"
+                  onClick={() => handleItemClick(item)}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-neutral-900">{item.name}</div>
+                    <div className="text-xs text-neutral-500" style={{ fontSize: "12px" }}>
+                      {item.category} · {item.txCount} transaction{item.txCount !== 1 ? 's' : ''}
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <div className="font-semibold text-neutral-900 tabular-nums">
+                        {formatCurrency(item.total, data.currency)}
+                      </div>
+                    </div>
+                    
+                    <svg className="w-5 h-5 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
         ) : (
           // Regular ranked items view
           <div className="space-y-2">
@@ -852,12 +904,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                     <div className="flex items-center gap-2 mb-1">
                       <div>
                         <div className="font-medium text-neutral-900">{item.name}</div>
-                        {item.category && data.level === "search" && (
-                          <div className="text-xs text-neutral-500" style={{ fontSize: "12px" }}>
-                            {item.category}
-                          </div>
-                        )}
-                        {item.subLabel && data.level !== "search" && (
+                        {item.subLabel && (
                           <div className="text-xs text-neutral-500" style={{ fontSize: "12px" }}>
                             {item.subLabel}
                           </div>

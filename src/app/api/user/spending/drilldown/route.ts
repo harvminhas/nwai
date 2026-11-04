@@ -892,7 +892,8 @@ export async function GET(req: NextRequest) {
         });
       }
 
-      // Build merchant map from profile.expenseTxns, across all non-Debt categories
+      // Build merchant map keyed by category + canonical slug
+      // (a merchant can appear in multiple categories, show one row per merchant-in-category)
       const merchantMap = new Map<string, {
         name: string;
         canonicalSlug: string;
@@ -914,9 +915,10 @@ export async function GET(req: NextRequest) {
         const parent = getParentCategory(t.category);
         const slug = merchantSlug(t.merchant);
         const canonical = resolveCanonicalMerchantSlug(t.merchant);
+        const key = `${parent}::${canonical}`; // Key by category + canonical slug
 
-        if (!merchantMap.has(canonical)) {
-          merchantMap.set(canonical, {
+        if (!merchantMap.has(key)) {
+          merchantMap.set(key, {
             name: t.merchant,
             canonicalSlug: canonical,
             parentCategory: parent,
@@ -925,7 +927,7 @@ export async function GET(req: NextRequest) {
           });
         }
 
-        const entry = merchantMap.get(canonical)!;
+        const entry = merchantMap.get(key)!;
         entry.total += Math.abs(t.amount);
         entry.transactions.push({
           date: t.date,
