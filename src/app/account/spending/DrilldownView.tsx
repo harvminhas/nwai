@@ -102,9 +102,15 @@ export function DrilldownView({ token }: DrilldownViewProps) {
   
   const [searchInput, setSearchInput] = useState(searchQuery);
 
-  const loadData = async () => {
-    setLoading(true);
-    setError(null);
+  // silent: refresh the numbers without unmounting the page. A merge panel on
+  // top of the page must survive its own refresh, otherwise it remounts and
+  // reopens on the merchant that was just merged.
+  const loadData = async (options?: { silent?: boolean }) => {
+    const silent = options?.silent === true;
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
 
     try {
       const params = new URLSearchParams({ level });
@@ -125,9 +131,9 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       const result = await res.json();
       setData(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load data");
+      if (!silent) setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -1009,7 +1015,8 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             setMergeFor(null);
           }}
           onMergeComplete={() => {
-            loadData();
+            // Refresh in place; a full reload would remount the panel
+            loadData({ silent: true });
           }}
           currency={data?.currency || "usd"}
         />

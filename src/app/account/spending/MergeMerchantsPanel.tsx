@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { pairKey } from "@/lib/sourceMappings";
+import { pairKey, normaliseName } from "@/lib/sourceMappings";
 
 export interface MerchantOption {
   name: string;
@@ -153,6 +153,31 @@ export function MergeMerchantsPanel({
     setChosen(next);
   };
 
+  // Re-read the suggestions and the merchant list from the server, so the panel
+  // shows the world as it now is rather than its own filtered copy.
+  const refreshSuggestions = async () => {
+    try {
+      const res = await fetch("/api/user/spending/merge-suggestions?all=1", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const json = await res.json();
+      setClusters(json.clusters || []);
+      setAllMerchants(
+        (json.merchants || []).map((m: any) => ({
+          name: m.name,
+          slug: m.slug,
+          total: m.total,
+          txCount: m.txCount,
+          category: m.category,
+          categories: m.categories,
+        }))
+      );
+    } catch {
+      // Leave the current list in place if the refresh fails
+    }
+  };
+
   const undo = async () => {
     if (undoIds.length === 0 || undoing) return;
     setUndoing(true);
@@ -166,6 +191,7 @@ export function MergeMerchantsPanel({
       if (!res.ok) throw new Error("Could not undo the merge");
       setDone("Undone. Those names are separate again.");
       setUndoIds([]);
+      await refreshSuggestions();
       onMergeComplete();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not undo the merge");
@@ -183,14 +209,23 @@ export function MergeMerchantsPanel({
         .map((slug) => allMerchants.find((m) => m.slug === slug) ?? groupsForTarget.find((m) => m.slug === slug))
         .filter((m): m is MerchantOption => Boolean(m));
 
-      const mappings = aliases.map((alias) => ({
-        pairKey: pairKey(suggestedName, alias.name),
+      // The merchant being merged into needs a mapping as well whenever the
+      // merge name differs from its own name. Without that it keeps the old
+      // name and stays a separate row, so the merge looks like it did nothing.
+      const entries: MerchantOption[] = [...aliases];
+      if (normaliseName(suggestedName) !== normaliseName(target.name)) {
+        entries.unshift(target);
+      }
+
+      const mappings = entries.map((entry) => ({
+        pairKey: pairKey(suggestedName, entry.name),
         type: "expense" as const,
         canonical: suggestedName,
-        alias: alias.name,
+        alias: entry.name,
         status: "confirmed" as const,
         confidence: "high" as const,
         createdAt: new Date().toISOString(),
+        // Name-only merge: nothing moves between categories
         affectsCache: false,
       }));
 
@@ -202,9 +237,13 @@ export function MergeMerchantsPanel({
       if (!res.ok) throw new Error("Could not save the merge");
 
       setDone(
-        `Merged ${aliases.length + 1} names into "${suggestedName}". Category totals are unchanged.`
+        `Merged ${entries.length} name${entries.length === 1 ? "" : "s"} into "${suggestedName}". Category totals are unchanged.`
       );
       setChosen(new Set());
+      // Back to the suggestion list, so the panel does not sit on the merchant
+      // that has just been merged
+      setTarget(null);
+      setSearch("");
 
       // The API keys each mapping by its pairKey, so the same ids undo this merge
       setUndoIds(mappings.map((m) => m.pairKey.replace(/[|\/]/g, "_")));
@@ -217,6 +256,7 @@ export function MergeMerchantsPanel({
           .map((c) => ({ ...c, members: c.members.filter((m) => !mergedSlugs.has(m.slug)) }))
           .filter((c) => c.members.length > 1)
       );
+      refreshSuggestions();
       onMergeComplete();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to merge");
