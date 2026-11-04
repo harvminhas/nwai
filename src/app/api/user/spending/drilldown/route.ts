@@ -479,7 +479,7 @@ export async function GET(req: NextRequest) {
 
           // SubLabel: regular amount per month plus payment count
           const regularPerMonth = total / windowMonths.length;
-          const subLabel = `${formatCurrency(regularPerMonth, profile.homeCurrency)}/mo · ${account.paymentCount} payment${account.paymentCount !== 1 ? 's' : ''}`;
+          const subLabel = `usual payment - ${formatCurrency(regularPerMonth, profile.homeCurrency)}/mo - ${account.paymentCount} payment${account.paymentCount !== 1 ? 's' : ''}`;
 
           return {
             name: account.accountName || account.accountSlug,
@@ -504,7 +504,7 @@ export async function GET(req: NextRequest) {
           const trend = last3Avg - avg;
 
           const regularPerMonth = total / windowMonths.length;
-          const subLabel = `${formatCurrency(regularPerMonth, profile.homeCurrency)}/mo · ${account.paymentCount} payment${account.paymentCount !== 1 ? 's' : ''}`;
+          const subLabel = `estimated from ${account.paymentCount} payment${account.paymentCount !== 1 ? 's' : ''} - ${formatCurrency(regularPerMonth, profile.homeCurrency)}/mo`;
 
           return {
             name: account.accountName || account.accountSlug,
@@ -534,7 +534,7 @@ export async function GET(req: NextRequest) {
             label: "Card payments",
             counted: false,
             total: actualDebt.cardRegularTotal,
-            subLabel: "shown for information — already counted as purchases",
+            subLabel: "estimated payments, not counted - purchases already spent",
             items: cardItems,
           },
         ];
@@ -568,7 +568,7 @@ export async function GET(req: NextRequest) {
           rankedItems: [], // Not used when groups present
           groups,
           oneOffTotal: actualDebt.oneOffTotal,
-          oneOffLabel: "One-off payments in the same period",
+          oneOffLabel: "One-off payments, not counted - already in spending",
           excluded,
           currency: profile.homeCurrency,
         });
