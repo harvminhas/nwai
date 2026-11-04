@@ -22,7 +22,7 @@ interface RankedItem {
 }
 
 interface CadenceStats {
-  dayOfWeek?: { day: string; count: number }[];
+  dayOfWeek?: { day: string; count: number; amount: number }[];
   dayOfMonth?: { day: number; count: number }[];
   sentence?: string;
 }
@@ -421,8 +421,27 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                       const maxCount = Math.max(...(data.cadence?.dayOfWeek || []).map(dow => dow.count));
                       const heightPercent = maxCount > 0 ? (d.count / maxCount) * 100 : 0;
                       const isBusiest = d.count === maxCount && maxCount > 0;
+                      
+                      // Full day name for tooltip
+                      const fullDayNames: Record<string, string> = {
+                        "Sun": "Sunday", "Mon": "Monday", "Tue": "Tuesday", "Wed": "Wednesday",
+                        "Thu": "Thursday", "Fri": "Friday", "Sat": "Saturday"
+                      };
+                      const fullDay = fullDayNames[d.day] || d.day;
+                      
+                      // Tooltip text
+                      const tooltipText = d.count === 0
+                        ? `${fullDay} · no charges`
+                        : d.count === 1
+                          ? `${fullDay} · 1 charge · ${formatCurrency(d.amount, data.currency)}`
+                          : `${fullDay} · ${d.count} charges · ${formatCurrency(d.amount, data.currency)}`;
+                      
                       return (
-                        <div key={d.day} className="flex-1 flex flex-col items-center gap-1">
+                        <div 
+                          key={d.day} 
+                          className="flex-1 flex flex-col items-center gap-1 cursor-default"
+                          title={tooltipText}
+                        >
                           <div className="w-full h-12 bg-neutral-100 rounded-sm relative flex items-end">
                             <div 
                               className="w-full bg-emerald-500 rounded-sm"

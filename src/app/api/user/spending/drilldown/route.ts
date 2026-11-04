@@ -34,7 +34,7 @@ interface RankedItem {
 }
 
 interface CadenceStats {
-  dayOfWeek?: { day: string; count: number }[];
+  dayOfWeek?: { day: string; count: number; amount: number }[];
   sentence?: string;
 }
 
@@ -460,6 +460,7 @@ function computeCadenceStats(
   label: string
 ): CadenceStats {
   const dayOfWeekCounts = new Map<string, number>();
+  const dayOfWeekAmounts = new Map<string, number>();
   const dayOfMonthCounts = new Map<number, number>();
   const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   
@@ -467,13 +468,16 @@ function computeCadenceStats(
     const date = new Date(txn.date);
     const dow = days[date.getDay()];
     const dom = date.getDate();
+    const absAmount = Math.abs(txn.amount);
     dayOfWeekCounts.set(dow, (dayOfWeekCounts.get(dow) || 0) + 1);
+    dayOfWeekAmounts.set(dow, (dayOfWeekAmounts.get(dow) || 0) + absAmount);
     dayOfMonthCounts.set(dom, (dayOfMonthCounts.get(dom) || 0) + 1);
   }
 
   const dayOfWeek = days.map(day => ({
     day,
     count: dayOfWeekCounts.get(day) || 0,
+    amount: dayOfWeekAmounts.get(day) || 0,
   }));
 
   // Check for clear patterns only
