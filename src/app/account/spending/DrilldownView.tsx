@@ -230,6 +230,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
     };
   });
 
+  const debtPeriodLabel = selectedMonth ? "that month" : "the last 12 months";
   const debtLoanShown = groupsForDisplay.find((g) => g.key === "loans")?.total || 0;
   const debtCardShown = groupsForDisplay.find((g) => g.key === "cards")?.total || 0;
   const debtOneOffShown = groupsForDisplay.reduce((sum, g) => {
@@ -347,30 +348,30 @@ export function DrilldownView({ token }: DrilldownViewProps) {
         {data.kind === "debt" && data.level === "category" && data.groups && (
           <div className="flex gap-2 mt-3">
             <div className="flex-1 border border-green-200 bg-green-50 rounded-lg p-3">
-              <div className="text-xs text-green-700 font-medium mb-1">Added to spending</div>
+              <div className="text-xs text-green-700 font-medium mb-1">Counted in spending</div>
               <div className="text-lg font-semibold text-green-900 tabular-nums">
                 {formatCurrency(selectedMonth ? debtLoanShown : data.total, data.currency)}
               </div>
-              <div className="text-xs text-green-600 mt-0.5">
-                {selectedMonth ? "loan payments that month" : "loan payments, 12 months"}
+              <div className="text-xs text-green-700 mt-1 leading-snug">
+                Regular loan payments over {debtPeriodLabel}. New money leaving your accounts.
               </div>
             </div>
             <div className="flex-1 border border-neutral-200 bg-neutral-50 rounded-lg p-3">
-              <div className="text-xs text-neutral-600 font-medium mb-1">Shown, not added</div>
+              <div className="text-xs text-neutral-700 font-medium mb-1">Not counted: already spent</div>
               <div className="text-lg font-semibold text-neutral-700 tabular-nums">
                 {formatCurrency(debtCardShown, data.currency)}
               </div>
-              <div className="text-xs text-neutral-500 mt-0.5">
-                {selectedMonth ? "card payments that month" : "card payments, same 12 months"}
+              <div className="text-xs text-neutral-600 mt-1 leading-snug">
+                Card payments over {debtPeriodLabel}. The purchases are already counted under Groceries, Dining and the rest, so adding the payment would count the same money twice.
               </div>
             </div>
             <div className="flex-1 border border-neutral-200 bg-neutral-50 rounded-lg p-3">
-              <div className="text-xs text-neutral-600 font-medium mb-1">Set aside as info</div>
+              <div className="text-xs text-neutral-700 font-medium mb-1">Not counted: one-off</div>
               <div className="text-lg font-semibold text-neutral-700 tabular-nums">
                 {formatCurrency(debtOneOffShown, data.currency)}
               </div>
-              <div className="text-xs text-neutral-500 mt-0.5">
-                {selectedMonth ? "one-off payments that month" : "one-off and extra payments"}
+              <div className="text-xs text-neutral-600 mt-1 leading-snug">
+                Amounts above an account&apos;s usual payment over {debtPeriodLabel}, listed below for information only.
               </div>
             </div>
           </div>
