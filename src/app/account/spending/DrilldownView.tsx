@@ -290,11 +290,13 @@ export function DrilldownView({ token }: DrilldownViewProps) {
 
       {/* Merchant Search (All spending and search levels) */}
       {(data.level === "all" || data.level === "search") && (
-        <div className="mb-6 flex gap-3">
-          <div className="relative flex-1">
+        <div className="mb-6 flex items-center justify-between gap-4">
+          <div className="relative w-full max-w-sm">
             <input
               type="text"
-              placeholder="Search merchants..."
+              aria-label="Search merchants"
+              placeholder="Search merchants"
+              autoComplete="off"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               onKeyDown={(e) => {
@@ -309,10 +311,10 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                   router.push(url.pathname + url.search);
                 }
               }}
-              className="w-full px-4 py-2 pl-10 border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              className="w-full rounded-full border border-neutral-300 bg-white py-2 pl-9 pr-8 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-purple-500"
             />
             <svg
-              className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-neutral-400"
+              className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 transform text-neutral-400"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -332,9 +334,9 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                   url.searchParams.delete("q");
                   router.push(url.pathname + url.search);
                 }}
-                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+                className="absolute right-2 top-1/2 -translate-y-1/2 transform text-neutral-400 hover:text-neutral-600"
               >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
@@ -345,9 +347,12 @@ export function DrilldownView({ token }: DrilldownViewProps) {
               setMergeFor(null);
               setShowMergePanel(true);
             }}
-            className="px-4 py-2 bg-white border border-neutral-300 text-neutral-700 rounded-lg text-sm font-medium hover:bg-neutral-50 whitespace-nowrap"
+            className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-sm font-medium text-neutral-600 hover:text-purple-700"
           >
-            Merge merchants
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-3-3m3 3l-3 3M16 17H4m0 0l3-3m-3 3l3 3" />
+            </svg>
+            Find duplicates
           </button>
         </div>
       )}
