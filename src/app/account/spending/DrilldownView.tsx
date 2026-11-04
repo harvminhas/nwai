@@ -586,7 +586,38 @@ export function DrilldownView({ token }: DrilldownViewProps) {
           )}
         </div>
         
-        {level === "merchant" ? (
+        {level === "merchant" && data.kind === "debt" ? (
+          // Monthly schedule for a single debt account (regular payments + one-offs)
+          <div className="space-y-1">
+            <div className="flex items-center gap-3 px-2 pb-2 text-xs uppercase tracking-wide text-neutral-500">
+              <div className="w-24">Month</div>
+              <div className="flex-1">Regular payment</div>
+              <div className="w-32 text-right">Amount</div>
+            </div>
+            {data.rankedItems.map((item, idx) => (
+              <div key={idx}>
+                <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-neutral-50">
+                  <div className="text-sm text-neutral-600 w-24">{item.name}</div>
+                  <div className="flex-1 text-xs text-neutral-500">{item.subLabel || "Regular payment"}</div>
+                  <div className="text-sm font-semibold text-neutral-900 tabular-nums w-32 text-right">
+                    {formatCurrency(item.total, data.currency)}
+                  </div>
+                </div>
+                {item.extras && item.extras.map((extra) => (
+                  <div key={`${idx}-${extra.yearMonth}`} className="ml-8 flex items-center gap-2 px-2 py-1.5 text-xs text-neutral-500">
+                    <div>{item.name} · extra</div>
+                    <div className="flex-1"></div>
+                    <div className="px-2 py-0.5 bg-neutral-100 rounded text-neutral-600 text-[11px]">once</div>
+                    <div className="tabular-nums font-medium w-32 text-right">{formatCurrency(extra.amount, data.currency)}</div>
+                  </div>
+                ))}
+              </div>
+            ))}
+            <div className="mt-3 p-3 bg-neutral-50 rounded-lg text-sm text-neutral-600">
+              Only the regular payment is counted. One-off payments appear here and in the Debt list, and never add to the total.
+            </div>
+          </div>
+        ) : level === "merchant" ? (
           // Transaction list with columns
           <div className="space-y-1">
             {data.rankedItems.map((item, idx) => {

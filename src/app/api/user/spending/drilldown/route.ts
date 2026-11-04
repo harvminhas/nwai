@@ -564,7 +564,7 @@ export async function GET(req: NextRequest) {
           total: actualDebt.loanTotal, // Loan payments only (counted in spending)
           avgPerMonth: actualDebt.loanTotal / windowMonths.length,
           monthlySeries: actualDebt.loanMonthlySeries,
-          comparisonSeries: allSpendingMonthlySeries, // Unadjusted comparison
+          comparisonSeries: adjustedAllSeries, // Same basis as All spending (loans counted, cards not)
           rankedItems: [], // Not used when groups present
           groups,
           oneOffTotal: actualDebt.oneOffTotal,
