@@ -18,6 +18,7 @@ import CashflowHeatmap from "@/components/CashflowHeatmap";
 import AccountSwitcher from "@/components/AccountSwitcher";
 import { debtGroup } from "@/lib/debtsSummary";
 import { accountGroup } from "@/lib/assetsSummary";
+import { formatLastTransactionDate } from "@/lib/formatLastTransactionDate";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -438,6 +439,7 @@ export default function AccountDetailPage() {
 
   const [data, setData]                   = useState<ParsedStatementData | null>(null);
   const [previousMonth, setPreviousMonth] = useState<{ netWorth: number; assets: number; debts: number } | null>(null);
+  const [lastTransactionDate, setLastTransactionDate] = useState<string | undefined>(undefined);
   const [yearMonth, setYearMonth]         = useState<string | null>(null);
   const [history, setHistory]             = useState<{ yearMonth: string; netWorth: number; expensesTotal?: number; isEstimate?: boolean }[]>([]);
   const [manualAssets, setManualAssets]   = useState<ManualAsset[]>([]);
@@ -449,7 +451,6 @@ export default function AccountDetailPage() {
   const [idToken, setIdToken]             = useState<string | null>(null);
   const [deletingId, setDeletingId]       = useState<string | null>(null);
   const [reparsingId, setReparsingId]     = useState<string | null>(null);
-  const [showCsvImport, setShowCsvImport] = useState(false);
   const [activeTab, setActiveTab] = useState<"overview" | "transactions" | "history">("overview");
 
   useEffect(() => {
@@ -499,14 +500,9 @@ export default function AccountDetailPage() {
   const [savingCurrency, setSavingCurrency]       = useState(false);
 
   // Balance snapshot state
-  const [showSnapshotForm,  setShowSnapshotForm]  = useState(false);
-  const [snapBalance,       setSnapBalance]       = useState("");
-  const [snapMonth,         setSnapMonth]         = useState("");
-  const [snapNote,          setSnapNote]          = useState("");
-  const [snapSaving,        setSnapSaving]        = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
-  const [snapError,         setSnapError]         = useState<string | null>(null);
-  const [deletingSnap,      setDeletingSnap]      = useState<string | null>(null);
+  const [uploadingPdf, setUploadingPdf] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   /** Inline delete confirmation for History tab (same pattern as Manage uploads). */
   const [historyDeleteConfirmId, setHistoryDeleteConfirmId] = useState<string | null>(null);
 
@@ -536,6 +532,7 @@ export default function AccountDetailPage() {
       setTxData((json.data as ParsedStatementData | null)?.expenses ?? null);
       setTxIncomeData((json.data as ParsedStatementData | null)?.income ?? null);
       setTxPayments(json.paymentsMade ?? 0);
+      setLastTransactionDate(json.lastTransactionDate);
 
       const acctHistory: StatementHistoryEntry[] = json.accountStatementHistory?.[slug] ?? [];
       setStmtHistory(acctHistory);
@@ -800,66 +797,6 @@ export default function AccountDetailPage() {
     else localStorage.removeItem(`baseline-${slug}`);
   }
 
-  // ── Balance snapshot handlers ──────────────────────────────────────────────
-  function openSnapshotForm() {
-    const now = new Date();
-    const ym = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
-    const latestBal = stmtHistory.find((e) => !e.isManualSnapshot && !e.isCarryForward)?.netWorth ?? 0;
-    setSnapBalance(String(Math.abs(latestBal)));
-    setSnapMonth(ym);
-    setSnapNote("");
-    setSnapError(null);
-    setShowSnapshotForm(true);
-  }
-  async function handleSaveSnapshot() {
-    if (!idToken || !data) return;
-    const val = parseFloat(snapBalance.replace(/,/g, ""));
-    if (isNaN(val)) { setSnapError("Enter a valid balance"); return; }
-    if (!snapMonth)  { setSnapError("Select a month"); return; }
-    setSnapSaving(true); setSnapError(null);
-    try {
-      const isDebt = ["credit", "mortgage", "loan"].includes(data.accountType ?? "");
-      const balance = isDebt ? -Math.abs(val) : Math.abs(val);
-      const res = await fetch("/api/user/balance-snapshots", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accountSlug: slug,
-          accountName: data.accountName ?? data.bankName ?? slug,
-          accountType: data.accountType ?? "other",
-          balance,
-          yearMonth: snapMonth,
-          note: snapNote || undefined,
-        }),
-      });
-      if (!res.ok) { setSnapError("Failed to save. Please try again."); return; }
-      setShowSnapshotForm(false);
-      // Refresh the page data
-      const refreshed = await fetch(
-        `/api/user/statements/consolidated?account=${encodeURIComponent(slug)}`,
-        { headers: { Authorization: `Bearer ${idToken}` } }
-      );
-      const rJson = await refreshed.json().catch(() => ({}));
-      const acctHistory: StatementHistoryEntry[] = rJson.accountStatementHistory?.[slug] ?? [];
-      setStmtHistory(acctHistory);
-      setHistory((rJson.history ?? []).map((h: { yearMonth: string; netWorth: number; expensesTotal?: number; isEstimate?: boolean }) => ({
-        ...h,
-        isEstimate: h.isEstimate ??
-          (acctHistory.find((e) => e.yearMonth === h.yearMonth)?.isCarryForward ?? false),
-      })));
-    } finally { setSnapSaving(false); }
-  }
-  async function handleDeleteSnapshot(snapshotId: string) {
-    if (!idToken) return;
-    setDeletingSnap(snapshotId);
-    try {
-      await fetch(`/api/user/balance-snapshots?id=${snapshotId}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${idToken}` },
-      });
-      setStmtHistory((prev) => prev.filter((e) => e.snapshotId !== snapshotId));
-    } finally { setDeletingSnap(null); }
-  }
 
   async function saveCurrency(newCurrency: string) {
     if (!idToken) return;
@@ -878,6 +815,57 @@ export default function AccountDetailPage() {
       showToast("Failed to save currency", false);
     } finally {
       setSavingCurrency(false);
+    }
+  }
+
+  async function handlePdfUpload(file: File) {
+    if (!idToken) return;
+    setUploadingPdf(true);
+    setUploadError(null);
+    
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      
+      const uploadRes = await fetch("/api/upload", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${idToken}` },
+        body: formData,
+      });
+      
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok) {
+        setUploadError(uploadData.error || "Upload failed");
+        return;
+      }
+      
+      const statementId = uploadData.id;
+      if (!statementId) {
+        setUploadError("Upload succeeded but no statement ID returned");
+        return;
+      }
+      
+      showToast("Statement uploaded, parsing...", true);
+      
+      // Trigger parse
+      const parseRes = await fetch("/api/parse", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ statementId }),
+      });
+      
+      const parseData = await parseRes.json();
+      if (!parseRes.ok) {
+        setUploadError(parseData.error || "Parse failed");
+        return;
+      }
+      
+      showToast("Statement parsed successfully!", true);
+      await loadAccountData(idToken);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploadingPdf(false);
     }
   }
 
@@ -974,6 +962,24 @@ export default function AccountDetailPage() {
   const txns = txData?.transactions ?? [];
   const incomeTxns = txIncomeData?.transactions ?? [];
 
+  // Calculate missing statement months (gaps in coverage)
+  const missingMonths: string[] = [];
+  if (realMonths.length > 1) {
+    const sortedAsc = [...realMonths].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
+    for (let i = 0; i < sortedAsc.length - 1; i++) {
+      const current = sortedAsc[i].yearMonth;
+      const next = sortedAsc[i + 1].yearMonth;
+      let [y, m] = current.split("-").map(Number);
+      while (true) {
+        m++;
+        if (m > 12) { m = 1; y++; }
+        const candidate = `${y}-${String(m).padStart(2, "0")}`;
+        if (candidate >= next) break;
+        missingMonths.push(candidate);
+      }
+    }
+  }
+
   // Balance headline for the top-left of the chart - the same pattern as Spending.
   // Uses this account's own month history, not the profile-wide previous month.
   const headerYm = txMonth ?? yearMonth;
@@ -986,6 +992,8 @@ export default function AccountDetailPage() {
   const headerDelta = prevBalance !== null ? headerBalance - prevBalance : null;
   const headerDeltaGood = headerDelta !== null ? (isDebtAccount ? headerDelta < 0 : headerDelta > 0) : null;
   const prevLabel = prevPoint ? shortMonth(prevPoint.yearMonth) : "previous month";
+
+  const formattedLastTxDate = formatLastTransactionDate(lastTransactionDate);
 
   const balanceHeader = (
     <div className="mb-5">
@@ -1007,6 +1015,9 @@ export default function AccountDetailPage() {
               {headerDelta > 0 ? "\u2191" : "\u2193"} {fmt(Math.abs(headerDelta), currency)} vs {prevLabel}
               {isDebtAccount ? (headerDelta < 0 ? " (paid down)" : " (more debt)") : ""}
             </p>
+          )}
+          {formattedLastTxDate && (
+            <p className="mt-1 text-xs text-gray-400">{formattedLastTxDate}</p>
           )}
           {isForeignCurrency && homeEquivalent != null && fxRate != null && (
             <p className="mt-1 text-[10px] text-gray-400">1 {currency} = {fxRate.toFixed(4)} {homeCurrency}</p>
@@ -1173,8 +1184,40 @@ export default function AccountDetailPage() {
       </div>
 
 
+      {/* Slim upload + missing months row */}
+      {(missingMonths.length > 0 || true) && (
+        <div className="mt-5 mb-3 flex items-center justify-between gap-3 text-xs">
+          {missingMonths.length > 0 ? (
+            <p className="text-amber-700">
+              <span className="font-medium">Missing:</span> {missingMonths.slice(0, 3).map((ym) => shortMonth(ym)).join(", ")}
+              {missingMonths.length > 3 && ` +${missingMonths.length - 3}`}
+            </p>
+          ) : <span />}
+          <label className="cursor-pointer">
+            <input
+              type="file"
+              accept="application/pdf"
+              className="hidden"
+              disabled={uploadingPdf}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handlePdfUpload(file);
+                e.target.value = "";
+              }}
+            />
+            <span className={`inline-block rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+              uploadingPdf
+                ? "border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed"
+                : "border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50"
+            }`}>
+              {uploadingPdf ? "Uploading..." : "+ Upload statement"}
+            </span>
+          </label>
+        </div>
+      )}
+
       {/* Tab bar */}
-      <div className="mt-5 mb-6 flex border-b border-gray-200">
+      <div className="mb-6 flex border-b border-gray-200">
         {([
           { id: "overview",     label: "Overview" },
           { id: "transactions", label: "Transactions", count: txns.length + incomeTxns.length },
@@ -1219,6 +1262,13 @@ export default function AccountDetailPage() {
         </div>
       )}
 
+      {/* Upload error */}
+      {uploadError && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          {uploadError}
+        </div>
+      )}
+
       {/* Incomplete months banner */}
       {carryForwardCount > 0 && (
         <div className="mb-6 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
@@ -1258,22 +1308,6 @@ export default function AccountDetailPage() {
         </div>
       )}
 
-      {isDebtAccount && linkedAssets.length === 0 && (
-        <div className="mb-6 rounded-xl border-2 border-dashed border-purple-200 bg-purple-50/50 p-5 flex items-center justify-between gap-4">
-          <div>
-            <p className="font-semibold text-gray-900">
-              {accountType === "mortgage" ? "🏠 What's your property worth?" : "🚗 Add the asset behind this loan"}
-            </p>
-            <p className="mt-0.5 text-sm text-gray-600">Link an asset to calculate your true equity.</p>
-          </div>
-          <Link
-            href={`/account/assets?tab=accounts&add=1&link=${slug}&category=${accountType === "mortgage" ? "property" : "vehicle"}`}
-            className="shrink-0 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
-          >
-            Add asset
-          </Link>
-        </div>
-      )}
 
       {/* ── KPI cards ────────────────────────────────────────────────────────── */}
       {isDebtAccount ? (
@@ -1560,35 +1594,12 @@ export default function AccountDetailPage() {
             {stmtHistory.length > 0 && (
               <p className="text-sm text-gray-500">{stmtHistory.length} entr{stmtHistory.length !== 1 ? "ies" : "y"}</p>
             )}
-            <div className="flex items-center gap-2">
-              {baselineMonth && (
-                <button onClick={() => handleSetBaseline(baselineMonth)} className="text-xs text-purple-600 hover:underline">
-                  Clear baseline
-                </button>
-              )}
-              <button
-                onClick={() => setShowCsvImport((v) => !v)}
-                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${showCsvImport ? "border-teal-300 bg-teal-50 text-teal-700 hover:bg-teal-100" : "border-gray-200 text-gray-600 hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700"}`}
-              >
-                {showCsvImport ? "✕ Cancel import" : "+ Import CSV"}
+            {baselineMonth && (
+              <button onClick={() => handleSetBaseline(baselineMonth)} className="text-xs text-purple-600 hover:underline">
+                Clear baseline
               </button>
-              <button
-                onClick={openSnapshotForm}
-                className="rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-600 hover:bg-purple-100 transition"
-              >
-                + Update balance
-              </button>
-            </div>
+            )}
           </div>
-
-          {/* Inline CSV import panel */}
-          {showCsvImport && idToken && (
-            <div className="rounded-xl border border-teal-200 bg-teal-50/30 p-5">
-              <CsvImportPanel idToken={idToken} preselectedAccountSlug={slug}
-                onReset={() => setShowCsvImport(false)}
-                onImportComplete={() => idToken && loadAccountData(idToken)} />
-            </div>
-          )}
           {baselineMonth && (
             <p className="text-xs text-gray-400">
               Trend starts from <span className="font-medium text-gray-600">{shortMonth(baselineMonth)}</span>.
@@ -1695,16 +1706,7 @@ export default function AccountDetailPage() {
                         className="px-4 py-3 text-right"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        {entry.isManualSnapshot && entry.snapshotId ? (
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteSnapshot(entry.snapshotId!)}
-                            disabled={deletingSnap === entry.snapshotId}
-                            className="text-xs text-gray-400 hover:text-red-500 disabled:opacity-40"
-                          >
-                            {deletingSnap === entry.snapshotId ? "…" : "Delete"}
-                          </button>
-                        ) : !entry.isCarryForward && entry.statementId ? (
+                        {!entry.isManualSnapshot && !entry.isCarryForward && entry.statementId ? (
                           <div className="flex items-center justify-end gap-1">
                             <div
                               className={`flex items-center gap-1 transition-opacity ${
@@ -1941,75 +1943,6 @@ export default function AccountDetailPage() {
         </div>
       )}
 
-      {/* ── Add balance entry modal ────────────────────────────────────────── */}
-      {showSnapshotForm && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h3 className="font-semibold text-gray-900">Add balance entry</h3>
-                <p className="text-sm text-gray-400 mt-0.5">{data?.accountName ?? slug}</p>
-              </div>
-              <button onClick={() => setShowSnapshotForm(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
-            </div>
-
-            <div className="mb-4 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2.5 text-xs text-blue-700">
-              <strong>Statement data stays intact.</strong> This entry only updates the displayed balance for the selected month. Your next uploaded statement will take over automatically.
-            </div>
-
-            <div className="mb-3">
-              <label className="block text-xs font-medium text-gray-600 mb-1">
-                Balance {isDebtAccount ? "(enter what you owe)" : ""}
-              </label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
-                <input
-                  type="number" min="0" step="0.01"
-                  value={snapBalance}
-                  onChange={(e) => setSnapBalance(e.target.value)}
-                  className="w-full rounded-lg border border-gray-200 pl-7 pr-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
-                  placeholder="0.00"
-                  autoFocus
-                />
-              </div>
-            </div>
-
-            <div className="mb-3">
-              <label className="block text-xs font-medium text-gray-600 mb-1">As of month</label>
-              <input
-                type="month"
-                value={snapMonth}
-                onChange={(e) => setSnapMonth(e.target.value)}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
-              />
-            </div>
-
-            <div className="mb-4">
-              <label className="block text-xs font-medium text-gray-600 mb-1">Note <span className="font-normal text-gray-400">(optional)</span></label>
-              <input
-                type="text"
-                value={snapNote}
-                onChange={(e) => setSnapNote(e.target.value)}
-                placeholder="e.g. Checked online banking today"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
-              />
-            </div>
-
-            {snapError && <p className="mb-3 text-sm text-red-600">{snapError}</p>}
-
-            <div className="flex gap-3">
-              <button onClick={() => setShowSnapshotForm(false)}
-                className="flex-1 rounded-lg border border-gray-200 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
-                Cancel
-              </button>
-              <button onClick={handleSaveSnapshot} disabled={snapSaving}
-                className="flex-1 rounded-lg bg-purple-600 py-2.5 text-sm font-semibold text-white hover:bg-purple-700 transition disabled:opacity-50">
-                {snapSaving ? "Saving…" : "Save"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

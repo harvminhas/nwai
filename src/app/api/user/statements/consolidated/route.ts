@@ -274,12 +274,15 @@ export async function GET(request: NextRequest) {
     //   directly — getNetWorth(profile) sums ALL accounts, which would produce
     //   the wrong total for a single-account detail page.
     let enrichedConsolidated: ParsedStatementData;
+    let accountLastTransactionDate: string | undefined;
     if (accountFilter) {
       // Also carry through currency from the account's snapshot in the profile
       // (so the detail page can show it even if consolidateStatements dropped it)
-      const snapCurrency = profile.accountSnapshots.find(
+      const accountSnap = profile.accountSnapshots.find(
         (s) => s.slug === accountFilter
-      )?.currency;
+      );
+      const snapCurrency = accountSnap?.currency;
+      accountLastTransactionDate = accountSnap?.lastTransactionDate;
       enrichedConsolidated = {
         ...consolidatedWithRules,
         // Always carry the currency override through — even CAD, so a user who
@@ -812,6 +815,8 @@ export async function GET(request: NextRequest) {
       paymentsMade: enrichedConsolidated.paymentsMade ?? 0,
       count: allCompleted.length,
       previousMonth,
+      /** Last transaction date for this account (when accountFilter is set) */
+      ...(accountFilter && accountLastTransactionDate ? { lastTransactionDate: accountLastTransactionDate } : {}),
       /**
        * Pre-computed month-over-month deltas — both months from monthlyHistory
        * (same pipeline as Asset Growth + Debt Over Time charts).

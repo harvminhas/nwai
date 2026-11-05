@@ -88,6 +88,11 @@ export interface AccountSnapshot {
    * where the formula estimate is less accurate than the real payment made.
    */
   paymentsMade?: number;
+  /**
+   * Latest transaction date (YYYY-MM-DD) from expense or income transactions.
+   * Undefined when the account has no transactions.
+   */
+  lastTransactionDate?: string;
 }
 
 /**
@@ -400,6 +405,22 @@ export async function extractAllTransactions(
       latestStmtPerSlug.set(slug, { parsed, stmtYm });
     }
   }
+
+  // Calculate last transaction date per account
+  const lastTxDateBySlug = new Map<string, string>();
+  for (const txn of expenseTxns) {
+    const existing = lastTxDateBySlug.get(txn.accountSlug);
+    if (!existing || txn.date > existing) {
+      lastTxDateBySlug.set(txn.accountSlug, txn.date);
+    }
+  }
+  for (const txn of incomeTxns) {
+    const existing = lastTxDateBySlug.get(txn.accountSlug);
+    if (!existing || txn.date > existing) {
+      lastTxDateBySlug.set(txn.accountSlug, txn.date);
+    }
+  }
+
   const accountSnapshots: AccountSnapshot[] = Array.from(latestStmtPerSlug.entries()).map(
     ([slug, { parsed, stmtYm }]) => ({
       slug,
@@ -415,6 +436,7 @@ export async function extractAllTransactions(
       interestRate: typeof parsed.interestRate === "number" ? parsed.interestRate : null,
       currency: inferCurrencyFromBankName(parsed.bankName, parsed.currency),
       paymentsMade: typeof parsed.paymentsMade === "number" && parsed.paymentsMade > 0 ? parsed.paymentsMade : undefined,
+      lastTransactionDate: lastTxDateBySlug.get(slug),
     })
   );
 

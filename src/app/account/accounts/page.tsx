@@ -7,6 +7,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import type { AccountSnapshot } from "@/lib/extractTransactions";
 import { fmt as formatCurrency } from "@/lib/currencyUtils";
+import { formatLastTransactionDate } from "@/lib/formatLastTransactionDate";
 
 type AccountType = "checking" | "savings" | "credit" | "mortgage" | "investment" | "loan" | "other";
 
@@ -117,6 +118,7 @@ export default function AccountsPage() {
                   {accounts.map((acct) => {
                     const displayName = acct.accountName ?? acct.bankName ?? "Account";
                     const currency    = acct.currency ?? "CAD";
+                    const lastTxDate  = formatLastTransactionDate(acct.lastTransactionDate);
                     return (
                       <li key={acct.slug}>
                         <Link
@@ -132,9 +134,11 @@ export default function AccountsPage() {
                                   <span className="ml-1 text-gray-400">· {acct.accountId}</span>
                                 )}
                               </p>
-                              <p className="mt-0.5 text-xs text-gray-400">
-                                as of {acct.statementMonth}
-                              </p>
+                              {lastTxDate && (
+                                <p className="mt-0.5 text-xs text-gray-400">
+                                  {lastTxDate}
+                                </p>
+                              )}
                             </div>
                             {acct.balance != null && (
                               <p className={`shrink-0 font-bold text-sm ${acct.balance < 0 ? "text-red-600" : "text-gray-900"}`}>

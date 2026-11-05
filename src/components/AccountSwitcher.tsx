@@ -112,9 +112,21 @@ export default function AccountSwitcher() {
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
+    
+    // Context-aware filtering based on current page
+    let contextFiltered = items;
+    if (pathname.includes("/liabilities") || pathname.includes("/debts")) {
+      // On liabilities/debts pages: only show debt accounts
+      contextFiltered = items.filter((i) => i.icon === "debt");
+    } else if (pathname.includes("/assets")) {
+      // On assets pages: only show asset accounts
+      contextFiltered = items.filter((i) => i.icon === "asset");
+    }
+    // Elsewhere (generic accounts list, spending, etc.): show all
+    
     const list = q
-      ? items.filter((i) => i.label.toLowerCase().includes(q) || i.sub.toLowerCase().includes(q))
-      : items;
+      ? contextFiltered.filter((i) => i.label.toLowerCase().includes(q) || i.sub.toLowerCase().includes(q))
+      : contextFiltered;
     const byGroup = new Map<string, Item[]>();
     for (const i of list) {
       const arr = byGroup.get(i.group) ?? [];
@@ -122,7 +134,7 @@ export default function AccountSwitcher() {
       byGroup.set(i.group, arr);
     }
     return Array.from(byGroup.entries());
-  }, [items, query]);
+  }, [items, query, pathname]);
 
   return (
     <div ref={boxRef} className="relative">

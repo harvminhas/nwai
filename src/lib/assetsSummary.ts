@@ -20,6 +20,7 @@ export interface AssetAccount {
   statementMonth: string;
   isStale: boolean; // true if statementMonth is >45 days old
   daysOld: number;
+  lastTransactionDate?: string;
 }
 
 export interface AssetGroup {
@@ -157,6 +158,7 @@ export function buildAssetsSummary(
       statementMonth: acc.statementMonth,
       isStale: stale,
       daysOld,
+      lastTransactionDate: acc.lastTransactionDate,
     };
   });
 

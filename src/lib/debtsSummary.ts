@@ -23,6 +23,7 @@ export interface DebtAccount {
   monthlyPayment: number | null; // estimated from payment history
   minPayment: number | null; // from paymentsMade in latest statement
   paymentHistory?: Array<{ date: string; amount: number }>; // for detecting regular loan payments
+  lastTransactionDate?: string;
 }
 
 export interface DebtGroup {
@@ -235,6 +236,7 @@ export function buildDebtsSummary(
       monthlyPayment,
       minPayment: latestPayment?.paymentsMade || null,
       paymentHistory: accountPaymentHistory.length > 0 ? accountPaymentHistory : undefined,
+      lastTransactionDate: acc.lastTransactionDate,
     };
   });
 
