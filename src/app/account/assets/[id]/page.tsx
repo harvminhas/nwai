@@ -603,9 +603,10 @@ export default function ManualAssetPage() {
                   </p>
                   <button
                     onClick={() => unlinkTransaction(tx.fingerprint, tx.role)}
-                    className="shrink-0 text-xs text-gray-400 hover:text-red-600 transition"
+                    className="shrink-0 text-gray-400 hover:text-red-600 transition"
+                    title="Remove"
                   >
-                    Remove
+                    ×
                   </button>
                 </div>
               ))}
@@ -684,9 +685,10 @@ export default function ManualAssetPage() {
                   </p>
                   <button
                     onClick={() => unlinkTransaction(tx.fingerprint, tx.role)}
-                    className="shrink-0 text-xs text-gray-400 hover:text-red-600 transition"
+                    className="shrink-0 text-gray-400 hover:text-red-600 transition"
+                    title="Remove"
                   >
-                    Remove
+                    ×
                   </button>
                 </div>
               ))}
@@ -896,13 +898,40 @@ export default function ManualAssetPage() {
               </div>
             </div>
 
-            {selectedTxns.size > 0 && (
-              <div className="mt-3 rounded-lg border border-purple-200 bg-purple-50 p-3">
+            <div className="mt-3 flex items-center justify-between">
+              {selectedTxns.size > 0 ? (
                 <p className="text-sm font-medium text-purple-900">
-                  {selectedTxns.size} transaction{selectedTxns.size > 1 ? 's' : ''} selected
+                  {selectedTxns.size} selected
                 </p>
-              </div>
-            )}
+              ) : (
+                <div />
+              )}
+              <button
+                onClick={() => {
+                  const visibleTxns = availableTxns
+                    .filter((tx) => !txnSearch || tx.merchant?.toLowerCase().includes(txnSearch.toLowerCase()))
+                    .filter((tx) => !linkedTxns.some((l) => l.fingerprint === tx.fingerprint))
+                    .slice(0, 50);
+                  
+                  if (selectedTxns.size === visibleTxns.length && visibleTxns.length > 0) {
+                    // Deselect all
+                    setSelectedTxns(new Set());
+                  } else {
+                    // Select all visible
+                    setSelectedTxns(new Set(visibleTxns.map(tx => tx.fingerprint)));
+                  }
+                }}
+                className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+              >
+                {(() => {
+                  const visibleTxns = availableTxns
+                    .filter((tx) => !txnSearch || tx.merchant?.toLowerCase().includes(txnSearch.toLowerCase()))
+                    .filter((tx) => !linkedTxns.some((l) => l.fingerprint === tx.fingerprint))
+                    .slice(0, 50);
+                  return selectedTxns.size === visibleTxns.length && visibleTxns.length > 0 ? "Deselect all" : "Select all";
+                })()}
+              </button>
+            </div>
 
             {selectedTxnRole === "funds" && selectedTxns.size === 1 && (
               <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
