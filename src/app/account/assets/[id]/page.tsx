@@ -7,6 +7,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { formatCurrency } from "@/lib/currencyUtils";
 import AccountSwitcher from "@/components/AccountSwitcher";
+import { ConfirmModal } from "@/components/ConfirmModal";
 import type { ManualAsset, AssetCategory, HubLink, ExpenseTransaction, IncomeTransaction } from "@/lib/types";
 import type { DebtsSummary, DebtAccount } from "@/lib/debtsSummary";
 
@@ -73,6 +74,14 @@ export default function ManualAssetPage() {
   const [selectedTxns, setSelectedTxns] = useState<Set<string>>(new Set());
   const [selectedTxnRole, setSelectedTxnRole] = useState<"funds" | "spend_on" | "income_from">("funds");
   const [partialAmount, setPartialAmount] = useState("");
+  
+  // Confirmation modal state
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   const load = useCallback(async (tok: string) => {
     setLoading(true);
@@ -248,15 +257,23 @@ export default function ManualAssetPage() {
     }
   };
 
-  const remove = async () => {
-    if (!token || !asset) return;
-    if (!confirm(`Delete ${asset.label}? This removes it from your net worth.`)) return;
-    const res = await fetch(`/api/user/assets/${asset.id}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
+  const remove = () => {
+    if (!asset) return;
+    setConfirmModal({
+      isOpen: true,
+      title: "Delete asset",
+      message: `Delete ${asset.label}? This removes it from your net worth.`,
+      onConfirm: async () => {
+        if (!token) return;
+        const res = await fetch(`/api/user/assets/${asset.id}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        setConfirmModal(null);
+        if (res.ok) router.push("/account/assets?tab=accounts");
+        else setToast({ msg: "Could not delete", ok: false });
+      },
     });
-    if (res.ok) router.push("/account/assets?tab=accounts");
-    else setToast({ msg: "Could not delete", ok: false });
   };
 
   const linkAccount = async () => {
@@ -284,25 +301,34 @@ export default function ManualAssetPage() {
     }
   };
 
-  const unlinkAccount = async (accountSlug: string, role: string) => {
-    if (!token || !asset) return;
-    if (!confirm("Remove this account link?")) return;
-    try {
-      const res = await fetch("/api/user/account-links", {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accountSlug,
-          hubId: asset.id,
-          role,
-        }),
-      });
-      if (!res.ok) throw new Error("Failed to unlink");
-      setToast({ msg: "Account unlinked", ok: true });
-      await load(token);
-    } catch {
-      setToast({ msg: "Could not unlink account", ok: false });
-    }
+  const unlinkAccount = (accountSlug: string, role: string) => {
+    if (!asset) return;
+    setConfirmModal({
+      isOpen: true,
+      title: "Remove account link",
+      message: "Remove this account link?",
+      onConfirm: async () => {
+        if (!token) return;
+        try {
+          const res = await fetch("/api/user/account-links", {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              accountSlug,
+              hubId: asset.id,
+              role,
+            }),
+          });
+          setConfirmModal(null);
+          if (!res.ok) throw new Error("Failed to unlink");
+          setToast({ msg: "Account unlinked", ok: true });
+          await load(token);
+        } catch {
+          setConfirmModal(null);
+          setToast({ msg: "Could not unlink account", ok: false });
+        }
+      },
+    });
   };
 
   const linkTransaction = async () => {
@@ -346,25 +372,34 @@ export default function ManualAssetPage() {
     }
   };
 
-  const unlinkTransaction = async (fingerprint: string, role: string) => {
-    if (!token || !asset) return;
-    if (!confirm("Remove this transaction link?")) return;
-    try {
-      const res = await fetch("/api/user/tx-links", {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fingerprint,
-          hubId: asset.id,
-          role,
-        }),
-      });
-      if (!res.ok) throw new Error("Failed to unlink");
-      setToast({ msg: "Transaction unlinked", ok: true });
-      await load(token);
-    } catch {
-      setToast({ msg: "Could not unlink transaction", ok: false });
-    }
+  const unlinkTransaction = (fingerprint: string, role: string) => {
+    if (!asset) return;
+    setConfirmModal({
+      isOpen: true,
+      title: "Remove transaction link",
+      message: "Remove this transaction link?",
+      onConfirm: async () => {
+        if (!token) return;
+        try {
+          const res = await fetch("/api/user/tx-links", {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              fingerprint,
+              hubId: asset.id,
+              role,
+            }),
+          });
+          setConfirmModal(null);
+          if (!res.ok) throw new Error("Failed to unlink");
+          setToast({ msg: "Transaction unlinked", ok: true });
+          await load(token);
+        } catch {
+          setConfirmModal(null);
+          setToast({ msg: "Could not unlink transaction", ok: false });
+        }
+      },
+    });
   };
 
   if (loading) {
@@ -1128,6 +1163,19 @@ export default function ManualAssetPage() {
         </div>
         );
       })()}
+
+      {/* Confirmation Modal */}
+      {confirmModal && (
+        <ConfirmModal
+          isOpen={confirmModal.isOpen}
+          title={confirmModal.title}
+          message={confirmModal.message}
+          confirmLabel="Remove"
+          confirmDanger={true}
+          onConfirm={confirmModal.onConfirm}
+          onCancel={() => setConfirmModal(null)}
+        />
+      )}
     </div>
   );
 }
