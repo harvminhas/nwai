@@ -749,7 +749,23 @@ export default function ManualAssetPage() {
                     {(() => {
                       let cumulativePercent = 0;
                       const colors = ["#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#6366f1"];
-                      return Object.entries(spendingByCategory).map(([cat, amt], i) => {
+                      const entries = Object.entries(spendingByCategory);
+                      
+                      // Special case: single category (100%) - render full circle
+                      if (entries.length === 1) {
+                        return (
+                          <circle
+                            cx="50"
+                            cy="50"
+                            r="40"
+                            fill={colors[0]}
+                            opacity="0.8"
+                          />
+                        );
+                      }
+                      
+                      // Multiple categories - render arcs
+                      return entries.map(([cat, amt], i) => {
                         const percent = (amt / totalSpending) * 100;
                         const startAngle = (cumulativePercent / 100) * 360;
                         const endAngle = ((cumulativePercent + percent) / 100) * 360;
