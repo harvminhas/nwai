@@ -1586,7 +1586,12 @@ export default function AccountDetailPage() {
             <div className="rounded-xl border border-teal-200 bg-teal-50/30 p-5">
               <CsvImportPanel idToken={idToken} preselectedAccountSlug={slug}
                 onReset={() => setShowCsvImport(false)}
-                onImportComplete={() => idToken && loadAccountData(idToken)} />
+                onImportComplete={() => {
+                  if (!idToken) return;
+                  // Refetch this account, then refresh the server tree so cached
+                  // roll-ups (net worth, spending totals) pick up the import too.
+                  loadAccountData(idToken).then(() => router.refresh());
+                }} />
             </div>
           )}
           {baselineMonth && (
