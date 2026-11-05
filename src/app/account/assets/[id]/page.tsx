@@ -429,25 +429,29 @@ export default function ManualAssetPage() {
           <AccountSwitcher />
         </div>
 
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex-1">
-            <h1 className="text-2xl font-bold text-gray-900 mb-2">{asset.label}</h1>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-700">
-                {CATEGORY_LABEL[asset.category] ?? asset.category}
-              </span>
-              <span className="text-xs text-gray-400">•</span>
-              <span className="text-xs text-gray-400">
-                Updated {new Date(asset.updatedAt).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
-              </span>
-            </div>
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <h1 className="text-2xl font-bold text-gray-900">{asset.label}</h1>
+            <button
+              onClick={() => setShowEditModal(true)}
+              className="text-gray-400 hover:text-gray-600 transition"
+              title="Edit asset"
+              aria-label="Edit asset"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+              </svg>
+            </button>
           </div>
-          <button
-            onClick={() => setShowEditModal(true)}
-            className="text-sm text-gray-500 hover:text-gray-700"
-          >
-            Edit
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-700">
+              {CATEGORY_LABEL[asset.category] ?? asset.category}
+            </span>
+            <span className="text-xs text-gray-400">•</span>
+            <span className="text-xs text-gray-400">
+              Updated {new Date(asset.updatedAt).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
+            </span>
+          </div>
         </div>
       </div>
 
