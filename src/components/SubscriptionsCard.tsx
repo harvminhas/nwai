@@ -20,8 +20,10 @@ function groupSubscriptions(
 
 export default function SubscriptionsCard({
   subscriptions,
+  onMerchantClick,
 }: {
   subscriptions: Subscription[];
+  onMerchantClick?: (merchantName: string) => void;
 }) {
   const grouped = groupSubscriptions(subscriptions);
   const total = grouped.reduce((sum, s) => sum + s.amount, 0);
@@ -49,10 +51,19 @@ export default function SubscriptionsCard({
             {grouped.map((item, index) => (
               <li
                 key={`${item.name}-${index}`}
-                className="flex justify-between text-sm text-gray-700"
+                className="flex justify-between items-center text-sm text-gray-700"
               >
-                <span>{item.name}</span>
-                <span className="font-medium">{fmt(item.amount)}</span>
+                {onMerchantClick ? (
+                  <button
+                    onClick={() => onMerchantClick(item.name)}
+                    className="text-left hover:text-purple-600 transition font-medium"
+                  >
+                    {item.name}
+                  </button>
+                ) : (
+                  <span>{item.name}</span>
+                )}
+                <span className="font-medium ml-2">{fmt(item.amount)}</span>
               </li>
             ))}
           </ul>

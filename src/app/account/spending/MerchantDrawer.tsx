@@ -59,12 +59,14 @@ export function MerchantDrawer({
   homeCurrency,
   isOpen,
   onClose,
+  fallbackDisplayName,
 }: {
   slug: string | null;
   token: string | null;
   homeCurrency: string;
   isOpen: boolean;
   onClose: () => void;
+  fallbackDisplayName?: string;
 }) {
   const [merchant, setMerchant] = useState<DrawerMerchant | null>(null);
   const [loading, setLoading]   = useState(false);
@@ -74,18 +76,31 @@ export function MerchantDrawer({
   useEffect(() => {
     if (!slug || !token || !isOpen) return;
     setLoading(true); setError(null); setMerchant(null); setSelectedYm(null);
-    fetch(`/api/user/spending/merchants?slug=${encodeURIComponent(slug)}`, {
+    
+    const url = `/api/user/spending/merchants?slug=${encodeURIComponent(slug)}`;
+    
+    console.log('[MerchantDrawer] Fetching merchant:', { slug, fallbackDisplayName });
+    
+    fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     })
       .then((r) => r.json().catch(() => ({})))
       .then((json) => {
-        if (json.merchant) setMerchant(json.merchant);
-        else setError("No data found for this merchant.");
+        if (json.merchant) {
+          console.log('[MerchantDrawer] Found merchant:', json.merchant.name);
+          setMerchant(json.merchant);
+        } else {
+          console.log('[MerchantDrawer] No merchant found for slug:', slug);
+          setError("No data found for this merchant.");
+        }
       })
-      .catch(() => setError("Failed to load merchant data."))
+      .catch((err) => {
+        console.error('[MerchantDrawer] Fetch error:', err);
+        setError("Failed to load merchant data.");
+      })
       .finally(() => setLoading(false));
-  }, [slug, token, isOpen]);
+  }, [slug, token, isOpen, fallbackDisplayName]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -95,7 +110,7 @@ export function MerchantDrawer({
   }, [isOpen, onClose]);
 
   const color         = merchant ? categoryColor(merchant.category) : "#a855f7";
-  const displayedName = merchant?.displayName ?? merchant?.name ?? (slug ?? "");
+  const displayedName = merchant?.displayName ?? merchant?.name ?? fallbackDisplayName ?? (slug ?? "");
   const monthlyAvg    = merchant && merchant.monthly.length > 0
     ? merchant.total / merchant.monthly.length : 0;
 

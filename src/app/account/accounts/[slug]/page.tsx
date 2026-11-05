@@ -8,7 +8,7 @@ import { getFirebaseClient } from "@/lib/firebase";
 import NetWorthChart from "@/components/NetWorthChart";
 import SubscriptionsCard from "@/components/SubscriptionsCard";
 import InsightsSection from "@/components/InsightsSection";
-import type { ParsedStatementData, ManualAsset, InvestmentHolding, Subscription } from "@/lib/types";
+import type { ParsedStatementData, ManualAsset, InvestmentHolding, Subscription, ExpenseTransaction, IncomeTransaction } from "@/lib/types";
 import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
 import CsvImportPanel from "@/components/CsvImportPanel";
 import type { PaymentFrequency } from "@/app/api/user/account-rates/route";
@@ -19,6 +19,8 @@ import AccountSwitcher from "@/components/AccountSwitcher";
 import { debtGroup } from "@/lib/debtsSummary";
 import { accountGroup } from "@/lib/assetsSummary";
 import { formatLastTransactionDate } from "@/lib/formatLastTransactionDate";
+import { MerchantDrawer, useMerchantDrawer } from "@/app/account/spending/MerchantDrawer";
+import { merchantSlug } from "@/lib/applyRules";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -317,6 +319,9 @@ function FlowSections({
   hasIncoming,
   collapsedRows,
   subscriptions,
+  expenseTransactions,
+  incomeTransactions,
+  onMerchantClick,
 }: {
   outflowRows: { name: string; amount: number; pct: number }[];
   outflowTotal: number;
@@ -328,15 +333,83 @@ function FlowSections({
   hasIncoming: boolean;
   collapsedRows: number;
   subscriptions: Subscription[];
+  expenseTransactions?: ExpenseTransaction[];
+  incomeTransactions?: IncomeTransaction[];
+  onMerchantClick: (merchant: string) => void;
 }) {
   const [outflowExpanded, setOutflowExpanded] = useState(false);
   const [incomingExpanded, setIncomingExpanded] = useState(false);
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
 
   const visibleOutflow = outflowExpanded ? outflowRows : outflowRows.slice(0, collapsedRows);
   const hiddenOutflow = outflowRows.length - collapsedRows;
 
   const visibleIncome = incomingExpanded ? incomeRows : incomeRows.slice(0, collapsedRows);
   const hiddenIncome = incomeRows.length - collapsedRows;
+
+  // Group expense transactions by category
+  const txnsByCategory = useMemo(() => {
+    if (!expenseTransactions) return new Map<string, ExpenseTransaction[]>();
+    const map = new Map<string, ExpenseTransaction[]>();
+    for (const txn of expenseTransactions) {
+      const cat = txn.category || "Other";
+      if (!map.has(cat)) map.set(cat, []);
+      map.get(cat)!.push(txn);
+    }
+    // Sort transactions within each category by date (newest first)
+    map.forEach((txns) => {
+      txns.sort((a, b) => {
+        if (!a.date && !b.date) return 0;
+        if (!a.date) return 1;
+        if (!b.date) return -1;
+        return b.date.localeCompare(a.date);
+      });
+    });
+    return map;
+  }, [expenseTransactions]);
+
+  // Group income transactions by source
+  const txnsBySource = useMemo(() => {
+    if (!incomeTransactions) return new Map<string, IncomeTransaction[]>();
+    const map = new Map<string, IncomeTransaction[]>();
+    // Use the same normalization logic as incomeRows
+    const DEPOSIT_RE = [
+      /e[-\s]?transfer/i, /\bdeposit\b/i, /\bGC\s/i, /\bCRA\b/i,
+      /\bCANADA\b/i, /\bGST\b/i, /\bOAS\b/i, /\bCPP\b/i,
+      /\bEI\b/i, /\bCERB\b/i, /\bINTERACT?\b/i,
+    ];
+    const normalizeIncLabel = (d: string) => {
+      if (!d.trim()) return "Cash / Deposit";
+      if (DEPOSIT_RE.some((re) => re.test(d))) return "Cash / Deposit";
+      return d.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+    };
+    
+    for (const txn of incomeTransactions) {
+      const src = normalizeIncLabel(txn.source);
+      if (!map.has(src)) map.set(src, []);
+      map.get(src)!.push(txn);
+    }
+    // Sort transactions within each source by date (newest first)
+    map.forEach((txns) => {
+      txns.sort((a, b) => {
+        if (!a.date && !b.date) return 0;
+        if (!a.date) return 1;
+        if (!b.date) return -1;
+        return b.date.localeCompare(a.date);
+      });
+    });
+    return map;
+  }, [incomeTransactions]);
+
+  const toggleCategory = (name: string) => {
+    const newExpanded = new Set(expandedCategories);
+    if (newExpanded.has(name)) {
+      newExpanded.delete(name);
+    } else {
+      newExpanded.add(name);
+    }
+    setExpandedCategories(newExpanded);
+  };
 
   return (
     <div className={`mt-4 grid items-start gap-3 ${hasOutflow && hasIncoming ? "sm:grid-cols-2" : ""}`}>
@@ -351,25 +424,70 @@ function FlowSections({
             </div>
           </div>
           <div className="divide-y divide-gray-50">
-            {visibleOutflow.map((cat) => (
-              <div key={cat.name} className="flex items-center gap-3 px-5 py-3">
-                <div className="w-1.5 h-1.5 rounded-full shrink-0 mt-0.5" style={{}} >
-                  <span className={`block w-1.5 h-1.5 rounded-full ${catColor(cat.name)}`} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-baseline gap-2 mb-1">
-                    <span className="text-sm text-gray-700 truncate">{cat.name}</span>
-                    <span className="text-sm font-semibold text-gray-900 tabular-nums shrink-0">
-                      {fmt(cat.amount, currency)}
-                      <span className="ml-1.5 text-[11px] font-normal text-gray-400">{cat.pct}%</span>
-                    </span>
+            {visibleOutflow.map((cat) => {
+              const categoryTxns = txnsByCategory.get(cat.name) ?? [];
+              const isExpanded = expandedCategories.has(cat.name);
+              const hasTxns = categoryTxns.length > 0;
+              
+              return (
+                <div key={cat.name}>
+                  <div 
+                    className={`flex items-center gap-3 px-5 py-3 ${hasTxns ? "cursor-pointer hover:bg-gray-50/80" : ""}`}
+                    onClick={() => hasTxns && toggleCategory(cat.name)}
+                  >
+                    <div className="w-1.5 h-1.5 rounded-full shrink-0 mt-0.5">
+                      <span className={`block w-1.5 h-1.5 rounded-full ${catColor(cat.name)}`} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between items-baseline gap-2 mb-1">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm text-gray-700 truncate">{cat.name}</span>
+                          {hasTxns && (
+                            <span className="shrink-0 text-[10px] text-gray-400">
+                              {categoryTxns.length} {isExpanded ? "↑" : "→"}
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-sm font-semibold text-gray-900 tabular-nums shrink-0">
+                          {fmt(cat.amount, currency)}
+                          <span className="ml-1.5 text-[11px] font-normal text-gray-400">{cat.pct}%</span>
+                        </span>
+                      </div>
+                      <div className="h-1.5 overflow-hidden rounded-full bg-gray-100">
+                        <div className={`h-full rounded-full ${catColor(cat.name)}`} style={{ width: `${Math.min(cat.pct, 100)}%` }} />
+                      </div>
+                    </div>
                   </div>
-                  <div className="h-1.5 overflow-hidden rounded-full bg-gray-100">
-                    <div className={`h-full rounded-full ${catColor(cat.name)}`} style={{ width: `${Math.min(cat.pct, 100)}%` }} />
-                  </div>
+                  
+                  {/* Expanded transactions */}
+                  {isExpanded && hasTxns && (
+                    <div className="bg-gray-50/60 px-5 py-2 space-y-1.5 border-t border-gray-100">
+                      {categoryTxns.map((txn, i) => (
+                        <div key={`${cat.name}-${txn.merchant}-${txn.date}-${i}`} className="flex items-center justify-between gap-3 text-xs py-1.5 px-3 bg-white rounded border border-gray-100">
+                          <div className="flex-1 min-w-0">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onMerchantClick(txn.merchant);
+                              }}
+                              className="text-left text-gray-900 font-medium truncate hover:text-purple-600 transition"
+                            >
+                              {txn.merchant}
+                            </button>
+                            {txn.date && (
+                              <p className="text-gray-400 text-[10px] mt-0.5">{fmtDate(txn.date)}</p>
+                            )}
+                          </div>
+                          <span className="text-gray-900 font-semibold tabular-nums shrink-0">
+                            {fmt(txn.amount, currency)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           {outflowRows.length > collapsedRows && (
             <button
@@ -394,17 +512,60 @@ function FlowSections({
             </div>
           </div>
           <div className="divide-y divide-gray-50">
-            {visibleIncome.map((src) => (
-              <div key={src.label} className="flex items-center justify-between px-5 py-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <span className="block w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
-                  <span className="text-sm text-gray-700 truncate">{src.label}</span>
+            {visibleIncome.map((src) => {
+              const sourceTxns = txnsBySource.get(src.label) ?? [];
+              const isExpanded = expandedCategories.has(src.label);
+              const hasTxns = sourceTxns.length > 0;
+              
+              return (
+                <div key={src.label}>
+                  <div 
+                    className={`flex items-center justify-between px-5 py-3 ${hasTxns ? "cursor-pointer hover:bg-gray-50/80" : ""}`}
+                    onClick={() => hasTxns && toggleCategory(src.label)}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="block w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
+                      <span className="text-sm text-gray-700 truncate">{src.label}</span>
+                      {hasTxns && (
+                        <span className="shrink-0 text-[10px] text-gray-400">
+                          {sourceTxns.length} {isExpanded ? "↑" : "→"}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-sm font-semibold text-gray-900 tabular-nums shrink-0 ml-4">
+                      {fmt(src.amount, currency)}
+                    </span>
+                  </div>
+                  
+                  {/* Expanded transactions */}
+                  {isExpanded && hasTxns && (
+                    <div className="bg-green-50/30 px-5 py-2 space-y-1.5 border-t border-gray-100">
+                      {sourceTxns.map((txn, i) => (
+                        <div key={`${src.label}-${txn.source}-${txn.date}-${i}`} className="flex items-center justify-between gap-3 text-xs py-1.5 px-3 bg-white rounded border border-green-100">
+                          <div className="flex-1 min-w-0">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onMerchantClick(txn.source);
+                              }}
+                              className="text-left text-gray-900 font-medium truncate hover:text-purple-600 transition"
+                            >
+                              {txn.source}
+                            </button>
+                            {txn.date && (
+                              <p className="text-gray-400 text-[10px] mt-0.5">{fmtDate(txn.date)}</p>
+                            )}
+                          </div>
+                          <span className="text-green-700 font-semibold tabular-nums shrink-0">
+                            +{fmt(txn.amount, currency)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <span className="text-sm font-semibold text-gray-900 tabular-nums shrink-0 ml-4">
-                  {fmt(src.amount, currency)}
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
           {incomeRows.length > collapsedRows && (
             <button
@@ -422,7 +583,10 @@ function FlowSections({
       {/* ── Subscriptions ─────────────────────────────────────────────── */}
       {subscriptions.length > 0 && (
         <div className={hasOutflow && hasIncoming ? "sm:col-span-2" : ""}>
-          <SubscriptionsCard subscriptions={subscriptions} />
+          <SubscriptionsCard 
+            subscriptions={subscriptions}
+            onMerchantClick={onMerchantClick}
+          />
         </div>
       )}
     </div>
@@ -452,6 +616,100 @@ export default function AccountDetailPage() {
   const [deletingId, setDeletingId]       = useState<string | null>(null);
   const [reparsingId, setReparsingId]     = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"overview" | "transactions" | "history">("overview");
+  
+  // Merchant drawer state
+  const { drawerSlug, drawerOpen, openDrawer, closeDrawer } = useMerchantDrawer();
+  const [drawerMerchantName, setDrawerMerchantName] = useState<string | null>(null);
+  const [merchantsList, setMerchantsList] = useState<Array<{ name: string; slug: string }> | null>(null);
+  
+  // Fetch merchant list for resolving raw names to canonical slugs
+  useEffect(() => {
+    if (!idToken || merchantsList) return;
+    fetch("/api/user/spending/merge-suggestions?all=1", {
+      headers: { Authorization: `Bearer ${idToken}` },
+    })
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data?.merchants) {
+          setMerchantsList(data.merchants.map((m: any) => ({ name: m.name, slug: m.slug })));
+        }
+      })
+      .catch(() => { /* silent - drawer will fall back to raw slug */ });
+  }, [idToken, merchantsList]);
+  
+  const handleOpenMerchantDrawer = (merchantName: string) => {
+    setDrawerMerchantName(merchantName);
+    
+    // Try to resolve to canonical merchant slug
+    if (merchantsList) {
+      const rawSlug = merchantSlug(merchantName);
+      
+      // First try exact slug match
+      let canonical = merchantsList.find((m) => m.slug === rawSlug);
+      
+      // If not found, try fuzzy matching on merchant name
+      if (!canonical) {
+        // Normalize by removing special chars, keeping only alphanumeric and spaces
+        const normalizeForMatch = (s: string) => 
+          s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        
+        const normalizedRaw = normalizeForMatch(merchantName);
+        const rawWords = normalizedRaw.split(" ").filter(w => w.length > 0);
+        const firstRawWord = rawWords[0];
+        
+        canonical = merchantsList.find((m) => {
+          const normalizedCanonical = normalizeForMatch(m.name);
+          const canonicalWords = normalizedCanonical.split(" ").filter(w => w.length > 0);
+          
+          // Strategy 1: Canonical name is a prefix of raw name
+          // e.g. "fortinos" matches "fortinos 55 woodbridge"
+          if (normalizedRaw.startsWith(normalizedCanonical)) {
+            return true;
+          }
+          
+          // Strategy 2: Raw name starts with canonical name
+          // e.g. "google cloud" matches "googlecloud"
+          if (normalizedCanonical.startsWith(normalizedRaw)) {
+            return true;
+          }
+          
+          // Strategy 3: First word matches (for brand names)
+          // e.g. "fortinos" in "FORTINOS #55" matches "Fortinos"
+          if (firstRawWord && canonicalWords[0] === firstRawWord && firstRawWord.length > 3) {
+            return true;
+          }
+          
+          // Strategy 4: Check if slugs share a common prefix (handles variants)
+          // e.g. "google-cloud" matches "googlecloud"
+          const canonicalSlug = m.slug;
+          const commonPrefixLen = Math.min(rawSlug.length, canonicalSlug.length);
+          if (commonPrefixLen > 6) {
+            const prefix = rawSlug.substring(0, Math.min(10, commonPrefixLen));
+            if (canonicalSlug.startsWith(prefix)) {
+              return true;
+            }
+          }
+          
+          return false;
+        });
+      }
+      
+      if (canonical) {
+        console.log('[MerchantDrawer] Resolved:', { 
+          raw: merchantName, 
+          rawSlug, 
+          canonicalName: canonical.name,
+          canonicalSlug: canonical.slug 
+        });
+        openDrawer(canonical.slug);
+        return;
+      }
+    }
+    
+    // Fallback to raw slug if no match found
+    console.log('[MerchantDrawer] No canonical match, using raw slug:', { merchantName, slug: merchantSlug(merchantName) });
+    openDrawer(merchantSlug(merchantName));
+  };
 
   useEffect(() => {
     const t = searchParams.get("tab");
@@ -1578,6 +1836,9 @@ export default function AccountDetailPage() {
             hasIncoming={hasIncome}
             collapsedRows={COLLAPSED_ROWS}
             subscriptions={hasActualSubs ? (data.subscriptions ?? []) : []}
+            expenseTransactions={data.expenses?.transactions}
+            incomeTransactions={data.income?.transactions}
+            onMerchantClick={handleOpenMerchantDrawer}
           />
         );
       })()}
@@ -1869,7 +2130,12 @@ export default function AccountDetailPage() {
                   {incomeTxns.map((txn, i) => (
                     <div key={i} className="flex items-center gap-3 px-4 py-3">
                       <div className="flex-1 min-w-0">
-                        <p className="truncate text-sm font-medium text-gray-900">{txn.source}</p>
+                        <button
+                          onClick={() => handleOpenMerchantDrawer(txn.source)}
+                          className="truncate text-sm font-medium text-gray-900 hover:text-purple-600 transition text-left"
+                        >
+                          {txn.source}
+                        </button>
                         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                           {txn.date && <span className="text-xs text-gray-400">{fmtDate(txn.date)}</span>}
                           {txn.category && (
@@ -1898,7 +2164,12 @@ export default function AccountDetailPage() {
                 {txns.map((txn, i) => (
                   <div key={i} className="flex items-center gap-3 px-4 py-3">
                     <div className="flex-1 min-w-0">
-                      <p className="truncate text-sm font-medium text-gray-900">{txn.merchant}</p>
+                      <button
+                        onClick={() => handleOpenMerchantDrawer(txn.merchant)}
+                        className="truncate text-sm font-medium text-gray-900 hover:text-purple-600 transition text-left"
+                      >
+                        {txn.merchant}
+                      </button>
                       <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                         {txn.date && <span className="text-xs text-gray-400">{fmtDate(txn.date)}</span>}
                         {txn.category && !isInvestment && (
@@ -1942,6 +2213,16 @@ export default function AccountDetailPage() {
           )}
         </div>
       )}
+
+      {/* Merchant drawer */}
+      <MerchantDrawer
+        slug={drawerSlug}
+        token={idToken}
+        homeCurrency={homeCurrency}
+        isOpen={drawerOpen}
+        onClose={closeDrawer}
+        fallbackDisplayName={drawerMerchantName ?? undefined}
+      />
 
     </div>
   );
