@@ -1184,8 +1184,40 @@ export default function AccountDetailPage() {
       </div>
 
 
+      {/* Slim upload + missing months row */}
+      {(missingMonths.length > 0 || true) && (
+        <div className="mt-5 mb-3 flex items-center justify-between gap-3 text-xs">
+          {missingMonths.length > 0 ? (
+            <p className="text-amber-700">
+              <span className="font-medium">Missing:</span> {missingMonths.slice(0, 3).map((ym) => shortMonth(ym)).join(", ")}
+              {missingMonths.length > 3 && ` +${missingMonths.length - 3}`}
+            </p>
+          ) : <span />}
+          <label className="cursor-pointer">
+            <input
+              type="file"
+              accept="application/pdf"
+              className="hidden"
+              disabled={uploadingPdf}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handlePdfUpload(file);
+                e.target.value = "";
+              }}
+            />
+            <span className={`inline-block rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+              uploadingPdf
+                ? "border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed"
+                : "border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50"
+            }`}>
+              {uploadingPdf ? "Uploading..." : "+ Upload statement"}
+            </span>
+          </label>
+        </div>
+      )}
+
       {/* Tab bar */}
-      <div className="mt-5 mb-6 flex border-b border-gray-200">
+      <div className="mb-6 flex border-b border-gray-200">
         {([
           { id: "overview",     label: "Overview" },
           { id: "transactions", label: "Transactions", count: txns.length + incomeTxns.length },
@@ -1230,60 +1262,12 @@ export default function AccountDetailPage() {
         </div>
       )}
 
-      {/* Upload statement + Missing statements banner */}
-      <div className="mb-6 space-y-3">
-        {/* Upload button - always visible */}
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-sm font-semibold text-gray-700">Statement Management</p>
-          <label className="cursor-pointer">
-            <input
-              type="file"
-              accept="application/pdf"
-              className="hidden"
-              disabled={uploadingPdf}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) handlePdfUpload(file);
-                e.target.value = "";
-              }}
-            />
-            <span className={`inline-block rounded-lg border px-4 py-2 text-sm font-semibold transition ${
-              uploadingPdf
-                ? "border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed"
-                : "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
-            }`}>
-              {uploadingPdf ? "Uploading..." : "+ Upload statement (PDF)"}
-            </span>
-          </label>
+      {/* Upload error */}
+      {uploadError && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          {uploadError}
         </div>
-
-        {/* Upload error */}
-        {uploadError && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {uploadError}
-          </div>
-        )}
-
-        {/* Missing statements indicator */}
-        {missingMonths.length > 0 && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
-            <div className="flex items-start gap-2">
-              <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-              </svg>
-              <div className="flex-1">
-                <p className="text-sm font-medium text-amber-900">Missing statement{missingMonths.length > 1 ? "s" : ""}</p>
-                <p className="mt-1 text-xs text-amber-700">
-                  Upload {missingMonths.length > 1 ? "statements for" : "a statement for"}{" "}
-                  {missingMonths.slice(0, 3).map((ym) => shortMonth(ym)).join(", ")}
-                  {missingMonths.length > 3 && ` and ${missingMonths.length - 3} more`}
-                  {" "}to fill gaps in your history.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Incomplete months banner */}
       {carryForwardCount > 0 && (
