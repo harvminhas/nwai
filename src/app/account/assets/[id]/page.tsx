@@ -471,11 +471,22 @@ export default function ManualAssetPage() {
 
         {/* Income */}
         <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-medium text-gray-500">Income</p>
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-gray-500">Income</p>
+            <button
+              onClick={() => {
+                setSelectedTxnRole("income_from");
+                setShowLinkTxnModal(true);
+              }}
+              className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+            >
+              + Add
+            </button>
+          </div>
           <p className="mt-2 text-2xl font-bold text-gray-900 tabular-nums">
             {formatCurrency(totalIncome, currency)}
           </p>
-          {incomeTxns.length > 0 ? (
+          {incomeTxns.length > 0 && (
             <div className="mt-3 space-y-2">
               {incomeTxns.slice(0, 3).map((tx) => (
                 <div key={tx.fingerprint} className="flex items-start justify-between gap-2 text-xs">
@@ -502,36 +513,25 @@ export default function ManualAssetPage() {
               {incomeTxns.length > 3 && (
                 <p className="text-xs text-gray-400">+ {incomeTxns.length - 3} more</p>
               )}
-              <button
-                onClick={() => {
-                  setSelectedTxnRole("income_from");
-                  setShowLinkTxnModal(true);
-                }}
-                className="mt-2 text-xs text-purple-600 hover:text-purple-700 font-medium"
-              >
-                + Link income
-              </button>
             </div>
-          ) : (
-            <button
-              onClick={() => {
-                setSelectedTxnRole("income_from");
-                setShowLinkTxnModal(true);
-              }}
-              className="mt-3 text-sm text-purple-600 hover:text-purple-700 font-medium"
-            >
-              + Link income
-            </button>
           )}
         </div>
 
         {/* Debt Owed */}
         <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-medium text-gray-500">Debt owed</p>
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-gray-500">Debt owed</p>
+            <button
+              onClick={() => setShowLinkAccountModal(true)}
+              className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+            >
+              + Add
+            </button>
+          </div>
           <p className="mt-2 text-2xl font-bold text-gray-900 tabular-nums">
             {formatCurrency(totalDebt, currency)}
           </p>
-          {linkedAccounts.length > 0 ? (
+          {linkedAccounts.length > 0 && (
             <div className="mt-3 space-y-2">
               {linkedAccounts.map(({ account, role, isLegacy }) => (
                 <div key={account.slug} className="flex items-start justify-between gap-2 text-xs">
@@ -562,20 +562,7 @@ export default function ManualAssetPage() {
                   </div>
                 </div>
               ))}
-              <button
-                onClick={() => setShowLinkAccountModal(true)}
-                className="mt-2 text-xs text-purple-600 hover:text-purple-700 font-medium"
-              >
-                + Add financing
-              </button>
             </div>
-          ) : (
-            <button
-              onClick={() => setShowLinkAccountModal(true)}
-              className="mt-3 text-sm text-purple-600 hover:text-purple-700 font-medium"
-            >
-              + Add financing
-            </button>
           )}
         </div>
       </div>
@@ -591,7 +578,7 @@ export default function ManualAssetPage() {
             }}
             className="text-sm text-purple-600 hover:text-purple-700 font-medium"
           >
-            + Add expense
+            + Add
           </button>
         </div>
 
