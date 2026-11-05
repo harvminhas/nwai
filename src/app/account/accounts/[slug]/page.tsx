@@ -12,6 +12,7 @@ import type { ParsedStatementData, ManualAsset, InvestmentHolding, Subscription 
 import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
 import CsvImportPanel from "@/components/CsvImportPanel";
 import type { PaymentFrequency } from "@/app/api/user/account-rates/route";
+import { FEATURE_FLAGS } from "@/lib/featureFlags";
 import { CategoryPicker, categoryColor } from "@/app/account/spending/shared";
 import { useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 import CashflowHeatmap from "@/components/CashflowHeatmap";
@@ -1566,12 +1567,14 @@ export default function AccountDetailPage() {
                   Clear baseline
                 </button>
               )}
-              <button
-                onClick={() => setShowCsvImport((v) => !v)}
-                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${showCsvImport ? "border-teal-300 bg-teal-50 text-teal-700 hover:bg-teal-100" : "border-gray-200 text-gray-600 hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700"}`}
-              >
-                {showCsvImport ? "✕ Cancel import" : "+ Import CSV"}
-              </button>
+              {FEATURE_FLAGS.CSV_IMPORT_ENABLED && (
+                <button
+                  onClick={() => setShowCsvImport((v) => !v)}
+                  className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${showCsvImport ? "border-teal-300 bg-teal-50 text-teal-700 hover:bg-teal-100" : "border-gray-200 text-gray-600 hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700"}`}
+                >
+                  {showCsvImport ? "✕ Cancel import" : "+ Import CSV"}
+                </button>
+              )}
               <button
                 onClick={openSnapshotForm}
                 className="rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-600 hover:bg-purple-100 transition"
@@ -1582,7 +1585,7 @@ export default function AccountDetailPage() {
           </div>
 
           {/* Inline CSV import panel */}
-          {showCsvImport && idToken && (
+          {FEATURE_FLAGS.CSV_IMPORT_ENABLED && showCsvImport && idToken && (
             <div className="rounded-xl border border-teal-200 bg-teal-50/30 p-5">
               <CsvImportPanel idToken={idToken} preselectedAccountSlug={slug}
                 onReset={() => setShowCsvImport(false)}
