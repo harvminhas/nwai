@@ -19,6 +19,7 @@ import { buildCsvCoverage, planCsvImport, writeCsvStatementDocs } from "@/lib/cs
 import { runCsvQualityCheck } from "@/lib/csvQa";
 import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
 import { fireInsightEvent } from "@/lib/insights/index";
+import { FEATURE_FLAGS } from "@/lib/featureFlags";
 
 async function getUid(request: NextRequest): Promise<string | null> {
   const token = request.headers.get("authorization")?.replace("Bearer ", "");
@@ -31,6 +32,13 @@ async function getUid(request: NextRequest): Promise<string | null> {
 }
 
 export async function POST(request: NextRequest) {
+  if (!FEATURE_FLAGS.CSV_IMPORT_ENABLED) {
+    return NextResponse.json(
+      { error: "CSV import is temporarily disabled. Please upload PDF statements instead." },
+      { status: 503 }
+    );
+  }
+
   const uid = await getUid(request);
   if (!uid) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
