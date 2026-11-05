@@ -59,6 +59,9 @@ export default function ManualAssetPage() {
   const [showLinkAccountModal, setShowLinkAccountModal] = useState(false);
   const [showLinkTxnModal, setShowLinkTxnModal] = useState(false);
   const [availableTxns, setAvailableTxns] = useState<TxnWithFingerprint[]>([]);
+  const [availableIncomeTxns, setAvailableIncomeTxns] = useState<TxnWithFingerprint[]>([]);
+  const [transactionTab, setTransactionTab] = useState<"income" | "expenses">("expenses");
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   
   // Link account modal state
   const [selectedAccountSlug, setSelectedAccountSlug] = useState("");
@@ -75,10 +78,11 @@ export default function ManualAssetPage() {
     setLoading(true);
     setError(null);
     try {
-      const [assetsRes, debtsRes, txnsRes] = await Promise.all([
+      const [assetsRes, debtsRes, txnsRes, incomeTxnsRes] = await Promise.all([
         fetch("/api/user/assets-summary", { headers: { Authorization: `Bearer ${tok}` } }),
         fetch("/api/user/debts-summary", { headers: { Authorization: `Bearer ${tok}` } }),
         fetch("/api/user/spending/transactions?months=12&limit=2000", { headers: { Authorization: `Bearer ${tok}` } }),
+        fetch("/api/user/income/transactions?months=12&limit=2000", { headers: { Authorization: `Bearer ${tok}` } }),
       ]);
       if (!assetsRes.ok) throw new Error("Failed to load assets");
       const assetsJson: AssetSummaryShape = await assetsRes.json();
@@ -98,10 +102,14 @@ export default function ManualAssetPage() {
       // Load available transactions
       const txnsData = txnsRes.ok ? await txnsRes.json() : { transactions: [] };
       setAvailableTxns(txnsData.transactions ?? []);
+      
+      // Load available income transactions
+      const incomeTxnsData = incomeTxnsRes.ok ? await incomeTxnsRes.json() : { transactions: [] };
+      setAvailableIncomeTxns(incomeTxnsData.transactions ?? []);
 
       // Load linked accounts and transactions for this asset
-      if (found && debtsData && txnsData.transactions) {
-        await loadLinks(tok, found.id, debtsData, txnsData.transactions);
+      if (found && debtsData && txnsData.transactions && incomeTxnsData.transactions) {
+        await loadLinks(tok, found.id, debtsData, [...txnsData.transactions, ...incomeTxnsData.transactions]);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load asset");
