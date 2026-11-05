@@ -44,18 +44,17 @@ export default function ManualAssetPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [editing, setEditing] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [label, setLabel] = useState("");
   const [category, setCategory] = useState<AssetCategory>("other");
   const [value, setValue] = useState("");
-  const [linkedSlug, setLinkedSlug] = useState("");
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
   // Hub links state
   type TxnWithFingerprint = ExpenseTransaction & { fingerprint: string };
   type LinkedTxn = TxnWithFingerprint & { linkAmount?: number; role: "funds" | "spend_on" };
-  const [linkedAccounts, setLinkedAccounts] = useState<Array<{ account: DebtAccount; role: string }>>([]);
+  const [linkedAccounts, setLinkedAccounts] = useState<Array<{ account: DebtAccount; role: string; isLegacy?: boolean }>>([]);
   const [linkedTxns, setLinkedTxns] = useState<LinkedTxn[]>([]);
   const [showLinkAccountModal, setShowLinkAccountModal] = useState(false);
   const [showLinkTxnModal, setShowLinkTxnModal] = useState(false);
@@ -91,7 +90,6 @@ export default function ManualAssetPage() {
         setLabel(found.label);
         setCategory(found.category);
         setValue(String(found.value));
-        setLinkedSlug(found.linkedAccountSlug ?? "");
       }
 
       const debtsData = debtsRes.ok ? await debtsRes.json() : null;
@@ -120,17 +118,41 @@ export default function ManualAssetPage() {
           headers: { Authorization: `Bearer ${tok}` },
         });
         
+        const accounts = debtsData?.groups?.flatMap((g) => g.accounts) ?? [];
+        let linked: Array<{ account: DebtAccount; role: string; isLegacy?: boolean }> = [];
+        
         if (accountLinksRes.ok) {
           const { links } = await accountLinksRes.json();
-          const accounts = debtsData?.groups?.flatMap((g) => g.accounts) ?? [];
-          const linked = links
+          linked = links
             .map((link: { accountSlug: string; role: string }) => ({
               account: accounts.find((a) => a.slug === link.accountSlug),
               role: link.role,
+              isLegacy: false,
             }))
             .filter((l: { account: DebtAccount | undefined }) => l.account);
-          setLinkedAccounts(linked);
         }
+
+        // Add legacy linkedAccountSlug if not already in new links
+        if (asset?.linkedAccountSlug) {
+          const alreadyLinked = linked.some(({ account }) => account.slug === asset.linkedAccountSlug);
+          if (!alreadyLinked) {
+            const legacyAccount = accounts.find((a) => a.slug === asset.linkedAccountSlug);
+            if (legacyAccount) {
+              // Determine role based on account type
+              const role = 
+                legacyAccount.accountType === "line_of_credit" || legacyAccount.accountType === "mortgage"
+                  ? "secures"
+                  : "finances";
+              linked.push({
+                account: legacyAccount,
+                role,
+                isLegacy: true,
+              });
+            }
+          }
+        }
+        
+        setLinkedAccounts(linked);
 
         // Load transaction links
         const txLinksRes = await fetch(`/api/user/tx-links-for-hub?hubId=${assetId}`, {
@@ -204,11 +226,11 @@ export default function ManualAssetPage() {
           label: label.trim(),
           category,
           value: num,
-          linkedAccountSlug: linkedSlug || null,
+          linkedAccountSlug: asset.linkedAccountSlug, // Preserve legacy link
         }),
       });
       if (!res.ok) throw new Error("Failed to save");
-      setEditing(false);
+      setShowEditModal(false);
       setToast({ msg: "Saved", ok: true });
       await load(token);
     } catch {
@@ -348,69 +370,97 @@ export default function ManualAssetPage() {
     );
   }
 
-  // Calculate total debt from all linked accounts (finances + secures)
+  // Calculate total debt from all linked accounts (finances + secures, including legacy)
   const totalDebt = linkedAccounts
     .filter(({ role }) => role === "finances" || role === "secures")
     .reduce((sum, { account }) => sum + Math.abs(account.balance), 0);
   
-  // Legacy: also include linkedAccountSlug if set (backward compatibility)
-  const legacyDebt = linkedDebt && !linkedAccounts.some(({ account }) => account.slug === linkedDebt.slug)
-    ? Math.abs(linkedDebt.balance)
-    : 0;
-  
-  const equity = asset.value - totalDebt - legacyDebt;
+  const equity = asset.value - totalDebt;
+
+  const spendingTxns = linkedTxns.filter((tx) => tx.role === "spend_on");
+  const fundingTxns = linkedTxns.filter((tx) => tx.role === "funds");
+
+  // Spending by category for pie chart
+  const spendingByCategory: Record<string, number> = {};
+  spendingTxns.forEach((tx) => {
+    const cat = tx.category || "Other";
+    spendingByCategory[cat] = (spendingByCategory[cat] || 0) + tx.amount;
+  });
+
+  const totalSpending = Object.values(spendingByCategory).reduce((sum, amt) => sum + amt, 0);
 
   return (
-    <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
+    <div className="mx-auto max-w-6xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
       {toast && (
         <div className={`fixed bottom-6 left-1/2 z-50 -translate-x-1/2 flex items-center gap-3 rounded-xl px-5 py-3 shadow-lg text-sm font-medium ${toast.ok ? "bg-green-600 text-white" : "bg-red-600 text-white"}`}>
-          <span>{toast.ok ? "OK" : "!"}</span>
+          <span>{toast.ok ? "✓" : "!"}</span>
           <span>{toast.msg}</span>
         </div>
       )}
 
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-sm text-gray-500">
-          <Link href="/account/assets?tab=accounts" className="hover:text-purple-600">Assets</Link>
-          <span>/</span>
-          <Link href={`/account/assets/category/${asset.category === "property" ? "property" : "other"}`} className="hover:text-purple-600">
-            {asset.category === "property" ? "Property" : "Other Assets"}
-          </Link>
-          <span>/</span>
-          <span className="font-medium text-gray-700">{asset.label}</span>
+      {/* Header */}
+      <div className="mb-6">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm text-gray-500">
+            <Link href="/account/assets?tab=accounts" className="hover:text-purple-600">Assets</Link>
+            <span>/</span>
+            <Link href={`/account/assets/category/${asset.category === "property" ? "property" : "other"}`} className="hover:text-purple-600">
+              {asset.category === "property" ? "Property" : "Other Assets"}
+            </Link>
+          </div>
+          <AccountSwitcher />
         </div>
-        <AccountSwitcher />
-      </div>
 
-      <div className="mb-1 flex flex-wrap items-center gap-2">
-        <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-700">
-          {CATEGORY_LABEL[asset.category] ?? asset.category}
-        </span>
-        <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-500">
-          Manual asset
-        </span>
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1">
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">{asset.label}</h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-700">
+                {CATEGORY_LABEL[asset.category] ?? asset.category}
+              </span>
+              <span className="text-xs text-gray-400">•</span>
+              <span className="text-xs text-gray-500">
+                {formatCurrency(asset.value, currency)}
+              </span>
+              <span className="text-xs text-gray-400">•</span>
+              <span className="text-xs text-gray-400">
+                Updated {new Date(asset.updatedAt).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowLinkAccountModal(true)}
+              className="text-sm text-purple-600 hover:text-purple-700 font-medium"
+            >
+              + Add financing
+            </button>
+            <button
+              onClick={() => setShowEditModal(true)}
+              className="text-sm text-gray-500 hover:text-gray-700"
+            >
+              Edit
+            </button>
+          </div>
+        </div>
       </div>
-      <h1 className="text-2xl font-bold text-gray-900">{asset.label}</h1>
 
       {/* Value + equity */}
-      <div className="mt-5 grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Value</p>
+          <p className="text-xs font-medium text-gray-500">Value</p>
           <p className="mt-2 text-2xl font-bold text-gray-900 tabular-nums">
             {formatCurrency(asset.value, currency)}
           </p>
-          <p className="mt-1.5 text-xs text-gray-400">
-            Updated {new Date(asset.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-          </p>
         </div>
-        {(linkedAccounts.length > 0 || linkedDebt) && (
+        {linkedAccounts.length > 0 && (
           <div className={`rounded-xl border p-5 shadow-sm ${equity >= 0 ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Your equity</p>
+            <p className="text-xs font-medium text-gray-500">Equity</p>
             <p className={`mt-2 text-2xl font-bold tabular-nums ${equity >= 0 ? "text-green-700" : "text-red-600"}`}>
               {formatCurrency(equity, currency)}
             </p>
-            <p className="mt-1.5 text-xs text-gray-500">
-              {formatCurrency(asset.value, currency)} value less {formatCurrency(totalDebt + legacyDebt, currency)} owed
+            <p className="mt-1.5 text-xs text-gray-400">
+              {formatCurrency(asset.value, currency)} less {formatCurrency(totalDebt, currency)} owed
             </p>
           </div>
         )}
@@ -419,13 +469,18 @@ export default function ManualAssetPage() {
       {/* Financing */}
       {linkedAccounts.length > 0 && (
         <div className="mt-6">
-          <h2 className="mb-2 text-sm font-medium text-gray-500">Financing</h2>
+          <h2 className="mb-3 text-sm font-medium text-gray-700">Financing</h2>
           <div className="space-y-2">
-            {linkedAccounts.map(({ account, role }) => (
+            {linkedAccounts.map(({ account, role, isLegacy }) => (
               <div key={account.slug} className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-3">
                 <div className="flex-1">
-                  <p className="text-sm font-medium text-gray-900">{account.bankName}</p>
-                  {account.accountName && <p className="text-xs text-gray-600">{account.accountName}</p>}
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-gray-900">{account.bankName}</p>
+                    {isLegacy && (
+                      <span className="text-xs text-gray-400">(auto-linked)</span>
+                    )}
+                  </div>
+                  {account.accountName && <p className="text-xs text-gray-500">{account.accountName}</p>}
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-semibold text-gray-900 tabular-nums">{formatCurrency(Math.abs(account.balance), currency)}</p>
@@ -433,164 +488,213 @@ export default function ManualAssetPage() {
                     {formatMonth(account.statementMonth)}
                   </p>
                 </div>
-                <button
-                  onClick={() => unlinkAccount(account.slug, role)}
-                  className="shrink-0 text-xs text-gray-400 hover:text-red-600 transition"
-                >
-                  Remove
-                </button>
+                {!isLegacy && (
+                  <button
+                    onClick={() => unlinkAccount(account.slug, role)}
+                    className="shrink-0 text-xs text-gray-400 hover:text-red-600 transition"
+                  >
+                    Remove
+                  </button>
+                )}
               </div>
             ))}
           </div>
-          <button
-            onClick={() => setShowLinkAccountModal(true)}
-            className="mt-2 text-xs text-purple-600 hover:text-purple-700"
-          >
-            + Link account
-          </button>
-        </div>
-      )}
-      
-      {linkedAccounts.length === 0 && (
-        <div className="mt-6">
-          <button
-            onClick={() => setShowLinkAccountModal(true)}
-            className="text-sm text-purple-600 hover:text-purple-700"
-          >
-            + Link financing account
-          </button>
         </div>
       )}
 
-      {/* Linked transactions */}
-      {linkedTxns.length > 0 && (
-        <div className="mt-6">
-          <h2 className="mb-2 text-sm font-medium text-gray-500">Linked transactions</h2>
-          <div className="space-y-2">
-            {linkedTxns.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "")).map((tx) => (
-              <div key={tx.fingerprint} className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
+      {/* Spending section with chart */}
+      <div className="mt-6">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-medium text-gray-700">Spending</h2>
+          <button
+            onClick={() => {
+              setSelectedTxnRole("spend_on");
+              setShowLinkTxnModal(true);
+            }}
+            className="text-sm text-purple-600 hover:text-purple-700 font-medium"
+          >
+            + Add expense
+          </button>
+        </div>
+
+        {spendingTxns.length > 0 ? (
+          <div className="grid gap-6 lg:grid-cols-3">
+            {/* Spending list */}
+            <div className="lg:col-span-2 space-y-2">
+              {spendingTxns.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "")).map((tx) => (
+                <div key={tx.fingerprint} className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-3">
+                  <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-900 truncate">{tx.merchant}</p>
-                    <span className="shrink-0 text-xs text-gray-400">
-                      {tx.role === "funds" ? "Funding" : "Spending"}
-                    </span>
+                    <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500">
+                      <span>{tx.category}</span>
+                      <span>•</span>
+                      <span>{tx.accountLabel ?? "Unknown"}</span>
+                      <span>•</span>
+                      <span>{tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "No date"}</span>
+                    </div>
                   </div>
-                  <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500">
-                    <span>{tx.accountLabel ?? "Unknown"}</span>
-                    <span>•</span>
-                    <span>{tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "No date"}</span>
+                  <p className="text-sm font-semibold text-gray-900 tabular-nums">
+                    {formatCurrency(tx.amount, currency)}
+                  </p>
+                  <button
+                    onClick={() => unlinkTransaction(tx.fingerprint, tx.role)}
+                    className="shrink-0 text-xs text-gray-400 hover:text-red-600 transition"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            {/* Pie chart */}
+            <div className="rounded-lg border border-gray-200 bg-white p-4">
+              <p className="text-xs font-medium text-gray-500 mb-3">By category</p>
+              {totalSpending > 0 ? (
+                <div>
+                  <svg viewBox="0 0 100 100" className="w-full max-w-[200px] mx-auto mb-3">
+                    {(() => {
+                      let cumulativePercent = 0;
+                      const colors = ["#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#6366f1"];
+                      return Object.entries(spendingByCategory).map(([cat, amt], i) => {
+                        const percent = (amt / totalSpending) * 100;
+                        const startAngle = (cumulativePercent / 100) * 360;
+                        const endAngle = ((cumulativePercent + percent) / 100) * 360;
+                        cumulativePercent += percent;
+
+                        const x1 = 50 + 40 * Math.cos((Math.PI * startAngle) / 180);
+                        const y1 = 50 + 40 * Math.sin((Math.PI * startAngle) / 180);
+                        const x2 = 50 + 40 * Math.cos((Math.PI * endAngle) / 180);
+                        const y2 = 50 + 40 * Math.sin((Math.PI * endAngle) / 180);
+                        const largeArc = percent > 50 ? 1 : 0;
+
+                        return (
+                          <path
+                            key={cat}
+                            d={`M 50 50 L ${x1} ${y1} A 40 40 0 ${largeArc} 1 ${x2} ${y2} Z`}
+                            fill={colors[i % colors.length]}
+                            opacity="0.8"
+                          />
+                        );
+                      });
+                    })()}
+                  </svg>
+                  <div className="space-y-1.5">
+                    {Object.entries(spendingByCategory)
+                      .sort(([, a], [, b]) => b - a)
+                      .map(([cat, amt]) => (
+                        <div key={cat} className="flex items-center justify-between text-xs">
+                          <span className="text-gray-600 truncate">{cat}</span>
+                          <span className="font-medium text-gray-900 tabular-nums ml-2">
+                            {formatCurrency(amt, currency)}
+                          </span>
+                        </div>
+                      ))}
                   </div>
                 </div>
-                <p className="text-sm font-semibold text-gray-900 tabular-nums">
-                  {formatCurrency(tx.linkAmount ?? tx.amount, currency)}
-                </p>
-                <button
-                  onClick={() => unlinkTransaction(tx.fingerprint, tx.role)}
-                  className="shrink-0 text-xs text-gray-400 hover:text-red-600 transition"
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
-          </div>
-          <button
-            onClick={() => setShowLinkTxnModal(true)}
-            className="mt-2 text-xs text-purple-600 hover:text-purple-700"
-          >
-            + Link transaction
-          </button>
-        </div>
-      )}
-      
-      {linkedTxns.length === 0 && (
-        <div className="mt-4">
-          <button
-            onClick={() => setShowLinkTxnModal(true)}
-            className="text-sm text-purple-600 hover:text-purple-700"
-          >
-            + Link transaction
-          </button>
-        </div>
-      )}
-
-      {/* Edit panel */}
-      <div className="mt-6 rounded-xl border border-gray-200 bg-white p-5">
-        {!editing ? (
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-gray-900">Asset details</p>
-              <p className="text-xs text-gray-500">
-                {asset.label} is counted in your net worth under {CATEGORY_LABEL[asset.category] ?? asset.category}.
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <button
-                onClick={remove}
-                className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-400 hover:border-red-300 hover:text-red-600 transition"
-              >
-                Delete
-              </button>
-              <button
-                onClick={() => setEditing(true)}
-                className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:border-purple-300 hover:text-purple-600 transition"
-              >
-                Edit
-              </button>
+              ) : (
+                <p className="text-xs text-gray-400 text-center py-8">No spending yet</p>
+              )}
             </div>
           </div>
         ) : (
-          <div className="space-y-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-500">Name</label>
-              <input
-                value={label}
-                onChange={(e) => setLabel(e.target.value)}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
-              />
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-gray-500">Type</label>
-                <select
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value as AssetCategory)}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
-                >
-                  {(Object.keys(CATEGORY_LABEL) as AssetCategory[]).map((c) => (
-                    <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-gray-500">Value ({currency})</label>
-                <input
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                  inputMode="decimal"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm tabular-nums focus:border-purple-400 focus:outline-none"
-                />
-              </div>
-            </div>
-            <div className="flex items-center justify-end gap-2 pt-1">
-              <button
-                onClick={() => setEditing(false)}
-                disabled={saving}
-                className="rounded-lg px-3 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 disabled:opacity-40"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={save}
-                disabled={saving}
-                className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-40 transition"
-              >
-                {saving ? "Saving..." : "Save"}
-              </button>
+          <p className="text-sm text-gray-500">No spending transactions linked.</p>
+        )}
+
+        {fundingTxns.length > 0 && (
+          <div className="mt-6">
+            <p className="text-xs font-medium text-gray-500 mb-2">Funding</p>
+            <div className="space-y-2">
+              {fundingTxns.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "")).map((tx) => (
+                <div key={tx.fingerprint} className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">{tx.merchant}</p>
+                    <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500">
+                      <span>{tx.accountLabel ?? "Unknown"}</span>
+                      <span>•</span>
+                      <span>{tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "No date"}</span>
+                    </div>
+                  </div>
+                  <p className="text-sm font-semibold text-gray-900 tabular-nums">
+                    {formatCurrency(tx.linkAmount ?? tx.amount, currency)}
+                  </p>
+                  <button
+                    onClick={() => unlinkTransaction(tx.fingerprint, tx.role)}
+                    className="shrink-0 text-xs text-gray-400 hover:text-red-600 transition"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
         )}
       </div>
+
+      {/* Edit Modal */}
+      {showEditModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowEditModal(false)}>
+          <div className="max-w-md w-full rounded-xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold text-gray-900">Edit asset</h3>
+            <div className="mt-4 space-y-4">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-500">Name</label>
+                <input
+                  value={label}
+                  onChange={(e) => setLabel(e.target.value)}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
+                />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500">Category</label>
+                  <select
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value as AssetCategory)}
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
+                  >
+                    {(Object.keys(CATEGORY_LABEL) as AssetCategory[]).map((c) => (
+                      <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500">Value ({currency})</label>
+                  <input
+                    value={value}
+                    onChange={(e) => setValue(e.target.value)}
+                    inputMode="decimal"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm tabular-nums focus:border-purple-400 focus:outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="mt-6 flex items-center justify-between border-t border-gray-200 pt-4">
+              <button
+                onClick={remove}
+                className="text-sm text-red-600 hover:text-red-700"
+              >
+                Delete asset
+              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowEditModal(false)}
+                  disabled={saving}
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={save}
+                  disabled={saving}
+                  className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-40 transition"
+                >
+                  {saving ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Link Account Modal */}
       {showLinkAccountModal && (
