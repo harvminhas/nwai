@@ -7,7 +7,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { formatCurrency } from "@/lib/currencyUtils";
 import AccountSwitcher from "@/components/AccountSwitcher";
-import type { ManualAsset, AssetCategory } from "@/lib/types";
+import type { ManualAsset, AssetCategory, HubLink, ExpenseTransaction, IncomeTransaction } from "@/lib/types";
 import type { DebtsSummary, DebtAccount } from "@/lib/debtsSummary";
 
 const CATEGORY_LABEL: Record<AssetCategory, string> = {
@@ -52,13 +52,25 @@ export default function ManualAssetPage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
+  // Hub links state
+  type TxnWithFingerprint = ExpenseTransaction & { fingerprint: string };
+  const [linkedAccounts, setLinkedAccounts] = useState<Array<{ account: DebtAccount; role: string }>>([]);
+  const [fundingTxns, setFundingTxns] = useState<Array<TxnWithFingerprint & { linkAmount?: number }>>([]);
+  const [spendOnTxns, setSpendOnTxns] = useState<TxnWithFingerprint[]>([]);
+  const [showLinkAccountModal, setShowLinkAccountModal] = useState(false);
+  const [showLinkTxnModal, setShowLinkTxnModal] = useState(false);
+  const [availableTxns, setAvailableTxns] = useState<TxnWithFingerprint[]>([]);
+  const [txnLinkRole, setTxnLinkRole] = useState<"funds" | "spend_on">("funds");
+  const [linkingTxn, setLinkingTxn] = useState<string | null>(null);
+
   const load = useCallback(async (tok: string) => {
     setLoading(true);
     setError(null);
     try {
-      const [assetsRes, debtsRes] = await Promise.all([
+      const [assetsRes, debtsRes, txnsRes] = await Promise.all([
         fetch("/api/user/assets-summary", { headers: { Authorization: `Bearer ${tok}` } }),
         fetch("/api/user/debts-summary", { headers: { Authorization: `Bearer ${tok}` } }),
+        fetch("/api/user/spending/transactions?limit=1000", { headers: { Authorization: `Bearer ${tok}` } }),
       ]);
       if (!assetsRes.ok) throw new Error("Failed to load assets");
       const assetsJson: AssetSummaryShape = await assetsRes.json();
@@ -73,12 +85,70 @@ export default function ManualAssetPage() {
         setLinkedSlug(found.linkedAccountSlug ?? "");
       }
       if (debtsRes.ok) setDebts(await debtsRes.json());
+      
+      // Load available transactions
+      if (txnsRes.ok) {
+        const txnsJson = await txnsRes.json();
+        setAvailableTxns(txnsJson.transactions ?? []);
+      }
+
+      // Load linked accounts and transactions for this asset
+      if (found) {
+        await loadLinks(tok, found.id);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load asset");
     } finally {
       setLoading(false);
     }
   }, [id]);
+
+  const loadLinks = useCallback(async (tok: string, assetId: string) => {
+    try {
+      // Load account links
+      const accountLinksRes = await fetch(`/api/user/account-links-for-hub?hubId=${assetId}`, {
+        headers: { Authorization: `Bearer ${tok}` },
+      });
+      
+      if (accountLinksRes.ok) {
+        const { links } = await accountLinksRes.json();
+        const accounts = debts?.groups?.flatMap((g) => g.accounts) ?? [];
+        const linked = links.map((link: { accountSlug: string; role: string }) => ({
+          account: accounts.find((a) => a.slug === link.accountSlug),
+          role: link.role,
+        })).filter((l: { account: DebtAccount | undefined }) => l.account);
+        setLinkedAccounts(linked);
+      }
+
+      // Load transaction links
+      const txLinksRes = await fetch(`/api/user/tx-links-for-hub?hubId=${assetId}`, {
+        headers: { Authorization: `Bearer ${tok}` },
+      });
+      
+      if (txLinksRes.ok) {
+        const { links } = await txLinksRes.json();
+        const txns = availableTxns;
+        
+        const funding = links
+          .filter((l: { role: string }) => l.role === "funds")
+          .map((l: { fingerprint: string; amount?: number }) => {
+            const txn = txns.find((t) => t.fingerprint === l.fingerprint);
+            return txn ? { ...txn, linkAmount: l.amount } : null;
+          })
+          .filter(Boolean);
+        
+        const spending = links
+          .filter((l: { role: string }) => l.role === "spend_on")
+          .map((l: { fingerprint: string }) => txns.find((t) => t.fingerprint === l.fingerprint))
+          .filter(Boolean);
+        
+        setFundingTxns(funding);
+        setSpendOnTxns(spending);
+      }
+    } catch (err) {
+      console.error("Failed to load links:", err);
+    }
+  }, [debts, availableTxns]);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -169,8 +239,17 @@ export default function ManualAssetPage() {
     );
   }
 
-  const debtBalance = linkedDebt ? Math.abs(linkedDebt.balance) : 0;
-  const equity = asset.value - debtBalance;
+  // Calculate total debt from all linked accounts (finances + secures)
+  const totalDebt = linkedAccounts
+    .filter(({ role }) => role === "finances" || role === "secures")
+    .reduce((sum, { account }) => sum + Math.abs(account.balance), 0);
+  
+  // Legacy: also include linkedAccountSlug if set (backward compatibility)
+  const legacyDebt = linkedDebt && !linkedAccounts.some(({ account }) => account.slug === linkedDebt.slug)
+    ? Math.abs(linkedDebt.balance)
+    : 0;
+  
+  const equity = asset.value - totalDebt - legacyDebt;
 
   return (
     <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
@@ -215,63 +294,135 @@ export default function ManualAssetPage() {
             Updated {new Date(asset.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
           </p>
         </div>
-        {linkedDebt && (
+        {(linkedAccounts.length > 0 || linkedDebt) && (
           <div className={`rounded-xl border p-5 shadow-sm ${equity >= 0 ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Your equity</p>
             <p className={`mt-2 text-2xl font-bold tabular-nums ${equity >= 0 ? "text-green-700" : "text-red-600"}`}>
               {formatCurrency(equity, currency)}
             </p>
             <p className="mt-1.5 text-xs text-gray-500">
-              {formatCurrency(asset.value, currency)} value less {formatCurrency(debtBalance, currency)} owed
+              {formatCurrency(asset.value, currency)} value less {formatCurrency(totalDebt + legacyDebt, currency)} owed
             </p>
           </div>
         )}
       </div>
 
-      <div className="mt-6 grid items-start gap-6 lg:grid-cols-2">
-      {/* Linked loan */}
-      <div>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">Linked loan</h2>
-        {linkedDebt ? (
-          <Link
-            href={`/account/accounts/${linkedDebt.slug}`}
-            className="block rounded-xl border border-purple-200 bg-purple-50 p-5 hover:bg-purple-100 transition"
+      {/* Financing (linked accounts) */}
+      <div className="mt-6">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-400">Financing</h2>
+          <button
+            onClick={() => setShowLinkAccountModal(true)}
+            className="rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 transition"
           >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="font-semibold text-gray-900">{linkedDebt.bankName}</p>
-                {linkedDebt.accountName && <p className="text-sm text-gray-600">{linkedDebt.accountName}</p>}
-                <div className="mt-2 flex flex-wrap gap-4 text-xs text-gray-500">
-                  {linkedDebt.interestRate !== null && <span>{linkedDebt.interestRate.toFixed(2)}% APR</span>}
-                  {linkedDebt.monthlyPayment !== null && <span>{formatCurrency(linkedDebt.monthlyPayment, currency)}/mo</span>}
-                  {payoff?.payoffDate && <span className="text-green-600">Payoff {formatMonth(payoff.payoffDate)}</span>}
+            Link account
+          </button>
+        </div>
+        {linkedAccounts.length > 0 ? (
+          <div className="space-y-2">
+            {linkedAccounts.map(({ account, role }) => (
+              <div key={account.slug} className="flex items-center justify-between rounded-xl border border-gray-200 bg-white p-4">
+                <div className="flex-1">
+                  <p className="font-medium text-gray-900">{account.bankName}</p>
+                  {account.accountName && <p className="text-sm text-gray-600">{account.accountName}</p>}
+                  <span className="mt-1 inline-block rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+                    {role === "finances" ? "Financing" : "Secures"}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <p className="text-lg font-bold text-gray-900 tabular-nums">{formatCurrency(Math.abs(account.balance), currency)}</p>
+                  <p className="text-xs text-gray-500">
+                    as of {formatMonth(account.statementMonth)}
+                  </p>
                 </div>
               </div>
-              <div className="text-right">
-                <p className="text-lg font-bold text-gray-900 tabular-nums">{formatCurrency(debtBalance, currency)}</p>
-                <p className="text-xs text-purple-600">Open account</p>
-              </div>
-            </div>
-          </Link>
+            ))}
+          </div>
         ) : (
           <div className="rounded-xl border-2 border-dashed border-gray-200 bg-gray-50/60 p-5">
-            <p className="text-sm text-gray-600">
-              {debtAccounts.length > 0
-                ? "Link a loan or mortgage to see your equity here."
-                : "No loan accounts yet. Upload a mortgage or loan statement and it will appear here."}
-            </p>
-            <button
-              onClick={() => setEditing(true)}
-              className="mt-3 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
-            >
-              Edit asset
-            </button>
+            <p className="text-sm text-gray-600">No linked accounts yet. Link a loan or mortgage to track equity.</p>
           </div>
         )}
       </div>
 
-      {/* Edit */}
-      <div className="rounded-xl border border-gray-200 bg-white p-5">
+      {/* How you paid (funding transactions) */}
+      <div className="mt-6">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-400">How you paid</h2>
+          <button
+            onClick={() => {
+              setTxnLinkRole("funds");
+              setShowLinkTxnModal(true);
+            }}
+            className="rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 transition"
+          >
+            Link transaction
+          </button>
+        </div>
+        {fundingTxns.length > 0 ? (
+          <div className="space-y-2">
+            {fundingTxns.map((tx) => (
+              <div key={tx.fingerprint} className="flex items-center justify-between rounded-xl border border-gray-200 bg-white p-3">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-gray-900">{tx.merchant}</p>
+                  <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500">
+                    <span>{tx.accountLabel ?? "Unknown account"}</span>
+                    <span>•</span>
+                    <span>{tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "No date"}</span>
+                  </div>
+                </div>
+                <p className="text-sm font-bold text-gray-900 tabular-nums">
+                  {formatCurrency(tx.linkAmount ?? tx.amount, currency)}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-xl border-2 border-dashed border-gray-200 bg-gray-50/60 p-5">
+            <p className="text-sm text-gray-600">No funding transactions yet. Link transactions to show purchase history.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Related spending */}
+      <div className="mt-6">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-400">Related spending</h2>
+          <button
+            onClick={() => {
+              setTxnLinkRole("spend_on");
+              setShowLinkTxnModal(true);
+            }}
+            className="rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 transition"
+          >
+            Link transaction
+          </button>
+        </div>
+        {spendOnTxns.length > 0 ? (
+          <div className="space-y-2">
+            {spendOnTxns.map((tx) => (
+              <div key={tx.fingerprint} className="flex items-center justify-between rounded-xl border border-gray-200 bg-white p-3">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-gray-900">{tx.merchant}</p>
+                  <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500">
+                    <span>{tx.category}</span>
+                    <span>•</span>
+                    <span>{tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "No date"}</span>
+                  </div>
+                </div>
+                <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(tx.amount, currency)}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-xl border-2 border-dashed border-gray-200 bg-gray-50/60 p-5">
+            <p className="text-sm text-gray-600">No related spending yet. Link transactions for insurance, gas, repairs, etc.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Edit panel */}
+      <div className="mt-6 rounded-xl border border-gray-200 bg-white p-5">
         {!editing ? (
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -328,21 +479,6 @@ export default function ManualAssetPage() {
                 />
               </div>
             </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-500">Linked loan (optional)</label>
-              <select
-                value={linkedSlug}
-                onChange={(e) => setLinkedSlug(e.target.value)}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
-              >
-                <option value="">Not linked</option>
-                {debtAccounts.map((a) => (
-                  <option key={a.slug} value={a.slug}>
-                    {a.bankName}{a.accountName ? ` — ${a.accountName}` : ""} ({formatCurrency(Math.abs(a.balance), currency)})
-                  </option>
-                ))}
-              </select>
-            </div>
             <div className="flex items-center justify-end gap-2 pt-1">
               <button
                 onClick={() => setEditing(false)}
@@ -362,7 +498,50 @@ export default function ManualAssetPage() {
           </div>
         )}
       </div>
-      </div>
+
+      {/* Link Account Modal (placeholder - simplified for P1) */}
+      {showLinkAccountModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="max-w-md w-full rounded-xl bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-bold text-gray-900">Link Account</h3>
+            <p className="mt-2 text-sm text-gray-600">Select an account and role to link to this asset.</p>
+            <div className="mt-4 space-y-3">
+              <p className="text-xs text-gray-500">Coming soon: account selection interface</p>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                onClick={() => setShowLinkAccountModal(false)}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Link Transaction Modal (placeholder - simplified for P1) */}
+      {showLinkTxnModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="max-w-md w-full rounded-xl bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-bold text-gray-900">Link Transaction</h3>
+            <p className="mt-2 text-sm text-gray-600">
+              Select a transaction to link as {txnLinkRole === "funds" ? "funding" : "related spending"}.
+            </p>
+            <div className="mt-4 space-y-3">
+              <p className="text-xs text-gray-500">Coming soon: transaction selection interface</p>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                onClick={() => setShowLinkTxnModal(false)}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -34,6 +34,48 @@ export interface ManualAsset {
   updatedAt: string; // ISO date string
 }
 
+// ── Typed Links & Hubs ───────────────────────────────────────────────────────
+
+export type HubRole = "finances" | "secures" | "funds" | "spend_on" | "grouped_under";
+
+export interface HubLink {
+  hubId: string;
+  role: HubRole;
+  /** funds only: omit = whole txn; set = partial amount toward the asset */
+  amount?: number;
+  createdAt: string;
+}
+
+/** General hub / topic created by user (e.g. "Taxes", "Vacation_Mexico") */
+export interface GeneralHub {
+  id: string;
+  name: string;
+  /** Tailwind color name for chips/badges */
+  color?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Links from an account to hubs (manual assets or general topics).
+ * Stored in users/{uid}/accountLinks/{accountSlug}
+ */
+export interface AccountLinks {
+  accountSlug: string;
+  links: HubLink[];
+  updatedAt: string;
+}
+
+/**
+ * Links from a transaction to hubs (manual assets or general topics).
+ * Stored in users/{uid}/txLinks/{txFingerprint}
+ */
+export interface TransactionLinks {
+  txFingerprint: string;
+  links: HubLink[];
+  updatedAt: string;
+}
+
 // Parsed statement data from Claude API
 export interface IncomeSource {
   description: string;
