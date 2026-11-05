@@ -36,7 +36,7 @@ export interface ManualAsset {
 
 // ── Typed Links & Hubs ───────────────────────────────────────────────────────
 
-export type HubRole = "finances" | "secures" | "funds" | "spend_on" | "grouped_under";
+export type HubRole = "finances" | "secures" | "funds" | "spend_on" | "grouped_under" | "income_from";
 
 export interface HubLink {
   hubId: string;

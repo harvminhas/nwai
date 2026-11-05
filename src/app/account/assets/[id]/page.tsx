@@ -53,7 +53,7 @@ export default function ManualAssetPage() {
 
   // Hub links state
   type TxnWithFingerprint = ExpenseTransaction & { fingerprint: string };
-  type LinkedTxn = TxnWithFingerprint & { linkAmount?: number; role: "funds" | "spend_on" };
+  type LinkedTxn = TxnWithFingerprint & { linkAmount?: number; role: "funds" | "spend_on" | "income_from" };
   const [linkedAccounts, setLinkedAccounts] = useState<Array<{ account: DebtAccount; role: string; isLegacy?: boolean }>>([]);
   const [linkedTxns, setLinkedTxns] = useState<LinkedTxn[]>([]);
   const [showLinkAccountModal, setShowLinkAccountModal] = useState(false);
@@ -68,7 +68,7 @@ export default function ManualAssetPage() {
   // Link transaction modal state
   const [txnSearch, setTxnSearch] = useState("");
   const [selectedTxns, setSelectedTxns] = useState<Set<string>>(new Set());
-  const [selectedTxnRole, setSelectedTxnRole] = useState<"funds" | "spend_on">("funds");
+  const [selectedTxnRole, setSelectedTxnRole] = useState<"funds" | "spend_on" | "income_from">("funds");
   const [partialAmount, setPartialAmount] = useState("");
 
   const load = useCallback(async (tok: string) => {
@@ -163,10 +163,10 @@ export default function ManualAssetPage() {
           const { links } = await txLinksRes.json();
           
           const allLinked = links
-            .filter((l: { role: string }) => l.role === "funds" || l.role === "spend_on")
+            .filter((l: { role: string }) => l.role === "funds" || l.role === "spend_on" || l.role === "income_from")
             .map((l: { fingerprint: string; role: string; amount?: number }) => {
               const txn = txnsData.find((t) => t.fingerprint === l.fingerprint);
-              return txn ? { ...txn, linkAmount: l.amount, role: l.role as "funds" | "spend_on" } : null;
+              return txn ? { ...txn, linkAmount: l.amount, role: l.role as "funds" | "spend_on" | "income_from" } : null;
             })
             .filter(Boolean);
           
@@ -385,6 +385,7 @@ export default function ManualAssetPage() {
 
   const spendingTxns = linkedTxns.filter((tx) => tx.role === "spend_on");
   const fundingTxns = linkedTxns.filter((tx) => tx.role === "funds");
+  const incomeTxns = linkedTxns.filter((tx) => tx.role === "income_from");
 
   // Spending by category for pie chart
   const spendingByCategory: Record<string, number> = {};
@@ -394,6 +395,9 @@ export default function ManualAssetPage() {
   });
 
   const totalSpending = Object.values(spendingByCategory).reduce((sum, amt) => sum + amt, 0);
+  
+  // Total income from this asset
+  const totalIncome = incomeTxns.reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
 
   return (
     <div className="mx-auto max-w-6xl px-4 pt-4 pb-8 sm:py-8 sm:px-6">
@@ -441,15 +445,7 @@ export default function ManualAssetPage() {
 
       {/* Asset Summary Cards */}
       <div className="grid gap-4 sm:grid-cols-3">
-        {/* Value */}
-        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-medium text-gray-500">Value</p>
-          <p className="mt-2 text-2xl font-bold text-gray-900 tabular-nums">
-            {formatCurrency(asset.value, currency)}
-          </p>
-        </div>
-
-        {/* Equity */}
+        {/* Value & Equity */}
         <div className={`rounded-xl border p-5 shadow-sm ${
           linkedAccounts.length > 0
             ? equity >= 0 
@@ -457,16 +453,76 @@ export default function ManualAssetPage() {
               : "border-red-200 bg-red-50"
             : "border-gray-200 bg-white"
         }`}>
-          <p className="text-xs font-medium text-gray-500">Equity</p>
-          <p className={`mt-2 text-2xl font-bold tabular-nums ${
-            linkedAccounts.length > 0
-              ? equity >= 0 
-                ? "text-green-700" 
-                : "text-red-600"
-              : "text-gray-900"
-          }`}>
-            {formatCurrency(equity, currency)}
+          <p className="text-xs font-medium text-gray-500">Value</p>
+          <p className="mt-2 text-2xl font-bold text-gray-900 tabular-nums">
+            {formatCurrency(asset.value, currency)}
           </p>
+          {linkedAccounts.length > 0 && (
+            <>
+              <p className="mt-3 text-xs font-medium text-gray-500">Equity</p>
+              <p className={`mt-1 text-xl font-bold tabular-nums ${
+                equity >= 0 ? "text-green-700" : "text-red-600"
+              }`}>
+                {formatCurrency(equity, currency)}
+              </p>
+            </>
+          )}
+        </div>
+
+        {/* Income */}
+        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <p className="text-xs font-medium text-gray-500">Income</p>
+          <p className="mt-2 text-2xl font-bold text-gray-900 tabular-nums">
+            {formatCurrency(totalIncome, currency)}
+          </p>
+          {incomeTxns.length > 0 ? (
+            <div className="mt-3 space-y-2">
+              {incomeTxns.slice(0, 3).map((tx) => (
+                <div key={tx.fingerprint} className="flex items-start justify-between gap-2 text-xs">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-gray-700 truncate">{tx.merchant}</p>
+                    <p className="text-gray-400 truncate">
+                      {tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : ""}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <p className="font-medium text-gray-900 tabular-nums">
+                      {formatCurrency(Math.abs(tx.amount), currency)}
+                    </p>
+                    <button
+                      onClick={() => unlinkTransaction(tx.fingerprint, tx.role)}
+                      className="text-gray-400 hover:text-red-600 transition"
+                      title="Remove"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {incomeTxns.length > 3 && (
+                <p className="text-xs text-gray-400">+ {incomeTxns.length - 3} more</p>
+              )}
+              <button
+                onClick={() => {
+                  setSelectedTxnRole("income_from");
+                  setShowLinkTxnModal(true);
+                }}
+                className="mt-2 text-xs text-purple-600 hover:text-purple-700 font-medium"
+              >
+                + Link income
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => {
+                setSelectedTxnRole("income_from");
+                setShowLinkTxnModal(true);
+              }}
+              className="mt-3 text-sm text-purple-600 hover:text-purple-700 font-medium"
+            >
+              + Link income
+            </button>
+          )}
         </div>
 
         {/* Debt Owed */}
@@ -808,10 +864,10 @@ export default function ManualAssetPage() {
             <div className="mt-4 space-y-3">
               <div>
                 <label className="mb-2 block text-xs font-medium text-gray-500">Type</label>
-                <div className="flex gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   <button
                     onClick={() => setSelectedTxnRole("funds")}
-                    className={`flex-1 rounded-lg border px-3 py-2 text-sm transition ${
+                    className={`rounded-lg border px-3 py-2 text-sm transition ${
                       selectedTxnRole === "funds"
                         ? "border-purple-400 bg-purple-50 text-purple-700"
                         : "border-gray-200 text-gray-600 hover:border-gray-300"
@@ -821,13 +877,23 @@ export default function ManualAssetPage() {
                   </button>
                   <button
                     onClick={() => setSelectedTxnRole("spend_on")}
-                    className={`flex-1 rounded-lg border px-3 py-2 text-sm transition ${
+                    className={`rounded-lg border px-3 py-2 text-sm transition ${
                       selectedTxnRole === "spend_on"
                         ? "border-purple-400 bg-purple-50 text-purple-700"
                         : "border-gray-200 text-gray-600 hover:border-gray-300"
                     }`}
                   >
                     Spending
+                  </button>
+                  <button
+                    onClick={() => setSelectedTxnRole("income_from")}
+                    className={`rounded-lg border px-3 py-2 text-sm transition ${
+                      selectedTxnRole === "income_from"
+                        ? "border-purple-400 bg-purple-50 text-purple-700"
+                        : "border-gray-200 text-gray-600 hover:border-gray-300"
+                    }`}
+                  >
+                    Income
                   </button>
                 </div>
               </div>
