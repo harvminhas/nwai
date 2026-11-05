@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "fingerprint, hubId, and role are required" }, { status: 400 });
     }
 
-    const validRoles = ["finances", "secures", "funds", "spend_on", "grouped_under"];
+    const validRoles = ["finances", "secures", "funds", "spend_on", "grouped_under", "income_from"];
     if (!validRoles.includes(body.role)) {
       return NextResponse.json({ error: `Invalid role. Must be one of: ${validRoles.join(", ")}` }, { status: 400 });
     }
