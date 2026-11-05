@@ -583,7 +583,10 @@ function FlowSections({
       {/* ── Subscriptions ─────────────────────────────────────────────── */}
       {subscriptions.length > 0 && (
         <div className={hasOutflow && hasIncoming ? "sm:col-span-2" : ""}>
-          <SubscriptionsCard subscriptions={subscriptions} />
+          <SubscriptionsCard 
+            subscriptions={subscriptions}
+            onMerchantClick={onMerchantClick}
+          />
         </div>
       )}
     </div>
