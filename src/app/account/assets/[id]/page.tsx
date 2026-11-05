@@ -54,13 +54,12 @@ export default function ManualAssetPage() {
 
   // Hub links state
   type TxnWithFingerprint = ExpenseTransaction & { fingerprint: string };
+  type LinkedTxn = TxnWithFingerprint & { linkAmount?: number; role: "funds" | "spend_on" };
   const [linkedAccounts, setLinkedAccounts] = useState<Array<{ account: DebtAccount; role: string }>>([]);
-  const [fundingTxns, setFundingTxns] = useState<Array<TxnWithFingerprint & { linkAmount?: number }>>([]);
-  const [spendOnTxns, setSpendOnTxns] = useState<TxnWithFingerprint[]>([]);
+  const [linkedTxns, setLinkedTxns] = useState<LinkedTxn[]>([]);
   const [showLinkAccountModal, setShowLinkAccountModal] = useState(false);
   const [showLinkTxnModal, setShowLinkTxnModal] = useState(false);
   const [availableTxns, setAvailableTxns] = useState<TxnWithFingerprint[]>([]);
-  const [txnLinkRole, setTxnLinkRole] = useState<"funds" | "spend_on">("funds");
   
   // Link account modal state
   const [selectedAccountSlug, setSelectedAccountSlug] = useState("");
@@ -70,6 +69,7 @@ export default function ManualAssetPage() {
   // Link transaction modal state
   const [txnSearch, setTxnSearch] = useState("");
   const [selectedTxn, setSelectedTxn] = useState<string | null>(null);
+  const [selectedTxnRole, setSelectedTxnRole] = useState<"funds" | "spend_on">("funds");
   const [partialAmount, setPartialAmount] = useState("");
 
   const load = useCallback(async (tok: string) => {
@@ -140,21 +140,15 @@ export default function ManualAssetPage() {
         if (txLinksRes.ok) {
           const { links } = await txLinksRes.json();
           
-          const funding = links
-            .filter((l: { role: string }) => l.role === "funds")
-            .map((l: { fingerprint: string; amount?: number }) => {
+          const allLinked = links
+            .filter((l: { role: string }) => l.role === "funds" || l.role === "spend_on")
+            .map((l: { fingerprint: string; role: string; amount?: number }) => {
               const txn = txnsData.find((t) => t.fingerprint === l.fingerprint);
-              return txn ? { ...txn, linkAmount: l.amount } : null;
+              return txn ? { ...txn, linkAmount: l.amount, role: l.role as "funds" | "spend_on" } : null;
             })
             .filter(Boolean);
           
-          const spending = links
-            .filter((l: { role: string }) => l.role === "spend_on")
-            .map((l: { fingerprint: string }) => txnsData.find((t) => t.fingerprint === l.fingerprint))
-            .filter(Boolean);
-          
-          setFundingTxns(funding);
-          setSpendOnTxns(spending);
+          setLinkedTxns(allLinked);
         }
       } catch (err) {
         console.error("Failed to load links:", err);
@@ -288,9 +282,9 @@ export default function ManualAssetPage() {
       const body: { fingerprint: string; hubId: string; role: string; amount?: number } = {
         fingerprint: selectedTxn,
         hubId: asset.id,
-        role: txnLinkRole,
+        role: selectedTxnRole,
       };
-      if (txnLinkRole === "funds" && partialAmount) {
+      if (selectedTxnRole === "funds" && partialAmount) {
         const amt = Number(partialAmount.replace(/[^0-9.-]/g, ""));
         if (!isNaN(amt) && amt > 0) {
           body.amount = amt;
@@ -307,6 +301,7 @@ export default function ManualAssetPage() {
       setSelectedTxn(null);
       setPartialAmount("");
       setTxnSearch("");
+      setSelectedTxnRole("funds");
       await load(token);
     } catch {
       setToast({ msg: "Could not link transaction", ok: false });
@@ -421,137 +416,103 @@ export default function ManualAssetPage() {
         )}
       </div>
 
-      {/* Financing (linked accounts) */}
-      <div className="mt-6">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-400">Financing</h2>
-          <button
-            onClick={() => setShowLinkAccountModal(true)}
-            className="rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 transition"
-          >
-            Link account
-          </button>
-        </div>
-        {linkedAccounts.length > 0 ? (
+      {/* Financing */}
+      {linkedAccounts.length > 0 && (
+        <div className="mt-6">
+          <h2 className="mb-2 text-sm font-medium text-gray-500">Financing</h2>
           <div className="space-y-2">
             {linkedAccounts.map(({ account, role }) => (
-              <div key={account.slug} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-4">
+              <div key={account.slug} className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-3">
                 <div className="flex-1">
-                  <p className="font-medium text-gray-900">{account.bankName}</p>
-                  {account.accountName && <p className="text-sm text-gray-600">{account.accountName}</p>}
-                  <span className="mt-1 inline-block rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
-                    {role === "finances" ? "Financing" : "Secures"}
-                  </span>
+                  <p className="text-sm font-medium text-gray-900">{account.bankName}</p>
+                  {account.accountName && <p className="text-xs text-gray-600">{account.accountName}</p>}
                 </div>
                 <div className="text-right">
-                  <p className="text-lg font-bold text-gray-900 tabular-nums">{formatCurrency(Math.abs(account.balance), currency)}</p>
-                  <p className="text-xs text-gray-500">
-                    as of {formatMonth(account.statementMonth)}
+                  <p className="text-sm font-semibold text-gray-900 tabular-nums">{formatCurrency(Math.abs(account.balance), currency)}</p>
+                  <p className="text-xs text-gray-400">
+                    {formatMonth(account.statementMonth)}
                   </p>
                 </div>
                 <button
                   onClick={() => unlinkAccount(account.slug, role)}
-                  className="shrink-0 rounded-lg border border-gray-200 px-2 py-1 text-xs font-medium text-gray-400 hover:border-red-300 hover:text-red-600 transition"
+                  className="shrink-0 text-xs text-gray-400 hover:text-red-600 transition"
                 >
-                  Unlink
+                  Remove
                 </button>
               </div>
             ))}
           </div>
-        ) : (
-          <div className="rounded-xl border-2 border-dashed border-gray-200 bg-gray-50/60 p-5">
-            <p className="text-sm text-gray-600">No linked accounts yet. Link a loan or mortgage to track equity.</p>
-          </div>
-        )}
-      </div>
-
-      {/* How you paid (funding transactions) */}
-      <div className="mt-6">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-400">How you paid</h2>
           <button
-            onClick={() => {
-              setTxnLinkRole("funds");
-              setShowLinkTxnModal(true);
-            }}
-            className="rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 transition"
+            onClick={() => setShowLinkAccountModal(true)}
+            className="mt-2 text-xs text-purple-600 hover:text-purple-700"
           >
-            Link transaction
+            + Link account
           </button>
         </div>
-        {fundingTxns.length > 0 ? (
+      )}
+      
+      {linkedAccounts.length === 0 && (
+        <div className="mt-6">
+          <button
+            onClick={() => setShowLinkAccountModal(true)}
+            className="text-sm text-purple-600 hover:text-purple-700"
+          >
+            + Link financing account
+          </button>
+        </div>
+      )}
+
+      {/* Linked transactions */}
+      {linkedTxns.length > 0 && (
+        <div className="mt-6">
+          <h2 className="mb-2 text-sm font-medium text-gray-500">Linked transactions</h2>
           <div className="space-y-2">
-            {fundingTxns.map((tx) => (
-              <div key={tx.fingerprint} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3">
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-gray-900">{tx.merchant}</p>
+            {linkedTxns.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "")).map((tx) => (
+              <div key={tx.fingerprint} className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-gray-900 truncate">{tx.merchant}</p>
+                    <span className="shrink-0 text-xs text-gray-400">
+                      {tx.role === "funds" ? "Funding" : "Spending"}
+                    </span>
+                  </div>
                   <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500">
-                    <span>{tx.accountLabel ?? "Unknown account"}</span>
+                    <span>{tx.accountLabel ?? "Unknown"}</span>
                     <span>•</span>
                     <span>{tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "No date"}</span>
                   </div>
                 </div>
-                <p className="text-sm font-bold text-gray-900 tabular-nums">
+                <p className="text-sm font-semibold text-gray-900 tabular-nums">
                   {formatCurrency(tx.linkAmount ?? tx.amount, currency)}
                 </p>
                 <button
-                  onClick={() => unlinkTransaction(tx.fingerprint, "funds")}
-                  className="shrink-0 rounded-lg border border-gray-200 px-2 py-1 text-xs font-medium text-gray-400 hover:border-red-300 hover:text-red-600 transition"
+                  onClick={() => unlinkTransaction(tx.fingerprint, tx.role)}
+                  className="shrink-0 text-xs text-gray-400 hover:text-red-600 transition"
                 >
-                  Unlink
+                  Remove
                 </button>
               </div>
             ))}
           </div>
-        ) : (
-          <div className="rounded-xl border-2 border-dashed border-gray-200 bg-gray-50/60 p-5">
-            <p className="text-sm text-gray-600">No funding transactions yet. Link transactions to show purchase history.</p>
-          </div>
-        )}
-      </div>
-
-      {/* Related spending */}
-      <div className="mt-6">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-400">Related spending</h2>
           <button
-            onClick={() => {
-              setTxnLinkRole("spend_on");
-              setShowLinkTxnModal(true);
-            }}
-            className="rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 transition"
+            onClick={() => setShowLinkTxnModal(true)}
+            className="mt-2 text-xs text-purple-600 hover:text-purple-700"
           >
-            Link transaction
+            + Link transaction
           </button>
         </div>
-        {spendOnTxns.length > 0 ? (
-          <div className="space-y-2">
-            {spendOnTxns.map((tx) => (
-              <div key={tx.fingerprint} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3">
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-gray-900">{tx.merchant}</p>
-                  <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500">
-                    <span>{tx.category}</span>
-                    <span>•</span>
-                    <span>{tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "No date"}</span>
-                  </div>
-                </div>
-                <p className="text-sm font-bold text-gray-900 tabular-nums">{formatCurrency(tx.amount, currency)}</p>
-                <button
-                  onClick={() => unlinkTransaction(tx.fingerprint, "spend_on")}
-                  className="shrink-0 rounded-lg border border-gray-200 px-2 py-1 text-xs font-medium text-gray-400 hover:border-red-300 hover:text-red-600 transition"
-                >
-                  Unlink
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="rounded-xl border-2 border-dashed border-gray-200 bg-gray-50/60 p-5">
-            <p className="text-sm text-gray-600">No related spending yet. Link transactions for insurance, gas, repairs, etc.</p>
-          </div>
-        )}
-      </div>
+      )}
+      
+      {linkedTxns.length === 0 && (
+        <div className="mt-4">
+          <button
+            onClick={() => setShowLinkTxnModal(true)}
+            className="text-sm text-purple-600 hover:text-purple-700"
+          >
+            + Link transaction
+          </button>
+        </div>
+      )}
 
       {/* Edit panel */}
       <div className="mt-6 rounded-xl border border-gray-200 bg-white p-5">
@@ -635,8 +596,8 @@ export default function ManualAssetPage() {
       {showLinkAccountModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowLinkAccountModal(false)}>
           <div className="max-w-lg w-full rounded-xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold text-gray-900">Link Account</h3>
-            <p className="mt-2 text-sm text-gray-600">Select a debt account and role to link to this asset.</p>
+            <h3 className="text-lg font-bold text-gray-900">Link account</h3>
+            <p className="mt-2 text-sm text-gray-600">Link a debt account that finances this asset.</p>
             <div className="mt-4 space-y-4">
               <div>
                 <label className="mb-2 block text-xs font-medium text-gray-500">Account</label>
@@ -656,37 +617,35 @@ export default function ManualAssetPage() {
                 </select>
               </div>
               <div>
-                <label className="mb-2 block text-xs font-medium text-gray-500">Role</label>
-                <div className="space-y-2">
-                  <label className="flex items-start gap-2 rounded-lg border border-gray-200 p-3 cursor-pointer hover:border-purple-300">
-                    <input
-                      type="radio"
-                      name="accountRole"
-                      value="finances"
-                      checked={selectedAccountRole === "finances"}
-                      onChange={(e) => setSelectedAccountRole(e.target.value as "finances" | "secures")}
-                      className="mt-0.5"
-                    />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-gray-900">Financing</p>
-                      <p className="text-xs text-gray-500">General loan or mortgage that finances this asset</p>
-                    </div>
-                  </label>
-                  <label className="flex items-start gap-2 rounded-lg border border-gray-200 p-3 cursor-pointer hover:border-purple-300">
-                    <input
-                      type="radio"
-                      name="accountRole"
-                      value="secures"
-                      checked={selectedAccountRole === "secures"}
-                      onChange={(e) => setSelectedAccountRole(e.target.value as "finances" | "secures")}
-                      className="mt-0.5"
-                    />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-gray-900">Secures</p>
-                      <p className="text-xs text-gray-500">HELOC or LOC secured by this asset</p>
-                    </div>
-                  </label>
+                <label className="mb-2 block text-xs font-medium text-gray-500">Type</label>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setSelectedAccountRole("finances")}
+                    className={`flex-1 rounded-lg border px-3 py-2 text-sm transition ${
+                      selectedAccountRole === "finances"
+                        ? "border-purple-400 bg-purple-50 text-purple-700"
+                        : "border-gray-200 text-gray-600 hover:border-gray-300"
+                    }`}
+                  >
+                    Financing
+                  </button>
+                  <button
+                    onClick={() => setSelectedAccountRole("secures")}
+                    className={`flex-1 rounded-lg border px-3 py-2 text-sm transition ${
+                      selectedAccountRole === "secures"
+                        ? "border-purple-400 bg-purple-50 text-purple-700"
+                        : "border-gray-200 text-gray-600 hover:border-gray-300"
+                    }`}
+                  >
+                    Secures
+                  </button>
                 </div>
+                <p className="mt-2 text-xs text-gray-400">
+                  {selectedAccountRole === "finances" 
+                    ? "General loan or mortgage that finances this asset"
+                    : "HELOC or line of credit secured by this asset"
+                  }
+                </p>
               </div>
             </div>
             <div className="mt-6 flex justify-end gap-2">
@@ -704,7 +663,7 @@ export default function ManualAssetPage() {
                 disabled={!selectedAccountSlug || linking}
                 className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-40 transition"
               >
-                {linking ? "Linking..." : "Link Account"}
+                {linking ? "Linking..." : "Link"}
               </button>
             </div>
           </div>
@@ -715,23 +674,51 @@ export default function ManualAssetPage() {
       {showLinkTxnModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowLinkTxnModal(false)}>
           <div className="max-w-3xl w-full rounded-xl bg-white p-6 shadow-xl max-h-[80vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold text-gray-900">Link Transaction</h3>
+            <h3 className="text-lg font-bold text-gray-900">Link transaction</h3>
             <p className="mt-2 text-sm text-gray-600">
-              Select a transaction to link as {txnLinkRole === "funds" ? "funding" : "related spending"}.
+              Link a transaction to this asset.
             </p>
 
-            <div className="mt-4">
-              <input
-                type="text"
-                value={txnSearch}
-                onChange={(e) => setTxnSearch(e.target.value)}
-                placeholder="Search by merchant..."
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
-              />
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="mb-2 block text-xs font-medium text-gray-500">Type</label>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setSelectedTxnRole("funds")}
+                    className={`flex-1 rounded-lg border px-3 py-2 text-sm transition ${
+                      selectedTxnRole === "funds"
+                        ? "border-purple-400 bg-purple-50 text-purple-700"
+                        : "border-gray-200 text-gray-600 hover:border-gray-300"
+                    }`}
+                  >
+                    Funding
+                  </button>
+                  <button
+                    onClick={() => setSelectedTxnRole("spend_on")}
+                    className={`flex-1 rounded-lg border px-3 py-2 text-sm transition ${
+                      selectedTxnRole === "spend_on"
+                        ? "border-purple-400 bg-purple-50 text-purple-700"
+                        : "border-gray-200 text-gray-600 hover:border-gray-300"
+                    }`}
+                  >
+                    Spending
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <input
+                  type="text"
+                  value={txnSearch}
+                  onChange={(e) => setTxnSearch(e.target.value)}
+                  placeholder="Search by merchant..."
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
+                />
+              </div>
             </div>
 
-            {txnLinkRole === "funds" && selectedTxn && (
-              <div className="mt-3 rounded-lg border border-purple-200 bg-purple-50 p-3">
+            {selectedTxnRole === "funds" && selectedTxn && (
+              <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
                 <label className="block text-xs font-medium text-gray-600 mb-1">
                   Partial amount (optional)
                 </label>
@@ -743,8 +730,8 @@ export default function ManualAssetPage() {
                   inputMode="decimal"
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
                 />
-                <p className="mt-1 text-xs text-gray-500">
-                  If you only used part of this transaction to fund this asset, enter that amount
+                <p className="mt-1 text-xs text-gray-400">
+                  If you only used part of this transaction to fund this asset
                 </p>
               </div>
             )}
@@ -753,12 +740,7 @@ export default function ManualAssetPage() {
               <div className="space-y-2">
                 {availableTxns
                   .filter((tx) => !txnSearch || tx.merchant?.toLowerCase().includes(txnSearch.toLowerCase()))
-                  .filter((tx) => {
-                    const alreadyLinked = 
-                      fundingTxns.some((f) => f.fingerprint === tx.fingerprint) ||
-                      spendOnTxns.some((s) => s.fingerprint === tx.fingerprint);
-                    return !alreadyLinked;
-                  })
+                  .filter((tx) => !linkedTxns.some((l) => l.fingerprint === tx.fingerprint))
                   .slice(0, 50)
                   .map((tx) => (
                     <button
@@ -767,7 +749,7 @@ export default function ManualAssetPage() {
                       className={`w-full text-left rounded-lg border p-3 transition ${
                         selectedTxn === tx.fingerprint
                           ? "border-purple-400 bg-purple-50"
-                          : "border-gray-200 hover:border-purple-200"
+                          : "border-gray-200 hover:border-gray-300"
                       }`}
                     >
                       <div className="flex items-start justify-between gap-3">
@@ -781,7 +763,7 @@ export default function ManualAssetPage() {
                             <span>{tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "No date"}</span>
                           </div>
                         </div>
-                        <p className="text-sm font-bold text-gray-900 tabular-nums">
+                        <p className="text-sm font-semibold text-gray-900 tabular-nums">
                           {formatCurrency(tx.amount, currency)}
                         </p>
                       </div>
@@ -800,6 +782,7 @@ export default function ManualAssetPage() {
                   setSelectedTxn(null);
                   setPartialAmount("");
                   setTxnSearch("");
+                  setSelectedTxnRole("funds");
                 }}
                 className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900"
               >
@@ -810,7 +793,7 @@ export default function ManualAssetPage() {
                 disabled={!selectedTxn || linking}
                 className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-40 transition"
               >
-                {linking ? "Linking..." : "Link Transaction"}
+                {linking ? "Linking..." : "Link"}
               </button>
             </div>
           </div>
