@@ -452,7 +452,7 @@ export default function ManualAssetPage() {
       </div>
 
       {/* Asset Summary Cards */}
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className={`grid gap-4 ${totalIncome > 0 ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
         {/* Value & Equity */}
         <div className={`rounded-xl border p-5 shadow-sm ${
           linkedAccounts.length > 0
@@ -476,6 +476,16 @@ export default function ManualAssetPage() {
             </>
           )}
         </div>
+
+        {/* Income (conditional - only shown when totalIncome > 0) */}
+        {totalIncome > 0 && (
+          <div className="rounded-xl border border-green-200 bg-green-50 p-5 shadow-sm">
+            <p className="text-xs font-medium text-gray-500">Income</p>
+            <p className="mt-2 text-2xl font-bold text-green-700 tabular-nums">
+              {formatCurrency(totalIncome, currency)}
+            </p>
+          </div>
+        )}
 
         {/* Debt Owed */}
         <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
