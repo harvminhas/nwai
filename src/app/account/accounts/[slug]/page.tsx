@@ -463,7 +463,7 @@ function FlowSections({
                   {isExpanded && hasTxns && (
                     <div className="bg-gray-50/60 px-5 py-2 space-y-1.5 border-t border-gray-100">
                       {categoryTxns.map((txn, i) => (
-                        <div key={i} className="flex items-center justify-between gap-3 text-xs py-1.5 px-3 bg-white rounded border border-gray-100">
+                        <div key={`${cat.name}-${txn.merchant}-${txn.date}-${i}`} className="flex items-center justify-between gap-3 text-xs py-1.5 px-3 bg-white rounded border border-gray-100">
                           <div className="flex-1 min-w-0">
                             <button
                               onClick={(e) => {
@@ -541,7 +541,7 @@ function FlowSections({
                   {isExpanded && hasTxns && (
                     <div className="bg-green-50/30 px-5 py-2 space-y-1.5 border-t border-gray-100">
                       {sourceTxns.map((txn, i) => (
-                        <div key={i} className="flex items-center justify-between gap-3 text-xs py-1.5 px-3 bg-white rounded border border-green-100">
+                        <div key={`${src.label}-${txn.source}-${txn.date}-${i}`} className="flex items-center justify-between gap-3 text-xs py-1.5 px-3 bg-white rounded border border-green-100">
                           <div className="flex-1 min-w-0">
                             <button
                               onClick={(e) => {
