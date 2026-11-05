@@ -452,7 +452,7 @@ export default function ManualAssetPage() {
       </div>
 
       {/* Asset Summary Cards */}
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2">
         {/* Value & Equity */}
         <div className={`rounded-xl border p-5 shadow-sm ${
           linkedAccounts.length > 0
@@ -474,54 +474,6 @@ export default function ManualAssetPage() {
                 {formatCurrency(equity, currency)}
               </p>
             </>
-          )}
-        </div>
-
-        {/* Income */}
-        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-gray-500">Income</p>
-            <button
-              onClick={() => {
-                setSelectedTxnRole("income_from");
-                setShowLinkTxnModal(true);
-              }}
-              className="text-xs text-purple-600 hover:text-purple-700 font-medium"
-            >
-              + Add
-            </button>
-          </div>
-          <p className="mt-2 text-2xl font-bold text-gray-900 tabular-nums">
-            {formatCurrency(totalIncome, currency)}
-          </p>
-          {incomeTxns.length > 0 && (
-            <div className="mt-3 space-y-2">
-              {incomeTxns.slice(0, 3).map((tx) => (
-                <div key={tx.fingerprint} className="flex items-start justify-between gap-2 text-xs">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-gray-700 truncate">{tx.merchant}</p>
-                    <p className="text-gray-400 truncate">
-                      {tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : ""}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <p className="font-medium text-gray-900 tabular-nums">
-                      {formatCurrency(Math.abs(tx.amount), currency)}
-                    </p>
-                    <button
-                      onClick={() => unlinkTransaction(tx.fingerprint, tx.role)}
-                      className="text-gray-400 hover:text-red-600 transition"
-                      title="Remove"
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
-              ))}
-              {incomeTxns.length > 3 && (
-                <p className="text-xs text-gray-400">+ {incomeTxns.length - 3} more</p>
-              )}
-            </div>
           )}
         </div>
 
