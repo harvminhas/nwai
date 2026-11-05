@@ -67,7 +67,7 @@ export default function ManualAssetPage() {
 
   // Link transaction modal state
   const [txnSearch, setTxnSearch] = useState("");
-  const [selectedTxn, setSelectedTxn] = useState<string | null>(null);
+  const [selectedTxns, setSelectedTxns] = useState<Set<string>>(new Set());
   const [selectedTxnRole, setSelectedTxnRole] = useState<"funds" | "spend_on">("funds");
   const [partialAmount, setPartialAmount] = useState("");
 
@@ -298,35 +298,41 @@ export default function ManualAssetPage() {
   };
 
   const linkTransaction = async () => {
-    if (!token || !asset || !selectedTxn) return;
+    if (!token || !asset || selectedTxns.size === 0) return;
     setLinking(true);
     try {
-      const body: { fingerprint: string; hubId: string; role: string; amount?: number } = {
-        fingerprint: selectedTxn,
-        hubId: asset.id,
-        role: selectedTxnRole,
-      };
-      if (selectedTxnRole === "funds" && partialAmount) {
-        const amt = Number(partialAmount.replace(/[^0-9.-]/g, ""));
-        if (!isNaN(amt) && amt > 0) {
-          body.amount = amt;
+      // Link all selected transactions
+      const promises = Array.from(selectedTxns).map(async (fingerprint) => {
+        const body: { fingerprint: string; hubId: string; role: string; amount?: number } = {
+          fingerprint,
+          hubId: asset.id,
+          role: selectedTxnRole,
+        };
+        // Only apply partial amount if single transaction selected
+        if (selectedTxns.size === 1 && selectedTxnRole === "funds" && partialAmount) {
+          const amt = Number(partialAmount.replace(/[^0-9.-]/g, ""));
+          if (!isNaN(amt) && amt > 0) {
+            body.amount = amt;
+          }
         }
-      }
-      const res = await fetch("/api/user/tx-links", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        const res = await fetch("/api/user/tx-links", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error("Failed to link transaction");
       });
-      if (!res.ok) throw new Error("Failed to link transaction");
-      setToast({ msg: "Transaction linked", ok: true });
+      
+      await Promise.all(promises);
+      setToast({ msg: `${selectedTxns.size} transaction${selectedTxns.size > 1 ? 's' : ''} linked`, ok: true });
       setShowLinkTxnModal(false);
-      setSelectedTxn(null);
+      setSelectedTxns(new Set());
       setPartialAmount("");
       setTxnSearch("");
       setSelectedTxnRole("funds");
       await load(token);
     } catch {
-      setToast({ msg: "Could not link transaction", ok: false });
+      setToast({ msg: "Could not link transactions", ok: false });
     } finally {
       setLinking(false);
     }
@@ -818,7 +824,15 @@ export default function ManualAssetPage() {
               </div>
             </div>
 
-            {selectedTxnRole === "funds" && selectedTxn && (
+            {selectedTxns.size > 0 && (
+              <div className="mt-3 rounded-lg border border-purple-200 bg-purple-50 p-3">
+                <p className="text-sm font-medium text-purple-900">
+                  {selectedTxns.size} transaction{selectedTxns.size > 1 ? 's' : ''} selected
+                </p>
+              </div>
+            )}
+
+            {selectedTxnRole === "funds" && selectedTxns.size === 1 && (
               <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
                 <label className="block text-xs font-medium text-gray-600 mb-1">
                   Partial amount (optional)
@@ -844,16 +858,29 @@ export default function ManualAssetPage() {
                   .filter((tx) => !linkedTxns.some((l) => l.fingerprint === tx.fingerprint))
                   .slice(0, 50)
                   .map((tx) => (
-                    <button
+                    <label
                       key={tx.fingerprint}
-                      onClick={() => setSelectedTxn(tx.fingerprint)}
-                      className={`w-full text-left rounded-lg border p-3 transition ${
-                        selectedTxn === tx.fingerprint
+                      className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition ${
+                        selectedTxns.has(tx.fingerprint)
                           ? "border-purple-400 bg-purple-50"
                           : "border-gray-200 hover:border-gray-300"
                       }`}
                     >
-                      <div className="flex items-start justify-between gap-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedTxns.has(tx.fingerprint)}
+                        onChange={(e) => {
+                          const newSet = new Set(selectedTxns);
+                          if (e.target.checked) {
+                            newSet.add(tx.fingerprint);
+                          } else {
+                            newSet.delete(tx.fingerprint);
+                          }
+                          setSelectedTxns(newSet);
+                        }}
+                        className="mt-0.5 h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                      />
+                      <div className="flex-1 flex items-start justify-between gap-3 min-w-0">
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-gray-900 truncate">{tx.merchant}</p>
                           <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500">
@@ -868,7 +895,7 @@ export default function ManualAssetPage() {
                           {formatCurrency(tx.amount, currency)}
                         </p>
                       </div>
-                    </button>
+                    </label>
                   ))}
                 {availableTxns.filter((tx) => !txnSearch || tx.merchant?.toLowerCase().includes(txnSearch.toLowerCase())).length === 0 && (
                   <p className="text-sm text-gray-500 text-center py-8">No transactions found</p>
@@ -880,7 +907,7 @@ export default function ManualAssetPage() {
               <button
                 onClick={() => {
                   setShowLinkTxnModal(false);
-                  setSelectedTxn(null);
+                  setSelectedTxns(new Set());
                   setPartialAmount("");
                   setTxnSearch("");
                   setSelectedTxnRole("funds");
@@ -891,10 +918,10 @@ export default function ManualAssetPage() {
               </button>
               <button
                 onClick={linkTransaction}
-                disabled={!selectedTxn || linking}
+                disabled={selectedTxns.size === 0 || linking}
                 className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-40 transition"
               >
-                {linking ? "Linking..." : "Link"}
+                {linking ? "Linking..." : selectedTxns.size > 1 ? `Link ${selectedTxns.size}` : "Link"}
               </button>
             </div>
           </div>

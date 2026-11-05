@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
   const { db } = getFirebaseAdmin();
   const access = await resolveAccess(req, db);
   if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const { actorUid } = access;
+  const { targetUid } = access;
 
   try {
     const body = await req.json() as {
@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Invalid role. Must be one of: ${validRoles.join(", ")}` }, { status: 400 });
     }
 
-    const ref = db.doc(`users/${actorUid}/accountLinks/${body.accountSlug}`);
+    const ref = db.doc(`users/${targetUid}/accountLinks/${body.accountSlug}`);
     const now = new Date().toISOString();
 
     const snap = await ref.get();
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
     };
 
     await ref.set(updated);
-    await invalidateFinancialProfileCache(actorUid, db);
+    await invalidateFinancialProfileCache(targetUid, db);
 
     return NextResponse.json({ ok: true, links: updated.links });
   } catch (err) {
@@ -85,7 +85,7 @@ export async function DELETE(req: NextRequest) {
   const { db } = getFirebaseAdmin();
   const access = await resolveAccess(req, db);
   if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const { actorUid } = access;
+  const { targetUid } = access;
 
   try {
     const body = await req.json() as {
@@ -98,7 +98,7 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: "accountSlug, hubId, and role are required" }, { status: 400 });
     }
 
-    const ref = db.doc(`users/${actorUid}/accountLinks/${body.accountSlug}`);
+    const ref = db.doc(`users/${targetUid}/accountLinks/${body.accountSlug}`);
     const snap = await ref.get();
     
     if (!snap.exists) {
@@ -121,7 +121,7 @@ export async function DELETE(req: NextRequest) {
       });
     }
 
-    await invalidateFinancialProfileCache(actorUid, db);
+    await invalidateFinancialProfileCache(targetUid, db);
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("[account-links] DELETE error", err);

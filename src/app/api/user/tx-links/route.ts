@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   const { db } = getFirebaseAdmin();
   const access = await resolveAccess(req, db);
   if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const { actorUid } = access;
+  const { targetUid } = access;
 
   try {
     const body = await req.json() as {
@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Only 'funds' role can have partial amount" }, { status: 400 });
     }
 
-    const ref = db.doc(`users/${actorUid}/txLinks/${body.fingerprint}`);
+    const ref = db.doc(`users/${targetUid}/txLinks/${body.fingerprint}`);
     const now = new Date().toISOString();
 
     const snap = await ref.get();
@@ -93,7 +93,7 @@ export async function DELETE(req: NextRequest) {
   const { db } = getFirebaseAdmin();
   const access = await resolveAccess(req, db);
   if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const { actorUid } = access;
+  const { targetUid } = access;
 
   try {
     const body = await req.json() as {
@@ -106,7 +106,7 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: "fingerprint, hubId, and role are required" }, { status: 400 });
     }
 
-    const ref = db.doc(`users/${actorUid}/txLinks/${body.fingerprint}`);
+    const ref = db.doc(`users/${targetUid}/txLinks/${body.fingerprint}`);
     const snap = await ref.get();
     
     if (!snap.exists) {
