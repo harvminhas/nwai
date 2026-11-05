@@ -209,21 +209,59 @@ export async function extractAllTransactions(
 
   // ── 1. Deduplicate: best doc per account-slug × statement-month ──────────────
   // If the same statement was re-uploaded, keep only the most recent parse.
-  const bestDocPerSlugYm = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+  //
+  // One exception: a CSV backfill and a PDF statement can share a month while
+  // covering different days of it. TD's October card statement runs to the 6th and
+  // the transaction export for the rest of October starts on the 7th. Keying on
+  // month alone let the newer CSV evict the PDF and dropped every PDF row, so the
+  // 1st-6th vanished. When the two sources' date spans genuinely differ, both are
+  // kept and the two-pass walk below merges them by fingerprint; when the CSV only
+  // repeats days the PDF already covers, the newer document still wins on its own.
+  const docTs = (doc: FirebaseFirestore.QueryDocumentSnapshot) =>
+    doc.data().uploadedAt?.toDate?.()?.getTime() ?? 0;
+
+  const docSpan = (doc: FirebaseFirestore.QueryDocumentSnapshot): { min: string; max: string } | null => {
+    const parsed = doc.data().parsedData as ParsedStatementData | undefined;
+    const dates: string[] = [];
+    for (const t of parsed?.expenses?.transactions ?? []) if (t.date) dates.push(t.date);
+    for (const t of parsed?.income?.transactions ?? []) if (t.date) dates.push(t.date);
+    if (dates.length === 0) return null;
+    dates.sort();
+    return { min: dates[0], max: dates[dates.length - 1] };
+  };
+
+  const docsBySlugYm = new Map<string, FirebaseFirestore.QueryDocumentSnapshot[]>();
   for (const doc of allDocs) {
-    const d = doc.data();
-    const stmtYm = docYearMonth(d);
+    const stmtYm = docYearMonth(doc.data());
     if (!stmtYm) continue;
-    const parsed = d.parsedData as ParsedStatementData;
-    const slug = resolveSlug(d, parsed);
+    const slug = resolveSlug(doc.data(), doc.data().parsedData as ParsedStatementData);
     const key = `${slug}|${stmtYm}`;
-    const existing = bestDocPerSlugYm.get(key);
-    if (!existing) {
-      bestDocPerSlugYm.set(key, doc);
-    } else {
-      const existingTs = existing.data().uploadedAt?.toDate?.()?.getTime() ?? 0;
-      const thisTs     = d.uploadedAt?.toDate?.()?.getTime() ?? 0;
-      if (thisTs > existingTs) bestDocPerSlugYm.set(key, doc);
+    const bucket = docsBySlugYm.get(key);
+    if (bucket) bucket.push(doc); else docsBySlugYm.set(key, [doc]);
+  }
+
+  const bestDocPerSlugYm = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+  for (const [key, docs] of docsBySlugYm) {
+    // Newest upload wins within each source.
+    const bySource = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+    for (const doc of docs) {
+      const src = (doc.data().source as string | undefined) === "csv" ? "csv" : "pdf";
+      const cur = bySource.get(src);
+      if (!cur || docTs(doc) > docTs(cur)) bySource.set(src, doc);
+    }
+    const chosen = Array.from(bySource.values()).sort((a, b) => docTs(b) - docTs(a));
+
+    const winner = chosen[0];
+    bestDocPerSlugYm.set(key, winner);
+
+    // Keep a second source only when it reaches days the winner does not cover;
+    // otherwise it is a re-upload of the same period and must not be counted twice.
+    const winSpan = docSpan(winner);
+    for (let i = 1; i < chosen.length; i++) {
+      const span = docSpan(chosen[i]);
+      if (!span) continue;
+      const addsDays = !winSpan || span.max > winSpan.max || span.min < winSpan.min;
+      if (addsDays) bestDocPerSlugYm.set(`${key}|${i}`, chosen[i]);
     }
   }
 
