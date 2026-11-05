@@ -447,63 +447,77 @@ export default function ManualAssetPage() {
         </div>
       </div>
 
-      {/* Value or Equity */}
-      <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-        {linkedAccounts.length > 0 ? (
-          <>
-            <p className="text-xs font-medium text-gray-500">Equity</p>
-            <p className={`mt-2 text-2xl font-bold tabular-nums ${equity >= 0 ? "text-green-700" : "text-red-600"}`}>
-              {formatCurrency(equity, currency)}
-            </p>
-            <p className="mt-1.5 text-xs text-gray-400">
-              {formatCurrency(asset.value, currency)} value less {formatCurrency(totalDebt, currency)} owed
-            </p>
-          </>
-        ) : (
-          <>
-            <p className="text-xs font-medium text-gray-500">Value</p>
-            <p className="mt-2 text-2xl font-bold text-gray-900 tabular-nums">
-              {formatCurrency(asset.value, currency)}
-            </p>
-          </>
-        )}
-      </div>
+      {/* Asset Summary Cards */}
+      <div className="grid gap-4 sm:grid-cols-3">
+        {/* Value */}
+        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <p className="text-xs font-medium text-gray-500">Value</p>
+          <p className="mt-2 text-2xl font-bold text-gray-900 tabular-nums">
+            {formatCurrency(asset.value, currency)}
+          </p>
+        </div>
 
-      {/* Financing */}
-      {linkedAccounts.length > 0 && (
-        <div className="mt-6">
-          <h2 className="mb-3 text-sm font-medium text-gray-700">Financing</h2>
-          <div className="space-y-2">
-            {linkedAccounts.map(({ account, role, isLegacy }) => (
-              <div key={account.slug} className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-3">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium text-gray-900">{account.bankName}</p>
-                    {isLegacy && (
-                      <span className="text-xs text-gray-400">(auto-linked)</span>
+        {/* Equity */}
+        <div className={`rounded-xl border p-5 shadow-sm ${
+          linkedAccounts.length > 0
+            ? equity >= 0 
+              ? "border-green-200 bg-green-50" 
+              : "border-red-200 bg-red-50"
+            : "border-gray-200 bg-white"
+        }`}>
+          <p className="text-xs font-medium text-gray-500">Equity</p>
+          <p className={`mt-2 text-2xl font-bold tabular-nums ${
+            linkedAccounts.length > 0
+              ? equity >= 0 
+                ? "text-green-700" 
+                : "text-red-600"
+              : "text-gray-900"
+          }`}>
+            {formatCurrency(equity, currency)}
+          </p>
+        </div>
+
+        {/* Debt Owed */}
+        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <p className="text-xs font-medium text-gray-500">Debt owed</p>
+          <p className="mt-2 text-2xl font-bold text-gray-900 tabular-nums">
+            {formatCurrency(totalDebt, currency)}
+          </p>
+          {linkedAccounts.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {linkedAccounts.map(({ account, role, isLegacy }) => (
+                <div key={account.slug} className="flex items-start justify-between gap-2 text-xs">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-gray-700 truncate">{account.bankName}</p>
+                      {isLegacy && (
+                        <span className="text-gray-400 shrink-0">(auto)</span>
+                      )}
+                    </div>
+                    {account.accountName && (
+                      <p className="text-gray-400 truncate">{account.accountName}</p>
                     )}
                   </div>
-                  {account.accountName && <p className="text-xs text-gray-500">{account.accountName}</p>}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <p className="font-medium text-gray-900 tabular-nums">
+                      {formatCurrency(Math.abs(account.balance), currency)}
+                    </p>
+                    {!isLegacy && (
+                      <button
+                        onClick={() => unlinkAccount(account.slug, role)}
+                        className="text-gray-400 hover:text-red-600 transition"
+                        title="Remove"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className="text-right">
-                  <p className="text-sm font-semibold text-gray-900 tabular-nums">{formatCurrency(Math.abs(account.balance), currency)}</p>
-                  <p className="text-xs text-gray-400">
-                    {formatMonth(account.statementMonth)}
-                  </p>
-                </div>
-                {!isLegacy && (
-                  <button
-                    onClick={() => unlinkAccount(account.slug, role)}
-                    className="shrink-0 text-xs text-gray-400 hover:text-red-600 transition"
-                  >
-                    Remove
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
       {/* Spending section with chart */}
       <div className="mt-6">
