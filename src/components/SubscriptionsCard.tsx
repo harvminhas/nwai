@@ -58,12 +58,6 @@ export default function SubscriptionsCard({
           </ul>
         </div>
       )}
-      <button
-        type="button"
-        className="mt-4 w-full rounded-lg border-2 border-purple-600 py-2 font-semibold text-purple-600 transition hover:bg-purple-50"
-      >
-        Review All
-      </button>
     </div>
   );
 }
