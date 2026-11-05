@@ -101,6 +101,32 @@ describe("csvQa", () => {
     expect(qa.checks.find((c) => c.id === "direction")?.status).toBe("warn");
   });
 
+  it("reconciles a newest-first credit-card export (MM/DD/YYYY)", () => {
+    // Rows are newest first and each row's balance is the balance after that
+    // charge, so the file has to be walked in reverse to line the steps up.
+    const csv = [
+      '"11/01/2026","MECP-ONTPARK","8.50",,"723.66"',
+      '"11/01/2026","GOOGLE*CLOUD","33.72",,"715.16"',
+      '"10/30/2026","IXL Learning","14.63",,"681.44"',
+      '"10/29/2026","Netflix.com","27.11",,"666.81"',
+      '"10/27/2026","PAYMENT - THANK YOU",,"800.00","639.70"',
+      '"10/24/2026","Uber","1.17",,"1439.70"',
+    ].join("\n");
+    const qa = runCsvQualityCheck({
+      csvText: csv,
+      parsed: parseOf([
+        { date: "2026-10-24", description: "Uber", amount: 1.17, isExpense: true, rawAmount: 1.17, category: "Other", balance: 1439.7 },
+        { date: "2026-10-27", description: "PAYMENT - THANK YOU", amount: 800, isExpense: false, rawAmount: -800, category: "Other", balance: 639.7 },
+        { date: "2026-10-29", description: "Netflix.com", amount: 27.11, isExpense: true, rawAmount: 27.11, category: "Other", balance: 666.81 },
+        { date: "2026-10-30", description: "IXL Learning", amount: 14.63, isExpense: true, rawAmount: 14.63, category: "Other", balance: 681.44 },
+        { date: "2026-11-01", description: "GOOGLE*CLOUD", amount: 33.72, isExpense: true, rawAmount: 33.72, category: "Other", balance: 715.16 },
+        { date: "2026-11-01", description: "MECP-ONTPARK", amount: 8.5, isExpense: true, rawAmount: 8.5, category: "Other", balance: 723.66 },
+      ]),
+    });
+    expect(qa.checks.find((c) => c.id === "balance")?.status).toBe("ok");
+    expect(qa.status).toBe("ok");
+  });
+
   it("blocks when the balance column doesn't reconcile with the amounts", () => {
     const csv = '"2026-10-01","A","5.00",,"95.00"\n"2026-10-02","B","5.00",,"70.00"\n"2026-10-03","C","5.00",,"40.00"\n';
     const qa = runCsvQualityCheck({

@@ -119,6 +119,23 @@ export interface CsvImportPlan {
   gapRowCount: number;
 }
 
+/** The 16th of "YYYY-MM" — the first day the closing-day rule credits to that month. */
+function midMonthDate(ym: string): string {
+  return `${ym}-16`;
+}
+
+/**
+ * Statement date for a CSV month document. The date exists only so the rest of the
+ * app's closing-day rule assigns the document to the right month: anything on or
+ * before the 15th is credited to the previous month. Use the last transaction's
+ * date when that lands in the right month, otherwise the 16th, which always does.
+ */
+export function csvStatementDate(ym: string, dates: string[]): string {
+  const last = dates.length > 0 ? dates.slice().sort()[dates.length - 1] : null;
+  if (last && Number(last.slice(8, 10)) > 15 && last.slice(0, 7) === ym) return last;
+  return midMonthDate(ym);
+}
+
 /**
  * Balance at the end of a calendar month, taken from the CSV's own running
  * balance column: the balance on the last row of that month. Rows arrive in
@@ -217,7 +234,11 @@ export function planCsvImport(args: {
     const parsedData: ParsedStatementData = {
       ...(netWorth != null ? { netWorth } : {}),
       ...(paymentsMade > 0 ? { paymentsMade } : {}),
-      statementDate: `${ym}-01`,
+      // Date it so the closing-day rule lands it on the month it actually covers.
+      // That rule files anything on or before the 15th into the previous month, so
+      // dating a month document on the 1st credited its data to last month and left
+      // the month itself still reported as missing.
+      statementDate: csvStatementDate(ym, dates),
       bankName: account.bankName,
       accountId,
       accountType: account.accountType as ParsedStatementData["accountType"],
@@ -281,6 +302,7 @@ export async function writeCsvStatementDocs(args: {
     await ref.set({
       userId: uid,
       accountSlug: m.parsedData.accountSlug ?? null,
+      yearMonth: m.ym,
       source: "csv",
       fileName,
       fileUrl: "",

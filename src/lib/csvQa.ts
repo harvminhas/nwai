@@ -347,8 +347,28 @@ function rawDateSpan(table: RawTable): { from: string; to: string } | null {
 }
 
 /**
- * Walk the rows in file order and confirm each balance step matches the amount
+ * Best-effort date key for a raw file value, so rows can be walked oldest-first
+ * regardless of which way the bank exported them. Null when it isn't a date.
+ */
+function dateKey(v: string): string | null {
+  const s = (v ?? "").trim();
+  let m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
+  if (m) return `${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+  m = /^(\d{1,2})\/(\d{1,2})\/(\d{2})$/.exec(s);
+  if (m) return `20${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+  return null;
+}
+
+/**
+ * Walk the rows oldest-first and confirm each balance step matches the amount
  * on that row. A mismatch usually means we read the wrong column.
+ *
+ * Banks export in either direction — TD credit-card exports are newest-first —
+ * and the balance on each row is the balance *after* that row's transaction. So
+ * the rows are ordered by date before walking; using file order read every step
+ * against the wrong transaction and reported a perfect file as broken.
  */
 function checkBalanceContinuity(table: RawTable, columns: QaColumn[]): QaCheck | null {
   const balanceCol = columns.find((c) => c.role === "balance");
@@ -369,21 +389,48 @@ function checkBalanceContinuity(table: RawTable, columns: QaColumn[]): QaCheck |
     return d + c;
   };
 
-  let compared = 0;
-  let mismatched = 0;
-  let prev: number | null = null;
-
-  for (const row of table.rows) {
-    const bal = parseNumberish(row[balanceCol.index] ?? "");
-    const amt = amountOn(row);
-    if (bal === null) continue;
-    if (prev !== null && amt !== null) {
-      compared++;
-      const delta = Number((bal - prev).toFixed(2));
-      if (Math.abs(Math.abs(delta) - amt) > 0.02) mismatched++;
-    }
-    prev = bal;
+  // Try every plausible reading order and keep whichever reconciles best: the
+  // file as-is, reversed, and date-ordered either way. Within a single day the
+  // balances still depend on the export's own direction, so both tie-breaks are
+  // tried rather than assuming one.
+  const dateCol = columns.find((c) => c.role === "date");
+  const keyed = table.rows.map((row, i) => ({
+    row,
+    i,
+    key: dateCol ? dateKey(row[dateCol.index] ?? "") : null,
+  }));
+  const allKeyed = keyed.every((k) => k.key !== null);
+  const orders: string[][][] = [table.rows, table.rows.slice().reverse()];
+  if (allKeyed) {
+    const asc = keyed.slice().sort((a, b) => (a.key! < b.key! ? -1 : a.key! > b.key! ? 1 : a.i - b.i));
+    const ascRev = keyed.slice().sort((a, b) => (a.key! < b.key! ? -1 : a.key! > b.key! ? 1 : b.i - a.i));
+    orders.push(asc.map((k) => k.row), ascRev.map((k) => k.row));
   }
+
+  let bestCompared = 0;
+  let bestMismatched = 0;
+  for (const rows of orders) {
+    let compared = 0;
+    let mismatched = 0;
+    let prev: number | null = null;
+    for (const row of rows) {
+      const bal = parseNumberish(row[balanceCol.index] ?? "");
+      const amt = amountOn(row);
+      if (bal === null) continue;
+      if (prev !== null && amt !== null) {
+        compared++;
+        const delta = Number((bal - prev).toFixed(2));
+        if (Math.abs(Math.abs(delta) - amt) > 0.02) mismatched++;
+      }
+      prev = bal;
+    }
+    if (bestCompared === 0 || mismatched / Math.max(compared, 1) < bestMismatched / Math.max(bestCompared, 1)) {
+      bestCompared = compared;
+      bestMismatched = mismatched;
+    }
+  }
+  const compared = bestCompared;
+  const mismatched = bestMismatched;
 
   if (compared === 0) return null;
   const share = mismatched / compared;
