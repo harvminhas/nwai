@@ -121,8 +121,14 @@ export default function AccountSwitcher() {
     } else if (pathname.includes("/assets")) {
       // On assets pages: only show asset accounts
       contextFiltered = items.filter((i) => i.icon === "asset");
+    } else {
+      // On account detail pages (/account/accounts/[slug]), filter by current account type
+      const currentAccount = items.find((i) => i.href === pathname);
+      if (currentAccount) {
+        contextFiltered = items.filter((i) => i.icon === currentAccount.icon);
+      }
+      // Elsewhere (generic accounts list, spending, etc.): show all
     }
-    // Elsewhere (generic accounts list, spending, etc.): show all
     
     const list = q
       ? contextFiltered.filter((i) => i.label.toLowerCase().includes(q) || i.sub.toLowerCase().includes(q))
