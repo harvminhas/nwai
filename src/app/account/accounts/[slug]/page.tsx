@@ -451,7 +451,6 @@ export default function AccountDetailPage() {
   const [idToken, setIdToken]             = useState<string | null>(null);
   const [deletingId, setDeletingId]       = useState<string | null>(null);
   const [reparsingId, setReparsingId]     = useState<string | null>(null);
-  const [showCsvImport, setShowCsvImport] = useState(false);
   const [activeTab, setActiveTab] = useState<"overview" | "transactions" | "history">("overview");
 
   useEffect(() => {
@@ -1231,6 +1230,61 @@ export default function AccountDetailPage() {
         </div>
       )}
 
+      {/* Upload statement + Missing statements banner */}
+      <div className="mb-6 space-y-3">
+        {/* Upload button - always visible */}
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-semibold text-gray-700">Statement Management</p>
+          <label className="cursor-pointer">
+            <input
+              type="file"
+              accept="application/pdf"
+              className="hidden"
+              disabled={uploadingPdf}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handlePdfUpload(file);
+                e.target.value = "";
+              }}
+            />
+            <span className={`inline-block rounded-lg border px-4 py-2 text-sm font-semibold transition ${
+              uploadingPdf
+                ? "border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed"
+                : "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
+            }`}>
+              {uploadingPdf ? "Uploading..." : "+ Upload statement (PDF)"}
+            </span>
+          </label>
+        </div>
+
+        {/* Upload error */}
+        {uploadError && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {uploadError}
+          </div>
+        )}
+
+        {/* Missing statements indicator */}
+        {missingMonths.length > 0 && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+            <div className="flex items-start gap-2">
+              <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+              </svg>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-amber-900">Missing statement{missingMonths.length > 1 ? "s" : ""}</p>
+                <p className="mt-1 text-xs text-amber-700">
+                  Upload {missingMonths.length > 1 ? "statements for" : "a statement for"}{" "}
+                  {missingMonths.slice(0, 3).map((ym) => shortMonth(ym)).join(", ")}
+                  {missingMonths.length > 3 && ` and ${missingMonths.length - 3} more`}
+                  {" "}to fill gaps in your history.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Incomplete months banner */}
       {carryForwardCount > 0 && (
         <div className="mb-6 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
@@ -1270,22 +1324,6 @@ export default function AccountDetailPage() {
         </div>
       )}
 
-      {isDebtAccount && linkedAssets.length === 0 && (
-        <div className="mb-6 rounded-xl border-2 border-dashed border-purple-200 bg-purple-50/50 p-5 flex items-center justify-between gap-4">
-          <div>
-            <p className="font-semibold text-gray-900">
-              {accountType === "mortgage" ? "🏠 What's your property worth?" : "🚗 Add the asset behind this loan"}
-            </p>
-            <p className="mt-0.5 text-sm text-gray-600">Link an asset to calculate your true equity.</p>
-          </div>
-          <Link
-            href={`/account/assets?tab=accounts&add=1&link=${slug}&category=${accountType === "mortgage" ? "property" : "vehicle"}`}
-            className="shrink-0 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
-          >
-            Add asset
-          </Link>
-        </div>
-      )}
 
       {/* ── KPI cards ────────────────────────────────────────────────────────── */}
       {isDebtAccount ? (
@@ -1572,76 +1610,12 @@ export default function AccountDetailPage() {
             {stmtHistory.length > 0 && (
               <p className="text-sm text-gray-500">{stmtHistory.length} entr{stmtHistory.length !== 1 ? "ies" : "y"}</p>
             )}
-            <div className="flex items-center gap-2">
-              {baselineMonth && (
-                <button onClick={() => handleSetBaseline(baselineMonth)} className="text-xs text-purple-600 hover:underline">
-                  Clear baseline
-                </button>
-              )}
-              <button
-                onClick={() => setShowCsvImport((v) => !v)}
-                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${showCsvImport ? "border-teal-300 bg-teal-50 text-teal-700 hover:bg-teal-100" : "border-gray-200 text-gray-600 hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700"}`}
-              >
-                {showCsvImport ? "✕ Cancel import" : "+ Import CSV"}
+            {baselineMonth && (
+              <button onClick={() => handleSetBaseline(baselineMonth)} className="text-xs text-purple-600 hover:underline">
+                Clear baseline
               </button>
-              <label className="cursor-pointer">
-                <input
-                  type="file"
-                  accept="application/pdf"
-                  className="hidden"
-                  disabled={uploadingPdf}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) handlePdfUpload(file);
-                    e.target.value = "";
-                  }}
-                />
-                <span className={`inline-block rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
-                  uploadingPdf
-                    ? "border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed"
-                    : "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
-                }`}>
-                  {uploadingPdf ? "Uploading..." : "+ Upload statement (PDF)"}
-                </span>
-              </label>
-            </div>
+            )}
           </div>
-
-          {/* Upload error */}
-          {uploadError && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {uploadError}
-            </div>
-          )}
-
-          {/* Missing statements indicator */}
-          {missingMonths.length > 0 && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
-              <div className="flex items-start gap-2">
-                <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-                </svg>
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-amber-900">Missing statement{missingMonths.length > 1 ? "s" : ""}</p>
-                  <p className="mt-1 text-xs text-amber-700">
-                    Upload {missingMonths.length > 1 ? "statements for" : "a statement for"}{" "}
-                    {missingMonths.slice(0, 3).map((ym) => shortMonth(ym)).join(", ")}
-                    {missingMonths.length > 3 && ` and ${missingMonths.length - 3} more`}
-                    {" "}to fill gaps in your history.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Inline CSV import panel */}
-          {showCsvImport && idToken && (
-            <div className="rounded-xl border border-teal-200 bg-teal-50/30 p-5">
-              <CsvImportPanel idToken={idToken} preselectedAccountSlug={slug}
-                onReset={() => setShowCsvImport(false)}
-                onImportComplete={() => idToken && loadAccountData(idToken)} />
-            </div>
-          )}
           {baselineMonth && (
             <p className="text-xs text-gray-400">
               Trend starts from <span className="font-medium text-gray-600">{shortMonth(baselineMonth)}</span>.
@@ -1748,16 +1722,7 @@ export default function AccountDetailPage() {
                         className="px-4 py-3 text-right"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        {entry.isManualSnapshot && entry.snapshotId ? (
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteSnapshot(entry.snapshotId!)}
-                            disabled={deletingSnap === entry.snapshotId}
-                            className="text-xs text-gray-400 hover:text-red-500 disabled:opacity-40"
-                          >
-                            {deletingSnap === entry.snapshotId ? "…" : "Delete"}
-                          </button>
-                        ) : !entry.isCarryForward && entry.statementId ? (
+                        {!entry.isManualSnapshot && !entry.isCarryForward && entry.statementId ? (
                           <div className="flex items-center justify-end gap-1">
                             <div
                               className={`flex items-center gap-1 transition-opacity ${
@@ -1994,75 +1959,6 @@ export default function AccountDetailPage() {
         </div>
       )}
 
-      {/* ── Removed: Add balance entry modal ────────────────────────────────────────── */}
-      {false && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h3 className="font-semibold text-gray-900">Add balance entry</h3>
-                <p className="text-sm text-gray-400 mt-0.5">{data?.accountName ?? slug}</p>
-              </div>
-              <button onClick={() => setShowSnapshotForm(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
-            </div>
-
-            <div className="mb-4 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2.5 text-xs text-blue-700">
-              <strong>Statement data stays intact.</strong> This entry only updates the displayed balance for the selected month. Your next uploaded statement will take over automatically.
-            </div>
-
-            <div className="mb-3">
-              <label className="block text-xs font-medium text-gray-600 mb-1">
-                Balance {isDebtAccount ? "(enter what you owe)" : ""}
-              </label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
-                <input
-                  type="number" min="0" step="0.01"
-                  value={snapBalance}
-                  onChange={(e) => setSnapBalance(e.target.value)}
-                  className="w-full rounded-lg border border-gray-200 pl-7 pr-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
-                  placeholder="0.00"
-                  autoFocus
-                />
-              </div>
-            </div>
-
-            <div className="mb-3">
-              <label className="block text-xs font-medium text-gray-600 mb-1">As of month</label>
-              <input
-                type="month"
-                value={snapMonth}
-                onChange={(e) => setSnapMonth(e.target.value)}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
-              />
-            </div>
-
-            <div className="mb-4">
-              <label className="block text-xs font-medium text-gray-600 mb-1">Note <span className="font-normal text-gray-400">(optional)</span></label>
-              <input
-                type="text"
-                value={snapNote}
-                onChange={(e) => setSnapNote(e.target.value)}
-                placeholder="e.g. Checked online banking today"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
-              />
-            </div>
-
-            {snapError && <p className="mb-3 text-sm text-red-600">{snapError}</p>}
-
-            <div className="flex gap-3">
-              <button onClick={() => setShowSnapshotForm(false)}
-                className="flex-1 rounded-lg border border-gray-200 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
-                Cancel
-              </button>
-              <button onClick={handleSaveSnapshot} disabled={snapSaving}
-                className="flex-1 rounded-lg bg-purple-600 py-2.5 text-sm font-semibold text-white hover:bg-purple-700 transition disabled:opacity-50">
-                {snapSaving ? "Saving…" : "Save"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -90,12 +90,6 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
                 {group.manualLiabilities.map((liability) => (
                   <ManualLine key={liability.id} liability={liability} currency={currency} />
                 ))}
-                <Link
-                  href={`/account/liabilities/category/${group.type}`}
-                  className="mt-1 inline-block py-1.5 text-xs font-medium text-purple-600 hover:underline"
-                >
-                  Open {group.label}
-                </Link>
               </div>
             </CategoryListRow>
           </div>
