@@ -18,6 +18,7 @@ import CashflowHeatmap from "@/components/CashflowHeatmap";
 import AccountSwitcher from "@/components/AccountSwitcher";
 import { debtGroup } from "@/lib/debtsSummary";
 import { accountGroup } from "@/lib/assetsSummary";
+import { formatLastTransactionDate } from "@/lib/formatLastTransactionDate";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -438,6 +439,7 @@ export default function AccountDetailPage() {
 
   const [data, setData]                   = useState<ParsedStatementData | null>(null);
   const [previousMonth, setPreviousMonth] = useState<{ netWorth: number; assets: number; debts: number } | null>(null);
+  const [lastTransactionDate, setLastTransactionDate] = useState<string | undefined>(undefined);
   const [yearMonth, setYearMonth]         = useState<string | null>(null);
   const [history, setHistory]             = useState<{ yearMonth: string; netWorth: number; expensesTotal?: number; isEstimate?: boolean }[]>([]);
   const [manualAssets, setManualAssets]   = useState<ManualAsset[]>([]);
@@ -499,14 +501,9 @@ export default function AccountDetailPage() {
   const [savingCurrency, setSavingCurrency]       = useState(false);
 
   // Balance snapshot state
-  const [showSnapshotForm,  setShowSnapshotForm]  = useState(false);
-  const [snapBalance,       setSnapBalance]       = useState("");
-  const [snapMonth,         setSnapMonth]         = useState("");
-  const [snapNote,          setSnapNote]          = useState("");
-  const [snapSaving,        setSnapSaving]        = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
-  const [snapError,         setSnapError]         = useState<string | null>(null);
-  const [deletingSnap,      setDeletingSnap]      = useState<string | null>(null);
+  const [uploadingPdf, setUploadingPdf] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   /** Inline delete confirmation for History tab (same pattern as Manage uploads). */
   const [historyDeleteConfirmId, setHistoryDeleteConfirmId] = useState<string | null>(null);
 
@@ -536,6 +533,7 @@ export default function AccountDetailPage() {
       setTxData((json.data as ParsedStatementData | null)?.expenses ?? null);
       setTxIncomeData((json.data as ParsedStatementData | null)?.income ?? null);
       setTxPayments(json.paymentsMade ?? 0);
+      setLastTransactionDate(json.lastTransactionDate);
 
       const acctHistory: StatementHistoryEntry[] = json.accountStatementHistory?.[slug] ?? [];
       setStmtHistory(acctHistory);
@@ -800,66 +798,6 @@ export default function AccountDetailPage() {
     else localStorage.removeItem(`baseline-${slug}`);
   }
 
-  // ── Balance snapshot handlers ──────────────────────────────────────────────
-  function openSnapshotForm() {
-    const now = new Date();
-    const ym = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
-    const latestBal = stmtHistory.find((e) => !e.isManualSnapshot && !e.isCarryForward)?.netWorth ?? 0;
-    setSnapBalance(String(Math.abs(latestBal)));
-    setSnapMonth(ym);
-    setSnapNote("");
-    setSnapError(null);
-    setShowSnapshotForm(true);
-  }
-  async function handleSaveSnapshot() {
-    if (!idToken || !data) return;
-    const val = parseFloat(snapBalance.replace(/,/g, ""));
-    if (isNaN(val)) { setSnapError("Enter a valid balance"); return; }
-    if (!snapMonth)  { setSnapError("Select a month"); return; }
-    setSnapSaving(true); setSnapError(null);
-    try {
-      const isDebt = ["credit", "mortgage", "loan"].includes(data.accountType ?? "");
-      const balance = isDebt ? -Math.abs(val) : Math.abs(val);
-      const res = await fetch("/api/user/balance-snapshots", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accountSlug: slug,
-          accountName: data.accountName ?? data.bankName ?? slug,
-          accountType: data.accountType ?? "other",
-          balance,
-          yearMonth: snapMonth,
-          note: snapNote || undefined,
-        }),
-      });
-      if (!res.ok) { setSnapError("Failed to save. Please try again."); return; }
-      setShowSnapshotForm(false);
-      // Refresh the page data
-      const refreshed = await fetch(
-        `/api/user/statements/consolidated?account=${encodeURIComponent(slug)}`,
-        { headers: { Authorization: `Bearer ${idToken}` } }
-      );
-      const rJson = await refreshed.json().catch(() => ({}));
-      const acctHistory: StatementHistoryEntry[] = rJson.accountStatementHistory?.[slug] ?? [];
-      setStmtHistory(acctHistory);
-      setHistory((rJson.history ?? []).map((h: { yearMonth: string; netWorth: number; expensesTotal?: number; isEstimate?: boolean }) => ({
-        ...h,
-        isEstimate: h.isEstimate ??
-          (acctHistory.find((e) => e.yearMonth === h.yearMonth)?.isCarryForward ?? false),
-      })));
-    } finally { setSnapSaving(false); }
-  }
-  async function handleDeleteSnapshot(snapshotId: string) {
-    if (!idToken) return;
-    setDeletingSnap(snapshotId);
-    try {
-      await fetch(`/api/user/balance-snapshots?id=${snapshotId}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${idToken}` },
-      });
-      setStmtHistory((prev) => prev.filter((e) => e.snapshotId !== snapshotId));
-    } finally { setDeletingSnap(null); }
-  }
 
   async function saveCurrency(newCurrency: string) {
     if (!idToken) return;
@@ -878,6 +816,57 @@ export default function AccountDetailPage() {
       showToast("Failed to save currency", false);
     } finally {
       setSavingCurrency(false);
+    }
+  }
+
+  async function handlePdfUpload(file: File) {
+    if (!idToken) return;
+    setUploadingPdf(true);
+    setUploadError(null);
+    
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      
+      const uploadRes = await fetch("/api/upload", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${idToken}` },
+        body: formData,
+      });
+      
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok) {
+        setUploadError(uploadData.error || "Upload failed");
+        return;
+      }
+      
+      const statementId = uploadData.id;
+      if (!statementId) {
+        setUploadError("Upload succeeded but no statement ID returned");
+        return;
+      }
+      
+      showToast("Statement uploaded, parsing...", true);
+      
+      // Trigger parse
+      const parseRes = await fetch("/api/parse", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ statementId }),
+      });
+      
+      const parseData = await parseRes.json();
+      if (!parseRes.ok) {
+        setUploadError(parseData.error || "Parse failed");
+        return;
+      }
+      
+      showToast("Statement parsed successfully!", true);
+      await loadAccountData(idToken);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploadingPdf(false);
     }
   }
 
@@ -974,6 +963,24 @@ export default function AccountDetailPage() {
   const txns = txData?.transactions ?? [];
   const incomeTxns = txIncomeData?.transactions ?? [];
 
+  // Calculate missing statement months (gaps in coverage)
+  const missingMonths: string[] = [];
+  if (realMonths.length > 1) {
+    const sortedAsc = [...realMonths].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
+    for (let i = 0; i < sortedAsc.length - 1; i++) {
+      const current = sortedAsc[i].yearMonth;
+      const next = sortedAsc[i + 1].yearMonth;
+      let [y, m] = current.split("-").map(Number);
+      while (true) {
+        m++;
+        if (m > 12) { m = 1; y++; }
+        const candidate = `${y}-${String(m).padStart(2, "0")}`;
+        if (candidate >= next) break;
+        missingMonths.push(candidate);
+      }
+    }
+  }
+
   // Balance headline for the top-left of the chart - the same pattern as Spending.
   // Uses this account's own month history, not the profile-wide previous month.
   const headerYm = txMonth ?? yearMonth;
@@ -986,6 +993,8 @@ export default function AccountDetailPage() {
   const headerDelta = prevBalance !== null ? headerBalance - prevBalance : null;
   const headerDeltaGood = headerDelta !== null ? (isDebtAccount ? headerDelta < 0 : headerDelta > 0) : null;
   const prevLabel = prevPoint ? shortMonth(prevPoint.yearMonth) : "previous month";
+
+  const formattedLastTxDate = formatLastTransactionDate(lastTransactionDate);
 
   const balanceHeader = (
     <div className="mb-5">
@@ -1007,6 +1016,9 @@ export default function AccountDetailPage() {
               {headerDelta > 0 ? "\u2191" : "\u2193"} {fmt(Math.abs(headerDelta), currency)} vs {prevLabel}
               {isDebtAccount ? (headerDelta < 0 ? " (paid down)" : " (more debt)") : ""}
             </p>
+          )}
+          {formattedLastTxDate && (
+            <p className="mt-1 text-xs text-gray-400">{formattedLastTxDate}</p>
           )}
           {isForeignCurrency && homeEquivalent != null && fxRate != null && (
             <p className="mt-1 text-[10px] text-gray-400">1 {currency} = {fxRate.toFixed(4)} {homeCurrency}</p>
@@ -1572,14 +1584,55 @@ export default function AccountDetailPage() {
               >
                 {showCsvImport ? "✕ Cancel import" : "+ Import CSV"}
               </button>
-              <button
-                onClick={openSnapshotForm}
-                className="rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-600 hover:bg-purple-100 transition"
-              >
-                + Update balance
-              </button>
+              <label className="cursor-pointer">
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  className="hidden"
+                  disabled={uploadingPdf}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handlePdfUpload(file);
+                    e.target.value = "";
+                  }}
+                />
+                <span className={`inline-block rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                  uploadingPdf
+                    ? "border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed"
+                    : "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
+                }`}>
+                  {uploadingPdf ? "Uploading..." : "+ Upload statement (PDF)"}
+                </span>
+              </label>
             </div>
           </div>
+
+          {/* Upload error */}
+          {uploadError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {uploadError}
+            </div>
+          )}
+
+          {/* Missing statements indicator */}
+          {missingMonths.length > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+              <div className="flex items-start gap-2">
+                <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                </svg>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-amber-900">Missing statement{missingMonths.length > 1 ? "s" : ""}</p>
+                  <p className="mt-1 text-xs text-amber-700">
+                    Upload {missingMonths.length > 1 ? "statements for" : "a statement for"}{" "}
+                    {missingMonths.slice(0, 3).map((ym) => shortMonth(ym)).join(", ")}
+                    {missingMonths.length > 3 && ` and ${missingMonths.length - 3} more`}
+                    {" "}to fill gaps in your history.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Inline CSV import panel */}
           {showCsvImport && idToken && (
@@ -1941,8 +1994,8 @@ export default function AccountDetailPage() {
         </div>
       )}
 
-      {/* ── Add balance entry modal ────────────────────────────────────────── */}
-      {showSnapshotForm && (
+      {/* ── Removed: Add balance entry modal ────────────────────────────────────────── */}
+      {false && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 px-4">
           <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
             <div className="flex items-start justify-between mb-4">

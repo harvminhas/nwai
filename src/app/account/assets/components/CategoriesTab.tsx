@@ -8,6 +8,7 @@ import type { ManualAsset, AssetCategory } from "@/lib/types";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { formatAccountLast4 } from "@/lib/rangeUtils";
 import { getFirebaseClient } from "@/lib/firebase";
+import { formatLastTransactionDate } from "@/lib/formatLastTransactionDate";
 import { CategoryListRow, CategoryNameLink } from "@/app/account/spending/CategoryListRow";
 
 const GROUP_COLOR: Record<string, string> = {
@@ -265,14 +266,20 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
 }
 
 function AccountLine({ account, currency }: { account: AssetAccount; currency: string }) {
+  const lastTxDate = formatLastTransactionDate(account.lastTransactionDate);
   return (
     <Link
       href={`/account/accounts/${account.slug}`}
       className="flex items-center gap-3 border-b border-gray-100 py-2 last:border-0 hover:text-purple-600"
     >
       <span className="min-w-0 flex-1 truncate text-sm text-gray-700">
-        {account.bankName}
-        {account.accountName ? ` · ${account.accountName}` : ""}
+        <span className="block">
+          {account.bankName}
+          {account.accountName ? ` · ${account.accountName}` : ""}
+        </span>
+        {lastTxDate && (
+          <span className="block text-xs text-gray-400 mt-0.5">{lastTxDate}</span>
+        )}
       </span>
       <span className="shrink-0 text-xs tabular-nums text-gray-500">{formatAccountLast4(account.slug)}</span>
       <span className="w-28 shrink-0 text-right text-sm tabular-nums text-gray-900">
