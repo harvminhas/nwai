@@ -77,36 +77,28 @@ export function MerchantDrawer({
     if (!slug || !token || !isOpen) return;
     setLoading(true); setError(null); setMerchant(null); setSelectedYm(null);
     
-    // Try fetching with slug first, then fallback to name search if provided
-    const urlWithSlug = `/api/user/spending/merchants?slug=${encodeURIComponent(slug)}`;
-    const urlWithName = fallbackDisplayName 
-      ? `/api/user/spending/merchants?name=${encodeURIComponent(fallbackDisplayName)}`
-      : null;
+    const url = `/api/user/spending/merchants?slug=${encodeURIComponent(slug)}`;
     
-    fetch(urlWithSlug, {
+    console.log('[MerchantDrawer] Fetching merchant:', { slug, fallbackDisplayName });
+    
+    fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     })
       .then((r) => r.json().catch(() => ({})))
       .then((json) => {
         if (json.merchant) {
+          console.log('[MerchantDrawer] Found merchant:', json.merchant.name);
           setMerchant(json.merchant);
-        } else if (urlWithName) {
-          // Slug lookup failed, try with merchant name
-          return fetch(urlWithName, {
-            headers: { Authorization: `Bearer ${token}` },
-            cache: "no-store",
-          })
-            .then((r) => r.json().catch(() => ({})))
-            .then((json2) => {
-              if (json2.merchant) setMerchant(json2.merchant);
-              else setError("No data found for this merchant.");
-            });
         } else {
+          console.log('[MerchantDrawer] No merchant found for slug:', slug);
           setError("No data found for this merchant.");
         }
       })
-      .catch(() => setError("Failed to load merchant data."))
+      .catch((err) => {
+        console.error('[MerchantDrawer] Fetch error:', err);
+        setError("Failed to load merchant data.");
+      })
       .finally(() => setLoading(false));
   }, [slug, token, isOpen, fallbackDisplayName]);
 

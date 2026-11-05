@@ -620,9 +620,94 @@ export default function AccountDetailPage() {
   // Merchant drawer state
   const { drawerSlug, drawerOpen, openDrawer, closeDrawer } = useMerchantDrawer();
   const [drawerMerchantName, setDrawerMerchantName] = useState<string | null>(null);
+  const [merchantsList, setMerchantsList] = useState<Array<{ name: string; slug: string }> | null>(null);
+  
+  // Fetch merchant list for resolving raw names to canonical slugs
+  useEffect(() => {
+    if (!idToken || merchantsList) return;
+    fetch("/api/user/spending/merge-suggestions?all=1", {
+      headers: { Authorization: `Bearer ${idToken}` },
+    })
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data?.merchants) {
+          setMerchantsList(data.merchants.map((m: any) => ({ name: m.name, slug: m.slug })));
+        }
+      })
+      .catch(() => { /* silent - drawer will fall back to raw slug */ });
+  }, [idToken, merchantsList]);
   
   const handleOpenMerchantDrawer = (merchantName: string) => {
     setDrawerMerchantName(merchantName);
+    
+    // Try to resolve to canonical merchant slug
+    if (merchantsList) {
+      const rawSlug = merchantSlug(merchantName);
+      
+      // First try exact slug match
+      let canonical = merchantsList.find((m) => m.slug === rawSlug);
+      
+      // If not found, try fuzzy matching on merchant name
+      if (!canonical) {
+        // Normalize by removing special chars, keeping only alphanumeric and spaces
+        const normalizeForMatch = (s: string) => 
+          s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        
+        const normalizedRaw = normalizeForMatch(merchantName);
+        const rawWords = normalizedRaw.split(" ").filter(w => w.length > 0);
+        const firstRawWord = rawWords[0];
+        
+        canonical = merchantsList.find((m) => {
+          const normalizedCanonical = normalizeForMatch(m.name);
+          const canonicalWords = normalizedCanonical.split(" ").filter(w => w.length > 0);
+          
+          // Strategy 1: Canonical name is a prefix of raw name
+          // e.g. "fortinos" matches "fortinos 55 woodbridge"
+          if (normalizedRaw.startsWith(normalizedCanonical)) {
+            return true;
+          }
+          
+          // Strategy 2: Raw name starts with canonical name
+          // e.g. "google cloud" matches "googlecloud"
+          if (normalizedCanonical.startsWith(normalizedRaw)) {
+            return true;
+          }
+          
+          // Strategy 3: First word matches (for brand names)
+          // e.g. "fortinos" in "FORTINOS #55" matches "Fortinos"
+          if (firstRawWord && canonicalWords[0] === firstRawWord && firstRawWord.length > 3) {
+            return true;
+          }
+          
+          // Strategy 4: Check if slugs share a common prefix (handles variants)
+          // e.g. "google-cloud" matches "googlecloud"
+          const canonicalSlug = m.slug;
+          const commonPrefixLen = Math.min(rawSlug.length, canonicalSlug.length);
+          if (commonPrefixLen > 6) {
+            const prefix = rawSlug.substring(0, Math.min(10, commonPrefixLen));
+            if (canonicalSlug.startsWith(prefix)) {
+              return true;
+            }
+          }
+          
+          return false;
+        });
+      }
+      
+      if (canonical) {
+        console.log('[MerchantDrawer] Resolved:', { 
+          raw: merchantName, 
+          rawSlug, 
+          canonicalName: canonical.name,
+          canonicalSlug: canonical.slug 
+        });
+        openDrawer(canonical.slug);
+        return;
+      }
+    }
+    
+    // Fallback to raw slug if no match found
+    console.log('[MerchantDrawer] No canonical match, using raw slug:', { merchantName, slug: merchantSlug(merchantName) });
     openDrawer(merchantSlug(merchantName));
   };
 
