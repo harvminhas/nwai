@@ -19,6 +19,8 @@ import AccountSwitcher from "@/components/AccountSwitcher";
 import { debtGroup } from "@/lib/debtsSummary";
 import { accountGroup } from "@/lib/assetsSummary";
 import { formatLastTransactionDate } from "@/lib/formatLastTransactionDate";
+import { MerchantDrawer, useMerchantDrawer } from "@/app/account/spending/MerchantDrawer";
+import { merchantSlug } from "@/lib/applyRules";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -319,6 +321,7 @@ function FlowSections({
   subscriptions,
   expenseTransactions,
   incomeTransactions,
+  onMerchantClick,
 }: {
   outflowRows: { name: string; amount: number; pct: number }[];
   outflowTotal: number;
@@ -332,6 +335,7 @@ function FlowSections({
   subscriptions: Subscription[];
   expenseTransactions?: ExpenseTransaction[];
   incomeTransactions?: IncomeTransaction[];
+  onMerchantClick: (merchant: string) => void;
 }) {
   const [outflowExpanded, setOutflowExpanded] = useState(false);
   const [incomingExpanded, setIncomingExpanded] = useState(false);
@@ -461,7 +465,15 @@ function FlowSections({
                       {categoryTxns.map((txn, i) => (
                         <div key={i} className="flex items-center justify-between gap-3 text-xs py-1.5 px-3 bg-white rounded border border-gray-100">
                           <div className="flex-1 min-w-0">
-                            <p className="text-gray-900 font-medium truncate">{txn.merchant}</p>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onMerchantClick(txn.merchant);
+                              }}
+                              className="text-left text-gray-900 font-medium truncate hover:text-purple-600 transition"
+                            >
+                              {txn.merchant}
+                            </button>
                             {txn.date && (
                               <p className="text-gray-400 text-[10px] mt-0.5">{fmtDate(txn.date)}</p>
                             )}
@@ -531,7 +543,15 @@ function FlowSections({
                       {sourceTxns.map((txn, i) => (
                         <div key={i} className="flex items-center justify-between gap-3 text-xs py-1.5 px-3 bg-white rounded border border-green-100">
                           <div className="flex-1 min-w-0">
-                            <p className="text-gray-900 font-medium truncate">{txn.source}</p>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onMerchantClick(txn.source);
+                              }}
+                              className="text-left text-gray-900 font-medium truncate hover:text-purple-600 transition"
+                            >
+                              {txn.source}
+                            </button>
                             {txn.date && (
                               <p className="text-gray-400 text-[10px] mt-0.5">{fmtDate(txn.date)}</p>
                             )}
@@ -593,6 +613,9 @@ export default function AccountDetailPage() {
   const [deletingId, setDeletingId]       = useState<string | null>(null);
   const [reparsingId, setReparsingId]     = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"overview" | "transactions" | "history">("overview");
+  
+  // Merchant drawer state
+  const { drawerSlug, drawerOpen, openDrawer, closeDrawer } = useMerchantDrawer();
 
   useEffect(() => {
     const t = searchParams.get("tab");
@@ -1721,6 +1744,7 @@ export default function AccountDetailPage() {
             subscriptions={hasActualSubs ? (data.subscriptions ?? []) : []}
             expenseTransactions={data.expenses?.transactions}
             incomeTransactions={data.income?.transactions}
+            onMerchantClick={(merchant) => openDrawer(merchantSlug(merchant))}
           />
         );
       })()}
@@ -2012,7 +2036,12 @@ export default function AccountDetailPage() {
                   {incomeTxns.map((txn, i) => (
                     <div key={i} className="flex items-center gap-3 px-4 py-3">
                       <div className="flex-1 min-w-0">
-                        <p className="truncate text-sm font-medium text-gray-900">{txn.source}</p>
+                        <button
+                          onClick={() => openDrawer(merchantSlug(txn.source))}
+                          className="truncate text-sm font-medium text-gray-900 hover:text-purple-600 transition text-left"
+                        >
+                          {txn.source}
+                        </button>
                         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                           {txn.date && <span className="text-xs text-gray-400">{fmtDate(txn.date)}</span>}
                           {txn.category && (
@@ -2041,7 +2070,12 @@ export default function AccountDetailPage() {
                 {txns.map((txn, i) => (
                   <div key={i} className="flex items-center gap-3 px-4 py-3">
                     <div className="flex-1 min-w-0">
-                      <p className="truncate text-sm font-medium text-gray-900">{txn.merchant}</p>
+                      <button
+                        onClick={() => openDrawer(merchantSlug(txn.merchant))}
+                        className="truncate text-sm font-medium text-gray-900 hover:text-purple-600 transition text-left"
+                      >
+                        {txn.merchant}
+                      </button>
                       <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                         {txn.date && <span className="text-xs text-gray-400">{fmtDate(txn.date)}</span>}
                         {txn.category && !isInvestment && (
@@ -2085,6 +2119,15 @@ export default function AccountDetailPage() {
           )}
         </div>
       )}
+
+      {/* Merchant drawer */}
+      <MerchantDrawer
+        slug={drawerSlug}
+        token={idToken}
+        homeCurrency={homeCurrency}
+        isOpen={drawerOpen}
+        onClose={closeDrawer}
+      />
 
     </div>
   );
