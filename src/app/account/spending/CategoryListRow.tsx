@@ -8,7 +8,6 @@ import React from "react";
  *
  * Interaction model (consistent everywhere):
  *   - Click anywhere on the row  → expand / collapse
- *   - Click the category name    → navigate to category page (stopPropagation)
  *   - Chevron icon               → purely visual, animates on open
  */
 interface CategoryListRowProps {
@@ -53,14 +52,21 @@ export function CategoryListRow({
   );
 }
 
-/** Category name that navigates on click without triggering the row expand. */
+/** 
+ * Category name that can either navigate (when href is provided) or do nothing (when href is omitted).
+ * When href is omitted, clicking the name will trigger the row's expand/collapse.
+ */
 interface CategoryNameLinkProps {
-  href: string;
+  href?: string;
   name: string;
   className?: string;
 }
 
 export function CategoryNameLink({ href, name, className = "" }: CategoryNameLinkProps) {
+  if (!href) {
+    return <span className={className}>{name}</span>;
+  }
+
   return (
     <Link
       href={href}

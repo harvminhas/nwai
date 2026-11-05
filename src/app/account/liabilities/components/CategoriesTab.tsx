@@ -61,7 +61,6 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
                       <CategoryNameLink
-                        href={`/account/liabilities/category/${group.type}`}
                         name={group.label}
                         className="text-sm font-semibold text-gray-900"
                       />
