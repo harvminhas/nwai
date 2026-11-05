@@ -59,12 +59,14 @@ export function MerchantDrawer({
   homeCurrency,
   isOpen,
   onClose,
+  fallbackDisplayName,
 }: {
   slug: string | null;
   token: string | null;
   homeCurrency: string;
   isOpen: boolean;
   onClose: () => void;
+  fallbackDisplayName?: string;
 }) {
   const [merchant, setMerchant] = useState<DrawerMerchant | null>(null);
   const [loading, setLoading]   = useState(false);
@@ -95,7 +97,7 @@ export function MerchantDrawer({
   }, [isOpen, onClose]);
 
   const color         = merchant ? categoryColor(merchant.category) : "#a855f7";
-  const displayedName = merchant?.displayName ?? merchant?.name ?? (slug ?? "");
+  const displayedName = merchant?.displayName ?? merchant?.name ?? fallbackDisplayName ?? (slug ?? "");
   const monthlyAvg    = merchant && merchant.monthly.length > 0
     ? merchant.total / merchant.monthly.length : 0;
 

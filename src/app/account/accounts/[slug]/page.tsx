@@ -616,6 +616,12 @@ export default function AccountDetailPage() {
   
   // Merchant drawer state
   const { drawerSlug, drawerOpen, openDrawer, closeDrawer } = useMerchantDrawer();
+  const [drawerMerchantName, setDrawerMerchantName] = useState<string | null>(null);
+  
+  const handleOpenMerchantDrawer = (merchantName: string) => {
+    setDrawerMerchantName(merchantName);
+    openDrawer(merchantSlug(merchantName));
+  };
 
   useEffect(() => {
     const t = searchParams.get("tab");
@@ -1744,7 +1750,7 @@ export default function AccountDetailPage() {
             subscriptions={hasActualSubs ? (data.subscriptions ?? []) : []}
             expenseTransactions={data.expenses?.transactions}
             incomeTransactions={data.income?.transactions}
-            onMerchantClick={(merchant) => openDrawer(merchantSlug(merchant))}
+            onMerchantClick={handleOpenMerchantDrawer}
           />
         );
       })()}
@@ -2037,7 +2043,7 @@ export default function AccountDetailPage() {
                     <div key={i} className="flex items-center gap-3 px-4 py-3">
                       <div className="flex-1 min-w-0">
                         <button
-                          onClick={() => openDrawer(merchantSlug(txn.source))}
+                          onClick={() => handleOpenMerchantDrawer(txn.source)}
                           className="truncate text-sm font-medium text-gray-900 hover:text-purple-600 transition text-left"
                         >
                           {txn.source}
@@ -2071,7 +2077,7 @@ export default function AccountDetailPage() {
                   <div key={i} className="flex items-center gap-3 px-4 py-3">
                     <div className="flex-1 min-w-0">
                       <button
-                        onClick={() => openDrawer(merchantSlug(txn.merchant))}
+                        onClick={() => handleOpenMerchantDrawer(txn.merchant)}
                         className="truncate text-sm font-medium text-gray-900 hover:text-purple-600 transition text-left"
                       >
                         {txn.merchant}
@@ -2127,6 +2133,7 @@ export default function AccountDetailPage() {
         homeCurrency={homeCurrency}
         isOpen={drawerOpen}
         onClose={closeDrawer}
+        fallbackDisplayName={drawerMerchantName ?? undefined}
       />
 
     </div>
