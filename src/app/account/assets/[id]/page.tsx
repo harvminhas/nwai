@@ -527,20 +527,139 @@ export default function ManualAssetPage() {
         </div>
       </div>
 
-      {/* Spending section with chart */}
+      {/* Income/Expenses Tabs */}
       <div className="mt-6">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-medium text-gray-700">Spending</h2>
+        {/* Tab Switcher */}
+        <div className="mb-4 flex items-center gap-4 border-b border-gray-200">
           <button
-            onClick={() => {
-              setSelectedTxnRole("spend_on");
-              setShowLinkTxnModal(true);
-            }}
-            className="text-sm text-purple-600 hover:text-purple-700 font-medium"
+            onClick={() => setTransactionTab("income")}
+            className={`pb-2 px-1 text-sm font-medium transition ${
+              transactionTab === "income"
+                ? "border-b-2 border-purple-600 text-purple-600"
+                : "text-gray-500 hover:text-gray-700"
+            }`}
           >
-            + Add
+            Income ({formatCurrency(totalIncome, currency)})
+          </button>
+          <button
+            onClick={() => setTransactionTab("expenses")}
+            className={`pb-2 px-1 text-sm font-medium transition ${
+              transactionTab === "expenses"
+                ? "border-b-2 border-purple-600 text-purple-600"
+                : "text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            Expenses ({formatCurrency(totalSpending, currency)})
           </button>
         </div>
+
+        {/* Income Tab */}
+        {transactionTab === "income" && (
+          <div>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-medium text-gray-700">Linked income</h2>
+              <button
+                onClick={() => {
+                  setSelectedTxnRole("income_from");
+                  setShowLinkTxnModal(true);
+                }}
+                className="text-sm text-purple-600 hover:text-purple-700 font-medium"
+              >
+                + Add
+              </button>
+            </div>
+            {incomeTxns.length > 0 ? (
+              <div className="space-y-2">
+                {(() => {
+                  // Group income by merchant/source
+                  const groups = incomeTxns.reduce((acc, tx) => {
+                    const key = tx.merchant;
+                    if (!acc[key]) acc[key] = [];
+                    acc[key].push(tx);
+                    return acc;
+                  }, {} as Record<string, typeof incomeTxns>);
+
+                  return Object.entries(groups).map(([merchant, txns]) => {
+                    const total = txns.reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
+                    const isExpanded = expandedGroups.has(merchant);
+
+                    return (
+                      <div key={merchant} className="rounded-lg border border-gray-200 bg-white">
+                        <button
+                          onClick={() => {
+                            const newExpanded = new Set(expandedGroups);
+                            if (isExpanded) {
+                              newExpanded.delete(merchant);
+                            } else {
+                              newExpanded.add(merchant);
+                            }
+                            setExpandedGroups(newExpanded);
+                          }}
+                          className="w-full p-3 flex items-center justify-between hover:bg-gray-50 transition"
+                        >
+                          <div className="flex-1 text-left">
+                            <p className="text-sm font-medium text-gray-900">{merchant}</p>
+                            <p className="text-xs text-gray-500">{txns.length} transaction{txns.length > 1 ? 's' : ''}</p>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <p className="text-sm font-semibold text-gray-900 tabular-nums">
+                              {formatCurrency(total, currency)}
+                            </p>
+                            <span className="text-gray-400">{isExpanded ? '▼' : '▶'}</span>
+                          </div>
+                        </button>
+                        {isExpanded && (
+                          <div className="border-t border-gray-200 p-3 space-y-2 bg-gray-50">
+                            {txns.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "")).map((tx) => (
+                              <div key={tx.fingerprint} className="flex items-center justify-between text-xs">
+                                <p className="text-gray-600">
+                                  {tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "No date"}
+                                </p>
+                                <div className="flex items-center gap-2">
+                                  <p className="font-medium text-gray-900 tabular-nums">
+                                    {formatCurrency(Math.abs(tx.amount), currency)}
+                                  </p>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      unlinkTransaction(tx.fingerprint, tx.role);
+                                    }}
+                                    className="text-gray-400 hover:text-red-600 transition"
+                                    title="Remove"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">No income transactions linked.</p>
+            )}
+          </div>
+        )}
+
+        {/* Expenses Tab */}
+        {transactionTab === "expenses" && (
+          <div>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-medium text-gray-700">Linked spending</h2>
+              <button
+                onClick={() => {
+                  setSelectedTxnRole("spend_on");
+                  setShowLinkTxnModal(true);
+                }}
+                className="text-sm text-purple-600 hover:text-purple-700 font-medium"
+              >
+                + Add
+              </button>
+            </div>
 
         {spendingTxns.length > 0 ? (
           <div className="grid gap-6 lg:grid-cols-3">
@@ -653,6 +772,8 @@ export default function ManualAssetPage() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
           </div>
         )}
       </div>
@@ -802,7 +923,11 @@ export default function ManualAssetPage() {
       )}
 
       {/* Link Transaction Modal */}
-      {showLinkTxnModal && (
+      {showLinkTxnModal && (() => {
+        // Select correct transaction source based on role
+        const txnSource = selectedTxnRole === "income_from" ? availableIncomeTxns : availableTxns;
+        
+        return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowLinkTxnModal(false)}>
           <div className="max-w-3xl w-full rounded-xl bg-white p-6 shadow-xl max-h-[80vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold text-gray-900">Link transaction</h3>
@@ -868,7 +993,7 @@ export default function ManualAssetPage() {
               )}
               <button
                 onClick={() => {
-                  const visibleTxns = availableTxns
+                  const visibleTxns = txnSource
                     .filter((tx) => !txnSearch || tx.merchant?.toLowerCase().includes(txnSearch.toLowerCase()))
                     .filter((tx) => !linkedTxns.some((l) => l.fingerprint === tx.fingerprint))
                     .slice(0, 50);
@@ -884,7 +1009,7 @@ export default function ManualAssetPage() {
                 className="text-xs text-purple-600 hover:text-purple-700 font-medium"
               >
                 {(() => {
-                  const visibleTxns = availableTxns
+                  const visibleTxns = txnSource
                     .filter((tx) => !txnSearch || tx.merchant?.toLowerCase().includes(txnSearch.toLowerCase()))
                     .filter((tx) => !linkedTxns.some((l) => l.fingerprint === tx.fingerprint))
                     .slice(0, 50);
@@ -914,7 +1039,7 @@ export default function ManualAssetPage() {
 
             <div className="mt-4 flex-1 overflow-y-auto">
               <div className="space-y-2">
-                {availableTxns
+                {txnSource
                   .filter((tx) => !txnSearch || tx.merchant?.toLowerCase().includes(txnSearch.toLowerCase()))
                   .filter((tx) => !linkedTxns.some((l) => l.fingerprint === tx.fingerprint))
                   .slice(0, 50)
@@ -958,7 +1083,7 @@ export default function ManualAssetPage() {
                       </div>
                     </label>
                   ))}
-                {availableTxns.filter((tx) => !txnSearch || tx.merchant?.toLowerCase().includes(txnSearch.toLowerCase())).length === 0 && (
+                {txnSource.filter((tx) => !txnSearch || tx.merchant?.toLowerCase().includes(txnSearch.toLowerCase())).length === 0 && (
                   <p className="text-sm text-gray-500 text-center py-8">No transactions found</p>
                 )}
               </div>
@@ -987,7 +1112,8 @@ export default function ManualAssetPage() {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
