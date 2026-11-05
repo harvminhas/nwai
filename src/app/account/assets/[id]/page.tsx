@@ -419,16 +419,12 @@ export default function ManualAssetPage() {
                 {CATEGORY_LABEL[asset.category] ?? asset.category}
               </span>
               <span className="text-xs text-gray-400">•</span>
-              <span className="text-xs text-gray-500">
-                {formatCurrency(asset.value, currency)}
-              </span>
-              <span className="text-xs text-gray-400">•</span>
               <span className="text-xs text-gray-400">
                 Updated {new Date(asset.updatedAt).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
               </span>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <button
               onClick={() => setShowLinkAccountModal(true)}
               className="text-sm text-purple-600 hover:text-purple-700 font-medium"
@@ -445,24 +441,25 @@ export default function ManualAssetPage() {
         </div>
       </div>
 
-      {/* Value + equity */}
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-medium text-gray-500">Value</p>
-          <p className="mt-2 text-2xl font-bold text-gray-900 tabular-nums">
-            {formatCurrency(asset.value, currency)}
-          </p>
-        </div>
-        {linkedAccounts.length > 0 && (
-          <div className={`rounded-xl border p-5 shadow-sm ${equity >= 0 ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
+      {/* Value or Equity */}
+      <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+        {linkedAccounts.length > 0 ? (
+          <>
             <p className="text-xs font-medium text-gray-500">Equity</p>
             <p className={`mt-2 text-2xl font-bold tabular-nums ${equity >= 0 ? "text-green-700" : "text-red-600"}`}>
               {formatCurrency(equity, currency)}
             </p>
             <p className="mt-1.5 text-xs text-gray-400">
-              {formatCurrency(asset.value, currency)} less {formatCurrency(totalDebt, currency)} owed
+              {formatCurrency(asset.value, currency)} value less {formatCurrency(totalDebt, currency)} owed
             </p>
-          </div>
+          </>
+        ) : (
+          <>
+            <p className="text-xs font-medium text-gray-500">Value</p>
+            <p className="mt-2 text-2xl font-bold text-gray-900 tabular-nums">
+              {formatCurrency(asset.value, currency)}
+            </p>
+          </>
         )}
       </div>
 

@@ -23,6 +23,7 @@ export async function GET(req: NextRequest) {
 
   const params  = new URL(req.url).searchParams;
   const months  = Math.min(24, Math.max(1, parseInt(params.get("months") ?? "6", 10)));
+  const limit   = Math.min(5000, Math.max(1, parseInt(params.get("limit") ?? "2000", 10)));
   const q       = (params.get("q") ?? "").toLowerCase().trim();
 
   try {
@@ -40,13 +41,15 @@ export async function GET(req: NextRequest) {
       .map((tx) => ({
         fingerprint:  txFingerprint(tx.accountSlug, tx.date, tx.amount, tx.merchant),
         date:         tx.date,
-        description:  tx.merchant,
+        merchant:     tx.merchant,
         amount:       Math.abs(tx.amount),
         category:     tx.category,
         accountLabel: tx.accountLabel,
+        accountSlug:  tx.accountSlug,
         txMonth:      tx.txMonth,
       }))
-      .sort((a, b) => b.date.localeCompare(a.date));
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, limit);
 
     return NextResponse.json({ transactions: txns });
   } catch (err) {
