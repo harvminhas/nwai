@@ -68,6 +68,7 @@ export default function ManualAssetPage() {
   const [expandedExpenseCategories, setExpandedExpenseCategories] = useState<Set<string>>(new Set());
   const [expenseYearFilter, setExpenseYearFilter] = useState<string>("all");
   const [expenseSearch, setExpenseSearch] = useState("");
+  const [highlightedTxns, setHighlightedTxns] = useState<Set<string>>(new Set());
   
   // Link account modal state
   const [selectedAccountSlug, setSelectedAccountSlug] = useState("");
@@ -346,20 +347,59 @@ export default function ManualAssetPage() {
   const linkTransaction = async () => {
     if (!token || !asset || selectedTxns.size === 0) return;
     setLinking(true);
+    
+    // Get transactions to link
+    const txSource = selectedTxnRole === "income_from" ? availableIncomeTxns : availableTxns;
+    const txnsToLink = Array.from(selectedTxns)
+      .map(fp => txSource.find(tx => tx.fingerprint === fp))
+      .filter((tx): tx is typeof txSource[0] => tx !== undefined)
+      .map(tx => ({
+        ...tx,
+        role: selectedTxnRole as "funds" | "spend_on" | "income_from",
+        linkAmount: selectedTxns.size === 1 && selectedTxnRole === "funds" && partialAmount 
+          ? Number(partialAmount.replace(/[^0-9.-]/g, ""))
+          : undefined,
+      }));
+    
+    // Optimistically add to linkedTxns
+    setLinkedTxns(prev => [...prev, ...txnsToLink]);
+    
+    // Switch to appropriate tab
+    if (selectedTxnRole === "income_from") {
+      setTransactionTab("income");
+      // Expand income groups for newly added merchants
+      const newMerchants = new Set(txnsToLink.map(tx => tx.merchant));
+      setExpandedGroups(prev => new Set([...prev, ...newMerchants]));
+    } else if (selectedTxnRole === "spend_on") {
+      setTransactionTab("expenses");
+      // Expand expense categories for newly added categories
+      const newCategories = new Set(txnsToLink.map(tx => tx.category || "Other"));
+      setExpandedExpenseCategories(prev => new Set([...prev, ...newCategories]));
+    }
+    
+    // Highlight newly added transactions
+    const newFingerprints = new Set(txnsToLink.map(tx => tx.fingerprint));
+    setHighlightedTxns(newFingerprints);
+    setTimeout(() => setHighlightedTxns(new Set()), 2000);
+    
+    // Close modal and reset
+    setShowLinkTxnModal(false);
+    setSelectedTxns(new Set());
+    setPartialAmount("");
+    setTxnSearch("");
+    setSelectedTxnRole("funds");
+    
     try {
-      // Link all selected transactions
+      // Persist links
       const promises = Array.from(selectedTxns).map(async (fingerprint) => {
+        const tx = txnsToLink.find(t => t.fingerprint === fingerprint);
         const body: { fingerprint: string; hubId: string; role: string; amount?: number } = {
           fingerprint,
           hubId: asset.id,
           role: selectedTxnRole,
         };
-        // Only apply partial amount if single transaction selected
-        if (selectedTxns.size === 1 && selectedTxnRole === "funds" && partialAmount) {
-          const amt = Number(partialAmount.replace(/[^0-9.-]/g, ""));
-          if (!isNaN(amt) && amt > 0) {
-            body.amount = amt;
-          }
+        if (tx?.linkAmount !== undefined) {
+          body.amount = tx.linkAmount;
         }
         const res = await fetch("/api/user/tx-links", {
           method: "POST",
@@ -370,15 +410,11 @@ export default function ManualAssetPage() {
       });
       
       await Promise.all(promises);
-      setToast({ msg: `${selectedTxns.size} transaction${selectedTxns.size > 1 ? 's' : ''} linked`, ok: true });
-      setShowLinkTxnModal(false);
-      setSelectedTxns(new Set());
-      setPartialAmount("");
-      setTxnSearch("");
-      setSelectedTxnRole("funds");
-      await load(token);
+      setToast({ msg: `${txnsToLink.length} transaction${txnsToLink.length > 1 ? 's' : ''} linked`, ok: true });
     } catch {
       setToast({ msg: "Could not link transactions", ok: false });
+      // Revert optimistic update by reloading
+      await load(token);
     } finally {
       setLinking(false);
     }
@@ -697,7 +733,14 @@ export default function ManualAssetPage() {
                         {isExpanded && (
                           <div className="border-t border-gray-200 p-3 space-y-2 bg-gray-50">
                             {txns.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "")).map((tx) => (
-                              <div key={tx.fingerprint} className="flex items-center justify-between gap-3">
+                              <div 
+                                key={tx.fingerprint} 
+                                className={`flex items-center justify-between gap-3 rounded-lg p-2 -m-2 transition-all duration-500 ${
+                                  highlightedTxns.has(tx.fingerprint)
+                                    ? 'bg-purple-50 shadow-sm ring-2 ring-purple-300'
+                                    : ''
+                                }`}
+                              >
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2 text-xs text-gray-500">
                                     <button
@@ -886,7 +929,14 @@ export default function ManualAssetPage() {
                         {isExpanded && (
                           <div className="border-t border-gray-200 bg-gray-50/60 p-3 space-y-2">
                             {txns.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "")).map((tx) => (
-                              <div key={tx.fingerprint} className="flex items-center gap-3 rounded-lg bg-white border border-gray-100 p-3">
+                              <div 
+                                key={tx.fingerprint} 
+                                className={`flex items-center gap-3 rounded-lg bg-white border p-3 transition-all duration-500 ${
+                                  highlightedTxns.has(tx.fingerprint)
+                                    ? 'border-purple-400 bg-purple-50 shadow-sm'
+                                    : 'border-gray-100'
+                                }`}
+                              >
                                 <div className="flex-1 min-w-0">
                                   <p className="text-sm font-medium text-gray-900 truncate">{tx.merchant}</p>
                                   <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500">
