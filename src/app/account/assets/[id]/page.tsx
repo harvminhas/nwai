@@ -411,15 +411,48 @@ export default function ManualAssetPage() {
     if (!token) return;
     setOpenCategoryPicker(null);
     
-    // Optimistic update for both expense and income lists
+    // Determine if moving between income and expense
     const isMovingToIncome = newCategory.toLowerCase().startsWith("income");
+    const currentTx = linkedTxns.find(tx => tx.fingerprint === txFingerprint);
+    const isCurrentlyIncome = currentTx?.role === "income_from";
     
+    // Optimistic update for linked transactions (displayed on page)
+    setLinkedTxns((prev) => {
+      if (isMovingToIncome && !isCurrentlyIncome) {
+        // Moving from expense to income - change role and category
+        return prev.map((tx) =>
+          tx.fingerprint === txFingerprint 
+            ? { 
+                ...tx, 
+                category: newCategory.replace(/^income\s*-\s*/i, "").trim() || "Other",
+                role: "income_from" as const
+              } 
+            : tx
+        );
+      } else if (!isMovingToIncome && isCurrentlyIncome) {
+        // Moving from income to expense - change role and category
+        return prev.map((tx) =>
+          tx.fingerprint === txFingerprint 
+            ? { 
+                ...tx, 
+                category: newCategory,
+                role: "spend_on" as const
+              } 
+            : tx
+        );
+      } else {
+        // Just updating category, staying in same type
+        return prev.map((tx) =>
+          tx.fingerprint === txFingerprint ? { ...tx, category: newCategory } : tx
+        );
+      }
+    });
+    
+    // Also update available transaction lists (for picker)
     setAvailableTxns((prev) => {
       if (isMovingToIncome) {
-        // Remove from expenses
         return prev.filter((tx) => tx.fingerprint !== txFingerprint);
       } else {
-        // Update category in expenses
         return prev.map((tx) =>
           tx.fingerprint === txFingerprint ? { ...tx, category: newCategory } : tx
         );
@@ -428,8 +461,7 @@ export default function ManualAssetPage() {
     
     setAvailableIncomeTxns((prev) => {
       if (isMovingToIncome) {
-        // Add to income (find the transaction from expenses first)
-        const expenseTx = availableTxns.find(tx => tx.fingerprint === txFingerprint);
+        const expenseTx = availableTxns.find(tx => tx.fingerprint === txFingerprint) || currentTx;
         if (expenseTx) {
           return [...prev, {
             ...expenseTx,
@@ -438,7 +470,6 @@ export default function ManualAssetPage() {
         }
         return prev;
       } else {
-        // Remove from income
         return prev.filter((tx) => tx.fingerprint !== txFingerprint);
       }
     });
@@ -452,14 +483,42 @@ export default function ManualAssetPage() {
       
       if (res.ok) {
         setToast({ msg: `Category updated: "${merchant}" → ${newCategory}`, ok: true });
+        // If role changed, we need to update the link in the database
+        if ((isMovingToIncome && !isCurrentlyIncome) || (!isMovingToIncome && isCurrentlyIncome)) {
+          // Need to unlink old role and link new role
+          if (asset) {
+            const oldRole = isCurrentlyIncome ? "income_from" : "spend_on";
+            const newRole = isMovingToIncome ? "income_from" : "spend_on";
+            
+            // Delete old link
+            await fetch("/api/user/tx-links", {
+              method: "DELETE",
+              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                fingerprint: txFingerprint,
+                hubId: asset.id,
+                role: oldRole,
+              }),
+            });
+            
+            // Create new link
+            await fetch("/api/user/tx-links", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                fingerprint: txFingerprint,
+                hubId: asset.id,
+                role: newRole,
+              }),
+            });
+          }
+        }
       } else {
         setToast({ msg: "Failed to save category", ok: false });
-        // Revert on error - reload
         await load(token);
       }
     } catch {
       setToast({ msg: "Failed to save category", ok: false });
-      // Revert on error - reload
       await load(token);
     }
   };
@@ -722,12 +781,49 @@ export default function ManualAssetPage() {
                         {isExpanded && (
                           <div className="border-t border-gray-200 p-3 space-y-2 bg-gray-50">
                             {txns.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "")).map((tx) => (
-                              <div key={tx.fingerprint} className="flex items-center justify-between text-xs">
-                                <p className="text-gray-600">
-                                  {tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "No date"}
-                                </p>
-                                <div className="flex items-center gap-2">
-                                  <p className="font-medium text-gray-900 tabular-nums">
+                              <div key={tx.fingerprint} className="flex items-center justify-between gap-3">
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                                    <button
+                                      ref={(el) => {
+                                        if (el) categoryPickerBtnRefs.set(tx.fingerprint, el);
+                                        else categoryPickerBtnRefs.delete(tx.fingerprint);
+                                      }}
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        setOpenCategoryPicker(openCategoryPicker === tx.fingerprint ? null : tx.fingerprint);
+                                      }}
+                                      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-gray-100 transition"
+                                      style={{
+                                        backgroundColor: openCategoryPicker === tx.fingerprint ? "#f3f4f6" : undefined,
+                                      }}
+                                    >
+                                      <span
+                                        className="h-1.5 w-1.5 rounded-full"
+                                        style={{ backgroundColor: categoryColor(tx.category?.toLowerCase() ?? "other") }}
+                                      />
+                                      <span>{tx.category}</span>
+                                      <svg className="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                      </svg>
+                                    </button>
+                                    {openCategoryPicker === tx.fingerprint && categoryPickerBtnRefs.has(tx.fingerprint) && (
+                                      <CategoryPicker
+                                        anchorRef={{ current: categoryPickerBtnRefs.get(tx.fingerprint)! }}
+                                        current={tx.category ?? "Other"}
+                                        onSelect={(cat) => handleCategoryChange(tx.fingerprint, tx.merchant, cat)}
+                                        onClose={() => setOpenCategoryPicker(null)}
+                                      />
+                                    )}
+                                    <span>•</span>
+                                    <span className="text-gray-600">
+                                      {tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "No date"}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <p className="text-xs font-medium text-gray-900 tabular-nums">
                                     {formatCurrency(Math.abs(tx.amount), currency)}
                                   </p>
                                   <button
@@ -781,7 +877,38 @@ export default function ManualAssetPage() {
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-900 truncate">{tx.merchant}</p>
                     <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500">
-                      <span>{tx.category}</span>
+                      <button
+                        ref={(el) => {
+                          if (el) categoryPickerBtnRefs.set(tx.fingerprint, el);
+                          else categoryPickerBtnRefs.delete(tx.fingerprint);
+                        }}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setOpenCategoryPicker(openCategoryPicker === tx.fingerprint ? null : tx.fingerprint);
+                        }}
+                        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-gray-100 transition"
+                        style={{
+                          backgroundColor: openCategoryPicker === tx.fingerprint ? "#f3f4f6" : undefined,
+                        }}
+                      >
+                        <span
+                          className="h-1.5 w-1.5 rounded-full"
+                          style={{ backgroundColor: categoryColor(tx.category?.toLowerCase() ?? "other") }}
+                        />
+                        <span>{tx.category}</span>
+                        <svg className="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                      {openCategoryPicker === tx.fingerprint && categoryPickerBtnRefs.has(tx.fingerprint) && (
+                        <CategoryPicker
+                          anchorRef={{ current: categoryPickerBtnRefs.get(tx.fingerprint)! }}
+                          current={tx.category ?? "Other"}
+                          onSelect={(cat) => handleCategoryChange(tx.fingerprint, tx.merchant, cat)}
+                          onClose={() => setOpenCategoryPicker(null)}
+                        />
+                      )}
                       <span>•</span>
                       <span>{tx.accountLabel ?? "Unknown"}</span>
                       <span>•</span>
@@ -1199,38 +1326,7 @@ export default function ManualAssetPage() {
                           <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500">
                             <span>{tx.accountLabel ?? "Unknown"}</span>
                             <span>•</span>
-                            <button
-                              ref={(el) => {
-                                if (el) categoryPickerBtnRefs.set(tx.fingerprint, el);
-                                else categoryPickerBtnRefs.delete(tx.fingerprint);
-                              }}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                setOpenCategoryPicker(openCategoryPicker === tx.fingerprint ? null : tx.fingerprint);
-                              }}
-                              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-gray-100 transition"
-                              style={{
-                                backgroundColor: openCategoryPicker === tx.fingerprint ? "#f3f4f6" : undefined,
-                              }}
-                            >
-                              <span
-                                className="h-1.5 w-1.5 rounded-full"
-                                style={{ backgroundColor: categoryColor(tx.category?.toLowerCase() ?? "other") }}
-                              />
-                              <span>{tx.category}</span>
-                              <svg className="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                              </svg>
-                            </button>
-                            {openCategoryPicker === tx.fingerprint && categoryPickerBtnRefs.has(tx.fingerprint) && (
-                              <CategoryPicker
-                                anchorRef={{ current: categoryPickerBtnRefs.get(tx.fingerprint)! }}
-                                current={tx.category ?? "Other"}
-                                onSelect={(cat) => handleCategoryChange(tx.fingerprint, tx.merchant, cat)}
-                                onClose={() => setOpenCategoryPicker(null)}
-                              />
-                            )}
+                            <span>{tx.category}</span>
                             <span>•</span>
                             <span>{tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "No date"}</span>
                           </div>
