@@ -432,8 +432,8 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                   onClick={dismissSearch}
                 />
                 
-                {/* Dropdown positioned below search input */}
-                <div className="absolute top-full left-0 right-0 mt-2 z-50 bg-white rounded-lg border border-neutral-200 shadow-xl max-h-96 flex flex-col">
+                {/* Dropdown positioned below search input - wider than input for desktop readability */}
+                <div className="absolute top-full left-0 mt-2 z-50 bg-white rounded-lg border border-neutral-200 shadow-xl max-h-96 flex flex-col w-[600px] max-w-[calc(100vw-2rem)]">
             {/* Dropdown content */}
             <div className="overflow-y-auto flex-1">
               {searchInput.trim().length < 2 ? (

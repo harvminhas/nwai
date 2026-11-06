@@ -921,12 +921,11 @@ export async function GET(req: NextRequest) {
         txCount: number;
       }>();
 
-      // Filter to window months, exclude core-excluded categories and Debt
+      // Filter to window months, exclude core-excluded categories
+      // Include Debt transactions in search (users want to find loan/card payment merchants)
       const scopedTxns = profile.expenseTxns.filter(t => {
         if (!windowMonths.includes(t.txMonth)) return false;
         if (isCoreExcluded(t.category)) return false;
-        const parent = getParentCategory(t.category);
-        if (parent === "Debt") return false; // Debt is not searchable
         return true;
       });
 
