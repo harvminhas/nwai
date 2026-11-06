@@ -65,6 +65,9 @@ export default function ManualAssetPage() {
   const [availableIncomeTxns, setAvailableIncomeTxns] = useState<TxnWithFingerprint[]>([]);
   const [transactionTab, setTransactionTab] = useState<"income" | "expenses">("expenses");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [expandedExpenseCategories, setExpandedExpenseCategories] = useState<Set<string>>(new Set());
+  const [expenseYearFilter, setExpenseYearFilter] = useState<string>("all");
+  const [expenseSearch, setExpenseSearch] = useState("");
   
   // Link account modal state
   const [selectedAccountSlug, setSelectedAccountSlug] = useState("");
@@ -782,65 +785,171 @@ export default function ManualAssetPage() {
             </div>
 
         {spendingTxns.length > 0 ? (
-          <div className="grid gap-6 lg:grid-cols-3">
-            {/* Spending list */}
-            <div className="lg:col-span-2 space-y-2">
-              {spendingTxns.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "")).map((tx) => (
-                <div key={tx.fingerprint} className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-3">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{tx.merchant}</p>
-                    <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500">
-                      <button
-                        ref={(el) => {
-                          if (el) categoryPickerBtnRefs.set(tx.fingerprint, el);
-                          else categoryPickerBtnRefs.delete(tx.fingerprint);
-                        }}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setOpenCategoryPicker(openCategoryPicker === tx.fingerprint ? null : tx.fingerprint);
-                        }}
-                        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-gray-100 transition"
-                        style={{
-                          backgroundColor: openCategoryPicker === tx.fingerprint ? "#f3f4f6" : undefined,
-                        }}
-                      >
-                        <span
-                          className="h-1.5 w-1.5 rounded-full"
-                          style={{ backgroundColor: categoryColor(tx.category?.toLowerCase() ?? "other") }}
-                        />
-                        <span>{tx.category}</span>
-                        <svg className="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                        </svg>
-                      </button>
-                      {openCategoryPicker === tx.fingerprint && categoryPickerBtnRefs.has(tx.fingerprint) && (
-                        <CategoryPicker
-                          anchorRef={{ current: categoryPickerBtnRefs.get(tx.fingerprint)! }}
-                          current={tx.category ?? "Other"}
-                          onSelect={(cat) => handleCategoryChange(tx.fingerprint, tx.merchant, cat)}
-                          onClose={() => setOpenCategoryPicker(null)}
-                        />
-                      )}
-                      <span>•</span>
-                      <span>{tx.accountLabel ?? "Unknown"}</span>
-                      <span>•</span>
-                      <span>{tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "No date"}</span>
-                    </div>
-                  </div>
-                  <p className="text-sm font-semibold text-gray-900 tabular-nums">
-                    {formatCurrency(tx.amount, currency)}
-                  </p>
-                  <button
-                    onClick={() => unlinkTransaction(tx.fingerprint, tx.role)}
-                    className="shrink-0 text-gray-400 hover:text-red-600 transition"
-                    title="Remove"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
+          <div>
+            {/* Filters */}
+            <div className="mb-4 flex flex-wrap items-center gap-3">
+              <input
+                type="text"
+                value={expenseSearch}
+                onChange={(e) => setExpenseSearch(e.target.value)}
+                placeholder="Search merchant or category..."
+                className="flex-1 min-w-[200px] rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
+              />
+              <select
+                value={expenseYearFilter}
+                onChange={(e) => setExpenseYearFilter(e.target.value)}
+                className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
+              >
+                <option value="all">All time</option>
+                {(() => {
+                  const years = new Set(
+                    spendingTxns
+                      .map(tx => tx.date ? new Date(tx.date).getFullYear() : null)
+                      .filter((y): y is number => y !== null)
+                  );
+                  return Array.from(years).sort((a, b) => b - a).map(year => (
+                    <option key={year} value={year}>{year}</option>
+                  ));
+                })()}
+              </select>
             </div>
+
+            <div className="grid gap-6 lg:grid-cols-3">
+              {/* Spending by category (grouped) */}
+              <div className="lg:col-span-2 space-y-2">
+                {(() => {
+                  // Filter transactions
+                  const filtered = spendingTxns.filter(tx => {
+                    const matchesSearch = !expenseSearch || 
+                      tx.merchant?.toLowerCase().includes(expenseSearch.toLowerCase()) ||
+                      tx.category?.toLowerCase().includes(expenseSearch.toLowerCase());
+                    const matchesYear = expenseYearFilter === "all" || 
+                      (tx.date && new Date(tx.date).getFullYear() === Number(expenseYearFilter));
+                    return matchesSearch && matchesYear;
+                  });
+
+                  // Group by category
+                  const byCategory = filtered.reduce((acc, tx) => {
+                    const cat = tx.category || "Other";
+                    if (!acc[cat]) acc[cat] = [];
+                    acc[cat].push(tx);
+                    return acc;
+                  }, {} as Record<string, typeof spendingTxns>);
+
+                  const sortedCategories = Object.entries(byCategory)
+                    .sort(([, aTxns], [, bTxns]) => {
+                      const aTotal = aTxns.reduce((sum, tx) => sum + tx.amount, 0);
+                      const bTotal = bTxns.reduce((sum, tx) => sum + tx.amount, 0);
+                      return bTotal - aTotal;
+                    });
+
+                  if (sortedCategories.length === 0) {
+                    return <p className="text-sm text-gray-500 text-center py-8">No transactions found</p>;
+                  }
+
+                  return sortedCategories.map(([category, txns]) => {
+                    const total = txns.reduce((sum, tx) => sum + tx.amount, 0);
+                    const isExpanded = expandedExpenseCategories.has(category);
+
+                    return (
+                      <div key={category} className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+                        <button
+                          onClick={() => {
+                            const newExpanded = new Set(expandedExpenseCategories);
+                            if (isExpanded) {
+                              newExpanded.delete(category);
+                            } else {
+                              newExpanded.add(category);
+                            }
+                            setExpandedExpenseCategories(newExpanded);
+                          }}
+                          className="w-full p-4 flex items-center justify-between hover:bg-gray-50 transition"
+                        >
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <span
+                              className="h-3 w-3 shrink-0 rounded-full"
+                              style={{ backgroundColor: categoryColor(category.toLowerCase()) }}
+                            />
+                            <div className="flex-1 text-left min-w-0">
+                              <p className="text-sm font-semibold text-gray-900">{category}</p>
+                              <p className="text-xs text-gray-500">{txns.length} transaction{txns.length > 1 ? 's' : ''}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <p className="text-sm font-bold text-gray-900 tabular-nums">
+                              {formatCurrency(total, currency)}
+                            </p>
+                            <span className="text-gray-400">{isExpanded ? '▼' : '▶'}</span>
+                          </div>
+                        </button>
+                        
+                        {isExpanded && (
+                          <div className="border-t border-gray-200 bg-gray-50/60 p-3 space-y-2">
+                            {txns.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "")).map((tx) => (
+                              <div key={tx.fingerprint} className="flex items-center gap-3 rounded-lg bg-white border border-gray-100 p-3">
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-gray-900 truncate">{tx.merchant}</p>
+                                  <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500">
+                                    <button
+                                      ref={(el) => {
+                                        if (el) categoryPickerBtnRefs.set(tx.fingerprint, el);
+                                        else categoryPickerBtnRefs.delete(tx.fingerprint);
+                                      }}
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        setOpenCategoryPicker(openCategoryPicker === tx.fingerprint ? null : tx.fingerprint);
+                                      }}
+                                      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-gray-100 transition"
+                                      style={{
+                                        backgroundColor: openCategoryPicker === tx.fingerprint ? "#f3f4f6" : undefined,
+                                      }}
+                                    >
+                                      <span
+                                        className="h-1.5 w-1.5 rounded-full"
+                                        style={{ backgroundColor: categoryColor(tx.category?.toLowerCase() ?? "other") }}
+                                      />
+                                      <span>{tx.category}</span>
+                                      <svg className="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                      </svg>
+                                    </button>
+                                    {openCategoryPicker === tx.fingerprint && categoryPickerBtnRefs.has(tx.fingerprint) && (
+                                      <CategoryPicker
+                                        anchorRef={{ current: categoryPickerBtnRefs.get(tx.fingerprint)! }}
+                                        current={tx.category ?? "Other"}
+                                        onSelect={(cat) => handleCategoryChange(tx.fingerprint, tx.merchant, cat)}
+                                        onClose={() => setOpenCategoryPicker(null)}
+                                      />
+                                    )}
+                                    <span>•</span>
+                                    <span>{tx.accountLabel ?? "Unknown"}</span>
+                                    <span>•</span>
+                                    <span>{tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "No date"}</span>
+                                  </div>
+                                </div>
+                                <p className="text-sm font-semibold text-gray-900 tabular-nums shrink-0">
+                                  {formatCurrency(tx.amount, currency)}
+                                </p>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    unlinkTransaction(tx.fingerprint, tx.role);
+                                  }}
+                                  className="shrink-0 text-gray-400 hover:text-red-600 transition"
+                                  title="Remove"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
 
             {/* Pie chart */}
             <div className="rounded-lg border border-gray-200 bg-white p-4">
@@ -907,6 +1016,7 @@ export default function ManualAssetPage() {
                 <p className="text-xs text-gray-400 text-center py-8">No spending yet</p>
               )}
             </div>
+          </div>
           </div>
         ) : (
           <p className="text-sm text-gray-500">No spending transactions linked.</p>
