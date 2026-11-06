@@ -8,6 +8,8 @@ import { getFirebaseClient } from "@/lib/firebase";
 import { formatCurrency } from "@/lib/currencyUtils";
 import AccountSwitcher from "@/components/AccountSwitcher";
 import { ConfirmModal } from "@/components/ConfirmModal";
+import { CategoryPicker, categoryColor } from "@/app/account/spending/shared";
+import { useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 import type { ManualAsset, AssetCategory, HubLink, ExpenseTransaction, IncomeTransaction } from "@/lib/types";
 import type { DebtsSummary, DebtAccount } from "@/lib/debtsSummary";
 
@@ -63,6 +65,10 @@ export default function ManualAssetPage() {
   const [availableIncomeTxns, setAvailableIncomeTxns] = useState<TxnWithFingerprint[]>([]);
   const [transactionTab, setTransactionTab] = useState<"income" | "expenses">("expenses");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [expandedExpenseCategories, setExpandedExpenseCategories] = useState<Set<string>>(new Set());
+  const [expenseYearFilter, setExpenseYearFilter] = useState<string>("all");
+  const [expenseSearch, setExpenseSearch] = useState("");
+  const [highlightedTxns, setHighlightedTxns] = useState<Set<string>>(new Set());
   
   // Link account modal state
   const [selectedAccountSlug, setSelectedAccountSlug] = useState("");
@@ -82,6 +88,13 @@ export default function ManualAssetPage() {
     message: string;
     onConfirm: () => void;
   } | null>(null);
+  
+  // Category picker state for transaction modal
+  const [openCategoryPicker, setOpenCategoryPicker] = useState<string | null>(null);
+  const categoryPickerBtnRefs = useState(() => new Map<string, HTMLButtonElement>())[0];
+  
+  // Profile refresh context (same as account detail)
+  const { requestProfileRefresh } = useProfileRefresh();
 
   const load = useCallback(async (tok: string) => {
     setLoading(true);
@@ -334,20 +347,59 @@ export default function ManualAssetPage() {
   const linkTransaction = async () => {
     if (!token || !asset || selectedTxns.size === 0) return;
     setLinking(true);
+    
+    // Get transactions to link
+    const txSource = selectedTxnRole === "income_from" ? availableIncomeTxns : availableTxns;
+    const txnsToLink = Array.from(selectedTxns)
+      .map(fp => txSource.find(tx => tx.fingerprint === fp))
+      .filter((tx): tx is typeof txSource[0] => tx !== undefined)
+      .map(tx => ({
+        ...tx,
+        role: selectedTxnRole as "funds" | "spend_on" | "income_from",
+        linkAmount: selectedTxns.size === 1 && selectedTxnRole === "funds" && partialAmount 
+          ? Number(partialAmount.replace(/[^0-9.-]/g, ""))
+          : undefined,
+      }));
+    
+    // Optimistically add to linkedTxns
+    setLinkedTxns(prev => [...prev, ...txnsToLink]);
+    
+    // Switch to appropriate tab
+    if (selectedTxnRole === "income_from") {
+      setTransactionTab("income");
+      // Expand income groups for newly added merchants
+      const newMerchants = new Set(txnsToLink.map(tx => tx.merchant));
+      setExpandedGroups(prev => new Set([...prev, ...newMerchants]));
+    } else if (selectedTxnRole === "spend_on") {
+      setTransactionTab("expenses");
+      // Expand expense categories for newly added categories
+      const newCategories = new Set(txnsToLink.map(tx => tx.category || "Other"));
+      setExpandedExpenseCategories(prev => new Set([...prev, ...newCategories]));
+    }
+    
+    // Highlight newly added transactions
+    const newFingerprints = new Set(txnsToLink.map(tx => tx.fingerprint));
+    setHighlightedTxns(newFingerprints);
+    setTimeout(() => setHighlightedTxns(new Set()), 2000);
+    
+    // Close modal and reset
+    setShowLinkTxnModal(false);
+    setSelectedTxns(new Set());
+    setPartialAmount("");
+    setTxnSearch("");
+    setSelectedTxnRole("funds");
+    
     try {
-      // Link all selected transactions
+      // Persist links
       const promises = Array.from(selectedTxns).map(async (fingerprint) => {
+        const tx = txnsToLink.find(t => t.fingerprint === fingerprint);
         const body: { fingerprint: string; hubId: string; role: string; amount?: number } = {
           fingerprint,
           hubId: asset.id,
           role: selectedTxnRole,
         };
-        // Only apply partial amount if single transaction selected
-        if (selectedTxns.size === 1 && selectedTxnRole === "funds" && partialAmount) {
-          const amt = Number(partialAmount.replace(/[^0-9.-]/g, ""));
-          if (!isNaN(amt) && amt > 0) {
-            body.amount = amt;
-          }
+        if (tx?.linkAmount !== undefined) {
+          body.amount = tx.linkAmount;
         }
         const res = await fetch("/api/user/tx-links", {
           method: "POST",
@@ -358,15 +410,11 @@ export default function ManualAssetPage() {
       });
       
       await Promise.all(promises);
-      setToast({ msg: `${selectedTxns.size} transaction${selectedTxns.size > 1 ? 's' : ''} linked`, ok: true });
-      setShowLinkTxnModal(false);
-      setSelectedTxns(new Set());
-      setPartialAmount("");
-      setTxnSearch("");
-      setSelectedTxnRole("funds");
-      await load(token);
+      setToast({ msg: `${txnsToLink.length} transaction${txnsToLink.length > 1 ? 's' : ''} linked`, ok: true });
     } catch {
       setToast({ msg: "Could not link transactions", ok: false });
+      // Revert optimistic update by reloading
+      await load(token);
     } finally {
       setLinking(false);
     }
@@ -400,6 +448,35 @@ export default function ManualAssetPage() {
         }
       },
     });
+  };
+
+  const handleCategoryChange = async (txFingerprint: string, merchant: string, newCategory: string) => {
+    if (!token) return;
+    setOpenCategoryPicker(null);
+    
+    // Optimistic update - just category, no role changes
+    setLinkedTxns((prev) =>
+      prev.map((tx) =>
+        tx.fingerprint === txFingerprint ? { ...tx, category: newCategory } : tx
+      )
+    );
+    
+    try {
+      const res = await fetch("/api/user/category-rules", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ merchant, category: newCategory }),
+      });
+      
+      if (res.ok) {
+        setToast({ msg: `Rule saved: "${merchant}" → ${newCategory}`, ok: true });
+        requestProfileRefresh();
+      } else {
+        setToast({ msg: "Failed to save rule", ok: false });
+      }
+    } catch {
+      setToast({ msg: "Failed to save rule", ok: false });
+    }
   };
 
   if (loading) {
@@ -456,10 +533,6 @@ export default function ManualAssetPage() {
         <div className="mb-2 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-sm text-gray-500">
             <Link href="/account/assets?tab=accounts" className="hover:text-purple-600">Assets</Link>
-            <span>/</span>
-            <Link href={`/account/assets/category/${asset.category === "property" ? "property" : "other"}`} className="hover:text-purple-600">
-              {asset.category === "property" ? "Property" : "Other Assets"}
-            </Link>
           </div>
           <AccountSwitcher />
         </div>
@@ -660,12 +733,56 @@ export default function ManualAssetPage() {
                         {isExpanded && (
                           <div className="border-t border-gray-200 p-3 space-y-2 bg-gray-50">
                             {txns.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "")).map((tx) => (
-                              <div key={tx.fingerprint} className="flex items-center justify-between text-xs">
-                                <p className="text-gray-600">
-                                  {tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "No date"}
-                                </p>
-                                <div className="flex items-center gap-2">
-                                  <p className="font-medium text-gray-900 tabular-nums">
+                              <div 
+                                key={tx.fingerprint} 
+                                className={`flex items-center justify-between gap-3 rounded-lg p-2 -m-2 transition-all duration-500 ${
+                                  highlightedTxns.has(tx.fingerprint)
+                                    ? 'bg-purple-50 shadow-sm ring-2 ring-purple-300'
+                                    : ''
+                                }`}
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                                    <button
+                                      ref={(el) => {
+                                        if (el) categoryPickerBtnRefs.set(tx.fingerprint, el);
+                                        else categoryPickerBtnRefs.delete(tx.fingerprint);
+                                      }}
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        setOpenCategoryPicker(openCategoryPicker === tx.fingerprint ? null : tx.fingerprint);
+                                      }}
+                                      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-gray-100 transition"
+                                      style={{
+                                        backgroundColor: openCategoryPicker === tx.fingerprint ? "#f3f4f6" : undefined,
+                                      }}
+                                    >
+                                      <span
+                                        className="h-1.5 w-1.5 rounded-full"
+                                        style={{ backgroundColor: categoryColor(tx.category?.toLowerCase() ?? "other") }}
+                                      />
+                                      <span>{tx.category}</span>
+                                      <svg className="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                      </svg>
+                                    </button>
+                                    {openCategoryPicker === tx.fingerprint && categoryPickerBtnRefs.has(tx.fingerprint) && (
+                                      <CategoryPicker
+                                        anchorRef={{ current: categoryPickerBtnRefs.get(tx.fingerprint)! }}
+                                        current={tx.category ?? "Other"}
+                                        onSelect={(cat) => handleCategoryChange(tx.fingerprint, tx.merchant, cat)}
+                                        onClose={() => setOpenCategoryPicker(null)}
+                                      />
+                                    )}
+                                    <span>•</span>
+                                    <span className="text-gray-600">
+                                      {tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "No date"}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <p className="text-xs font-medium text-gray-900 tabular-nums">
                                     {formatCurrency(Math.abs(tx.amount), currency)}
                                   </p>
                                   <button
@@ -697,59 +814,212 @@ export default function ManualAssetPage() {
         {/* Expenses Tab */}
         {transactionTab === "expenses" && (
           <div>
-            <div className="mb-3 flex items-center justify-between">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
               <h2 className="text-sm font-medium text-gray-700">Linked spending</h2>
+              <div className="flex-1" />
+              {spendingTxns.length > 0 && (
+                <>
+                  <input
+                    type="text"
+                    value={expenseSearch}
+                    onChange={(e) => setExpenseSearch(e.target.value)}
+                    placeholder="Search..."
+                    className="w-32 rounded border border-gray-200 px-2 py-1 text-xs focus:border-purple-300 focus:outline-none"
+                  />
+                  <select
+                    value={expenseYearFilter}
+                    onChange={(e) => setExpenseYearFilter(e.target.value)}
+                    className="rounded border border-gray-200 px-2 py-1 text-xs focus:border-purple-300 focus:outline-none"
+                  >
+                    <option value="all">All time</option>
+                    {(() => {
+                      const years = new Set(
+                        spendingTxns
+                          .map(tx => tx.date ? new Date(tx.date).getFullYear() : null)
+                          .filter((y): y is number => y !== null)
+                      );
+                      return Array.from(years).sort((a, b) => b - a).map(year => (
+                        <option key={year} value={year}>{year}</option>
+                      ));
+                    })()}
+                  </select>
+                </>
+              )}
               <button
                 onClick={() => {
                   setSelectedTxnRole("spend_on");
                   setShowLinkTxnModal(true);
                 }}
-                className="text-sm text-purple-600 hover:text-purple-700 font-medium"
+                className="text-xs text-purple-600 hover:text-purple-700 font-medium"
               >
                 + Add
               </button>
             </div>
 
-        {spendingTxns.length > 0 ? (
-          <div className="grid gap-6 lg:grid-cols-3">
-            {/* Spending list */}
-            <div className="lg:col-span-2 space-y-2">
-              {spendingTxns.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "")).map((tx) => (
-                <div key={tx.fingerprint} className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-3">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{tx.merchant}</p>
-                    <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500">
-                      <span>{tx.category}</span>
-                      <span>•</span>
-                      <span>{tx.accountLabel ?? "Unknown"}</span>
-                      <span>•</span>
-                      <span>{tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "No date"}</span>
-                    </div>
-                  </div>
-                  <p className="text-sm font-semibold text-gray-900 tabular-nums">
-                    {formatCurrency(tx.amount, currency)}
-                  </p>
-                  <button
-                    onClick={() => unlinkTransaction(tx.fingerprint, tx.role)}
-                    className="shrink-0 text-gray-400 hover:text-red-600 transition"
-                    title="Remove"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
+        {spendingTxns.length > 0 && (
+          <div>
+            {(() => {
+              // Filter transactions (used by both list and chart)
+              const filtered = spendingTxns.filter(tx => {
+                const matchesSearch = !expenseSearch || 
+                  tx.merchant?.toLowerCase().includes(expenseSearch.toLowerCase()) ||
+                  tx.category?.toLowerCase().includes(expenseSearch.toLowerCase());
+                const matchesYear = expenseYearFilter === "all" || 
+                  (tx.date && new Date(tx.date).getFullYear() === Number(expenseYearFilter));
+                return matchesSearch && matchesYear;
+              });
 
-            {/* Pie chart */}
-            <div className="rounded-lg border border-gray-200 bg-white p-4">
-              <p className="text-xs font-medium text-gray-500 mb-3">By category</p>
-              {totalSpending > 0 ? (
-                <div>
-                  <svg viewBox="0 0 100 100" className="w-full max-w-[200px] mx-auto mb-3">
-                    {(() => {
-                      let cumulativePercent = 0;
-                      const colors = ["#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#6366f1"];
-                      const entries = Object.entries(spendingByCategory);
+              // Compute filtered totals for chart
+              const filteredByCategory: Record<string, number> = {};
+              filtered.forEach((tx) => {
+                const cat = tx.category || "Other";
+                filteredByCategory[cat] = (filteredByCategory[cat] || 0) + tx.amount;
+              });
+              const filteredTotal = Object.values(filteredByCategory).reduce((sum, amt) => sum + amt, 0);
+
+              // Group by category for list
+              const byCategory = filtered.reduce((acc, tx) => {
+                const cat = tx.category || "Other";
+                if (!acc[cat]) acc[cat] = [];
+                acc[cat].push(tx);
+                return acc;
+              }, {} as Record<string, typeof spendingTxns>);
+
+              const sortedCategories = Object.entries(byCategory)
+                .sort(([, aTxns], [, bTxns]) => {
+                  const aTotal = aTxns.reduce((sum, tx) => sum + tx.amount, 0);
+                  const bTotal = bTxns.reduce((sum, tx) => sum + tx.amount, 0);
+                  return bTotal - aTotal;
+                });
+
+              if (sortedCategories.length === 0) {
+                return <p className="text-sm text-gray-500 text-center py-8">No transactions found</p>;
+              }
+
+              return (
+                <div className="grid gap-6 lg:grid-cols-3">
+                  {/* Spending by category (grouped) */}
+                  <div className="lg:col-span-2 space-y-2">
+                    {sortedCategories.map(([category, txns]) => {
+                    const total = txns.reduce((sum, tx) => sum + tx.amount, 0);
+                    const isExpanded = expandedExpenseCategories.has(category);
+
+                    return (
+                      <div key={category} className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+                        <button
+                          onClick={() => {
+                            const newExpanded = new Set(expandedExpenseCategories);
+                            if (isExpanded) {
+                              newExpanded.delete(category);
+                            } else {
+                              newExpanded.add(category);
+                            }
+                            setExpandedExpenseCategories(newExpanded);
+                          }}
+                          className="w-full p-4 flex items-center justify-between hover:bg-gray-50 transition"
+                        >
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <span
+                              className="h-3 w-3 shrink-0 rounded-full"
+                              style={{ backgroundColor: categoryColor(category.toLowerCase()) }}
+                            />
+                            <div className="flex-1 text-left min-w-0">
+                              <p className="text-sm font-semibold text-gray-900">{category}</p>
+                              <p className="text-xs text-gray-500">{txns.length} transaction{txns.length > 1 ? 's' : ''}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <p className="text-sm font-bold text-gray-900 tabular-nums">
+                              {formatCurrency(total, currency)}
+                            </p>
+                            <span className="text-gray-400">{isExpanded ? '▼' : '▶'}</span>
+                          </div>
+                        </button>
+                        
+                        {isExpanded && (
+                          <div className="border-t border-gray-200 bg-gray-50/60 p-3 space-y-2">
+                            {txns.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "")).map((tx) => (
+                              <div 
+                                key={tx.fingerprint} 
+                                className={`flex items-center gap-3 rounded-lg bg-white border p-3 transition-all duration-500 ${
+                                  highlightedTxns.has(tx.fingerprint)
+                                    ? 'border-purple-400 bg-purple-50 shadow-sm'
+                                    : 'border-gray-100'
+                                }`}
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-gray-900 truncate">{tx.merchant}</p>
+                                  <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500">
+                                    <button
+                                      ref={(el) => {
+                                        if (el) categoryPickerBtnRefs.set(tx.fingerprint, el);
+                                        else categoryPickerBtnRefs.delete(tx.fingerprint);
+                                      }}
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        setOpenCategoryPicker(openCategoryPicker === tx.fingerprint ? null : tx.fingerprint);
+                                      }}
+                                      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-gray-100 transition"
+                                      style={{
+                                        backgroundColor: openCategoryPicker === tx.fingerprint ? "#f3f4f6" : undefined,
+                                      }}
+                                    >
+                                      <span
+                                        className="h-1.5 w-1.5 rounded-full"
+                                        style={{ backgroundColor: categoryColor(tx.category?.toLowerCase() ?? "other") }}
+                                      />
+                                      <span>{tx.category}</span>
+                                      <svg className="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                      </svg>
+                                    </button>
+                                    {openCategoryPicker === tx.fingerprint && categoryPickerBtnRefs.has(tx.fingerprint) && (
+                                      <CategoryPicker
+                                        anchorRef={{ current: categoryPickerBtnRefs.get(tx.fingerprint)! }}
+                                        current={tx.category ?? "Other"}
+                                        onSelect={(cat) => handleCategoryChange(tx.fingerprint, tx.merchant, cat)}
+                                        onClose={() => setOpenCategoryPicker(null)}
+                                      />
+                                    )}
+                                    <span>•</span>
+                                    <span>{tx.accountLabel ?? "Unknown"}</span>
+                                    <span>•</span>
+                                    <span>{tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "No date"}</span>
+                                  </div>
+                                </div>
+                                <p className="text-sm font-semibold text-gray-900 tabular-nums shrink-0">
+                                  {formatCurrency(tx.amount, currency)}
+                                </p>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    unlinkTransaction(tx.fingerprint, tx.role);
+                                  }}
+                                  className="shrink-0 text-gray-400 hover:text-red-600 transition"
+                                  title="Remove"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  </div>
+
+                  {/* Pie chart - uses filtered data */}
+                  <div className="rounded-lg border border-gray-200 bg-white p-4">
+                    <p className="text-xs font-medium text-gray-500 mb-3">By category</p>
+                    {filteredTotal > 0 ? (
+                      <div>
+                        <svg viewBox="0 0 100 100" className="w-full max-w-[200px] mx-auto mb-3">
+                          {(() => {
+                            let cumulativePercent = 0;
+                            const colors = ["#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#6366f1"];
+                            const entries = Object.entries(filteredByCategory);
                       
                       // Special case: single category (100%) - render full circle
                       if (entries.length === 1) {
@@ -764,9 +1034,9 @@ export default function ManualAssetPage() {
                         );
                       }
                       
-                      // Multiple categories - render arcs
-                      return entries.map(([cat, amt], i) => {
-                        const percent = (amt / totalSpending) * 100;
+                            // Multiple categories - render arcs
+                            return entries.map(([cat, amt], i) => {
+                              const percent = (amt / filteredTotal) * 100;
                         const startAngle = (cumulativePercent / 100) * 360;
                         const endAngle = ((cumulativePercent + percent) / 100) * 360;
                         cumulativePercent += percent;
@@ -786,27 +1056,32 @@ export default function ManualAssetPage() {
                           />
                         );
                       });
-                    })()}
-                  </svg>
-                  <div className="space-y-1.5">
-                    {Object.entries(spendingByCategory)
-                      .sort(([, a], [, b]) => b - a)
-                      .map(([cat, amt]) => (
-                        <div key={cat} className="flex items-center justify-between text-xs">
-                          <span className="text-gray-600 truncate">{cat}</span>
-                          <span className="font-medium text-gray-900 tabular-nums ml-2">
-                            {formatCurrency(amt, currency)}
-                          </span>
+                          })()}
+                        </svg>
+                        <div className="space-y-1.5">
+                          {Object.entries(filteredByCategory)
+                            .sort(([, a], [, b]) => b - a)
+                            .map(([cat, amt]) => (
+                              <div key={cat} className="flex items-center justify-between text-xs">
+                                <span className="text-gray-600 truncate">{cat}</span>
+                                <span className="font-medium text-gray-900 tabular-nums ml-2">
+                                  {formatCurrency(amt, currency)}
+                                </span>
+                              </div>
+                            ))}
                         </div>
-                      ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400 text-center py-8">No matches</p>
+                    )}
                   </div>
                 </div>
-              ) : (
-                <p className="text-xs text-gray-400 text-center py-8">No spending yet</p>
-              )}
-            </div>
+              );
+            })()}
           </div>
-        ) : (
+        )}
+        
+        {spendingTxns.length === 0 && (
           <p className="text-sm text-gray-500">No spending transactions linked.</p>
         )}
 
