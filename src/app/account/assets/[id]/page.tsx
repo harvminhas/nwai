@@ -814,83 +814,93 @@ export default function ManualAssetPage() {
         {/* Expenses Tab */}
         {transactionTab === "expenses" && (
           <div>
-            <div className="mb-3 flex items-center justify-between">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
               <h2 className="text-sm font-medium text-gray-700">Linked spending</h2>
+              <div className="flex-1" />
+              {spendingTxns.length > 0 && (
+                <>
+                  <input
+                    type="text"
+                    value={expenseSearch}
+                    onChange={(e) => setExpenseSearch(e.target.value)}
+                    placeholder="Search..."
+                    className="w-32 rounded border border-gray-200 px-2 py-1 text-xs focus:border-purple-300 focus:outline-none"
+                  />
+                  <select
+                    value={expenseYearFilter}
+                    onChange={(e) => setExpenseYearFilter(e.target.value)}
+                    className="rounded border border-gray-200 px-2 py-1 text-xs focus:border-purple-300 focus:outline-none"
+                  >
+                    <option value="all">All time</option>
+                    {(() => {
+                      const years = new Set(
+                        spendingTxns
+                          .map(tx => tx.date ? new Date(tx.date).getFullYear() : null)
+                          .filter((y): y is number => y !== null)
+                      );
+                      return Array.from(years).sort((a, b) => b - a).map(year => (
+                        <option key={year} value={year}>{year}</option>
+                      ));
+                    })()}
+                  </select>
+                </>
+              )}
               <button
                 onClick={() => {
                   setSelectedTxnRole("spend_on");
                   setShowLinkTxnModal(true);
                 }}
-                className="text-sm text-purple-600 hover:text-purple-700 font-medium"
+                className="text-xs text-purple-600 hover:text-purple-700 font-medium"
               >
                 + Add
               </button>
             </div>
 
-        {spendingTxns.length > 0 ? (
+        {spendingTxns.length > 0 && (
           <div>
-            {/* Filters */}
-            <div className="mb-4 flex flex-wrap items-center gap-3">
-              <input
-                type="text"
-                value={expenseSearch}
-                onChange={(e) => setExpenseSearch(e.target.value)}
-                placeholder="Search merchant or category..."
-                className="flex-1 min-w-[200px] rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
-              />
-              <select
-                value={expenseYearFilter}
-                onChange={(e) => setExpenseYearFilter(e.target.value)}
-                className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
-              >
-                <option value="all">All time</option>
-                {(() => {
-                  const years = new Set(
-                    spendingTxns
-                      .map(tx => tx.date ? new Date(tx.date).getFullYear() : null)
-                      .filter((y): y is number => y !== null)
-                  );
-                  return Array.from(years).sort((a, b) => b - a).map(year => (
-                    <option key={year} value={year}>{year}</option>
-                  ));
-                })()}
-              </select>
-            </div>
+            {(() => {
+              // Filter transactions (used by both list and chart)
+              const filtered = spendingTxns.filter(tx => {
+                const matchesSearch = !expenseSearch || 
+                  tx.merchant?.toLowerCase().includes(expenseSearch.toLowerCase()) ||
+                  tx.category?.toLowerCase().includes(expenseSearch.toLowerCase());
+                const matchesYear = expenseYearFilter === "all" || 
+                  (tx.date && new Date(tx.date).getFullYear() === Number(expenseYearFilter));
+                return matchesSearch && matchesYear;
+              });
 
-            <div className="grid gap-6 lg:grid-cols-3">
-              {/* Spending by category (grouped) */}
-              <div className="lg:col-span-2 space-y-2">
-                {(() => {
-                  // Filter transactions
-                  const filtered = spendingTxns.filter(tx => {
-                    const matchesSearch = !expenseSearch || 
-                      tx.merchant?.toLowerCase().includes(expenseSearch.toLowerCase()) ||
-                      tx.category?.toLowerCase().includes(expenseSearch.toLowerCase());
-                    const matchesYear = expenseYearFilter === "all" || 
-                      (tx.date && new Date(tx.date).getFullYear() === Number(expenseYearFilter));
-                    return matchesSearch && matchesYear;
-                  });
+              // Compute filtered totals for chart
+              const filteredByCategory: Record<string, number> = {};
+              filtered.forEach((tx) => {
+                const cat = tx.category || "Other";
+                filteredByCategory[cat] = (filteredByCategory[cat] || 0) + tx.amount;
+              });
+              const filteredTotal = Object.values(filteredByCategory).reduce((sum, amt) => sum + amt, 0);
 
-                  // Group by category
-                  const byCategory = filtered.reduce((acc, tx) => {
-                    const cat = tx.category || "Other";
-                    if (!acc[cat]) acc[cat] = [];
-                    acc[cat].push(tx);
-                    return acc;
-                  }, {} as Record<string, typeof spendingTxns>);
+              // Group by category for list
+              const byCategory = filtered.reduce((acc, tx) => {
+                const cat = tx.category || "Other";
+                if (!acc[cat]) acc[cat] = [];
+                acc[cat].push(tx);
+                return acc;
+              }, {} as Record<string, typeof spendingTxns>);
 
-                  const sortedCategories = Object.entries(byCategory)
-                    .sort(([, aTxns], [, bTxns]) => {
-                      const aTotal = aTxns.reduce((sum, tx) => sum + tx.amount, 0);
-                      const bTotal = bTxns.reduce((sum, tx) => sum + tx.amount, 0);
-                      return bTotal - aTotal;
-                    });
+              const sortedCategories = Object.entries(byCategory)
+                .sort(([, aTxns], [, bTxns]) => {
+                  const aTotal = aTxns.reduce((sum, tx) => sum + tx.amount, 0);
+                  const bTotal = bTxns.reduce((sum, tx) => sum + tx.amount, 0);
+                  return bTotal - aTotal;
+                });
 
-                  if (sortedCategories.length === 0) {
-                    return <p className="text-sm text-gray-500 text-center py-8">No transactions found</p>;
-                  }
+              if (sortedCategories.length === 0) {
+                return <p className="text-sm text-gray-500 text-center py-8">No transactions found</p>;
+              }
 
-                  return sortedCategories.map(([category, txns]) => {
+              return (
+                <div className="grid gap-6 lg:grid-cols-3">
+                  {/* Spending by category (grouped) */}
+                  <div className="lg:col-span-2 space-y-2">
+                    {sortedCategories.map(([category, txns]) => {
                     const total = txns.reduce((sum, tx) => sum + tx.amount, 0);
                     const isExpanded = expandedExpenseCategories.has(category);
 
@@ -997,20 +1007,19 @@ export default function ManualAssetPage() {
                         )}
                       </div>
                     );
-                  });
-                })()}
-              </div>
+                  })}
+                  </div>
 
-            {/* Pie chart */}
-            <div className="rounded-lg border border-gray-200 bg-white p-4">
-              <p className="text-xs font-medium text-gray-500 mb-3">By category</p>
-              {totalSpending > 0 ? (
-                <div>
-                  <svg viewBox="0 0 100 100" className="w-full max-w-[200px] mx-auto mb-3">
-                    {(() => {
-                      let cumulativePercent = 0;
-                      const colors = ["#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#6366f1"];
-                      const entries = Object.entries(spendingByCategory);
+                  {/* Pie chart - uses filtered data */}
+                  <div className="rounded-lg border border-gray-200 bg-white p-4">
+                    <p className="text-xs font-medium text-gray-500 mb-3">By category</p>
+                    {filteredTotal > 0 ? (
+                      <div>
+                        <svg viewBox="0 0 100 100" className="w-full max-w-[200px] mx-auto mb-3">
+                          {(() => {
+                            let cumulativePercent = 0;
+                            const colors = ["#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#6366f1"];
+                            const entries = Object.entries(filteredByCategory);
                       
                       // Special case: single category (100%) - render full circle
                       if (entries.length === 1) {
@@ -1025,9 +1034,9 @@ export default function ManualAssetPage() {
                         );
                       }
                       
-                      // Multiple categories - render arcs
-                      return entries.map(([cat, amt], i) => {
-                        const percent = (amt / totalSpending) * 100;
+                            // Multiple categories - render arcs
+                            return entries.map(([cat, amt], i) => {
+                              const percent = (amt / filteredTotal) * 100;
                         const startAngle = (cumulativePercent / 100) * 360;
                         const endAngle = ((cumulativePercent + percent) / 100) * 360;
                         cumulativePercent += percent;
@@ -1047,28 +1056,32 @@ export default function ManualAssetPage() {
                           />
                         );
                       });
-                    })()}
-                  </svg>
-                  <div className="space-y-1.5">
-                    {Object.entries(spendingByCategory)
-                      .sort(([, a], [, b]) => b - a)
-                      .map(([cat, amt]) => (
-                        <div key={cat} className="flex items-center justify-between text-xs">
-                          <span className="text-gray-600 truncate">{cat}</span>
-                          <span className="font-medium text-gray-900 tabular-nums ml-2">
-                            {formatCurrency(amt, currency)}
-                          </span>
+                          })()}
+                        </svg>
+                        <div className="space-y-1.5">
+                          {Object.entries(filteredByCategory)
+                            .sort(([, a], [, b]) => b - a)
+                            .map(([cat, amt]) => (
+                              <div key={cat} className="flex items-center justify-between text-xs">
+                                <span className="text-gray-600 truncate">{cat}</span>
+                                <span className="font-medium text-gray-900 tabular-nums ml-2">
+                                  {formatCurrency(amt, currency)}
+                                </span>
+                              </div>
+                            ))}
                         </div>
-                      ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400 text-center py-8">No matches</p>
+                    )}
                   </div>
                 </div>
-              ) : (
-                <p className="text-xs text-gray-400 text-center py-8">No spending yet</p>
-              )}
-            </div>
+              );
+            })()}
           </div>
-          </div>
-        ) : (
+        )}
+        
+        {spendingTxns.length === 0 && (
           <p className="text-sm text-gray-500">No spending transactions linked.</p>
         )}
 
