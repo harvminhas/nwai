@@ -101,6 +101,28 @@ export function DrilldownView({ token }: DrilldownViewProps) {
   const level = merchant ? "merchant" : category ? "category" : searchQuery ? "search" : "all";
   
   const [searchInput, setSearchInput] = useState(searchQuery);
+  const [debouncedSearch, setDebouncedSearch] = useState(searchQuery);
+
+  // Debounce search input to avoid excessive URL updates
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchInput.trim());
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  // Trigger search when debounced value changes
+  useEffect(() => {
+    if (debouncedSearch !== searchQuery) {
+      const url = new URL(window.location.href);
+      if (debouncedSearch && debouncedSearch.length >= 2) {
+        url.searchParams.set("q", debouncedSearch);
+      } else {
+        url.searchParams.delete("q");
+      }
+      router.push(url.pathname + url.search);
+    }
+  }, [debouncedSearch, searchQuery, router]);
 
   // silent: refresh the numbers without unmounting the page. A merge panel on
   // top of the page must survive its own refresh, otherwise it remounts and
@@ -300,15 +322,8 @@ export function DrilldownView({ token }: DrilldownViewProps) {
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && searchInput.trim().length >= 2) {
-                  const url = new URL(window.location.href);
-                  url.searchParams.set("q", searchInput.trim());
-                  router.push(url.pathname + url.search);
-                } else if (e.key === "Escape") {
+                if (e.key === "Escape") {
                   setSearchInput("");
-                  const url = new URL(window.location.href);
-                  url.searchParams.delete("q");
-                  router.push(url.pathname + url.search);
                 }
               }}
               className="w-full rounded-full border border-neutral-300 bg-white py-2 pl-9 pr-8 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-purple-500"
@@ -328,12 +343,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             </svg>
             {searchInput && (
               <button
-                onClick={() => {
-                  setSearchInput("");
-                  const url = new URL(window.location.href);
-                  url.searchParams.delete("q");
-                  router.push(url.pathname + url.search);
-                }}
+                onClick={() => setSearchInput("")}
                 className="absolute right-2 top-1/2 -translate-y-1/2 transform text-neutral-400 hover:text-neutral-600"
               >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
