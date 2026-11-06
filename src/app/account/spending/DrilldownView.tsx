@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
-import { formatCurrency, getCurrencySymbol } from "@/lib/currencyUtils";
+import { formatCurrency, formatCurrencyWithCents, getCurrencySymbol } from "@/lib/currencyUtils";
 import { ReviewList } from "@/components/ReviewList";
 import { MergeMerchantsPanel } from "./MergeMerchantsPanel";
 
@@ -630,8 +630,8 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                       const tooltipText = d.count === 0
                         ? `${fullDay} · no charges`
                         : d.count === 1
-                          ? `${fullDay} · 1 charge · ${formatCurrency(d.amount, data.currency)}`
-                          : `${fullDay} · ${d.count} charges · ${formatCurrency(d.amount, data.currency)}`;
+                          ? `${fullDay} · 1 charge · ${formatCurrencyWithCents(d.amount, data.currency)}`
+                          : `${fullDay} · ${d.count} charges · ${formatCurrencyWithCents(d.amount, data.currency)}`;
                       
                       return (
                         <div 

@@ -2,7 +2,7 @@
 
 import type { IncomeSummary } from "@/lib/incomeSummary";
 import { formatMonthYear, formatDate } from "@/lib/dateFormatting";
-import { formatCurrency } from "@/lib/currencyUtils";
+import { formatCurrency, formatCurrencyWithCents } from "@/lib/currencyUtils";
 
 interface OverviewTabProps {
   summary: IncomeSummary;
@@ -39,7 +39,7 @@ export function OverviewTab({ summary, windowNote }: OverviewTabProps) {
     whatChangedItems.push({
       type: "late",
       text: `${whatChanged.lateMissing.source} hasn't paid yet`,
-      detail: `Usually by ${formatDate(whatChanged.lateMissing.expectedBy)} — ${formatCurrency(whatChanged.lateMissing.amount, currency)}`
+      detail: `Usually by ${formatDate(whatChanged.lateMissing.expectedBy)} — ${formatCurrencyWithCents(whatChanged.lateMissing.amount, currency)}`
     });
   }
   
@@ -47,7 +47,7 @@ export function OverviewTab({ summary, windowNote }: OverviewTabProps) {
     whatChangedItems.push({
       type: "new",
       text: `New source: ${whatChanged.newSource.source}`,
-      detail: `${formatCurrency(whatChanged.newSource.amount, currency)} on ${formatDate(whatChanged.newSource.firstDate)}`
+      detail: `${formatCurrencyWithCents(whatChanged.newSource.amount, currency)} on ${formatDate(whatChanged.newSource.firstDate)}`
     });
   }
   
