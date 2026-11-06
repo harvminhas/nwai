@@ -104,9 +104,22 @@ export function DrilldownView({ token }: DrilldownViewProps) {
   const [debouncedSearch, setDebouncedSearch] = useState(searchQuery);
   const [liveSearchData, setLiveSearchData] = useState<DrilldownData | null>(null);
   const [isSearching, setIsSearching] = useState(false);
-  const [showSearchCard, setShowSearchCard] = useState(false);
+  const [showSearchDropdown, setShowSearchDropdown] = useState(false);
 
-  // Debounce search input
+  // Show dropdown immediately on typing (before debounce)
+  useEffect(() => {
+    const trimmed = searchInput.trim();
+    if (trimmed.length > 0) {
+      setShowSearchDropdown(true);
+      setIsSearching(true);
+    } else {
+      setShowSearchDropdown(false);
+      setIsSearching(false);
+      setLiveSearchData(null);
+    }
+  }, [searchInput]);
+
+  // Debounce search input for network requests
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(searchInput.trim());
@@ -114,28 +127,18 @@ export function DrilldownView({ token }: DrilldownViewProps) {
     return () => clearTimeout(timer);
   }, [searchInput]);
 
-  // Fetch search results without navigation when debounced search changes
+  // Fetch search results when debounced value changes (doesn't control dropdown state)
   useEffect(() => {
     const abortController = new AbortController();
     
     const fetchSearchResults = async () => {
       const query = debouncedSearch.trim();
       
-      // Clear live search if query too short
-      if (query.length < 2) {
-        setLiveSearchData(null);
+      // Don't fetch if too short or already showing from URL
+      if (query.length < 2 || query === searchQuery) {
         setIsSearching(false);
-        setShowSearchCard(false);
         return;
       }
-
-      // Don't fetch if we're already showing these results from URL
-      if (query === searchQuery) {
-        return;
-      }
-
-      setIsSearching(true);
-      setShowSearchCard(true);
       
       try {
         const params = new URLSearchParams({ level: "search" });
@@ -149,32 +152,30 @@ export function DrilldownView({ token }: DrilldownViewProps) {
 
         if (res.ok) {
           const result = await res.json();
-          // Only update if not aborted
           if (!abortController.signal.aborted) {
             setLiveSearchData(result);
+            setIsSearching(false);
+          }
+        } else {
+          if (!abortController.signal.aborted) {
+            setIsSearching(false);
           }
         }
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') {
-          // Ignore aborted requests
           return;
         }
         console.error("Search error:", err);
-        // Close card on error
-        setShowSearchCard(false);
-      } finally {
         if (!abortController.signal.aborted) {
           setIsSearching(false);
         }
       }
     };
 
-    if (debouncedSearch.trim()) {
+    if (debouncedSearch.trim().length >= 2) {
       fetchSearchResults();
     } else {
-      setLiveSearchData(null);
       setIsSearching(false);
-      setShowSearchCard(false);
     }
 
     return () => {
@@ -231,11 +232,11 @@ export function DrilldownView({ token }: DrilldownViewProps) {
     setSearchInput(searchQuery);
   }, [searchQuery]);
 
-  // Dismiss search card and clear input
+  // Dismiss search dropdown and clear input
   const dismissSearch = () => {
     setSearchInput("");
     setLiveSearchData(null);
-    setShowSearchCard(false);
+    setShowSearchDropdown(false);
     setIsSearching(false);
   };
 
@@ -382,7 +383,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       {/* Merchant Search (All spending and search levels) */}
       {(displayData.level === "all" || displayData.level === "search") && (
         <div className="mb-6 flex items-center justify-between gap-4">
-          <div className="relative w-full max-w-sm">
+          <div className="relative w-full max-w-sm" style={{ isolation: 'isolate' }}>
             <input
               type="text"
               aria-label="Search merchants"
@@ -437,78 +438,82 @@ export function DrilldownView({ token }: DrilldownViewProps) {
         </div>
       )}
 
-      {/* Search Results Card Overlay */}
-      {showSearchCard && liveSearchData && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 px-4" onClick={dismissSearch}>
+      {/* Search Results Dropdown - appears immediately below search input */}
+      {showSearchDropdown && (
+        <>
+          {/* Invisible backdrop for outside clicks */}
           <div 
-            className="bg-white rounded-2xl border border-neutral-200 shadow-2xl max-w-2xl w-full max-h-[70vh] flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Card Header */}
-            <div className="flex items-center justify-between p-4 border-b border-neutral-200">
-              <div className="flex-1">
-                <h3 className="text-base font-semibold text-neutral-900">
-                  {liveSearchData.rankedItems.length} merchant{liveSearchData.rankedItems.length !== 1 ? 's' : ''} match "{liveSearchData.query}"
-                </h3>
-                {liveSearchData.rankedItems.length > 0 && (
-                  <p className="text-xs text-neutral-600 mt-1">
-                    {formatCurrency(liveSearchData.total, liveSearchData.currency)} combined total
-                  </p>
-                )}
-              </div>
-              <button
-                onClick={dismissSearch}
-                className="ml-4 text-neutral-400 hover:text-neutral-600 transition"
-                aria-label="Close search results"
-              >
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Card Body - Scrollable */}
-            <div className="overflow-y-auto flex-1 p-4">
-              {isSearching ? (
-                <div className="flex items-center justify-center py-8">
-                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-purple-600 border-t-transparent" />
+            className="fixed inset-0 z-40" 
+            onClick={dismissSearch}
+          />
+          
+          {/* Dropdown positioned below search input */}
+          <div className="absolute top-full left-0 right-0 mt-2 z-50 bg-white rounded-lg border border-neutral-200 shadow-xl max-h-96 flex flex-col">
+            {/* Dropdown content */}
+            <div className="overflow-y-auto flex-1">
+              {searchInput.trim().length < 2 ? (
+                <div className="p-4 text-sm text-neutral-500 text-center">
+                  Type at least 2 characters to search
                 </div>
-              ) : liveSearchData.rankedItems.length === 0 ? (
-                <p className="text-sm text-neutral-500 text-center py-8">No merchants found</p>
-              ) : (
-                <div className="space-y-2">
-                  {liveSearchData.rankedItems.map((item) => (
-                    <button
-                      key={item.slug}
-                      onClick={() => {
-                        dismissSearch();
-                        if (item.category) {
-                          router.push(`/account/spending?category=${encodeURIComponent(item.category)}&merchant=${encodeURIComponent(item.slug)}`);
-                        }
-                      }}
-                      className="w-full flex items-center justify-between p-3 rounded-lg hover:bg-neutral-50 transition text-left"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-medium text-neutral-900 truncate">{item.name}</p>
-                          {item.subLabel && (
-                            <span className="text-xs text-neutral-500">{item.subLabel}</span>
-                          )}
-                        </div>
-                        {item.category && (
-                          <p className="text-xs text-neutral-600 mt-0.5">{item.category}</p>
-                        )}
-                      </div>
-                      <div className="ml-3 text-sm font-semibold text-neutral-900 tabular-nums shrink-0">
-                        {formatCurrency(item.total, liveSearchData.currency)}
-                      </div>
-                    </button>
-                  ))}
+              ) : isSearching ? (
+                <div className="flex items-center justify-center py-6">
+                  <div className="flex items-center gap-2 text-sm text-neutral-600">
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-purple-600 border-t-transparent" />
+                    <span>Loading...</span>
+                  </div>
                 </div>
-              )}
+              ) : liveSearchData ? (
+                <>
+                  {/* Results header */}
+                  <div className="px-4 py-3 border-b border-neutral-100 bg-neutral-50">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-medium text-neutral-700">
+                        {liveSearchData.rankedItems.length} merchant{liveSearchData.rankedItems.length !== 1 ? 's' : ''} found
+                      </p>
+                      {liveSearchData.rankedItems.length > 0 && (
+                        <p className="text-xs text-neutral-600">
+                          {formatCurrency(liveSearchData.total, liveSearchData.currency)} total
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Merchant results */}
+                  {liveSearchData.rankedItems.length === 0 ? (
+                    <div className="p-4 text-sm text-neutral-500 text-center">
+                      No merchants found
+                    </div>
+                  ) : (
+                    <div className="p-2">
+                      {liveSearchData.rankedItems.map((item) => (
+                        <button
+                          key={item.slug}
+                          onClick={() => {
+                            dismissSearch();
+                            if (item.category) {
+                              router.push(`/account/spending?category=${encodeURIComponent(item.category)}&merchant=${encodeURIComponent(item.slug)}`);
+                            }
+                          }}
+                          className="w-full flex items-center justify-between p-2 rounded hover:bg-neutral-50 transition text-left"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-neutral-900 truncate">{item.name}</p>
+                            {item.category && (
+                              <p className="text-xs text-neutral-600 mt-0.5">{item.category}</p>
+                            )}
+                          </div>
+                          <div className="ml-3 text-sm font-semibold text-neutral-900 tabular-nums shrink-0">
+                            {formatCurrency(item.total, liveSearchData.currency)}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : null}
             </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* Debt Payment Review List */}
