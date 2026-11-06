@@ -104,6 +104,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
   const [debouncedSearch, setDebouncedSearch] = useState(searchQuery);
   const [liveSearchData, setLiveSearchData] = useState<DrilldownData | null>(null);
   const [isSearching, setIsSearching] = useState(false);
+  const [showSearchCard, setShowSearchCard] = useState(false);
 
   // Debounce search input
   useEffect(() => {
@@ -115,6 +116,8 @@ export function DrilldownView({ token }: DrilldownViewProps) {
 
   // Fetch search results without navigation when debounced search changes
   useEffect(() => {
+    const abortController = new AbortController();
+    
     const fetchSearchResults = async () => {
       const query = debouncedSearch.trim();
       
@@ -122,6 +125,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       if (query.length < 2) {
         setLiveSearchData(null);
         setIsSearching(false);
+        setShowSearchCard(false);
         return;
       }
 
@@ -131,6 +135,8 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       }
 
       setIsSearching(true);
+      setShowSearchCard(true);
+      
       try {
         const params = new URLSearchParams({ level: "search" });
         params.set("q", query);
@@ -138,16 +144,28 @@ export function DrilldownView({ token }: DrilldownViewProps) {
         const res = await fetch(`/api/user/spending/drilldown?${params}`, {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
+          signal: abortController.signal,
         });
 
         if (res.ok) {
           const result = await res.json();
-          setLiveSearchData(result);
+          // Only update if not aborted
+          if (!abortController.signal.aborted) {
+            setLiveSearchData(result);
+          }
         }
       } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          // Ignore aborted requests
+          return;
+        }
         console.error("Search error:", err);
+        // Close card on error
+        setShowSearchCard(false);
       } finally {
-        setIsSearching(false);
+        if (!abortController.signal.aborted) {
+          setIsSearching(false);
+        }
       }
     };
 
@@ -156,7 +174,12 @@ export function DrilldownView({ token }: DrilldownViewProps) {
     } else {
       setLiveSearchData(null);
       setIsSearching(false);
+      setShowSearchCard(false);
     }
+
+    return () => {
+      abortController.abort();
+    };
   }, [debouncedSearch, token, searchQuery]);
 
   // silent: refresh the numbers without unmounting the page. A merge panel on
@@ -208,6 +231,14 @@ export function DrilldownView({ token }: DrilldownViewProps) {
     setSearchInput(searchQuery);
   }, [searchQuery]);
 
+  // Dismiss search card and clear input
+  const dismissSearch = () => {
+    setSearchInput("");
+    setLiveSearchData(null);
+    setShowSearchCard(false);
+    setIsSearching(false);
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
@@ -224,8 +255,8 @@ export function DrilldownView({ token }: DrilldownViewProps) {
     );
   }
 
-  // Use live search results if available, otherwise use loaded data
-  const displayData = liveSearchData || data;
+  // Use loaded data for main page (search card is separate overlay)
+  const displayData = data;
 
   const handleItemClick = (item: RankedItem) => {
     if (level === "all") {
@@ -326,7 +357,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
   }, 0);
 
   return (
-    <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8">
+    <div className="relative mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8">
       {/* Breadcrumb */}
       <div className="mb-6">
         <div className="flex items-center gap-2 text-sm mb-2">
@@ -361,7 +392,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
               onChange={(e) => setSearchInput(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Escape") {
-                  setSearchInput("");
+                  dismissSearch();
                 }
               }}
               className="w-full rounded-full border border-neutral-300 bg-white py-2 pl-9 pr-8 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-purple-500"
@@ -381,8 +412,9 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             </svg>
             {searchInput && (
               <button
-                onClick={() => setSearchInput("")}
+                onClick={dismissSearch}
                 className="absolute right-2 top-1/2 -translate-y-1/2 transform text-neutral-400 hover:text-neutral-600"
+                aria-label="Clear search"
               >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -402,6 +434,80 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             </svg>
             Find duplicates
           </button>
+        </div>
+      )}
+
+      {/* Search Results Card Overlay */}
+      {showSearchCard && liveSearchData && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 px-4" onClick={dismissSearch}>
+          <div 
+            className="bg-white rounded-2xl border border-neutral-200 shadow-2xl max-w-2xl w-full max-h-[70vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Card Header */}
+            <div className="flex items-center justify-between p-4 border-b border-neutral-200">
+              <div className="flex-1">
+                <h3 className="text-base font-semibold text-neutral-900">
+                  {liveSearchData.rankedItems.length} merchant{liveSearchData.rankedItems.length !== 1 ? 's' : ''} match "{liveSearchData.query}"
+                </h3>
+                {liveSearchData.rankedItems.length > 0 && (
+                  <p className="text-xs text-neutral-600 mt-1">
+                    {formatCurrency(liveSearchData.total, liveSearchData.currency)} combined total
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={dismissSearch}
+                className="ml-4 text-neutral-400 hover:text-neutral-600 transition"
+                aria-label="Close search results"
+              >
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Card Body - Scrollable */}
+            <div className="overflow-y-auto flex-1 p-4">
+              {isSearching ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-purple-600 border-t-transparent" />
+                </div>
+              ) : liveSearchData.rankedItems.length === 0 ? (
+                <p className="text-sm text-neutral-500 text-center py-8">No merchants found</p>
+              ) : (
+                <div className="space-y-2">
+                  {liveSearchData.rankedItems.map((item) => (
+                    <button
+                      key={item.slug}
+                      onClick={() => {
+                        dismissSearch();
+                        if (item.category) {
+                          router.push(`/account/spending?category=${encodeURIComponent(item.category)}&merchant=${encodeURIComponent(item.slug)}`);
+                        }
+                      }}
+                      className="w-full flex items-center justify-between p-3 rounded-lg hover:bg-neutral-50 transition text-left"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-neutral-900 truncate">{item.name}</p>
+                          {item.subLabel && (
+                            <span className="text-xs text-neutral-500">{item.subLabel}</span>
+                          )}
+                        </div>
+                        {item.category && (
+                          <p className="text-xs text-neutral-600 mt-0.5">{item.category}</p>
+                        )}
+                      </div>
+                      <div className="ml-3 text-sm font-semibold text-neutral-900 tabular-nums shrink-0">
+                        {formatCurrency(item.total, liveSearchData.currency)}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
