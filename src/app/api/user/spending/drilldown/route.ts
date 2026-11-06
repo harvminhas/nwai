@@ -910,19 +910,19 @@ export async function GET(req: NextRequest) {
         });
       }
 
-      // One row per merchant, whichever categories it was charged in. A merged
-      // merchant used to show once per category, which made a successful merge
-      // look like it had done nothing.
+      // One row per merchant/account, whichever categories it was charged in.
+      // For Debt transactions, group by account (not merchant) since debt detail expects accountSlug.
       const merchantMap = new Map<string, {
         name: string;
         canonicalSlug: string;
         total: number;
         categories: Map<string, number>;
         txCount: number;
+        isDebtAccount?: boolean; // Track debt accounts separately
       }>();
 
       // Filter to window months, exclude core-excluded categories
-      // Include Debt transactions in search (users want to find loan/card payment merchants)
+      // Include Debt transactions in search (users want to find loan/card payment accounts)
       const scopedTxns = profile.expenseTxns.filter(t => {
         if (!windowMonths.includes(t.txMonth)) return false;
         if (isCoreExcluded(t.category)) return false;
@@ -931,25 +931,37 @@ export async function GET(req: NextRequest) {
 
       scopedTxns.forEach(t => {
         const parent = getParentCategory(t.category);
-        // 1. Resolve alias to canonical name first (merging)
-        const resolvedMerchant = aliasResolver.resolve(t.merchant);
-        // 2. Then apply slug and canonical resolution (aliasing)
-        const slug = merchantSlug(resolvedMerchant);
-        const canonical = resolveCanonicalMerchantSlug(slug);
-        if (!canonical) return;
+        
+        // For Debt transactions, use accountSlug as the key (debt detail expects account, not merchant)
+        const isDebt = parent === "Debt";
+        const key = isDebt ? t.accountSlug : (() => {
+          // Regular merchant: resolve alias and canonical slug
+          const resolvedMerchant = aliasResolver.resolve(t.merchant);
+          const slug = merchantSlug(resolvedMerchant);
+          return resolveCanonicalMerchantSlug(slug);
+        })();
+        
+        if (!key) return;
 
-        if (!merchantMap.has(canonical)) {
-          // Use same display name resolution as category branch
-          merchantMap.set(canonical, {
-            name: resolveMerchantAlias(slug, resolvedMerchant),
-            canonicalSlug: canonical,
+        if (!merchantMap.has(key)) {
+          // Display name: for debt use account name, for merchants use resolved merchant
+          const displayName = isDebt ? (t.accountLabel || t.accountSlug) : (() => {
+            const resolvedMerchant = aliasResolver.resolve(t.merchant);
+            const slug = merchantSlug(resolvedMerchant);
+            return resolveMerchantAlias(slug, resolvedMerchant);
+          })();
+          
+          merchantMap.set(key, {
+            name: displayName,
+            canonicalSlug: key,
             total: 0,
             categories: new Map(),
             txCount: 0,
+            isDebtAccount: isDebt,
           });
         }
 
-        const entry = merchantMap.get(canonical)!;
+        const entry = merchantMap.get(key)!;
         const amount = Math.abs(t.amount);
         entry.total += amount;
         entry.txCount += 1;
