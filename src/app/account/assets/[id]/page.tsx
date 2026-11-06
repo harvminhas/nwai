@@ -8,6 +8,7 @@ import { getFirebaseClient } from "@/lib/firebase";
 import { formatCurrency } from "@/lib/currencyUtils";
 import AccountSwitcher from "@/components/AccountSwitcher";
 import { ConfirmModal } from "@/components/ConfirmModal";
+import { CategoryPicker, categoryColor } from "@/app/account/spending/shared";
 import type { ManualAsset, AssetCategory, HubLink, ExpenseTransaction, IncomeTransaction } from "@/lib/types";
 import type { DebtsSummary, DebtAccount } from "@/lib/debtsSummary";
 
@@ -82,6 +83,10 @@ export default function ManualAssetPage() {
     message: string;
     onConfirm: () => void;
   } | null>(null);
+  
+  // Category picker state for transaction modal
+  const [openCategoryPicker, setOpenCategoryPicker] = useState<string | null>(null);
+  const categoryPickerBtnRefs = useState(() => new Map<string, HTMLButtonElement>())[0];
 
   const load = useCallback(async (tok: string) => {
     setLoading(true);
@@ -400,6 +405,63 @@ export default function ManualAssetPage() {
         }
       },
     });
+  };
+
+  const handleCategoryChange = async (txFingerprint: string, merchant: string, newCategory: string) => {
+    if (!token) return;
+    setOpenCategoryPicker(null);
+    
+    // Optimistic update for both expense and income lists
+    const isMovingToIncome = newCategory.toLowerCase().startsWith("income");
+    
+    setAvailableTxns((prev) => {
+      if (isMovingToIncome) {
+        // Remove from expenses
+        return prev.filter((tx) => tx.fingerprint !== txFingerprint);
+      } else {
+        // Update category in expenses
+        return prev.map((tx) =>
+          tx.fingerprint === txFingerprint ? { ...tx, category: newCategory } : tx
+        );
+      }
+    });
+    
+    setAvailableIncomeTxns((prev) => {
+      if (isMovingToIncome) {
+        // Add to income (find the transaction from expenses first)
+        const expenseTx = availableTxns.find(tx => tx.fingerprint === txFingerprint);
+        if (expenseTx) {
+          return [...prev, {
+            ...expenseTx,
+            category: newCategory.replace(/^income\s*-\s*/i, "").trim() || "Other",
+          }];
+        }
+        return prev;
+      } else {
+        // Remove from income
+        return prev.filter((tx) => tx.fingerprint !== txFingerprint);
+      }
+    });
+    
+    try {
+      const res = await fetch("/api/user/category-rules", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ merchant, category: newCategory }),
+      });
+      
+      if (res.ok) {
+        setToast({ msg: `Category updated: "${merchant}" → ${newCategory}`, ok: true });
+      } else {
+        setToast({ msg: "Failed to save category", ok: false });
+        // Revert on error - reload
+        await load(token);
+      }
+    } catch {
+      setToast({ msg: "Failed to save category", ok: false });
+      // Revert on error - reload
+      await load(token);
+    }
   };
 
   if (loading) {
@@ -1137,7 +1199,38 @@ export default function ManualAssetPage() {
                           <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500">
                             <span>{tx.accountLabel ?? "Unknown"}</span>
                             <span>•</span>
-                            <span>{tx.category}</span>
+                            <button
+                              ref={(el) => {
+                                if (el) categoryPickerBtnRefs.set(tx.fingerprint, el);
+                                else categoryPickerBtnRefs.delete(tx.fingerprint);
+                              }}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setOpenCategoryPicker(openCategoryPicker === tx.fingerprint ? null : tx.fingerprint);
+                              }}
+                              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-gray-100 transition"
+                              style={{
+                                backgroundColor: openCategoryPicker === tx.fingerprint ? "#f3f4f6" : undefined,
+                              }}
+                            >
+                              <span
+                                className="h-1.5 w-1.5 rounded-full"
+                                style={{ backgroundColor: categoryColor(tx.category?.toLowerCase() ?? "other") }}
+                              />
+                              <span>{tx.category}</span>
+                              <svg className="h-3 w-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </button>
+                            {openCategoryPicker === tx.fingerprint && categoryPickerBtnRefs.has(tx.fingerprint) && (
+                              <CategoryPicker
+                                anchorRef={{ current: categoryPickerBtnRefs.get(tx.fingerprint)! }}
+                                current={tx.category ?? "Other"}
+                                onSelect={(cat) => handleCategoryChange(tx.fingerprint, tx.merchant, cat)}
+                                onClose={() => setOpenCategoryPicker(null)}
+                              />
+                            )}
                             <span>•</span>
                             <span>{tx.date ? new Date(tx.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "No date"}</span>
                           </div>
