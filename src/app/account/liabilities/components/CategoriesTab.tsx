@@ -6,7 +6,7 @@ import type { DebtsSummary, DebtAccount } from "@/lib/debtsSummary";
 import type { ManualLiability } from "@/lib/types";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { formatAccountLast4 } from "@/lib/rangeUtils";
-import { CategoryListRow, CategoryNameLink } from "@/app/account/spending/CategoryListRow";
+import { CategoryListRow } from "@/app/account/spending/CategoryListRow";
 import { formatLastTransactionDate } from "@/lib/formatLastTransactionDate";
 
 const GROUP_COLOR: Record<string, string> = {
@@ -60,11 +60,9 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
                   <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${GROUP_COLOR[group.type] ?? "bg-gray-300"}`} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
-                      <CategoryNameLink
-                        href={`/account/liabilities/category/${group.type}`}
-                        name={group.label}
-                        className="text-sm font-semibold text-gray-900"
-                      />
+                      <p className="text-sm font-semibold text-gray-900">
+                        {group.label}
+                      </p>
                       <span className="text-xs text-gray-400">
                         {count} {count === 1 ? "account" : "accounts"}
                       </span>

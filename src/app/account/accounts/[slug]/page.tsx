@@ -1322,12 +1322,6 @@ export default function AccountDetailPage() {
             {isDebtAccount ? "Debts" : "Assets"}
           </Link>
           <span>/</span>
-          <Link href={isDebtAccount ? `/account/liabilities/category/${debtGroup(accountType, data.accountName)}` : `/account/assets/category/${accountGroup(accountType, data.accountName)}`} className="hover:text-purple-600">
-            {isDebtAccount
-              ? DEBT_GROUP_LABEL[debtGroup(accountType, data.accountName)]
-              : ASSET_GROUP_LABEL[accountGroup(accountType, data.accountName)]}
-          </Link>
-          <span>/</span>
           <span className="font-medium text-gray-700">{data.accountName ?? data.bankName ?? slug}</span>
         </div>
         <AccountSwitcher />

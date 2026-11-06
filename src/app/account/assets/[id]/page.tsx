@@ -9,6 +9,7 @@ import { formatCurrency } from "@/lib/currencyUtils";
 import AccountSwitcher from "@/components/AccountSwitcher";
 import { ConfirmModal } from "@/components/ConfirmModal";
 import { CategoryPicker, categoryColor } from "@/app/account/spending/shared";
+import { useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 import type { ManualAsset, AssetCategory, HubLink, ExpenseTransaction, IncomeTransaction } from "@/lib/types";
 import type { DebtsSummary, DebtAccount } from "@/lib/debtsSummary";
 
@@ -87,6 +88,9 @@ export default function ManualAssetPage() {
   // Category picker state for transaction modal
   const [openCategoryPicker, setOpenCategoryPicker] = useState<string | null>(null);
   const categoryPickerBtnRefs = useState(() => new Map<string, HTMLButtonElement>())[0];
+  
+  // Profile refresh context (same as account detail)
+  const { requestProfileRefresh } = useProfileRefresh();
 
   const load = useCallback(async (tok: string) => {
     setLoading(true);
@@ -411,68 +415,12 @@ export default function ManualAssetPage() {
     if (!token) return;
     setOpenCategoryPicker(null);
     
-    // Determine if moving between income and expense
-    const isMovingToIncome = newCategory.toLowerCase().startsWith("income");
-    const currentTx = linkedTxns.find(tx => tx.fingerprint === txFingerprint);
-    const isCurrentlyIncome = currentTx?.role === "income_from";
-    
-    // Optimistic update for linked transactions (displayed on page)
-    setLinkedTxns((prev) => {
-      if (isMovingToIncome && !isCurrentlyIncome) {
-        // Moving from expense to income - change role and category
-        return prev.map((tx) =>
-          tx.fingerprint === txFingerprint 
-            ? { 
-                ...tx, 
-                category: newCategory.replace(/^income\s*-\s*/i, "").trim() || "Other",
-                role: "income_from" as const
-              } 
-            : tx
-        );
-      } else if (!isMovingToIncome && isCurrentlyIncome) {
-        // Moving from income to expense - change role and category
-        return prev.map((tx) =>
-          tx.fingerprint === txFingerprint 
-            ? { 
-                ...tx, 
-                category: newCategory,
-                role: "spend_on" as const
-              } 
-            : tx
-        );
-      } else {
-        // Just updating category, staying in same type
-        return prev.map((tx) =>
-          tx.fingerprint === txFingerprint ? { ...tx, category: newCategory } : tx
-        );
-      }
-    });
-    
-    // Also update available transaction lists (for picker)
-    setAvailableTxns((prev) => {
-      if (isMovingToIncome) {
-        return prev.filter((tx) => tx.fingerprint !== txFingerprint);
-      } else {
-        return prev.map((tx) =>
-          tx.fingerprint === txFingerprint ? { ...tx, category: newCategory } : tx
-        );
-      }
-    });
-    
-    setAvailableIncomeTxns((prev) => {
-      if (isMovingToIncome) {
-        const expenseTx = availableTxns.find(tx => tx.fingerprint === txFingerprint) || currentTx;
-        if (expenseTx) {
-          return [...prev, {
-            ...expenseTx,
-            category: newCategory.replace(/^income\s*-\s*/i, "").trim() || "Other",
-          }];
-        }
-        return prev;
-      } else {
-        return prev.filter((tx) => tx.fingerprint !== txFingerprint);
-      }
-    });
+    // Optimistic update - just category, no role changes
+    setLinkedTxns((prev) =>
+      prev.map((tx) =>
+        tx.fingerprint === txFingerprint ? { ...tx, category: newCategory } : tx
+      )
+    );
     
     try {
       const res = await fetch("/api/user/category-rules", {
@@ -482,44 +430,13 @@ export default function ManualAssetPage() {
       });
       
       if (res.ok) {
-        setToast({ msg: `Category updated: "${merchant}" → ${newCategory}`, ok: true });
-        // If role changed, we need to update the link in the database
-        if ((isMovingToIncome && !isCurrentlyIncome) || (!isMovingToIncome && isCurrentlyIncome)) {
-          // Need to unlink old role and link new role
-          if (asset) {
-            const oldRole = isCurrentlyIncome ? "income_from" : "spend_on";
-            const newRole = isMovingToIncome ? "income_from" : "spend_on";
-            
-            // Delete old link
-            await fetch("/api/user/tx-links", {
-              method: "DELETE",
-              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-              body: JSON.stringify({
-                fingerprint: txFingerprint,
-                hubId: asset.id,
-                role: oldRole,
-              }),
-            });
-            
-            // Create new link
-            await fetch("/api/user/tx-links", {
-              method: "POST",
-              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-              body: JSON.stringify({
-                fingerprint: txFingerprint,
-                hubId: asset.id,
-                role: newRole,
-              }),
-            });
-          }
-        }
+        setToast({ msg: `Rule saved: "${merchant}" → ${newCategory}`, ok: true });
+        requestProfileRefresh();
       } else {
-        setToast({ msg: "Failed to save category", ok: false });
-        await load(token);
+        setToast({ msg: "Failed to save rule", ok: false });
       }
     } catch {
-      setToast({ msg: "Failed to save category", ok: false });
-      await load(token);
+      setToast({ msg: "Failed to save rule", ok: false });
     }
   };
 
@@ -577,10 +494,6 @@ export default function ManualAssetPage() {
         <div className="mb-2 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-sm text-gray-500">
             <Link href="/account/assets?tab=accounts" className="hover:text-purple-600">Assets</Link>
-            <span>/</span>
-            <Link href={`/account/assets/category/${asset.category === "property" ? "property" : "other"}`} className="hover:text-purple-600">
-              {asset.category === "property" ? "Property" : "Other Assets"}
-            </Link>
           </div>
           <AccountSwitcher />
         </div>
