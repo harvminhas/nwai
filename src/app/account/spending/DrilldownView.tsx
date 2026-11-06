@@ -422,33 +422,18 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                 </svg>
               </button>
             )}
-          </div>
-          <button
-            onClick={() => {
-              setMergeFor(null);
-              setShowMergePanel(true);
-            }}
-            className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-sm font-medium text-neutral-600 hover:text-purple-700"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-3-3m3 3l-3 3M16 17H4m0 0l3-3m-3 3l3 3" />
-            </svg>
-            Find duplicates
-          </button>
-        </div>
-      )}
 
-      {/* Search Results Dropdown - appears immediately below search input */}
-      {showSearchDropdown && (
-        <>
-          {/* Invisible backdrop for outside clicks */}
-          <div 
-            className="fixed inset-0 z-40" 
-            onClick={dismissSearch}
-          />
-          
-          {/* Dropdown positioned below search input */}
-          <div className="absolute top-full left-0 right-0 mt-2 z-50 bg-white rounded-lg border border-neutral-200 shadow-xl max-h-96 flex flex-col">
+            {/* Search Results Dropdown - positioned below input */}
+            {showSearchDropdown && (
+              <>
+                {/* Invisible backdrop for outside clicks */}
+                <div 
+                  className="fixed inset-0 z-40" 
+                  onClick={dismissSearch}
+                />
+                
+                {/* Dropdown positioned below search input */}
+                <div className="absolute top-full left-0 right-0 mt-2 z-50 bg-white rounded-lg border border-neutral-200 shadow-xl max-h-96 flex flex-col">
             {/* Dropdown content */}
             <div className="overflow-y-auto flex-1">
               {searchInput.trim().length < 2 ? (
@@ -514,6 +499,21 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             </div>
           </div>
         </>
+      )}
+          </div>
+          <button
+            onClick={() => {
+              setMergeFor(null);
+              setShowMergePanel(true);
+            }}
+            className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-sm font-medium text-neutral-600 hover:text-purple-700"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-3-3m3 3l-3 3M16 17H4m0 0l3-3m-3 3l3 3" />
+            </svg>
+            Find duplicates
+          </button>
+        </div>
       )}
 
       {/* Debt Payment Review List */}
