@@ -222,11 +222,18 @@ function NetWorthPageContent() {
       // Check if this is a first appearance (baseline)
       const isBaseline = previous === undefined && current !== undefined;
       
+      // Check if this is a new manual asset (from change items)
+      const isNewAsset = selectedData.items.some(
+        item => item.type === "new_asset" && item.accountSlug === slug
+      );
+      
       const line: BreakdownLine = {
         category,
-        label: isBaseline 
-          ? `${current.label} (first statement)` 
-          : (current?.label || previous?.label || slug),
+        label: isNewAsset
+          ? `New asset: ${current.label}`
+          : isBaseline 
+            ? `${current.label} (first statement)` 
+            : (current?.label || previous?.label || slug),
         amount: change,
         accountSlug: slug,
         isBaseline,
@@ -334,6 +341,7 @@ function NetWorthPageContent() {
                 netWorth: d.netWorth,
                 hasPaidOff: d.items.some(i => i.type === "account_paid_off"),
                 hasNewAccount: d.items.some(i => i.type === "account_added"),
+                hasNewAsset: d.items.some(i => i.type === "new_asset"),
               }))}
               onClick={(e: any) => {
                 if (e?.activeLabel) {
@@ -394,10 +402,11 @@ function NetWorthPageContent() {
                         <p className="text-sm font-semibold text-gray-900">
                           {formatCurrency(data.netWorth, currency)}
                         </p>
-                        {(data.hasPaidOff || data.hasNewAccount) && (
+                        {(data.hasPaidOff || data.hasNewAccount || data.hasNewAsset) && (
                           <div className="mt-1 flex gap-2 text-xs">
                             {data.hasPaidOff && <span className="text-green-600">● Paid off</span>}
                             {data.hasNewAccount && <span className="text-blue-600">● New account</span>}
+                            {data.hasNewAsset && <span className="text-purple-600">● New asset</span>}
                           </div>
                         )}
                       </div>
