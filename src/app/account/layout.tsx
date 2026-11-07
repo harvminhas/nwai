@@ -1,16 +1,17 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { ActiveProfileProvider, useActiveProfile } from "@/contexts/ActiveProfileContext";
 import { PlanProvider } from "@/contexts/PlanContext";
-import { ProfileRefreshProvider } from "@/contexts/ProfileRefreshContext";
+import { ProfileRefreshProvider, PROFILE_REFRESHED_EVENT } from "@/contexts/ProfileRefreshContext";
 import { MvpTopNav } from "@/components/MvpTopNav";
 
 function AccountLayoutInner({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const { buildHeaders } = useActiveProfile();
   const [token, setToken] = useState<string | null>(null);
   const [netWorthData, setNetWorthData] = useState<{
@@ -59,6 +60,23 @@ function AccountLayoutInner({ children }: { children: React.ReactNode }) {
     if (token) {
       loadNetWorth(token);
     }
+  }, [token, loadNetWorth]);
+
+  // Refresh net worth when navigating to /account/net-worth page
+  // Ensures header shows latest data matching detail page
+  useEffect(() => {
+    if (token && pathname === "/account/net-worth") {
+      loadNetWorth(token);
+    }
+  }, [pathname, token, loadNetWorth]);
+
+  // Refresh net worth when profile cache is rebuilt
+  useEffect(() => {
+    const handleProfileRefresh = () => {
+      if (token) loadNetWorth(token);
+    };
+    window.addEventListener(PROFILE_REFRESHED_EVENT, handleProfileRefresh);
+    return () => window.removeEventListener(PROFILE_REFRESHED_EVENT, handleProfileRefresh);
   }, [token, loadNetWorth]);
 
   if (!token) {
