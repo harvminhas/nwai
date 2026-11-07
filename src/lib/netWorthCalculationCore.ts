@@ -28,6 +28,36 @@ export interface AccountBalanceHistory {
 }
 
 /**
+ * Get the effective valuation for a manual asset as of a specific month-end.
+ * 
+ * @param asset - The manual asset with optional valuations array
+ * @param yearMonth - The target month (YYYY-MM format)
+ * @returns The asset's value (in dollars) as of the end of that month
+ */
+function getAssetValueForMonth(asset: ManualAsset, yearMonth: string): number {
+  // Legacy path: no valuations array means single current value for all months
+  if (!asset.valuations || asset.valuations.length === 0) {
+    return asset.value;
+  }
+
+  // Find the most recent valuation as of the end of this month
+  // Month-end is YYYY-MM-31 (simplified — actual last day doesn't matter for comparison)
+  const monthEnd = `${yearMonth}-31`;
+  
+  let effectiveValue: number | null = null;
+  for (const val of asset.valuations) {
+    if (val.effectiveDate <= monthEnd) {
+      effectiveValue = val.valueCents / 100; // Convert cents to dollars
+    } else {
+      break; // valuations are sorted ascending, so we can stop
+    }
+  }
+
+  // If no valuation exists for this month (all are after monthEnd), use legacy value or 0
+  return effectiveValue !== null ? effectiveValue : asset.value;
+}
+
+/**
  * Calculate net worth for all months in history.
  * 
  * This is the PRODUCTION calculation used by financialProfile.ts.
@@ -46,8 +76,7 @@ export function calculateNetWorthForMonths(
   toHome: (balance: number, currency: string) => number,
   accountStatusMap: Map<string, AccountStatusRecord>
 ): void {
-  // Manual assets total (added to each month)
-  const manualAssetsTotal = manualAssets.reduce((s, a) => s + a.value, 0);
+  // Note: manualAssetsTotal removed — no longer a single value per asset
 
   // Account type classification (same as assets/liabilities pages)
   const ASSET_TYPES = new Set(["checking", "savings", "investment", "property", "other"]);
@@ -121,12 +150,15 @@ export function calculateNetWorthForMonths(
         if (h.yearMonth < startMonth) continue; // Exclude before start month
       }
       
-      ta += asset.value;
+      // Get the effective value for this specific month
+      const valueForMonth = getAssetValueForMonth(asset, h.yearMonth);
+      
+      ta += valueForMonth;
       accountContributions.push({
         slug: `manual-${asset.id}`,
         label: asset.label,
         type: `manual-${asset.category}`,
-        value: asset.value,
+        value: valueForMonth,
       });
     }
     

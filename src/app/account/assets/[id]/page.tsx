@@ -95,6 +95,19 @@ export default function ManualAssetPage() {
   const [openCategoryPicker, setOpenCategoryPicker] = useState<string | null>(null);
   const categoryPickerBtnRefs = useState(() => new Map<string, HTMLButtonElement>())[0];
   
+  // Main tab state
+  const [mainTab, setMainTab] = useState<"overview" | "history" | "projections">("overview");
+  
+  // History tab state
+  const [showAddValuationModal, setShowAddValuationModal] = useState(false);
+  const [newValuationValue, setNewValuationValue] = useState("");
+  const [newValuationDate, setNewValuationDate] = useState("");
+  const [addingValuation, setAddingValuation] = useState(false);
+  
+  // Projections tab state
+  const [annualGrowthRate, setAnnualGrowthRate] = useState<string>("");
+  const [projectionYears, setProjectionYears] = useState(5);
+  
   const { requestProfileRefresh } = useProfileRefresh();
 
   const load = useCallback(async (tok: string) => {
@@ -117,6 +130,22 @@ export default function ManualAssetPage() {
         setLabel(found.label);
         setCategory(found.category);
         setValue(String(found.value));
+        setStartDate(found.startDate || "");
+        setAnnualGrowthRate(found.annualGrowthRate !== undefined && found.annualGrowthRate !== null ? String(found.annualGrowthRate) : "");
+        
+        // Initialize newValuationDate to today (America/New_York)
+        const now = new Date();
+        const formatter = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'America/New_York',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        });
+        const parts = formatter.formatToParts(now);
+        const year = parts.find(p => p.type === 'year')?.value ?? '';
+        const month = parts.find(p => p.type === 'month')?.value ?? '';
+        const day = parts.find(p => p.type === 'day')?.value ?? '';
+        setNewValuationDate(`${year}-${month}-${day}`);
       }
 
       const debtsData = debtsRes.ok ? await debtsRes.json() : null;
@@ -258,6 +287,7 @@ export default function ManualAssetPage() {
           category,
           value: num,
           startDate: startDate === "" ? null : startDate, // Explicit null to clear
+          annualGrowthRate: annualGrowthRate === "" ? null : Number(annualGrowthRate),
           linkedAccountSlug: asset.linkedAccountSlug, // Preserve legacy link
         }),
       });
@@ -272,6 +302,74 @@ export default function ManualAssetPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const addValuation = async () => {
+    if (!token || !asset) return;
+    const valueCents = Math.round(Number(newValuationValue.replace(/[^0-9.-]/g, "")) * 100);
+    if (Number.isNaN(valueCents) || valueCents < 0) {
+      setToast({ msg: "Enter a valid value", ok: false });
+      return;
+    }
+    if (!newValuationDate) {
+      setToast({ msg: "Enter a date", ok: false });
+      return;
+    }
+    
+    setAddingValuation(true);
+    try {
+      const res = await fetch(`/api/user/assets/${asset.id}/valuations`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          valueCents,
+          effectiveDate: newValuationDate,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to add valuation");
+      setShowAddValuationModal(false);
+      setNewValuationValue("");
+      setToast({ msg: "Valuation added", ok: true });
+      triggerProfileRefetch();
+      await load(token);
+    } catch {
+      setToast({ msg: "Could not add valuation", ok: false });
+    } finally {
+      setAddingValuation(false);
+    }
+  };
+
+  const deleteValuation = (effectiveDate: string) => {
+    if (!asset) return;
+    setConfirmModal({
+      isOpen: true,
+      title: "Delete valuation",
+      message: `Delete valuation from ${new Date(effectiveDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}? This will recalculate net worth for affected months.`,
+      onConfirm: async () => {
+        if (!token) return;
+        try {
+          const res = await fetch(
+            `/api/user/assets/${asset.id}/valuations?effectiveDate=${effectiveDate}`,
+            {
+              method: "DELETE",
+              headers: { Authorization: `Bearer ${token}` },
+            }
+          );
+          setConfirmModal(null);
+          if (!res.ok) {
+            const err = await res.json();
+            setToast({ msg: err.error || "Could not delete valuation", ok: false });
+          } else {
+            setToast({ msg: "Valuation deleted", ok: true });
+            triggerProfileRefetch();
+            await load(token);
+          }
+        } catch {
+          setConfirmModal(null);
+          setToast({ msg: "Could not delete valuation", ok: false });
+        }
+      },
+    });
   };
 
   const remove = () => {
@@ -555,6 +653,7 @@ export default function ManualAssetPage() {
                 setCategory(asset.category);
                 setValue(String(asset.value));
                 setStartDate(asset.startDate || "");
+                setAnnualGrowthRate(asset.annualGrowthRate !== undefined && asset.annualGrowthRate !== null ? String(asset.annualGrowthRate) : "");
                 setShowEditModal(true);
               }}
               className="text-gray-400 hover:text-gray-600 transition"
@@ -664,31 +763,67 @@ export default function ManualAssetPage() {
         </div>
       </div>
 
-      {/* Income/Expenses Tabs */}
+      {/* Main Tabs */}
       <div className="mt-6">
-        {/* Tab Switcher */}
-        <div className="mb-4 flex items-center gap-4 border-b border-gray-200">
+        <div className="mb-6 flex items-center gap-6 border-b border-gray-200">
           <button
-            onClick={() => setTransactionTab("income")}
-            className={`pb-2 px-1 text-sm font-medium transition ${
-              transactionTab === "income"
+            onClick={() => setMainTab("overview")}
+            className={`pb-3 px-1 text-base font-semibold transition ${
+              mainTab === "overview"
                 ? "border-b-2 border-purple-600 text-purple-600"
                 : "text-gray-500 hover:text-gray-700"
             }`}
           >
-            Income ({formatCurrency(totalIncome, currency)})
+            Overview
           </button>
           <button
-            onClick={() => setTransactionTab("expenses")}
-            className={`pb-2 px-1 text-sm font-medium transition ${
-              transactionTab === "expenses"
+            onClick={() => setMainTab("history")}
+            className={`pb-3 px-1 text-base font-semibold transition ${
+              mainTab === "history"
                 ? "border-b-2 border-purple-600 text-purple-600"
                 : "text-gray-500 hover:text-gray-700"
             }`}
           >
-            Expenses ({formatCurrency(totalSpending, currency)})
+            History
+          </button>
+          <button
+            onClick={() => setMainTab("projections")}
+            className={`pb-3 px-1 text-base font-semibold transition ${
+              mainTab === "projections"
+                ? "border-b-2 border-purple-600 text-purple-600"
+                : "text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            Projections
           </button>
         </div>
+
+        {/* Overview Tab */}
+        {mainTab === "overview" && (
+          <div>
+            {/* Income/Expenses Sub-Tabs */}
+            <div className="mb-4 flex items-center gap-4 border-b border-gray-200">
+              <button
+                onClick={() => setTransactionTab("income")}
+                className={`pb-2 px-1 text-sm font-medium transition ${
+                  transactionTab === "income"
+                    ? "border-b-2 border-purple-600 text-purple-600"
+                    : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                Income ({formatCurrency(totalIncome, currency)})
+              </button>
+              <button
+                onClick={() => setTransactionTab("expenses")}
+                className={`pb-2 px-1 text-sm font-medium transition ${
+                  transactionTab === "expenses"
+                    ? "border-b-2 border-purple-600 text-purple-600"
+                    : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                Expenses ({formatCurrency(totalSpending, currency)})
+              </button>
+            </div>
 
         {/* Income Tab */}
         {transactionTab === "income" && (
@@ -1131,7 +1266,289 @@ export default function ManualAssetPage() {
         )}
           </div>
         )}
+          </div>
+        )}
+
+        {/* History Tab */}
+        {mainTab === "history" && (
+          <div>
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Valuation History</h2>
+                <p className="text-sm text-gray-500 mt-1">Track how the value of this asset has changed over time</p>
+              </div>
+              <button
+                onClick={() => setShowAddValuationModal(true)}
+                className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
+              >
+                + Add Valuation
+              </button>
+            </div>
+
+            {asset.valuations && asset.valuations.length > 0 ? (
+              <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+                <table className="w-full">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Value</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {[...asset.valuations]
+                      .sort((a, b) => b.effectiveDate.localeCompare(a.effectiveDate))
+                      .map((val) => (
+                        <tr key={val.effectiveDate} className="hover:bg-gray-50 transition">
+                          <td className="px-4 py-3 text-sm text-gray-900">
+                            {new Date(val.effectiveDate).toLocaleDateString("en-US", {
+                              month: "short",
+                              day: "numeric",
+                              year: "numeric",
+                            })}
+                          </td>
+                          <td className="px-4 py-3 text-sm font-semibold text-gray-900 tabular-nums text-right">
+                            {formatCurrencyWithCents(val.valueCents / 100, currency)}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              onClick={() => deleteValuation(val.effectiveDate)}
+                              className="text-red-600 hover:text-red-700 text-sm font-medium transition"
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-8 text-center">
+                <p className="text-sm text-gray-500 mb-4">No valuation history yet. Add your first entry to start tracking changes.</p>
+                <button
+                  onClick={() => setShowAddValuationModal(true)}
+                  className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
+                >
+                  Add First Valuation
+                </button>
+              </div>
+            )}
+
+            <div className="mt-6 rounded-lg border border-blue-100 bg-blue-50 p-4">
+              <div className="flex gap-3">
+                <svg className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div className="text-sm text-blue-900">
+                  <p className="font-medium mb-1">How valuation history works</p>
+                  <ul className="text-blue-800 space-y-1 list-disc list-inside">
+                    <li>Each month uses the most recent valuation as of that month's end</li>
+                    <li>You can backdate valuations to correct historical values</li>
+                    <li>Deleting a valuation recalculates affected months using the previous value</li>
+                    <li>Cannot delete the only valuation (edit the value instead)</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Projections Tab */}
+        {mainTab === "projections" && (
+          <div>
+            <div className="mb-4">
+              <h2 className="text-lg font-semibold text-gray-900">Asset Projections</h2>
+              <p className="text-sm text-gray-500 mt-1">Estimate future value based on annual growth or depreciation</p>
+            </div>
+
+            {/* Projection Settings */}
+            <div className="rounded-xl border border-gray-200 bg-white p-5 mb-6">
+              <h3 className="text-sm font-semibold text-gray-900 mb-4">Projection Settings</h3>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">
+                    Annual Growth/Depreciation Rate (%)
+                  </label>
+                  <input
+                    type="number"
+                    value={annualGrowthRate}
+                    onChange={(e) => setAnnualGrowthRate(e.target.value)}
+                    onBlur={async () => {
+                      if (!token || !asset) return;
+                      // Save rate when user changes it
+                      const rate = annualGrowthRate === "" ? null : Number(annualGrowthRate);
+                      try {
+                        const res = await fetch(`/api/user/assets/${asset.id}`, {
+                          method: "PUT",
+                          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            label: asset.label,
+                            category: asset.category,
+                            value: asset.value,
+                            startDate: asset.startDate,
+                            linkedAccountSlug: asset.linkedAccountSlug,
+                            annualGrowthRate: rate,
+                          }),
+                        });
+                        if (res.ok) {
+                          await load(token);
+                        }
+                      } catch {
+                        // Silent fail - non-critical
+                      }
+                    }}
+                    placeholder="0"
+                    step="0.1"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Positive for appreciation, negative for depreciation
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">
+                    Projection Horizon (years)
+                  </label>
+                  <select
+                    value={projectionYears}
+                    onChange={(e) => setProjectionYears(Number(e.target.value))}
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
+                  >
+                    <option value="3">3 years</option>
+                    <option value="5">5 years</option>
+                    <option value="10">10 years</option>
+                    <option value="15">15 years</option>
+                    <option value="20">20 years</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Projection Chart/Table */}
+            {annualGrowthRate && annualGrowthRate !== "0" ? (
+              <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+                <div className="bg-amber-50 border-b border-amber-200 px-4 py-3">
+                  <div className="flex items-center gap-2 text-sm font-medium text-amber-900">
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>ESTIMATES ONLY - Not included in actual net worth</span>
+                  </div>
+                </div>
+                <table className="w-full">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Year</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Projected Value</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Change from Current</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {Array.from({ length: projectionYears }, (_, i) => {
+                      const year = new Date().getFullYear() + i + 1;
+                      const rate = Number(annualGrowthRate) / 100;
+                      const projectedValue = asset.value * Math.pow(1 + rate, i + 1);
+                      const change = projectedValue - asset.value;
+                      const changePercent = ((change / asset.value) * 100);
+
+                      return (
+                        <tr key={year} className={i === 0 ? "bg-purple-50" : ""}>
+                          <td className="px-4 py-3 text-sm font-medium text-gray-900">{year}</td>
+                          <td className="px-4 py-3 text-sm font-semibold text-gray-900 tabular-nums text-right">
+                            {formatCurrency(projectedValue, currency)}
+                          </td>
+                          <td className="px-4 py-3 text-sm tabular-nums text-right">
+                            <span className={change >= 0 ? "text-green-600" : "text-red-600"}>
+                              {change >= 0 ? "+" : ""}{formatCurrency(change, currency)}
+                              {" "}({change >= 0 ? "+" : ""}{changePercent.toFixed(1)}%)
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-8 text-center">
+                <p className="text-sm text-gray-500">Enter a growth or depreciation rate above to see projections</p>
+              </div>
+            )}
+
+            <div className="mt-6 rounded-lg border border-blue-100 bg-blue-50 p-4">
+              <div className="flex gap-3">
+                <svg className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div className="text-sm text-blue-900">
+                  <p className="font-medium mb-1">About projections</p>
+                  <ul className="text-blue-800 space-y-1 list-disc list-inside">
+                    <li>Projections use compound annual growth from your current value</li>
+                    <li>These are estimates only and do NOT affect your actual recorded net worth</li>
+                    <li>Changing the rate does not add a valuation entry</li>
+                    <li>Use positive rates for appreciation (e.g., 5 for 5% annual growth)</li>
+                    <li>Use negative rates for depreciation (e.g., -10 for 10% annual decline)</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Add Valuation Modal */}
+      {showAddValuationModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowAddValuationModal(false)}>
+          <div className="max-w-md w-full rounded-xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold text-gray-900">Add Valuation</h3>
+            <p className="mt-2 text-sm text-gray-600">Record the value of this asset on a specific date</p>
+            <div className="mt-4 space-y-4">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-500">Value ({currency})</label>
+                <input
+                  value={newValuationValue}
+                  onChange={(e) => setNewValuationValue(e.target.value)}
+                  inputMode="decimal"
+                  placeholder={String(asset?.value ?? "")}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm tabular-nums focus:border-purple-400 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-500">Effective Date</label>
+                <input
+                  type="date"
+                  value={newValuationDate}
+                  onChange={(e) => setNewValuationDate(e.target.value)}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Defaults to today. You can backdate to correct historical values.
+                </p>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  setShowAddValuationModal(false);
+                  setNewValuationValue("");
+                }}
+                disabled={addingValuation}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={addValuation}
+                disabled={addingValuation}
+                className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-40 transition"
+              >
+                {addingValuation ? "Adding..." : "Add Valuation"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Edit Modal */}
       {showEditModal && (
@@ -1292,11 +1709,7 @@ export default function ManualAssetPage() {
       )}
 
       {/* Link Transaction Modal */}
-      {showLinkTxnModal && (() => {
-        // Select correct transaction source based on role
-        const txnSource = selectedTxnRole === "income_from" ? availableIncomeTxns : availableTxns;
-        
-        return (
+      {showLinkTxnModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowLinkTxnModal(false)}>
           <div className="max-w-3xl w-full rounded-xl bg-white p-6 shadow-xl max-h-[80vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold text-gray-900">Link transaction</h3>
@@ -1362,6 +1775,7 @@ export default function ManualAssetPage() {
               )}
               <button
                 onClick={() => {
+                  const txnSource = selectedTxnRole === "income_from" ? availableIncomeTxns : availableTxns;
                   const visibleTxns = txnSource
                     .filter((tx) => !txnSearch || tx.merchant?.toLowerCase().includes(txnSearch.toLowerCase()))
                     .filter((tx) => !linkedTxns.some((l) => l.fingerprint === tx.fingerprint))
@@ -1378,6 +1792,7 @@ export default function ManualAssetPage() {
                 className="text-xs text-purple-600 hover:text-purple-700 font-medium"
               >
                 {(() => {
+                  const txnSource = selectedTxnRole === "income_from" ? availableIncomeTxns : availableTxns;
                   const visibleTxns = txnSource
                     .filter((tx) => !txnSearch || tx.merchant?.toLowerCase().includes(txnSearch.toLowerCase()))
                     .filter((tx) => !linkedTxns.some((l) => l.fingerprint === tx.fingerprint))
@@ -1408,7 +1823,7 @@ export default function ManualAssetPage() {
 
             <div className="mt-4 flex-1 overflow-y-auto">
               <div className="space-y-2">
-                {txnSource
+                {(selectedTxnRole === "income_from" ? availableIncomeTxns : availableTxns)
                   .filter((tx) => !txnSearch || tx.merchant?.toLowerCase().includes(txnSearch.toLowerCase()))
                   .filter((tx) => !linkedTxns.some((l) => l.fingerprint === tx.fingerprint))
                   .slice(0, 50)
@@ -1452,7 +1867,7 @@ export default function ManualAssetPage() {
                       </div>
                     </label>
                   ))}
-                {txnSource.filter((tx) => !txnSearch || tx.merchant?.toLowerCase().includes(txnSearch.toLowerCase())).length === 0 && (
+                {(selectedTxnRole === "income_from" ? availableIncomeTxns : availableTxns).filter((tx) => !txnSearch || tx.merchant?.toLowerCase().includes(txnSearch.toLowerCase())).length === 0 && (
                   <p className="text-sm text-gray-500 text-center py-8">No transactions found</p>
                 )}
               </div>
@@ -1481,8 +1896,7 @@ export default function ManualAssetPage() {
             </div>
           </div>
         </div>
-        );
-      })()}
+      )}
 
       {/* Confirmation Modal */}
       {confirmModal && (

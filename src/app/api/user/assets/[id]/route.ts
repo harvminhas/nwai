@@ -15,7 +15,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const { uid } = await auth.verifyIdToken(token);
     const { id } = await params;
     const body = await req.json();
-    const { label, category, value, linkedAccountSlug, startDate } = body;
+    const { label, category, value, linkedAccountSlug, startDate, annualGrowthRate } = body;
     if (!label || typeof value !== "number") {
       return NextResponse.json({ error: "label and value are required" }, { status: 400 });
     }
@@ -35,6 +35,17 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         }
       }
     }
+
+    // Validate annualGrowthRate if provided
+    if (annualGrowthRate !== undefined && annualGrowthRate !== null) {
+      if (typeof annualGrowthRate !== 'number' || !Number.isFinite(annualGrowthRate)) {
+        return NextResponse.json({ error: "annualGrowthRate must be a finite number or null" }, { status: 400 });
+      }
+      // Reasonable bounds: -100% to +100% per year
+      if (annualGrowthRate < -100 || annualGrowthRate > 100) {
+        return NextResponse.json({ error: "annualGrowthRate must be between -100 and 100" }, { status: 400 });
+      }
+    }
     
     const doc: Record<string, unknown> = {
       label,
@@ -47,6 +58,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
     if (startDate !== undefined) {
       doc.startDate = startDate === null || startDate === "" ? null : startDate; // Explicit clear support
+    }
+    if (annualGrowthRate !== undefined) {
+      doc.annualGrowthRate = annualGrowthRate === null || annualGrowthRate === "" ? null : annualGrowthRate;
     }
     await db.collection("users").doc(uid).collection("manualAssets").doc(id).set(doc, { merge: true });
     await invalidateFinancialProfileCache(uid, db);

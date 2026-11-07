@@ -24,6 +24,19 @@ export type AssetCategory =
   | "business"
   | "other";
 
+/**
+ * Single dated valuation entry for a manual asset.
+ * Records the asset's value on a specific date.
+ */
+export interface AssetValuation {
+  /** ISO date string (YYYY-MM-DD) when this valuation is effective (America/New_York) */
+  effectiveDate: string;
+  /** Asset value in cents (exact precision) */
+  valueCents: number;
+  /** ISO timestamp when this valuation entry was created */
+  createdAt: string;
+}
+
 export interface ManualAsset {
   id: string;
   label: string;
@@ -34,6 +47,20 @@ export interface ManualAsset {
   /** Date asset ownership started (YYYY-MM-DD) - user editable, controls inclusion in history */
   startDate?: string;
   updatedAt: string; // ISO date string - last edit timestamp
+  /**
+   * Dated valuation history — list of past values with effective dates.
+   * Each entry records when the user updated the asset value. The effective
+   * date defaults to "today" (America/New_York) but can be backdated.
+   * Sorted ascending by effectiveDate (oldest first).
+   * Empty or undefined for legacy assets (single current value only).
+   */
+  valuations?: AssetValuation[];
+  /**
+   * Optional annual growth/depreciation rate (signed percentage, e.g. 5 for 5% appreciation,
+   * -10 for 10% depreciation per year). Null or omitted means no projection.
+   * Used only for the Projections tab forecast — never affects actual recorded net worth.
+   */
+  annualGrowthRate?: number | null;
 }
 
 // ── Typed Links & Hubs ───────────────────────────────────────────────────────
