@@ -362,15 +362,20 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
       new Map()
     );
 
-    // byAccount should have checking (+10k) and mortgage (-200k)
-    // Manual assets are added to totalAssets but NOT in byAccount (per existing logic)
-    expect(monthlyHistory[0].byAccount).toHaveLength(2);
+    // byAccount should have checking (+10k), mortgage (-200k), AND car (+50k)
+    // Manual assets are now included in byAccount for detail page breakdown
+    expect(monthlyHistory[0].byAccount).toHaveLength(3);
     
     const checking = monthlyHistory[0].byAccount.find(a => a.slug === "checking-1");
     expect(checking?.value).toBe(10000);
     
     const mortgage = monthlyHistory[0].byAccount.find(a => a.slug === "mortgage-1");
     expect(mortgage?.value).toBe(-200000);
+    
+    const car = monthlyHistory[0].byAccount.find(a => a.slug === "manual-car-1");
+    expect(car?.value).toBe(50000);
+    expect(car?.label).toBe("Car");
+    expect(car?.type).toBe("manual-vehicle");
   });
 
   it("should handle no data gracefully", () => {

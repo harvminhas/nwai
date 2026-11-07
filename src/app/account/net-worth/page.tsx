@@ -5,30 +5,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
-import { formatCurrency, getCurrencySymbol } from "@/lib/currencyUtils";
-import type { MonthNetWorthSummary, ChangeItemType } from "@/lib/netWorthChanges";
+import { formatCurrency, formatCurrencyWithCents, getCurrencySymbol } from "@/lib/currencyUtils";
+import type { MonthNetWorthSummary } from "@/lib/netWorthChanges";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Area, ComposedChart, Dot } from "recharts";
-
-const CHANGE_TYPE_LABELS: Record<ChangeItemType, string> = {
-  account_added: "Account Added",
-  account_paid_off: "Account Paid Off",
-  account_closed: "Account Closed",
-  balance_increase: "Balance Increase",
-  balance_decrease: "Balance Decrease",
-  income_change: "Income Change",
-  spending_spike: "Spending Spike",
-  new_recurring_charge: "New Recurring Charge",
-};
-
-type FilterType = "all" | "income" | "spending" | "debt" | "assets";
-
-const FILTER_TYPE_LABELS: Record<FilterType, string> = {
-  all: "All Changes",
-  income: "Income",
-  spending: "Spending",
-  debt: "Debt",
-  assets: "Assets",
-};
 
 interface MonthlyNetWorthData {
   yearMonth: string;
@@ -51,7 +30,6 @@ function NetWorthPageContent() {
   const [data, setData] = useState<MonthlyNetWorthData[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [viewMonth, setViewMonth] = useState<string | null>(null); // For interactive header
-  const [filterType, setFilterType] = useState<FilterType>("all");
   const [currency, setCurrency] = useState<string>("CAD");
   const [activeTab, setActiveTab] = useState<"changes" | "assets" | "debts">("changes");
 
@@ -196,20 +174,6 @@ function NetWorthPageContent() {
   const selectedData = data.find(d => d.yearMonth === selectedMonth) || latestMonth;
 
   // Helper to categorize items by filter type
-  const getItemCategory = (item: MonthNetWorthSummary["items"][0]): FilterType => {
-    if (item.type === "income_change") return "income";
-    if (item.type === "spending_spike" || item.type === "new_recurring_charge") return "spending";
-    if (item.type === "account_paid_off") return "debt";
-    if (item.accountType === "credit_card" || item.accountType === "loan" || item.accountType === "line_of_credit" || item.accountType === "mortgage") {
-      return "debt";
-    }
-    return "assets";
-  };
-
-  // Filter items based on selected type
-  const filteredItems = filterType === "all" 
-    ? selectedData.items 
-    : selectedData.items.filter(i => getItemCategory(i) === filterType);
 
   // Calculate breakdown using per-account contributions (byAccount)
   // This adds up EXACTLY by construction since it uses the same carry-forward logic
@@ -646,7 +610,7 @@ function NetWorthPageContent() {
                           {isManual && <span className="ml-2 text-xs text-gray-500">(manual)</span>}
                         </span>
                         <span className="text-sm font-semibold text-gray-900">
-                          {formatCurrency(item.value, currency)}
+                          {formatCurrencyWithCents(item.value, currency)}
                         </span>
                       </Link>
                     );
@@ -654,7 +618,7 @@ function NetWorthPageContent() {
                 <div className="flex items-center justify-between py-3 border-t-2 border-gray-300 mt-2">
                   <span className="text-sm font-bold text-gray-900">Total Assets</span>
                   <span className="text-lg font-bold text-gray-900">
-                    {formatCurrency(selectedData.byAccount.filter((i) => i.value > 0).reduce((s, i) => s + i.value, 0), currency)}
+                    {formatCurrencyWithCents(selectedData.byAccount.filter((i) => i.value > 0).reduce((s, i) => s + i.value, 0), currency)}
                   </span>
                 </div>
               </div>
@@ -679,14 +643,14 @@ function NetWorthPageContent() {
                     >
                       <span className="text-sm text-gray-700">{item.label}</span>
                       <span className="text-sm font-semibold text-red-600">
-                        {formatCurrency(Math.abs(item.value), currency)}
+                        {formatCurrencyWithCents(Math.abs(item.value), currency)}
                       </span>
                     </Link>
                   ))}
                 <div className="flex items-center justify-between py-3 border-t-2 border-gray-300 mt-2">
                   <span className="text-sm font-bold text-gray-900">Total Debts</span>
                   <span className="text-lg font-bold text-red-600">
-                    {formatCurrency(Math.abs(selectedData.byAccount.filter((i) => i.value < 0).reduce((s, i) => s + i.value, 0)), currency)}
+                    {formatCurrencyWithCents(Math.abs(selectedData.byAccount.filter((i) => i.value < 0).reduce((s, i) => s + i.value, 0)), currency)}
                   </span>
                 </div>
               </div>
@@ -702,86 +666,13 @@ function NetWorthPageContent() {
             <div className="flex items-center justify-between">
               <span className="text-base font-bold text-gray-900">Net Worth</span>
               <span className="text-xl font-bold text-purple-600">
-                {formatCurrency(selectedData.netWorth, currency)}
+                {formatCurrencyWithCents(selectedData.netWorth, currency)}
               </span>
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              Assets ({formatCurrency(selectedData.byAccount.filter((i) => i.value > 0).reduce((s, i) => s + i.value, 0), currency)}) 
-              - Debts ({formatCurrency(Math.abs(selectedData.byAccount.filter((i) => i.value < 0).reduce((s, i) => s + i.value, 0)), currency)})
+              Assets ({formatCurrencyWithCents(selectedData.byAccount.filter((i) => i.value > 0).reduce((s, i) => s + i.value, 0), currency)}) 
+              - Debts ({formatCurrencyWithCents(Math.abs(selectedData.byAccount.filter((i) => i.value < 0).reduce((s, i) => s + i.value, 0)), currency)})
             </p>
-          </div>
-        )}
-      </div>
-
-      {/* Legacy Changes Feed - Hidden */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6 hidden">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">Legacy Changes</h2>
-          
-          {/* Filter Dropdown */}
-          <select
-            value={filterType}
-            onChange={(e) => setFilterType(e.target.value as FilterType)}
-            className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-600"
-          >
-            <option value="all">All Changes</option>
-            <option value="income">Income</option>
-            <option value="spending">Spending</option>
-            <option value="debt">Debt</option>
-            <option value="assets">Assets</option>
-          </select>
-        </div>
-
-        {filteredItems.length === 0 ? (
-          <p className="text-sm text-gray-500 text-center py-8">
-            {selectedData.items.length === 0 
-              ? `No detailed changes available yet for ${formatMonthLabel(selectedData.yearMonth)}`
-              : `No ${filterType === "all" ? "" : filterType.replace(/_/g, " ") + " "}changes for ${formatMonthLabel(selectedData.yearMonth)}`
-            }
-          </p>
-        ) : (
-          <div className="space-y-3">
-            {filteredItems.map((item, idx) => (
-              <div key={idx} className="flex items-start justify-between py-3 border-b border-gray-100 last:border-0">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-sm font-medium text-gray-900">{item.accountLabel}</span>
-                    <span className="px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-700 rounded">
-                      {CHANGE_TYPE_LABELS[item.type]}
-                    </span>
-                  </div>
-                  {item.source && (
-                    <p className="text-xs text-gray-500">
-                      {item.source}
-                    </p>
-                  )}
-                  {!item.source && (
-                    <p className="text-xs text-gray-500 capitalize">
-                      {item.accountType.replace("_", " ")}
-                    </p>
-                  )}
-                  {item.impactDescription && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      {item.impactDescription}
-                    </p>
-                  )}
-                  {!item.impactDescription && (item.previousBalance !== undefined || item.currentBalance !== undefined) && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      {item.previousBalance !== undefined && formatCurrency(item.previousBalance, currency)}
-                      {item.previousBalance !== undefined && item.currentBalance !== undefined && " → "}
-                      {item.currentBalance !== undefined && formatCurrency(item.currentBalance, currency)}
-                    </p>
-                  )}
-                </div>
-                <div className={`text-sm font-semibold tabular-nums ${
-                  item.netWorthImpact > 0 ? "text-green-600" : 
-                  item.netWorthImpact < 0 ? "text-red-600" : "text-gray-900"
-                }`}>
-                  {item.netWorthImpact > 0 ? "+" : ""}
-                  {formatCurrency(item.netWorthImpact, currency)}
-                </div>
-              </div>
-            ))}
           </div>
         )}
       </div>
