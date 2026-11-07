@@ -97,11 +97,12 @@ export async function generateNetWorthChanges(
     return; // No data to process
   }
 
-  // Build map of manual assets by their addition month (from updatedAt)
-  // Limitation: updatedAt reflects last edit, not creation. Defensible proxy for addition timeline.
+  // Build map of manual assets by their creation month (from createdAt)
+  // Only include assets with known createdAt - legacy assets without it are excluded
   const manualAssetsByMonth = new Map<string, typeof profile.manualAssets[0][]>();
   for (const asset of profile.manualAssets) {
-    const addedMonth = asset.updatedAt.slice(0, 7); // YYYY-MM from ISO date
+    if (!asset.createdAt) continue; // Skip legacy assets with unknown creation date
+    const addedMonth = asset.createdAt.slice(0, 7); // YYYY-MM from ISO date
     if (!manualAssetsByMonth.has(addedMonth)) {
       manualAssetsByMonth.set(addedMonth, []);
     }

@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
         category: (data.category as AssetCategory) ?? "other",
         value: data.value ?? 0,
         linkedAccountSlug: data.linkedAccountSlug ?? undefined,
+        createdAt: data.createdAt?.toDate?.()?.toISOString?.() ?? data.createdAt ?? undefined,
         updatedAt: data.updatedAt?.toDate?.()?.toISOString?.() ?? data.updatedAt ?? new Date().toISOString(),
       };
     });
@@ -49,11 +50,13 @@ export async function POST(req: NextRequest) {
     if (!label || typeof value !== "number") {
       return NextResponse.json({ error: "label and value are required" }, { status: 400 });
     }
+    const now = new Date();
     const doc: Record<string, unknown> = {
       label,
       category: category ?? "other",
       value,
-      updatedAt: new Date(),
+      createdAt: now, // Set on creation
+      updatedAt: now,
     };
     if (linkedAccountSlug) doc.linkedAccountSlug = linkedAccountSlug;
     const ref = await db.collection("users").doc(uid).collection("manualAssets").add(doc);
