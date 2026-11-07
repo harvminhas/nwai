@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
+import { getFinancialProfile } from "@/lib/financialProfile";
 import { getNetWorthForMonth } from "@/lib/netWorthCalculation";
 
 export async function GET(req: NextRequest) {
@@ -16,7 +17,15 @@ export async function GET(req: NextRequest) {
   if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    // Get latest available net worth using shared authoritative function
+    // Get financial profile for full history
+    const profile = await getFinancialProfile(access.targetUid, db);
+    
+    // Get user's home currency
+    const userDoc = await db.collection("users").doc(access.targetUid).get();
+    const userData = userDoc.exists ? userDoc.data() ?? {} : {};
+    const homeCurrency: string = userData.homeCurrency ?? userData.currency ?? "CAD";
+
+    // Use shared function for latest month calculation
     const result = await getNetWorthForMonth(access.targetUid, db);
 
     if (!result) {
@@ -24,14 +33,14 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({
         netWorth: 0,
         monthlyChange: 0,
-        currency: "CAD",
+        currency: homeCurrency,
         current: 0,
         previousMonth: null,
         change: 0,
         changePercent: null,
         latestMonth: null,
         trend: null,
-        last12Months: [],
+        monthlyHistory: [],
       });
     }
 
@@ -53,6 +62,16 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Get last 12 months for detail page chart (preserve full API contract)
+    const sortedHistory = [...profile.monthlyHistory].sort((a, b) => 
+      b.yearMonth.localeCompare(a.yearMonth)
+    );
+    const last12Months = sortedHistory.slice(0, 12).reverse().map(m => ({
+      yearMonth: m.yearMonth,
+      netWorth: m.netWorth,
+      byAccount: m.byAccount || [],
+    }));
+
     return NextResponse.json({
       // Original fields (required by nav pill)
       netWorth,
@@ -65,8 +84,8 @@ export async function GET(req: NextRequest) {
       changePercent,
       latestMonth: yearMonth,
       trend,
-      // Monthly history populated by detail page if needed
-      monthlyHistory: [],
+      // Monthly history for detail page chart (PRESERVED)
+      monthlyHistory: last12Months,
     });
   } catch (err) {
     console.error("Net worth summary error:", err);
