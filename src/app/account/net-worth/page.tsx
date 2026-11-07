@@ -53,6 +53,7 @@ function NetWorthPageContent() {
   const [viewMonth, setViewMonth] = useState<string | null>(null); // For interactive header
   const [filterType, setFilterType] = useState<FilterType>("all");
   const [currency, setCurrency] = useState<string>("CAD");
+  const [activeTab, setActiveTab] = useState<"changes" | "assets" | "debts">("changes");
 
   const loadData = async (tok: string) => {
     try {
@@ -469,11 +470,49 @@ function NetWorthPageContent() {
         </div>
       </div>
 
-      {/* What Moved It Breakdown */}
+      {/* Breakdown Section with Tabs */}
       <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">
-          What Moved It: {formatMonthLabel(selectedData.yearMonth)}
-        </h2>
+        {/* Tab Headers */}
+        <div className="flex items-center gap-4 border-b border-gray-200 mb-4">
+          <button
+            onClick={() => setActiveTab("changes")}
+            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+              activeTab === "changes"
+                ? "border-purple-600 text-purple-600"
+                : "border-transparent text-gray-600 hover:text-gray-900"
+            }`}
+          >
+            What Changed
+          </button>
+          <button
+            onClick={() => setActiveTab("assets")}
+            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+              activeTab === "assets"
+                ? "border-purple-600 text-purple-600"
+                : "border-transparent text-gray-600 hover:text-gray-900"
+            }`}
+          >
+            Assets
+          </button>
+          <button
+            onClick={() => setActiveTab("debts")}
+            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+              activeTab === "debts"
+                ? "border-purple-600 text-purple-600"
+                : "border-transparent text-gray-600 hover:text-gray-900"
+            }`}
+          >
+            Debts
+          </button>
+          <div className="flex-1" />
+          <div className="text-sm text-gray-500">
+            {formatMonthLabel(selectedData.yearMonth)}
+          </div>
+        </div>
+
+        {/* What Changed Tab */}
+        {activeTab === "changes" && (
+          <div>
         
         {selectedData.change !== null && (
           <div className="mb-4 p-4 bg-gray-50 rounded-lg">
@@ -583,12 +622,101 @@ function NetWorthPageContent() {
             No detailed breakdown available yet. Change items will appear here after processing statements.
           </p>
         )}
+          </div>
+        )}
+
+        {/* Assets Tab */}
+        {activeTab === "assets" && (
+          <div>
+            {selectedData.byAccount && selectedData.byAccount.length > 0 ? (
+              <div className="space-y-2">
+                {selectedData.byAccount
+                  .filter((item) => item.value > 0)
+                  .map((item, idx) => {
+                    const isManual = item.slug.startsWith("manual-");
+                    const accountPage = isManual ? "/account/assets" : "/account/assets";
+                    return (
+                      <Link
+                        key={idx}
+                        href={accountPage}
+                        className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0 hover:bg-gray-50 -mx-2 px-2 rounded transition-colors"
+                      >
+                        <span className="text-sm text-gray-700">
+                          {item.label}
+                          {isManual && <span className="ml-2 text-xs text-gray-500">(manual)</span>}
+                        </span>
+                        <span className="text-sm font-semibold text-gray-900">
+                          {formatCurrency(item.value, currency)}
+                        </span>
+                      </Link>
+                    );
+                  })}
+                <div className="flex items-center justify-between py-3 border-t-2 border-gray-300 mt-2">
+                  <span className="text-sm font-bold text-gray-900">Total Assets</span>
+                  <span className="text-lg font-bold text-gray-900">
+                    {formatCurrency(selectedData.byAccount.filter((i) => i.value > 0).reduce((s, i) => s + i.value, 0), currency)}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500 text-center py-8">No asset data available</p>
+            )}
+          </div>
+        )}
+
+        {/* Debts Tab */}
+        {activeTab === "debts" && (
+          <div>
+            {selectedData.byAccount && selectedData.byAccount.length > 0 ? (
+              <div className="space-y-2">
+                {selectedData.byAccount
+                  .filter((item) => item.value < 0)
+                  .map((item, idx) => (
+                    <Link
+                      key={idx}
+                      href="/account/liabilities"
+                      className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0 hover:bg-gray-50 -mx-2 px-2 rounded transition-colors"
+                    >
+                      <span className="text-sm text-gray-700">{item.label}</span>
+                      <span className="text-sm font-semibold text-red-600">
+                        {formatCurrency(Math.abs(item.value), currency)}
+                      </span>
+                    </Link>
+                  ))}
+                <div className="flex items-center justify-between py-3 border-t-2 border-gray-300 mt-2">
+                  <span className="text-sm font-bold text-gray-900">Total Debts</span>
+                  <span className="text-lg font-bold text-red-600">
+                    {formatCurrency(Math.abs(selectedData.byAccount.filter((i) => i.value < 0).reduce((s, i) => s + i.value, 0)), currency)}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500 text-center py-8">No debt data</p>
+            )}
+          </div>
+        )}
+
+        {/* Net Worth Reconciliation */}
+        {(activeTab === "assets" || activeTab === "debts") && selectedData.byAccount && (
+          <div className="mt-4 pt-4 border-t-2 border-purple-200">
+            <div className="flex items-center justify-between">
+              <span className="text-base font-bold text-gray-900">Net Worth</span>
+              <span className="text-xl font-bold text-purple-600">
+                {formatCurrency(selectedData.netWorth, currency)}
+              </span>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Assets ({formatCurrency(selectedData.byAccount.filter((i) => i.value > 0).reduce((s, i) => s + i.value, 0), currency)}) 
+              - Debts ({formatCurrency(Math.abs(selectedData.byAccount.filter((i) => i.value < 0).reduce((s, i) => s + i.value, 0)), currency)})
+            </p>
+          </div>
+        )}
       </div>
 
-      {/* Changes Feed */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
+      {/* Legacy Changes Feed - Hidden */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6 hidden">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">Changes</h2>
+          <h2 className="text-lg font-semibold text-gray-900">Legacy Changes</h2>
           
           {/* Filter Dropdown */}
           <select

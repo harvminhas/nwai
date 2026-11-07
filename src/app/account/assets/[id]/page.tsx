@@ -9,6 +9,7 @@ import { formatCurrency, formatCurrencyWithCents } from "@/lib/currencyUtils";
 import AccountSwitcher from "@/components/AccountSwitcher";
 import { ConfirmModal } from "@/components/ConfirmModal";
 import { CategoryPicker, categoryColor } from "@/app/account/spending/shared";
+import { triggerProfileRefetch } from "@/lib/profileRefetch";
 import { useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 import type { ManualAsset, AssetCategory, HubLink, ExpenseTransaction, IncomeTransaction } from "@/lib/types";
 import type { DebtsSummary, DebtAccount } from "@/lib/debtsSummary";
@@ -93,7 +94,6 @@ export default function ManualAssetPage() {
   const [openCategoryPicker, setOpenCategoryPicker] = useState<string | null>(null);
   const categoryPickerBtnRefs = useState(() => new Map<string, HTMLButtonElement>())[0];
   
-  // Profile refresh context (same as account detail)
   const { requestProfileRefresh } = useProfileRefresh();
 
   const load = useCallback(async (tok: string) => {
@@ -262,6 +262,8 @@ export default function ManualAssetPage() {
       if (!res.ok) throw new Error("Failed to save");
       setShowEditModal(false);
       setToast({ msg: "Saved", ok: true });
+      // Server invalidated cache; trigger refetch so header/detail update
+      triggerProfileRefetch();
       await load(token);
     } catch {
       setToast({ msg: "Could not save", ok: false });
@@ -283,8 +285,13 @@ export default function ManualAssetPage() {
           headers: { Authorization: `Bearer ${token}` },
         });
         setConfirmModal(null);
-        if (res.ok) router.push("/account/assets?tab=accounts");
-        else setToast({ msg: "Could not delete", ok: false });
+        if (res.ok) {
+          // Server invalidated cache; trigger refetch so header/detail update
+          triggerProfileRefetch();
+          router.push("/account/assets?tab=accounts");
+        } else {
+          setToast({ msg: "Could not delete", ok: false });
+        }
       },
     });
   };

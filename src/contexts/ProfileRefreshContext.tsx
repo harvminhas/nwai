@@ -17,9 +17,10 @@ import {
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import RefreshToast from "@/components/RefreshToast";
+import { PROFILE_REFRESHED_EVENT } from "@/lib/profileRefetch";
 
-/** Fired on window after RefreshToast completes POST /api/user/insights/generate */
-export const PROFILE_REFRESHED_EVENT = "nw:profile-refreshed";
+// Re-export for backwards compatibility
+export { PROFILE_REFRESHED_EVENT };
 
 type ProfileRefreshContextValue = {
   /** Call when a category rule (or similar) invalidates users/{uid}/financialProfile cache. */

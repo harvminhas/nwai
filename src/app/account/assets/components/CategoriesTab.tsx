@@ -10,6 +10,7 @@ import { formatAccountLast4 } from "@/lib/rangeUtils";
 import { getFirebaseClient } from "@/lib/firebase";
 import { formatLastTransactionDate } from "@/lib/formatLastTransactionDate";
 import { CategoryListRow } from "@/app/account/spending/CategoryListRow";
+import { triggerProfileRefetch } from "@/lib/profileRefetch";
 
 const GROUP_COLOR: Record<string, string> = {
   cash: "bg-blue-500",
@@ -83,6 +84,8 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
       });
       if (!res.ok) throw new Error("Failed to save");
       const { id } = await res.json();
+      // Server invalidated cache; trigger refetch so header/detail update
+      triggerProfileRefetch();
       if (id) router.push(`/account/assets/${id}`);
       else router.refresh();
     } catch (err) {
