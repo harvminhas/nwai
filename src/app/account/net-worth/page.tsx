@@ -114,9 +114,12 @@ function NetWorthPageContent() {
 
       setData(combinedData);
 
-      // Select most recent month by default
+      // Select most recent month by default (explicit max comparison, not array position)
       if (combinedData.length > 0 && !selectedMonth) {
-        setSelectedMonth(combinedData[combinedData.length - 1].yearMonth);
+        const latest = combinedData.reduce((max, m) => 
+          m.yearMonth > max.yearMonth ? m : max
+        );
+        setSelectedMonth(latest.yearMonth);
       }
 
       // Update netWorthLastViewedAt to clear the badge count
@@ -179,7 +182,12 @@ function NetWorthPageContent() {
     );
   }
 
-  const latestMonth = data[data.length - 1];
+  // Get latest month by explicit max yearMonth comparison (not array position)
+  // Handles out-of-order history or cache inconsistencies
+  const latestMonth = data.reduce((max, m) => 
+    m.yearMonth > max.yearMonth ? m : max
+  , data[0]);
+  
   const viewData = viewMonth 
     ? data.find(d => d.yearMonth === viewMonth) || latestMonth 
     : latestMonth;
