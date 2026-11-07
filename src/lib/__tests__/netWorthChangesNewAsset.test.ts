@@ -29,7 +29,7 @@ describe("new_asset change generation", () => {
         label: "Honda Civic",
         category: "vehicle",
         value: 25000,
-        createdAt: "2026-11-15T10:00:00Z", // Created in Nov 2026
+        startDate: "2026-11-15", // Start date in Nov 2026
         updatedAt: "2026-11-15T10:00:00Z",
       },
     ];
@@ -69,8 +69,8 @@ describe("new_asset change generation", () => {
     // Manual asset detection logic (from netWorthChanges.ts)
     const manualAssetsByMonth = new Map<string, ManualAsset[]>();
     for (const asset of profile.manualAssets) {
-      if (!asset.createdAt) continue; // Skip legacy without createdAt
-      const addedMonth = asset.createdAt.slice(0, 7);
+      if (!asset.startDate) continue; // Skip legacy without startDate
+      const addedMonth = asset.startDate.slice(0, 7);
       if (!manualAssetsByMonth.has(addedMonth)) {
         manualAssetsByMonth.set(addedMonth, []);
       }
@@ -95,7 +95,7 @@ describe("new_asset change generation", () => {
         label: "Honda Civic",
         category: "vehicle",
         value: 25000,
-        createdAt: "2026-11-15T10:00:00Z",
+        startDate: "2026-11-15",
         updatedAt: "2026-11-15T10:00:00Z",
       },
       {
@@ -103,15 +103,15 @@ describe("new_asset change generation", () => {
         label: "Investment Property",
         category: "property",
         value: 500000,
-        createdAt: "2026-12-20T14:30:00Z",
+        startDate: "2026-12-20",
         updatedAt: "2026-12-20T14:30:00Z",
       },
     ];
 
     const manualAssetsByMonth = new Map<string, ManualAsset[]>();
     for (const asset of manualAssets) {
-      if (!asset.createdAt) continue;
-      const addedMonth = asset.createdAt.slice(0, 7);
+      if (!asset.startDate) continue;
+      const addedMonth = asset.startDate.slice(0, 7);
       if (!manualAssetsByMonth.has(addedMonth)) {
         manualAssetsByMonth.set(addedMonth, []);
       }
@@ -132,7 +132,7 @@ describe("new_asset change generation", () => {
         label: "Honda Civic",
         category: "vehicle",
         value: 25000,
-        createdAt: "2026-11-15T10:00:00Z",
+        startDate: "2026-11-15",
         updatedAt: "2026-11-15T10:00:00Z",
       },
     ];
@@ -179,28 +179,28 @@ describe("new_asset change generation", () => {
     expect(debtsSum).toBe(month.totalDebts);
   });
 
-  test("change event shows in month asset was created, not edited", () => {
-    const carCreatedAt = "2026-11-15T10:00:00Z";
-    const addedMonth = carCreatedAt.slice(0, 7);
+  test("change event shows in month asset was started, not edited", () => {
+    const carStartDate = "2026-11-15";
+    const addedMonth = carStartDate.slice(0, 7);
     
     expect(addedMonth).toBe("2026-11");
     expect(addedMonth).not.toBe("2026-10");
     expect(addedMonth).not.toBe("2026-12");
   });
 
-  test("legacy asset without createdAt does not generate new_asset event", () => {
+  test("legacy asset without startDate does not generate new_asset event", () => {
     const legacyAsset: ManualAsset = {
       id: "old-car",
       label: "Old Car",
       category: "vehicle",
       value: 15000,
-      updatedAt: "2026-11-15T10:00:00Z", // Only updatedAt, no createdAt
+      updatedAt: "2026-11-15T10:00:00Z", // Only updatedAt, no startDate
     };
 
     const manualAssetsByMonth = new Map<string, ManualAsset[]>();
     for (const asset of [legacyAsset]) {
-      if (!asset.createdAt) continue; // Skip
-      const addedMonth = asset.createdAt.slice(0, 7);
+      if (!asset.startDate) continue; // Skip
+      const addedMonth = asset.startDate.slice(0, 7);
       if (!manualAssetsByMonth.has(addedMonth)) {
         manualAssetsByMonth.set(addedMonth, []);
       }
@@ -211,9 +211,9 @@ describe("new_asset change generation", () => {
     expect(manualAssetsByMonth.size).toBe(0);
   });
 
-  test("cached profile with all-months manual assets still generates correct change event", () => {
-    // Regression test: even though manual assets appear in ALL months in byAccount,
-    // the change event should only show in the createdAt month
+  test("change event appears only in startDate month regardless of byAccount presence", () => {
+    // Regression test: the change event should only show in the startDate month
+    // Legacy assets without startDate should not trigger any change event
     
     const manualAssets: ManualAsset[] = [
       {
@@ -221,24 +221,23 @@ describe("new_asset change generation", () => {
         label: "Honda Civic",
         category: "vehicle",
         value: 25000,
-        createdAt: "2026-11-15T10:00:00Z",
+        startDate: "2026-11-15",
         updatedAt: "2026-11-15T10:00:00Z",
       },
     ];
 
-    // Both months have the car in byAccount (from cached calculation)
+    // Oct does not have the car (before startDate)
     const monthlyHistory: MonthlyHistoryEntry[] = [
       {
         yearMonth: "2026-10",
-        netWorth: -165000,
-        totalAssets: 35000,
+        netWorth: -190000,
+        totalAssets: 10000,
         totalDebts: 200000,
         expensesTotal: 3000,
         coreExpensesTotal: 2500,
         incomeTotal: 5000,
         byAccount: [
           { slug: "checking-1", label: "Checking", type: "checking", value: 10000 },
-          { slug: "manual-car-1", label: "Honda Civic", type: "manual-vehicle", value: 25000 },
           { slug: "mortgage-1", label: "Mortgage", type: "mortgage", value: -200000 },
         ],
       },
@@ -258,18 +257,18 @@ describe("new_asset change generation", () => {
       },
     ];
 
-    // Change generation uses createdAt, not byAccount presence
+    // Change generation uses startDate, not byAccount presence
     const manualAssetsByMonth = new Map<string, ManualAsset[]>();
     for (const asset of manualAssets) {
-      if (!asset.createdAt) continue;
-      const addedMonth = asset.createdAt.slice(0, 7);
+      if (!asset.startDate) continue;
+      const addedMonth = asset.startDate.slice(0, 7);
       if (!manualAssetsByMonth.has(addedMonth)) {
         manualAssetsByMonth.set(addedMonth, []);
       }
       manualAssetsByMonth.get(addedMonth)!.push(asset);
     }
 
-    // Oct should have NO change event (even though car is in byAccount)
+    // Oct should have NO change event (car not yet started)
     expect(manualAssetsByMonth.get("2026-10") || []).toHaveLength(0);
     
     // Nov should have the change event

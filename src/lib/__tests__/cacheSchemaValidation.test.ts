@@ -144,9 +144,9 @@ describe("Cache Schema Validation - Production Path", () => {
     },
   ];
 
-  test("old cache: manual in totalAssets but not byAccount triggers rebuild", async () => {
+  test("old schema version (68) with manual assets triggers rebuild", async () => {
     const oldCache = {
-      schemaVersion: SCHEMA_VERSION,
+      schemaVersion: "68", // Old schema version
       sourceVersion: "v1",
       updatedAt: new Date(Date.now() - 120000).toISOString(),
       cacheStale: false,
@@ -175,7 +175,7 @@ describe("Cache Schema Validation - Production Path", () => {
     const mock = createMockDbWithData(oldCache, mockRawManualAssets, mockRawStatements);
     const profile = await getFinancialProfile("test-uid", mock.db);
     
-    expect(mock.counters.sourceReadCount, "Should read from source on rebuild").toBeGreaterThan(0);
+    expect(mock.counters.sourceReadCount, "Should read from source on rebuild due to schema mismatch").toBeGreaterThan(0);
     expect(mock.counters.cacheWriteCount, "Should write cache on rebuild").toBe(1);
     expect(profile.manualAssets).toHaveLength(1);
     expect(profile.manualAssets[0].id).toBe("car-1");
@@ -189,23 +189,23 @@ describe("Cache Schema Validation - Production Path", () => {
     }
   });
 
-  test("empty byAccount with manual assets triggers rebuild", async () => {
-    const emptyByAccount = {
+  test("current schema (69) with manual assets excluded by startDate accepts cache", async () => {
+    const cacheWithDateFilteredAsset = {
       schemaVersion: SCHEMA_VERSION,
       sourceVersion: "v1",
       updatedAt: new Date(Date.now() - 120000).toISOString(),
       cacheStale: false,
       homeCurrency: "CAD",
       manualAssets: [
-        { id: "car-1", label: "Car", category: "vehicle", value: 25000, updatedAt: "2026-11-01" },
+        { id: "car-1", label: "Car", category: "vehicle", value: 25000, updatedAt: "2026-11-01", startDate: "2026-12-01" },
       ],
       monthlyHistory: [
         {
           yearMonth: "2026-11",
-          netWorth: 25000,
-          totalAssets: 25000,
+          netWorth: 0,
+          totalAssets: 0,
           totalDebts: 0,
-          byAccount: [],
+          byAccount: [], // Car not in byAccount because startDate is 2026-12-01
         },
       ],
       accountBalanceHistory: [],
@@ -214,26 +214,21 @@ describe("Cache Schema Validation - Production Path", () => {
       incomeTxns: [],
     };
 
-    const mock = createMockDbWithData(emptyByAccount, mockRawManualAssets, mockRawStatements);
+    const mock = createMockDbWithData(cacheWithDateFilteredAsset, mockRawManualAssets, mockRawStatements);
     const profile = await getFinancialProfile("test-uid", mock.db);
     
-    expect(mock.counters.sourceReadCount, "Should read from source on rebuild").toBeGreaterThan(0);
-    expect(mock.counters.cacheWriteCount, "Should write cache on rebuild").toBe(1);
-    
-    if (profile.monthlyHistory.length > 0) {
-      const carEntries = profile.monthlyHistory[0].byAccount?.filter(a => a.slug === "manual-car-1") || [];
-      expect(carEntries.length, "Car should appear exactly once in byAccount after rebuild").toBe(1);
-    }
+    expect(mock.counters.sourceReadCount, "Should accept cache with startDate-filtered assets").toBe(0);
+    expect(mock.counters.cacheWriteCount, "Should not rebuild").toBe(0);
   });
 
-  test("partial: 2 manual assets, only 1 in byAccount triggers rebuild", async () => {
+  test("old schema (68) with partially populated byAccount triggers rebuild", async () => {
     const twoManualAssets = [
       { id: "car-1", label: "Car", category: "vehicle", value: 25000, currency: "CAD", updatedAt: "2026-11-01" },
       { id: "house-1", label: "House", category: "property", value: 500000, currency: "CAD", updatedAt: "2026-11-01" },
     ];
 
     const partialCache = {
-      schemaVersion: SCHEMA_VERSION,
+      schemaVersion: "68", // Old schema version
       sourceVersion: "v1",
       updatedAt: new Date(Date.now() - 120000).toISOString(),
       cacheStale: false,
@@ -262,7 +257,7 @@ describe("Cache Schema Validation - Production Path", () => {
     const mock = createMockDbWithData(partialCache, twoManualAssets, mockRawStatements);
     const profile = await getFinancialProfile("test-uid", mock.db);
     
-    expect(mock.counters.sourceReadCount, "Should read from source on rebuild").toBeGreaterThan(0);
+    expect(mock.counters.sourceReadCount, "Should read from source on rebuild due to schema mismatch").toBeGreaterThan(0);
     expect(mock.counters.cacheWriteCount, "Should write cache on rebuild").toBe(1);
     
     if (profile.monthlyHistory.length > 0) {
