@@ -10,6 +10,7 @@ import AccountSwitcher from "@/components/AccountSwitcher";
 import { ConfirmModal } from "@/components/ConfirmModal";
 import { CategoryPicker, categoryColor } from "@/app/account/spending/shared";
 import { triggerProfileRefetch } from "@/lib/profileRefetch";
+import { useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 import type { ManualAsset, AssetCategory, HubLink, ExpenseTransaction, IncomeTransaction } from "@/lib/types";
 import type { DebtsSummary, DebtAccount } from "@/lib/debtsSummary";
 
@@ -92,6 +93,8 @@ export default function ManualAssetPage() {
   // Category picker state for transaction modal
   const [openCategoryPicker, setOpenCategoryPicker] = useState<string | null>(null);
   const categoryPickerBtnRefs = useState(() => new Map<string, HTMLButtonElement>())[0];
+  
+  const { requestProfileRefresh } = useProfileRefresh();
 
   const load = useCallback(async (tok: string) => {
     setLoading(true);
@@ -474,8 +477,7 @@ export default function ManualAssetPage() {
       
       if (res.ok) {
         setToast({ msg: `Rule saved: "${merchant}" → ${newCategory}`, ok: true });
-        // Category rule changes need full profile rebuild (show toast for user action)
-        // triggerProfileRefetch(); // Not needed here - category rules show toast prompt
+        requestProfileRefresh();
       } else {
         setToast({ msg: "Failed to save rule", ok: false });
       }
