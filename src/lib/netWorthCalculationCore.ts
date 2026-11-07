@@ -9,15 +9,14 @@ import type { ManualAsset } from "./types";
 import type { AccountStatusRecord } from "./accountStatus";
 import { isAccountActive } from "./accountStatus";
 
-// Use a minimal interface that works with financialProfile.ts MonthlyHistoryEntry
-// We only modify netWorth/totalAssets/totalDebts/byAccount fields
+// Minimal interface for net worth calculation fields
+// financialProfile.ts MonthlyHistoryEntry has all these fields plus more
 export interface MonthNetWorthHistory {
   yearMonth: string;
   netWorth: number;
   totalAssets: number;
   totalDebts: number;
-  byAccount: Array<{ slug: string; label: string; type: string; value: number }>;
-  [key: string]: unknown; // Allow additional fields from MonthlyHistoryEntry
+  byAccount?: Array<{ slug: string; label: string; type: string; value: number }>;
 }
 
 export interface AccountBalanceHistory {
