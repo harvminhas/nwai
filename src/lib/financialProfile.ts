@@ -634,6 +634,7 @@ export async function buildAndCacheFinancialProfile(
       category: data.category ?? "other",
       value: data.value ?? 0,
       linkedAccountSlug: data.linkedAccountSlug ?? undefined,
+      startDate: data.startDate || undefined, // User-editable start date (YYYY-MM-DD)
       updatedAt: data.updatedAt?.toDate?.()?.toISOString?.() ?? new Date().toISOString(),
     };
   });
