@@ -113,9 +113,15 @@ export function calculateNetWorthForMonths(
       });
     }
 
-    // Add manual assets (car, property, etc.) - include in both total AND byAccount
-    ta += manualAssetsTotal;
+    // Add manual assets from their start date onward
+    // Legacy assets without startDate are included in all months (preserve prior behavior)
     for (const asset of manualAssets) {
+      if (asset.startDate) {
+        const startMonth = asset.startDate.slice(0, 7); // YYYY-MM
+        if (h.yearMonth < startMonth) continue; // Exclude before start month
+      }
+      
+      ta += asset.value;
       accountContributions.push({
         slug: `manual-${asset.id}`,
         label: asset.label,

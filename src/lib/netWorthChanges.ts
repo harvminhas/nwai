@@ -97,16 +97,16 @@ export async function generateNetWorthChanges(
     return; // No data to process
   }
 
-  // Build map of manual assets by their creation month (from createdAt)
-  // Only include assets with known createdAt - legacy assets without it are excluded
+  // Build map of manual assets by their start month (from startDate)
+  // Only include assets with known startDate - legacy assets without it are excluded
   const manualAssetsByMonth = new Map<string, typeof profile.manualAssets[0][]>();
   for (const asset of profile.manualAssets) {
-    if (!asset.createdAt) continue; // Skip legacy assets with unknown creation date
-    const addedMonth = asset.createdAt.slice(0, 7); // YYYY-MM from ISO date
-    if (!manualAssetsByMonth.has(addedMonth)) {
-      manualAssetsByMonth.set(addedMonth, []);
+    if (!asset.startDate) continue; // Skip legacy assets with unknown start date
+    const startMonth = asset.startDate.slice(0, 7); // YYYY-MM from YYYY-MM-DD
+    if (!manualAssetsByMonth.has(startMonth)) {
+      manualAssetsByMonth.set(startMonth, []);
     }
-    manualAssetsByMonth.get(addedMonth)!.push(asset);
+    manualAssetsByMonth.get(startMonth)!.push(asset);
   }
 
   // Use the same carry-forward logic as financialProfile

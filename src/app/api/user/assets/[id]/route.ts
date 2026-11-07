@@ -15,19 +15,27 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const { uid } = await auth.verifyIdToken(token);
     const { id } = await params;
     const body = await req.json();
-    const { label, category, value, linkedAccountSlug } = body;
+    const { label, category, value, linkedAccountSlug, startDate } = body;
     if (!label || typeof value !== "number") {
       return NextResponse.json({ error: "label and value are required" }, { status: 400 });
     }
+    
+    // Validate startDate format if provided (YYYY-MM-DD)
+    if (startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+      return NextResponse.json({ error: "startDate must be YYYY-MM-DD format" }, { status: 400 });
+    }
+    
     const doc: Record<string, unknown> = {
       label,
       category: category ?? "other",
       value,
       updatedAt: new Date(),
     };
-    // Allow clearing the link by passing null explicitly
     if (linkedAccountSlug !== undefined) {
       doc.linkedAccountSlug = linkedAccountSlug ?? null;
+    }
+    if (startDate !== undefined) {
+      doc.startDate = startDate || null; // Allow setting/clearing
     }
     await db.collection("users").doc(uid).collection("manualAssets").doc(id).set(doc, { merge: true });
     await invalidateFinancialProfileCache(uid, db);
