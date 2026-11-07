@@ -20,9 +20,20 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: "label and value are required" }, { status: 400 });
     }
     
-    // Validate startDate format if provided (YYYY-MM-DD)
-    if (startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
-      return NextResponse.json({ error: "startDate must be YYYY-MM-DD format" }, { status: 400 });
+    // Validate startDate format and value if provided
+    if (startDate !== undefined) {
+      if (startDate !== null && typeof startDate !== 'string') {
+        return NextResponse.json({ error: "startDate must be a string or null" }, { status: 400 });
+      }
+      if (startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+        return NextResponse.json({ error: "startDate must be YYYY-MM-DD format" }, { status: 400 });
+      }
+      if (startDate) {
+        const date = new Date(startDate);
+        if (isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== startDate) {
+          return NextResponse.json({ error: "startDate must be a valid calendar date" }, { status: 400 });
+        }
+      }
     }
     
     const doc: Record<string, unknown> = {
@@ -35,7 +46,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       doc.linkedAccountSlug = linkedAccountSlug ?? null;
     }
     if (startDate !== undefined) {
-      doc.startDate = startDate || null; // Allow setting/clearing
+      doc.startDate = startDate === null || startDate === "" ? null : startDate; // Explicit clear support
     }
     await db.collection("users").doc(uid).collection("manualAssets").doc(id).set(doc, { merge: true });
     await invalidateFinancialProfileCache(uid, db);

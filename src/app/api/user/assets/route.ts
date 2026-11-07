@@ -51,9 +51,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "label and value are required" }, { status: 400 });
     }
     
-    // Validate startDate format if provided (YYYY-MM-DD)
-    if (startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
-      return NextResponse.json({ error: "startDate must be YYYY-MM-DD format" }, { status: 400 });
+    // Validate startDate format and value if provided
+    if (startDate !== undefined && startDate !== null) {
+      if (typeof startDate !== 'string') {
+        return NextResponse.json({ error: "startDate must be a string" }, { status: 400 });
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+        return NextResponse.json({ error: "startDate must be YYYY-MM-DD format" }, { status: 400 });
+      }
+      const date = new Date(startDate);
+      if (isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== startDate) {
+        return NextResponse.json({ error: "startDate must be a valid calendar date" }, { status: 400 });
+      }
     }
     
     const now = new Date();

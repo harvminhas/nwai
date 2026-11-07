@@ -257,7 +257,7 @@ export default function ManualAssetPage() {
           label: label.trim(),
           category,
           value: num,
-          startDate: startDate || undefined,
+          startDate: startDate === "" ? null : startDate, // Explicit null to clear
           linkedAccountSlug: asset.linkedAccountSlug, // Preserve legacy link
         }),
       });
