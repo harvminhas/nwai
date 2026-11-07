@@ -568,7 +568,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
           <div>
             <div className="text-xs uppercase text-neutral-500 mb-0.5">Average</div>
             <div className="text-sm text-neutral-900 tabular-nums">
-              {formatCurrency(displayData.avgPerMonth, displayData.currency)}/mo
+              {formatCurrencyWithCents(displayData.avgPerMonth, displayData.currency, displayData.currency)}/mo
             </div>
           </div>
           <div>
@@ -694,7 +694,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                       <div className="bg-white border border-neutral-200 rounded-lg shadow-lg px-3 py-2">
                         <p className="text-xs text-neutral-600 mb-1">{dataPoint.month}</p>
                         <p className="text-sm font-semibold text-neutral-900">
-                          {formatCurrency(dataPoint.amount, displayData.currency)}
+                          {formatCurrencyWithCents(dataPoint.amount, displayData.currency, displayData.currency)}
                         </p>
                       </div>
                     );
@@ -753,11 +753,11 @@ export function DrilldownView({ token }: DrilldownViewProps) {
           <div className="mt-3 text-xs text-neutral-500">
             {level === "category" ? (
               <>
-                {formatCurrency(displayData.total, displayData.currency)} is {((displayData.total / displayData.comparisonSeries.reduce((sum, m) => sum + m.amount, 0)) * 100).toFixed(1)}% of the {formatCurrency(displayData.comparisonSeries.reduce((sum, m) => sum + m.amount, 0), displayData.currency)} you spent in these 12 months.
+                {formatCurrencyWithCents(displayData.total, displayData.currency, displayData.currency)} is {((displayData.total / displayData.comparisonSeries.reduce((sum, m) => sum + m.amount, 0)) * 100).toFixed(1)}% of the {formatCurrencyWithCents(displayData.comparisonSeries.reduce((sum, m) => sum + m.amount, 0), displayData.currency, displayData.currency)} you spent in these 12 months.
               </>
             ) : (
               <>
-                {formatCurrency(displayData.total, displayData.currency)} is {((displayData.total / displayData.comparisonSeries.reduce((sum, m) => sum + m.amount, 0)) * 100).toFixed(1)}% of your {formatCurrency(displayData.comparisonSeries.reduce((sum, m) => sum + m.amount, 0), displayData.currency)} in {displayData.breadcrumb[1]?.label}.
+                {formatCurrencyWithCents(displayData.total, displayData.currency, displayData.currency)} is {((displayData.total / displayData.comparisonSeries.reduce((sum, m) => sum + m.amount, 0)) * 100).toFixed(1)}% of your {formatCurrencyWithCents(displayData.comparisonSeries.reduce((sum, m) => sum + m.amount, 0), displayData.currency, displayData.currency)} in {displayData.breadcrumb[1]?.label}.
               </>
             )}
           </div>
@@ -827,7 +827,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                           <span className="text-sm text-neutral-800 truncate flex-1">{acc.label}</span>
                           <div className="flex items-center gap-3 ml-3 tabular-nums">
                             <span className="text-sm text-neutral-900 w-20 text-right">
-                              {formatCurrency(acc.total, displayData.currency)}
+                              {formatCurrencyWithCents(acc.total, displayData.currency, displayData.currency)}
                             </span>
                             <span className="text-sm text-neutral-500 w-10 text-right">
                               {Math.round(acc.share * 100)}%
