@@ -65,7 +65,6 @@ export default function ManualAssetPage() {
   const [showLinkTxnModal, setShowLinkTxnModal] = useState(false);
   const [availableTxns, setAvailableTxns] = useState<TxnWithFingerprint[]>([]);
   const [availableIncomeTxns, setAvailableIncomeTxns] = useState<TxnWithFingerprint[]>([]);
-  const [transactionTab, setTransactionTab] = useState<"income" | "expenses">("expenses");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [expandedExpenseCategories, setExpandedExpenseCategories] = useState<Set<string>>(new Set());
   const [expenseYearFilter, setExpenseYearFilter] = useState<string>("all");
@@ -96,7 +95,7 @@ export default function ManualAssetPage() {
   const categoryPickerBtnRefs = useState(() => new Map<string, HTMLButtonElement>())[0];
   
   // Main tab state
-  const [mainTab, setMainTab] = useState<"overview" | "history" | "projections">("overview");
+  const [mainTab, setMainTab] = useState<"overview" | "income" | "expenses" | "history" | "projections">("overview");
   
   // History tab state
   const [showAddValuationModal, setShowAddValuationModal] = useState(false);
@@ -473,12 +472,12 @@ export default function ManualAssetPage() {
     
     // Switch to appropriate tab
     if (selectedTxnRole === "income_from") {
-      setTransactionTab("income");
+      setMainTab("income");
       // Expand income groups for newly added merchants
       const newMerchants = new Set(txnsToLink.map(tx => tx.merchant));
       setExpandedGroups(prev => new Set([...prev, ...newMerchants]));
     } else if (selectedTxnRole === "spend_on") {
-      setTransactionTab("expenses");
+      setMainTab("expenses");
       // Expand expense categories for newly added categories
       const newCategories = new Set(txnsToLink.map(tx => tx.category || "Other"));
       setExpandedExpenseCategories(prev => new Set([...prev, ...newCategories]));
@@ -777,6 +776,26 @@ export default function ManualAssetPage() {
             Overview
           </button>
           <button
+            onClick={() => setMainTab("income")}
+            className={`pb-3 px-1 text-base font-semibold transition ${
+              mainTab === "income"
+                ? "border-b-2 border-purple-600 text-purple-600"
+                : "text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            Income ({formatCurrency(totalIncome, currency)})
+          </button>
+          <button
+            onClick={() => setMainTab("expenses")}
+            className={`pb-3 px-1 text-base font-semibold transition ${
+              mainTab === "expenses"
+                ? "border-b-2 border-purple-600 text-purple-600"
+                : "text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            Expenses ({formatCurrency(totalSpending, currency)})
+          </button>
+          <button
             onClick={() => setMainTab("history")}
             className={`pb-3 px-1 text-base font-semibold transition ${
               mainTab === "history"
@@ -800,33 +819,13 @@ export default function ManualAssetPage() {
 
         {/* Overview Tab */}
         {mainTab === "overview" && (
-          <div>
-            {/* Income/Expenses Sub-Tabs */}
-            <div className="mb-4 flex items-center gap-4 border-b border-gray-200">
-              <button
-                onClick={() => setTransactionTab("income")}
-                className={`pb-2 px-1 text-sm font-medium transition ${
-                  transactionTab === "income"
-                    ? "border-b-2 border-purple-600 text-purple-600"
-                    : "text-gray-500 hover:text-gray-700"
-                }`}
-              >
-                Income ({formatCurrency(totalIncome, currency)})
-              </button>
-              <button
-                onClick={() => setTransactionTab("expenses")}
-                className={`pb-2 px-1 text-sm font-medium transition ${
-                  transactionTab === "expenses"
-                    ? "border-b-2 border-purple-600 text-purple-600"
-                    : "text-gray-500 hover:text-gray-700"
-                }`}
-              >
-                Expenses ({formatCurrency(totalSpending, currency)})
-              </button>
-            </div>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">Summary of asset value, equity, and linked accounts.</p>
+          </div>
+        )}
 
         {/* Income Tab */}
-        {transactionTab === "income" && (
+        {mainTab === "income" && (
           <div>
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-medium text-gray-700">Linked income</h2>
@@ -962,7 +961,7 @@ export default function ManualAssetPage() {
         )}
 
         {/* Expenses Tab */}
-        {transactionTab === "expenses" && (
+        {mainTab === "expenses" && (
           <div>
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <h2 className="text-sm font-medium text-gray-700">Linked spending</h2>
@@ -1228,8 +1227,6 @@ export default function ManualAssetPage() {
                 </div>
               );
             })()}
-          </div>
-        )}
         
         {spendingTxns.length === 0 && (
           <p className="text-sm text-gray-500">No spending transactions linked.</p>
@@ -1262,10 +1259,6 @@ export default function ManualAssetPage() {
                 </div>
               ))}
             </div>
-          </div>
-        )}
-          </div>
-        )}
           </div>
         )}
 
