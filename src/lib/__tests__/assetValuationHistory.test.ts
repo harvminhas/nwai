@@ -45,8 +45,8 @@ describe("Asset Valuation History", () => {
       startDate: "2026-10-01",
       updatedAt: "2026-11-15T10:00:00Z",
       valuations: [
-        { effectiveDate: "2026-10-15", valueCents: 2500000, createdAt: "2026-10-15T10:00:00Z" }, // $25,000
-        { effectiveDate: "2026-11-10", valueCents: 2000000, createdAt: "2026-11-10T12:00:00Z" }, // $20,000
+        { id: "val1", effectiveDate: "2026-10-15", valueCents: 2500000, createdAt: "2026-10-15T10:00:00Z" }, // $25,000
+        { id: "val2", effectiveDate: "2026-11-10", valueCents: 2000000, createdAt: "2026-11-10T12:00:00Z" }, // $20,000
       ],
     };
 
@@ -83,8 +83,8 @@ describe("Asset Valuation History", () => {
       startDate: "2026-10-01",
       updatedAt: "2026-11-15T10:00:00Z",
       valuations: [
-        { effectiveDate: "2026-10-15", valueCents: 3100000, createdAt: "2026-10-15T10:00:00Z" }, // $31,000
-        { effectiveDate: "2026-11-10", valueCents: 2900000, createdAt: "2026-11-10T12:00:00Z" }, // $29,000
+        { id: "val3", effectiveDate: "2026-10-15", valueCents: 3100000, createdAt: "2026-10-15T10:00:00Z" }, // $31,000
+        { id: "val4", effectiveDate: "2026-11-10", valueCents: 2900000, createdAt: "2026-11-10T12:00:00Z" }, // $29,000
       ],
     };
 
@@ -129,8 +129,8 @@ describe("Asset Valuation History", () => {
       startDate: "2026-11-01", // Starts in November
       updatedAt: "2026-11-15T10:00:00Z",
       valuations: [
-        { effectiveDate: "2026-09-15", valueCents: 2700000, createdAt: "2026-10-15T10:00:00Z" }, // Before start
-        { effectiveDate: "2026-11-10", valueCents: 2500000, createdAt: "2026-11-10T12:00:00Z" }, // After start
+        { id: "val1", effectiveDate: "2026-09-15", valueCents: 2700000, createdAt: "2026-10-15T10:00:00Z" }, // Before start
+        { id: "val2", effectiveDate: "2026-11-10", valueCents: 2500000, createdAt: "2026-11-10T12:00:00Z" }, // After start
       ],
     };
 
@@ -161,8 +161,8 @@ describe("Asset Valuation History", () => {
       startDate: "2026-11-01",
       updatedAt: "2026-11-15T10:00:00Z",
       valuations: [
-        { effectiveDate: "2026-11-01", valueCents: 2500000, createdAt: "2026-11-01T09:00:00Z" }, // First edit
-        { effectiveDate: "2026-11-01", valueCents: 2450000, createdAt: "2026-11-01T14:00:00Z" }, // Later edit same day
+        { id: "val3", effectiveDate: "2026-11-01", valueCents: 2500000, createdAt: "2026-11-01T09:00:00Z" }, // First edit
+        { id: "val4", effectiveDate: "2026-11-01", valueCents: 2450000, createdAt: "2026-11-01T14:00:00Z" }, // Later edit same day
       ],
     };
 
@@ -186,8 +186,8 @@ describe("Asset Valuation History", () => {
       startDate: "2026-10-01",
       updatedAt: "2026-12-01T10:00:00Z",
       valuations: [
-        { effectiveDate: "2026-10-15", valueCents: 2500000, createdAt: "2026-10-15T10:00:00Z" }, // Initial
-        { effectiveDate: "2026-10-25", valueCents: 2300000, createdAt: "2026-12-01T10:00:00Z" }, // Backdated
+        { id: "val5", effectiveDate: "2026-10-15", valueCents: 2500000, createdAt: "2026-10-15T10:00:00Z" }, // Initial
+        { id: "val6", effectiveDate: "2026-10-25", valueCents: 2300000, createdAt: "2026-12-01T10:00:00Z" }, // Backdated
       ],
     };
 
@@ -216,7 +216,7 @@ describe("Asset Valuation History", () => {
       startDate: "2026-10-01",
       updatedAt: "2026-11-20T10:00:00Z",
       valuations: [
-        { effectiveDate: "2026-10-15", valueCents: 2500000, createdAt: "2026-10-15T10:00:00Z" },
+        { id: "val7", effectiveDate: "2026-10-15", valueCents: 2500000, createdAt: "2026-10-15T10:00:00Z" },
         // Nov valuation was deleted
       ],
     };
@@ -245,7 +245,7 @@ describe("Asset Valuation History", () => {
       updatedAt: "2026-11-15T10:00:00Z",
       valuations: [
         // Oct valuation was deleted
-        { effectiveDate: "2026-11-10", valueCents: 2000000, createdAt: "2026-11-10T12:00:00Z" },
+        { id: "val8", effectiveDate: "2026-11-10", valueCents: 2000000, createdAt: "2026-11-10T12:00:00Z" },
       ],
     };
 
@@ -286,9 +286,9 @@ describe("Asset Valuation History", () => {
       updatedAt: "2026-11-10T12:00:00Z",
       valuations: [
         // Baseline: preserved original value at startDate
-        { effectiveDate: "2026-10-01", valueCents: 3000000, createdAt: "2026-10-01T00:00:00Z" },
+        { id: "val9", effectiveDate: "2026-10-01", valueCents: 3000000, createdAt: "2026-10-01T00:00:00Z" },
         // New edit
-        { effectiveDate: "2026-11-10", valueCents: 2900000, createdAt: "2026-11-10T12:00:00Z" },
+        { id: "val10", effectiveDate: "2026-11-10", valueCents: 2900000, createdAt: "2026-11-10T12:00:00Z" },
       ],
     };
 
@@ -315,7 +315,7 @@ describe("Asset Valuation History", () => {
       startDate: "2026-11-01",
       updatedAt: "2026-11-15T10:00:00Z",
       valuations: [
-        { effectiveDate: "2026-11-01", valueCents: 2499999, createdAt: "2026-11-01T09:00:00Z" }, // $24,999.99
+        { id: "val11", effectiveDate: "2026-11-01", valueCents: 2499999, createdAt: "2026-11-01T09:00:00Z" }, // $24,999.99
       ],
     };
 
@@ -342,7 +342,7 @@ describe("Asset Valuation History", () => {
       updatedAt: "2026-11-20T10:00:00Z", // Later edit timestamp
       annualGrowthRate: -10, // Added projection rate
       valuations: [
-        { effectiveDate: "2026-10-15", valueCents: 2500000, createdAt: "2026-10-15T10:00:00Z" },
+        { id: "val12", effectiveDate: "2026-10-15", valueCents: 2500000, createdAt: "2026-10-15T10:00:00Z" },
         // No new valuation added when only rate changed
       ],
     };

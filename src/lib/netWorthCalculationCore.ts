@@ -28,6 +28,18 @@ export interface AccountBalanceHistory {
 }
 
 /**
+ * Get the actual last day of a month (handles February, leap years correctly).
+ * @param yearMonth - YYYY-MM format
+ * @returns Last day of the month (28-31)
+ */
+function getLastDayOfMonth(yearMonth: string): number {
+  const [year, month] = yearMonth.split('-').map(Number);
+  // Date(year, month, 0) gives last day of previous month
+  // Date(year, month+1, 0) gives last day of target month
+  return new Date(year, month, 0).getDate();
+}
+
+/**
  * Get the effective valuation for a manual asset as of a specific month-end.
  * 
  * @param asset - The manual asset with optional valuations array
@@ -41,8 +53,9 @@ function getAssetValueForMonth(asset: ManualAsset, yearMonth: string): number {
   }
 
   // Find the most recent valuation as of the end of this month
-  // Month-end is YYYY-MM-31 (simplified — actual last day doesn't matter for comparison)
-  const monthEnd = `${yearMonth}-31`;
+  // Use actual last day of month (handles February 28/29, not assuming day 31)
+  const lastDay = getLastDayOfMonth(yearMonth);
+  const monthEnd = `${yearMonth}-${String(lastDay).padStart(2, '0')}`;
   
   let effectiveValue: number | null = null;
   for (const val of asset.valuations) {

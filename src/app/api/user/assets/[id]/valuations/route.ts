@@ -3,15 +3,21 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
 import { getTodayInNewYork, isValidDateString } from "@/lib/dateUtils";
 import type { AssetValuation, ManualAsset } from "@/lib/types";
+import { randomBytes } from "crypto";
 
 function authToken(req: NextRequest): string | null {
   const h = req.headers.get("authorization");
   return h?.startsWith("Bearer ") ? h.slice(7) : null;
 }
 
+function generateValuationId(): string {
+  return randomBytes(16).toString("hex");
+}
+
 /**
  * POST /api/user/assets/[id]/valuations
  * Add a new dated valuation entry to an asset.
+ * Uses Firestore transactions for atomic updates.
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const token = authToken(req);
@@ -37,74 +43,81 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: "effectiveDate must be a valid YYYY-MM-DD date" }, { status: 400 });
     }
 
-    // Fetch asset doc
     const assetRef = db.collection("users").doc(uid).collection("manualAssets").doc(id);
-    const assetDoc = await assetRef.get();
 
-    if (!assetDoc.exists) {
-      return NextResponse.json({ error: "Asset not found" }, { status: 404 });
-    }
+    // Use transaction for atomic read-modify-write
+    const result = await db.runTransaction(async (transaction) => {
+      const assetDoc = await transaction.get(assetRef);
 
-    const asset = assetDoc.data() as ManualAsset;
+      if (!assetDoc.exists) {
+        throw new Error("Asset not found");
+      }
 
-    // Build new valuation entry
-    const newValuation: AssetValuation = {
-      effectiveDate,
-      valueCents,
-      createdAt: new Date().toISOString(),
-    };
+      const asset = assetDoc.data() as ManualAsset;
 
-    // Initialize valuations array if this is the first edit
-    let valuations: AssetValuation[] = asset.valuations || [];
+      // Build new valuation entry with unique ID
+      const newValuation: AssetValuation = {
+        id: generateValuationId(),
+        effectiveDate,
+        valueCents,
+        createdAt: new Date().toISOString(),
+      };
 
-    // First valuation on a legacy asset: preserve current value as baseline
-    if (valuations.length === 0) {
-      const baselineCents = Math.round(asset.value * 100);
-      const baselineDate = asset.startDate || asset.updatedAt?.slice?.(0, 10) || getTodayInNewYork();
-      
-      valuations.push({
-        effectiveDate: baselineDate,
-        valueCents: baselineCents,
-        createdAt: asset.updatedAt || new Date().toISOString(),
-      });
-    }
+      // Initialize valuations array if this is the first edit
+      let valuations: AssetValuation[] = asset.valuations || [];
 
-    // Check for duplicate date (same-day edits)
-    const existingIndex = valuations.findIndex((v) => v.effectiveDate === effectiveDate);
-    
-    if (existingIndex >= 0) {
-      // Replace existing entry for this date (same-day edit)
-      valuations[existingIndex] = newValuation;
-    } else {
-      // Add new entry
+      // First valuation on a legacy asset: preserve current value as baseline
+      if (valuations.length === 0) {
+        const baselineCents = Math.round(asset.value * 100);
+        const baselineDate = asset.startDate || asset.updatedAt?.slice?.(0, 10) || getTodayInNewYork();
+        
+        valuations.push({
+          id: generateValuationId(),
+          effectiveDate: baselineDate,
+          valueCents: baselineCents,
+          createdAt: asset.updatedAt || new Date().toISOString(),
+        });
+      }
+
+      // Add new entry (multiple same-day entries allowed, each with unique ID)
       valuations.push(newValuation);
-    }
 
-    // Sort ascending by effectiveDate (deterministic order)
-    valuations.sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate));
+      // Sort by effectiveDate ascending, then by createdAt for same-day determinism
+      valuations.sort((a, b) => {
+        const dateCmp = a.effectiveDate.localeCompare(b.effectiveDate);
+        if (dateCmp !== 0) return dateCmp;
+        return a.createdAt.localeCompare(b.createdAt);
+      });
 
-    // Update asset with new valuations array and current value
-    const latestValuation = valuations[valuations.length - 1];
-    const currentValue = latestValuation.valueCents / 100;
+      // Update asset with new valuations array and current value
+      const latestValuation = valuations[valuations.length - 1];
+      const currentValue = latestValuation.valueCents / 100;
 
-    await assetRef.update({
-      valuations,
-      value: currentValue, // Keep legacy field in sync with latest valuation
-      updatedAt: new Date(),
+      transaction.update(assetRef, {
+        valuations,
+        value: currentValue, // Keep legacy field in sync with latest valuation
+        updatedAt: new Date(),
+      });
+
+      return { valuations };
     });
 
     await invalidateFinancialProfileCache(uid, db);
 
-    return NextResponse.json({ ok: true, valuations });
+    return NextResponse.json({ ok: true, valuations: result.valuations });
   } catch (err) {
     console.error("POST /api/user/assets/[id]/valuations error:", err);
+    if (err instanceof Error && err.message === "Asset not found") {
+      return NextResponse.json({ error: "Asset not found" }, { status: 404 });
+    }
     return NextResponse.json({ error: "Failed to add valuation" }, { status: 500 });
   }
 }
 
 /**
  * DELETE /api/user/assets/[id]/valuations
- * Delete a specific valuation entry by effectiveDate.
+ * Delete a specific valuation entry by ID.
+ * Uses Firestore transactions for atomic updates.
  */
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const token = authToken(req);
@@ -116,64 +129,76 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     const { id } = await params;
     
     const url = new URL(req.url);
-    const effectiveDate = url.searchParams.get("effectiveDate");
+    const valuationId = url.searchParams.get("valuationId");
 
-    if (!effectiveDate) {
-      return NextResponse.json({ error: "effectiveDate query parameter required" }, { status: 400 });
+    if (!valuationId) {
+      return NextResponse.json({ error: "valuationId query parameter required" }, { status: 400 });
     }
 
-    if (!isValidDateString(effectiveDate)) {
-      return NextResponse.json({ error: "effectiveDate must be a valid YYYY-MM-DD date" }, { status: 400 });
-    }
-
-    // Fetch asset doc
     const assetRef = db.collection("users").doc(uid).collection("manualAssets").doc(id);
-    const assetDoc = await assetRef.get();
 
-    if (!assetDoc.exists) {
-      return NextResponse.json({ error: "Asset not found" }, { status: 404 });
-    }
+    // Use transaction for atomic read-modify-write
+    const result = await db.runTransaction(async (transaction) => {
+      const assetDoc = await transaction.get(assetRef);
 
-    const asset = assetDoc.data() as ManualAsset;
-    let valuations: AssetValuation[] = asset.valuations || [];
+      if (!assetDoc.exists) {
+        throw new Error("Asset not found");
+      }
 
-    if (valuations.length === 0) {
-      return NextResponse.json({ error: "No valuations to delete" }, { status: 400 });
-    }
+      const asset = assetDoc.data() as ManualAsset;
+      let valuations: AssetValuation[] = asset.valuations || [];
 
-    // Find and remove the entry
-    const indexToRemove = valuations.findIndex((v) => v.effectiveDate === effectiveDate);
+      if (valuations.length === 0) {
+        throw new Error("No valuations to delete");
+      }
 
-    if (indexToRemove < 0) {
-      return NextResponse.json({ error: "Valuation not found for this date" }, { status: 404 });
-    }
+      // Find and remove the entry by ID
+      const indexToRemove = valuations.findIndex((v) => v.id === valuationId);
 
-    // Guard: cannot delete if it's the only valuation (would erase all history)
-    if (valuations.length === 1) {
-      return NextResponse.json(
-        { error: "Cannot delete the only valuation. Edit the value instead or delete the asset." },
-        { status: 400 }
-      );
-    }
+      if (indexToRemove < 0) {
+        throw new Error("Valuation not found");
+      }
 
-    // Remove the entry
-    valuations.splice(indexToRemove, 1);
+      // Guard: cannot delete if it's the only valuation (would erase all history)
+      if (valuations.length === 1) {
+        throw new Error("Cannot delete the only valuation. Edit the value instead or delete the asset.");
+      }
 
-    // Update current value to match the latest remaining valuation
-    const latestValuation = valuations[valuations.length - 1];
-    const currentValue = latestValuation.valueCents / 100;
+      // Remove the entry
+      valuations.splice(indexToRemove, 1);
 
-    await assetRef.update({
-      valuations,
-      value: currentValue,
-      updatedAt: new Date(),
+      // Update current value to match the latest remaining valuation
+      const latestValuation = valuations[valuations.length - 1];
+      const currentValue = latestValuation.valueCents / 100;
+
+      transaction.update(assetRef, {
+        valuations,
+        value: currentValue,
+        updatedAt: new Date(),
+      });
+
+      return { valuations };
     });
 
     await invalidateFinancialProfileCache(uid, db);
 
-    return NextResponse.json({ ok: true, valuations });
+    return NextResponse.json({ ok: true, valuations: result.valuations });
   } catch (err) {
     console.error("DELETE /api/user/assets/[id]/valuations error:", err);
+    if (err instanceof Error) {
+      if (err.message === "Asset not found") {
+        return NextResponse.json({ error: "Asset not found" }, { status: 404 });
+      }
+      if (err.message === "No valuations to delete") {
+        return NextResponse.json({ error: "No valuations to delete" }, { status: 400 });
+      }
+      if (err.message === "Valuation not found") {
+        return NextResponse.json({ error: "Valuation not found" }, { status: 404 });
+      }
+      if (err.message.includes("Cannot delete the only valuation")) {
+        return NextResponse.json({ error: err.message }, { status: 400 });
+      }
+    }
     return NextResponse.json({ error: "Failed to delete valuation" }, { status: 500 });
   }
 }

@@ -29,6 +29,8 @@ export type AssetCategory =
  * Records the asset's value on a specific date.
  */
 export interface AssetValuation {
+  /** Unique identifier for this valuation entry (for same-day deletion) */
+  id: string;
   /** ISO date string (YYYY-MM-DD) when this valuation is effective (America/New_York) */
   effectiveDate: string;
   /** Asset value in cents (exact precision) */

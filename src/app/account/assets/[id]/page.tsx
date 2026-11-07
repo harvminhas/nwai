@@ -339,7 +339,7 @@ export default function ManualAssetPage() {
     }
   };
 
-  const deleteValuation = (effectiveDate: string) => {
+  const deleteValuation = (valuationId: string, effectiveDate: string) => {
     if (!asset) return;
     setConfirmModal({
       isOpen: true,
@@ -349,7 +349,7 @@ export default function ManualAssetPage() {
         if (!token) return;
         try {
           const res = await fetch(
-            `/api/user/assets/${asset.id}/valuations?effectiveDate=${effectiveDate}`,
+            `/api/user/assets/${asset.id}/valuations?valuationId=${valuationId}`,
             {
               method: "DELETE",
               headers: { Authorization: `Bearer ${token}` },
@@ -1297,9 +1297,14 @@ export default function ManualAssetPage() {
                   </thead>
                   <tbody className="divide-y divide-gray-200">
                     {[...asset.valuations]
-                      .sort((a, b) => b.effectiveDate.localeCompare(a.effectiveDate))
+                      .sort((a, b) => {
+                        // Sort by date descending, then by createdAt descending for same-day
+                        const dateCmp = b.effectiveDate.localeCompare(a.effectiveDate);
+                        if (dateCmp !== 0) return dateCmp;
+                        return b.createdAt.localeCompare(a.createdAt);
+                      })
                       .map((val) => (
-                        <tr key={val.effectiveDate} className="hover:bg-gray-50 transition">
+                        <tr key={val.id} className="hover:bg-gray-50 transition">
                           <td className="px-4 py-3 text-sm text-gray-900">
                             {new Date(val.effectiveDate).toLocaleDateString("en-US", {
                               month: "short",
@@ -1312,7 +1317,7 @@ export default function ManualAssetPage() {
                           </td>
                           <td className="px-4 py-3 text-right">
                             <button
-                              onClick={() => deleteValuation(val.effectiveDate)}
+                              onClick={() => deleteValuation(val.id, val.effectiveDate)}
                               className="text-red-600 hover:text-red-700 text-sm font-medium transition"
                             >
                               Delete
@@ -1427,16 +1432,149 @@ export default function ManualAssetPage() {
 
             {/* Projection Chart/Table */}
             {annualGrowthRate && annualGrowthRate !== "0" ? (
-              <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
-                <div className="bg-amber-50 border-b border-amber-200 px-4 py-3">
-                  <div className="flex items-center gap-2 text-sm font-medium text-amber-900">
-                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <span>ESTIMATES ONLY - Not included in actual net worth</span>
+              <>
+                {/* Chart */}
+                <div className="rounded-xl border border-gray-200 bg-white p-6 mb-6">
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4">
+                    <div className="flex items-center gap-2 text-sm font-medium text-amber-900">
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span>ESTIMATES ONLY - Not included in actual net worth</span>
+                    </div>
                   </div>
+                  
+                  <h3 className="text-sm font-semibold text-gray-900 mb-4">Projected Value Over Time</h3>
+                  
+                  {(() => {
+                    const rate = Number(annualGrowthRate) / 100;
+                    const currentYear = new Date().getFullYear();
+                    
+                    // Generate data points (current + projections)
+                    const dataPoints = [
+                      { year: currentYear, value: asset.value, label: 'Current' }
+                    ];
+                    for (let i = 1; i <= projectionYears; i++) {
+                      dataPoints.push({
+                        year: currentYear + i,
+                        value: asset.value * Math.pow(1 + rate, i),
+                        label: String(currentYear + i)
+                      });
+                    }
+                    
+                    // Chart dimensions
+                    const width = 800;
+                    const height = 300;
+                    const padding = { top: 20, right: 20, bottom: 40, left: 60 };
+                    const chartWidth = width - padding.left - padding.right;
+                    const chartHeight = height - padding.top - padding.bottom;
+                    
+                    // Scales
+                    const minValue = Math.min(...dataPoints.map(d => d.value));
+                    const maxValue = Math.max(...dataPoints.map(d => d.value));
+                    const valueRange = maxValue - minValue;
+                    const yMin = minValue - valueRange * 0.1;
+                    const yMax = maxValue + valueRange * 0.1;
+                    
+                    const xScale = (index: number) => padding.left + (index / (dataPoints.length - 1)) * chartWidth;
+                    const yScale = (value: number) => padding.top + chartHeight - ((value - yMin) / (yMax - yMin)) * chartHeight;
+                    
+                    // Generate path
+                    const pathData = dataPoints
+                      .map((d, i) => `${i === 0 ? 'M' : 'L'} ${xScale(i)} ${yScale(d.value)}`)
+                      .join(' ');
+                    
+                    // Y-axis ticks
+                    const yTicks = 5;
+                    const yTickValues = Array.from({ length: yTicks }, (_, i) => 
+                      yMin + (i / (yTicks - 1)) * (yMax - yMin)
+                    );
+                    
+                    return (
+                      <div className="w-full overflow-x-auto">
+                        <svg 
+                          viewBox={`0 0 ${width} ${height}`} 
+                          className="w-full h-auto"
+                          style={{ minWidth: '600px', maxHeight: '300px' }}
+                        >
+                          {/* Y-axis grid lines and labels */}
+                          {yTickValues.map((tickValue, i) => {
+                            const y = yScale(tickValue);
+                            return (
+                              <g key={i}>
+                                <line
+                                  x1={padding.left}
+                                  y1={y}
+                                  x2={width - padding.right}
+                                  y2={y}
+                                  stroke="#e5e7eb"
+                                  strokeWidth="1"
+                                />
+                                <text
+                                  x={padding.left - 10}
+                                  y={y}
+                                  textAnchor="end"
+                                  alignmentBaseline="middle"
+                                  className="text-xs fill-gray-500"
+                                  style={{ fontSize: '10px' }}
+                                >
+                                  {formatCurrency(tickValue, currency)}
+                                </text>
+                              </g>
+                            );
+                          })}
+                          
+                          {/* X-axis labels */}
+                          {dataPoints.map((d, i) => (
+                            <text
+                              key={i}
+                              x={xScale(i)}
+                              y={height - padding.bottom + 20}
+                              textAnchor="middle"
+                              className="text-xs fill-gray-700"
+                              style={{ fontSize: '10px' }}
+                            >
+                              {d.label}
+                            </text>
+                          ))}
+                          
+                          {/* Line path */}
+                          <path
+                            d={pathData}
+                            fill="none"
+                            stroke={rate >= 0 ? "#10b981" : "#ef4444"}
+                            strokeWidth="3"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          
+                          {/* Data points */}
+                          {dataPoints.map((d, i) => (
+                            <g key={i}>
+                              <circle
+                                cx={xScale(i)}
+                                cy={yScale(d.value)}
+                                r="5"
+                                fill={i === 0 ? "#8b5cf6" : (rate >= 0 ? "#10b981" : "#ef4444")}
+                                stroke="white"
+                                strokeWidth="2"
+                              />
+                              {/* Value label on hover */}
+                              <title>{`${d.year}: ${formatCurrency(d.value, currency)}`}</title>
+                            </g>
+                          ))}
+                        </svg>
+                      </div>
+                    );
+                  })()}
                 </div>
-                <table className="w-full">
+                
+                {/* Table */}
+                <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+                  <div className="bg-gray-50 border-b border-gray-200 px-4 py-3">
+                    <h3 className="text-sm font-semibold text-gray-900">Detailed Projections</h3>
+                  </div>
+                  <table className="w-full">
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Year</th>
@@ -1470,6 +1608,7 @@ export default function ManualAssetPage() {
                   </tbody>
                 </table>
               </div>
+              </>
             ) : (
               <div className="rounded-xl border border-gray-200 bg-gray-50 p-8 text-center">
                 <p className="text-sm text-gray-500">Enter a growth or depreciation rate above to see projections</p>
