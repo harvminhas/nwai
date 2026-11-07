@@ -10,6 +10,7 @@ import { formatAccountLast4 } from "@/lib/rangeUtils";
 import { getFirebaseClient } from "@/lib/firebase";
 import { formatLastTransactionDate } from "@/lib/formatLastTransactionDate";
 import { CategoryListRow } from "@/app/account/spending/CategoryListRow";
+import { triggerProfileRefetch } from "@/lib/profileRefetch";
 
 const GROUP_COLOR: Record<string, string> = {
   cash: "bg-blue-500",
@@ -39,6 +40,7 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
   const [addCategory, setAddCategory] = useState<AssetCategory>("property");
   const [addValue, setAddValue] = useState("");
   const [addLink, setAddLink] = useState("");
+  const [addStartDate, setAddStartDate] = useState("");
   const [addSaving, setAddSaving] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
@@ -47,6 +49,7 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
   useEffect(() => {
     if (searchParams.get("add") === "1" || searchParams.get("link")) {
       setShowAdd(true);
+      setAddStartDate(new Date().toISOString().slice(0, 10)); // Default today
     }
     const cat = searchParams.get("category");
     if (cat && ["property", "vehicle", "retirement", "investment", "business", "other"].includes(cat)) {
@@ -78,11 +81,14 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
           label: addLabel.trim(),
           category: addCategory,
           value: num,
+          startDate: addStartDate || undefined,
           ...(addLink ? { linkedAccountSlug: addLink } : {}),
         }),
       });
       if (!res.ok) throw new Error("Failed to save");
       const { id } = await res.json();
+      // Server invalidated cache; trigger refetch so header/detail update
+      triggerProfileRefetch();
       if (id) router.push(`/account/assets/${id}`);
       else router.refresh();
     } catch (err) {
@@ -133,6 +139,16 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
               className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm tabular-nums focus:border-purple-400 focus:outline-none"
             />
           </div>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-500">Start Date</label>
+          <input
+            type="date"
+            value={addStartDate}
+            onChange={(e) => setAddStartDate(e.target.value)}
+            className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
+          />
+          <p className="text-xs text-gray-500 mt-1">Asset included from this month onward</p>
         </div>
         {linkedFromQuery ? (
           <p className="text-xs text-gray-500">

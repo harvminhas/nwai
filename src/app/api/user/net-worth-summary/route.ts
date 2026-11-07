@@ -2,15 +2,14 @@
  * GET /api/user/net-worth-summary
  * 
  * Lightweight endpoint for nav bar net worth pill.
- * Returns current net worth, monthly change, and home currency.
- * Uses getFinancialProfile (single source of truth) so it matches
- * the dashboard and Net worth pages exactly.
+ * Uses shared getNetWorthForMonth (single authoritative source).
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import { getFinancialProfile } from "@/lib/financialProfile";
+import { getNetWorthForMonth } from "@/lib/netWorthCalculation";
 
 export async function GET(req: NextRequest) {
   const { db } = getFirebaseAdmin();
@@ -18,34 +17,91 @@ export async function GET(req: NextRequest) {
   if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    // Get user's home currency
-    const userDoc = await db.collection("users").doc(access.targetUid).get();
-    const userData = userDoc.exists ? userDoc.data() ?? {} : {};
-    const homeCurrency: string = userData.homeCurrency ?? userData.currency ?? "CAD";
+    // Parse explicit month/year from URL params
+    const url = new URL(req.url);
+    const monthParam = url.searchParams.get("month");
+    const yearParam = url.searchParams.get("year");
 
-    // Get financial profile (single source of truth)
-    const profile = await getFinancialProfile(access.targetUid, db);
+    let options: { month?: number; year?: number } | undefined;
 
-    // Get the latest two months from history to calculate change
-    const sortedHistory = [...profile.monthlyHistory].sort((a, b) => 
-      b.yearMonth.localeCompare(a.yearMonth)
-    );
+    if (monthParam !== null || yearParam !== null) {
+      // Explicit period requested - validate paired month+year
+      if (monthParam === null || yearParam === null) {
+        return NextResponse.json(
+          { error: "month and year must be provided together" },
+          { status: 400 }
+        );
+      }
 
-    const currentMonth = sortedHistory[0];
-    const previousMonth = sortedHistory[1];
+      // Strict integer validation: reject decimals, junk characters
+      if (!/^\d+$/.test(monthParam) || !/^\d+$/.test(yearParam)) {
+        return NextResponse.json(
+          { error: "month and year must be valid integers" },
+          { status: 400 }
+        );
+      }
 
-    const netWorth = currentMonth?.netWorth ?? 0;
-    const monthlyChange = previousMonth 
-      ? (currentMonth?.netWorth ?? 0) - previousMonth.netWorth 
-      : 0;
+      const month = parseInt(monthParam, 10);
+      const year = parseInt(yearParam, 10);
+
+      if (month < 1 || month > 12) {
+        return NextResponse.json(
+          { error: "month must be an integer between 1 and 12" },
+          { status: 400 }
+        );
+      }
+
+      if (year < 1900 || year > 2100) {
+        return NextResponse.json(
+          { error: "year must be a valid 4-digit year" },
+          { status: 400 }
+        );
+      }
+
+      options = { month, year };
+    }
+
+    // SINGLE profile read - service returns headline + history from same snapshot
+    const result = await getNetWorthForMonth(access.targetUid, db, options);
+
+    if (!result && options) {
+      // Explicit period requested but not available
+      return NextResponse.json(
+        { error: `No data available for ${options.year}-${String(options.month).padStart(2, "0")}` },
+        { status: 404 }
+      );
+    }
+
+    if (!result) {
+      // No data available - need currency for empty state
+      const userDoc = await db.collection("users").doc(access.targetUid).get();
+      const userData = userDoc.exists ? userDoc.data() ?? {} : {};
+      const currency: string = userData.homeCurrency ?? userData.currency ?? "CAD";
+      
+      return NextResponse.json({
+        netWorth: 0,
+        monthlyChange: 0,
+        currency,
+        current: 0,
+        previousMonth: null,
+        change: 0,
+        changePercent: null,
+        latestMonth: null,
+        trend: null,
+        monthlyHistory: [],
+      });
+    }
+
+    // Use currency and monthlyHistory from same profile snapshot as headline
+    const { netWorth, monthlyChange, currency, yearMonth, previousMonth, monthlyHistory } = result;
 
     // Calculate additional fields for badge count feature
-    const changePercent = previousMonth && previousMonth.netWorth !== 0
+    const changePercent = previousMonth && previousMonth.netWorth !== 0 && monthlyChange !== null
       ? (monthlyChange / Math.abs(previousMonth.netWorth)) * 100
       : null;
 
     let trend: "up" | "down" | "flat" | null = null;
-    if (previousMonth) {
+    if (previousMonth && monthlyChange !== null) {
       if (Math.abs(monthlyChange) < 1) {
         trend = "flat";
       } else if (monthlyChange > 0) {
@@ -55,27 +111,20 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Get last 12 months for the net worth page chart and breakdown
-    const last12Months = sortedHistory.slice(0, 12).reverse().map(m => ({
-      yearMonth: m.yearMonth,
-      netWorth: m.netWorth,
-      byAccount: m.byAccount || [], // Per-account contributions for What moved it
-    }));
-
     return NextResponse.json({
       // Original fields (required by nav pill)
       netWorth,
-      monthlyChange,
-      currency: homeCurrency,
+      monthlyChange: monthlyChange ?? 0,
+      currency,
       // Additional fields for badge functionality
       current: netWorth,
       previousMonth: previousMonth?.netWorth ?? null,
-      change: monthlyChange,
+      change: monthlyChange ?? 0,
       changePercent,
-      latestMonth: currentMonth?.yearMonth ?? null,
+      latestMonth: yearMonth,
       trend,
-      // Monthly history for net worth page chart
-      monthlyHistory: last12Months,
+      // Monthly history from SAME snapshot as headline (no disagreement)
+      monthlyHistory,
     });
   } catch (err) {
     console.error("Net worth summary error:", err);

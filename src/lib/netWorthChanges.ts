@@ -18,7 +18,8 @@ export type ChangeItemType =
   | "balance_decrease"
   | "income_change"
   | "spending_spike"
-  | "new_recurring_charge";
+  | "new_recurring_charge"
+  | "new_asset";
 
 export interface NetWorthChangeItem {
   /** Deterministic ID: month+type+accountSlug (or month+type+source for non-account items) */
@@ -94,6 +95,18 @@ export async function generateNetWorthChanges(
 
   if (allMonths.length === 0) {
     return; // No data to process
+  }
+
+  // Build map of manual assets by their start month (from startDate)
+  // Only include assets with known startDate - legacy assets without it are excluded
+  const manualAssetsByMonth = new Map<string, typeof profile.manualAssets[0][]>();
+  for (const asset of profile.manualAssets) {
+    if (!asset.startDate) continue; // Skip legacy assets with unknown start date
+    const startMonth = asset.startDate.slice(0, 7); // YYYY-MM from YYYY-MM-DD
+    if (!manualAssetsByMonth.has(startMonth)) {
+      manualAssetsByMonth.set(startMonth, []);
+    }
+    manualAssetsByMonth.get(startMonth)!.push(asset);
   }
 
   // Use the same carry-forward logic as financialProfile
@@ -251,7 +264,25 @@ export async function generateNetWorthChanges(
         }
       }
 
-      // 3. Check for balance changes on existing accounts
+      // 3. Check for new manual assets added this month
+      const assetsAddedThisMonth = manualAssetsByMonth.get(month) || [];
+      for (const asset of assetsAddedThisMonth) {
+        const id = createItemId(month, "new_asset", `manual-${asset.id}`);
+        items.push({
+          id,
+          month,
+          type: "new_asset",
+          accountSlug: `manual-${asset.id}`,
+          accountLabel: asset.label,
+          accountType: `manual-${asset.category}`,
+          netWorthImpact: asset.value,
+          currency: currency,
+          currentBalance: asset.value,
+          generatedAt: getGeneratedAt(id),
+        });
+      }
+
+      // 4. Check for balance changes on existing accounts
       for (const [slug, acc] of currentAccounts) {
         const prevAcc = previousMonthAccounts.get(slug);
         if (prevAcc && prevAcc.balance !== acc.balance) {

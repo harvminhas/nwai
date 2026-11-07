@@ -31,7 +31,9 @@ export interface ManualAsset {
   value: number;
   /** Optional slug of a linked statement account (mortgage/loan) */
   linkedAccountSlug?: string;
-  updatedAt: string; // ISO date string
+  /** Date asset ownership started (YYYY-MM-DD) - user editable, controls inclusion in history */
+  startDate?: string;
+  updatedAt: string; // ISO date string - last edit timestamp
 }
 
 // ── Typed Links & Hubs ───────────────────────────────────────────────────────

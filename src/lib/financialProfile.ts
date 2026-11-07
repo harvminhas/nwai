@@ -21,6 +21,7 @@
 
 import type * as Firestore from "firebase-admin/firestore";
 import { extractAllTransactions } from "./extractTransactions";
+import { calculateNetWorthForMonths } from "./netWorthCalculationCore";
 import { isDebtServicingExpense, resolveDebtServicingKind } from "./debtServicing";
 import { computeTypicalSpend, INCOME_TRANSFER_RE, isCoreExcluded } from "./spendingMetrics";
 import type { CashIncomeEntry } from "./cashIncome";
@@ -62,7 +63,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-const SCHEMA_VERSION = "68"; // byAccount per-account contributions for What moved it breakdown
+export const SCHEMA_VERSION = "69"; // Manual asset startDate field and month-based inclusion
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -633,6 +634,7 @@ export async function buildAndCacheFinancialProfile(
       category: data.category ?? "other",
       value: data.value ?? 0,
       linkedAccountSlug: data.linkedAccountSlug ?? undefined,
+      startDate: data.startDate || undefined, // User-editable start date (YYYY-MM-DD)
       updatedAt: data.updatedAt?.toDate?.()?.toISOString?.() ?? new Date().toISOString(),
     };
   });
@@ -1308,80 +1310,14 @@ export async function buildAndCacheFinancialProfile(
   }
 
   // ── Per-month NW back-fill ───────────────────────────────────────────────────
-  // Use the SAME account-type-based filtering as the "Asset Growth" chart (assets page)
-  // and "Debt Over Time" chart (liabilities page) so all three charts are on one pipeline.
-  {
-    const manualAssetsTotal = manualAssets.reduce((s, a) => s + a.value, 0);
-
-    const ASSET_TYPES = new Set(["checking", "savings", "investment", "property", "other"]);
-    const DEBT_TYPES  = new Set(["credit", "mortgage", "loan", "line_of_credit"]);
-
-    // Pre-sort entries ascending; split into asset and debt buckets by account type —
-    // matching assets/page.tsx (ASSET_TYPES) and liabilities/page.tsx (DEBT_TYPES or
-    // any account that ever carries a negative balance).
-    const assetEntries: { acct: AccountBalanceHistory; sorted: { yearMonth: string; balance: number }[] }[] = [];
-    const debtEntries:  { acct: AccountBalanceHistory; sorted: { yearMonth: string; balance: number }[] }[] = [];
-
-    for (const acct of accountBalanceHistory) {
-      const sorted = [...acct.entries].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
-      if (ASSET_TYPES.has(acct.accountType)) {
-        assetEntries.push({ acct, sorted });
-      }
-      if (DEBT_TYPES.has(acct.accountType) || acct.entries.some((e) => e.balance < 0)) {
-        debtEntries.push({ acct, sorted });
-      }
-    }
-
-    for (const h of monthlyHistory) {
-      let ta = 0;
-      let td = 0;
-      const accountContributions: Array<{ slug: string; label: string; type: string; value: number }> = [];
-
-      for (const { acct, sorted } of assetEntries) {
-        let bal: number | null = null;
-        for (const e of sorted) {
-          if (e.yearMonth <= h.yearMonth) bal = e.balance;
-          else break;
-        }
-        if (bal === null) continue;
-        const value = Math.max(0, toHome(bal, acct.currency)); // positive balances only
-        ta += value;
-        accountContributions.push({
-          slug: acct.slug,
-          label: acct.label,
-          type: acct.accountType,
-          value, // Assets are positive
-        });
-      }
-
-      for (const { acct, sorted } of debtEntries) {
-        // Exclude paid-off/closed debts from net worth calculation
-        const isActive = isAccountActive(acct.slug, h.yearMonth, accountStatusMap);
-        if (!isActive) continue;
-
-        let bal: number | null = null;
-        for (const e of sorted) {
-          if (e.yearMonth <= h.yearMonth) bal = e.balance;
-          else break;
-        }
-        if (bal === null) continue;
-        const absValue = Math.abs(toHome(bal, acct.currency)); // abs — same as liabilities page
-        td += absValue;
-        accountContributions.push({
-          slug: acct.slug,
-          label: acct.label,
-          type: acct.accountType,
-          value: -absValue, // Debts are negative
-        });
-      }
-
-      ta += manualAssetsTotal;
-      h.totalAssets = ta;
-      h.totalDebts  = td;
-      h.netWorth    = ta - td;
-      h.byAccount   = accountContributions;
-    }
-  }
+  // Use shared authoritative calculation function (extracted for reuse)
+  calculateNetWorthForMonths(
+    monthlyHistory,
+    accountBalanceHistory,
+    manualAssets,
+    toHome,
+    accountStatusMap
+  );
 
   // Build new cache fields from the parallel reads
   const manualLiabilities: ManualLiability[] = manualLiabSnap.docs.map((d) => ({
@@ -1503,6 +1439,9 @@ export async function getFinancialProfile(
       full = await buildAndCacheFinancialProfile(uid, db);
     } else {
       const ageMs = Date.now() - new Date(cached.updatedAt).getTime();
+
+      // Schema v69: startDate-based inclusion invalidates v68 all-months caches
+      // SCHEMA_VERSION bump handles migration; no bespoke validation needed
 
       // Hot path: cache is < 5 min old AND not stale — return immediately
       if (ageMs < HOT_WINDOW_MS && !cached.cacheStale) {

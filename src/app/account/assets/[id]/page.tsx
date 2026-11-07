@@ -9,6 +9,7 @@ import { formatCurrency, formatCurrencyWithCents } from "@/lib/currencyUtils";
 import AccountSwitcher from "@/components/AccountSwitcher";
 import { ConfirmModal } from "@/components/ConfirmModal";
 import { CategoryPicker, categoryColor } from "@/app/account/spending/shared";
+import { triggerProfileRefetch } from "@/lib/profileRefetch";
 import { useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 import type { ManualAsset, AssetCategory, HubLink, ExpenseTransaction, IncomeTransaction } from "@/lib/types";
 import type { DebtsSummary, DebtAccount } from "@/lib/debtsSummary";
@@ -51,6 +52,7 @@ export default function ManualAssetPage() {
   const [label, setLabel] = useState("");
   const [category, setCategory] = useState<AssetCategory>("other");
   const [value, setValue] = useState("");
+  const [startDate, setStartDate] = useState("");
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
@@ -93,7 +95,6 @@ export default function ManualAssetPage() {
   const [openCategoryPicker, setOpenCategoryPicker] = useState<string | null>(null);
   const categoryPickerBtnRefs = useState(() => new Map<string, HTMLButtonElement>())[0];
   
-  // Profile refresh context (same as account detail)
   const { requestProfileRefresh } = useProfileRefresh();
 
   const load = useCallback(async (tok: string) => {
@@ -256,12 +257,15 @@ export default function ManualAssetPage() {
           label: label.trim(),
           category,
           value: num,
+          startDate: startDate === "" ? null : startDate, // Explicit null to clear
           linkedAccountSlug: asset.linkedAccountSlug, // Preserve legacy link
         }),
       });
       if (!res.ok) throw new Error("Failed to save");
       setShowEditModal(false);
       setToast({ msg: "Saved", ok: true });
+      // Server invalidated cache; trigger refetch so header/detail update
+      triggerProfileRefetch();
       await load(token);
     } catch {
       setToast({ msg: "Could not save", ok: false });
@@ -283,8 +287,13 @@ export default function ManualAssetPage() {
           headers: { Authorization: `Bearer ${token}` },
         });
         setConfirmModal(null);
-        if (res.ok) router.push("/account/assets?tab=accounts");
-        else setToast({ msg: "Could not delete", ok: false });
+        if (res.ok) {
+          // Server invalidated cache; trigger refetch so header/detail update
+          triggerProfileRefetch();
+          router.push("/account/assets?tab=accounts");
+        } else {
+          setToast({ msg: "Could not delete", ok: false });
+        }
       },
     });
   };
@@ -541,7 +550,13 @@ export default function ManualAssetPage() {
           <div className="flex items-center gap-2 mb-2">
             <h1 className="text-2xl font-bold text-gray-900">{asset.label}</h1>
             <button
-              onClick={() => setShowEditModal(true)}
+              onClick={() => {
+                setLabel(asset.label);
+                setCategory(asset.category);
+                setValue(String(asset.value));
+                setStartDate(asset.startDate || "");
+                setShowEditModal(true);
+              }}
               className="text-gray-400 hover:text-gray-600 transition"
               title="Edit asset"
               aria-label="Edit asset"
@@ -1154,6 +1169,20 @@ export default function ManualAssetPage() {
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm tabular-nums focus:border-purple-400 focus:outline-none"
                   />
                 </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-500">Start Date</label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  {!startDate 
+                    ? "Set date to include from that month onward (leave empty for all months)"
+                    : "Asset included from this month onward"}
+                </p>
               </div>
             </div>
             <div className="mt-6 flex items-center justify-between border-t border-gray-200 pt-4">

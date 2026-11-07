@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
         category: (data.category as AssetCategory) ?? "other",
         value: data.value ?? 0,
         linkedAccountSlug: data.linkedAccountSlug ?? undefined,
+        startDate: data.startDate ?? undefined, // User-editable start date
         updatedAt: data.updatedAt?.toDate?.()?.toISOString?.() ?? data.updatedAt ?? new Date().toISOString(),
       };
     });
@@ -45,17 +46,34 @@ export async function POST(req: NextRequest) {
     if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const uid = access.actorUid;
     const body = await req.json();
-    const { label, category, value, linkedAccountSlug } = body;
+    const { label, category, value, linkedAccountSlug, startDate } = body;
     if (!label || typeof value !== "number") {
       return NextResponse.json({ error: "label and value are required" }, { status: 400 });
     }
+    
+    // Validate startDate format and value if provided
+    if (startDate !== undefined && startDate !== null) {
+      if (typeof startDate !== 'string') {
+        return NextResponse.json({ error: "startDate must be a string" }, { status: 400 });
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+        return NextResponse.json({ error: "startDate must be YYYY-MM-DD format" }, { status: 400 });
+      }
+      const date = new Date(startDate);
+      if (isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== startDate) {
+        return NextResponse.json({ error: "startDate must be a valid calendar date" }, { status: 400 });
+      }
+    }
+    
+    const now = new Date();
     const doc: Record<string, unknown> = {
       label,
       category: category ?? "other",
       value,
-      updatedAt: new Date(),
+      updatedAt: now,
     };
     if (linkedAccountSlug) doc.linkedAccountSlug = linkedAccountSlug;
+    if (startDate) doc.startDate = startDate; // User-editable start date
     const ref = await db.collection("users").doc(uid).collection("manualAssets").add(doc);
     // Invalidate profile cache so net worth reflects the new asset immediately
     await invalidateFinancialProfileCache(uid, db);
