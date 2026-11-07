@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { formatCurrency } from "@/lib/currencyUtils";
+import { formatCurrency, formatCurrencyWithCents } from "@/lib/currencyUtils";
 
 interface BalanceLineChartProps {
   history: Array<{
@@ -428,7 +428,7 @@ export function AccountDrawer({ isOpen, onClose, data }: AccountDrawerProps) {
                               <p className="text-gray-500">{txn.date}</p>
                             </div>
                             <p className={`font-semibold tabular-nums ${txn.isIncome ? 'text-green-600' : 'text-gray-900'}`}>
-                              {txn.isIncome ? '+' : ''}{formatCurrency(txn.amount, data.currency)}
+                              {txn.isIncome ? '+' : ''}{formatCurrencyWithCents(txn.amount, data.currency)}
                             </p>
                           </div>
                         ))}
@@ -497,7 +497,7 @@ export function AccountDrawer({ isOpen, onClose, data }: AccountDrawerProps) {
                       <div key={payment.month} className="flex items-center justify-between py-2">
                         <span className="text-sm text-gray-600">{payment.monthLabel}</span>
                         <span className="text-sm font-semibold text-gray-900 tabular-nums">
-                          {formatCurrency(payment.amount, data.currency)}
+                          {formatCurrencyWithCents(payment.amount, data.currency)}
                         </span>
                       </div>
                     ))}

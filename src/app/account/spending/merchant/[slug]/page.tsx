@@ -12,7 +12,7 @@ import {
 import { categoryColor, CategoryPicker } from "@/app/account/spending/shared";
 import { txnKey } from "@/lib/applyRules";
 import type { MerchantSummary } from "@/app/api/user/spending/merchants/route";
-import { formatCurrency, getCurrencySymbol } from "@/lib/currencyUtils";
+import { formatCurrency, formatCurrencyWithCents, getCurrencySymbol } from "@/lib/currencyUtils";
 import {
   MerchantForecastProvider,
   MerchantSpendCadencePill,
@@ -839,7 +839,7 @@ export default function MerchantDetailPage() {
               </p>
               <p className="mt-0.5 text-xs text-gray-600">
                 {fmtDate(merchant.lastDate!)}
-                {lastVisitTxn ? ` · ${formatCurrency(Math.abs(lastVisitTxn.amount), homeCurrency, lastVisitTxn.currency, true)}` : ""}
+                {lastVisitTxn ? ` · ${formatCurrencyWithCents(Math.abs(lastVisitTxn.amount), homeCurrency, lastVisitTxn.currency, true)}` : ""}
               </p>
               {isLongestGap && (
                 <p className="mt-1 text-[11px] text-amber-600">Your longest gap yet (typical {avgGap}d)</p>
@@ -947,7 +947,7 @@ export default function MerchantDetailPage() {
                 <span className="font-semibold text-orange-500">{shortMonth(outlierMonth.ym)}</span> was{" "}
                 <span className="font-medium text-gray-700">{outlierMonth.pct}% above typical.</span>
                 {outlierMonth.bigTxn && outlierMonth.bigTxn.date
-                  ? ` One ${outlierMonth.pct > 50 ? "large" : "notable"} ${vocab.trip} on ${fmtDate(outlierMonth.bigTxn.date)} (${formatCurrency(Math.abs(outlierMonth.bigTxn.amount), homeCurrency, outlierMonth.bigTxn.currency, true)}) drove most of the spike.`
+                  ? ` One ${outlierMonth.pct > 50 ? "large" : "notable"} ${vocab.trip} on ${fmtDate(outlierMonth.bigTxn.date)} (${formatCurrencyWithCents(Math.abs(outlierMonth.bigTxn.amount), homeCurrency, outlierMonth.bigTxn.currency, true)}) drove most of the spike.`
                   : ""}
               </p>
             )}
@@ -959,7 +959,7 @@ export default function MerchantDetailPage() {
           <InsightCard icon="warn">
             <span className="font-semibold">{shortMonth(outlierMonth.ym)}</span> was {outlierMonth.pct}% above your typical month.
             {outlierMonth.bigTxn?.date
-              ? ` One ${outlierMonth.pct > 50 ? "large" : "notable"} ${vocab.trip} on ${fmtDate(outlierMonth.bigTxn.date)} (${formatCurrency(Math.abs(outlierMonth.bigTxn.amount), homeCurrency, outlierMonth.bigTxn.currency, true)}) drove most of the spike — similar in size to your previous ${vocab.largeVisits}.`
+              ? ` One ${outlierMonth.pct > 50 ? "large" : "notable"} ${vocab.trip} on ${fmtDate(outlierMonth.bigTxn.date)} (${formatCurrencyWithCents(Math.abs(outlierMonth.bigTxn.amount), homeCurrency, outlierMonth.bigTxn.currency, true)}) drove most of the spike — similar in size to your previous ${vocab.largeVisits}.`
               : ""}
           </InsightCard>
         )}

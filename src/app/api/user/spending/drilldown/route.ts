@@ -254,6 +254,7 @@ export async function GET(req: NextRequest) {
   const categoryParam = url.searchParams.get("category") || "";
   const merchantParam = url.searchParams.get("merchant") || "";
   const searchQuery = url.searchParams.get("q") || "";
+  const viewParam = url.searchParams.get("view") || ""; // Explicit view type from search
 
   if (!["all", "category", "merchant", "search"].includes(level)) {
     return NextResponse.json({ error: "Invalid level" }, { status: 400 });
@@ -711,14 +712,14 @@ export async function GET(req: NextRequest) {
       const parentCategory = categoryParam;
 
       // Special handling for Debt account drill-down (regular + extras)
-      if (parentCategory === "Debt") {
-        const accountSlug = merchantParam; // It's an account slug, not a merchant
-        
-        // Find the account in snapshots
-        const account = profile.accountSnapshots.find(a => a.slug === accountSlug);
-        if (!account) {
-          return NextResponse.json({ error: "Account not found" }, { status: 404 });
-        }
+      // Use account detail only when: (1) category=Debt, (2) account exists, (3) NOT from merchant search
+      const account = parentCategory === "Debt" && viewParam !== "merchant"
+        ? profile.accountSnapshots.find(a => a.slug === merchantParam)
+        : null;
+      
+      if (account) {
+        // Debt ACCOUNT detail (e.g., TD Visa account payments by month)
+        const accountSlug = merchantParam;
 
         // Use actualDebt computed once for entire request
         
@@ -786,11 +787,10 @@ export async function GET(req: NextRequest) {
       }
 
       // Get all transactions for this merchant in window months (all categories)
-      // Match after resolving aliases, so both canonical and alias slugs work
+      // Include debt payment merchants (users can search and view them)
       const allMerchantTxns = profile.expenseTxns.filter(t => {
         if (!windowMonths.includes(t.txMonth)) return false;
         if (isCoreExcluded(t.category)) return false;
-        if (getParentCategory(t.category) === "Debt") return false;
         // 1. Resolve alias to canonical name first
         const resolvedMerchant = aliasResolver.resolve(t.merchant);
         // 2. Then apply slug and canonical resolution
@@ -910,9 +910,7 @@ export async function GET(req: NextRequest) {
         });
       }
 
-      // One row per merchant, whichever categories it was charged in. A merged
-      // merchant used to show once per category, which made a successful merge
-      // look like it had done nothing.
+      // One row per merchant, whichever categories it was charged in.
       const merchantMap = new Map<string, {
         name: string;
         canonicalSlug: string;
@@ -921,17 +919,17 @@ export async function GET(req: NextRequest) {
         txCount: number;
       }>();
 
-      // Filter to window months, exclude core-excluded categories and Debt
+      // Filter to window months, exclude core-excluded categories
+      // Include Debt transactions (debt payment merchants like Honda Finance)
       const scopedTxns = profile.expenseTxns.filter(t => {
         if (!windowMonths.includes(t.txMonth)) return false;
         if (isCoreExcluded(t.category)) return false;
-        const parent = getParentCategory(t.category);
-        if (parent === "Debt") return false; // Debt is not searchable
         return true;
       });
 
       scopedTxns.forEach(t => {
         const parent = getParentCategory(t.category);
+        // Group ALL transactions by merchant (including debt payments)
         // 1. Resolve alias to canonical name first (merging)
         const resolvedMerchant = aliasResolver.resolve(t.merchant);
         // 2. Then apply slug and canonical resolution (aliasing)

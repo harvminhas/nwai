@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
-import { formatCurrency, getCurrencySymbol } from "@/lib/currencyUtils";
+import { formatCurrency, formatCurrencyWithCents, getCurrencySymbol } from "@/lib/currencyUtils";
 import { ReviewList } from "@/components/ReviewList";
 import { MergeMerchantsPanel } from "./MergeMerchantsPanel";
 
@@ -97,10 +97,92 @@ export function DrilldownView({ token }: DrilldownViewProps) {
   const category = searchParams.get("category") || "";
   const merchant = searchParams.get("merchant") || "";
   const searchQuery = searchParams.get("q") || "";
+  const view = searchParams.get("view") || ""; // Explicit view type from search
   
   const level = merchant ? "merchant" : category ? "category" : searchQuery ? "search" : "all";
   
   const [searchInput, setSearchInput] = useState(searchQuery);
+  const [debouncedSearch, setDebouncedSearch] = useState(searchQuery);
+  const [liveSearchData, setLiveSearchData] = useState<DrilldownData | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showSearchDropdown, setShowSearchDropdown] = useState(false);
+
+  // Show dropdown immediately on typing (before debounce)
+  useEffect(() => {
+    const trimmed = searchInput.trim();
+    if (trimmed.length > 0) {
+      setShowSearchDropdown(true);
+      setIsSearching(true);
+    } else {
+      setShowSearchDropdown(false);
+      setIsSearching(false);
+      setLiveSearchData(null);
+    }
+  }, [searchInput]);
+
+  // Debounce search input for network requests
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchInput.trim());
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  // Fetch search results when debounced value changes (doesn't control dropdown state)
+  useEffect(() => {
+    const abortController = new AbortController();
+    
+    const fetchSearchResults = async () => {
+      const query = debouncedSearch.trim();
+      
+      // Don't fetch if too short or already showing from URL
+      if (query.length < 2 || query === searchQuery) {
+        setIsSearching(false);
+        return;
+      }
+      
+      try {
+        const params = new URLSearchParams({ level: "search" });
+        params.set("q", query);
+
+        const res = await fetch(`/api/user/spending/drilldown?${params}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+          signal: abortController.signal,
+        });
+
+        if (res.ok) {
+          const result = await res.json();
+          if (!abortController.signal.aborted) {
+            setLiveSearchData(result);
+            setIsSearching(false);
+          }
+        } else {
+          if (!abortController.signal.aborted) {
+            setIsSearching(false);
+          }
+        }
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          return;
+        }
+        console.error("Search error:", err);
+        if (!abortController.signal.aborted) {
+          setIsSearching(false);
+        }
+      }
+    };
+
+    if (debouncedSearch.trim().length >= 2) {
+      fetchSearchResults();
+    } else {
+      setIsSearching(false);
+    }
+
+    return () => {
+      abortController.abort();
+    };
+  }, [debouncedSearch, token, searchQuery]);
 
   // silent: refresh the numbers without unmounting the page. A merge panel on
   // top of the page must survive its own refresh, otherwise it remounts and
@@ -117,6 +199,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       if (category) params.set("category", category);
       if (merchant) params.set("merchant", merchant);
       if (searchQuery) params.set("q", searchQuery);
+      if (view) params.set("view", view);
 
       const res = await fetch(`/api/user/spending/drilldown?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -144,12 +227,20 @@ export function DrilldownView({ token }: DrilldownViewProps) {
 
   useEffect(() => {
     loadData();
-  }, [token, level, category, merchant, searchQuery]);
+  }, [token, level, category, merchant, searchQuery, view]);
 
   // Keep searchInput in sync with URL query changes
   useEffect(() => {
     setSearchInput(searchQuery);
   }, [searchQuery]);
+
+  // Dismiss search dropdown and clear input
+  const dismissSearch = () => {
+    setSearchInput("");
+    setLiveSearchData(null);
+    setShowSearchDropdown(false);
+    setIsSearching(false);
+  };
 
   if (loading) {
     return (
@@ -166,6 +257,9 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       </div>
     );
   }
+
+  // Use loaded data for main page (search card is separate overlay)
+  const displayData = data;
 
   const handleItemClick = (item: RankedItem) => {
     if (level === "all") {
@@ -189,7 +283,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
 
   // When month is selected, show that month's values
   const displayedItems = selectedMonth && level !== "merchant"
-    ? data.rankedItems
+    ? displayData.rankedItems
         .map(item => {
           const monthData = item.monthlySeries.find(m => m.yearMonth === selectedMonth);
           return {
@@ -207,18 +301,18 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             displayShare: monthTotal > 0 ? item.displayTotal / monthTotal : 0,
           };
         })
-    : data.rankedItems.map(item => ({
+    : displayData.rankedItems.map(item => ({
         ...item,
         displayTotal: item.total,
         displayShare: item.share,
       }));
 
   // Chart data
-  const chartData = data.monthlySeries.map((m, idx) => ({
+  const chartData = displayData.monthlySeries.map((m, idx) => ({
     month: formatMonthLabel(m.yearMonth),
     yearMonth: m.yearMonth,
     amount: m.amount,
-    comparison: data.comparisonSeries?.[idx]?.amount || 0,
+    comparison: displayData.comparisonSeries?.[idx]?.amount || 0,
   }));
 
   // Magnitude-aware 'nice' domain calculation
@@ -235,10 +329,10 @@ export function DrilldownView({ token }: DrilldownViewProps) {
     return [Math.floor(lo / step) * step, Math.ceil(hi / step) * step];
   };
   
-  const yAxisDomain = niceDomain(data.monthlySeries.map(m => m.amount));
+  const yAxisDomain = niceDomain(displayData.monthlySeries.map(m => m.amount));
 
   // Debt groups, narrowed to the selected month when one is picked
-  const groupsForDisplay = (data.groups || []).map((group) => {
+  const groupsForDisplay = (displayData.groups || []).map((group) => {
     if (!selectedMonth) return group;
     const items = group.items
       .map((item) => {
@@ -266,14 +360,14 @@ export function DrilldownView({ token }: DrilldownViewProps) {
   }, 0);
 
   return (
-    <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8">
+    <div className="relative mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8">
       {/* Breadcrumb */}
       <div className="mb-6">
         <div className="flex items-center gap-2 text-sm mb-2">
           <Link href="/account/overview" className="text-neutral-500 hover:text-neutral-700">
             ←
           </Link>
-          {data.breadcrumb.map((crumb, idx) => (
+          {displayData.breadcrumb.map((crumb, idx) => (
             <div key={idx} className="flex items-center gap-2">
               {idx > 0 && <span className="text-neutral-400">/</span>}
               {crumb.href ? (
@@ -289,7 +383,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       </div>
 
       {/* Merchant Search (All spending and search levels) */}
-      {(data.level === "all" || data.level === "search") && (
+      {(displayData.level === "all" || displayData.level === "search") && (
         <div className="mb-6 flex items-center justify-between gap-4">
           <div className="relative w-full max-w-sm">
             <input
@@ -300,15 +394,8 @@ export function DrilldownView({ token }: DrilldownViewProps) {
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && searchInput.trim().length >= 2) {
-                  const url = new URL(window.location.href);
-                  url.searchParams.set("q", searchInput.trim());
-                  router.push(url.pathname + url.search);
-                } else if (e.key === "Escape") {
-                  setSearchInput("");
-                  const url = new URL(window.location.href);
-                  url.searchParams.delete("q");
-                  router.push(url.pathname + url.search);
+                if (e.key === "Escape") {
+                  dismissSearch();
                 }
               }}
               className="w-full rounded-full border border-neutral-300 bg-white py-2 pl-9 pr-8 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-purple-500"
@@ -328,19 +415,93 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             </svg>
             {searchInput && (
               <button
-                onClick={() => {
-                  setSearchInput("");
-                  const url = new URL(window.location.href);
-                  url.searchParams.delete("q");
-                  router.push(url.pathname + url.search);
-                }}
+                onClick={dismissSearch}
                 className="absolute right-2 top-1/2 -translate-y-1/2 transform text-neutral-400 hover:text-neutral-600"
+                aria-label="Clear search"
               >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             )}
+
+            {/* Search Results Dropdown - positioned below input */}
+            {showSearchDropdown && (
+              <>
+                {/* Invisible backdrop for outside clicks */}
+                <div 
+                  className="fixed inset-0 z-[100]" 
+                  onClick={dismissSearch}
+                />
+                
+                {/* Dropdown positioned below search input - wider than input for desktop readability */}
+                <div className="absolute top-full left-0 mt-2 z-[101] bg-white opacity-100 rounded-lg border border-neutral-200 shadow-xl max-h-96 flex flex-col w-[600px] max-w-[calc(100vw-2rem)]">
+            {/* Dropdown content */}
+            <div className="overflow-y-auto flex-1">
+              {searchInput.trim().length < 2 ? (
+                <div className="p-4 text-sm text-neutral-500 text-center">
+                  Type at least 2 characters to search
+                </div>
+              ) : isSearching ? (
+                <div className="flex items-center justify-center py-6">
+                  <div className="flex items-center gap-2 text-sm text-neutral-600">
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-purple-600 border-t-transparent" />
+                    <span>Loading...</span>
+                  </div>
+                </div>
+              ) : liveSearchData ? (
+                <>
+                  {/* Results header */}
+                  <div className="px-4 py-3 border-b border-neutral-100 bg-neutral-50">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-medium text-neutral-700">
+                        {liveSearchData.rankedItems.length} merchant{liveSearchData.rankedItems.length !== 1 ? 's' : ''} found
+                      </p>
+                      {liveSearchData.rankedItems.length > 0 && (
+                        <p className="text-xs text-neutral-600">
+                          {formatCurrencyWithCents(liveSearchData.total, liveSearchData.currency, liveSearchData.currency)} total
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Merchant results */}
+                  {liveSearchData.rankedItems.length === 0 ? (
+                    <div className="p-4 text-sm text-neutral-500 text-center">
+                      No merchants found
+                    </div>
+                  ) : (
+                    <div className="p-2">
+                      {liveSearchData.rankedItems.map((item) => (
+                        <button
+                          key={item.slug}
+                          onClick={() => {
+                            dismissSearch();
+                            if (item.category) {
+                              router.push(`/account/spending?category=${encodeURIComponent(item.category)}&merchant=${encodeURIComponent(item.slug)}&view=merchant`);
+                            }
+                          }}
+                          className="w-full flex items-center justify-between p-2 rounded hover:bg-neutral-50 transition text-left"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-neutral-900 truncate">{item.name}</p>
+                            {item.category && (
+                              <p className="text-xs text-neutral-600 mt-0.5">{item.category}</p>
+                            )}
+                          </div>
+                          <div className="ml-3 text-sm font-semibold text-neutral-900 tabular-nums shrink-0">
+                            {formatCurrencyWithCents(item.total, liveSearchData.currency, liveSearchData.currency)}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : null}
+            </div>
+          </div>
+        </>
+      )}
           </div>
           <button
             onClick={() => {
@@ -367,15 +528,15 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       </div>
 
       {/* Header Card */}
-      {data.level === "search" ? (
+      {displayData.level === "search" ? (
         // Search results header (no chart)
         <div className="bg-white rounded-2xl border border-neutral-200 p-6 mb-6 shadow-sm">
           <div className="text-lg font-semibold text-neutral-900 mb-1">
-            {data.rankedItems.length} merchant{data.rankedItems.length !== 1 ? 's' : ''} match "{data.query}"
+            {displayData.rankedItems.length} merchant{displayData.rankedItems.length !== 1 ? 's' : ''} match "{displayData.query}"
           </div>
-          {data.rankedItems.length > 0 && (
+          {displayData.rankedItems.length > 0 && (
             <div className="text-sm text-neutral-600">
-              Combined total: {formatCurrency(data.total, data.currency)} across 12 months
+              Combined total: {formatCurrencyWithCents(displayData.total, displayData.currency, displayData.currency)} across 12 months
             </div>
           )}
         </div>
@@ -385,7 +546,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
           <div className="flex items-start justify-between mb-3">
             <div className="flex items-baseline gap-2">
               <div className="text-3xl font-bold text-neutral-900">
-                {formatCurrency(data.total, data.currency)}
+                {formatCurrencyWithCents(displayData.total, displayData.currency, displayData.currency)}
               </div>
               <div className="text-xs text-neutral-500">last 12 months</div>
             </div>
@@ -407,7 +568,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
           <div>
             <div className="text-xs uppercase text-neutral-500 mb-0.5">Average</div>
             <div className="text-sm text-neutral-900 tabular-nums">
-              {formatCurrency(data.avgPerMonth, data.currency)}/mo
+              {formatCurrencyWithCents(displayData.avgPerMonth, displayData.currency, displayData.currency)}/mo
             </div>
           </div>
           <div>
@@ -418,56 +579,56 @@ export function DrilldownView({ token }: DrilldownViewProps) {
               {formatCurrency(
                 selectedMonth
                   ? (chartData.find(d => d.yearMonth === selectedMonth)?.amount || 0)
-                  : (data.monthlySeries[data.monthlySeries.length - 1]?.amount || 0),
-                data.currency
+                  : (displayData.monthlySeries[displayData.monthlySeries.length - 1]?.amount || 0),
+                displayData.currency
               )}
             </div>
           </div>
-          {data.level === "merchant" && data.otherCategoriesTotal && data.otherCategoriesTotal > 0 && (
+          {displayData.level === "merchant" && displayData.otherCategoriesTotal && displayData.otherCategoriesTotal > 0 && (
             <div>
               <div className="text-xs uppercase text-neutral-500 mb-0.5">Other categories</div>
               <div className="text-sm text-neutral-900 tabular-nums">
-                {formatCurrency(data.otherCategoriesTotal, data.currency)}
+                {formatCurrency(displayData.otherCategoriesTotal, displayData.currency)}
               </div>
             </div>
           )}
         </div>
 
         {/* Debt level 2 caption */}
-        {data.kind === "debt" && data.level === "category" && data.basis === "actual" && (
+        {displayData.kind === "debt" && displayData.level === "category" && displayData.basis === "actual" && (
           <div className="text-xs text-neutral-500 mt-1">
             What you actually paid in regular monthly payments. One-off payments are shown below and not included.
           </div>
         )}
 
         {/* Level 1 (All spending) caption */}
-        {data.level === "all" && (
+        {displayData.level === "all" && (
           <div className="text-xs text-neutral-500 mt-1">
             Purchases plus loan payments. Card payments and one-off payments are shown inside Debt and not added.
           </div>
         )}
 
         {/* Two-box strip for Debt level 2 */}
-        {data.kind === "debt" && data.level === "category" && data.groups && (
+        {displayData.kind === "debt" && displayData.level === "category" && displayData.groups && (
           <div className="flex gap-2 mt-3">
             <div className="flex-1 border border-green-200 bg-green-50 rounded-lg p-3">
               <div className="text-xs text-green-700 font-medium mb-1">Regular payments</div>
               <div className="text-lg font-semibold text-green-900 tabular-nums">
-                {formatCurrency(selectedMonth ? debtLoanShown : data.total, data.currency)}
+                {formatCurrency(selectedMonth ? debtLoanShown : displayData.total, displayData.currency)}
               </div>
               <div className="text-xs text-green-700 mt-1 leading-snug">
                 Loan payments, counted in spending.
               </div>
               {debtCardShown > 0 && (
                 <div className="text-xs text-neutral-600 mt-1 leading-snug">
-                  Credit cards add {formatCurrency(debtCardShown, data.currency)} of estimated payments, shown below. Those purchases are already counted, so they are not added again.
+                  Credit cards add {formatCurrency(debtCardShown, displayData.currency)} of estimated payments, shown below. Those purchases are already counted, so they are not added again.
                 </div>
               )}
             </div>
             <div className="flex-1 border border-neutral-200 bg-neutral-50 rounded-lg p-3">
               <div className="text-xs text-neutral-700 font-medium mb-1">One-off payments</div>
               <div className="text-lg font-semibold text-neutral-700 tabular-nums">
-                {formatCurrency(debtOneOffShown, data.currency)}
+                {formatCurrency(debtOneOffShown, displayData.currency)}
               </div>
               <div className="text-xs text-neutral-600 mt-1 leading-snug">
                 Not counted over {debtPeriodLabel} — already in your spending.
@@ -518,7 +679,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                 axisLine={false}
                 tickLine={false}
                 tickFormatter={(value: number) => {
-                  const sym = getCurrencySymbol(data.currency);
+                  const sym = getCurrencySymbol(displayData.currency);
                   const abs = Math.abs(value);
                   if (abs >= 1_000_000) return `${sym}${(value / 1_000_000).toFixed(1)}M`;
                   if (abs >= 1_000) return `${sym}${(value / 1_000).toFixed(1)}k`;
@@ -533,7 +694,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                       <div className="bg-white border border-neutral-200 rounded-lg shadow-lg px-3 py-2">
                         <p className="text-xs text-neutral-600 mb-1">{dataPoint.month}</p>
                         <p className="text-sm font-semibold text-neutral-900">
-                          {formatCurrency(dataPoint.amount, data.currency)}
+                          {formatCurrencyWithCents(dataPoint.amount, displayData.currency, displayData.currency)}
                         </p>
                       </div>
                     );
@@ -588,34 +749,34 @@ export function DrilldownView({ token }: DrilldownViewProps) {
         </div>
 
         {/* Comparison caption */}
-        {data.comparisonSeries && (
+        {displayData.comparisonSeries && (
           <div className="mt-3 text-xs text-neutral-500">
             {level === "category" ? (
               <>
-                {formatCurrency(data.total, data.currency)} is {((data.total / data.comparisonSeries.reduce((sum, m) => sum + m.amount, 0)) * 100).toFixed(1)}% of the {formatCurrency(data.comparisonSeries.reduce((sum, m) => sum + m.amount, 0), data.currency)} you spent in these 12 months.
+                {formatCurrencyWithCents(displayData.total, displayData.currency, displayData.currency)} is {((displayData.total / displayData.comparisonSeries.reduce((sum, m) => sum + m.amount, 0)) * 100).toFixed(1)}% of the {formatCurrencyWithCents(displayData.comparisonSeries.reduce((sum, m) => sum + m.amount, 0), displayData.currency, displayData.currency)} you spent in these 12 months.
               </>
             ) : (
               <>
-                {formatCurrency(data.total, data.currency)} is {((data.total / data.comparisonSeries.reduce((sum, m) => sum + m.amount, 0)) * 100).toFixed(1)}% of your {formatCurrency(data.comparisonSeries.reduce((sum, m) => sum + m.amount, 0), data.currency)} in {data.breadcrumb[1]?.label}.
+                {formatCurrencyWithCents(displayData.total, displayData.currency, displayData.currency)} is {((displayData.total / displayData.comparisonSeries.reduce((sum, m) => sum + m.amount, 0)) * 100).toFixed(1)}% of your {formatCurrencyWithCents(displayData.comparisonSeries.reduce((sum, m) => sum + m.amount, 0), displayData.currency, displayData.currency)} in {displayData.breadcrumb[1]?.label}.
               </>
             )}
           </div>
         )}
 
         {/* When and Where - only at category and merchant levels */}
-        {level !== "all" && (data.cadence?.dayOfWeek || data.accounts) && (
+        {level !== "all" && (displayData.cadence?.dayOfWeek || displayData.accounts) && (
           <div className="mt-4 pt-4 border-t border-neutral-200">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:divide-x divide-neutral-200">
               {/* When it's charged */}
-              {data.cadence?.dayOfWeek && (
+              {displayData.cadence?.dayOfWeek && (
                 <div className="lg:pr-6">
                   <div className="text-xs uppercase text-neutral-500 mb-3">When it&apos;s charged</div>
                   <div className="text-sm text-neutral-600 mb-3">
-                    {data.cadence.sentence || ""}
+                    {displayData.cadence.sentence || ""}
                   </div>
                   <div className="flex gap-2">
-                    {data.cadence.dayOfWeek.map(d => {
-                      const maxCount = Math.max(...(data.cadence?.dayOfWeek || []).map(dow => dow.count));
+                    {displayData.cadence.dayOfWeek.map(d => {
+                      const maxCount = Math.max(...(displayData.cadence?.dayOfWeek || []).map(dow => dow.count));
                       const heightPercent = maxCount > 0 ? (d.count / maxCount) * 100 : 0;
                       const isBusiest = d.count === maxCount && maxCount > 0;
                       
@@ -630,8 +791,8 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                       const tooltipText = d.count === 0
                         ? `${fullDay} · no charges`
                         : d.count === 1
-                          ? `${fullDay} · 1 charge · ${formatCurrency(d.amount, data.currency)}`
-                          : `${fullDay} · ${d.count} charges · ${formatCurrency(d.amount, data.currency)}`;
+                          ? `${fullDay} · 1 charge · ${formatCurrencyWithCents(d.amount, displayData.currency)}`
+                          : `${fullDay} · ${d.count} charges · ${formatCurrencyWithCents(d.amount, displayData.currency)}`;
                       
                       return (
                         <div 
@@ -656,17 +817,17 @@ export function DrilldownView({ token }: DrilldownViewProps) {
               )}
 
               {/* Where it was charged */}
-              {data.accounts && data.accounts.length > 0 && (
+              {displayData.accounts && displayData.accounts.length > 0 && (
                 <div className="lg:pl-6">
                   <div className="text-xs uppercase text-neutral-500 mb-3">Where it was charged</div>
                   <div className="space-y-2.5">
-                    {data.accounts.slice(0, 3).map((acc) => (
+                    {displayData.accounts.slice(0, 3).map((acc) => (
                       <div key={acc.slug}>
                         <div className="flex items-center justify-between mb-1">
                           <span className="text-sm text-neutral-800 truncate flex-1">{acc.label}</span>
                           <div className="flex items-center gap-3 ml-3 tabular-nums">
                             <span className="text-sm text-neutral-900 w-20 text-right">
-                              {formatCurrency(acc.total, data.currency)}
+                              {formatCurrencyWithCents(acc.total, displayData.currency, displayData.currency)}
                             </span>
                             <span className="text-sm text-neutral-500 w-10 text-right">
                               {Math.round(acc.share * 100)}%
@@ -681,9 +842,9 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                         </div>
                       </div>
                     ))}
-                    {data.accounts.length > 3 && (
+                    {displayData.accounts.length > 3 && (
                       <div className="text-neutral-500 mt-1" style={{ fontSize: "11px" }}>
-                        +{data.accounts.length - 3} more
+                        +{displayData.accounts.length - 3} more
                       </div>
                     )}
                   </div>
@@ -702,22 +863,22 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             {level === "all" 
               ? "Categories" 
               : level === "category" 
-                ? (data.kind === "debt" ? "Debt accounts" : "Merchants")
+                ? (displayData.kind === "debt" ? "Debt accounts" : "Merchants")
                 : level === "search"
                   ? "Merchants"
-                  : (data.kind === "debt" ? "Monthly schedule" : "Transactions")}
+                  : (displayData.kind === "debt" ? "Monthly schedule" : "Transactions")}
             {selectedMonth && level !== "merchant" && (
               <span className="ml-2 text-sm font-normal text-neutral-500">
                 — {formatMonthLabel(selectedMonth)} only
               </span>
             )}
           </h2>
-          {!selectedMonth && level !== "merchant" && data.rankedItems.some(item => item.trend !== 0 && Math.round(Math.abs(item.trend)) !== 0) && (
+          {!selectedMonth && level !== "merchant" && displayData.rankedItems.some(item => item.trend !== 0 && Math.round(Math.abs(item.trend)) !== 0) && (
             <p className="text-xs text-neutral-500 mt-1">Trend compares the last 3 months with the 12-month average.</p>
           )}
         </div>
         
-        {level === "merchant" && data.kind === "debt" ? (
+        {level === "merchant" && displayData.kind === "debt" ? (
           // Monthly schedule for a single debt account (regular payments + one-offs)
           <div className="space-y-1">
             <div className="flex items-center gap-3 px-2 pb-2 text-xs uppercase tracking-wide text-neutral-500">
@@ -725,13 +886,13 @@ export function DrilldownView({ token }: DrilldownViewProps) {
               <div className="flex-1">Regular payment</div>
               <div className="w-32 text-right">Amount</div>
             </div>
-            {data.rankedItems.map((item, idx) => (
+            {displayData.rankedItems.map((item, idx) => (
               <div key={idx}>
                 <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-neutral-50">
                   <div className="text-sm text-neutral-600 w-24">{item.name}</div>
                   <div className="flex-1 text-xs text-neutral-500">{item.subLabel || "Regular payment"}</div>
                   <div className="text-sm font-semibold text-neutral-900 tabular-nums w-32 text-right">
-                    {formatCurrency(item.total, data.currency)}
+                    {formatCurrencyWithCents(item.total, displayData.currency, displayData.currency)}
                   </div>
                 </div>
                 {item.extras && item.extras.map((extra) => (
@@ -739,7 +900,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                     <div>{item.name} · extra</div>
                     <div className="flex-1"></div>
                     <div className="px-2 py-0.5 bg-neutral-100 rounded text-neutral-600 text-[11px]">once</div>
-                    <div className="tabular-nums font-medium w-32 text-right">{formatCurrency(extra.amount, data.currency)}</div>
+                    <div className="tabular-nums font-medium w-32 text-right">{formatCurrency(extra.amount, displayData.currency)}</div>
                   </div>
                 ))}
               </div>
@@ -751,7 +912,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
         ) : level === "merchant" ? (
           // Transaction list with columns
           <div className="space-y-1">
-            {data.rankedItems.map((item, idx) => {
+            {displayData.rankedItems.map((item, idx) => {
               const parts = item.name.split(" • ");
               const date = parts[0] || "";
               const account = parts[1] || "";
@@ -761,16 +922,16 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                   className="flex items-center gap-3 p-2 rounded-lg hover:bg-neutral-50"
                 >
                   <div className="text-sm text-neutral-600 w-20">{date}</div>
-                  <div className="flex-1 text-sm text-neutral-900">{data.breadcrumb[2]?.label}</div>
+                  <div className="flex-1 text-sm text-neutral-900">{displayData.breadcrumb[2]?.label}</div>
                   <div className="text-xs text-neutral-500 w-24 truncate">{account}</div>
                   <div className="text-sm font-semibold text-neutral-900 tabular-nums w-24 text-right">
-                    {formatCurrency(item.total, data.currency)}
+                    {formatCurrencyWithCents(item.total, displayData.currency, displayData.currency)}
                   </div>
                 </div>
               );
             })}
           </div>
-        ) : data.groups ? (
+        ) : displayData.groups ? (
           // Grouped view for Debt level 2
           <div className="space-y-6">
             {groupsForDisplay.map((group) => (
@@ -818,7 +979,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                           <div className="flex items-center gap-3">
                             <div className="text-right">
                               <div className={`font-semibold ${textColor} tabular-nums`}>
-                                {formatCurrency(item.total, data.currency)}
+                                {formatCurrencyWithCents(item.total, displayData.currency, displayData.currency)}
                               </div>
                             </div>
                             
@@ -841,7 +1002,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                               <div>{monthLabel} · extra</div>
                               <div className="flex-1"></div>
                               <div className="px-2 py-0.5 bg-neutral-100 rounded text-neutral-600 text-[11px]">once</div>
-                              <div className="tabular-nums font-medium w-20 text-right">{formatCurrency(extra.amount, data.currency)}</div>
+                              <div className="tabular-nums font-medium w-20 text-right">{formatCurrency(extra.amount, displayData.currency)}</div>
                             </div>
                           );
                         })}
@@ -853,7 +1014,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                 {/* Group subtotal */}
                 <div className="mt-3 pt-2 border-t border-neutral-100 text-xs text-neutral-600 flex justify-between">
                   <div>{group.counted ? (selectedMonth ? "Loans that month, added" : "Loans added to spending") : (selectedMonth ? "Cards that month, not added" : "Cards, not added")}</div>
-                  <div className="font-semibold tabular-nums">{formatCurrency(group.total, data.currency)}</div>
+                  <div className="font-semibold tabular-nums">{formatCurrency(group.total, displayData.currency)}</div>
                 </div>
               </div>
             ))}
@@ -869,22 +1030,22 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             </div>
             
             {/* One-off total line */}
-            {data.oneOffTotal && data.oneOffTotal > 0 && (
+            {displayData.oneOffTotal && displayData.oneOffTotal > 0 && (
               <div className="flex justify-between items-center p-3 bg-neutral-50 rounded-lg">
-                <div className="text-sm text-neutral-700">{data.oneOffLabel || "One-off payments"}</div>
-                <div className="font-semibold text-neutral-900 tabular-nums">{formatCurrency(data.oneOffTotal, data.currency)}</div>
+                <div className="text-sm text-neutral-700">{displayData.oneOffLabel || "One-off payments"}</div>
+                <div className="font-semibold text-neutral-900 tabular-nums">{formatCurrency(displayData.oneOffTotal, displayData.currency)}</div>
               </div>
             )}
           </div>
-        ) : data.level === "search" ? (
+        ) : displayData.level === "search" ? (
           // Search results view (no bar, no sparkline)
-          data.rankedItems.length === 0 ? (
+          displayData.rankedItems.length === 0 ? (
             <div className="text-center py-8 text-neutral-500">
-              No merchants match "{data.query}".
+              No merchants match "{displayData.query}".
             </div>
           ) : (
             <div className="space-y-2">
-              {data.rankedItems.map((item) => (
+              {displayData.rankedItems.map((item) => (
                 <div
                   key={`${item.category}-${item.slug}`}
                   className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-neutral-50 cursor-pointer"
@@ -900,7 +1061,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                   <div className="flex items-center gap-3">
                     <div className="text-right">
                       <div className="font-semibold text-neutral-900 tabular-nums">
-                        {formatCurrency(item.total, data.currency)}
+                        {formatCurrencyWithCents(item.total, displayData.currency, displayData.currency)}
                       </div>
                     </div>
 
@@ -976,11 +1137,11 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                   <div className="flex items-center gap-3">
                     <div className="text-right">
                       <div className="font-semibold text-neutral-900 tabular-nums">
-                        {formatCurrency(item.displayTotal, data.currency)}
+                        {formatCurrency(item.displayTotal, displayData.currency)}
                       </div>
                       {!selectedMonth && !isDebt && item.trend !== 0 && Math.round(Math.abs(item.trend)) !== 0 && (
                         <div className={`text-xs tabular-nums ${item.trend > 0 ? "text-red-600" : "text-green-600"}`}>
-                          {item.trend > 0 ? "↑" : "↓"} {formatCurrency(Math.abs(item.trend), data.currency)}/mo vs avg
+                          {item.trend > 0 ? "↑" : "↓"} {formatCurrency(Math.abs(item.trend), displayData.currency)}/mo vs avg
                         </div>
                       )}
                       {isDebt && item.subLabel && (
@@ -1001,7 +1162,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             })}
             
             {/* Note under level 1 (All spending) */}
-            {data.level === "all" && (
+            {displayData.level === "all" && (
               <div className="mt-4 p-3 bg-neutral-50 rounded-lg text-sm text-neutral-600">
                 The Debt row is loan payments only — mortgage, car, home equity line. Card payments sit inside it as information, because those purchases already appear in the category rows above. One-off payments are listed inside Debt too and never add to the total.
               </div>

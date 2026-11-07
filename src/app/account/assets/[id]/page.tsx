@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
-import { formatCurrency } from "@/lib/currencyUtils";
+import { formatCurrency, formatCurrencyWithCents } from "@/lib/currencyUtils";
 import AccountSwitcher from "@/components/AccountSwitcher";
 import { ConfirmModal } from "@/components/ConfirmModal";
 import { CategoryPicker, categoryColor } from "@/app/account/spending/shared";
@@ -783,7 +783,7 @@ export default function ManualAssetPage() {
                                 </div>
                                 <div className="flex items-center gap-2 shrink-0">
                                   <p className="text-xs font-medium text-gray-900 tabular-nums">
-                                    {formatCurrency(Math.abs(tx.amount), currency)}
+                                    {formatCurrencyWithCents(Math.abs(tx.amount), currency)}
                                   </p>
                                   <button
                                     onClick={(e) => {
@@ -989,7 +989,7 @@ export default function ManualAssetPage() {
                                   </div>
                                 </div>
                                 <p className="text-sm font-semibold text-gray-900 tabular-nums shrink-0">
-                                  {formatCurrency(tx.amount, currency)}
+                                  {formatCurrencyWithCents(tx.amount, currency)}
                                 </p>
                                 <button
                                   onClick={(e) => {
@@ -1100,7 +1100,7 @@ export default function ManualAssetPage() {
                     </div>
                   </div>
                   <p className="text-sm font-semibold text-gray-900 tabular-nums">
-                    {formatCurrency(tx.linkAmount ?? tx.amount, currency)}
+                    {formatCurrencyWithCents(tx.linkAmount ?? tx.amount, currency)}
                   </p>
                   <button
                     onClick={() => unlinkTransaction(tx.fingerprint, tx.role)}
@@ -1418,7 +1418,7 @@ export default function ManualAssetPage() {
                           </div>
                         </div>
                         <p className="text-sm font-semibold text-gray-900 tabular-nums">
-                          {formatCurrency(tx.amount, currency)}
+                          {formatCurrencyWithCents(tx.amount, currency)}
                         </p>
                       </div>
                     </label>

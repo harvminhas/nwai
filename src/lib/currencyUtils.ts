@@ -191,6 +191,23 @@ export function fmt(value: number, currency?: string | null): string {
 }
 
 /**
+ * Format with cents for individual transaction amounts.
+ * Use for granular line-item displays; use fmt() for aggregates/totals.
+ * Examples:
+ *   fmtWithCents(1234.56, "USD")  → "US$1,234.56"
+ *   fmtWithCents(1234, "CAD")     → "CA$1,234.00"
+ *   fmtWithCents(-500.99, "GBP")  → "-£500.99"
+ */
+export function fmtWithCents(value: number, currency?: string | null): string {
+  const sym = getCurrencySymbol(currency);
+  const num = new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Math.abs(value));
+  return `${value < 0 ? "-" : ""}${sym}${num}`;
+}
+
+/**
  * The single formatting entry-point for ALL monetary display in the app.
  *
  * Rules:
@@ -217,6 +234,26 @@ export function formatCurrency(
     ? homeCurrency
     : (originalCurrency ?? homeCurrency);
   return fmt(amount, displayCurrency);
+}
+
+/**
+ * Format individual transaction amounts with cents (two decimal places).
+ * Use for line-item transaction displays; use formatCurrency() for aggregates/totals.
+ * Same currency selection logic as formatCurrency (respects isConsolidated and originalCurrency).
+ * Examples:
+ *   formatCurrencyWithCents(1464.56, "USD", "CAD", false)  → "CA$1,464.56"
+ *   formatCurrencyWithCents(500, "CAD", "CAD", false)      → "CA$500.00"
+ */
+export function formatCurrencyWithCents(
+  amount: number,
+  homeCurrency: string,
+  originalCurrency?: string | null,
+  isConsolidated = false,
+): string {
+  const displayCurrency = isConsolidated
+    ? homeCurrency
+    : (originalCurrency ?? homeCurrency);
+  return fmtWithCents(amount, displayCurrency);
 }
 
 /**
