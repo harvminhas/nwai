@@ -1450,14 +1450,31 @@ export default function ManualAssetPage() {
                     const rate = Number(annualGrowthRate) / 100;
                     const currentYear = new Date().getFullYear();
                     
+                    // Find most recent ACTUAL valuation (not future)
+                    const today = new Date().toISOString().slice(0, 10);
+                    let currentValue = asset.value;
+                    
+                    if (asset.valuations && asset.valuations.length > 0) {
+                      // Filter to only actual (not future) valuations
+                      const actualValuations = asset.valuations.filter(
+                        v => v.effectiveDate <= today
+                      );
+                      
+                      if (actualValuations.length > 0) {
+                        // Use most recent actual valuation
+                        const mostRecent = actualValuations[actualValuations.length - 1];
+                        currentValue = mostRecent.valueCents / 100;
+                      }
+                    }
+                    
                     // Generate data points (current + projections)
                     const dataPoints = [
-                      { year: currentYear, value: asset.value, label: 'Current' }
+                      { year: currentYear, value: currentValue, label: 'Current' }
                     ];
                     for (let i = 1; i <= projectionYears; i++) {
                       dataPoints.push({
                         year: currentYear + i,
-                        value: asset.value * Math.pow(1 + rate, i),
+                        value: currentValue * Math.pow(1 + rate, i),
                         label: String(currentYear + i)
                       });
                     }
@@ -1583,28 +1600,44 @@ export default function ManualAssetPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
-                    {Array.from({ length: projectionYears }, (_, i) => {
-                      const year = new Date().getFullYear() + i + 1;
-                      const rate = Number(annualGrowthRate) / 100;
-                      const projectedValue = asset.value * Math.pow(1 + rate, i + 1);
-                      const change = projectedValue - asset.value;
-                      const changePercent = ((change / asset.value) * 100);
+                    {(() => {
+                      // Find most recent ACTUAL valuation (not future)
+                      const today = new Date().toISOString().slice(0, 10);
+                      let currentValue = asset.value;
+                      
+                      if (asset.valuations && asset.valuations.length > 0) {
+                        const actualValuations = asset.valuations.filter(
+                          v => v.effectiveDate <= today
+                        );
+                        if (actualValuations.length > 0) {
+                          const mostRecent = actualValuations[actualValuations.length - 1];
+                          currentValue = mostRecent.valueCents / 100;
+                        }
+                      }
+                      
+                      return Array.from({ length: projectionYears }, (_, i) => {
+                        const year = new Date().getFullYear() + i + 1;
+                        const rate = Number(annualGrowthRate) / 100;
+                        const projectedValue = currentValue * Math.pow(1 + rate, i + 1);
+                        const change = projectedValue - currentValue;
+                        const changePercent = ((change / currentValue) * 100);
 
-                      return (
-                        <tr key={year} className={i === 0 ? "bg-purple-50" : ""}>
-                          <td className="px-4 py-3 text-sm font-medium text-gray-900">{year}</td>
-                          <td className="px-4 py-3 text-sm font-semibold text-gray-900 tabular-nums text-right">
-                            {formatCurrency(projectedValue, currency)}
-                          </td>
-                          <td className="px-4 py-3 text-sm tabular-nums text-right">
-                            <span className={change >= 0 ? "text-green-600" : "text-red-600"}>
-                              {change >= 0 ? "+" : ""}{formatCurrency(change, currency)}
-                              {" "}({change >= 0 ? "+" : ""}{changePercent.toFixed(1)}%)
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                        return (
+                          <tr key={year} className={i === 0 ? "bg-purple-50" : ""}>
+                            <td className="px-4 py-3 text-sm font-medium text-gray-900">{year}</td>
+                            <td className="px-4 py-3 text-sm font-semibold text-gray-900 tabular-nums text-right">
+                              {formatCurrency(projectedValue, currency)}
+                            </td>
+                            <td className="px-4 py-3 text-sm tabular-nums text-right">
+                              <span className={change >= 0 ? "text-green-600" : "text-red-600"}>
+                                {change >= 0 ? "+" : ""}{formatCurrency(change, currency)}
+                                {" "}({change >= 0 ? "+" : ""}{changePercent.toFixed(1)}%)
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      });
+                    })()}
                   </tbody>
                 </table>
               </div>

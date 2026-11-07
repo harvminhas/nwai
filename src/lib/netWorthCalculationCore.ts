@@ -46,7 +46,7 @@ function getLastDayOfMonth(yearMonth: string): number {
  * @param yearMonth - The target month (YYYY-MM format)
  * @returns The asset's value (in dollars) as of the end of that month
  */
-function getAssetValueForMonth(asset: ManualAsset, yearMonth: string): number {
+export function getAssetValueForMonth(asset: ManualAsset, yearMonth: string): number {
   // Legacy path: no valuations array means single current value for all months
   if (!asset.valuations || asset.valuations.length === 0) {
     return asset.value;
