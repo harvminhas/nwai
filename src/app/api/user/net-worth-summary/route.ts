@@ -34,15 +34,9 @@ export async function GET(req: NextRequest) {
     const currentMonth = sortedHistory[0];
     const previousMonth = sortedHistory[1];
 
-    // Handle case where user has NO uploaded statements but HAS manual assets
-    // (monthlyHistory is empty, but manualAssets should still count)
-    let netWorth = currentMonth?.netWorth ?? 0;
-    if (!currentMonth && profile.manualAssets.length > 0) {
-      netWorth = profile.manualAssets.reduce((sum, a) => sum + a.value, 0);
-    }
-
+    const netWorth = currentMonth?.netWorth ?? 0;
     const monthlyChange = previousMonth 
-      ? (currentMonth?.netWorth ?? netWorth) - previousMonth.netWorth 
+      ? (currentMonth?.netWorth ?? 0) - previousMonth.netWorth 
       : 0;
 
     // Calculate additional fields for badge count feature
