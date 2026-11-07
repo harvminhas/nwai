@@ -29,28 +29,46 @@ vi.mock("../lib/financialProfile", () => ({
 import { resolveAccess } from "../lib/access/resolveAccess";
 import { getFinancialProfile } from "../lib/financialProfile";
 
-describe("Manual Asset Net Worth Bug", () => {
+describe("Manual Asset Net Worth Bug - User adds car to existing net worth", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("should include manual assets in net worth when monthlyHistory is empty", async () => {
+  it("should increase net worth when user adds manual car asset to existing history", async () => {
     // Mock auth to return valid user
     vi.mocked(resolveAccess).mockResolvedValue({
       targetUid: "test-uid",
     } as any);
 
-    // Mock profile with NO statements (empty monthlyHistory) but WITH manual assets
+    // Mock profile with EXISTING Oct/Nov history (~$1.24m) PLUS newly added $50k car
+    // This simulates the state AFTER cache rebuild triggered by requestProfileRefresh()
     vi.mocked(getFinancialProfile).mockResolvedValue({
       uid: "test-uid",
       homeCurrency: "CAD",
-      monthlyHistory: [], // NO STATEMENTS
+      monthlyHistory: [
+        {
+          yearMonth: "2026-10",
+          netWorth: 1244076, // Oct: ~$1.24m (original)
+          totalAssets: 1500000,
+          totalDebts: 255924,
+          byAccount: [],
+        },
+        {
+          yearMonth: "2026-11",
+          // Nov: $1,217,002 (original) + $50,000 (car) = $1,267,002
+          // Manual assets added in financialProfile.ts:1378 during rebuild
+          netWorth: 1267002,
+          totalAssets: 1550000,
+          totalDebts: 282998,
+          byAccount: [],
+        },
+      ],
       manualAssets: [
         {
           id: "car-1",
           label: "2020 Honda Civic",
           category: "vehicle" as any,
-          value: 50000, // $50k car
+          value: 50000, // $50k car newly added
           updatedAt: "2026-11-07T00:00:00Z",
         },
       ],
@@ -77,17 +95,19 @@ describe("Manual Asset Net Worth Bug", () => {
     const response = await GET(request);
     const data = await response.json();
 
-    // VERIFY: Net worth should be $50,000 (manual asset total), NOT $0
-    expect(data.netWorth).toBe(50000);
-    expect(data.current).toBe(50000);
+    // VERIFY: Net worth should be $1,267,002 (Nov $1,217,002 + car $50,000)
+    expect(data.netWorth).toBe(1267002);
+    expect(data.current).toBe(1267002);
+    expect(data.latestMonth).toBe("2026-11");
     
-    // Additional assertions
+    // Verify monthly change from Oct to Nov
+    const expectedChange = 1267002 - 1244076; // $22,926 increase
+    expect(data.monthlyChange).toBe(expectedChange);
+    
     expect(data.currency).toBe("CAD");
-    expect(data.monthlyChange).toBe(0); // No previous month
-    expect(data.latestMonth).toBeNull(); // No history
   });
 
-  it("should NOT include manual assets when monthlyHistory has data (existing behavior)", async () => {
+  it("should handle empty monthlyHistory edge case (fallback for users with no statements)", async () => {
     vi.mocked(resolveAccess).mockResolvedValue({
       targetUid: "test-uid",
     } as any);
