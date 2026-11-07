@@ -459,7 +459,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                       </p>
                       {liveSearchData.rankedItems.length > 0 && (
                         <p className="text-xs text-neutral-600">
-                          {formatCurrency(liveSearchData.total, liveSearchData.currency)} total
+                          {formatCurrencyWithCents(liveSearchData.total, liveSearchData.currency, liveSearchData.currency)} total
                         </p>
                       )}
                     </div>
@@ -490,7 +490,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                             )}
                           </div>
                           <div className="ml-3 text-sm font-semibold text-neutral-900 tabular-nums shrink-0">
-                            {formatCurrency(item.total, liveSearchData.currency)}
+                            {formatCurrencyWithCents(item.total, liveSearchData.currency, liveSearchData.currency)}
                           </div>
                         </button>
                       ))}
@@ -536,7 +536,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
           </div>
           {displayData.rankedItems.length > 0 && (
             <div className="text-sm text-neutral-600">
-              Combined total: {formatCurrency(displayData.total, displayData.currency)} across 12 months
+              Combined total: {formatCurrencyWithCents(displayData.total, displayData.currency, displayData.currency)} across 12 months
             </div>
           )}
         </div>
@@ -546,7 +546,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
           <div className="flex items-start justify-between mb-3">
             <div className="flex items-baseline gap-2">
               <div className="text-3xl font-bold text-neutral-900">
-                {formatCurrency(displayData.total, displayData.currency)}
+                {formatCurrencyWithCents(displayData.total, displayData.currency, displayData.currency)}
               </div>
               <div className="text-xs text-neutral-500">last 12 months</div>
             </div>
@@ -892,7 +892,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                   <div className="text-sm text-neutral-600 w-24">{item.name}</div>
                   <div className="flex-1 text-xs text-neutral-500">{item.subLabel || "Regular payment"}</div>
                   <div className="text-sm font-semibold text-neutral-900 tabular-nums w-32 text-right">
-                    {formatCurrency(item.total, displayData.currency)}
+                    {formatCurrencyWithCents(item.total, displayData.currency, displayData.currency)}
                   </div>
                 </div>
                 {item.extras && item.extras.map((extra) => (
@@ -925,7 +925,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                   <div className="flex-1 text-sm text-neutral-900">{displayData.breadcrumb[2]?.label}</div>
                   <div className="text-xs text-neutral-500 w-24 truncate">{account}</div>
                   <div className="text-sm font-semibold text-neutral-900 tabular-nums w-24 text-right">
-                    {formatCurrency(item.total, displayData.currency)}
+                    {formatCurrencyWithCents(item.total, displayData.currency, displayData.currency)}
                   </div>
                 </div>
               );
@@ -979,7 +979,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                           <div className="flex items-center gap-3">
                             <div className="text-right">
                               <div className={`font-semibold ${textColor} tabular-nums`}>
-                                {formatCurrency(item.total, displayData.currency)}
+                                {formatCurrencyWithCents(item.total, displayData.currency, displayData.currency)}
                               </div>
                             </div>
                             
@@ -1061,7 +1061,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                   <div className="flex items-center gap-3">
                     <div className="text-right">
                       <div className="font-semibold text-neutral-900 tabular-nums">
-                        {formatCurrency(item.total, displayData.currency)}
+                        {formatCurrencyWithCents(item.total, displayData.currency, displayData.currency)}
                       </div>
                     </div>
 
