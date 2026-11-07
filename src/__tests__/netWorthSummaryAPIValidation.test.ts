@@ -99,6 +99,42 @@ describe("GET /api/user/net-worth-summary - Explicit Period Validation", () => {
     expect(response.status).toBe(400);
   });
 
+  it("should return 400 when month is decimal (strict validation)", async () => {
+    const request = new NextRequest("http://localhost:3000/api/user/net-worth-summary?month=1.5&year=2026", {
+      headers: { authorization: "Bearer mock-token" },
+    });
+
+    const response = await GET(request);
+    expect(response.status).toBe(400);
+    
+    const data = await response.json();
+    expect(data.error).toContain("must be valid integers");
+  });
+
+  it("should return 400 when month has junk characters (strict validation)", async () => {
+    const request = new NextRequest("http://localhost:3000/api/user/net-worth-summary?month=11junk&year=2026", {
+      headers: { authorization: "Bearer mock-token" },
+    });
+
+    const response = await GET(request);
+    expect(response.status).toBe(400);
+    
+    const data = await response.json();
+    expect(data.error).toContain("must be valid integers");
+  });
+
+  it("should return 400 when year has junk characters (strict validation)", async () => {
+    const request = new NextRequest("http://localhost:3000/api/user/net-worth-summary?month=11&year=2026foo", {
+      headers: { authorization: "Bearer mock-token" },
+    });
+
+    const response = await GET(request);
+    expect(response.status).toBe(400);
+    
+    const data = await response.json();
+    expect(data.error).toContain("must be valid integers");
+  });
+
   it("should return 404 when explicit period unavailable", async () => {
     const request = new NextRequest("http://localhost:3000/api/user/net-worth-summary?month=9&year=2026", {
       headers: { authorization: "Bearer mock-token" },
@@ -135,5 +171,27 @@ describe("GET /api/user/net-worth-summary - Explicit Period Validation", () => {
     const data = await response.json();
     expect(data.netWorth).toBe(1267002); // November (latest)
     expect(data.latestMonth).toBe("2026-11");
+  });
+
+  it("should return history from same profile snapshot as headline", async () => {
+    // Service should call getFinancialProfile ONCE, not twice
+    mockGetFinancialProfile.mockClear();
+    
+    const request = new NextRequest("http://localhost:3000/api/user/net-worth-summary", {
+      headers: { authorization: "Bearer mock-token" },
+    });
+
+    const response = await GET(request);
+    expect(response.status).toBe(200);
+    
+    // getFinancialProfile should be called ONCE by service
+    // (not twice - once for history, once for headline)
+    expect(mockGetFinancialProfile).toHaveBeenCalledTimes(1);
+    
+    const data = await response.json();
+    // Headline and history from same snapshot
+    expect(data.netWorth).toBe(1267002);
+    expect(data.monthlyHistory).toBeDefined();
+    expect(data.monthlyHistory.length).toBeGreaterThan(0);
   });
 });

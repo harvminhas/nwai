@@ -33,17 +33,25 @@ export async function GET(req: NextRequest) {
         );
       }
 
+      // Strict integer validation: reject decimals, junk characters
+      if (!/^\d+$/.test(monthParam) || !/^\d+$/.test(yearParam)) {
+        return NextResponse.json(
+          { error: "month and year must be valid integers" },
+          { status: 400 }
+        );
+      }
+
       const month = parseInt(monthParam, 10);
       const year = parseInt(yearParam, 10);
 
-      if (isNaN(month) || month < 1 || month > 12) {
+      if (month < 1 || month > 12) {
         return NextResponse.json(
           { error: "month must be an integer between 1 and 12" },
           { status: 400 }
         );
       }
 
-      if (isNaN(year) || year < 1900 || year > 2100) {
+      if (year < 1900 || year > 2100) {
         return NextResponse.json(
           { error: "year must be a valid 4-digit year" },
           { status: 400 }
@@ -53,15 +61,7 @@ export async function GET(req: NextRequest) {
       options = { month, year };
     }
 
-    // Get financial profile for full history
-    const profile = await getFinancialProfile(access.targetUid, db);
-    
-    // Get user's home currency
-    const userDoc = await db.collection("users").doc(access.targetUid).get();
-    const userData = userDoc.exists ? userDoc.data() ?? {} : {};
-    const homeCurrency: string = userData.homeCurrency ?? userData.currency ?? "CAD";
-
-    // Use shared authoritative function (defaults to latest if no options)
+    // SINGLE profile read - service returns headline + history from same snapshot
     const result = await getNetWorthForMonth(access.targetUid, db, options);
 
     if (!result && options) {
@@ -73,11 +73,15 @@ export async function GET(req: NextRequest) {
     }
 
     if (!result) {
-      // No data available
+      // No data available - need currency for empty state
+      const userDoc = await db.collection("users").doc(access.targetUid).get();
+      const userData = userDoc.exists ? userDoc.data() ?? {} : {};
+      const currency: string = userData.homeCurrency ?? userData.currency ?? "CAD";
+      
       return NextResponse.json({
         netWorth: 0,
         monthlyChange: 0,
-        currency: homeCurrency,
+        currency,
         current: 0,
         previousMonth: null,
         change: 0,
@@ -88,7 +92,8 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const { netWorth, monthlyChange, currency, yearMonth, previousMonth } = result;
+    // Use currency and monthlyHistory from same profile snapshot as headline
+    const { netWorth, monthlyChange, currency, yearMonth, previousMonth, monthlyHistory } = result;
 
     // Calculate additional fields for badge count feature
     const changePercent = previousMonth && previousMonth.netWorth !== 0 && monthlyChange !== null
@@ -106,16 +111,6 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Get last 12 months for detail page chart (preserve full API contract)
-    const sortedHistory = [...profile.monthlyHistory].sort((a, b) => 
-      b.yearMonth.localeCompare(a.yearMonth)
-    );
-    const last12Months = sortedHistory.slice(0, 12).reverse().map(m => ({
-      yearMonth: m.yearMonth,
-      netWorth: m.netWorth,
-      byAccount: m.byAccount || [],
-    }));
-
     return NextResponse.json({
       // Original fields (required by nav pill)
       netWorth,
@@ -128,8 +123,8 @@ export async function GET(req: NextRequest) {
       changePercent,
       latestMonth: yearMonth,
       trend,
-      // Monthly history for detail page chart (PRESERVED)
-      monthlyHistory: last12Months,
+      // Monthly history from SAME snapshot as headline (no disagreement)
+      monthlyHistory,
     });
   } catch (err) {
     console.error("Net worth summary error:", err);

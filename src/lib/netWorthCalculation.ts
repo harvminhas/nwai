@@ -16,6 +16,12 @@ export interface NetWorthResult {
   totalDebts: number;
   monthlyChange: number | null;
   previousMonth: { yearMonth: string; netWorth: number } | null;
+  // Include full monthlyHistory for API consumers (from same profile snapshot)
+  monthlyHistory: Array<{
+    yearMonth: string;
+    netWorth: number;
+    byAccount: Array<{ slug: string; label: string; type: string; value: number }>;
+  }>;
 }
 
 /**
@@ -40,14 +46,14 @@ export async function getNetWorthForMonth(
 ): Promise<NetWorthResult | null> {
   const profile = await getFinancialProfile(uid, db);
   
-  // Get home currency
-  const userDoc = await db.collection("users").doc(uid).get();
-  const userData = userDoc.exists ? userDoc.data() ?? {} : {};
-  const currency: string = userData.homeCurrency ?? userData.currency ?? "CAD";
-
   if (profile.monthlyHistory.length === 0) {
     return null; // No data available
   }
+  
+  // Get home currency from profile's user doc (already fetched by getFinancialProfile)
+  const userDoc = await db.collection("users").doc(uid).get();
+  const userData = userDoc.exists ? userDoc.data() ?? {} : {};
+  const currency: string = userData.homeCurrency ?? userData.currency ?? "CAD";
 
   let targetMonth: typeof profile.monthlyHistory[0] | null = null;
 
@@ -78,6 +84,16 @@ export async function getNetWorthForMonth(
     ? targetMonth.netWorth - previousMonth.netWorth 
     : null;
 
+  // Include full monthlyHistory from same profile snapshot for API consumers
+  const sortedHistory = [...profile.monthlyHistory].sort((a, b) => 
+    b.yearMonth.localeCompare(a.yearMonth)
+  );
+  const last12Months = sortedHistory.slice(0, 12).reverse().map(m => ({
+    yearMonth: m.yearMonth,
+    netWorth: m.netWorth,
+    byAccount: m.byAccount || [],
+  }));
+
   return {
     netWorth: targetMonth.netWorth,
     yearMonth: targetMonth.yearMonth,
@@ -89,5 +105,6 @@ export async function getNetWorthForMonth(
       yearMonth: previousMonth.yearMonth,
       netWorth: previousMonth.netWorth,
     } : null,
+    monthlyHistory: last12Months,
   };
 }
