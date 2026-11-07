@@ -1310,8 +1310,9 @@ export async function buildAndCacheFinancialProfile(
 
   // ── Per-month NW back-fill ───────────────────────────────────────────────────
   // Use shared authoritative calculation function (extracted for reuse)
+  // MonthlyHistoryEntry has all fields of MonthNetWorthHistory (structural typing)
   calculateNetWorthForMonths(
-    monthlyHistory as any, // MonthlyHistoryEntry extends MonthNetWorthHistory
+    monthlyHistory,
     accountBalanceHistory,
     manualAssets,
     toHome,

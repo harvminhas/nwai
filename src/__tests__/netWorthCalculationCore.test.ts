@@ -181,6 +181,49 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
     expect(monthlyHistory[0].netWorth).toBe(51350);
   });
 
+  it("should use EXACT original isAccountActive logic (closure mid-month parity)", () => {
+    const monthlyHistory: MonthNetWorthHistory[] = [
+      { yearMonth: "2026-11", netWorth: 0, totalAssets: 0, totalDebts: 0, byAccount: [] },
+    ];
+
+    const accountBalanceHistory: AccountBalanceHistory[] = [
+      {
+        slug: "mortgage-1",
+        label: "Mortgage",
+        accountType: "mortgage",
+        currency: "CAD",
+        entries: [{ yearMonth: "2026-11", balance: -100000 }],
+      },
+    ];
+
+    // Account closed mid-month on 2026-11-15
+    const accountStatusMap = new Map<string, AccountStatusRecord>([
+      [
+        "mortgage-1",
+        {
+          accountSlug: "mortgage-1",
+          status: "paid_off",
+          statusDate: "2026-11-15", // Closed on the 15th
+          statusSource: "auto",
+          updatedAt: "2026-11-15T00:00:00Z",
+        },
+      ],
+    ]);
+
+    calculateNetWorthForMonths(
+      monthlyHistory,
+      accountBalanceHistory,
+      [],
+      toHomeCAD,
+      accountStatusMap
+    );
+
+    // ORIGINAL LOGIC: "2026-11" < "2026-11-15" → TRUE → ACTIVE for month 2026-11
+    // Account closed mid-month is ACTIVE for the whole month
+    expect(monthlyHistory[0].totalDebts).toBe(100000); // Debt counted
+    expect(monthlyHistory[0].netWorth).toBe(-100000);
+  });
+
   it("should exclude closed accounts from net worth", () => {
     const monthlyHistory: MonthNetWorthHistory[] = [
       { yearMonth: "2026-10", netWorth: 0, totalAssets: 0, totalDebts: 0, byAccount: [] },

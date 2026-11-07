@@ -7,6 +7,7 @@
 
 import type { ManualAsset } from "./types";
 import type { AccountStatusRecord } from "./accountStatus";
+import { isAccountActive } from "./accountStatus";
 
 // Use a minimal interface that works with financialProfile.ts MonthlyHistoryEntry
 // We only modify netWorth/totalAssets/totalDebts/byAccount fields
@@ -92,10 +93,10 @@ export function calculateNetWorthForMonths(
     }
 
     // Sum debt account balances as of this month
-    for (const { acct, sorted } of debtEntries) {
-      // Exclude paid-off/closed debts from net worth calculation
-      const isActive = isAccountActive(acct.slug, h.yearMonth, accountStatusMap);
-      if (!isActive) continue;
+      for (const { acct, sorted } of debtEntries) {
+        // Exclude paid-off/closed debts from net worth calculation
+        const active = isAccountActive(acct.slug, h.yearMonth, accountStatusMap);
+        if (!active) continue;
 
       let bal: number | null = null;
       for (const e of sorted) {
@@ -124,26 +125,6 @@ export function calculateNetWorthForMonths(
   }
 }
 
-/**
- * Helper to check if account is active for a given month.
- * Re-uses logic from accountStatus.ts isAccountActive.
- */
-function isAccountActive(
-  slug: string,
-  yearMonth: string,
-  accountStatusMap: Map<string, AccountStatusRecord>
-): boolean {
-  const statusRec = accountStatusMap.get(slug);
-  if (!statusRec) return true; // No status info = assume active (open)
-  
-  // Check if status changed before or during this month
-  const statusYearMonth = statusRec.statusDate.substring(0, 7); // YYYY-MM-DD -> YYYY-MM
-  
-  if (statusYearMonth > yearMonth) {
-    // Status change happened after this month - account was still active
-    return true;
-  }
-  
-  // Status changed at or before this month - check if it's still active
-  return statusRec.status === "open";
-}
+// isAccountActive imported from accountStatus.ts - DO NOT reimplement
+// Original logic: dateStr.slice(0,10) < statusDate.slice(0,10)
+// Closure mid-month (2026-11-15) is ACTIVE for month 2026-11

@@ -17,6 +17,42 @@ export async function GET(req: NextRequest) {
   if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
+    // Parse explicit month/year from URL params
+    const url = new URL(req.url);
+    const monthParam = url.searchParams.get("month");
+    const yearParam = url.searchParams.get("year");
+
+    let options: { month?: number; year?: number } | undefined;
+
+    if (monthParam !== null || yearParam !== null) {
+      // Explicit period requested - validate paired month+year
+      if (monthParam === null || yearParam === null) {
+        return NextResponse.json(
+          { error: "month and year must be provided together" },
+          { status: 400 }
+        );
+      }
+
+      const month = parseInt(monthParam, 10);
+      const year = parseInt(yearParam, 10);
+
+      if (isNaN(month) || month < 1 || month > 12) {
+        return NextResponse.json(
+          { error: "month must be an integer between 1 and 12" },
+          { status: 400 }
+        );
+      }
+
+      if (isNaN(year) || year < 1900 || year > 2100) {
+        return NextResponse.json(
+          { error: "year must be a valid 4-digit year" },
+          { status: 400 }
+        );
+      }
+
+      options = { month, year };
+    }
+
     // Get financial profile for full history
     const profile = await getFinancialProfile(access.targetUid, db);
     
@@ -25,8 +61,16 @@ export async function GET(req: NextRequest) {
     const userData = userDoc.exists ? userDoc.data() ?? {} : {};
     const homeCurrency: string = userData.homeCurrency ?? userData.currency ?? "CAD";
 
-    // Use shared authoritative function for latest month calculation
-    const result = await getNetWorthForMonth(access.targetUid, db);
+    // Use shared authoritative function (defaults to latest if no options)
+    const result = await getNetWorthForMonth(access.targetUid, db, options);
+
+    if (!result && options) {
+      // Explicit period requested but not available
+      return NextResponse.json(
+        { error: `No data available for ${options.year}-${String(options.month).padStart(2, "0")}` },
+        { status: 404 }
+      );
+    }
 
     if (!result) {
       // No data available
