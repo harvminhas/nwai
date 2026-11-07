@@ -113,8 +113,16 @@ export function calculateNetWorthForMonths(
       });
     }
 
-    // Add manual assets (car, property, etc.)
+    // Add manual assets (car, property, etc.) - include in both total AND byAccount
     ta += manualAssetsTotal;
+    for (const asset of manualAssets) {
+      accountContributions.push({
+        slug: `manual-${asset.id}`,
+        label: asset.label,
+        type: `manual-${asset.category}`,
+        value: asset.value,
+      });
+    }
     
     // Populate month entry
     h.totalAssets = ta;
