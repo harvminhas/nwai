@@ -95,8 +95,13 @@ export default function ManualAssetPage() {
   const categoryPickerBtnRefs = useState(() => new Map<string, HTMLButtonElement>())[0];
   
   // Main tab state
-  const [mainTab, setMainTab] = useState<"overview" | "income" | "expenses" | "history" | "projections">("overview");
-  
+  const [mainTab, setMainTab] = useState<"income" | "expenses" | "history" | "projections">("expenses");
+
+  // Reset to expenses tab when asset ID changes
+  useEffect(() => {
+    setMainTab("expenses");
+  }, [id]);
+
   // History tab state
   const [showAddValuationModal, setShowAddValuationModal] = useState(false);
   const [newValuationValue, setNewValuationValue] = useState("");
@@ -766,16 +771,6 @@ export default function ManualAssetPage() {
       <div className="mt-6">
         <div className="mb-6 flex items-center gap-6 border-b border-gray-200">
           <button
-            onClick={() => setMainTab("overview")}
-            className={`pb-3 px-1 text-base font-semibold transition ${
-              mainTab === "overview"
-                ? "border-b-2 border-purple-600 text-purple-600"
-                : "text-gray-500 hover:text-gray-700"
-            }`}
-          >
-            Overview
-          </button>
-          <button
             onClick={() => setMainTab("income")}
             className={`pb-3 px-1 text-base font-semibold transition ${
               mainTab === "income"
@@ -816,13 +811,6 @@ export default function ManualAssetPage() {
             Projections
           </button>
         </div>
-
-        {/* Overview Tab */}
-        {mainTab === "overview" && (
-          <div className="space-y-4">
-            <p className="text-sm text-gray-600">Summary of asset value, equity, and linked accounts.</p>
-          </div>
-        )}
 
         {/* Income Tab */}
         {mainTab === "income" && (
