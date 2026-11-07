@@ -10,6 +10,7 @@ import { formatAccountLast4 } from "@/lib/rangeUtils";
 import { getFirebaseClient } from "@/lib/firebase";
 import { formatLastTransactionDate } from "@/lib/formatLastTransactionDate";
 import { CategoryListRow } from "@/app/account/spending/CategoryListRow";
+import { useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 
 const GROUP_COLOR: Record<string, string> = {
   cash: "bg-blue-500",
@@ -33,6 +34,7 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
   const { groups, currency, totalAssets } = summary;
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { requestProfileRefresh } = useProfileRefresh();
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const [showAdd, setShowAdd] = useState(false);
   const [addLabel, setAddLabel] = useState("");
@@ -83,6 +85,8 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
       });
       if (!res.ok) throw new Error("Failed to save");
       const { id } = await res.json();
+      // Trigger profile refresh so header net worth updates
+      requestProfileRefresh();
       if (id) router.push(`/account/assets/${id}`);
       else router.refresh();
     } catch (err) {
