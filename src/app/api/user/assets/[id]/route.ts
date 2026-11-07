@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
+import { resolveAccess } from "@/lib/access/resolveAccess";
 
 function authToken(req: NextRequest): string | null {
   const h = req.headers.get("authorization");
@@ -11,8 +12,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const token = authToken(req);
   if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
-    const { auth, db } = getFirebaseAdmin();
-    const { uid } = await auth.verifyIdToken(token);
+    const { db } = getFirebaseAdmin();
+    const access = await resolveAccess(req, db);
+    if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const uid = access.targetUid;
     const { id } = await params;
     const body = await req.json();
     const { label, category, value, linkedAccountSlug } = body;
@@ -42,8 +45,10 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const token = authToken(req);
   if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
-    const { auth, db } = getFirebaseAdmin();
-    const { uid } = await auth.verifyIdToken(token);
+    const { db } = getFirebaseAdmin();
+    const access = await resolveAccess(req, db);
+    if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const uid = access.targetUid;
     const { id } = await params;
     await db.collection("users").doc(uid).collection("manualAssets").doc(id).delete();
     await invalidateFinancialProfileCache(uid, db);

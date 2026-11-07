@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
     const { db } = getFirebaseAdmin();
     const access = await resolveAccess(req, db);
     if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const uid = access.actorUid;
+    const uid = access.targetUid;
     const snap = await db.collection("users").doc(uid).collection("manualAssets").orderBy("updatedAt", "desc").get();
     const assets: ManualAsset[] = snap.docs.map((d) => {
       const data = d.data();
@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
     const { db } = getFirebaseAdmin();
     const access = await resolveAccess(req, db);
     if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const uid = access.actorUid;
+    const uid = access.targetUid;
     const body = await req.json();
     const { label, category, value, linkedAccountSlug } = body;
     if (!label || typeof value !== "number") {
