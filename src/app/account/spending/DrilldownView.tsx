@@ -97,6 +97,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
   const category = searchParams.get("category") || "";
   const merchant = searchParams.get("merchant") || "";
   const searchQuery = searchParams.get("q") || "";
+  const view = searchParams.get("view") || ""; // Explicit view type from search
   
   const level = merchant ? "merchant" : category ? "category" : searchQuery ? "search" : "all";
   
@@ -198,6 +199,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       if (category) params.set("category", category);
       if (merchant) params.set("merchant", merchant);
       if (searchQuery) params.set("q", searchQuery);
+      if (view) params.set("view", view);
 
       const res = await fetch(`/api/user/spending/drilldown?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -225,7 +227,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
 
   useEffect(() => {
     loadData();
-  }, [token, level, category, merchant, searchQuery]);
+  }, [token, level, category, merchant, searchQuery, view]);
 
   // Keep searchInput in sync with URL query changes
   useEffect(() => {

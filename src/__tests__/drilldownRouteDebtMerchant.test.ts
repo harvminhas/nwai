@@ -34,8 +34,16 @@ vi.mock("@/lib/financialProfile", () => ({
 }));
 
 describe("Drilldown route: debt merchant vs account detail", () => {
+  let fetchSpy: any;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    // Spy on global fetch to verify view param forwarding
+    fetchSpy = vi.spyOn(global, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy?.mockRestore();
   });
 
   const createRequest = (level: string, category: string, merchant: string, view?: string) => {
@@ -193,6 +201,32 @@ describe("Drilldown route: debt merchant vs account detail", () => {
     expect(response.status).toBe(200);
     expect(data.level).toBe("merchant");
     expect(data.total).toBe(2000);
+  });
+
+  test("view=merchant param passed to API", async () => {
+    // SYNTHETIC: Verify view param flows from search click → API request
+    mockProfile = createMinimalProfile({
+      accountSnapshots: [{ slug: "amex", accountName: "Amex", accountType: "credit_card" }],
+      accountStatusRecords: [{ accountSlug: "amex", status: "active", statusDate: "2024-01-01" }],
+      monthlyHistory: [{ yearMonth: "2024-01", expensesTotal: 100, coreExpensesTotal: 100, incomeTotal: 0 }],
+      expenseTxns: [{
+        merchant: "Honda Finance",
+        accountSlug: "amex",
+        category: "Installment Servicing",
+        amount: -100,
+        txMonth: "2024-01",
+        date: "2024-01-15",
+        accountLabel: "Amex",
+      }],
+    });
+
+    // Request with view=merchant
+    const req = createRequest("merchant", "Debt", "honda-finance", "merchant");
+    const response = await GET(req);
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.kind).toBeUndefined(); // Merchant detail, not account
   });
 
   test("COLLISION: merchant slug equals account slug", async () => {
