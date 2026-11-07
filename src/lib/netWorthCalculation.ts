@@ -91,6 +91,8 @@ export async function getNetWorthForMonth(
   const last12Months = sortedHistory.slice(0, 12).reverse().map(m => ({
     yearMonth: m.yearMonth,
     netWorth: m.netWorth,
+    totalAssets: m.totalAssets,
+    totalDebts: m.totalDebts,
     byAccount: m.byAccount || [],
   }));
 

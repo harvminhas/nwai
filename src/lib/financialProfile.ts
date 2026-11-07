@@ -1319,6 +1319,30 @@ export async function buildAndCacheFinancialProfile(
     accountStatusMap
   );
 
+  // ── Read-path normalization: ensure byAccount includes manual assets ─────────
+  // Existing cached profiles built before code update may have manual assets in
+  // totalAssets but omitted from byAccount. Reconstruct to ensure completeness.
+  const manualAssetsTotal = manualAssets.reduce((s, a) => s + a.value, 0);
+  for (const h of monthlyHistory) {
+    if (!h.byAccount || h.byAccount.length === 0) continue;
+    
+    // Check if manual assets are already in byAccount
+    const hasManualAssets = h.byAccount.some(item => item.slug.startsWith("manual-"));
+    
+    if (!hasManualAssets && manualAssets.length > 0) {
+      // Manual assets missing from byAccount but should be included
+      // Add them without changing totalAssets (already correct from cache or calculation)
+      for (const asset of manualAssets) {
+        h.byAccount.push({
+          slug: `manual-${asset.id}`,
+          label: asset.label,
+          type: `manual-${asset.category}`,
+          value: asset.value,
+        });
+      }
+    }
+  }
+
   // Build new cache fields from the parallel reads
   const manualLiabilities: ManualLiability[] = manualLiabSnap.docs.map((d) => ({
     id: d.id,

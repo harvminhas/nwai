@@ -12,6 +12,8 @@ import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tool
 interface MonthlyNetWorthData {
   yearMonth: string;
   netWorth: number;
+  totalAssets: number;
+  totalDebts: number;
   change: number | null;
   changePercent: number | null;
   items: MonthNetWorthSummary["items"];
@@ -49,6 +51,8 @@ function NetWorthPageContent() {
       const monthlyHistory = (summary.monthlyHistory || []) as Array<{ 
         yearMonth: string; 
         netWorth: number;
+        totalAssets: number;
+        totalDebts: number;
         byAccount: Array<{ slug: string; label: string; type: string; value: number }>;
       }>;
       setCurrency(summary.currency || "CAD");
@@ -84,6 +88,8 @@ function NetWorthPageContent() {
         return {
           yearMonth: month.yearMonth,
           netWorth: month.netWorth,
+          totalAssets: month.totalAssets,
+          totalDebts: month.totalDebts,
           change,
           changePercent,
           items: changesByMonth.get(month.yearMonth) || [],
@@ -618,7 +624,7 @@ function NetWorthPageContent() {
                 <div className="flex items-center justify-between py-3 border-t-2 border-gray-300 mt-2">
                   <span className="text-sm font-bold text-gray-900">Total Assets</span>
                   <span className="text-lg font-bold text-gray-900">
-                    {formatCurrencyWithCents(selectedData.byAccount.filter((i) => i.value > 0).reduce((s, i) => s + i.value, 0), currency)}
+                    {formatCurrencyWithCents(selectedData.totalAssets, currency)}
                   </span>
                 </div>
               </div>
@@ -650,7 +656,7 @@ function NetWorthPageContent() {
                 <div className="flex items-center justify-between py-3 border-t-2 border-gray-300 mt-2">
                   <span className="text-sm font-bold text-gray-900">Total Debts</span>
                   <span className="text-lg font-bold text-red-600">
-                    {formatCurrencyWithCents(Math.abs(selectedData.byAccount.filter((i) => i.value < 0).reduce((s, i) => s + i.value, 0)), currency)}
+                    {formatCurrencyWithCents(selectedData.totalDebts, currency)}
                   </span>
                 </div>
               </div>
@@ -670,8 +676,8 @@ function NetWorthPageContent() {
               </span>
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              Assets ({formatCurrencyWithCents(selectedData.byAccount.filter((i) => i.value > 0).reduce((s, i) => s + i.value, 0), currency)}) 
-              - Debts ({formatCurrencyWithCents(Math.abs(selectedData.byAccount.filter((i) => i.value < 0).reduce((s, i) => s + i.value, 0)), currency)})
+              Assets ({formatCurrencyWithCents(selectedData.totalAssets, currency)}) 
+              - Debts ({formatCurrencyWithCents(selectedData.totalDebts, currency)})
             </p>
           </div>
         )}
