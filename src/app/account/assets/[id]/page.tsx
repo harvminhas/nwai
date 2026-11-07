@@ -1227,6 +1227,8 @@ export default function ManualAssetPage() {
                 </div>
               );
             })()}
+          </div>
+        )}
         
         {spendingTxns.length === 0 && (
           <p className="text-sm text-gray-500">No spending transactions linked.</p>
@@ -1259,6 +1261,8 @@ export default function ManualAssetPage() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
           </div>
         )}
 
