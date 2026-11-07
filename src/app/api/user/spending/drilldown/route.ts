@@ -711,14 +711,14 @@ export async function GET(req: NextRequest) {
       const parentCategory = categoryParam;
 
       // Special handling for Debt account drill-down (regular + extras)
-      if (parentCategory === "Debt") {
-        const accountSlug = merchantParam; // It's an account slug, not a merchant
-        
-        // Find the account in snapshots
-        const account = profile.accountSnapshots.find(a => a.slug === accountSlug);
-        if (!account) {
-          return NextResponse.json({ error: "Account not found" }, { status: 404 });
-        }
+      // Only use account detail if merchantParam actually matches an account
+      const account = parentCategory === "Debt" 
+        ? profile.accountSnapshots.find(a => a.slug === merchantParam)
+        : null;
+      
+      if (parentCategory === "Debt" && account) {
+        // Debt ACCOUNT detail (e.g., TD Visa account payments by month)
+        const accountSlug = merchantParam;
 
         // Use actualDebt computed once for entire request
         
