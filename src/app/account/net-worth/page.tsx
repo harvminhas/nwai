@@ -230,9 +230,9 @@ function NetWorthPageContent() {
       const line: BreakdownLine = {
         category,
         label: isNewAsset
-          ? `New asset: ${current.label}`
+          ? `New asset: ${current?.label || slug}`
           : isBaseline 
-            ? `${current.label} (first statement)` 
+            ? `${current?.label || slug} (first statement)` 
             : (current?.label || previous?.label || slug),
         amount: change,
         accountSlug: slug,
