@@ -383,7 +383,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
       {/* Merchant Search (All spending and search levels) */}
       {(displayData.level === "all" || displayData.level === "search") && (
         <div className="mb-6 flex items-center justify-between gap-4">
-          <div className="relative w-full max-w-sm" style={{ isolation: 'isolate' }}>
+          <div className="relative w-full max-w-sm">
             <input
               type="text"
               aria-label="Search merchants"
@@ -428,12 +428,12 @@ export function DrilldownView({ token }: DrilldownViewProps) {
               <>
                 {/* Invisible backdrop for outside clicks */}
                 <div 
-                  className="fixed inset-0 z-40" 
+                  className="fixed inset-0 z-[100]" 
                   onClick={dismissSearch}
                 />
                 
                 {/* Dropdown positioned below search input - wider than input for desktop readability */}
-                <div className="absolute top-full left-0 mt-2 z-50 bg-white rounded-lg border border-neutral-200 shadow-xl max-h-96 flex flex-col w-[600px] max-w-[calc(100vw-2rem)]">
+                <div className="absolute top-full left-0 mt-2 z-[101] bg-white opacity-100 rounded-lg border border-neutral-200 shadow-xl max-h-96 flex flex-col w-[600px] max-w-[calc(100vw-2rem)]">
             {/* Dropdown content */}
             <div className="overflow-y-auto flex-1">
               {searchInput.trim().length < 2 ? (
