@@ -9,54 +9,146 @@ import { describe, test, expect, vi } from "vitest";
 import { getFinancialProfile, SCHEMA_VERSION } from "../financialProfile";
 import type { Firestore } from "firebase-admin/firestore";
 
-function createMockDb(cachedProfile: any): Firestore {
+function createMockDbWithData(cachedProfile: any, rawManualAssets: any[] = [], rawStatements: any[] = []): {
+  db: Firestore;
+  counters: { sourceReadCount: number; cacheWriteCount: number };
+} {
+  const counters = { sourceReadCount: 0, cacheWriteCount: 0 };
+
+  const mockStatementDocs = rawStatements.map(stmt => ({
+    id: stmt.id,
+    data: () => stmt,
+  }));
+
+  const mockManualAssetDocs = rawManualAssets.map(asset => ({
+    id: asset.id,
+    data: () => asset,
+  }));
+
   const createDocRef = (isCache: boolean) => ({
-    get: vi.fn(async () => ({
-      exists: isCache && !!cachedProfile,
-      data: () => (isCache && cachedProfile ? { financialProfile: cachedProfile } : {}),
-    })),
-    set: vi.fn(async () => {}),
-    collection: vi.fn(() => ({
-      get: vi.fn(async () => ({ docs: [] })),
+    get: vi.fn(async () => {
+      if (isCache) {
+        return {
+          exists: !!cachedProfile,
+          data: () => (cachedProfile ? { financialProfile: cachedProfile } : {}),
+        };
+      }
+      return { exists: false, data: () => ({}) };
+    }),
+    set: vi.fn(async () => {
+      counters.cacheWriteCount++;
+    }),
+    collection: vi.fn((name: string) => ({
+      get: vi.fn(async () => {
+        if (name === "manualAssets") {
+          counters.sourceReadCount++;
+          return { docs: mockManualAssetDocs };
+        }
+        return { docs: [] };
+      }),
       orderBy: vi.fn(() => ({
         get: vi.fn(async () => ({ docs: [] })),
-        desc: vi.fn(() => ({
-          get: vi.fn(async () => ({ docs: [] })),
-        })),
       })),
     })),
   });
 
-  return {
-    collection: vi.fn((path: string) => ({
-      where: vi.fn(() => ({
-        where: vi.fn(() => ({
+  const db = {
+    collection: vi.fn((path: string) => {
+      if (path === "statements") {
+        return {
+          where: vi.fn(() => ({
+            where: vi.fn(() => ({
+              orderBy: vi.fn(() => ({
+                get: vi.fn(async () => {
+                  counters.sourceReadCount++;
+                  return { docs: mockStatementDocs };
+                }),
+              })),
+              get: vi.fn(async () => {
+                counters.sourceReadCount++;
+                return { docs: mockStatementDocs };
+              }),
+            })),
+            get: vi.fn(async () => {
+              counters.sourceReadCount++;
+              return { docs: mockStatementDocs };
+            }),
+          })),
+        };
+      }
+      if (path === "users") {
+        return {
+          doc: vi.fn((uid: string) => createDocRef(uid === "test-uid")),
+        };
+      }
+      if (path.startsWith("users/") && path.includes("/manualAssets")) {
+        return {
           orderBy: vi.fn(() => ({
+            get: vi.fn(async () => {
+              counters.sourceReadCount++;
+              return { docs: mockManualAssetDocs };
+            }),
+          })),
+          get: vi.fn(async () => {
+            counters.sourceReadCount++;
+            return { docs: mockManualAssetDocs };
+          }),
+        };
+      }
+      return {
+        where: vi.fn(() => ({
+          where: vi.fn(() => ({
             get: vi.fn(async () => ({ docs: [] })),
           })),
           get: vi.fn(async () => ({ docs: [] })),
         })),
-        get: vi.fn(async () => ({ docs: [] })),
-      })),
-      doc: vi.fn((uid: string) => createDocRef(path === "users" && uid === "test-uid")),
-      get: vi.fn(async () => ({ docs: [] })),
-      orderBy: vi.fn(() => ({
-        get: vi.fn(async () => ({ docs: [] })),
-        desc: vi.fn(() => ({
+        orderBy: vi.fn(() => ({
           get: vi.fn(async () => ({ docs: [] })),
         })),
-      })),
-    })),
+        get: vi.fn(async () => ({ docs: [] })),
+      };
+    }),
     doc: vi.fn((path: string) => createDocRef(path === "users/test-uid")),
   } as unknown as Firestore;
+
+  return { db, counters };
 }
 
 describe("Cache Schema Validation - Production Path", () => {
+  const mockRawManualAssets = [
+    { id: "car-1", label: "Car", category: "vehicle", value: 25000, currency: "CAD", updatedAt: "2026-11-01" },
+  ];
+
+  const mockRawStatements = [
+    {
+      id: "checking-stmt",
+      userId: "test-uid",
+      status: "completed",
+      accountId: "checking-1",
+      accountName: "Checking",
+      accountType: "checking",
+      institutionName: "Bank",
+      currency: "CAD",
+      balances: [{ date: "2026-11-15", balance: 10000 }],
+    },
+    {
+      id: "mortgage-stmt",
+      userId: "test-uid",
+      status: "completed",
+      accountId: "mortgage-1",
+      accountName: "Mortgage",
+      accountType: "mortgage",
+      institutionName: "Bank",
+      currency: "CAD",
+      balances: [{ date: "2026-11-15", balance: -200000 }],
+    },
+  ];
+
   test("old cache: manual in totalAssets but not byAccount triggers rebuild", async () => {
     const oldCache = {
       schemaVersion: SCHEMA_VERSION,
       sourceVersion: "v1",
-      updatedAt: new Date(Date.now() - 120000).toISOString(), // 2min old (hot)
+      updatedAt: new Date(Date.now() - 120000).toISOString(),
       cacheStale: false,
       homeCurrency: "CAD",
       manualAssets: [
@@ -69,7 +161,6 @@ describe("Cache Schema Validation - Production Path", () => {
           totalAssets: 35000, // Includes car
           totalDebts: 200000,
           byAccount: [
-            // Old schema: car missing
             { slug: "checking-1", label: "Checking", type: "checking", value: 10000 },
             { slug: "mortgage-1", label: "Mortgage", type: "mortgage", value: -200000 },
           ],
@@ -81,18 +172,26 @@ describe("Cache Schema Validation - Production Path", () => {
       incomeTxns: [],
     };
 
-    const db = createMockDb(oldCache);
+    const mock = createMockDbWithData(oldCache, mockRawManualAssets, mockRawStatements);
+    const profile = await getFinancialProfile("test-uid", mock.db);
     
-    // getFinancialProfile should detect incomplete byAccount and rebuild
-    const profile = await getFinancialProfile("test-uid", db);
+    expect(mock.counters.sourceReadCount, "Should read from source on rebuild").toBeGreaterThan(0);
+    expect(mock.counters.cacheWriteCount, "Should write cache on rebuild").toBe(1);
+    expect(profile.manualAssets).toHaveLength(1);
+    expect(profile.manualAssets[0].id).toBe("car-1");
     
-    // Rebuilt profile will be minimal since we have no actual data
-    expect(profile).toBeDefined();
+    if (profile.monthlyHistory.length > 0) {
+      const month = profile.monthlyHistory[0];
+      const carEntries = month.byAccount?.filter(a => a.slug === "manual-car-1") || [];
+      expect(carEntries.length, "Car should appear exactly once in byAccount").toBe(1);
+      expect(month.totalAssets).toBeGreaterThan(0);
+      expect(month.totalDebts).toBeLessThan(0);
+    }
   });
 
   test("empty byAccount with manual assets triggers rebuild", async () => {
     const emptyByAccount = {
-      schemaVersion: 1,
+      schemaVersion: SCHEMA_VERSION,
       sourceVersion: "v1",
       updatedAt: new Date(Date.now() - 120000).toISOString(),
       cacheStale: false,
@@ -106,7 +205,7 @@ describe("Cache Schema Validation - Production Path", () => {
           netWorth: 25000,
           totalAssets: 25000,
           totalDebts: 0,
-          byAccount: [], // Empty!
+          byAccount: [],
         },
       ],
       accountBalanceHistory: [],
@@ -115,14 +214,26 @@ describe("Cache Schema Validation - Production Path", () => {
       incomeTxns: [],
     };
 
-    const db = createMockDb(emptyByAccount);
-    const profile = await getFinancialProfile("test-uid", db);
-    expect(profile).toBeDefined();
+    const mock = createMockDbWithData(emptyByAccount, mockRawManualAssets, mockRawStatements);
+    const profile = await getFinancialProfile("test-uid", mock.db);
+    
+    expect(mock.counters.sourceReadCount, "Should read from source on rebuild").toBeGreaterThan(0);
+    expect(mock.counters.cacheWriteCount, "Should write cache on rebuild").toBe(1);
+    
+    if (profile.monthlyHistory.length > 0) {
+      const carEntries = profile.monthlyHistory[0].byAccount?.filter(a => a.slug === "manual-car-1") || [];
+      expect(carEntries.length, "Car should appear exactly once in byAccount after rebuild").toBe(1);
+    }
   });
 
   test("partial: 2 manual assets, only 1 in byAccount triggers rebuild", async () => {
+    const twoManualAssets = [
+      { id: "car-1", label: "Car", category: "vehicle", value: 25000, currency: "CAD", updatedAt: "2026-11-01" },
+      { id: "house-1", label: "House", category: "property", value: 500000, currency: "CAD", updatedAt: "2026-11-01" },
+    ];
+
     const partialCache = {
-      schemaVersion: 1,
+      schemaVersion: SCHEMA_VERSION,
       sourceVersion: "v1",
       updatedAt: new Date(Date.now() - 120000).toISOString(),
       cacheStale: false,
@@ -138,7 +249,6 @@ describe("Cache Schema Validation - Production Path", () => {
           totalAssets: 525000,
           totalDebts: 0,
           byAccount: [
-            // Only car, missing house
             { slug: "manual-car-1", label: "Car", type: "manual-vehicle", value: 25000 },
           ],
         },
@@ -149,9 +259,19 @@ describe("Cache Schema Validation - Production Path", () => {
       incomeTxns: [],
     };
 
-    const db = createMockDb(partialCache);
-    const profile = await getFinancialProfile("test-uid", db);
-    expect(profile).toBeDefined();
+    const mock = createMockDbWithData(partialCache, twoManualAssets, mockRawStatements);
+    const profile = await getFinancialProfile("test-uid", mock.db);
+    
+    expect(mock.counters.sourceReadCount, "Should read from source on rebuild").toBeGreaterThan(0);
+    expect(mock.counters.cacheWriteCount, "Should write cache on rebuild").toBe(1);
+    
+    if (profile.monthlyHistory.length > 0) {
+      const month = profile.monthlyHistory[0];
+      const carEntries = month.byAccount?.filter(a => a.slug === "manual-car-1") || [];
+      const houseEntries = month.byAccount?.filter(a => a.slug === "manual-house-1") || [];
+      expect(carEntries.length, "Car should appear exactly once").toBe(1);
+      expect(houseEntries.length, "House should appear exactly once").toBe(1);
+    }
   });
 
   test("valid cache: all manual assets in byAccount returns cached", async () => {
@@ -171,7 +291,6 @@ describe("Cache Schema Validation - Production Path", () => {
           totalAssets: 25000,
           totalDebts: 0,
           byAccount: [
-            // Complete schema
             { slug: "manual-car-1", label: "Car", type: "manual-vehicle", value: 25000 },
           ],
         },
@@ -182,33 +301,21 @@ describe("Cache Schema Validation - Production Path", () => {
       incomeTxns: [],
     };
 
-    // Track if rebuild (cache write) was attempted
-    let cacheWriteCount = 0;
-    const db = createMockDb(validCache);
-    const origColl = db.collection;
-    (db as any).collection = vi.fn((path: string) => {
-      const coll = origColl(path);
-      if (path === "users") {
-        const origDoc = coll.doc;
-        (coll as any).doc = vi.fn((uid: string) => {
-          const docRef = origDoc(uid);
-          const origSet = docRef.set;
-          (docRef as any).set = vi.fn(async (...args: any[]) => {
-            cacheWriteCount++;
-            return origSet(...args);
-          });
-          return docRef;
-        });
-      }
-      return coll;
-    });
+    const mock = createMockDbWithData(validCache, mockRawManualAssets, mockRawStatements);
+    const profile = await getFinancialProfile("test-uid", mock.db);
     
-    const profile = await getFinancialProfile("test-uid", db);
-    
-    // Valid cache should be returned without rebuild
-    expect(cacheWriteCount, "Valid cache triggered unexpected rebuild").toBe(0);
+    expect(mock.counters.sourceReadCount, "Should NOT read from source when cache valid").toBe(0);
+    expect(mock.counters.cacheWriteCount, "Should NOT write cache when returning cached").toBe(0);
     expect(profile.manualAssets).toHaveLength(1);
     expect(profile.manualAssets[0].id).toBe("car-1");
+    expect(profile.monthlyHistory[0].yearMonth).toBe("2026-11");
+    expect(profile.monthlyHistory[0].netWorth).toBe(25000);
+    expect(profile.monthlyHistory[0].totalAssets).toBe(25000);
+    expect(profile.monthlyHistory[0].totalDebts).toBe(0);
+    
+    const car = profile.monthlyHistory[0].byAccount?.find(a => a.slug === "manual-car-1");
+    expect(car, "Cached car should be present").toBeDefined();
+    expect(car?.value).toBe(25000);
   });
 
   test("cacheStale bypasses hot and warm return", async () => {
@@ -216,7 +323,7 @@ describe("Cache Schema Validation - Production Path", () => {
       schemaVersion: SCHEMA_VERSION,
       sourceVersion: "v1",
       updatedAt: new Date(Date.now() - 60000).toISOString(), // 1min (hot window)
-      cacheStale: true, // Marked stale
+      cacheStale: true,
       homeCurrency: "CAD",
       manualAssets: [],
       monthlyHistory: [],
@@ -226,10 +333,11 @@ describe("Cache Schema Validation - Production Path", () => {
       incomeTxns: [],
     };
 
-    const db = createMockDb(staleCache);
+    const mock = createMockDbWithData(staleCache, [], mockRawStatements);
+    const profile = await getFinancialProfile("test-uid", mock.db);
     
-    // Should rebuild despite being in hot window
-    const profile = await getFinancialProfile("test-uid", db);
+    expect(mock.counters.sourceReadCount, "cacheStale should trigger rebuild (source read)").toBeGreaterThan(0);
+    expect(mock.counters.cacheWriteCount, "cacheStale should trigger rebuild (cache write)").toBe(1);
     expect(profile).toBeDefined();
   });
 
@@ -240,7 +348,7 @@ describe("Cache Schema Validation - Production Path", () => {
       updatedAt: new Date(Date.now() - 60000).toISOString(),
       cacheStale: false,
       homeCurrency: "CAD",
-      manualAssets: [], // Empty
+      manualAssets: [],
       monthlyHistory: [
         {
           yearMonth: "2026-11",
@@ -259,8 +367,12 @@ describe("Cache Schema Validation - Production Path", () => {
       incomeTxns: [],
     };
 
-    const db = createMockDb(noManualCache);
-    const profile = await getFinancialProfile("test-uid", db);
-    expect(profile).toBeDefined();
+    const mock = createMockDbWithData(noManualCache, [], mockRawStatements);
+    const profile = await getFinancialProfile("test-uid", mock.db);
+    
+    expect(mock.counters.sourceReadCount, "No manual assets: should NOT read source").toBe(0);
+    expect(mock.counters.cacheWriteCount, "No manual assets: should NOT write cache").toBe(0);
+    expect(profile.manualAssets).toHaveLength(0);
+    expect(profile.monthlyHistory[0].netWorth).toBe(-190000);
   });
 });
