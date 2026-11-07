@@ -90,15 +90,18 @@ describe("Asset Valuation Net Worth Changes - Production", () => {
           ],
         },
       ],
-      expenseTransactions: [],
-      categorizedTransactions: [],
+      expenseTxns: [],
+      categorizedTxns: [],
       recurringCharges: [],
+      confirmedSubscriptions: [],
+      statementHistory: [],
       hasMultiCurrency: false,
       missingMonthCoverage: [],
       fxToHome: (v: number) => v,
       schemaVersion: 3,
       cachedAt: new Date().toISOString(),
-    };
+      homeCurrency: "USD",
+    } as any;
 
     vi.mocked(getFinancialProfile).mockResolvedValue(profile);
 
@@ -201,15 +204,18 @@ describe("Asset Valuation Net Worth Changes - Production", () => {
           ],
         },
       ],
-      expenseTransactions: [],
-      categorizedTransactions: [],
+      expenseTxns: [],
+      categorizedTxns: [],
       recurringCharges: [],
+      confirmedSubscriptions: [],
+      statementHistory: [],
       hasMultiCurrency: false,
       missingMonthCoverage: [],
       fxToHome: (v: number) => v,
       schemaVersion: 3,
       cachedAt: new Date().toISOString(),
-    };
+      homeCurrency: "USD",
+    } as any;
 
     vi.mocked(getFinancialProfile).mockResolvedValue(profile);
 
@@ -278,15 +284,18 @@ describe("Asset Valuation Net Worth Changes - Production", () => {
           ],
         },
       ],
-      expenseTransactions: [],
-      categorizedTransactions: [],
+      expenseTxns: [],
+      categorizedTxns: [],
       recurringCharges: [],
+      confirmedSubscriptions: [],
+      statementHistory: [],
       hasMultiCurrency: false,
       missingMonthCoverage: [],
       fxToHome: (v: number) => v,
       schemaVersion: 3,
       cachedAt: new Date().toISOString(),
-    };
+      homeCurrency: "USD",
+    } as any;
 
     vi.mocked(getFinancialProfile).mockResolvedValue(profile);
 
@@ -359,15 +368,18 @@ describe("Asset Valuation Net Worth Changes - Production", () => {
           ],
         },
       ],
-      expenseTransactions: [],
-      categorizedTransactions: [],
+      expenseTxns: [],
+      categorizedTxns: [],
       recurringCharges: [],
+      confirmedSubscriptions: [],
+      statementHistory: [],
       hasMultiCurrency: false,
       missingMonthCoverage: [],
       fxToHome: (v: number) => v,
       schemaVersion: 3,
       cachedAt: new Date().toISOString(),
-    };
+      homeCurrency: "USD",
+    } as any;
 
     vi.mocked(getFinancialProfile).mockResolvedValue(profile);
 
@@ -386,6 +398,126 @@ describe("Asset Valuation Net Worth Changes - Production", () => {
     expect(novChange.netWorthImpact).toBeCloseTo(-499.49, 2);
     expect(novChange.previousBalance).toBeCloseTo(24999.99, 2);
     expect(novChange.currentBalance).toBeCloseTo(24500.50, 2);
+  });
+
+  test("legacy no-startDate with Sept/Oct/Nov: retains Sept 31000, Oct 31000, Nov edit 29000", async () => {
+    const { getFinancialProfile } = await import("../financialProfile");
+    const { generateNetWorthChanges } = await import("../netWorthChanges");
+    
+    const profile: FinancialProfileCache = {
+      currency: "USD",
+      monthlyHistory: [
+        {
+          yearMonth: "2026-09",
+          netWorth: 31000,
+          totalAssets: 31000,
+          totalDebts: 0,
+          incomeTotal: 0,
+          expensesTotal: 0,
+          incomeTotalAllCredits: 0,
+          coreExpensesTotal: 0,
+          debtPaymentsTotal: 0,
+          minDebtPaymentsTotal: 0,
+          cardServicingPaymentsTotal: 0,
+          byAccount: [
+            { slug: "manual-car-1", label: "Old Car", type: "manual-vehicle", value: 31000 }
+          ],
+        },
+        {
+          yearMonth: "2026-10",
+          netWorth: 31000,
+          totalAssets: 31000,
+          totalDebts: 0,
+          incomeTotal: 0,
+          expensesTotal: 0,
+          incomeTotalAllCredits: 0,
+          coreExpensesTotal: 0,
+          debtPaymentsTotal: 0,
+          minDebtPaymentsTotal: 0,
+          cardServicingPaymentsTotal: 0,
+          byAccount: [
+            { slug: "manual-car-1", label: "Old Car", type: "manual-vehicle", value: 31000 }
+          ],
+        },
+        {
+          yearMonth: "2026-11",
+          netWorth: 29000,
+          totalAssets: 29000,
+          totalDebts: 0,
+          incomeTotal: 0,
+          expensesTotal: 0,
+          incomeTotalAllCredits: 0,
+          coreExpensesTotal: 0,
+          debtPaymentsTotal: 0,
+          minDebtPaymentsTotal: 0,
+          cardServicingPaymentsTotal: 0,
+          byAccount: [
+            { slug: "manual-car-1", label: "Old Car", type: "manual-vehicle", value: 29000 }
+          ],
+        },
+      ],
+      accountBalanceHistory: [],
+      accountStatusRecords: [],
+      manualAssets: [
+        {
+          id: "car-1",
+          label: "Old Car",
+          category: "vehicle",
+          value: 29000,
+          // No startDate - legacy asset
+          updatedAt: "2026-11-10T12:00:00Z",
+          valuations: [
+            // First edit preserved baseline + new value
+            { id: "val1", effectiveDate: "2026-10-01", valueCents: 3100000, createdAt: "2026-10-01T00:00:00Z" },
+            { id: "val2", effectiveDate: "2026-11-10", valueCents: 2900000, createdAt: "2026-11-10T12:00:00Z" },
+          ],
+        },
+      ],
+      expenseTxns: [],
+      categorizedTxns: [],
+      recurringCharges: [],
+      confirmedSubscriptions: [],
+      statementHistory: [],
+      hasMultiCurrency: false,
+      missingMonthCoverage: [],
+      fxToHome: (v: number) => v,
+      schemaVersion: 3,
+      cachedAt: new Date().toISOString(),
+      homeCurrency: "USD",
+    } as any;
+
+    vi.mocked(getFinancialProfile).mockResolvedValue(profile);
+
+    await generateNetWorthChanges("test-uid", mockDb as any);
+
+    const writes = mockBatch.set.mock.calls;
+
+    // Sept: should show new_asset with 31000 (legacy behavior - active in all months)
+    const septWrite = writes.find((call: any) => call[1].month === "2026-09");
+    expect(septWrite).toBeDefined();
+    const septNewAsset = septWrite[1].items.find((item: any) => 
+      item.type === "new_asset" && item.accountSlug === "manual-car-1"
+    );
+    expect(septNewAsset).toBeDefined();
+    expect(septNewAsset.netWorthImpact).toBe(31000); // Sept uses Oct baseline valuation
+
+    // Oct: no change event (value stayed at 31000)
+    const octWrite = writes.find((call: any) => call[1].month === "2026-10");
+    const octChange = octWrite[1].items.find((item: any) => 
+      item.accountSlug === "manual-car-1" && 
+      (item.type === "balance_decrease" || item.type === "balance_increase")
+    );
+    expect(octChange).toBeUndefined(); // No change in Oct
+
+    // Nov: decrease of -2000
+    const novWrite = writes.find((call: any) => call[1].month === "2026-11");
+    const novChange = novWrite[1].items.find((item: any) => 
+      item.accountSlug === "manual-car-1" && item.type === "balance_decrease"
+    );
+    expect(novChange).toBeDefined();
+    expect(novChange.netWorthImpact).toBe(-2000);
+    expect(novChange.previousBalance).toBe(31000);
+    expect(novChange.currentBalance).toBe(29000);
   });
 
   test("appreciation shows positive change", async () => {
@@ -444,15 +576,18 @@ describe("Asset Valuation Net Worth Changes - Production", () => {
           ],
         },
       ],
-      expenseTransactions: [],
-      categorizedTransactions: [],
+      expenseTxns: [],
+      categorizedTxns: [],
       recurringCharges: [],
+      confirmedSubscriptions: [],
+      statementHistory: [],
       hasMultiCurrency: false,
       missingMonthCoverage: [],
       fxToHome: (v: number) => v,
       schemaVersion: 3,
       cachedAt: new Date().toISOString(),
-    };
+      homeCurrency: "USD",
+    } as any;
 
     vi.mocked(getFinancialProfile).mockResolvedValue(profile);
 

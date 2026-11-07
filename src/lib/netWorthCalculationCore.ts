@@ -66,8 +66,19 @@ export function getAssetValueForMonth(asset: ManualAsset, yearMonth: string): nu
     }
   }
 
-  // If no valuation exists for this month (all are after monthEnd), use legacy value or 0
-  return effectiveValue !== null ? effectiveValue : asset.value;
+  // If no valuation exists for this month (all are after monthEnd)
+  if (effectiveValue !== null) {
+    return effectiveValue;
+  }
+  
+  // For legacy assets without startDate, use first valuation as unknown baseline
+  // (preserves historical baseline without inventing dates)
+  if (!asset.startDate && asset.valuations.length > 0) {
+    return asset.valuations[0].valueCents / 100;
+  }
+  
+  // Otherwise use current value (shouldn't happen for well-formed data)
+  return asset.value;
 }
 
 /**

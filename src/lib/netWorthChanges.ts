@@ -107,15 +107,9 @@ export async function generateNetWorthChanges(
       // Asset has explicit startDate
       startMonth = asset.startDate.slice(0, 7); // YYYY-MM from YYYY-MM-DD
     } else {
-      // Legacy asset without startDate: find earliest month it appears in history
-      // (from valuations or fall back to first available month)
-      if (asset.valuations && asset.valuations.length > 0) {
-        const earliestValuation = asset.valuations[0]; // Already sorted ascending
-        startMonth = earliestValuation.effectiveDate.slice(0, 7);
-      } else {
-        // No valuations, no startDate: asset exists in all months (legacy behavior)
-        startMonth = allMonths[0]; // Start from first month in history
-      }
+      // Legacy asset without startDate: appears in first month of history
+      // (valuations only track value changes, not when asset started existing)
+      startMonth = allMonths[0];
     }
     
     if (!manualAssetsByStartMonth.has(startMonth)) {
@@ -197,15 +191,9 @@ export async function generateNetWorthChanges(
         const startMonth = asset.startDate.slice(0, 7);
         isActiveThisMonth = month >= startMonth;
       } else {
-        // Legacy asset without startDate
-        if (asset.valuations && asset.valuations.length > 0) {
-          // Active from first valuation onwards
-          const firstValMonth = asset.valuations[0].effectiveDate.slice(0, 7);
-          isActiveThisMonth = month >= firstValMonth;
-        } else {
-          // No startDate, no valuations: active in all months (legacy behavior)
-          isActiveThisMonth = true;
-        }
+        // Legacy asset without startDate: ALWAYS active in ALL months
+        // (valuations only track value changes, not existence)
+        isActiveThisMonth = true;
       }
       
       if (isActiveThisMonth) {
@@ -265,6 +253,26 @@ export async function generateNetWorthChanges(
       currentNetWorth += acc.balance;
     }
 
+    // Handle first month: create new_asset events for all manual assets active this month
+    if (!previousMonthAccounts) {
+      const assetsActiveThisMonth = manualAssetsByMonth.get(month) || new Map();
+      for (const [slug, assetData] of assetsActiveThisMonth) {
+        const id = createItemId(month, "new_asset", slug);
+        items.push({
+          id,
+          month,
+          type: "new_asset",
+          accountSlug: slug,
+          accountLabel: assetData.label,
+          accountType: `manual-${assetData.category}`,
+          netWorthImpact: assetData.value,
+          currency: currency,
+          currentBalance: assetData.value,
+          generatedAt: getGeneratedAt(id),
+        });
+      }
+    }
+    
     if (previousMonthAccounts) {
       // Detect changes from previous month
       
