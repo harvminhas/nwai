@@ -4,11 +4,11 @@
  */
 import Stripe from "stripe";
 
-// Use a dummy key during build (Next.js collects page data at build time)
-// Runtime API calls will fail with clear error if real key is missing
-const stripeKey = process.env.STRIPE_SECRET_KEY || "sk_test_build_placeholder";
+if (!process.env.STRIPE_SECRET_KEY) {
+  throw new Error("Missing STRIPE_SECRET_KEY environment variable");
+}
 
-export const stripe = new Stripe(stripeKey);
+export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 /** Stripe Price ID for the Pro monthly plan. Set in .env */
 export const PRO_PRICE_ID = process.env.STRIPE_PRO_PRICE_ID ?? "";
