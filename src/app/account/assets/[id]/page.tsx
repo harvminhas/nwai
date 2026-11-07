@@ -1451,7 +1451,11 @@ export default function ManualAssetPage() {
                     const currentYear = new Date().getFullYear();
                     
                     // Find most recent ACTUAL valuation (not future)
-                    const today = new Date().toISOString().slice(0, 10);
+                    // Use America/New_York timezone consistently
+                    const today = (() => {
+                      const nyDate = new Date().toLocaleString("en-US", { timeZone: "America/New_York" });
+                      return new Date(nyDate).toISOString().slice(0, 10);
+                    })();
                     let currentValue = asset.value;
                     
                     if (asset.valuations && asset.valuations.length > 0) {
@@ -1602,7 +1606,11 @@ export default function ManualAssetPage() {
                   <tbody className="divide-y divide-gray-200">
                     {(() => {
                       // Find most recent ACTUAL valuation (not future)
-                      const today = new Date().toISOString().slice(0, 10);
+                      // Use America/New_York timezone consistently
+                      const today = (() => {
+                        const nyDate = new Date().toLocaleString("en-US", { timeZone: "America/New_York" });
+                        return new Date(nyDate).toISOString().slice(0, 10);
+                      })();
                       let currentValue = asset.value;
                       
                       if (asset.valuations && asset.valuations.length > 0) {
