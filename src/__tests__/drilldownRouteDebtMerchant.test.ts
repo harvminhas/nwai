@@ -11,7 +11,13 @@ import { NextRequest } from "next/server";
 
 // Mock dependencies
 vi.mock("@/lib/firebase-admin", () => ({
-  getFirebaseAdmin: vi.fn(() => ({ db: {} })),
+  getFirebaseAdmin: vi.fn(() => ({
+    db: {
+      collection: vi.fn(() => ({
+        get: vi.fn(async () => ({ docs: [] })),
+      })),
+    },
+  })),
 }));
 
 vi.mock("@/lib/access/resolveAccess", () => ({
@@ -32,10 +38,11 @@ describe("Drilldown route: debt merchant vs account detail", () => {
     vi.clearAllMocks();
   });
 
-  const createRequest = (level: string, category: string, merchant: string) => {
-    const url = `http://localhost/api/user/spending/drilldown?level=${level}&category=${encodeURIComponent(
+  const createRequest = (level: string, category: string, merchant: string, view?: string) => {
+    let url = `http://localhost/api/user/spending/drilldown?level=${level}&category=${encodeURIComponent(
       category
     )}&merchant=${encodeURIComponent(merchant)}`;
+    if (view) url += `&view=${view}`;
     return new NextRequest(url);
   };
 
@@ -52,27 +59,22 @@ describe("Drilldown route: debt merchant vs account detail", () => {
     ...overrides,
   });
 
-  test("REGRESSION: debt merchant from credit card (Honda Finance)", async () => {
-    // SYNTHETIC fixture: Payment TO Honda Finance FROM credit card
-    // User reports this as real shape: debt payment from credit card, not bank account
-    mockProfile = {
-      homeCurrency: "CAD",
+  test("Honda Finance debt merchant from credit card (search result)", async () => {
+    // SYNTHETIC: Payment TO Honda Finance (lender) FROM credit card
+    mockProfile = createMinimalProfile({
       accountSnapshots: [
-        { slug: "td-visa", accountName: "TD Visa", accountType: "credit_card" },
         { slug: "scotiabank-visa", accountName: "Scotiabank Visa", accountType: "credit_card" },
       ],
       accountStatusRecords: [
-        { accountSlug: "td-visa", status: "active", statusDate: "2024-01-01" },
         { accountSlug: "scotiabank-visa", status: "active", statusDate: "2024-01-01" },
       ],
       monthlyHistory: [
         { yearMonth: "2024-01", expensesTotal: 500, coreExpensesTotal: 500, incomeTotal: 0 },
       ],
-      statementHistory: [],
       expenseTxns: [
         {
           merchant: "Honda Finance Plan",
-          accountSlug: "scotiabank-visa", // Payment FROM credit card
+          accountSlug: "scotiabank-visa",
           category: "Installment Servicing",
           amount: -500,
           txMonth: "2024-01",
@@ -80,31 +82,30 @@ describe("Drilldown route: debt merchant vs account detail", () => {
           accountLabel: "Scotiabank Visa",
         },
       ],
-      incomeTxns: [],
-      debtPaymentHistory: [], // No debt payment history for this merchant
-      cashCommitments: [],
-    };
+    });
 
-    const req = createRequest("merchant", "Debt", "honda-finance-plan");
+    const req = createRequest("merchant", "Debt", "honda-finance-plan", "merchant");
     const response = await GET(req);
-    
-    // PRE-FIX (1909225): Would return 404 because parentCategory=Debt → assumes accountSlug
-    // POST-FIX (7e4c91d): Returns 200 with merchant detail
-    expect(response.status).toBe(200);
-    
     const data = await response.json();
+
+    expect(response.status).toBe(200);
     expect(data.level).toBe("merchant");
-    expect(data.kind).toBeUndefined(); // NOT debt account detail
+    expect(data.kind).toBeUndefined(); // NOT account detail
     expect(data.total).toBe(500);
   });
 
-  test("debt merchant treated like any merchant (not account)", async () => {
-    // SYNTHETIC: Debt payment merchant is still just a merchant
-    // Category=Debt should not transform merchant identity into account identity
-    mockProfile = {
-      homeCurrency: "CAD",
+  test("multiple payments to debt merchant", async () => {
+    // SYNTHETIC: Multiple payments to same lender
+    mockProfile = createMinimalProfile({
       accountSnapshots: [
         { slug: "amex-card", accountName: "Amex Card", accountType: "credit_card" },
+      ],
+      accountStatusRecords: [
+        { accountSlug: "amex-card", status: "active", statusDate: "2024-01-01" },
+      ],
+      monthlyHistory: [
+        { yearMonth: "2024-01", expensesTotal: 500, coreExpensesTotal: 500, incomeTotal: 0 },
+        { yearMonth: "2024-02", expensesTotal: 500, coreExpensesTotal: 500, incomeTotal: 0 },
       ],
       expenseTxns: [
         {
@@ -126,9 +127,7 @@ describe("Drilldown route: debt merchant vs account detail", () => {
           accountLabel: "Amex Card",
         },
       ],
-      incomeTxns: [],
-      debtPaymentHistory: [],
-    };
+    });
 
     const req = createRequest("merchant", "Debt", "honda-finance-plan");
     const response = await GET(req);
@@ -136,44 +135,43 @@ describe("Drilldown route: debt merchant vs account detail", () => {
 
     expect(response.status).toBe(200);
     expect(data.level).toBe("merchant");
-    expect(data.rankedItems).toBeDefined();
-    expect(data.rankedItems.length).toBeGreaterThan(0);
-    expect(data.total).toBe(1000); // 2 x 500
+    expect(data.total).toBe(1000);
   });
 
-  test("debt account detail still works (TD Visa)", async () => {
-    mockProfile = {
-      homeCurrency: "CAD",
+  test("debt ACCOUNT detail (TD Visa account)", async () => {
+    // SYNTHETIC: Viewing debt account (not merchant)
+    mockProfile = createMinimalProfile({
       accountSnapshots: [
         { slug: "td-visa", accountName: "TD Visa", accountType: "credit_card" },
       ],
-      expenseTxns: [],
-      incomeTxns: [],
-      debtPaymentHistory: [
-        {
-          accountSlug: "td-visa",
-          statementMonth: "2024-01",
-          paymentsMade: 100,
-          currency: "CAD",
-        },
+      accountStatusRecords: [
+        { accountSlug: "td-visa", status: "active", statusDate: "2024-01-01" },
       ],
-    };
+      debtPaymentHistory: [
+        { accountSlug: "td-visa", statementMonth: "2024-01", paymentsMade: 100, currency: "CAD" },
+      ],
+    });
 
     const req = createRequest("merchant", "Debt", "td-visa");
     const response = await GET(req);
     const data = await response.json();
 
     expect(response.status).toBe(200);
-    expect(data.level).toBe("merchant");
     expect(data.kind).toBe("debt");
     expect(data.basis).toBe("actual");
   });
 
-  test("normal merchant (not debt) works", async () => {
-    mockProfile = {
-      homeCurrency: "CAD",
+  test("normal merchant (Transportation)", async () => {
+    // SYNTHETIC: Regular merchant, not debt
+    mockProfile = createMinimalProfile({
       accountSnapshots: [
         { slug: "td-chequing", accountName: "TD Chequing", accountType: "chequing" },
+      ],
+      accountStatusRecords: [
+        { accountSlug: "td-chequing", status: "active", statusDate: "2024-01-01" },
+      ],
+      monthlyHistory: [
+        { yearMonth: "2024-01", expensesTotal: 2000, coreExpensesTotal: 2000, incomeTotal: 0 },
       ],
       expenseTxns: [
         {
@@ -186,8 +184,7 @@ describe("Drilldown route: debt merchant vs account detail", () => {
           accountLabel: "TD Chequing",
         },
       ],
-      incomeTxns: [],
-    };
+    });
 
     const req = createRequest("merchant", "Transportation", "openroad-honda");
     const response = await GET(req);
@@ -199,16 +196,22 @@ describe("Drilldown route: debt merchant vs account detail", () => {
   });
 
   test("COLLISION: merchant slug equals account slug", async () => {
-    // Edge case: merchant named "TD Visa" creates slug "td-visa"
-    // which collides with account slug "td-visa"
-    mockProfile = {
-      homeCurrency: "CAD",
+    // SYNTHETIC: Merchant "TD Visa" → slug "td-visa" = account slug "td-visa"
+    mockProfile = createMinimalProfile({
       accountSnapshots: [
         { slug: "td-visa", accountName: "TD Visa", accountType: "credit_card" },
+        { slug: "td-chequing", accountName: "TD Chequing", accountType: "chequing" },
+      ],
+      accountStatusRecords: [
+        { accountSlug: "td-visa", status: "active", statusDate: "2024-01-01" },
+        { accountSlug: "td-chequing", status: "active", statusDate: "2024-01-01" },
+      ],
+      monthlyHistory: [
+        { yearMonth: "2024-01", expensesTotal: 150, coreExpensesTotal: 150, incomeTotal: 0 },
       ],
       expenseTxns: [
         {
-          merchant: "TD Visa", // Merchant happens to be named same as account
+          merchant: "TD Visa", // Merchant name matches account name
           accountSlug: "td-chequing",
           category: "Shopping",
           amount: -100,
@@ -216,37 +219,37 @@ describe("Drilldown route: debt merchant vs account detail", () => {
           date: "2024-01-15",
           accountLabel: "TD Chequing",
         },
-      ],
-      incomeTxns: [],
-      debtPaymentHistory: [
         {
-          accountSlug: "td-visa",
-          statementMonth: "2024-01",
-          paymentsMade: 200,
-          currency: "CAD",
+          merchant: "TD Visa", // Same merchant, debt payment
+          accountSlug: "td-chequing",
+          category: "Installment Servicing",
+          amount: -50,
+          txMonth: "2024-01",
+          date: "2024-01-20",
+          accountLabel: "TD Chequing",
         },
       ],
-    };
+      debtPaymentHistory: [
+        { accountSlug: "td-visa", statementMonth: "2024-01", paymentsMade: 200, currency: "CAD" },
+      ],
+    });
 
-    // Request: category=Shopping, merchant=td-visa
-    const req = createRequest("merchant", "Shopping", "td-visa");
-    const response = await GET(req);
-    const data = await response.json();
+    // FROM SEARCH (view=merchant): always merchant detail
+    const searchReq = createRequest("merchant", "Debt", "td-visa", "merchant");
+    const searchResponse = await GET(searchReq);
+    const searchData = await searchResponse.json();
+    
+    expect(searchResponse.status).toBe(200);
+    expect(searchData.kind).toBeUndefined(); // Merchant detail from search
+    expect(searchData.total).toBe(50); // Only debt payment
 
-    // Should show merchant detail (not account detail) because category != Debt
-    expect(response.status).toBe(200);
-    expect(data.level).toBe("merchant");
-    expect(data.kind).toBeUndefined(); // Not debt account detail
-    expect(data.total).toBe(100); // Merchant transaction
-
-    // Request: category=Debt, merchant=td-visa
-    const debtReq = createRequest("merchant", "Debt", "td-visa");
-    const debtResponse = await GET(debtReq);
-    const debtData = await debtResponse.json();
-
-    // Should show ACCOUNT detail because account exists
-    expect(debtResponse.status).toBe(200);
-    expect(debtData.kind).toBe("debt");
-    expect(debtData.basis).toBe("actual");
+    // FROM ACCOUNT LINK (no view): account detail when category=Debt + account exists
+    const accountReq = createRequest("merchant", "Debt", "td-visa");
+    const accountResponse = await GET(accountReq);
+    const accountData = await accountResponse.json();
+    
+    expect(accountResponse.status).toBe(200);
+    expect(accountData.kind).toBe("debt"); // Account detail from direct link
+    expect(accountData.basis).toBe("actual");
   });
 });

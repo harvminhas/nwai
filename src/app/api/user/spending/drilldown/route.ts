@@ -254,6 +254,7 @@ export async function GET(req: NextRequest) {
   const categoryParam = url.searchParams.get("category") || "";
   const merchantParam = url.searchParams.get("merchant") || "";
   const searchQuery = url.searchParams.get("q") || "";
+  const viewParam = url.searchParams.get("view") || ""; // Explicit view type from search
 
   if (!["all", "category", "merchant", "search"].includes(level)) {
     return NextResponse.json({ error: "Invalid level" }, { status: 400 });
@@ -711,12 +712,12 @@ export async function GET(req: NextRequest) {
       const parentCategory = categoryParam;
 
       // Special handling for Debt account drill-down (regular + extras)
-      // Only use account detail if merchantParam actually matches an account
-      const account = parentCategory === "Debt" 
+      // Use account detail only when: (1) category=Debt, (2) account exists, (3) NOT from merchant search
+      const account = parentCategory === "Debt" && viewParam !== "merchant"
         ? profile.accountSnapshots.find(a => a.slug === merchantParam)
         : null;
       
-      if (parentCategory === "Debt" && account) {
+      if (account) {
         // Debt ACCOUNT detail (e.g., TD Visa account payments by month)
         const accountSlug = merchantParam;
 

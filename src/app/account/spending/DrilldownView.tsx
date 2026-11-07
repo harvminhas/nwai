@@ -476,7 +476,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                           onClick={() => {
                             dismissSearch();
                             if (item.category) {
-                              router.push(`/account/spending?category=${encodeURIComponent(item.category)}&merchant=${encodeURIComponent(item.slug)}`);
+                              router.push(`/account/spending?category=${encodeURIComponent(item.category)}&merchant=${encodeURIComponent(item.slug)}&view=merchant`);
                             }
                           }}
                           className="w-full flex items-center justify-between p-2 rounded hover:bg-neutral-50 transition text-left"
