@@ -46,14 +46,24 @@ export function buildTrendChartData(
   const today = getTodayInNewYork();
   const actualPoints: TrendDataPoint[] = [];
 
+  // Helper to format YYYY-MM-DD as UTC date label (avoids timezone shift)
+  const formatDateLabel = (dateStr: string): string => {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const utcDate = new Date(Date.UTC(year, month - 1, day));
+    return utcDate.toLocaleDateString("en-US", { 
+      month: "short", 
+      year: "numeric",
+      timeZone: "UTC"
+    });
+  };
+
   // Build actual valuation points
   if (asset.valuations && asset.valuations.length > 0) {
     asset.valuations.forEach(val => {
-      const date = new Date(val.effectiveDate);
       actualPoints.push({
         date: val.effectiveDate,
         value: val.valueCents / 100,
-        label: date.toLocaleDateString("en-US", { month: "short", year: "numeric" }),
+        label: formatDateLabel(val.effectiveDate),
       });
     });
   } else {
@@ -61,10 +71,9 @@ export function buildTrendChartData(
     // Use startDate if known, otherwise show as "as of today"
     const baselineDate = asset.startDate || today;
     const isUnknownDate = !asset.startDate;
-    const date = new Date(baselineDate);
     const label = isUnknownDate
-      ? `As of ${date.toLocaleDateString("en-US", { month: "short", year: "numeric" })}`
-      : date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+      ? `As of ${formatDateLabel(baselineDate)}`
+      : formatDateLabel(baselineDate);
     
     actualPoints.push({
       date: baselineDate,
@@ -93,31 +102,33 @@ export function buildTrendChartData(
       : actualPoints[0]; // Fallback to first point if all are future
     
     const anchorValue = anchorPoint.value;
-    const anchorDate = new Date(anchorPoint.date);
+    const [anchorYear, anchorMonth, anchorDay] = anchorPoint.date.split('-').map(Number);
     
-    // Calculate projection end: today + selected years
-    const todayDate = new Date(today);
-    const projectionEndDate = new Date(todayDate);
-    projectionEndDate.setFullYear(todayDate.getFullYear() + projectionYears);
+    // Calculate projection end: today + selected years (parsed as UTC to avoid TZ shift)
+    const [todayYear, todayMonth, todayDay] = today.split('-').map(Number);
+    const todayDateUTC = new Date(Date.UTC(todayYear, todayMonth - 1, todayDay));
+    const projectionEndDateUTC = new Date(Date.UTC(todayYear + projectionYears, todayMonth - 1, todayDay));
     
-    // Calculate years from anchor to projection end
-    const anchorYear = anchorDate.getFullYear();
-    const endYear = projectionEndDate.getFullYear();
-    const totalYearsFromAnchor = endYear - anchorYear;
-    
-    // Generate future projections from anchor through today + selected years
+    // Generate future projections at anchor anniversaries until we reach/exceed projection end
     // Use sparse yearly intervals for readability
-    for (let i = 1; i <= totalYearsFromAnchor; i++) {
+    for (let i = 1; ; i++) {
+      const futureYear = anchorYear + i;
+      // Clamp day to valid range for the month (handles leap year Feb 29 -> Feb 28)
+      const daysInMonth = new Date(Date.UTC(futureYear, anchorMonth, 0)).getUTCDate();
+      const futureDay = Math.min(anchorDay, daysInMonth);
+      const futureDateUTC = new Date(Date.UTC(futureYear, anchorMonth - 1, futureDay));
+      
+      // Stop if this point is beyond the projection end
+      if (futureDateUTC > projectionEndDateUTC) break;
+      
       const yearsSinceAnchor = i;
       const projectedValue = anchorValue * Math.pow(1 + rate, yearsSinceAnchor);
-      const futureDate = new Date(anchorDate);
-      futureDate.setFullYear(anchorDate.getFullYear() + i);
-      const futureDateStr = futureDate.toISOString().slice(0, 10);
+      const futureDateStr = futureDateUTC.toISOString().slice(0, 10);
       
       projectedPoints.push({
         date: futureDateStr,
         value: projectedValue,
-        label: futureDate.getFullYear().toString(),
+        label: futureYear.toString(),
         isProjected: true,
       });
     }

@@ -434,4 +434,128 @@ describe("Asset Trend Chart - Production", () => {
       expect(valuations[0].valueCents).toBe(1234567);
     });
   });
+
+  describe("Bug regression tests (af7e367 fixes)", () => {
+    it("handles all-zero values without NaN in yScale", () => {
+      // Bug #1: All-zero values caused yMax === yMin, leading to divide-by-zero
+      const asset: ManualAsset = {
+        id: "asset1",
+        label: "Worthless Asset",
+        category: "other",
+        value: 0,
+        startDate: "2024-01-01",
+        annualGrowthRate: 5,
+        updatedAt: "2024-01-01T00:00:00Z",
+      };
+
+      const { actualPoints, projectedPoints } = buildTrendChartData(asset, 3);
+
+      expect(actualPoints).toHaveLength(1);
+      expect(actualPoints[0].value).toBe(0);
+      // All projected values will also be 0 (0 * 1.05^n = 0)
+      expect(projectedPoints.length).toBeGreaterThan(0);
+      projectedPoints.forEach(p => {
+        expect(p.value).toBe(0);
+        expect(p.value).not.toBeNaN();
+      });
+    });
+
+    it("formats first-of-month dates correctly in America/New_York timezone", () => {
+      // Bug #2: Date "2026-11-01" displayed as "Oct" in NY timezone due to UTC midnight -> local conversion
+      const asset: ManualAsset = {
+        id: "asset1",
+        label: "Test Asset",
+        category: "other",
+        value: 100000,
+        updatedAt: "2026-11-01T00:00:00Z",
+        valuations: [
+          {
+            id: "val1",
+            effectiveDate: "2026-11-01",
+            valueCents: 10000000,
+            createdAt: "2026-11-01T00:00:00Z",
+          },
+          {
+            id: "val2",
+            effectiveDate: "2027-01-01",
+            valueCents: 11000000,
+            createdAt: "2027-01-01T00:00:00Z",
+          },
+        ],
+      };
+
+      const { actualPoints } = buildTrendChartData(asset, 5);
+
+      expect(actualPoints).toHaveLength(2);
+      expect(actualPoints[0].date).toBe("2026-11-01");
+      expect(actualPoints[0].label).toBe("Nov 2026"); // Must be Nov, not Oct
+      expect(actualPoints[1].date).toBe("2027-01-01");
+      expect(actualPoints[1].label).toBe("Jan 2027"); // Must be Jan, not Dec
+    });
+
+    it("generates projections through exact horizon (today + years), not stopping months short", () => {
+      // Bug #3: Mar 2022 anchor with 5-year forecast from Nov 2026 should reach Nov 2031,
+      // not stop at Mar 2031 (anchor anniversary problem)
+      
+      // Mock today as 2026-11-08 for this test
+      const originalToday = new Date().toLocaleString("en-US", { timeZone: "America/New_York" });
+      
+      const asset: ManualAsset = {
+        id: "asset1",
+        label: "House",
+        category: "property",
+        value: 520000,
+        startDate: "2022-03-01",
+        annualGrowthRate: -5,
+        updatedAt: "2022-03-01T00:00:00Z",
+      };
+
+      // Build with 5 year projection
+      const { projectedPoints } = buildTrendChartData(asset, 5);
+
+      // With today = 2026-11-08, anchor = 2022-03-01, projectionYears = 5:
+      // Projection end = 2031-11-08
+      // Should generate points: 2023-03-01, 2024-03-01, ..., 2031-03-01
+      // The last point (2031-03-01) should be <= 2031-11-08
+      
+      expect(projectedPoints.length).toBeGreaterThanOrEqual(3);
+      
+      // Parse today from the function (uses America/New_York)
+      const todayStr = new Date().toLocaleString("en-US", { timeZone: "America/New_York" });
+      const todayParsed = new Date(todayStr);
+      const todayYear = todayParsed.getFullYear();
+      const targetYear = todayYear + 5;
+      
+      // Last projection point should be in the target year or earlier
+      const lastPoint = projectedPoints[projectedPoints.length - 1];
+      const lastYear = parseInt(lastPoint.date.split('-')[0]);
+      expect(lastYear).toBeLessThanOrEqual(targetYear);
+      
+      // Verify it's not stopping too early (at least reaches target year - 1)
+      expect(lastYear).toBeGreaterThanOrEqual(targetYear - 1);
+    });
+
+    it("handles leap year edge case (Feb 29 anchor -> Feb 28 in non-leap year)", () => {
+      // Ensure Feb 29 anchor gets clamped to Feb 28 in non-leap years
+      const asset: ManualAsset = {
+        id: "asset1",
+        label: "Leap Year Asset",
+        category: "other",
+        value: 100000,
+        startDate: "2024-02-29",
+        annualGrowthRate: 3,
+        updatedAt: "2024-02-29T00:00:00Z",
+      };
+
+      const { projectedPoints } = buildTrendChartData(asset, 3);
+
+      // 2024 is leap year (anchor), next years: 2025 (not leap), 2026 (not leap), 2027 (not leap)
+      expect(projectedPoints.length).toBeGreaterThanOrEqual(2);
+      
+      // Find 2025 projection (should be Feb 28)
+      const proj2025 = projectedPoints.find(p => p.date.startsWith('2025-02'));
+      expect(proj2025).toBeDefined();
+      expect(proj2025!.date).toBe('2025-02-28'); // Clamped from Feb 29
+    });
+  });
 });

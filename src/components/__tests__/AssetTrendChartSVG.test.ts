@@ -251,4 +251,43 @@ describe("AssetTrendChartSVG render tests", () => {
     expect(todayX).toBeGreaterThan(projX0);
     expect(todayX).toBeLessThan(projX1);
   });
+
+  describe("Bug regression: af7e367 render fixes", () => {
+    it("renders all-zero values without NaN coordinates (divide-by-zero guard)", () => {
+      // Bug #1: All-zero values caused yMax === yMin, leading to NaN in cy/y attributes
+      const actualPoints: TrendDataPoint[] = [
+        { date: "2024-01-01", value: 0, label: "Jan '24", isProjected: false },
+      ];
+      const projectedPoints: TrendDataPoint[] = [
+        { date: "2025-01-01", value: 0, label: "2025", isProjected: true },
+        { date: "2026-01-01", value: 0, label: "2026", isProjected: true },
+      ];
+      
+      const markup = renderToStaticMarkup(
+        createElement(AssetTrendChartSVG, {
+          actualPoints,
+          projectedPoints,
+          todayDate: "2026-11-08",
+          currency: "USD",
+          formatCurrency,
+          formatCurrencyWithCents,
+        })
+      );
+      
+      // Verify no NaN in rendered output
+      expect(markup).not.toContain("NaN");
+      
+      // Extract coordinates and verify they're valid numbers
+      const actualCy = extractX(markup, "actual-point-0");
+      const projCy0 = extractX(markup, "projected-point-0");
+      
+      expect(actualCy).not.toBeNull();
+      expect(projCy0).not.toBeNull();
+      expect(actualCy).not.toBeNaN();
+      expect(projCy0).not.toBeNaN();
+      
+      // All zero values should be at the same y-position
+      // (Note: extractX gets cx, but the test validates no NaN in any attribute)
+    });
+  });
 });

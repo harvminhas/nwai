@@ -28,8 +28,21 @@ export function AssetTrendChartSVG({
   const minValue = Math.min(...allValues);
   const maxValue = Math.max(...allValues);
   const valueRange = maxValue - minValue;
-  const yMin = valueRange > 0 ? minValue - valueRange * 0.1 : minValue * 0.9;
-  const yMax = valueRange > 0 ? maxValue + valueRange * 0.1 : maxValue * 1.1;
+  
+  // Guard against all-zero values: ensure yMax > yMin to avoid divide-by-zero in yScale
+  let yMin: number, yMax: number;
+  if (valueRange > 0) {
+    yMin = minValue - valueRange * 0.1;
+    yMax = maxValue + valueRange * 0.1;
+  } else if (minValue === 0) {
+    // All values are zero: use fixed range [0, 1] for display
+    yMin = 0;
+    yMax = 1;
+  } else {
+    // All values are same non-zero: add 10% padding
+    yMin = minValue * 0.9;
+    yMax = maxValue * 1.1;
+  }
 
   const width = 800;
   const height = 300;
