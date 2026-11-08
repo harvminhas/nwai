@@ -5,7 +5,7 @@
  */
 
 import React from "react";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render } from "@testing-library/react";
 import { AssetTrendChartSVG } from "../AssetTrendChartSVG";
 import type { TrendDataPoint } from "@/lib/assetTrendChart";
@@ -27,6 +27,68 @@ const formatCurrencyWithCents = (value: number, currency: string): string => {
 };
 
 describe("AssetTrendChartSVG time-based axis and connection", () => {
+  it("renders with default ResponsiveContainer production wrapper", () => {
+    // Mock ResizeObserver to notify ResponsiveContainer of dimensions
+    const mockObserve = vi.fn();
+    const mockDisconnect = vi.fn();
+    let observerCallback: ResizeObserverCallback | null = null;
+    
+    global.ResizeObserver = class MockResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        observerCallback = callback;
+      }
+      observe(target: Element) {
+        mockObserve(target);
+        // Simulate observer notification with measured dimensions
+        if (observerCallback) {
+          observerCallback([{
+            target,
+            contentRect: { width: 800, height: 300, top: 0, left: 0, bottom: 300, right: 800, x: 0, y: 0 },
+            borderBoxSize: [],
+            contentBoxSize: [],
+            devicePixelContentBoxSize: [],
+          }] as ResizeObserverEntry[], this as unknown as ResizeObserver);
+        }
+      }
+      unobserve() {}
+      disconnect() { mockDisconnect(); }
+    };
+    
+    const actualPoints: TrendDataPoint[] = [
+      { date: "2024-01-01", value: 10000, label: "Jan '24", isProjected: false },
+    ];
+    const projectedPoints: TrendDataPoint[] = [
+      { date: "2025-01-01", value: 11000, label: "Jan '25", isProjected: true },
+    ];
+    
+    // Test production path: no width/height props, uses ResponsiveContainer
+    const { container } = render(
+      <AssetTrendChartSVG
+        actualPoints={actualPoints}
+        projectedPoints={projectedPoints}
+        todayDate="2024-06-01"
+        currency="USD"
+        formatCurrency={formatCurrency}
+        formatCurrencyWithCents={formatCurrencyWithCents}
+      />
+    );
+    
+    // Verify ResponsiveContainer wrapper renders
+    const wrapper = container.querySelector('[data-testid="trend-chart-svg"]');
+    expect(wrapper).toBeTruthy();
+    
+    // Verify observer was called (ResponsiveContainer measured container)
+    expect(mockObserve).toHaveBeenCalled();
+    
+    // Verify SVG renders inside ResponsiveContainer with measured dimensions
+    const svg = container.querySelector('svg.recharts-surface');
+    expect(svg).toBeTruthy();
+    
+    // Verify chart content exists (not blank)
+    const paths = container.querySelectorAll('path');
+    expect(paths.length).toBeGreaterThan(0);
+  });
+
   it("renders actual SVG paths with fixed dimensions", () => {
     const actualPoints: TrendDataPoint[] = [
       { date: "2022-01-01", value: 10000, label: "Jan '22", isProjected: false },

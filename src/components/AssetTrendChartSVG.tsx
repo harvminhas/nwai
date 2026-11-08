@@ -136,10 +136,13 @@ function AssetTrendChartInner({
             type="number"
             domain={['dataMin', 'dataMax']}
             tickFormatter={(timestamp: number) => {
-              // Format every numeric tick as UTC date (not just exact matches)
+              // Format every numeric tick as UTC date
               const date = new Date(timestamp);
-              const year = date.getFullYear();
-              const month = date.toLocaleDateString('en-US', { month: 'short' });
+              const year = date.getUTCFullYear();
+              const month = date.toLocaleDateString('en-US', { 
+                month: 'short', 
+                timeZone: 'UTC' 
+              });
               
               // Show year for first tick or when year changes
               const isMultiYear = chartData.length > 0 && 
@@ -237,7 +240,7 @@ function AssetTrendChartInner({
 export function AssetTrendChartSVG(props: AssetTrendChartSVGProps) {
   const { width, height } = props;
   
-  // If dimensions provided, render directly (for tests)
+  // If dimensions provided, render directly (for tests with fixed size)
   if (width && height) {
     return (
       <div data-testid="trend-chart-svg" style={{ width, height }}>
@@ -246,13 +249,12 @@ export function AssetTrendChartSVG(props: AssetTrendChartSVGProps) {
     );
   }
   
-  // Production: use ResponsiveContainer
+  // Production: ResponsiveContainer with direct child (not render prop)
+  // Recharts 3.8 uses child element with context for dimensions
   return (
     <div data-testid="trend-chart-svg" style={{ height: '300px' }}>
       <ResponsiveContainer width="100%" height="100%">
-        {({ width: w, height: h }) => (
-          <AssetTrendChartInner {...props} width={w || 800} height={h || 300} />
-        )}
+        <AssetTrendChartInner {...props} width={800} height={300} />
       </ResponsiveContainer>
     </div>
   );
