@@ -59,6 +59,7 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
       monthlyHistory,
       accountBalanceHistory,
       manualAssets,
+      [],
       toHomeCAD,
       new Map()
     );
@@ -104,6 +105,7 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
       monthlyHistory,
       accountBalanceHistory,
       manualAssets,
+      [],
       toHomeCAD,
       new Map()
     );
@@ -134,6 +136,7 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
       monthlyHistory,
       accountBalanceHistory,
       manualAssets,
+      [],
       toHomeCAD,
       new Map()
     );
@@ -172,6 +175,7 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
       monthlyHistory,
       accountBalanceHistory,
       manualAssets,
+      [],
       toHomeCAD, // 1 USD = 1.35 CAD
       new Map()
     );
@@ -213,6 +217,7 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
     calculateNetWorthForMonths(
       monthlyHistory,
       accountBalanceHistory,
+      [],
       [],
       toHomeCAD,
       accountStatusMap
@@ -260,6 +265,7 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
       monthlyHistory,
       accountBalanceHistory,
       [],
+      [],
       toHomeCAD,
       accountStatusMap
     );
@@ -289,6 +295,7 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
       monthlyHistory,
       [],
       manualAssets,
+      [],
       toHomeCAD,
       new Map()
     );
@@ -317,6 +324,7 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
     calculateNetWorthForMonths(
       monthlyHistory,
       accountBalanceHistory,
+      [],
       [],
       toHomeCAD,
       new Map()
@@ -358,6 +366,7 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
       monthlyHistory,
       accountBalanceHistory,
       manualAssets,
+      [],
       toHomeCAD,
       new Map()
     );
@@ -387,6 +396,7 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
       monthlyHistory,
       [], // No accounts
       [], // No manual assets
+      [], // No manual liabilities
       toHomeCAD,
       new Map()
     );
@@ -395,5 +405,128 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
     expect(monthlyHistory[0].totalDebts).toBe(0);
     expect(monthlyHistory[0].netWorth).toBe(0);
     expect(monthlyHistory[0].byAccount).toEqual([]);
+  });
+
+  it("includes manual liabilities from known-from month and does not invent earlier balances", () => {
+    const monthlyHistory: MonthNetWorthHistory[] = [
+      { yearMonth: "2026-01", netWorth: 0, totalAssets: 0, totalDebts: 0, byAccount: [] },
+      { yearMonth: "2026-02", netWorth: 0, totalAssets: 0, totalDebts: 0, byAccount: [] },
+      { yearMonth: "2026-03", netWorth: 0, totalAssets: 0, totalDebts: 0, byAccount: [] },
+    ];
+
+    calculateNetWorthForMonths(
+      monthlyHistory,
+      [],
+      [],
+      [{ id: "student-1", label: "Federal Student Loan", category: "student_loan", balance: 15000, updatedAt: "2026-02-15T00:00:00Z" }],
+      toHomeCAD,
+      new Map()
+    );
+
+    expect(monthlyHistory[0].totalDebts).toBe(0);
+    expect(monthlyHistory[0].byAccount?.find(a => a.slug === "manual-student-1")).toBeUndefined();
+
+    expect(monthlyHistory[1].totalDebts).toBe(15000);
+    expect(monthlyHistory[1].byAccount?.find(a => a.slug === "manual-student-1")?.value).toBe(-15000);
+
+    expect(monthlyHistory[2].totalDebts).toBe(15000);
+    expect(monthlyHistory[2].netWorth).toBe(-15000);
+  });
+
+  it("linked manual counts in Feb when imported first contributes in March, then skips in March", () => {
+    const monthlyHistory: MonthNetWorthHistory[] = [
+      { yearMonth: "2026-02", netWorth: 0, totalAssets: 0, totalDebts: 0, byAccount: [] },
+      { yearMonth: "2026-03", netWorth: 0, totalAssets: 0, totalDebts: 0, byAccount: [] },
+      { yearMonth: "2026-04", netWorth: 0, totalAssets: 0, totalDebts: 0, byAccount: [] },
+    ];
+
+    const accountBalanceHistory: AccountBalanceHistory[] = [
+      {
+        slug: "osap-loan",
+        label: "OSAP Student Loan",
+        accountType: "loan",
+        currency: "CAD",
+        entries: [{ yearMonth: "2026-03", balance: -8000 }],
+      },
+    ];
+
+    // Paid off end of March → April is the first excluded month
+    // (isAccountActive: month-start compare, mid-month March stays active)
+    const accountStatusMap = new Map<string, AccountStatusRecord>([
+      [
+        "osap-loan",
+        {
+          accountSlug: "osap-loan",
+          status: "paid_off",
+          statusDate: "2026-03-31",
+          statusSource: "auto",
+          updatedAt: "2026-03-31T00:00:00Z",
+        },
+      ],
+    ]);
+
+    calculateNetWorthForMonths(
+      monthlyHistory,
+      accountBalanceHistory,
+      [],
+      [{
+        id: "osap-manual",
+        label: "OSAP Student Loan",
+        category: "student_loan",
+        balance: 7500,
+        startDate: "2026-02-01",
+        linkedAccountSlug: "osap-loan",
+        updatedAt: "2026-02-01T00:00:00Z",
+      }],
+      toHomeCAD,
+      accountStatusMap
+    );
+
+    // Feb: imported has no statement yet — keep the manual once
+    expect(monthlyHistory[0].totalDebts).toBe(7500);
+    expect(monthlyHistory[0].byAccount?.map(a => a.slug)).toEqual(["manual-osap-manual"]);
+
+    // March: imported contributes — skip the linked manual
+    expect(monthlyHistory[1].totalDebts).toBe(8000);
+    expect(monthlyHistory[1].byAccount?.map(a => a.slug)).toEqual(["osap-loan"]);
+
+    // April: imported closed/paid off — do not resurrect the manual 7500
+    expect(monthlyHistory[2].totalDebts).toBe(0);
+    expect(monthlyHistory[2].byAccount).toEqual([]);
+  });
+
+  it("distinct same-label imported and manual loans both count when not linked", () => {
+    const monthlyHistory: MonthNetWorthHistory[] = [
+      { yearMonth: "2026-03", netWorth: 0, totalAssets: 0, totalDebts: 0, byAccount: [] },
+    ];
+
+    const accountBalanceHistory: AccountBalanceHistory[] = [
+      {
+        slug: "osap-imported",
+        label: "OSAP Student Loan",
+        accountType: "loan",
+        currency: "CAD",
+        entries: [{ yearMonth: "2026-03", balance: -8000 }],
+      },
+    ];
+
+    calculateNetWorthForMonths(
+      monthlyHistory,
+      accountBalanceHistory,
+      [],
+      [{
+        id: "osap-other",
+        label: "OSAP Student Loan",
+        category: "student_loan",
+        balance: 5000,
+        updatedAt: "2026-01-01T00:00:00Z",
+      }],
+      toHomeCAD,
+      new Map()
+    );
+
+    expect(monthlyHistory[0].totalDebts).toBe(13000);
+    const slugs = monthlyHistory[0].byAccount?.map(a => a.slug).sort();
+    expect(slugs).toEqual(["manual-osap-other", "osap-imported"]);
   });
 });

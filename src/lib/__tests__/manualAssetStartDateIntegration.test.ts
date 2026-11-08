@@ -110,7 +110,7 @@ describe("Manual Asset Start Date - Production Integration", () => {
     ];
 
     const toHome = (v: number) => v;
-    calculateNetWorthForMonths(history, [], profile.manualAssets, toHome, new Map());
+    calculateNetWorthForMonths(history, [], profile.manualAssets, [], toHome, new Map());
 
     // Assert month-based inclusion
     expect(history[0].byAccount?.find(a => a.slug === "manual-car-1")).toBeUndefined(); // Oct: before start
@@ -141,7 +141,7 @@ describe("Manual Asset Start Date - Production Integration", () => {
     ];
 
     const toHome = (v: number) => v;
-    calculateNetWorthForMonths(history, [], profile.manualAssets, toHome, new Map());
+    calculateNetWorthForMonths(history, [], profile.manualAssets, [], toHome, new Map());
 
     // Legacy asset in all months
     expect(history[0].byAccount?.find(a => a.slug === "manual-old-car")).toBeDefined();

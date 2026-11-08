@@ -45,6 +45,13 @@ export interface AssetsSummary {
       type: string;
       total: number;
     }>;
+    /** Authoritative month composition: accounts + manual assets with carry-forward, FX, historical values */
+    accountDetails?: Array<{
+      slug: string;
+      label: string;
+      type: string;
+      value: number; // In home currency, assets are positive
+    }>;
   }>;
   staleAccounts: AssetAccount[];
   /** Per-account balance history from profile.accountBalanceHistory */
@@ -136,7 +143,11 @@ export function buildAssetsSummary(
   manualAssets: ManualAsset[],
   fxRates: Record<string, number>,
   homeCurrency: string,
-  profileMonthlyHistory?: Array<{ yearMonth: string; totalAssets: number }>, // From profile
+  profileMonthlyHistory?: Array<{ 
+    yearMonth: string; 
+    totalAssets: number;
+    byAccount?: Array<{ slug: string; label: string; type: string; value: number }>;
+  }>, // From profile
   expenseTxns?: Array<{ date: string; txMonth: string; amount: number; merchant: string; accountSlug: string }>,
   incomeTxns?: Array<{ date: string; txMonth: string; amount: number; source: string; accountSlug: string }>
 ): AssetsSummary {
@@ -294,11 +305,24 @@ export function buildAssetsSummary(
         groupTotals.set("property", (groupTotals.get("property") || 0) + manualTotal);
       }
       
+      // Extract asset account details from profile's authoritative byAccount (value > 0 = assets)
+      const accountDetails = profileMonth.byAccount
+        ? profileMonth.byAccount
+            .filter(acc => acc.value > 0)
+            .map(acc => ({
+              slug: acc.slug,
+              label: acc.label,
+              type: acc.type,
+              value: acc.value,
+            }))
+        : undefined;
+
       monthlyHistory.push({
         month,
         monthLabel: formatMonthLabel(month),
         total: profileMonth.totalAssets, // Use profile's value which includes manual assets
         groups: Array.from(groupTotals.entries()).map(([type, total]) => ({ type, total })),
+        accountDetails,
       });
     }
   }

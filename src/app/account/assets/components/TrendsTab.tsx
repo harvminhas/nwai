@@ -1,14 +1,47 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { AssetsSummary } from "@/lib/assetsSummary";
-import { formatCurrency, fmtCompact } from "@/lib/currencyUtils";
+import { formatCurrency } from "@/lib/currencyUtils";
+import { calculateBalanceChartDomain } from "@/lib/chartDomain";
+import {
+  ResponsiveContainer,
+  ComposedChart,
+  Area,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+} from "recharts";
+import {
+  CANONICAL_CHART_MARGIN,
+  CANONICAL_GRID_CONFIG,
+  CANONICAL_XAXIS_CONFIG,
+  CANONICAL_YAXIS_CONFIG,
+  CANONICAL_LINE_CONFIG,
+  CANONICAL_CHART_HEIGHT,
+} from "@/lib/canonicalChartConfig";
+import { monthFromChartInteraction } from "@/lib/chartMonthClick";
 
 interface TrendsTabProps {
   summary: AssetsSummary;
 }
 
 export function TrendsTab({ summary }: TrendsTabProps) {
-  const { monthlyHistory, currency } = summary;
-  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+  const { monthlyHistory, currency, accountBalanceHistory } = summary;
+  
+  // Default selected month: LATEST AVAILABLE DATA (not wall clock empty future)
+  const latestMonth = monthlyHistory.length > 0
+    ? [...monthlyHistory].sort((a, b) => b.month.localeCompare(a.month))[0].month
+    : null;
+  
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(latestMonth);
+
+  // Update selected month when data arrives (async) if not explicitly set by user
+  useEffect(() => {
+    if (!selectedMonth && latestMonth) {
+      setSelectedMonth(latestMonth);
+    }
+  }, [latestMonth, selectedMonth]);
 
   if (monthlyHistory.length === 0) {
     return (
@@ -21,134 +54,184 @@ export function TrendsTab({ summary }: TrendsTabProps) {
     );
   }
 
-  // Show oldest on left to newest on right
+  // Sort chronologically (oldest to newest)
   const sortedHistory = [...monthlyHistory].sort((a, b) => a.month.localeCompare(b.month));
   
-  // Calculate min and max for scaling (with 5% padding)
-  const values = sortedHistory.map(m => m.total);
-  const minValue = Math.min(...values);
-  const maxValue = Math.max(...values);
-  const range = maxValue - minValue;
-  const paddedMin = minValue - (range * 0.05);
-  const paddedMax = maxValue + (range * 0.05);
-  const effectiveRange = paddedMax - paddedMin;
+  // Prepare chart data
+  const chartData = sortedHistory.map(m => ({
+    month: m.month,
+    label: m.monthLabel.split(' ')[0], // Short label (e.g., "Jan")
+    total: m.total,
+    isSelected: m.month === selectedMonth,
+  }));
   
-  // Calculate month-over-month changes
-  const changes = sortedHistory.map((month, idx) => {
-    if (idx === 0) return null;
-    return month.total - sortedHistory[idx - 1].total;
-  });
+  // Calculate domain using shared canonical logic
+  const values = chartData.map(d => d.total);
+  const domain = calculateBalanceChartDomain(values);
   
   const selectedData = selectedMonth 
     ? monthlyHistory.find(m => m.month === selectedMonth)
     : null;
+  
+  // Use authoritative account breakdown from profile's byAccount calculation
+  // This includes carry-forward, FX conversion, manual assets, and historical values
+  const selectedMonthAccounts = selectedData?.accountDetails
+    ? selectedData.accountDetails
+        .filter(acc => acc.value > 0) // Assets only
+        .map(acc => ({
+          label: acc.label,
+          balance: acc.value, // Already in home currency, FX-converted
+          slug: acc.slug,
+        }))
+    : [];
+  
+  function handleChartClick(
+    state: Parameters<typeof monthFromChartInteraction>[0],
+    event?: Parameters<typeof monthFromChartInteraction>[1]
+  ) {
+    const month = monthFromChartInteraction(state, event, chartData);
+    if (month) setSelectedMonth(month);
+  }
 
   return (
     <div className="space-y-6">
-      {/* Timeline Chart - Vertical Columns */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
+      {/* Canonical Line Chart */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6" data-testid="assets-trends-chart">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">
-          Total Assets by Month
+          Total Assets Over Time
         </h2>
         
-        {/* Compact timeline with vertical bars */}
-        <div className="h-48 flex items-end gap-1 mb-2">
-          {sortedHistory.map((month, idx) => {
-            const heightPct = effectiveRange > 0 
-              ? ((month.total - paddedMin) / effectiveRange) * 100 
-              : 50;
-            const change = changes[idx];
-            const isSelected = selectedMonth === month.month;
-            
-            return (
-              <button
-                key={month.month}
-                onClick={() => setSelectedMonth(
-                  selectedMonth === month.month ? null : month.month
-                )}
-                className="flex-1 h-full flex flex-col items-center justify-end group relative"
-              >
-                {/* Change label (+/-) */}
-                {change !== null && (
-                  <div className={`text-[10px] font-medium mb-1 ${
-                    change > 0 ? 'text-green-600' : change < 0 ? 'text-red-600' : 'text-gray-400'
-                  }`}>
-                    {change > 0 ? '+' : ''}{fmtCompact(change, currency)}
-                  </div>
-                )}
-                
-                {/* Vertical bar */}
-                <div className="w-full relative" style={{ height: `${Math.max(heightPct, 5)}%` }}>
-                  <div className={`absolute bottom-0 left-0 right-0 rounded-t transition-all ${
-                    isSelected
-                      ? "bg-purple-600"
-                      : "bg-purple-500 group-hover:bg-purple-600"
-                  }`} style={{ height: '100%' }} />
-                </div>
-                
-                {/* Month label */}
-                <span className="text-[10px] text-gray-600 mt-1 whitespace-nowrap">
-                  {month.monthLabel.split(' ')[0]}
-                </span>
-              </button>
-            );
-          })}
+        <div style={{ height: `${CANONICAL_CHART_HEIGHT}px` }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart
+              data={chartData}
+              margin={CANONICAL_CHART_MARGIN}
+              style={{ cursor: "pointer" }}
+              onClick={handleChartClick}
+            >
+              <defs>
+                <linearGradient id="assetsGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.15}/>
+                  <stop offset="95%" stopColor="#10b981" stopOpacity={0.02}/>
+                </linearGradient>
+              </defs>
+              
+              <CartesianGrid {...CANONICAL_GRID_CONFIG} />
+              
+              <XAxis
+                dataKey="label"
+                {...CANONICAL_XAXIS_CONFIG}
+              />
+              
+              <YAxis
+                domain={[domain.min, domain.max]}
+                tickFormatter={(v: number) => formatCurrency(v, currency)}
+                {...CANONICAL_YAXIS_CONFIG}
+              />
+              
+              <Tooltip
+                content={({ active, payload }) => {
+                  if (!active || !payload?.[0]) return null;
+                  const data = payload[0].payload;
+                  return (
+                    <div className="bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2">
+                      <p className="text-xs text-gray-600 mb-1">
+                        {sortedHistory.find(h => h.month === data.month)?.monthLabel}
+                      </p>
+                      <p className="text-sm font-semibold text-gray-900">
+                        {formatCurrency(data.total, currency)}
+                      </p>
+                    </div>
+                  );
+                }}
+              />
+              
+              {/* Gradient area */}
+              <Area
+                type="monotone"
+                dataKey="total"
+                fill="url(#assetsGradient)"
+                stroke="none"
+                isAnimationActive={false}
+              />
+              
+              {/* Line; month selection is ComposedChart onClick, not per-dot onClick */}
+              <Line
+                {...CANONICAL_LINE_CONFIG}
+                dataKey="total"
+                stroke="#10b981"
+                dot={(props: any) => {
+                  const isSelected = props.payload?.isSelected;
+                  return (
+                    <circle
+                      cx={props.cx}
+                      cy={props.cy}
+                      r={isSelected ? 6 : 4}
+                      fill={isSelected ? "#059669" : "#10b981"}
+                      stroke="#fff"
+                      strokeWidth={isSelected ? 3 : 2}
+                      data-month={props.payload?.month}
+                      style={{ cursor: "pointer", pointerEvents: "none" }}
+                    />
+                  );
+                }}
+                isAnimationActive={false}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
         </div>
         
-        {/* Value range labels */}
-        <div className="flex justify-between text-xs text-gray-500 border-t pt-2">
-          <span>{fmtCompact(minValue, currency)}</span>
-          <span>{fmtCompact(maxValue, currency)}</span>
-        </div>
+        <p className="mt-2 text-xs text-gray-400">Click a point to see details</p>
       </div>
 
-      {/* Month Detail Drawer */}
+      {/* Month Detail */}
       {selectedData && (
-        <div className="bg-purple-50 border border-purple-200 rounded-lg p-6">
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-gray-900">
-              {selectedData.monthLabel}
-            </h3>
-            <button
-              onClick={() => setSelectedMonth(null)}
-              className="text-purple-600 hover:text-purple-700 text-sm font-medium"
-            >
-              Close
-            </button>
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900">
+                {selectedData.monthLabel}
+              </h3>
+              <p className="text-xs text-gray-500 mt-1">
+                {selectedMonthAccounts.length} account{selectedMonthAccounts.length !== 1 ? 's' : ''}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-gray-500">Total</p>
+              <p className="text-xl font-bold text-gray-900">
+                {formatCurrency(selectedData.total, currency)}
+              </p>
+            </div>
           </div>
 
-          <div className="mb-4">
-            <p className="text-sm text-gray-600">Total Assets</p>
-            <p className="text-2xl font-bold text-gray-900">
-              {formatCurrency(selectedData.total, currency)}
-            </p>
-          </div>
-
-          {/* Groups Breakdown */}
-          <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-600 mb-2">
-              By Type
-            </p>
-            {selectedData.groups.map((group) => {
-              const pct = selectedData.total > 0 
-                ? (group.total / selectedData.total) * 100 
-                : 0;
-              
-              return (
-                <div key={group.type} className="flex items-center justify-between py-2 border-b border-purple-100 last:border-0">
-                  <span className="text-sm text-gray-700 capitalize">
-                    {group.type.replace("_", " ")}
-                  </span>
-                  <div className="text-right">
-                    <p className="text-sm font-semibold text-gray-900">
-                      {formatCurrency(group.total, currency)}
-                    </p>
-                    <p className="text-xs text-gray-500">{pct.toFixed(1)}%</p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          {/* Account List */}
+          {selectedMonthAccounts.length > 0 ? (
+            <div className="space-y-2">
+              {selectedMonthAccounts
+                .sort((a, b) => b.balance - a.balance)
+                .map((account) => {
+                  const pct = selectedData.total > 0 
+                    ? (account.balance / selectedData.total) * 100 
+                    : 0;
+                  
+                  return (
+                    <div key={account.slug} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                      <span className="text-sm text-gray-700">{account.label}</span>
+                      <div className="text-right">
+                        <span className="text-sm font-semibold text-gray-900">
+                          {formatCurrency(account.balance, currency)}
+                        </span>
+                        <span className="text-xs text-gray-500 ml-2">
+                          {pct.toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">No account data for this month.</p>
+          )}
         </div>
       )}
     </div>

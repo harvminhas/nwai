@@ -55,6 +55,7 @@ describe("Net Worth byAccount includes manual assets", () => {
       monthlyHistory as any,
       accountBalanceHistory,
       manualAssets,
+      [], // manualLiabilities
       toHome,
       accountStatusMap
     );
@@ -131,6 +132,7 @@ describe("Net Worth byAccount includes manual assets", () => {
       monthlyHistory as any,
       accountBalanceHistory,
       manualAssets,
+      [], // manualLiabilities
       toHome,
       accountStatusMap
     );

@@ -7,6 +7,15 @@ import { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, Cartesian
 import { formatCurrency, formatCurrencyWithCents, getCurrencySymbol } from "@/lib/currencyUtils";
 import { ReviewList } from "@/components/ReviewList";
 import { MergeMerchantsPanel } from "./MergeMerchantsPanel";
+import { calculateBalanceChartDomain } from "@/lib/chartDomain";
+import {
+  CANONICAL_CHART_MARGIN,
+  CANONICAL_GRID_CONFIG,
+  CANONICAL_XAXIS_CONFIG,
+  CANONICAL_YAXIS_CONFIG,
+  CANONICAL_LINE_CONFIG,
+  getCanonicalLineColor,
+} from "@/lib/canonicalChartConfig";
 
 interface MonthlySeries {
   yearMonth: string;
@@ -315,21 +324,10 @@ export function DrilldownView({ token }: DrilldownViewProps) {
     comparison: displayData.comparisonSeries?.[idx]?.amount || 0,
   }));
 
-  // Magnitude-aware 'nice' domain calculation
-  const niceDomain = (values: number[]): [number, number] => {
-    const max = Math.max(...values, 0);
-    if (max === 0) return [0, 100];
-    const min = Math.min(...values);
-    const pad = Math.max((max - min) * 0.15, max * 0.08);
-    const lo = Math.max(0, min - pad);
-    const hi = max + pad;
-    const rawStep = (hi - lo) / 4;
-    const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
-    const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= rawStep) ?? 10 * mag;
-    return [Math.floor(lo / step) * step, Math.ceil(hi / step) * step];
-  };
-  
-  const yAxisDomain = niceDomain(displayData.monthlySeries.map(m => m.amount));
+  // Use canonical chart domain calculation
+  const values = displayData.monthlySeries.map(m => m.amount);
+  const domain = calculateBalanceChartDomain(values);
+  const yAxisDomain: [number, number] = [domain.min, domain.max];
 
   // Debt groups, narrowed to the selected month when one is picked
   const groupsForDisplay = (displayData.groups || []).map((group) => {
@@ -658,7 +656,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
               data={chartData}
-              margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+              margin={CANONICAL_CHART_MARGIN}
             >
               <defs>
                 <linearGradient id="amountGradient" x1="0" y1="0" x2="0" y2="1">
@@ -666,18 +664,14 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                   <stop offset="95%" stopColor="#10b981" stopOpacity={0.02}/>
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+              <CartesianGrid {...CANONICAL_GRID_CONFIG} />
               <XAxis 
                 dataKey="month" 
-                tick={{ fontSize: 11, fill: "#6b7280" }}
-                axisLine={{ stroke: "#e5e7eb" }}
-                tickLine={false}
+                {...CANONICAL_XAXIS_CONFIG}
               />
               <YAxis 
                 domain={yAxisDomain}
-                tick={{ fontSize: 11, fill: "#6b7280" }}
-                axisLine={false}
-                tickLine={false}
+                {...CANONICAL_YAXIS_CONFIG}
                 tickFormatter={(value: number) => {
                   const sym = getCurrencySymbol(displayData.currency);
                   const abs = Math.abs(value);
@@ -691,9 +685,9 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                   if (active && payload && payload[0]) {
                     const dataPoint = payload[0].payload;
                     return (
-                      <div className="bg-white border border-neutral-200 rounded-lg shadow-lg px-3 py-2">
-                        <p className="text-xs text-neutral-600 mb-1">{dataPoint.month}</p>
-                        <p className="text-sm font-semibold text-neutral-900">
+                      <div className="bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2">
+                        <p className="text-xs text-gray-600 mb-1">{dataPoint.month}</p>
+                        <p className="text-sm font-semibold text-gray-900">
                           {formatCurrencyWithCents(dataPoint.amount, displayData.currency, displayData.currency)}
                         </p>
                       </div>
@@ -709,10 +703,9 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                 stroke="none"
               />
               <Line 
-                type="monotone" 
+                {...CANONICAL_LINE_CONFIG}
                 dataKey="amount" 
-                stroke="#10b981" 
-                strokeWidth={2}
+                stroke={getCanonicalLineColor("spending")}
                 dot={(props: any) => {
                   const isSelected = selectedMonth === props.payload.yearMonth;
                   return (
@@ -730,19 +723,19 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                         r={10}
                         fill="transparent"
                       />
-                      {/* Visible dot */}
+                      {/* Visible dot - canonical 6px selected / 4px ordinary */}
                       <circle
                         cx={props.cx}
                         cy={props.cy}
-                        r={isSelected ? 5 : 3}
+                        r={isSelected ? 6 : 4}
                         fill={isSelected ? "#059669" : "#10b981"}
                         stroke="#fff"
-                        strokeWidth={2}
+                        strokeWidth={isSelected ? 3 : 2}
                       />
                     </g>
                   );
                 }}
-                activeDot={{ r: 5 }}
+                activeDot={{ r: 6, fill: "#059669", stroke: "#fff", strokeWidth: 2 }}
               />
             </ComposedChart>
           </ResponsiveContainer>
@@ -1119,8 +1112,8 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                       {!selectedMonth && item.monthlySeries.length > 0 && !isOther && (
                         <div className="flex-shrink-0" style={{ width: "60px", height: "20px" }}>
                           <ResponsiveContainer width="100%" height="100%">
-                            <ComposedChart data={item.monthlySeries.map(m => ({ amount: m.amount }))}>
-                              <Line type="monotone" dataKey="amount" stroke="#10b981" strokeWidth={1} dot={false} />
+                            <ComposedChart data={item.monthlySeries.map(m => ({ amount: m.amount }))} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
+                              <Line type="monotone" dataKey="amount" stroke={getCanonicalLineColor("spending")} strokeWidth={1} dot={false} />
                             </ComposedChart>
                           </ResponsiveContainer>
                         </div>

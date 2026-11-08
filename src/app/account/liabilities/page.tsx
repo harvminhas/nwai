@@ -10,13 +10,14 @@ import { OverviewTab } from "./components/OverviewTab";
 import { TrendsTab } from "./components/TrendsTab";
 import { CategoriesTab } from "./components/CategoriesTab";
 import AccountSwitcher from "@/components/AccountSwitcher";
+import {
+  ACCOUNT_SECTION_TABS,
+  resolveAccountSectionTab,
+  type AccountSectionTabId,
+} from "@/lib/accountSectionTabs";
 
-const TABS = [
-  { id: "accounts", label: "Accounts" },
-  { id: "overview", label: "Overview" },
-  { id: "trends", label: "Trends" },
-] as const;
-type TabId = typeof TABS[number]["id"];
+const TABS = ACCOUNT_SECTION_TABS;
+type TabId = AccountSectionTabId;
 
 interface AutoMarkedAccount {
   accountSlug: string;
@@ -28,7 +29,7 @@ interface AutoMarkedAccount {
 function LiabilitiesPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [activeTab, setActiveTab] = useState<TabId>("accounts");
+  const [activeTab, setActiveTab] = useState<TabId>(() => resolveAccountSectionTab(null));
   const [summary, setSummary] = useState<DebtsSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -36,6 +37,8 @@ function LiabilitiesPageContent() {
 
   useEffect(() => {
     const tabParam = searchParams.get("tab");
+    // Only apply when the query names a real tab. Bare `/account/liabilities` (Debts nav) stays Overview.
+    // Do not reset on missing param: handleTabChange uses pushState, not Next searchParams.
     if (tabParam && TABS.some(t => t.id === tabParam)) {
       setActiveTab(tabParam as TabId);
     }

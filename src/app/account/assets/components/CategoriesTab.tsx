@@ -5,20 +5,17 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { AssetsSummary, AssetAccount } from "@/lib/assetsSummary";
 import type { ManualAsset, AssetCategory } from "@/lib/types";
-import { formatCurrency } from "@/lib/currencyUtils";
 import { formatAccountLast4 } from "@/lib/rangeUtils";
 import { getFirebaseClient } from "@/lib/firebase";
 import { formatLastTransactionDate } from "@/lib/formatLastTransactionDate";
-import { CategoryListRow } from "@/app/account/spending/CategoryListRow";
 import { triggerProfileRefetch } from "@/lib/profileRefetch";
-
-const GROUP_COLOR: Record<string, string> = {
-  cash: "bg-blue-500",
-  investments: "bg-purple-500",
-  registered: "bg-teal-500",
-  property: "bg-amber-500",
-  other: "bg-gray-400",
-};
+import { isCategoryGroupOpen, toggleCategoryGroup } from "@/lib/categoryGroupExpand";
+import { accountDisplayLabel, joinAccountMeta } from "@/lib/accountListLabel";
+import {
+  AccountCategoryList,
+  AccountCategorySection,
+  AccountCategoryItem,
+} from "@/app/account/components/AccountCategoryList";
 
 interface CategoriesTabProps {
   summary: AssetsSummary;
@@ -31,10 +28,10 @@ interface CategoriesTabProps {
  * Clicking a row expands it in place; clicking the name opens the category page.
  */
 export function CategoriesTab({ summary }: CategoriesTabProps) {
-  const { groups, currency, totalAssets } = summary;
+  const { groups, currency } = summary;
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const [userGroupOpen, setUserGroupOpen] = useState<Record<string, boolean>>({});
   const [showAdd, setShowAdd] = useState(false);
   const [addLabel, setAddLabel] = useState("");
   const [addCategory, setAddCategory] = useState<AssetCategory>("property");
@@ -59,7 +56,7 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
   }, [searchParams]);
 
   const toggle = (type: string) =>
-    setOpenGroups((prev) => ({ ...prev, [type]: !prev[type] }));
+    setUserGroupOpen((prev) => toggleCategoryGroup(prev, type));
 
   const submitAdd = async () => {
     const num = Number(addValue.replace(/[^0-9.-]/g, ""));
@@ -218,96 +215,64 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
         </button>
       </div>
       {addPanel}
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+      <AccountCategoryList>
       {ordered.map((group) => {
-        const isOpen = !!openGroups[group.type];
+        const isOpen = isCategoryGroupOpen(userGroupOpen, group.type);
         const count = group.accounts.length + group.manualAssets.length;
-        const pct = totalAssets > 0 ? (group.total / totalAssets) * 100 : 0;
 
         return (
-          <div key={group.type} className="border-b border-gray-100 last:border-0">
-            <CategoryListRow
-              isOpen={isOpen}
-              onToggle={() => toggle(group.type)}
-              rowContent={
-                <div className="flex flex-1 items-center gap-3 py-4 pl-5 pr-2">
-                  <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${GROUP_COLOR[group.type] ?? "bg-gray-300"}`} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline gap-2">
-                      <p className="text-sm font-semibold text-gray-900">
-                        {group.label}
-                      </p>
-                      <span className="text-xs text-gray-400">
-                        {count} {count === 1 ? "account" : "accounts"}
-                      </span>
-                    </div>
-                    <div className="mt-1.5 flex items-center gap-2">
-                      <div className="h-1.5 w-full max-w-[180px] overflow-hidden rounded-full bg-gray-100">
-                        <div className={`h-full rounded-full ${GROUP_COLOR[group.type] ?? "bg-gray-300"}`} style={{ width: `${pct}%` }} />
-                      </div>
-                      <span className="text-[11px] tabular-nums text-gray-400">{pct.toFixed(0)}%</span>
-                    </div>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <p className="text-sm font-semibold tabular-nums text-gray-900">
-                      {formatCurrency(group.total, currency)}
-                    </p>
-                  </div>
-                </div>
-              }
-            >
-              <div className="border-t border-gray-100 bg-gray-50/60 px-5 py-2">
-                {group.accounts.map((acc) => (
-                  <AccountLine key={acc.slug} account={acc} currency={currency} />
-                ))}
-                {group.manualAssets.map((asset) => (
-                  <ManualLine key={asset.id} asset={asset} currency={currency} />
-                ))}
-              </div>
-            </CategoryListRow>
-          </div>
+          <AccountCategorySection
+            key={group.type}
+            groupType={group.type}
+            label={group.label}
+            count={count}
+            total={group.total}
+            currency={currency}
+            isOpen={isOpen}
+            onToggle={() => toggle(group.type)}
+          >
+            {group.accounts.map((acc) => (
+              <AccountLine key={acc.slug} account={acc} currency={currency} />
+            ))}
+            {group.manualAssets.map((asset) => (
+              <ManualLine key={asset.id} asset={asset} currency={currency} />
+            ))}
+          </AccountCategorySection>
         );
       })}
-      </div>
+      </AccountCategoryList>
     </div>
   );
 }
 
 function AccountLine({ account, currency }: { account: AssetAccount; currency: string }) {
-  const lastTxDate = formatLastTransactionDate(account.lastTransactionDate);
+  const label = accountDisplayLabel(account.bankName, account.accountName);
+  const meta = joinAccountMeta([
+    label.secondary,
+    formatAccountLast4(account.slug),
+    formatLastTransactionDate(account.lastTransactionDate),
+  ]);
   return (
-    <Link
+    <AccountCategoryItem
       href={`/account/accounts/${account.slug}`}
-      className="flex items-center gap-3 border-b border-gray-100 py-2 last:border-0 hover:text-purple-600"
-    >
-      <span className="min-w-0 flex-1 truncate text-sm text-gray-700">
-        <span className="block">
-          {account.bankName}
-          {account.accountName ? ` · ${account.accountName}` : ""}
-        </span>
-        {lastTxDate && (
-          <span className="block text-xs text-gray-400 mt-0.5">{lastTxDate}</span>
-        )}
-      </span>
-      <span className="shrink-0 text-xs tabular-nums text-gray-500">{formatAccountLast4(account.slug)}</span>
-      <span className="w-28 shrink-0 text-right text-sm tabular-nums text-gray-900">
-        {formatCurrency(account.balance, currency)}
-      </span>
-    </Link>
+      primary={label.primary}
+      meta={meta}
+      fullName={label.full}
+      amount={account.balance}
+      currency={currency}
+    />
   );
 }
 
 function ManualLine({ asset, currency }: { asset: ManualAsset; currency: string }) {
   return (
-    <Link
+    <AccountCategoryItem
       href={`/account/assets/${asset.id}`}
-      className="flex items-center gap-3 border-b border-gray-100 py-2 last:border-0 hover:text-purple-600"
-    >
-      <span className="min-w-0 flex-1 truncate text-sm text-gray-700">{asset.label}</span>
-      <span className="shrink-0 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">Manual</span>
-      <span className="w-28 shrink-0 text-right text-sm tabular-nums text-gray-900">
-        {formatCurrency(asset.value, currency)}
-      </span>
-    </Link>
+      primary={asset.label}
+      meta="Manual"
+      fullName={asset.label}
+      amount={asset.value}
+      currency={currency}
+    />
   );
 }

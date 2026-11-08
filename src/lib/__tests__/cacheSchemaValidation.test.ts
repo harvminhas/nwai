@@ -144,6 +144,45 @@ describe("Cache Schema Validation - Production Path", () => {
     },
   ];
 
+  test("old schema (69) warm cache missing manual-liability history triggers rebuild", async () => {
+    const oldCache = {
+      schemaVersion: "69",
+      sourceVersion: "v1",
+      updatedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), // 2h — would reuse under 24h if schema matched
+      cacheStale: false,
+      homeCurrency: "CAD",
+      manualAssets: [
+        { id: "car-1", label: "Car", category: "vehicle", value: 25000, updatedAt: "2026-11-01" },
+      ],
+      manualLiabilities: [
+        { id: "student-1", label: "Federal Student Loan", category: "student_loan", balance: 15000, updatedAt: "2026-02-15T00:00:00Z" },
+      ],
+      monthlyHistory: [
+        {
+          yearMonth: "2026-11",
+          netWorth: -165000,
+          totalAssets: 35000,
+          totalDebts: 200000,
+          byAccount: [
+            { slug: "checking-1", label: "Checking", type: "checking", value: 10000 },
+            { slug: "mortgage-1", label: "Mortgage", type: "mortgage", value: -200000 },
+            { slug: "manual-car-1", label: "Car", type: "manual-vehicle", value: 25000 },
+          ],
+        },
+      ],
+      accountBalanceHistory: [],
+      allTxMonths: ["2026-11"],
+      expenseTxns: [],
+      incomeTxns: [],
+    };
+
+    const mock = createMockDbWithData(oldCache, mockRawManualAssets, mockRawStatements);
+    await getFinancialProfile("test-uid", mock.db);
+
+    expect(mock.counters.sourceReadCount, "v69 cache must rebuild so monthly history includes manual liabilities").toBeGreaterThan(0);
+    expect(mock.counters.cacheWriteCount, "rebuild writes the mock cache only, not a live profile").toBe(1);
+  });
+
   test("old schema version (68) with manual assets triggers rebuild", async () => {
     const oldCache = {
       schemaVersion: "68", // Old schema version

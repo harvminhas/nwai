@@ -5,9 +5,29 @@
  * Preserves all existing FX, account activation, and valuation rules.
  */
 
-import type { ManualAsset } from "./types";
+import type { ManualAsset, ManualLiability } from "./types";
 import type { AccountStatusRecord } from "./accountStatus";
 import { isAccountActive } from "./accountStatus";
+
+/** Stored manual-liability fields the NW calc reads. Extra Firestore keys (startDate, linkedAccountSlug) may be present. */
+export type ManualLiabilityInput = Pick<ManualLiability, "id" | "label" | "category" | "balance"> & {
+  updatedAt?: string;
+  startDate?: string;
+  linkedAccountSlug?: string;
+};
+
+/**
+ * Earliest month this manual liability is known to exist.
+ * Manual liabilities have no valuation history — only a current snapshot.
+ * Use startDate when stored; otherwise updatedAt (the only date on the type).
+ * Do not invent a balance for months before that date.
+ * Undated legacy records are included in every month (same as legacy manual assets).
+ */
+function liabilityKnownFromMonth(liability: ManualLiabilityInput): string | null {
+  const dated = liability.startDate || liability.updatedAt;
+  if (dated && dated.length >= 7) return dated.slice(0, 7);
+  return null;
+}
 
 // Minimal interface for net worth calculation fields
 // financialProfile.ts MonthlyHistoryEntry has all these fields plus more
@@ -90,6 +110,7 @@ export function getAssetValueForMonth(asset: ManualAsset, yearMonth: string): nu
  * @param monthlyHistory - Array of month entries to populate (modified in place)
  * @param accountBalanceHistory - Account balance history per account
  * @param manualAssets - Manually added assets (car, property, etc.)
+ * @param manualLiabilities - Manually added liabilities (current snapshot; no invented past balances)
  * @param toHome - Currency conversion function (balance, currency) => homeAmount
  * @param accountStatusMap - Active/closed status per account (AccountStatusRecord map)
  */
@@ -97,6 +118,7 @@ export function calculateNetWorthForMonths(
   monthlyHistory: MonthNetWorthHistory[],
   accountBalanceHistory: AccountBalanceHistory[],
   manualAssets: ManualAsset[],
+  manualLiabilities: ManualLiabilityInput[],
   toHome: (balance: number, currency: string) => number,
   accountStatusMap: Map<string, AccountStatusRecord>
 ): void {
@@ -119,6 +141,8 @@ export function calculateNetWorthForMonths(
       debtEntries.push({ acct, sorted });
     }
   }
+
+  const importedDebtBySlug = new Map(debtEntries.map(({ acct }) => [acct.slug, acct]));
 
   // Calculate net worth for each month
   for (const h of monthlyHistory) {
@@ -145,10 +169,11 @@ export function calculateNetWorthForMonths(
     }
 
     // Sum debt account balances as of this month
-      for (const { acct, sorted } of debtEntries) {
-        // Exclude paid-off/closed debts from net worth calculation
-        const active = isAccountActive(acct.slug, h.yearMonth, accountStatusMap);
-        if (!active) continue;
+    const importedContributingSlugs = new Set<string>();
+    for (const { acct, sorted } of debtEntries) {
+      // Exclude paid-off/closed debts from net worth calculation
+      const active = isAccountActive(acct.slug, h.yearMonth, accountStatusMap);
+      if (!active) continue;
 
       let bal: number | null = null;
       for (const e of sorted) {
@@ -164,6 +189,7 @@ export function calculateNetWorthForMonths(
         type: acct.accountType,
         value: -absValue, // Debts are negative
       });
+      importedContributingSlugs.add(acct.slug);
     }
 
     // Add manual assets from their start date onward
@@ -183,6 +209,34 @@ export function calculateNetWorthForMonths(
         label: asset.label,
         type: `manual-${asset.category}`,
         value: valueForMonth,
+      });
+    }
+    
+    // Add manual liabilities from their known-from month onward.
+    // Current snapshot only — do not invent a historical payoff series.
+    // Explicit link/id only. Skip when the linked imported loan:
+    //   • contributes this month (active + has a balance), or
+    //   • is closed/paid off as of this month (do not resurrect the manual).
+    // Active but not yet imported (no statement as of this month) → keep manual.
+    // Same-label imported vs manual loans are distinct unless linked.
+    for (const liability of manualLiabilities) {
+      const linkedSlugs = [liability.linkedAccountSlug, liability.id].filter(
+        (slug): slug is string => !!slug && importedDebtBySlug.has(slug)
+      );
+      if (linkedSlugs.some((slug) =>
+        !isAccountActive(slug, h.yearMonth, accountStatusMap) ||
+        importedContributingSlugs.has(slug)
+      )) continue;
+
+      const knownFrom = liabilityKnownFromMonth(liability);
+      if (knownFrom && h.yearMonth < knownFrom) continue;
+
+      td += liability.balance;
+      accountContributions.push({
+        slug: `manual-${liability.id}`,
+        label: liability.label,
+        type: `manual-${liability.category}`,
+        value: -liability.balance, // Debts are negative
       });
     }
     

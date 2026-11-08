@@ -6,6 +6,13 @@ import type { IncomeSummary } from "@/lib/incomeSummary";
 import { formatMonth, formatMonthYear } from "@/lib/dateFormatting";
 import { formatCurrency, getCurrencySymbol } from "@/lib/currencyUtils";
 import { getSignColor } from "@/lib/colorHelpers";
+import { calculateBalanceChartDomain } from "@/lib/chartDomain";
+import {
+  CANONICAL_CHART_MARGIN,
+  CANONICAL_GRID_CONFIG,
+  CANONICAL_XAXIS_CONFIG,
+  CANONICAL_YAXIS_CONFIG,
+} from "@/lib/canonicalChartConfig";
 
 type TimeWindow = "12month" | "ytd" | "last3";
 
@@ -58,6 +65,11 @@ export function TrendsTab({ summary }: TrendsTabProps) {
       lastYear: lastYearData ? Math.round(lastYearData.regular) : null
     };
   });
+  
+  // Calculate chart domain using canonical calculation
+  // Force zero baseline for stacked bar charts (not line charts)
+  const allChartValues = chartData.flatMap(d => [d.total, d.lastYear].filter((v): v is number => v !== null));
+  const chartDomain = calculateBalanceChartDomain(allChartValues, { forceZeroBaseline: true });
   
   // Currency formatter for axis
   const fmtAxis = (v: number) => {
@@ -200,12 +212,12 @@ export function TrendsTab({ summary }: TrendsTabProps) {
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart 
               data={chartData} 
-              margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+              margin={CANONICAL_CHART_MARGIN}
               className={selectedMonth ? 'has-selection' : ''}
             >
-              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-              <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
-              <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={60} />
+              <CartesianGrid {...CANONICAL_GRID_CONFIG} />
+              <XAxis dataKey="month" {...CANONICAL_XAXIS_CONFIG} />
+              <YAxis domain={[chartDomain.min, chartDomain.max]} tickFormatter={fmtAxis} {...CANONICAL_YAXIS_CONFIG} />
               <Tooltip
                 content={({ active, payload }) => {
                   if (!active || !payload?.length) return null;
