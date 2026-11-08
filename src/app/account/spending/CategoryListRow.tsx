@@ -31,12 +31,21 @@ export function CategoryListRow({
   return (
     <div>
       <div
-        className={`flex items-center hover:bg-gray-50 transition cursor-pointer ${className}`}
+        role="button"
+        tabIndex={0}
+        aria-expanded={isOpen}
+        className={`flex items-center hover:bg-gray-50 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-400 ${className}`}
         onClick={onToggle}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onToggle();
+          }
+        }}
       >
         <div className="flex flex-1 items-center min-w-0">{rowContent}</div>
         {/* Chevron — visual only */}
-        <div className="shrink-0 flex items-center justify-center w-8 self-stretch text-gray-300 transition-colors">
+        <div className="shrink-0 flex items-center justify-center w-8 self-stretch text-gray-300 transition-colors" aria-hidden>
           <svg
             className={`h-4 w-4 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
             fill="none"
