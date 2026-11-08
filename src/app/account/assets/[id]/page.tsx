@@ -13,6 +13,8 @@ import { triggerProfileRefetch } from "@/lib/profileRefetch";
 import { useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 import type { ManualAsset, AssetCategory, HubLink, ExpenseTransaction, IncomeTransaction } from "@/lib/types";
 import type { DebtsSummary, DebtAccount } from "@/lib/debtsSummary";
+import { buildTrendChartData, getDisplayValuations } from "@/lib/assetTrendChart";
+import { AssetTrendChartSVG } from "@/components/AssetTrendChartSVG";
 
 const CATEGORY_LABEL: Record<AssetCategory, string> = {
   property: "Property",
@@ -28,6 +30,21 @@ function formatMonth(ym: string): string {
   if (!m) return ym;
   return new Date(parseInt(y, 10), parseInt(m, 10) - 1, 1)
     .toLocaleDateString("en-US", { month: "short", year: "numeric" });
+}
+
+/**
+ * Format YYYY-MM-DD date string as UTC to avoid timezone shift
+ * (e.g., "2026-11-01" should display as "Nov 1, 2026", not "Oct 31, 2026" in NY timezone)
+ */
+function formatDateUTC(dateStr: string): string {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const utcDate = new Date(Date.UTC(year, month - 1, day));
+  return utcDate.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 interface AssetSummaryShape {
@@ -65,7 +82,6 @@ export default function ManualAssetPage() {
   const [showLinkTxnModal, setShowLinkTxnModal] = useState(false);
   const [availableTxns, setAvailableTxns] = useState<TxnWithFingerprint[]>([]);
   const [availableIncomeTxns, setAvailableIncomeTxns] = useState<TxnWithFingerprint[]>([]);
-  const [transactionTab, setTransactionTab] = useState<"income" | "expenses">("expenses");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [expandedExpenseCategories, setExpandedExpenseCategories] = useState<Set<string>>(new Set());
   const [expenseYearFilter, setExpenseYearFilter] = useState<string>("all");
@@ -95,6 +111,37 @@ export default function ManualAssetPage() {
   const [openCategoryPicker, setOpenCategoryPicker] = useState<string | null>(null);
   const categoryPickerBtnRefs = useState(() => new Map<string, HTMLButtonElement>())[0];
   
+  // Main tab state
+  const [mainTab, setMainTab] = useState<"income" | "expenses" | "trend">("expenses");
+
+  // Reset to expenses tab when asset ID changes
+  useEffect(() => {
+    setMainTab("expenses");
+  }, [id]);
+
+  // Reset projection state when asset ID changes
+  useEffect(() => {
+    setGrowthType("appreciation");
+    setGrowthPercent("");
+    setRateToast(null);
+    setShowProjectionTable(false);
+  }, [id]);
+
+  // History tab state
+  const [showAddValuationModal, setShowAddValuationModal] = useState(false);
+  const [newValuationValue, setNewValuationValue] = useState("");
+  const [newValuationDate, setNewValuationDate] = useState("");
+  const [addingValuation, setAddingValuation] = useState(false);
+  
+  // Projections tab state
+  const [annualGrowthRate, setAnnualGrowthRate] = useState<string>("");
+  const [projectionYears, setProjectionYears] = useState(5);
+  const [growthType, setGrowthType] = useState<"appreciation" | "depreciation">("appreciation");
+  const [growthPercent, setGrowthPercent] = useState<string>("");
+  const [savingRate, setSavingRate] = useState(false);
+  const [rateToast, setRateToast] = useState<{ msg: string; ok: boolean } | null>(null);
+  const [showProjectionTable, setShowProjectionTable] = useState(false);
+  
   const { requestProfileRefresh } = useProfileRefresh();
 
   const load = useCallback(async (tok: string) => {
@@ -117,6 +164,32 @@ export default function ManualAssetPage() {
         setLabel(found.label);
         setCategory(found.category);
         setValue(String(found.value));
+        setStartDate(found.startDate || "");
+        const savedRate = found.annualGrowthRate !== undefined && found.annualGrowthRate !== null ? found.annualGrowthRate : null;
+        setAnnualGrowthRate(savedRate !== null ? String(savedRate) : "");
+        
+        // Initialize projection UI from saved rate
+        if (savedRate !== null && savedRate !== 0) {
+          setGrowthType(savedRate >= 0 ? "appreciation" : "depreciation");
+          setGrowthPercent(String(Math.abs(savedRate)));
+        } else {
+          setGrowthType("appreciation");
+          setGrowthPercent("");
+        }
+        
+        // Initialize newValuationDate to today (America/New_York)
+        const now = new Date();
+        const formatter = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'America/New_York',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        });
+        const parts = formatter.formatToParts(now);
+        const year = parts.find(p => p.type === 'year')?.value ?? '';
+        const month = parts.find(p => p.type === 'month')?.value ?? '';
+        const day = parts.find(p => p.type === 'day')?.value ?? '';
+        setNewValuationDate(`${year}-${month}-${day}`);
       }
 
       const debtsData = debtsRes.ok ? await debtsRes.json() : null;
@@ -258,6 +331,7 @@ export default function ManualAssetPage() {
           category,
           value: num,
           startDate: startDate === "" ? null : startDate, // Explicit null to clear
+          annualGrowthRate: annualGrowthRate === "" ? null : Number(annualGrowthRate),
           linkedAccountSlug: asset.linkedAccountSlug, // Preserve legacy link
         }),
       });
@@ -272,6 +346,115 @@ export default function ManualAssetPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const addValuation = async () => {
+    if (!token || !asset) return;
+    const valueCents = Math.round(Number(newValuationValue.replace(/[^0-9.-]/g, "")) * 100);
+    if (Number.isNaN(valueCents) || valueCents < 0) {
+      setToast({ msg: "Enter a valid value", ok: false });
+      return;
+    }
+    if (!newValuationDate) {
+      setToast({ msg: "Enter a date", ok: false });
+      return;
+    }
+    
+    setAddingValuation(true);
+    try {
+      const res = await fetch(`/api/user/assets/${asset.id}/valuations`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          valueCents,
+          effectiveDate: newValuationDate,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to add valuation");
+      setShowAddValuationModal(false);
+      setNewValuationValue("");
+      setToast({ msg: "Valuation added", ok: true });
+      triggerProfileRefetch();
+      await load(token);
+    } catch {
+      setToast({ msg: "Could not add valuation", ok: false });
+    } finally {
+      setAddingValuation(false);
+    }
+  };
+
+  const saveGrowthRate = async () => {
+    if (!token || !asset) return;
+    
+    setSavingRate(true);
+    setRateToast(null);
+    
+    try {
+      // Convert UI state to signed rate
+      const percent = growthPercent.trim() === "" ? 0 : Number(growthPercent);
+      if (isNaN(percent) || percent < 0 || percent > 100) {
+        setRateToast({ msg: "Rate must be between 0 and 100", ok: false });
+        setSavingRate(false);
+        return;
+      }
+      
+      const signedRate = growthType === "appreciation" ? percent : -percent;
+      const rateToSave = percent === 0 ? null : signedRate;
+      
+      const res = await fetch(`/api/user/assets/${asset.id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ annualGrowthRate: rateToSave }),
+      });
+      
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: "Failed to save" }));
+        throw new Error(errData.error || "Failed to save");
+      }
+      
+      // Reload asset to get saved rate
+      await load(token);
+      setRateToast({ msg: "Saved", ok: true });
+      setTimeout(() => setRateToast(null), 2000);
+    } catch (err) {
+      console.error("Save growth rate error:", err);
+      setRateToast({ msg: err instanceof Error ? err.message : "Failed to save", ok: false });
+    } finally {
+      setSavingRate(false);
+    }
+  };
+
+  const deleteValuation = (valuationId: string, effectiveDate: string) => {
+    if (!asset) return;
+    setConfirmModal({
+      isOpen: true,
+      title: "Delete valuation",
+      message: `Delete valuation from ${formatDateUTC(effectiveDate)}? This will recalculate net worth for affected months.`,
+      onConfirm: async () => {
+        if (!token) return;
+        try {
+          const res = await fetch(
+            `/api/user/assets/${asset.id}/valuations?valuationId=${valuationId}`,
+            {
+              method: "DELETE",
+              headers: { Authorization: `Bearer ${token}` },
+            }
+          );
+          setConfirmModal(null);
+          if (!res.ok) {
+            const err = await res.json();
+            setToast({ msg: err.error || "Could not delete valuation", ok: false });
+          } else {
+            setToast({ msg: "Valuation deleted", ok: true });
+            triggerProfileRefetch();
+            await load(token);
+          }
+        } catch {
+          setConfirmModal(null);
+          setToast({ msg: "Could not delete valuation", ok: false });
+        }
+      },
+    });
   };
 
   const remove = () => {
@@ -375,12 +558,12 @@ export default function ManualAssetPage() {
     
     // Switch to appropriate tab
     if (selectedTxnRole === "income_from") {
-      setTransactionTab("income");
+      setMainTab("income");
       // Expand income groups for newly added merchants
       const newMerchants = new Set(txnsToLink.map(tx => tx.merchant));
       setExpandedGroups(prev => new Set([...prev, ...newMerchants]));
     } else if (selectedTxnRole === "spend_on") {
-      setTransactionTab("expenses");
+      setMainTab("expenses");
       // Expand expense categories for newly added categories
       const newCategories = new Set(txnsToLink.map(tx => tx.category || "Other"));
       setExpandedExpenseCategories(prev => new Set([...prev, ...newCategories]));
@@ -555,6 +738,7 @@ export default function ManualAssetPage() {
                 setCategory(asset.category);
                 setValue(String(asset.value));
                 setStartDate(asset.startDate || "");
+                setAnnualGrowthRate(asset.annualGrowthRate !== undefined && asset.annualGrowthRate !== null ? String(asset.annualGrowthRate) : "");
                 setShowEditModal(true);
               }}
               className="text-gray-400 hover:text-gray-600 transition"
@@ -664,14 +848,13 @@ export default function ManualAssetPage() {
         </div>
       </div>
 
-      {/* Income/Expenses Tabs */}
+      {/* Main Tabs */}
       <div className="mt-6">
-        {/* Tab Switcher */}
-        <div className="mb-4 flex items-center gap-4 border-b border-gray-200">
+        <div className="mb-6 flex items-center gap-6 border-b border-gray-200">
           <button
-            onClick={() => setTransactionTab("income")}
-            className={`pb-2 px-1 text-sm font-medium transition ${
-              transactionTab === "income"
+            onClick={() => setMainTab("income")}
+            className={`pb-3 px-1 text-base font-semibold transition ${
+              mainTab === "income"
                 ? "border-b-2 border-purple-600 text-purple-600"
                 : "text-gray-500 hover:text-gray-700"
             }`}
@@ -679,19 +862,29 @@ export default function ManualAssetPage() {
             Income ({formatCurrency(totalIncome, currency)})
           </button>
           <button
-            onClick={() => setTransactionTab("expenses")}
-            className={`pb-2 px-1 text-sm font-medium transition ${
-              transactionTab === "expenses"
+            onClick={() => setMainTab("expenses")}
+            className={`pb-3 px-1 text-base font-semibold transition ${
+              mainTab === "expenses"
                 ? "border-b-2 border-purple-600 text-purple-600"
                 : "text-gray-500 hover:text-gray-700"
             }`}
           >
             Expenses ({formatCurrency(totalSpending, currency)})
           </button>
+          <button
+            onClick={() => setMainTab("trend")}
+            className={`pb-3 px-1 text-base font-semibold transition ${
+              mainTab === "trend"
+                ? "border-b-2 border-purple-600 text-purple-600"
+                : "text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            Trend
+          </button>
         </div>
 
         {/* Income Tab */}
-        {transactionTab === "income" && (
+        {mainTab === "income" && (
           <div>
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-medium text-gray-700">Linked income</h2>
@@ -827,7 +1020,7 @@ export default function ManualAssetPage() {
         )}
 
         {/* Expenses Tab */}
-        {transactionTab === "expenses" && (
+        {mainTab === "expenses" && (
           <div>
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <h2 className="text-sm font-medium text-gray-700">Linked spending</h2>
@@ -1131,7 +1324,217 @@ export default function ManualAssetPage() {
         )}
           </div>
         )}
+
+        {/* Trend Tab */}
+        {mainTab === "trend" && (
+          <div>
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">Asset Trend</h2>
+              <button
+                onClick={() => setShowAddValuationModal(true)}
+                className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
+              >
+                + Add Valuation
+              </button>
+            </div>
+
+            {/* Combined Chart: Actual + Projected */}
+            {(() => {
+              const { actualPoints, projectedPoints, todayDate } = buildTrendChartData(asset, projectionYears);
+              const hasData = actualPoints.length > 0 || projectedPoints.length > 0;
+
+              if (!hasData) return null;
+
+              return (
+                <div className="rounded-xl border border-gray-200 bg-white p-5 mb-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-4 text-xs">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-0.5 bg-purple-600"></div>
+                        <span className="text-gray-600">Actual</span>
+                      </div>
+                      {projectedPoints.length > 0 && (
+                        <div className="flex items-center gap-2">
+                          <svg width="32" height="2" className="overflow-visible">
+                            <line x1="0" y1="1" x2="32" y2="1" stroke="#9ca3af" strokeWidth="2" strokeDasharray="4 3" />
+                          </svg>
+                          <span className="text-gray-600">Projected</span>
+                        </div>
+                      )}
+                    </div>
+                    {projectedPoints.length > 0 && <span className="text-xs text-gray-500">Estimate only</span>}
+                  </div>
+
+                  <div className="w-full overflow-x-auto">
+                    <AssetTrendChartSVG
+                      actualPoints={actualPoints}
+                      projectedPoints={projectedPoints}
+                      todayDate={todayDate}
+                      currency={currency}
+                      formatCurrency={formatCurrency}
+                      formatCurrencyWithCents={formatCurrencyWithCents}
+                    />
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Growth Rate Controls */}
+            <div className="flex items-center gap-3 mb-6">
+              <select
+                value={growthType}
+                onChange={(e) => setGrowthType(e.target.value as "appreciation" | "depreciation")}
+                className="rounded border border-gray-200 px-2 py-1 text-sm focus:border-purple-400 focus:outline-none"
+                disabled={savingRate}
+                aria-label="Growth type"
+              >
+                <option value="appreciation">Appreciation</option>
+                <option value="depreciation">Depreciation</option>
+              </select>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.1"
+                value={growthPercent}
+                onChange={(e) => setGrowthPercent(e.target.value)}
+                placeholder="5.0"
+                className="w-20 rounded border border-gray-200 px-2 py-1 text-sm focus:border-purple-400 focus:outline-none disabled:opacity-50"
+                disabled={savingRate}
+                aria-label="Annual growth rate percentage"
+              />
+              <span className="text-sm text-gray-500">%/yr</span>
+              <button
+                type="button"
+                onClick={saveGrowthRate}
+                disabled={savingRate || growthPercent.trim() === ""}
+                className="rounded bg-purple-600 px-3 py-1 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-40 transition"
+              >
+                {savingRate ? "Saving..." : "Save"}
+              </button>
+              {asset?.annualGrowthRate !== null && asset?.annualGrowthRate !== undefined && (
+                <span className="text-sm text-gray-600">
+                  Current: {asset.annualGrowthRate >= 0 ? "+" : ""}{asset.annualGrowthRate}%
+                </span>
+              )}
+              {rateToast && (
+                <span className={`text-sm font-medium ${
+                  rateToast.ok ? "text-green-600" : "text-red-600"
+                }`}>
+                  {rateToast.msg}
+                </span>
+              )}
+            </div>
+
+            {/* Valuation List */}
+            {(() => {
+              const displayValuations = getDisplayValuations(asset);
+
+              return (
+                <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+                  <table className="w-full">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                        <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Value</th>
+                        <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {[...displayValuations]
+                        .sort((a, b) => {
+                          const dateCmp = b.effectiveDate.localeCompare(a.effectiveDate);
+                          if (dateCmp !== 0) return dateCmp;
+                          return (b.createdAt || '').localeCompare(a.createdAt || '');
+                        })
+                        .map((val: any) => (
+                          <tr key={val.id} className="hover:bg-gray-50 transition">
+                            <td className="px-4 py-2 text-sm text-gray-900">
+                              {formatDateUTC(val.effectiveDate)}
+                              {val.isBaseline && (
+                                <span className="ml-2 text-xs text-gray-500">(baseline)</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2 text-sm font-semibold text-gray-900 tabular-nums text-right">
+                              {formatCurrencyWithCents(val.valueCents / 100, currency)}
+                            </td>
+                            <td className="px-4 py-2 text-right">
+                              {!val.isBaseline ? (
+                                <button
+                                  onClick={() => deleteValuation(val.id, val.effectiveDate)}
+                                  className="text-red-600 hover:text-red-700 text-xs font-medium transition"
+                                >
+                                  Delete
+                                </button>
+                              ) : (
+                                <span className="text-xs text-gray-400">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* Projections Tab */}
       </div>
+
+      {/* Add Valuation Modal */}
+      {showAddValuationModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowAddValuationModal(false)}>
+          <div className="max-w-md w-full rounded-xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold text-gray-900">Add Valuation</h3>
+            <p className="mt-2 text-sm text-gray-600">Record the value of this asset on a specific date</p>
+            <div className="mt-4 space-y-4">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-500">Value ({currency})</label>
+                <input
+                  value={newValuationValue}
+                  onChange={(e) => setNewValuationValue(e.target.value)}
+                  inputMode="decimal"
+                  placeholder={String(asset?.value ?? "")}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm tabular-nums focus:border-purple-400 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-500">Effective Date</label>
+                <input
+                  type="date"
+                  value={newValuationDate}
+                  onChange={(e) => setNewValuationDate(e.target.value)}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Defaults to today. You can backdate to correct historical values.
+                </p>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  setShowAddValuationModal(false);
+                  setNewValuationValue("");
+                }}
+                disabled={addingValuation}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={addValuation}
+                disabled={addingValuation}
+                className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-40 transition"
+              >
+                {addingValuation ? "Adding..." : "Add Valuation"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Edit Modal */}
       {showEditModal && (
@@ -1292,11 +1695,7 @@ export default function ManualAssetPage() {
       )}
 
       {/* Link Transaction Modal */}
-      {showLinkTxnModal && (() => {
-        // Select correct transaction source based on role
-        const txnSource = selectedTxnRole === "income_from" ? availableIncomeTxns : availableTxns;
-        
-        return (
+      {showLinkTxnModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowLinkTxnModal(false)}>
           <div className="max-w-3xl w-full rounded-xl bg-white p-6 shadow-xl max-h-[80vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold text-gray-900">Link transaction</h3>
@@ -1362,6 +1761,7 @@ export default function ManualAssetPage() {
               )}
               <button
                 onClick={() => {
+                  const txnSource = selectedTxnRole === "income_from" ? availableIncomeTxns : availableTxns;
                   const visibleTxns = txnSource
                     .filter((tx) => !txnSearch || tx.merchant?.toLowerCase().includes(txnSearch.toLowerCase()))
                     .filter((tx) => !linkedTxns.some((l) => l.fingerprint === tx.fingerprint))
@@ -1378,6 +1778,7 @@ export default function ManualAssetPage() {
                 className="text-xs text-purple-600 hover:text-purple-700 font-medium"
               >
                 {(() => {
+                  const txnSource = selectedTxnRole === "income_from" ? availableIncomeTxns : availableTxns;
                   const visibleTxns = txnSource
                     .filter((tx) => !txnSearch || tx.merchant?.toLowerCase().includes(txnSearch.toLowerCase()))
                     .filter((tx) => !linkedTxns.some((l) => l.fingerprint === tx.fingerprint))
@@ -1408,7 +1809,7 @@ export default function ManualAssetPage() {
 
             <div className="mt-4 flex-1 overflow-y-auto">
               <div className="space-y-2">
-                {txnSource
+                {(selectedTxnRole === "income_from" ? availableIncomeTxns : availableTxns)
                   .filter((tx) => !txnSearch || tx.merchant?.toLowerCase().includes(txnSearch.toLowerCase()))
                   .filter((tx) => !linkedTxns.some((l) => l.fingerprint === tx.fingerprint))
                   .slice(0, 50)
@@ -1452,7 +1853,7 @@ export default function ManualAssetPage() {
                       </div>
                     </label>
                   ))}
-                {txnSource.filter((tx) => !txnSearch || tx.merchant?.toLowerCase().includes(txnSearch.toLowerCase())).length === 0 && (
+                {(selectedTxnRole === "income_from" ? availableIncomeTxns : availableTxns).filter((tx) => !txnSearch || tx.merchant?.toLowerCase().includes(txnSearch.toLowerCase())).length === 0 && (
                   <p className="text-sm text-gray-500 text-center py-8">No transactions found</p>
                 )}
               </div>
@@ -1481,8 +1882,7 @@ export default function ManualAssetPage() {
             </div>
           </div>
         </div>
-        );
-      })()}
+      )}
 
       {/* Confirmation Modal */}
       {confirmModal && (

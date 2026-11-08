@@ -28,6 +28,8 @@ export async function GET(req: NextRequest) {
         linkedAccountSlug: data.linkedAccountSlug ?? undefined,
         startDate: data.startDate ?? undefined, // User-editable start date
         updatedAt: data.updatedAt?.toDate?.()?.toISOString?.() ?? data.updatedAt ?? new Date().toISOString(),
+        valuations: data.valuations ?? undefined,
+        annualGrowthRate: data.annualGrowthRate ?? undefined,
       };
     });
     return NextResponse.json({ assets });
