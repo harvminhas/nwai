@@ -20,6 +20,7 @@ import {
   CANONICAL_LINE_CONFIG,
   CANONICAL_CHART_HEIGHT,
 } from "@/lib/canonicalChartConfig";
+import { monthFromChartInteraction } from "@/lib/chartMonthClick";
 
 interface TrendsTabProps {
   summary: AssetsSummary;
@@ -84,21 +85,30 @@ export function TrendsTab({ summary }: TrendsTabProps) {
         }))
     : [];
   
-  function handleMonthClick(month: string) {
-    setSelectedMonth(prev => prev === month ? null : month);
+  function handleChartClick(
+    state: Parameters<typeof monthFromChartInteraction>[0],
+    event?: Parameters<typeof monthFromChartInteraction>[1]
+  ) {
+    const month = monthFromChartInteraction(state, event, chartData);
+    if (month) setSelectedMonth(month);
   }
 
   return (
     <div className="space-y-6">
       {/* Canonical Line Chart */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
+      <div className="bg-white rounded-lg border border-gray-200 p-6" data-testid="assets-trends-chart">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">
           Total Assets Over Time
         </h2>
         
         <div style={{ height: `${CANONICAL_CHART_HEIGHT}px` }}>
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={chartData} margin={CANONICAL_CHART_MARGIN}>
+            <ComposedChart
+              data={chartData}
+              margin={CANONICAL_CHART_MARGIN}
+              style={{ cursor: "pointer" }}
+              onClick={handleChartClick}
+            >
               <defs>
                 <linearGradient id="assetsGradient" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#10b981" stopOpacity={0.15}/>
@@ -145,7 +155,7 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                 isAnimationActive={false}
               />
               
-              {/* Line with clickable dots */}
+              {/* Line; month selection is ComposedChart onClick, not per-dot onClick */}
               <Line
                 {...CANONICAL_LINE_CONFIG}
                 dataKey="total"
@@ -161,8 +171,7 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                       stroke="#fff"
                       strokeWidth={isSelected ? 3 : 2}
                       data-month={props.payload?.month}
-                      onClick={() => handleMonthClick(props.payload.month)}
-                      style={{ cursor: 'pointer' }}
+                      style={{ cursor: "pointer", pointerEvents: "none" }}
                     />
                   );
                 }}

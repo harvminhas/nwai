@@ -4,6 +4,7 @@
  * (the same path the Assets and Liabilities pages use).
  */
 
+import { fireEvent } from "@testing-library/react";
 import { calculateNetWorthForMonths, type AccountBalanceHistory, type MonthNetWorthHistory } from "../netWorthCalculationCore";
 import { buildAssetsSummary } from "../assetsSummary";
 import { buildDebtsSummary } from "../debtsSummary";
@@ -221,4 +222,49 @@ export function installChartResizeObserver(width = 800, height = 340) {
     unobserve() {}
     disconnect() {}
   };
+}
+
+const CHART_WIDTH = 800;
+const CHART_HEIGHT = 340;
+
+/**
+ * Drive the real Recharts 3 pointer path: hover + click on `.recharts-wrapper`.
+ * Do not fireEvent.click a plot circle — that bypasses RechartsWrapper.onClick
+ * (the handler the browser actually uses) and previously passed while the UI was inert.
+ */
+export function clickRenderedChartMonth(container: HTMLElement, month: string) {
+  const wrapper = container.querySelector(".recharts-wrapper");
+  if (!(wrapper instanceof HTMLElement)) {
+    throw new Error("rendered chart is missing .recharts-wrapper");
+  }
+
+  const dot = container.querySelector(`circle[data-month="${month}"]`);
+  if (!dot || dot.tagName.toLowerCase() !== "circle") {
+    throw new Error(`rendered chart is missing circle[data-month="${month}"]`);
+  }
+
+  const cx = Number(dot.getAttribute("cx"));
+  const cy = Number(dot.getAttribute("cy"));
+  if (!Number.isFinite(cx) || !Number.isFinite(cy)) {
+    throw new Error(`plot point ${month} has invalid coordinates ${cx},${cy}`);
+  }
+
+  const rect = {
+    x: 0,
+    y: 0,
+    top: 0,
+    left: 0,
+    bottom: CHART_HEIGHT,
+    right: CHART_WIDTH,
+    width: CHART_WIDTH,
+    height: CHART_HEIGHT,
+    toJSON: () => ({}),
+  };
+  wrapper.getBoundingClientRect = () => rect as DOMRect;
+  Object.defineProperty(wrapper, "offsetWidth", { configurable: true, value: CHART_WIDTH });
+  Object.defineProperty(wrapper, "offsetHeight", { configurable: true, value: CHART_HEIGHT });
+
+  const coords = { clientX: cx, clientY: cy, bubbles: true };
+  fireEvent.mouseMove(wrapper, coords);
+  fireEvent.click(wrapper, coords);
 }

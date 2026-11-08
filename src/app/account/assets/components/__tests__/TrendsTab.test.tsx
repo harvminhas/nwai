@@ -5,12 +5,13 @@
 
 import React from "react";
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { TrendsTab } from "../TrendsTab";
 import type { AssetsSummary } from "@/lib/assetsSummary";
 import {
   buildProductionTrendsFixture,
   installChartResizeObserver,
+  clickRenderedChartMonth,
 } from "@/lib/__tests__/trendsMonthCompositionFixture";
 
 // @vitest-environment jsdom
@@ -203,19 +204,27 @@ describe("Assets TrendsTab production fixture — click and async", () => {
     expect(container.innerHTML).toContain("CA$31,620");
   });
 
-  it("clicking a historical month updates the visible details", () => {
+  it("clicking a historical month updates the visible details", async () => {
     const { assetsSummary } = buildProductionTrendsFixture();
     const { container } = render(<TrendsTab summary={assetsSummary} />);
 
-    const janDot = container.querySelector('circle[data-month="2026-01"]');
-    expect(janDot).toBeTruthy();
-    fireEvent.click(janDot!);
+    expect(container.querySelector(".recharts-wrapper")).toBeTruthy();
+    expect(container.innerHTML).toContain("Mar 2026");
+    expect(container.innerHTML).toContain("CA$31,620");
 
-    expect(container.innerHTML).toContain("Jan 2026");
-    expect(container.innerHTML).not.toContain("2022 Honda Civic");
+    // Click February (index 1): not the default latest month and not index 0.
+    // Coordinates go to `.recharts-wrapper` — the Recharts 3 pointer target.
+    clickRenderedChartMonth(container, "2026-02");
+
+    await waitFor(() => {
+      expect(container.innerHTML).toContain("Feb 2026");
+    });
+    expect(container.innerHTML).not.toContain("Mar 2026");
+    expect(container.innerHTML).toContain("2022 Honda Civic");
     expect(container.innerHTML).toContain("US Checking");
     expect(container.innerHTML).toContain("CAD Investment");
-    expect(container.innerHTML).toContain("CA$6,350");
+    expect(container.innerHTML).toContain("CA$31,485");
+    expect(container.innerHTML).not.toContain("CA$31,620");
   });
 
   it("async data arrival selects the latest available month", () => {

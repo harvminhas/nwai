@@ -5,12 +5,13 @@
 
 import React from "react";
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { TrendsTab } from "../TrendsTab";
 import type { DebtsSummary } from "@/lib/debtsSummary";
 import {
   buildProductionTrendsFixture,
   installChartResizeObserver,
+  clickRenderedChartMonth,
 } from "@/lib/__tests__/trendsMonthCompositionFixture";
 
 // @vitest-environment jsdom
@@ -219,15 +220,32 @@ describe("Liabilities TrendsTab production fixture — click and async", () => {
     expect(container.innerHTML).toContain("CA$24,400");
   });
 
-  it("clicking a historical month updates details and hides the later-dated manual loan", () => {
+  it("clicking a historical month updates details and hides the later-dated manual loan", async () => {
     const { debtsSummary } = buildProductionTrendsFixture();
     const { container } = render(<TrendsTab summary={debtsSummary} />);
 
-    const janDot = container.querySelector('circle[data-month="2026-01"]');
-    expect(janDot).toBeTruthy();
-    fireEvent.click(janDot!);
+    expect(container.querySelector(".recharts-wrapper")).toBeTruthy();
+    expect(container.innerHTML).toContain("Mar 2026");
+    expect(container.innerHTML).toContain("Federal Student Loan");
+    expect(container.innerHTML).toContain("CA$24,400");
 
-    expect(container.innerHTML).toContain("Jan 2026");
+    // Click February (index 1): not the default latest month and not index 0.
+    clickRenderedChartMonth(container, "2026-02");
+
+    await waitFor(() => {
+      expect(container.innerHTML).toContain("Feb 2026");
+    });
+    expect(container.innerHTML).not.toContain("Mar 2026");
+    expect(container.innerHTML).toContain("Federal Student Loan");
+    expect(container.innerHTML).toContain("CAD Visa");
+    expect(container.innerHTML).toContain("OSAP Student Loan");
+    expect(container.innerHTML).toContain("CA$24,700");
+    expect(container.innerHTML).not.toContain("CA$24,400");
+
+    clickRenderedChartMonth(container, "2026-01");
+    await waitFor(() => {
+      expect(container.innerHTML).toContain("Jan 2026");
+    });
     expect(container.innerHTML).not.toContain("Federal Student Loan");
     expect(container.innerHTML).toContain("OSAP Student Loan");
     expect(container.innerHTML).toContain("CA$10,000");
