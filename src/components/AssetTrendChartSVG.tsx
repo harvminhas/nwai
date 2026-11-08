@@ -5,6 +5,7 @@
  */
 
 import type { TrendDataPoint } from "@/lib/assetTrendChart";
+import { calculateBalanceChartDomain } from "@/lib/chartDomain";
 
 interface AssetTrendChartSVGProps {
   actualPoints: TrendDataPoint[];
@@ -25,24 +26,12 @@ export function AssetTrendChartSVG({
 }: AssetTrendChartSVGProps) {
   const allPoints = [...actualPoints, ...projectedPoints];
   const allValues = allPoints.map(p => p.value);
-  const minValue = Math.min(...allValues);
-  const maxValue = Math.max(...allValues);
-  const valueRange = maxValue - minValue;
   
-  // Guard against all-zero values: ensure yMax > yMin to avoid divide-by-zero in yScale
-  let yMin: number, yMax: number;
-  if (valueRange > 0) {
-    yMin = minValue - valueRange * 0.1;
-    yMax = maxValue + valueRange * 0.1;
-  } else if (minValue === 0) {
-    // All values are zero: use fixed range [0, 1] for display
-    yMin = 0;
-    yMax = 1;
-  } else {
-    // All values are same non-zero: add 10% padding
-    yMin = minValue * 0.9;
-    yMax = maxValue * 1.1;
-  }
+  // Use shared domain calculation for consistency with canonical balance charts
+  // Handles all-zero, small ranges, and large ranges appropriately
+  const domain = calculateBalanceChartDomain(allValues);
+  const yMin = domain.min;
+  const yMax = domain.max;
 
   const width = 800;
   const height = 300;

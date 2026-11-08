@@ -10,6 +10,7 @@ import {
   CartesianGrid,
   Line,
 } from "recharts";
+import { calculateBalanceChartDomain } from "@/lib/chartDomain";
 
 function shortMonthLabel(yearMonth: string): string {
   const [y, m] = yearMonth.split("-");
@@ -145,6 +146,10 @@ export default function NetWorthChart({
     return { ...pt, netWorthSolid: solid, netWorthDotted: dotted };
   });  const data = range === 0 ? connected : connected.slice(-range);
   const hasEstimates = data.some((p) => p.isEstimate);
+  
+  // Calculate adaptive domain for better visibility of changes
+  const values = data.map(p => p.netWorth);
+  const domain = calculateBalanceChartDomain(values);
 
   // Month detail for the selected point
   const selIdx   = selectedYm ? data.findIndex((p) => p.yearMonth === selectedYm) : -1;
@@ -208,6 +213,7 @@ export default function NetWorthChart({
               axisLine={false}
             />
             <YAxis
+              domain={[domain.min, domain.max]}
               tickFormatter={(v) => formatAxisFor(v, currency)}
               tick={{ fontSize: 11, fill: "#9ca3af" }}
               tickLine={false}
