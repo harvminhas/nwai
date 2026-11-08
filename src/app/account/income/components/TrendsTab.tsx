@@ -61,8 +61,9 @@ export function TrendsTab({ summary }: TrendsTabProps) {
   });
   
   // Calculate chart domain using canonical calculation
+  // Force zero baseline for stacked bar charts (not line charts)
   const allChartValues = chartData.flatMap(d => [d.total, d.lastYear].filter((v): v is number => v !== null));
-  const chartDomain = calculateBalanceChartDomain(allChartValues);
+  const chartDomain = calculateBalanceChartDomain(allChartValues, { forceZeroBaseline: true });
   
   // Currency formatter for axis
   const fmtAxis = (v: number) => {

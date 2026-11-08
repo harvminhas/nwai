@@ -11,6 +11,17 @@ import {
   Line,
 } from "recharts";
 import { calculateBalanceChartDomain } from "@/lib/chartDomain";
+import {
+  CANONICAL_CHART_MARGIN,
+  CANONICAL_GRID_CONFIG,
+  CANONICAL_XAXIS_CONFIG,
+  CANONICAL_YAXIS_CONFIG,
+  CANONICAL_TOOLTIP_CONTENT_STYLE,
+  CANONICAL_TOOLTIP_LABEL_STYLE,
+  CANONICAL_LINE_CONFIG,
+  CANONICAL_DASHED_LINE_CONFIG,
+  getCanonicalLineColor,
+} from "@/lib/canonicalChartConfig";
 
 function shortMonthLabel(yearMonth: string): string {
   const [y, m] = yearMonth.split("-");
@@ -204,21 +215,16 @@ export default function NetWorthChart({
 
       <div className="h-52 w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
+          <LineChart data={data} margin={CANONICAL_CHART_MARGIN}>
+            <CartesianGrid {...CANONICAL_GRID_CONFIG} />
             <XAxis
               dataKey="label"
-              tick={{ fontSize: 11, fill: "#9ca3af" }}
-              tickLine={false}
-              axisLine={false}
+              {...CANONICAL_XAXIS_CONFIG}
             />
             <YAxis
               domain={[domain.min, domain.max]}
               tickFormatter={(v) => formatAxisFor(v, currency)}
-              tick={{ fontSize: 11, fill: "#9ca3af" }}
-              tickLine={false}
-              axisLine={false}
-              width={56}
+              {...CANONICAL_YAXIS_CONFIG}
             />
             <Tooltip
               formatter={(value, name) => {
@@ -226,20 +232,14 @@ export default function NetWorthChart({
                 const label = name === "netWorthDotted" ? "Balance (estimated)" : "Balance";
                 return [formatCurrencyFor(value, currency), label];
               }}
-              contentStyle={{
-                borderRadius: "8px",
-                border: "1px solid #e5e7eb",
-                boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.08)",
-                fontSize: "13px",
-              }}
-              labelStyle={{ fontWeight: 600, color: "#111827" }}
+              contentStyle={CANONICAL_TOOLTIP_CONTENT_STYLE}
+              labelStyle={CANONICAL_TOOLTIP_LABEL_STYLE}
             />
             {/* Solid line — real data */}
             <Line
-              type="monotone"
+              {...CANONICAL_LINE_CONFIG}
               dataKey="netWorthSolid"
-              stroke="rgb(124 58 237)"
-              strokeWidth={2}
+              stroke={getCanonicalLineColor("balance")}
               dot={(props) => {
                 const p = props as { cx?: number; cy?: number; payload: Point };
                 return (
@@ -253,19 +253,13 @@ export default function NetWorthChart({
                   />
                 );
               }}
-              activeDot={false}
-              connectNulls={false}
               name="netWorthSolid"
-              legendType="none"
             />
             {/* Dotted line — estimated data */}
             <Line
-              type="monotone"
+              {...CANONICAL_DASHED_LINE_CONFIG}
               dataKey="netWorthDotted"
-              stroke="rgb(124 58 237)"
-              strokeWidth={2}
-              strokeDasharray="5 4"
-              strokeOpacity={0.45}
+              stroke={getCanonicalLineColor("balance")}
               dot={(props) => {
                 const p = props as { cx?: number; cy?: number; payload: Point };
                 return (
@@ -280,10 +274,7 @@ export default function NetWorthChart({
                   />
                 );
               }}
-              activeDot={false}
-              connectNulls={false}
               name="netWorthDotted"
-              legendType="none"
             />
           </LineChart>
         </ResponsiveContainer>
