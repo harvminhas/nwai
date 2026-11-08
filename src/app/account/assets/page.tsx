@@ -21,13 +21,14 @@ type TabId = typeof TABS[number]["id"];
 function AssetsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [activeTab, setActiveTab] = useState<TabId>("accounts");
+  const [activeTab, setActiveTab] = useState<TabId>("trends");
   const [summary, setSummary] = useState<AssetsSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const tabParam = searchParams.get("tab");
+    // Respect explicit tab parameter from URL (user-specified intent)
     if (tabParam && TABS.some(t => t.id === tabParam)) {
       setActiveTab(tabParam as TabId);
     }
