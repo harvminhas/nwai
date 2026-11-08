@@ -142,6 +142,8 @@ export function calculateNetWorthForMonths(
     }
   }
 
+  const importedDebtBySlug = new Map(debtEntries.map(({ acct }) => [acct.slug, acct]));
+
   // Calculate net worth for each month
   for (const h of monthlyHistory) {
     let ta = 0;
@@ -212,12 +214,19 @@ export function calculateNetWorthForMonths(
     
     // Add manual liabilities from their known-from month onward.
     // Current snapshot only — do not invent a historical payoff series.
-    // Skip only when an explicit link/id matches an imported loan that
-    // actually contributed this month (same active + carry-forward rules).
+    // Explicit link/id only. Skip when the linked imported loan:
+    //   • contributes this month (active + has a balance), or
+    //   • is closed/paid off as of this month (do not resurrect the manual).
+    // Active but not yet imported (no statement as of this month) → keep manual.
     // Same-label imported vs manual loans are distinct unless linked.
     for (const liability of manualLiabilities) {
-      if (liability.linkedAccountSlug && importedContributingSlugs.has(liability.linkedAccountSlug)) continue;
-      if (importedContributingSlugs.has(liability.id)) continue;
+      const linkedSlugs = [liability.linkedAccountSlug, liability.id].filter(
+        (slug): slug is string => !!slug && importedDebtBySlug.has(slug)
+      );
+      if (linkedSlugs.some((slug) =>
+        !isAccountActive(slug, h.yearMonth, accountStatusMap) ||
+        importedContributingSlugs.has(slug)
+      )) continue;
 
       const knownFrom = liabilityKnownFromMonth(liability);
       if (knownFrom && h.yearMonth < knownFrom) continue;

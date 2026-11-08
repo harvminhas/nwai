@@ -437,6 +437,7 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
     const monthlyHistory: MonthNetWorthHistory[] = [
       { yearMonth: "2026-02", netWorth: 0, totalAssets: 0, totalDebts: 0, byAccount: [] },
       { yearMonth: "2026-03", netWorth: 0, totalAssets: 0, totalDebts: 0, byAccount: [] },
+      { yearMonth: "2026-04", netWorth: 0, totalAssets: 0, totalDebts: 0, byAccount: [] },
     ];
 
     const accountBalanceHistory: AccountBalanceHistory[] = [
@@ -448,6 +449,21 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
         entries: [{ yearMonth: "2026-03", balance: -8000 }],
       },
     ];
+
+    // Paid off end of March → April is the first excluded month
+    // (isAccountActive: month-start compare, mid-month March stays active)
+    const accountStatusMap = new Map<string, AccountStatusRecord>([
+      [
+        "osap-loan",
+        {
+          accountSlug: "osap-loan",
+          status: "paid_off",
+          statusDate: "2026-03-31",
+          statusSource: "auto",
+          updatedAt: "2026-03-31T00:00:00Z",
+        },
+      ],
+    ]);
 
     calculateNetWorthForMonths(
       monthlyHistory,
@@ -463,7 +479,7 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
         updatedAt: "2026-02-01T00:00:00Z",
       }],
       toHomeCAD,
-      new Map()
+      accountStatusMap
     );
 
     // Feb: imported has no statement yet — keep the manual once
@@ -473,6 +489,10 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
     // March: imported contributes — skip the linked manual
     expect(monthlyHistory[1].totalDebts).toBe(8000);
     expect(monthlyHistory[1].byAccount?.map(a => a.slug)).toEqual(["osap-loan"]);
+
+    // April: imported closed/paid off — do not resurrect the manual 7500
+    expect(monthlyHistory[2].totalDebts).toBe(0);
+    expect(monthlyHistory[2].byAccount).toEqual([]);
   });
 
   it("distinct same-label imported and manual loans both count when not linked", () => {
