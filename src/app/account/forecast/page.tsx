@@ -19,6 +19,7 @@ import { MerchantDrawer, merchantSlugFromSpendingMerchantHref, useMerchantDrawer
 import { IncomeDrawer, useIncomeDrawer } from "@/app/account/today/IncomeDrawer";
 import { EventDrawer, eventIdFromEventsDetailHref, useEventDrawer } from "@/app/account/today/EventDrawer";
 import type { NearTermBucketDiscretionaryDTO } from "@/lib/forecastNearTermDiscretionary";
+import { calculateBalanceChartDomain } from "@/lib/chartDomain";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -890,13 +891,18 @@ export default function ForecastPage() {
 
   const chartData = hasEnoughData ? buildChartData(netWorth, monthlySavings, horizon) : [];
 
-  // Y-axis domain: 10% padding below min lowerBand, 10% above max upperBand
-  const chartYMin = hasEnoughData
-    ? Math.min(...chartData.map((p) => p.lowerBand)) * 0.95
-    : 0;
-  const chartYMax = hasEnoughData
-    ? Math.max(...chartData.map((p) => p.lowerBand + p.bandDiff)) * 1.05
-    : 0;
+  // Use canonical chart domain calculation - include all values (solid, dashed, and band edges)
+  const allChartValues = hasEnoughData
+    ? chartData.flatMap((p) => [
+        p.solid, 
+        p.dashed, 
+        p.lowerBand, 
+        p.lowerBand + p.bandDiff
+      ].filter((v): v is number => v !== null))
+    : [];
+  const forecastDomain = hasEnoughData ? calculateBalanceChartDomain(allChartValues) : { min: 0, max: 0 };
+  const chartYMin = forecastDomain.min;
+  const chartYMax = forecastDomain.max;
 
   const milestones = hasEnoughData
     ? detectMilestones(netWorth, monthlySavings, history, snapshots, accountHistory, sym, fxRates, hc)

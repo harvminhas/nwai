@@ -6,6 +6,7 @@ import type { IncomeSummary } from "@/lib/incomeSummary";
 import { formatMonth, formatMonthYear } from "@/lib/dateFormatting";
 import { formatCurrency, getCurrencySymbol } from "@/lib/currencyUtils";
 import { getSignColor } from "@/lib/colorHelpers";
+import { calculateBalanceChartDomain } from "@/lib/chartDomain";
 
 type TimeWindow = "12month" | "ytd" | "last3";
 
@@ -58,6 +59,10 @@ export function TrendsTab({ summary }: TrendsTabProps) {
       lastYear: lastYearData ? Math.round(lastYearData.regular) : null
     };
   });
+  
+  // Calculate chart domain using canonical calculation
+  const allChartValues = chartData.flatMap(d => [d.total, d.lastYear].filter((v): v is number => v !== null));
+  const chartDomain = calculateBalanceChartDomain(allChartValues);
   
   // Currency formatter for axis
   const fmtAxis = (v: number) => {
@@ -205,7 +210,7 @@ export function TrendsTab({ summary }: TrendsTabProps) {
             >
               <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
               <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} />
-              <YAxis tickFormatter={fmtAxis} tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={60} />
+              <YAxis domain={[chartDomain.min, chartDomain.max]} tickFormatter={fmtAxis} tick={{ fontSize: 11, fill: "#9ca3af" }} tickLine={false} axisLine={false} width={60} />
               <Tooltip
                 content={({ active, payload }) => {
                   if (!active || !payload?.length) return null;

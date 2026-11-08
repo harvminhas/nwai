@@ -7,6 +7,7 @@ import { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, Cartesian
 import { formatCurrency, formatCurrencyWithCents, getCurrencySymbol } from "@/lib/currencyUtils";
 import { ReviewList } from "@/components/ReviewList";
 import { MergeMerchantsPanel } from "./MergeMerchantsPanel";
+import { calculateBalanceChartDomain } from "@/lib/chartDomain";
 
 interface MonthlySeries {
   yearMonth: string;
@@ -315,21 +316,10 @@ export function DrilldownView({ token }: DrilldownViewProps) {
     comparison: displayData.comparisonSeries?.[idx]?.amount || 0,
   }));
 
-  // Magnitude-aware 'nice' domain calculation
-  const niceDomain = (values: number[]): [number, number] => {
-    const max = Math.max(...values, 0);
-    if (max === 0) return [0, 100];
-    const min = Math.min(...values);
-    const pad = Math.max((max - min) * 0.15, max * 0.08);
-    const lo = Math.max(0, min - pad);
-    const hi = max + pad;
-    const rawStep = (hi - lo) / 4;
-    const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
-    const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= rawStep) ?? 10 * mag;
-    return [Math.floor(lo / step) * step, Math.ceil(hi / step) * step];
-  };
-  
-  const yAxisDomain = niceDomain(displayData.monthlySeries.map(m => m.amount));
+  // Use canonical chart domain calculation
+  const values = displayData.monthlySeries.map(m => m.amount);
+  const domain = calculateBalanceChartDomain(values);
+  const yAxisDomain: [number, number] = [domain.min, domain.max];
 
   // Debt groups, narrowed to the selected month when one is picked
   const groupsForDisplay = (displayData.groups || []).map((group) => {

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { formatCurrency, formatCurrencyWithCents } from "@/lib/currencyUtils";
+import { calculateBalanceChartDomain } from "@/lib/chartDomain";
 
 interface BalanceLineChartProps {
   history: Array<{
@@ -41,30 +42,12 @@ function BalanceLineChart({ history, currency, isDebt, onMonthClick }: BalanceLi
     );
   }
   
-  // Calculate min/max with 5% padding
+  // Use canonical chart domain calculation
   const values = validHistory.map(h => Math.abs(h.balance));
-  const minValue = Math.min(...values);
-  const maxValue = Math.max(...values);
-  const range = maxValue - minValue;
-  
-  // Guard against constant values (max === min)
-  const hasVariation = range > 0.01; // Allow for tiny floating point differences
-  
-  let paddedMin: number;
-  let paddedMax: number;
-  let effectiveRange: number;
-  
-  if (hasVariation) {
-    paddedMin = Math.max(0, minValue - (range * 0.05));
-    paddedMax = maxValue + (range * 0.05);
-    effectiveRange = paddedMax - paddedMin;
-  } else {
-    // All values are the same - create artificial range for display
-    const value = minValue;
-    paddedMin = Math.max(0, value * 0.9);
-    paddedMax = value * 1.1;
-    effectiveRange = paddedMax - paddedMin;
-  }
+  const domain = calculateBalanceChartDomain(values);
+  const paddedMin = domain.min;
+  const paddedMax = domain.max;
+  const effectiveRange = paddedMax - paddedMin;
   
   // Determine if trend is improving
   const firstBalance = Math.abs(validHistory[0].balance);
