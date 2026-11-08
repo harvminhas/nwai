@@ -32,6 +32,21 @@ function formatMonth(ym: string): string {
     .toLocaleDateString("en-US", { month: "short", year: "numeric" });
 }
 
+/**
+ * Format YYYY-MM-DD date string as UTC to avoid timezone shift
+ * (e.g., "2026-11-01" should display as "Nov 1, 2026", not "Oct 31, 2026" in NY timezone)
+ */
+function formatDateUTC(dateStr: string): string {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const utcDate = new Date(Date.UTC(year, month - 1, day));
+  return utcDate.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
 interface AssetSummaryShape {
   totalAssets: number;
   currency: string;
@@ -414,7 +429,7 @@ export default function ManualAssetPage() {
     setConfirmModal({
       isOpen: true,
       title: "Delete valuation",
-      message: `Delete valuation from ${new Date(effectiveDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}? This will recalculate net worth for affected months.`,
+      message: `Delete valuation from ${formatDateUTC(effectiveDate)}? This will recalculate net worth for affected months.`,
       onConfirm: async () => {
         if (!token) return;
         try {
@@ -1435,11 +1450,7 @@ export default function ManualAssetPage() {
                         .map((val: any) => (
                           <tr key={val.id} className="hover:bg-gray-50 transition">
                             <td className="px-4 py-2 text-sm text-gray-900">
-                              {new Date(val.effectiveDate).toLocaleDateString("en-US", {
-                                month: "short",
-                                day: "numeric",
-                                year: "numeric",
-                              })}
+                              {formatDateUTC(val.effectiveDate)}
                               {val.isBaseline && (
                                 <span className="ml-2 text-xs text-gray-500">(baseline)</span>
                               )}

@@ -108,8 +108,9 @@ export function buildTrendChartData(
     const [todayYear, todayMonth, todayDay] = today.split('-').map(Number);
     const todayDateUTC = new Date(Date.UTC(todayYear, todayMonth - 1, todayDay));
     const projectionEndDateUTC = new Date(Date.UTC(todayYear + projectionYears, todayMonth - 1, todayDay));
+    const anchorDateUTC = new Date(Date.UTC(anchorYear, anchorMonth - 1, anchorDay));
     
-    // Generate future projections at anchor anniversaries until we reach/exceed projection end
+    // Generate future projections at anchor anniversaries up to (but not beyond) projection end
     // Use sparse yearly intervals for readability
     for (let i = 1; ; i++) {
       const futureYear = anchorYear + i;
@@ -118,7 +119,7 @@ export function buildTrendChartData(
       const futureDay = Math.min(anchorDay, daysInMonth);
       const futureDateUTC = new Date(Date.UTC(futureYear, anchorMonth - 1, futureDay));
       
-      // Stop if this point is beyond the projection end
+      // Stop if this anniversary is beyond the projection end
       if (futureDateUTC > projectionEndDateUTC) break;
       
       const yearsSinceAnchor = i;
@@ -129,6 +130,30 @@ export function buildTrendChartData(
         date: futureDateStr,
         value: projectedValue,
         label: futureYear.toString(),
+        isProjected: true,
+      });
+    }
+    
+    // Add final point at exact projection end date using fractional year compounding
+    // This ensures we reach the full horizon (today + projectionYears)
+    const lastAnniversary = projectedPoints.length > 0 
+      ? projectedPoints[projectedPoints.length - 1].date 
+      : anchorPoint.date;
+    const lastAnniversaryUTC = new Date(lastAnniversary + "T00:00:00Z");
+    
+    // Only add endpoint if it's after the last anniversary
+    if (projectionEndDateUTC > lastAnniversaryUTC) {
+      // Calculate fractional years from anchor to projection end
+      const msPerYear = 365.25 * 24 * 60 * 60 * 1000; // Average including leap years
+      const elapsedMs = projectionEndDateUTC.getTime() - anchorDateUTC.getTime();
+      const elapsedYears = elapsedMs / msPerYear;
+      const endpointValue = anchorValue * Math.pow(1 + rate, elapsedYears);
+      const endpointDateStr = projectionEndDateUTC.toISOString().slice(0, 10);
+      
+      projectedPoints.push({
+        date: endpointDateStr,
+        value: endpointValue,
+        label: projectionEndDateUTC.getUTCFullYear().toString(),
         isProjected: true,
       });
     }

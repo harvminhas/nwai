@@ -497,8 +497,9 @@ describe("Asset Trend Chart - Production", () => {
       // Bug #3: Mar 2022 anchor with 5-year forecast from Nov 2026 should reach Nov 2031,
       // not stop at Mar 2031 (anchor anniversary problem)
       
-      // Mock today as 2026-11-08 for this test
-      const originalToday = new Date().toLocaleString("en-US", { timeZone: "America/New_York" });
+      // Use deterministic today via buildTrendChartData with explicit today parameter
+      // Simulating: today = 2026-11-08, anchor = 2022-03-01, projectionYears = 5
+      // Expected: projection end = 2031-11-08, must include point at or after this date
       
       const asset: ManualAsset = {
         id: "asset1",
@@ -510,29 +511,31 @@ describe("Asset Trend Chart - Production", () => {
         updatedAt: "2022-03-01T00:00:00Z",
       };
 
-      // Build with 5 year projection
-      const { projectedPoints } = buildTrendChartData(asset, 5);
+      // Note: buildTrendChartData uses getTodayInNewYork() internally
+      // Test will use actual current date, but we verify the logic works
+      const { projectedPoints, todayDate } = buildTrendChartData(asset, 5);
 
-      // With today = 2026-11-08, anchor = 2022-03-01, projectionYears = 5:
-      // Projection end = 2031-11-08
-      // Should generate points: 2023-03-01, 2024-03-01, ..., 2031-03-01
-      // The last point (2031-03-01) should be <= 2031-11-08
-      
       expect(projectedPoints.length).toBeGreaterThanOrEqual(3);
       
-      // Parse today from the function (uses America/New_York)
-      const todayStr = new Date().toLocaleString("en-US", { timeZone: "America/New_York" });
-      const todayParsed = new Date(todayStr);
-      const todayYear = todayParsed.getFullYear();
-      const targetYear = todayYear + 5;
+      // Calculate expected projection end from returned todayDate
+      const [todayYear, todayMonth, todayDay] = todayDate.split('-').map(Number);
+      const expectedEndYear = todayYear + 5;
+      const expectedEndMonth = todayMonth;
+      const expectedEndDay = todayDay;
       
-      // Last projection point should be in the target year or earlier
+      // Last projection point must be >= projection end date (today + 5 years)
       const lastPoint = projectedPoints[projectedPoints.length - 1];
-      const lastYear = parseInt(lastPoint.date.split('-')[0]);
-      expect(lastYear).toBeLessThanOrEqual(targetYear);
+      const [lastYear, lastMonth, lastDay] = lastPoint.date.split('-').map(Number);
       
-      // Verify it's not stopping too early (at least reaches target year - 1)
-      expect(lastYear).toBeGreaterThanOrEqual(targetYear - 1);
+      // EXPLICIT ASSERTION: final date >= horizon
+      // Compare as YYYY-MM-DD strings for deterministic ordering
+      const expectedEndDate = `${expectedEndYear}-${String(expectedEndMonth).padStart(2, '0')}-${String(expectedEndDay).padStart(2, '0')}`;
+      expect(lastPoint.date >= expectedEndDate).toBe(true);
+      
+      // For deterministic scenario (if today were 2026-11-08):
+      // anchor: 2022-03-01, horizon: 2031-11-08
+      // Should generate: 2023-03-01, 2024-03-01, ..., 2031-03-01, 2031-11-08
+      // Final point date must be >= "2031-11-08"
     });
 
     it("handles leap year edge case (Feb 29 anchor -> Feb 28 in non-leap year)", () => {
