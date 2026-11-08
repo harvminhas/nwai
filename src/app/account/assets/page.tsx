@@ -29,7 +29,7 @@ function AssetsPageContent() {
 
   useEffect(() => {
     const tabParam = searchParams.get("tab");
-    // Only apply when the query names a real tab. Bare `/account/assets` stays Trends.
+    // Only apply when the query names a real tab. Bare `/account/assets` stays Overview.
     // Do not reset on missing param: handleTabChange uses pushState, not Next searchParams.
     if (tabParam && TABS.some(t => t.id === tabParam)) {
       setActiveTab(tabParam as TabId);

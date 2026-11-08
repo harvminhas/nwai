@@ -11,6 +11,7 @@ import { getFirebaseClient } from "@/lib/firebase";
 import { formatLastTransactionDate } from "@/lib/formatLastTransactionDate";
 import { CategoryListRow } from "@/app/account/spending/CategoryListRow";
 import { triggerProfileRefetch } from "@/lib/profileRefetch";
+import { isCategoryGroupOpen, toggleCategoryGroup } from "@/lib/categoryGroupExpand";
 
 const GROUP_COLOR: Record<string, string> = {
   cash: "bg-blue-500",
@@ -34,7 +35,7 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
   const { groups, currency, totalAssets } = summary;
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const [userGroupOpen, setUserGroupOpen] = useState<Record<string, boolean>>({});
   const [showAdd, setShowAdd] = useState(false);
   const [addLabel, setAddLabel] = useState("");
   const [addCategory, setAddCategory] = useState<AssetCategory>("property");
@@ -59,7 +60,7 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
   }, [searchParams]);
 
   const toggle = (type: string) =>
-    setOpenGroups((prev) => ({ ...prev, [type]: !prev[type] }));
+    setUserGroupOpen((prev) => toggleCategoryGroup(prev, type));
 
   const submitAdd = async () => {
     const num = Number(addValue.replace(/[^0-9.-]/g, ""));
@@ -220,7 +221,7 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
       {addPanel}
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
       {ordered.map((group) => {
-        const isOpen = !!openGroups[group.type];
+        const isOpen = isCategoryGroupOpen(userGroupOpen, group.type);
         const count = group.accounts.length + group.manualAssets.length;
         const pct = totalAssets > 0 ? (group.total / totalAssets) * 100 : 0;
 

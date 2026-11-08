@@ -6,15 +6,20 @@ import {
 } from "../accountSectionTabs";
 
 describe("account section tab intent", () => {
-  it("lists Trends first so default navigation shows the redesigned chart", () => {
-    expect(ACCOUNT_SECTION_TABS[0]).toEqual({ id: "trends", label: "Trends" });
-    expect(DEFAULT_ACCOUNT_SECTION_TAB).toBe("trends");
+  it("lists Overview first so default navigation opens Overview, not Trends", () => {
+    expect(ACCOUNT_SECTION_TABS.map((t) => t.id)).toEqual([
+      "overview",
+      "accounts",
+      "trends",
+    ]);
+    expect(ACCOUNT_SECTION_TABS[0]).toEqual({ id: "overview", label: "Overview" });
+    expect(DEFAULT_ACCOUNT_SECTION_TAB).toBe("overview");
   });
 
-  it("main Assets/Debts nav (no query) opens Trends", () => {
-    expect(resolveAccountSectionTab(null)).toBe("trends");
-    expect(resolveAccountSectionTab(undefined)).toBe("trends");
-    expect(resolveAccountSectionTab("")).toBe("trends");
+  it("main Assets/Debts nav (no query) opens Overview", () => {
+    expect(resolveAccountSectionTab(null)).toBe("overview");
+    expect(resolveAccountSectionTab(undefined)).toBe("overview");
+    expect(resolveAccountSectionTab("")).toBe("overview");
   });
 
   it("preserves explicit Accounts tab from account-detail breadcrumbs", () => {
@@ -27,7 +32,7 @@ describe("account section tab intent", () => {
   });
 
   it("ignores unknown query tabs such as insights ?tab=payoff", () => {
-    expect(resolveAccountSectionTab("payoff")).toBe("trends");
-    expect(resolveAccountSectionTab("debts")).toBe("trends");
+    expect(resolveAccountSectionTab("payoff")).toBe("overview");
+    expect(resolveAccountSectionTab("debts")).toBe("overview");
   });
 });

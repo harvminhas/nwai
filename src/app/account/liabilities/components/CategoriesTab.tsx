@@ -8,6 +8,7 @@ import { formatCurrency } from "@/lib/currencyUtils";
 import { formatAccountLast4 } from "@/lib/rangeUtils";
 import { CategoryListRow } from "@/app/account/spending/CategoryListRow";
 import { formatLastTransactionDate } from "@/lib/formatLastTransactionDate";
+import { isCategoryGroupOpen, toggleCategoryGroup } from "@/lib/categoryGroupExpand";
 
 const GROUP_COLOR: Record<string, string> = {
   mortgage: "bg-red-500",
@@ -23,7 +24,7 @@ interface CategoriesTabProps {
 /** Top level of the Liabilities drill-down: categories -> category page -> account page. */
 export function CategoriesTab({ summary }: CategoriesTabProps) {
   const { groups, currency, totalDebt } = summary;
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const [userGroupOpen, setUserGroupOpen] = useState<Record<string, boolean>>({});
 
   if (groups.length === 0) {
     return (
@@ -45,7 +46,7 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
   return (
     <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
       {ordered.map((group) => {
-        const isOpen = !!openGroups[group.type];
+        const isOpen = isCategoryGroupOpen(userGroupOpen, group.type);
         const count = group.accounts.length + group.manualLiabilities.length;
         const abs = Math.abs(group.totalBalance);
         const pct = totalDebt > 0 ? (abs / totalDebt) * 100 : 0;
@@ -54,7 +55,7 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
           <div key={group.type} className="border-b border-gray-100 last:border-0">
             <CategoryListRow
               isOpen={isOpen}
-              onToggle={() => setOpenGroups((p) => ({ ...p, [group.type]: !p[group.type] }))}
+              onToggle={() => setUserGroupOpen((p) => toggleCategoryGroup(p, group.type))}
               rowContent={
                 <div className="flex flex-1 items-center gap-3 py-4 pl-5 pr-2">
                   <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${GROUP_COLOR[group.type] ?? "bg-gray-300"}`} />
