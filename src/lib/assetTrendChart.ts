@@ -16,6 +16,7 @@ export interface TrendDataPoint {
 interface TrendChartData {
   actualPoints: TrendDataPoint[];
   projectedPoints: TrendDataPoint[];
+  todayDate: string; // YYYY-MM-DD - marker for current date
 }
 
 /**
@@ -94,11 +95,23 @@ export function buildTrendChartData(
     const anchorValue = anchorPoint.value;
     const anchorDate = new Date(anchorPoint.date);
     
-    // Generate future projections starting from anchor date
-    for (let i = 1; i <= projectionYears; i++) {
-      const projectedValue = anchorValue * Math.pow(1 + rate, i);
+    // Calculate projection end: today + selected years
+    const todayDate = new Date(today);
+    const projectionEndDate = new Date(todayDate);
+    projectionEndDate.setFullYear(todayDate.getFullYear() + projectionYears);
+    
+    // Calculate years from anchor to projection end
+    const anchorYear = anchorDate.getFullYear();
+    const endYear = projectionEndDate.getFullYear();
+    const totalYearsFromAnchor = endYear - anchorYear;
+    
+    // Generate future projections from anchor through today + selected years
+    // Use sparse yearly intervals for readability
+    for (let i = 1; i <= totalYearsFromAnchor; i++) {
+      const yearsSinceAnchor = i;
+      const projectedValue = anchorValue * Math.pow(1 + rate, yearsSinceAnchor);
       const futureDate = new Date(anchorDate);
-      futureDate.setFullYear(futureDate.getFullYear() + i);
+      futureDate.setFullYear(anchorDate.getFullYear() + i);
       const futureDateStr = futureDate.toISOString().slice(0, 10);
       
       projectedPoints.push({
@@ -110,7 +123,7 @@ export function buildTrendChartData(
     }
   }
 
-  return { actualPoints, projectedPoints };
+  return { actualPoints, projectedPoints, todayDate: today };
 }
 
 /**

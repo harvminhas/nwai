@@ -1324,7 +1324,7 @@ export default function ManualAssetPage() {
 
             {/* Combined Chart: Actual + Projected */}
             {(() => {
-              const { actualPoints, projectedPoints } = buildTrendChartData(asset, projectionYears);
+              const { actualPoints, projectedPoints, todayDate } = buildTrendChartData(asset, projectionYears);
               const hasData = actualPoints.length > 0 || projectedPoints.length > 0;
 
               if (!hasData) return null;
@@ -1418,6 +1418,20 @@ export default function ManualAssetPage() {
                           </g>
                         );
                       })}
+                      
+                      {/* Today marker line (vertical dashed) */}
+                      {projectedPoints.length > 0 && (
+                        <line
+                          x1={xScale(todayDate)}
+                          y1={padding.top}
+                          x2={xScale(todayDate)}
+                          y2={height - padding.bottom}
+                          stroke="#fbbf24"
+                          strokeWidth="2"
+                          strokeDasharray="4 3"
+                          opacity="0.6"
+                        />
+                      )}
                       
                       {/* X-axis labels (chronological) */}
                       {allPoints.map((d, i) => (
