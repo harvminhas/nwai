@@ -433,8 +433,9 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
     expect(monthlyHistory[2].netWorth).toBe(-15000);
   });
 
-  it("does not double-count an imported loan that is also stored as a manual liability", () => {
+  it("linked manual counts in Feb when imported first contributes in March, then skips in March", () => {
     const monthlyHistory: MonthNetWorthHistory[] = [
+      { yearMonth: "2026-02", netWorth: 0, totalAssets: 0, totalDebts: 0, byAccount: [] },
       { yearMonth: "2026-03", netWorth: 0, totalAssets: 0, totalDebts: 0, byAccount: [] },
     ];
 
@@ -452,16 +453,60 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
       monthlyHistory,
       accountBalanceHistory,
       [],
-      [
-        { id: "dup", label: "OSAP Student Loan", category: "student_loan", balance: 8000, updatedAt: "2026-01-01T00:00:00Z" },
-        { id: "linked", label: "Same loan via slug", category: "student_loan", balance: 8000, linkedAccountSlug: "osap-loan", updatedAt: "2026-01-01T00:00:00Z" },
-      ],
+      [{
+        id: "osap-manual",
+        label: "OSAP Student Loan",
+        category: "student_loan",
+        balance: 7500,
+        startDate: "2026-02-01",
+        linkedAccountSlug: "osap-loan",
+        updatedAt: "2026-02-01T00:00:00Z",
+      }],
       toHomeCAD,
       new Map()
     );
 
-    expect(monthlyHistory[0].totalDebts).toBe(8000);
-    expect(monthlyHistory[0].byAccount).toHaveLength(1);
-    expect(monthlyHistory[0].byAccount?.[0]?.slug).toBe("osap-loan");
+    // Feb: imported has no statement yet — keep the manual once
+    expect(monthlyHistory[0].totalDebts).toBe(7500);
+    expect(monthlyHistory[0].byAccount?.map(a => a.slug)).toEqual(["manual-osap-manual"]);
+
+    // March: imported contributes — skip the linked manual
+    expect(monthlyHistory[1].totalDebts).toBe(8000);
+    expect(monthlyHistory[1].byAccount?.map(a => a.slug)).toEqual(["osap-loan"]);
+  });
+
+  it("distinct same-label imported and manual loans both count when not linked", () => {
+    const monthlyHistory: MonthNetWorthHistory[] = [
+      { yearMonth: "2026-03", netWorth: 0, totalAssets: 0, totalDebts: 0, byAccount: [] },
+    ];
+
+    const accountBalanceHistory: AccountBalanceHistory[] = [
+      {
+        slug: "osap-imported",
+        label: "OSAP Student Loan",
+        accountType: "loan",
+        currency: "CAD",
+        entries: [{ yearMonth: "2026-03", balance: -8000 }],
+      },
+    ];
+
+    calculateNetWorthForMonths(
+      monthlyHistory,
+      accountBalanceHistory,
+      [],
+      [{
+        id: "osap-other",
+        label: "OSAP Student Loan",
+        category: "student_loan",
+        balance: 5000,
+        updatedAt: "2026-01-01T00:00:00Z",
+      }],
+      toHomeCAD,
+      new Map()
+    );
+
+    expect(monthlyHistory[0].totalDebts).toBe(13000);
+    const slugs = monthlyHistory[0].byAccount?.map(a => a.slug).sort();
+    expect(slugs).toEqual(["manual-osap-other", "osap-imported"]);
   });
 });

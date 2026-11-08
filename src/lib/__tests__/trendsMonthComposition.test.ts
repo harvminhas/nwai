@@ -32,7 +32,7 @@ describe("Trends month composition — production core → summary", () => {
     expect(mar.totalDebts).toBe(1600 + 7800 + 15000);
   });
 
-  it("does not double-count imported OSAP that is also stored as a manual liability", () => {
+  it("imported OSAP is the statement account, not collapsed by label", () => {
     for (const month of monthlyHistory) {
       const osapRows = (month.byAccount || []).filter((a) => a.label === "OSAP Student Loan");
       expect(osapRows).toHaveLength(1);

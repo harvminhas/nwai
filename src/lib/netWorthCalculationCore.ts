@@ -16,10 +16,6 @@ export type ManualLiabilityInput = Pick<ManualLiability, "id" | "label" | "categ
   linkedAccountSlug?: string;
 };
 
-function normalizeLabel(label: string): string {
-  return label.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
 /**
  * Earliest month this manual liability is known to exist.
  * Manual liabilities have no valuation history — only a current snapshot.
@@ -146,9 +142,6 @@ export function calculateNetWorthForMonths(
     }
   }
 
-  const importedDebtSlugs = new Set(debtEntries.map(({ acct }) => acct.slug));
-  const importedDebtLabels = new Set(debtEntries.map(({ acct }) => normalizeLabel(acct.label)));
-
   // Calculate net worth for each month
   for (const h of monthlyHistory) {
     let ta = 0;
@@ -174,10 +167,11 @@ export function calculateNetWorthForMonths(
     }
 
     // Sum debt account balances as of this month
-      for (const { acct, sorted } of debtEntries) {
-        // Exclude paid-off/closed debts from net worth calculation
-        const active = isAccountActive(acct.slug, h.yearMonth, accountStatusMap);
-        if (!active) continue;
+    const importedContributingSlugs = new Set<string>();
+    for (const { acct, sorted } of debtEntries) {
+      // Exclude paid-off/closed debts from net worth calculation
+      const active = isAccountActive(acct.slug, h.yearMonth, accountStatusMap);
+      if (!active) continue;
 
       let bal: number | null = null;
       for (const e of sorted) {
@@ -193,6 +187,7 @@ export function calculateNetWorthForMonths(
         type: acct.accountType,
         value: -absValue, // Debts are negative
       });
+      importedContributingSlugs.add(acct.slug);
     }
 
     // Add manual assets from their start date onward
@@ -217,11 +212,12 @@ export function calculateNetWorthForMonths(
     
     // Add manual liabilities from their known-from month onward.
     // Current snapshot only — do not invent a historical payoff series.
-    // Skip when the same loan is already imported as a statement account.
+    // Skip only when an explicit link/id matches an imported loan that
+    // actually contributed this month (same active + carry-forward rules).
+    // Same-label imported vs manual loans are distinct unless linked.
     for (const liability of manualLiabilities) {
-      if (liability.linkedAccountSlug && importedDebtSlugs.has(liability.linkedAccountSlug)) continue;
-      if (importedDebtSlugs.has(liability.id)) continue;
-      if (importedDebtLabels.has(normalizeLabel(liability.label))) continue;
+      if (liability.linkedAccountSlug && importedContributingSlugs.has(liability.linkedAccountSlug)) continue;
+      if (importedContributingSlugs.has(liability.id)) continue;
 
       const knownFrom = liabilityKnownFromMonth(liability);
       if (knownFrom && h.yearMonth < knownFrom) continue;

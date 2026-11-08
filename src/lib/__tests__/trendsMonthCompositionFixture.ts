@@ -112,14 +112,6 @@ export function buildProductionTrendsFixture() {
       balance: 15000,
       updatedAt: "2026-02-15T00:00:00Z",
     },
-    // Duplicate of the imported OSAP loan — must not be counted twice
-    {
-      id: "osap-dup",
-      label: "OSAP Student Loan",
-      category: "student_loan",
-      balance: 8000,
-      updatedAt: "2026-01-01T00:00:00Z",
-    },
   ];
 
   const monthlyHistory: MonthNetWorthHistory[] = [

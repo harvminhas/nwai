@@ -63,7 +63,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-export const SCHEMA_VERSION = "69"; // Manual asset startDate field and month-based inclusion
+export const SCHEMA_VERSION = "70"; // Manual liability inclusion in monthly net-worth / Trends history
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -1446,8 +1446,8 @@ export async function getFinancialProfile(
     } else {
       const ageMs = Date.now() - new Date(cached.updatedAt).getTime();
 
-      // Schema v69: startDate-based inclusion invalidates v68 all-months caches
-      // SCHEMA_VERSION bump handles migration; no bespoke validation needed
+      // Schema mismatch already handled above. v70 includes manual liabilities
+      // in monthlyHistory.byAccount; SCHEMA_VERSION bump forces rebuild.
 
       // Hot path: cache is < 5 min old AND not stale — return immediately
       if (ageMs < HOT_WINDOW_MS && !cached.cacheStale) {
