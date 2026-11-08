@@ -96,7 +96,7 @@ export default function ManualAssetPage() {
   const categoryPickerBtnRefs = useState(() => new Map<string, HTMLButtonElement>())[0];
   
   // Main tab state
-  const [mainTab, setMainTab] = useState<"income" | "expenses" | "trend" | "projections">("expenses");
+  const [mainTab, setMainTab] = useState<"income" | "expenses" | "trend">("expenses");
 
   // Reset to expenses tab when asset ID changes
   useEffect(() => {
@@ -865,16 +865,6 @@ export default function ManualAssetPage() {
           >
             Trend
           </button>
-          <button
-            onClick={() => setMainTab("projections")}
-            className={`pb-3 px-1 text-base font-semibold transition ${
-              mainTab === "projections"
-                ? "border-b-2 border-purple-600 text-purple-600"
-                : "text-gray-500 hover:text-gray-700"
-            }`}
-          >
-            Projections
-          </button>
         </div>
 
         {/* Income Tab */}
@@ -1519,66 +1509,51 @@ export default function ManualAssetPage() {
               );
             })()}
 
-            {/* Compact Projection Controls */}
-            <div className="rounded-xl border border-gray-200 bg-white p-4 mb-6">
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-0.5">
-                  <button
-                    type="button"
-                    onClick={() => setGrowthType("appreciation")}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${
-                      growthType === "appreciation"
-                        ? "bg-white text-gray-900 shadow-sm"
-                        : "text-gray-600 hover:text-gray-900"
-                    }`}
-                  >
-                    Appreciation
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setGrowthType("depreciation")}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${
-                      growthType === "depreciation"
-                        ? "bg-white text-gray-900 shadow-sm"
-                        : "text-gray-600 hover:text-gray-900"
-                    }`}
-                  >
-                    Depreciation
-                  </button>
-                </div>
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="0.1"
-                  value={growthPercent}
-                  onChange={(e) => setGrowthPercent(e.target.value)}
-                  placeholder="5.0"
-                  className="w-20 rounded-lg border border-gray-200 px-2 py-1.5 text-xs focus:border-purple-400 focus:outline-none disabled:opacity-50"
-                  disabled={savingRate}
-                />
-                <span className="text-xs text-gray-500">% per year</span>
-                <button
-                  type="button"
-                  onClick={saveGrowthRate}
-                  disabled={savingRate || growthPercent.trim() === ""}
-                  className="rounded-lg bg-purple-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
-                >
-                  {savingRate ? "Saving..." : "Save"}
-                </button>
-                {asset?.annualGrowthRate !== null && asset?.annualGrowthRate !== undefined && (
-                  <span className="text-xs text-gray-500">
-                    Current: {asset.annualGrowthRate >= 0 ? "+" : ""}{asset.annualGrowthRate}%
-                  </span>
-                )}
-                {rateToast && (
-                  <span className={`text-xs font-medium ${
-                    rateToast.ok ? "text-green-600" : "text-red-600"
-                  }`}>
-                    {rateToast.msg}
-                  </span>
-                )}
-              </div>
+            {/* Growth Rate Controls */}
+            <div className="flex items-center gap-3 mb-6">
+              <select
+                value={growthType}
+                onChange={(e) => setGrowthType(e.target.value as "appreciation" | "depreciation")}
+                className="rounded border border-gray-200 px-2 py-1 text-sm focus:border-purple-400 focus:outline-none"
+                disabled={savingRate}
+                aria-label="Growth type"
+              >
+                <option value="appreciation">Appreciation</option>
+                <option value="depreciation">Depreciation</option>
+              </select>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.1"
+                value={growthPercent}
+                onChange={(e) => setGrowthPercent(e.target.value)}
+                placeholder="5.0"
+                className="w-20 rounded border border-gray-200 px-2 py-1 text-sm focus:border-purple-400 focus:outline-none disabled:opacity-50"
+                disabled={savingRate}
+                aria-label="Annual growth rate percentage"
+              />
+              <span className="text-sm text-gray-500">%/yr</span>
+              <button
+                type="button"
+                onClick={saveGrowthRate}
+                disabled={savingRate || growthPercent.trim() === ""}
+                className="rounded bg-purple-600 px-3 py-1 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-40 transition"
+              >
+                {savingRate ? "Saving..." : "Save"}
+              </button>
+              {asset?.annualGrowthRate !== null && asset?.annualGrowthRate !== undefined && (
+                <span className="text-sm text-gray-600">
+                  Current: {asset.annualGrowthRate >= 0 ? "+" : ""}{asset.annualGrowthRate}%
+                </span>
+              )}
+              {rateToast && (
+                <span className={`text-sm font-medium ${
+                  rateToast.ok ? "text-green-600" : "text-red-600"
+                }`}>
+                  {rateToast.msg}
+                </span>
+              )}
             </div>
 
             {/* Valuation List */}
@@ -1640,338 +1615,6 @@ export default function ManualAssetPage() {
         )}
 
         {/* Projections Tab */}
-        {mainTab === "projections" && (
-          <div>
-            {/* Settings Card */}
-            <div className="rounded-xl border border-gray-200 bg-white p-6 mb-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-base font-semibold text-gray-900">Projection Settings</h3>
-                {asset?.annualGrowthRate !== null && asset?.annualGrowthRate !== undefined && (
-                  <span className="text-sm text-gray-500">
-                    Current: {asset.annualGrowthRate >= 0 ? "+" : ""}{asset.annualGrowthRate}%/year
-                  </span>
-                )}
-              </div>
-
-              <div className="space-y-4">
-                {/* Segmented Control */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Type</label>
-                  <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1">
-                    <button
-                      type="button"
-                      onClick={() => setGrowthType("appreciation")}
-                      className={`px-4 py-2 text-sm font-medium rounded-md transition ${
-                        growthType === "appreciation"
-                          ? "bg-white text-gray-900 shadow-sm"
-                          : "text-gray-600 hover:text-gray-900"
-                      }`}
-                    >
-                      Appreciation
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setGrowthType("depreciation")}
-                      className={`px-4 py-2 text-sm font-medium rounded-md transition ${
-                        growthType === "depreciation"
-                          ? "bg-white text-gray-900 shadow-sm"
-                          : "text-gray-600 hover:text-gray-900"
-                      }`}
-                    >
-                      Depreciation
-                    </button>
-                  </div>
-                </div>
-
-                {/* Rate Input and Save */}
-                <div className="flex gap-3 items-end">
-                  <div className="flex-1 max-w-xs">
-                    <label htmlFor="growth-percent" className="block text-sm font-medium text-gray-700 mb-2">
-                      Annual Rate (%)
-                    </label>
-                    <input
-                      id="growth-percent"
-                      type="number"
-                      min="0"
-                      max="100"
-                      step="0.1"
-                      value={growthPercent}
-                      onChange={(e) => setGrowthPercent(e.target.value)}
-                      placeholder="5.0"
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none disabled:opacity-50"
-                      disabled={savingRate}
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={saveGrowthRate}
-                    disabled={savingRate || growthPercent.trim() === ""}
-                    className="rounded-lg bg-purple-600 px-6 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
-                  >
-                    {savingRate ? "Saving..." : "Save"}
-                  </button>
-                </div>
-
-                {/* Toast */}
-                {rateToast && (
-                  <div className={`rounded-lg px-4 py-2 text-sm font-medium ${
-                    rateToast.ok ? "bg-green-50 text-green-800" : "bg-red-50 text-red-800"
-                  }`}>
-                    {rateToast.msg}
-                  </div>
-                )}
-
-                {/* Horizon */}
-                <div>
-                  <label htmlFor="projection-years" className="block text-sm font-medium text-gray-700 mb-2">
-                    Projection Horizon
-                  </label>
-                  <select
-                    id="projection-years"
-                    value={projectionYears}
-                    onChange={(e) => setProjectionYears(Number(e.target.value))}
-                    className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
-                  >
-                    <option value="3">3 years</option>
-                    <option value="5">5 years</option>
-                    <option value="10">10 years</option>
-                    <option value="15">15 years</option>
-                    <option value="20">20 years</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            {/* Projection Chart/Table */}
-            {asset?.annualGrowthRate !== null && asset?.annualGrowthRate !== undefined && asset?.annualGrowthRate !== 0 ? (
-              <>
-                {/* Chart */}
-                <div className="rounded-xl border border-gray-200 bg-white p-6 mb-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-base font-semibold text-gray-900">Projected Value</h3>
-                    <span className="text-xs text-gray-500 font-medium">Estimate only</span>
-                  </div>
-                  
-                  {(() => {
-                    const rate = (asset.annualGrowthRate ?? 0) / 100;
-                    const currentYear = new Date().getFullYear();
-                    
-                    // Find most recent ACTUAL valuation (not future)
-                    // Use America/New_York timezone consistently
-                    const today = (() => {
-                      const nyDate = new Date().toLocaleString("en-US", { timeZone: "America/New_York" });
-                      return new Date(nyDate).toISOString().slice(0, 10);
-                    })();
-                    let currentValue = asset.value;
-                    
-                    if (asset.valuations && asset.valuations.length > 0) {
-                      // Filter to only actual (not future) valuations
-                      const actualValuations = asset.valuations.filter(
-                        v => v.effectiveDate <= today
-                      );
-                      
-                      if (actualValuations.length > 0) {
-                        // Use most recent actual valuation
-                        const mostRecent = actualValuations[actualValuations.length - 1];
-                        currentValue = mostRecent.valueCents / 100;
-                      }
-                    }
-                    
-                    // Generate data points (current + projections)
-                    const dataPoints = [
-                      { year: currentYear, value: currentValue, label: 'Current' }
-                    ];
-                    for (let i = 1; i <= projectionYears; i++) {
-                      dataPoints.push({
-                        year: currentYear + i,
-                        value: currentValue * Math.pow(1 + rate, i),
-                        label: String(currentYear + i)
-                      });
-                    }
-                    
-                    // Chart dimensions
-                    const width = 800;
-                    const height = 300;
-                    const padding = { top: 20, right: 20, bottom: 40, left: 60 };
-                    const chartWidth = width - padding.left - padding.right;
-                    const chartHeight = height - padding.top - padding.bottom;
-                    
-                    // Scales
-                    const minValue = Math.min(...dataPoints.map(d => d.value));
-                    const maxValue = Math.max(...dataPoints.map(d => d.value));
-                    const valueRange = maxValue - minValue;
-                    const yMin = minValue - valueRange * 0.1;
-                    const yMax = maxValue + valueRange * 0.1;
-                    
-                    const xScale = (index: number) => padding.left + (index / (dataPoints.length - 1)) * chartWidth;
-                    const yScale = (value: number) => padding.top + chartHeight - ((value - yMin) / (yMax - yMin)) * chartHeight;
-                    
-                    // Generate path
-                    const pathData = dataPoints
-                      .map((d, i) => `${i === 0 ? 'M' : 'L'} ${xScale(i)} ${yScale(d.value)}`)
-                      .join(' ');
-                    
-                    // Y-axis ticks
-                    const yTicks = 5;
-                    const yTickValues = Array.from({ length: yTicks }, (_, i) => 
-                      yMin + (i / (yTicks - 1)) * (yMax - yMin)
-                    );
-                    
-                    return (
-                      <div className="w-full overflow-x-auto">
-                        <svg 
-                          viewBox={`0 0 ${width} ${height}`} 
-                          className="w-full h-auto"
-                          style={{ minWidth: '600px', maxHeight: '300px' }}
-                        >
-                          {/* Y-axis grid lines and labels */}
-                          {yTickValues.map((tickValue, i) => {
-                            const y = yScale(tickValue);
-                            return (
-                              <g key={i}>
-                                <line
-                                  x1={padding.left}
-                                  y1={y}
-                                  x2={width - padding.right}
-                                  y2={y}
-                                  stroke="#e5e7eb"
-                                  strokeWidth="1"
-                                />
-                                <text
-                                  x={padding.left - 10}
-                                  y={y}
-                                  textAnchor="end"
-                                  alignmentBaseline="middle"
-                                  className="text-xs fill-gray-500"
-                                  style={{ fontSize: '10px' }}
-                                >
-                                  {formatCurrency(tickValue, currency)}
-                                </text>
-                              </g>
-                            );
-                          })}
-                          
-                          {/* X-axis labels */}
-                          {dataPoints.map((d, i) => (
-                            <text
-                              key={i}
-                              x={xScale(i)}
-                              y={height - padding.bottom + 20}
-                              textAnchor="middle"
-                              className="text-xs fill-gray-700"
-                              style={{ fontSize: '10px' }}
-                            >
-                              {d.label}
-                            </text>
-                          ))}
-                          
-                          {/* Line path */}
-                          <path
-                            d={pathData}
-                            fill="none"
-                            stroke={rate >= 0 ? "#10b981" : "#ef4444"}
-                            strokeWidth="3"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                          
-                          {/* Data points */}
-                          {dataPoints.map((d, i) => (
-                            <g key={i}>
-                              <circle
-                                cx={xScale(i)}
-                                cy={yScale(d.value)}
-                                r="5"
-                                fill={i === 0 ? "#8b5cf6" : (rate >= 0 ? "#10b981" : "#ef4444")}
-                                stroke="white"
-                                strokeWidth="2"
-                              />
-                              {/* Value label on hover */}
-                              <title>{`${d.year}: ${formatCurrency(d.value, currency)}`}</title>
-                            </g>
-                          ))}
-                        </svg>
-                      </div>
-                    );
-                  })()}
-                </div>
-                
-                {/* Table (Collapsible) */}
-                <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
-                  <button
-                    type="button"
-                    onClick={() => setShowProjectionTable(!showProjectionTable)}
-                    className="w-full bg-gray-50 border-b border-gray-200 px-4 py-3 flex items-center justify-between hover:bg-gray-100 transition"
-                  >
-                    <h3 className="text-sm font-semibold text-gray-900">Detailed Projections</h3>
-                    <svg className={`h-5 w-5 text-gray-500 transition-transform ${showProjectionTable ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-                  {showProjectionTable && (
-                  <table className="w-full">
-                  <thead className="bg-gray-50 border-b border-gray-200">
-                    <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Year</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Projected Value</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Change from Current</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {(() => {
-                      // Find most recent ACTUAL valuation (not future)
-                      // Use America/New_York timezone consistently
-                      const today = (() => {
-                        const nyDate = new Date().toLocaleString("en-US", { timeZone: "America/New_York" });
-                        return new Date(nyDate).toISOString().slice(0, 10);
-                      })();
-                      let currentValue = asset.value;
-                      
-                      if (asset.valuations && asset.valuations.length > 0) {
-                        const actualValuations = asset.valuations.filter(
-                          v => v.effectiveDate <= today
-                        );
-                        if (actualValuations.length > 0) {
-                          const mostRecent = actualValuations[actualValuations.length - 1];
-                          currentValue = mostRecent.valueCents / 100;
-                        }
-                      }
-                      
-                      return Array.from({ length: projectionYears }, (_, i) => {
-                        const year = new Date().getFullYear() + i + 1;
-                        const rate = (asset.annualGrowthRate ?? 0) / 100;
-                        const projectedValue = currentValue * Math.pow(1 + rate, i + 1);
-                        const change = projectedValue - currentValue;
-                        const changePercent = ((change / currentValue) * 100);
-
-                        return (
-                          <tr key={year} className={i === 0 ? "bg-purple-50" : ""}>
-                            <td className="px-4 py-3 text-sm font-medium text-gray-900">{year}</td>
-                            <td className="px-4 py-3 text-sm font-semibold text-gray-900 tabular-nums text-right">
-                              {formatCurrency(projectedValue, currency)}
-                            </td>
-                            <td className="px-4 py-3 text-sm tabular-nums text-right">
-                              <span className={change >= 0 ? "text-green-600" : "text-red-600"}>
-                                {change >= 0 ? "+" : ""}{formatCurrency(change, currency)}
-                                {" "}({change >= 0 ? "+" : ""}{changePercent.toFixed(1)}%)
-                              </span>
-                            </td>
-                          </tr>
-                        );
-                      });
-                    })()}
-                  </tbody>
-                </table>
-                  )}
-              </div>
-              </>
-            ) : (
-              <div className="rounded-xl border border-gray-200 bg-gray-50 p-8 text-center">
-                <p className="text-sm text-gray-500">Set a growth rate above to see projections</p>
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
       {/* Add Valuation Modal */}
