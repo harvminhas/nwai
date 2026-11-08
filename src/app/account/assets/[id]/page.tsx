@@ -13,6 +13,7 @@ import { triggerProfileRefetch } from "@/lib/profileRefetch";
 import { useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 import type { ManualAsset, AssetCategory, HubLink, ExpenseTransaction, IncomeTransaction } from "@/lib/types";
 import type { DebtsSummary, DebtAccount } from "@/lib/debtsSummary";
+import { buildTrendChartData, getDisplayValuations } from "@/lib/assetTrendChart";
 
 const CATEGORY_LABEL: Record<AssetCategory, string> = {
   property: "Property",
@@ -1333,63 +1334,7 @@ export default function ManualAssetPage() {
 
             {/* Combined Chart: Actual + Projected */}
             {(() => {
-              // Build actual valuation data points (always include baseline)
-              const actualPoints: Array<{ date: string; value: number; label: string; isBaseline?: boolean }> = [];
-              
-              if (asset.valuations && asset.valuations.length > 0) {
-                // User has explicit valuations
-                asset.valuations.forEach(val => {
-                  actualPoints.push({
-                    date: val.effectiveDate,
-                    value: val.valueCents / 100,
-                    label: new Date(val.effectiveDate).toLocaleDateString("en-US", { month: "short", year: "numeric" }),
-                  });
-                });
-              } else {
-                // Legacy: show current value as baseline
-                const baselineDate = asset.startDate || new Date().toISOString().slice(0, 10);
-                const baselineLabel = asset.startDate 
-                  ? new Date(asset.startDate).toLocaleDateString("en-US", { month: "short", year: "numeric" })
-                  : "Current";
-                actualPoints.push({
-                  date: baselineDate,
-                  value: asset.value,
-                  label: baselineLabel,
-                  isBaseline: true,
-                });
-              }
-
-              // Sort actual points by date
-              actualPoints.sort((a, b) => a.date.localeCompare(b.date));
-
-              // Build projected points if rate exists
-              const projectedPoints: Array<{ date: string; value: number; label: string }> = [];
-              if (asset.annualGrowthRate !== null && asset.annualGrowthRate !== undefined && asset.annualGrowthRate !== 0) {
-                const rate = asset.annualGrowthRate / 100;
-                const today = (() => {
-                  const nyDate = new Date().toLocaleString("en-US", { timeZone: "America/New_York" });
-                  return new Date(nyDate).toISOString().slice(0, 10);
-                })();
-                
-                // Find most recent actual value (not future)
-                const actualFutureFiltered = actualPoints.filter(p => p.date <= today);
-                const anchorValue = actualFutureFiltered.length > 0 
-                  ? actualFutureFiltered[actualFutureFiltered.length - 1].value
-                  : asset.value;
-                
-                // Generate future projections
-                const currentYear = new Date().getFullYear();
-                for (let i = 1; i <= projectionYears; i++) {
-                  const projectedValue = anchorValue * Math.pow(1 + rate, i);
-                  const futureYear = currentYear + i;
-                  projectedPoints.push({
-                    date: `${futureYear}-12-31`,
-                    value: projectedValue,
-                    label: String(futureYear),
-                  });
-                }
-              }
-
+              const { actualPoints, projectedPoints } = buildTrendChartData(asset, projectionYears);
               const hasData = actualPoints.length > 0 || projectedPoints.length > 0;
 
               if (!hasData) return null;
@@ -1643,16 +1588,7 @@ export default function ManualAssetPage() {
 
             {/* Valuation List */}
             {(() => {
-              const hasExplicitValuations = asset.valuations && asset.valuations.length > 0;
-              const displayValuations = hasExplicitValuations 
-                ? asset.valuations 
-                : [{
-                    id: '__baseline__',
-                    effectiveDate: asset.startDate || new Date().toISOString().slice(0, 10),
-                    valueCents: Math.round(asset.value * 100),
-                    createdAt: new Date().toISOString(),
-                    isBaseline: true,
-                  }];
+              const displayValuations = getDisplayValuations(asset);
 
               return (
                 <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
