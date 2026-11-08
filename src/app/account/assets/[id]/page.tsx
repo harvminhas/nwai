@@ -95,7 +95,7 @@ export default function ManualAssetPage() {
   const categoryPickerBtnRefs = useState(() => new Map<string, HTMLButtonElement>())[0];
   
   // Main tab state
-  const [mainTab, setMainTab] = useState<"income" | "expenses" | "history" | "projections">("expenses");
+  const [mainTab, setMainTab] = useState<"income" | "expenses" | "trend" | "projections">("expenses");
 
   // Reset to expenses tab when asset ID changes
   useEffect(() => {
@@ -855,14 +855,14 @@ export default function ManualAssetPage() {
             Expenses ({formatCurrency(totalSpending, currency)})
           </button>
           <button
-            onClick={() => setMainTab("history")}
+            onClick={() => setMainTab("trend")}
             className={`pb-3 px-1 text-base font-semibold transition ${
-              mainTab === "history"
+              mainTab === "trend"
                 ? "border-b-2 border-purple-600 text-purple-600"
                 : "text-gray-500 hover:text-gray-700"
             }`}
           >
-            History
+            Trend
           </button>
           <button
             onClick={() => setMainTab("projections")}
@@ -1318,14 +1318,11 @@ export default function ManualAssetPage() {
           </div>
         )}
 
-        {/* History Tab */}
-        {mainTab === "history" && (
+        {/* Trend Tab */}
+        {mainTab === "trend" && (
           <div>
             <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">Valuation History</h2>
-                <p className="text-sm text-gray-500 mt-1">Track how the value of this asset has changed over time</p>
-              </div>
+              <h2 className="text-lg font-semibold text-gray-900">Asset Trend</h2>
               <button
                 onClick={() => setShowAddValuationModal(true)}
                 className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
@@ -1334,77 +1331,380 @@ export default function ManualAssetPage() {
               </button>
             </div>
 
-            {asset.valuations && asset.valuations.length > 0 ? (
-              <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
-                <table className="w-full">
-                  <thead className="bg-gray-50 border-b border-gray-200">
-                    <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Value</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {[...asset.valuations]
-                      .sort((a, b) => {
-                        // Sort by date descending, then by createdAt descending for same-day
-                        const dateCmp = b.effectiveDate.localeCompare(a.effectiveDate);
-                        if (dateCmp !== 0) return dateCmp;
-                        return b.createdAt.localeCompare(a.createdAt);
-                      })
-                      .map((val) => (
-                        <tr key={val.id} className="hover:bg-gray-50 transition">
-                          <td className="px-4 py-3 text-sm text-gray-900">
-                            {new Date(val.effectiveDate).toLocaleDateString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                              year: "numeric",
-                            })}
-                          </td>
-                          <td className="px-4 py-3 text-sm font-semibold text-gray-900 tabular-nums text-right">
-                            {formatCurrencyWithCents(val.valueCents / 100, currency)}
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <button
-                              onClick={() => deleteValuation(val.id, val.effectiveDate)}
-                              className="text-red-600 hover:text-red-700 text-sm font-medium transition"
-                            >
-                              Delete
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="rounded-xl border border-gray-200 bg-gray-50 p-8 text-center">
-                <p className="text-sm text-gray-500 mb-4">No valuation history yet. Add your first entry to start tracking changes.</p>
-                <button
-                  onClick={() => setShowAddValuationModal(true)}
-                  className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 transition"
-                >
-                  Add First Valuation
-                </button>
-              </div>
-            )}
+            {/* Combined Chart: Actual + Projected */}
+            {(() => {
+              // Build actual valuation data points (always include baseline)
+              const actualPoints: Array<{ date: string; value: number; label: string; isBaseline?: boolean }> = [];
+              
+              if (asset.valuations && asset.valuations.length > 0) {
+                // User has explicit valuations
+                asset.valuations.forEach(val => {
+                  actualPoints.push({
+                    date: val.effectiveDate,
+                    value: val.valueCents / 100,
+                    label: new Date(val.effectiveDate).toLocaleDateString("en-US", { month: "short", year: "numeric" }),
+                  });
+                });
+              } else {
+                // Legacy: show current value as baseline
+                const baselineDate = asset.startDate || new Date().toISOString().slice(0, 10);
+                const baselineLabel = asset.startDate 
+                  ? new Date(asset.startDate).toLocaleDateString("en-US", { month: "short", year: "numeric" })
+                  : "Current";
+                actualPoints.push({
+                  date: baselineDate,
+                  value: asset.value,
+                  label: baselineLabel,
+                  isBaseline: true,
+                });
+              }
 
-            <div className="mt-6 rounded-lg border border-blue-100 bg-blue-50 p-4">
-              <div className="flex gap-3">
-                <svg className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <div className="text-sm text-blue-900">
-                  <p className="font-medium mb-1">How valuation history works</p>
-                  <ul className="text-blue-800 space-y-1 list-disc list-inside">
-                    <li>Each month uses the most recent valuation as of that month's end</li>
-                    <li>You can backdate valuations to correct historical values</li>
-                    <li>Deleting a valuation recalculates affected months using the previous value</li>
-                    <li>Cannot delete the only valuation (edit the value instead)</li>
-                  </ul>
+              // Sort actual points by date
+              actualPoints.sort((a, b) => a.date.localeCompare(b.date));
+
+              // Build projected points if rate exists
+              const projectedPoints: Array<{ date: string; value: number; label: string }> = [];
+              if (asset.annualGrowthRate !== null && asset.annualGrowthRate !== undefined && asset.annualGrowthRate !== 0) {
+                const rate = asset.annualGrowthRate / 100;
+                const today = (() => {
+                  const nyDate = new Date().toLocaleString("en-US", { timeZone: "America/New_York" });
+                  return new Date(nyDate).toISOString().slice(0, 10);
+                })();
+                
+                // Find most recent actual value (not future)
+                const actualFutureFiltered = actualPoints.filter(p => p.date <= today);
+                const anchorValue = actualFutureFiltered.length > 0 
+                  ? actualFutureFiltered[actualFutureFiltered.length - 1].value
+                  : asset.value;
+                
+                // Generate future projections
+                const currentYear = new Date().getFullYear();
+                for (let i = 1; i <= projectionYears; i++) {
+                  const projectedValue = anchorValue * Math.pow(1 + rate, i);
+                  const futureYear = currentYear + i;
+                  projectedPoints.push({
+                    date: `${futureYear}-12-31`,
+                    value: projectedValue,
+                    label: String(futureYear),
+                  });
+                }
+              }
+
+              const hasData = actualPoints.length > 0 || projectedPoints.length > 0;
+
+              if (!hasData) return null;
+
+              // Combine all points for chart scaling
+              const allPoints = [...actualPoints, ...projectedPoints];
+              const allValues = allPoints.map(p => p.value);
+              const minValue = Math.min(...allValues);
+              const maxValue = Math.max(...allValues);
+              const valueRange = maxValue - minValue;
+              const yMin = valueRange > 0 ? minValue - valueRange * 0.1 : minValue * 0.9;
+              const yMax = valueRange > 0 ? maxValue + valueRange * 0.1 : maxValue * 1.1;
+
+              // Chart dimensions
+              const width = 800;
+              const height = 300;
+              const padding = { top: 20, right: 20, bottom: 40, left: 80 };
+              const chartWidth = width - padding.left - padding.right;
+              const chartHeight = height - padding.top - padding.bottom;
+
+              // Scales
+              const xScale = (index: number, total: number) => 
+                padding.left + (total > 1 ? (index / (total - 1)) * chartWidth : chartWidth / 2);
+              const yScale = (value: number) => 
+                padding.top + chartHeight - ((value - yMin) / (yMax - yMin)) * chartHeight;
+
+              // Y-axis ticks
+              const yTicks = 5;
+              const yTickValues = Array.from({ length: yTicks }, (_, i) => 
+                yMin + (i / (yTicks - 1)) * (yMax - yMin)
+              );
+
+              return (
+                <div className="rounded-xl border border-gray-200 bg-white p-5 mb-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-4 text-xs">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-0.5 bg-purple-600"></div>
+                        <span className="text-gray-600">Actual</span>
+                      </div>
+                      {projectedPoints.length > 0 && (
+                        <div className="flex items-center gap-2">
+                          <svg width="32" height="2" className="overflow-visible">
+                            <line x1="0" y1="1" x2="32" y2="1" stroke="#9ca3af" strokeWidth="2" strokeDasharray="4 3" />
+                          </svg>
+                          <span className="text-gray-600">Projected</span>
+                        </div>
+                      )}
+                    </div>
+                    {projectedPoints.length > 0 && <span className="text-xs text-gray-500">Estimate only</span>}
+                  </div>
+
+                  <div className="w-full overflow-x-auto">
+                    <svg 
+                      viewBox={`0 0 ${width} ${height}`} 
+                      className="w-full h-auto"
+                      style={{ minWidth: '600px', maxHeight: '300px' }}
+                    >
+                      {/* Y-axis grid lines and labels */}
+                      {yTickValues.map((tickValue, i) => {
+                        const y = yScale(tickValue);
+                        return (
+                          <g key={i}>
+                            <line
+                              x1={padding.left}
+                              y1={y}
+                              x2={width - padding.right}
+                              y2={y}
+                              stroke="#e5e7eb"
+                              strokeWidth="1"
+                            />
+                            <text
+                              x={padding.left - 10}
+                              y={y}
+                              textAnchor="end"
+                              alignmentBaseline="middle"
+                              className="text-xs fill-gray-500"
+                              style={{ fontSize: '10px' }}
+                            >
+                              {formatCurrency(tickValue, currency)}
+                            </text>
+                          </g>
+                        );
+                      })}
+                      
+                      {/* X-axis labels for actual points */}
+                      {actualPoints.map((d, i) => (
+                        <text
+                          key={`actual-x-${i}`}
+                          x={xScale(i, actualPoints.length)}
+                          y={height - padding.bottom + 20}
+                          textAnchor="middle"
+                          className="text-xs fill-gray-700"
+                          style={{ fontSize: '10px' }}
+                        >
+                          {d.label}
+                        </text>
+                      ))}
+
+                      {/* X-axis labels for projected points */}
+                      {projectedPoints.length > 0 && projectedPoints.map((d, i) => (
+                        <text
+                          key={`proj-x-${i}`}
+                          x={xScale(actualPoints.length + i, actualPoints.length + projectedPoints.length)}
+                          y={height - padding.bottom + 20}
+                          textAnchor="middle"
+                          className="text-xs fill-gray-500"
+                          style={{ fontSize: '10px' }}
+                        >
+                          {d.label}
+                        </text>
+                      ))}
+                      
+                      {/* Actual line path */}
+                      {actualPoints.length > 0 && (
+                        <>
+                          <path
+                            d={actualPoints
+                              .map((d, i) => `${i === 0 ? 'M' : 'L'} ${xScale(i, actualPoints.length)} ${yScale(d.value)}`)
+                              .join(' ')}
+                            fill="none"
+                            stroke="#8b5cf6"
+                            strokeWidth="3"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          {actualPoints.map((d, i) => (
+                            <g key={`actual-${i}`}>
+                              <circle
+                                cx={xScale(i, actualPoints.length)}
+                                cy={yScale(d.value)}
+                                r="5"
+                                fill="#8b5cf6"
+                                stroke="white"
+                                strokeWidth="2"
+                              />
+                              <title>{`${d.label}: ${formatCurrencyWithCents(d.value, currency)}`}</title>
+                            </g>
+                          ))}
+                        </>
+                      )}
+
+                      {/* Projected line path (dashed) */}
+                      {projectedPoints.length > 0 && (
+                        <>
+                          {/* Connect last actual to first projected */}
+                          {actualPoints.length > 0 && (
+                            <line
+                              x1={xScale(actualPoints.length - 1, actualPoints.length)}
+                              y1={yScale(actualPoints[actualPoints.length - 1].value)}
+                              x2={xScale(actualPoints.length, actualPoints.length + projectedPoints.length)}
+                              y2={yScale(projectedPoints[0].value)}
+                              stroke="#9ca3af"
+                              strokeWidth="2"
+                              strokeDasharray="4 3"
+                            />
+                          )}
+                          <path
+                            d={projectedPoints
+                              .map((d, i) => `${i === 0 ? 'M' : 'L'} ${xScale(actualPoints.length + i, actualPoints.length + projectedPoints.length)} ${yScale(d.value)}`)
+                              .join(' ')}
+                            fill="none"
+                            stroke="#9ca3af"
+                            strokeWidth="2"
+                            strokeDasharray="4 3"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          {projectedPoints.map((d, i) => (
+                            <g key={`proj-${i}`}>
+                              <circle
+                                cx={xScale(actualPoints.length + i, actualPoints.length + projectedPoints.length)}
+                                cy={yScale(d.value)}
+                                r="4"
+                                fill="#9ca3af"
+                                stroke="white"
+                                strokeWidth="2"
+                              />
+                              <title>{`${d.label}: ${formatCurrency(d.value, currency)} (estimated)`}</title>
+                            </g>
+                          ))}
+                        </>
+                      )}
+                    </svg>
+                  </div>
                 </div>
+              );
+            })()}
+
+            {/* Compact Projection Controls */}
+            <div className="rounded-xl border border-gray-200 bg-white p-4 mb-6">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setGrowthType("appreciation")}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${
+                      growthType === "appreciation"
+                        ? "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-600 hover:text-gray-900"
+                    }`}
+                  >
+                    Appreciation
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGrowthType("depreciation")}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${
+                      growthType === "depreciation"
+                        ? "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-600 hover:text-gray-900"
+                    }`}
+                  >
+                    Depreciation
+                  </button>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  value={growthPercent}
+                  onChange={(e) => setGrowthPercent(e.target.value)}
+                  placeholder="5.0"
+                  className="w-20 rounded-lg border border-gray-200 px-2 py-1.5 text-xs focus:border-purple-400 focus:outline-none disabled:opacity-50"
+                  disabled={savingRate}
+                />
+                <span className="text-xs text-gray-500">% per year</span>
+                <button
+                  type="button"
+                  onClick={saveGrowthRate}
+                  disabled={savingRate || growthPercent.trim() === ""}
+                  className="rounded-lg bg-purple-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                >
+                  {savingRate ? "Saving..." : "Save"}
+                </button>
+                {asset?.annualGrowthRate !== null && asset?.annualGrowthRate !== undefined && (
+                  <span className="text-xs text-gray-500">
+                    Current: {asset.annualGrowthRate >= 0 ? "+" : ""}{asset.annualGrowthRate}%
+                  </span>
+                )}
+                {rateToast && (
+                  <span className={`text-xs font-medium ${
+                    rateToast.ok ? "text-green-600" : "text-red-600"
+                  }`}>
+                    {rateToast.msg}
+                  </span>
+                )}
               </div>
             </div>
+
+            {/* Valuation List */}
+            {(() => {
+              const hasExplicitValuations = asset.valuations && asset.valuations.length > 0;
+              const displayValuations = hasExplicitValuations 
+                ? asset.valuations 
+                : [{
+                    id: '__baseline__',
+                    effectiveDate: asset.startDate || new Date().toISOString().slice(0, 10),
+                    valueCents: Math.round(asset.value * 100),
+                    createdAt: new Date().toISOString(),
+                    isBaseline: true,
+                  }];
+
+              return (
+                <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+                  <table className="w-full">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                        <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Value</th>
+                        <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {[...displayValuations]
+                        .sort((a, b) => {
+                          const dateCmp = b.effectiveDate.localeCompare(a.effectiveDate);
+                          if (dateCmp !== 0) return dateCmp;
+                          return (b.createdAt || '').localeCompare(a.createdAt || '');
+                        })
+                        .map((val: any) => (
+                          <tr key={val.id} className="hover:bg-gray-50 transition">
+                            <td className="px-4 py-2 text-sm text-gray-900">
+                              {new Date(val.effectiveDate).toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                              })}
+                              {val.isBaseline && (
+                                <span className="ml-2 text-xs text-gray-500">(baseline)</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2 text-sm font-semibold text-gray-900 tabular-nums text-right">
+                              {formatCurrencyWithCents(val.valueCents / 100, currency)}
+                            </td>
+                            <td className="px-4 py-2 text-right">
+                              {!val.isBaseline ? (
+                                <button
+                                  onClick={() => deleteValuation(val.id, val.effectiveDate)}
+                                  className="text-red-600 hover:text-red-700 text-xs font-medium transition"
+                                >
+                                  Delete
+                                </button>
+                              ) : (
+                                <span className="text-xs text-gray-400">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
           </div>
         )}
 
