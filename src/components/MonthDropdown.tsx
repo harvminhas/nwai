@@ -34,7 +34,7 @@ export function MonthDropdown({ months, selectedMonth, onChange }: MonthDropdown
     : "Month";
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative shrink-0" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
         className={`

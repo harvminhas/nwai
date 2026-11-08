@@ -10,8 +10,8 @@ import { fmt } from "@/lib/currencyUtils";
 import { getSignColor } from "@/lib/colorHelpers";
 import { Drawer, type DrawerType } from "@/components/Drawer";
 import { ReviewList } from "@/components/ReviewList";
-import { RangeSwitch } from "@/components/RangeSwitch";
-import { MonthDropdown } from "@/components/MonthDropdown";
+import { DashboardSampleQuestions } from "@/components/DashboardSampleQuestions";
+import { WhereMoneyGoesHeader } from "@/components/WhereMoneyGoesHeader";
 import type { TimeRange } from "@/lib/rangeUtils";
 import { formatMonthList, getSelectableMonths, type SelectableMonth } from "@/lib/rangeUtils";
 import type { GapReconciliation } from "@/lib/gapReconciliation";
@@ -263,19 +263,11 @@ function QuestionBox({
         </div>
       )}
       
-      <div className="flex flex-wrap items-center justify-center gap-2">
-        <span className="text-sm text-gray-500">Try asking:</span>
-        {suggestions.slice(0, 3).map((q) => (
-          <button
-            key={q}
-            onClick={() => onAsk(q)}
-            disabled={loading}
-            className="rounded-full border border-purple-200 bg-purple-50 px-4 py-2 text-sm font-medium text-purple-700 transition hover:border-purple-300 hover:bg-purple-100 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {q}
-          </button>
-        ))}
-      </div>
+      <DashboardSampleQuestions
+        suggestions={suggestions}
+        onAsk={onAsk}
+        loading={loading}
+      />
       
       {/* Saved answers link */}
       {savedAnswersCount > 0 && (
@@ -476,32 +468,13 @@ function WhereMoneyGoes({
 
   return (
     <section className="mt-10">
-      {/* Section Header with Range Switch */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <h2 className="text-lg font-semibold text-gray-900">Where Your Money Goes</h2>
-          {hasMissingStatements && (
-            <button
-              onClick={onOpenMissingStatements}
-              className="text-amber-600 hover:text-amber-700 transition-colors"
-              title="Statements missing for this period"
-              aria-label="View missing statements"
-            >
-              <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-              </svg>
-            </button>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <RangeSwitch value={range} onChange={onRangeChange} />
-          <MonthDropdown 
-            months={selectableMonths}
-            selectedMonth={range.startsWith("month:") ? range.substring(6) : null}
-            onChange={onRangeChange}
-          />
-        </div>
-      </div>
+      <WhereMoneyGoesHeader
+        hasMissingStatements={hasMissingStatements}
+        onOpenMissingStatements={onOpenMissingStatements}
+        range={range}
+        onRangeChange={onRangeChange}
+        selectableMonths={selectableMonths}
+      />
       
       {/* Coverage Note */}
       {coverage.coveragePct < 90 && (
