@@ -3,7 +3,8 @@
 import { ReactNode, useState } from "react";
 import {
   ResponsiveContainer,
-  LineChart,
+  ComposedChart,
+  Area,
   XAxis,
   YAxis,
   Tooltip,
@@ -16,10 +17,8 @@ import {
   CANONICAL_GRID_CONFIG,
   CANONICAL_XAXIS_CONFIG,
   CANONICAL_YAXIS_CONFIG,
-  CANONICAL_TOOLTIP_CONTENT_STYLE,
-  CANONICAL_TOOLTIP_LABEL_STYLE,
   CANONICAL_LINE_CONFIG,
-  CANONICAL_DASHED_LINE_CONFIG,
+  CANONICAL_DOT_CONFIG,
   getCanonicalLineColor,
 } from "@/lib/canonicalChartConfig";
 
@@ -72,7 +71,7 @@ const RANGES = [
   { label: "All", months: 0 },
 ];
 
-// Standalone clickable dot component — defined outside render to avoid Recharts re-mount issues
+// Standalone clickable dot component — canonical green emerald, r=6 selected / r=4 ordinary
 function ChartDot({
   cx, cy, yearMonth, isVisible, isSelected, opacity,
   onSelect,
@@ -85,10 +84,10 @@ function ChartDot({
   return (
     <circle
       cx={cx} cy={cy}
-      r={isSelected ? 7 : 4}
-      fill={isSelected ? "rgb(124 58 237)" : "#fff"}
-      stroke="rgb(124 58 237)"
-      strokeWidth={isSelected ? 2 : 1.5}
+      r={isSelected ? 6 : 4}
+      fill={isSelected ? "#059669" : "#10b981"}
+      stroke="#fff"
+      strokeWidth={isSelected ? 3 : 2}
       fillOpacity={opacity ?? 1}
       style={{ cursor: "pointer", outline: "none" }}
       onMouseDown={(e) => e.preventDefault()}
@@ -215,7 +214,13 @@ export default function NetWorthChart({
 
       <div className="h-52 w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={CANONICAL_CHART_MARGIN}>
+          <ComposedChart data={data} margin={CANONICAL_CHART_MARGIN}>
+            <defs>
+              <linearGradient id="netWorthGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#10b981" stopOpacity={0.15}/>
+                <stop offset="95%" stopColor="#10b981" stopOpacity={0.02}/>
+              </linearGradient>
+            </defs>
             <CartesianGrid {...CANONICAL_GRID_CONFIG} />
             <XAxis
               dataKey="label"
@@ -227,13 +232,27 @@ export default function NetWorthChart({
               {...CANONICAL_YAXIS_CONFIG}
             />
             <Tooltip
-              formatter={(value, name) => {
-                if (typeof value !== "number") return [String(value), "Balance"];
-                const label = name === "netWorthDotted" ? "Balance (estimated)" : "Balance";
-                return [formatCurrencyFor(value, currency), label];
+              content={({ active, payload }) => {
+                if (active && payload && payload[0]) {
+                  const dataPoint = payload[0].payload;
+                  return (
+                    <div className="bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2">
+                      <p className="text-xs text-gray-600 mb-1">{dataPoint.label}</p>
+                      <p className="text-sm font-semibold text-gray-900">
+                        {formatCurrencyFor(dataPoint.netWorth, currency)}
+                      </p>
+                    </div>
+                  );
+                }
+                return null;
               }}
-              contentStyle={CANONICAL_TOOLTIP_CONTENT_STYLE}
-              labelStyle={CANONICAL_TOOLTIP_LABEL_STYLE}
+            />
+            {/* Gradient area fill */}
+            <Area 
+              type="monotone" 
+              dataKey="netWorth" 
+              fill="url(#netWorthGradient)" 
+              stroke="none"
             />
             {/* Solid line — real data */}
             <Line
@@ -254,12 +273,16 @@ export default function NetWorthChart({
                 );
               }}
               name="netWorthSolid"
+              connectNulls={false}
             />
             {/* Dotted line — estimated data */}
             <Line
-              {...CANONICAL_DASHED_LINE_CONFIG}
+              type="monotone"
               dataKey="netWorthDotted"
               stroke={getCanonicalLineColor("balance")}
+              strokeWidth={2}
+              strokeDasharray="5 4"
+              strokeOpacity={0.45}
               dot={(props) => {
                 const p = props as { cx?: number; cy?: number; payload: Point };
                 return (
@@ -274,9 +297,12 @@ export default function NetWorthChart({
                   />
                 );
               }}
+              activeDot={false}
+              connectNulls={false}
+              legendType="none"
               name="netWorthDotted"
             />
-          </LineChart>
+          </ComposedChart>
         </ResponsiveContainer>
       </div>
 

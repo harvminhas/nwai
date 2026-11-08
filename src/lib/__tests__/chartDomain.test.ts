@@ -26,17 +26,17 @@ describe("calculateBalanceChartDomain", () => {
     const values = [100000, 100100];
     const domain = calculateBalanceChartDomain(values);
     
-    // Should zoom in: small range detected (< 5% of baseline)
-    // Range-informed steps use range magnitude, not baseline magnitude
-    // Range=$100 → step=100 (not 1000), so more granular
-    expect(domain.min).toBeLessThan(99000);
-    expect(domain.max).toBeGreaterThanOrEqual(100000); // At least covers the data
+    // Should zoom in: small range with range-proportional padding
+    // $100 range → 5x padding each side → ~$1100 total span
+    // This makes the $100 change occupy ~9% of chart height (visible!)
+    expect(domain.min).toBeLessThanOrEqual(100000);
+    expect(domain.max).toBeGreaterThanOrEqual(100100);
     
-    // $100 change should be visible: range should be tight
-    // With range=$100, step=100, we get very zoomed display
+    // $100 change should be visible: occupies meaningful portion of range
     const actualRange = domain.max - domain.min;
-    expect(actualRange).toBeLessThan(10000); // Zoomed in
-    expect(actualRange).toBeGreaterThan(100); // But not collapsed
+    const changeRatio = 100 / actualRange;
+    expect(changeRatio).toBeGreaterThan(0.05); // Change is at least 5% of display
+    expect(actualRange).toBeLessThan(2000); // But not excessive padding
   });
 
   it("applies standard padding for large changes ($10k change on $100k)", () => {

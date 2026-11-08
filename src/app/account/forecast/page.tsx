@@ -21,9 +21,13 @@ import { EventDrawer, eventIdFromEventsDetailHref, useEventDrawer } from "@/app/
 import type { NearTermBucketDiscretionaryDTO } from "@/lib/forecastNearTermDiscretionary";
 import { calculateBalanceChartDomain } from "@/lib/chartDomain";
 import {
+  CANONICAL_CHART_HEIGHT,
+  CANONICAL_CHART_MARGIN,
   CANONICAL_GRID_CONFIG,
   CANONICAL_XAXIS_CONFIG,
   CANONICAL_YAXIS_CONFIG,
+  CANONICAL_LINE_CONFIG,
+  getCanonicalLineColor,
 } from "@/lib/canonicalChartConfig";
 
 // ── constants ─────────────────────────────────────────────────────────────────
@@ -1188,10 +1192,16 @@ export default function ForecastPage() {
             </div>
 
             {/* Chart */}
-            <div className="px-4 pt-4" style={{ height: 256 }}>
+            <div className="px-4 pt-4" style={{ height: CANONICAL_CHART_HEIGHT }}>
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
-                  {/* Grid first (lowest layer) */}
+                <ComposedChart data={chartData} margin={CANONICAL_CHART_MARGIN}>
+                  {/* Gradient for area fill */}
+                  <defs>
+                    <linearGradient id="forecastGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.15}/>
+                      <stop offset="95%" stopColor="#10b981" stopOpacity={0.02}/>
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid {...CANONICAL_GRID_CONFIG} />
 
                   <XAxis
@@ -1204,9 +1214,23 @@ export default function ForecastPage() {
                     {...CANONICAL_YAXIS_CONFIG}
                     domain={[chartYMin, chartYMax]}
                   />
-                  <Tooltip content={<ForecastTooltip sym={sym} />} />
+                  <Tooltip 
+                    content={({ active, payload }) => {
+                      if (!active || !payload?.length) return null;
+                      const pt = payload.find((p) => p.dataKey === "solid" || p.dataKey === "dashed");
+                      if (!pt || pt.value == null) return null;
+                      return (
+                        <div className="bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2">
+                          <p className="text-xs text-gray-600 mb-1">{payload[0].payload.xLabel}</p>
+                          <p className="text-sm font-semibold text-gray-900 tabular-nums">
+                            {fmtShort(pt.value as number, sym)} predicted
+                          </p>
+                        </div>
+                      );
+                    }}
+                  />
 
-                  {/* Confidence band: stacked — white base then blue diff */}
+                  {/* Confidence band: stacked — white base then green tinted diff */}
                   <Area
                     type="monotone"
                     dataKey="lowerBand"
@@ -1224,7 +1248,7 @@ export default function ForecastPage() {
                     dataKey="bandDiff"
                     stackId="band"
                     stroke="none"
-                    fill="rgba(37,99,235,0.08)"
+                    fill="url(#forecastGradient)"
                     fillOpacity={1}
                     dot={false}
                     legendType="none"
@@ -1234,27 +1258,34 @@ export default function ForecastPage() {
 
                   {/* Solid line (high confidence — first 12 months) */}
                   <Line
-                    type="monotone"
+                    {...CANONICAL_LINE_CONFIG}
                     dataKey="solid"
-                    stroke="#2563eb"
-                    strokeWidth={2}
-                    dot={false}
-                    legendType="none"
+                    stroke={getCanonicalLineColor("spending")}
+                    dot={(props: any) => (
+                      <circle
+                        cx={props.cx}
+                        cy={props.cy}
+                        r={4}
+                        fill="#10b981"
+                        stroke="#fff"
+                        strokeWidth={2}
+                      />
+                    )}
                     connectNulls={false}
-                    activeDot={{ r: 4, fill: "#2563eb", stroke: "#fff", strokeWidth: 2 }}
                   />
 
                   {/* Dashed line (medium / directional) */}
                   <Line
                     type="monotone"
                     dataKey="dashed"
-                    stroke="#2563eb"
+                    stroke={getCanonicalLineColor("spending")}
                     strokeWidth={2}
                     strokeDasharray="5 4"
+                    strokeOpacity={0.6}
                     dot={false}
                     legendType="none"
                     connectNulls={false}
-                    activeDot={{ r: 4, fill: "#2563eb", stroke: "#fff", strokeWidth: 2 }}
+                    activeDot={{ r: 6, fill: "#059669", stroke: "#fff", strokeWidth: 2 }}
                   />
                 </ComposedChart>
               </ResponsiveContainer>

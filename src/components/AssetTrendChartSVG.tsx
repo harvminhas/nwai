@@ -66,7 +66,14 @@ export function AssetTrendChartSVG({
       style={{ minWidth: '600px', maxHeight: '300px' }}
       data-testid="trend-chart-svg"
     >
-      {/* Y-axis grid lines and labels */}
+      {/* Gradient definition - canonical emerald green */}
+      <defs>
+        <linearGradient id="assetTrendGradient" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="5%" stopColor="#10b981" stopOpacity={0.15}/>
+          <stop offset="95%" stopColor="#10b981" stopOpacity={0.02}/>
+        </linearGradient>
+      </defs>
+      {/* Y-axis grid lines and labels - canonical style */}
       {yTickValues.map((tickValue, i) => {
         const y = yScale(tickValue);
         return (
@@ -77,6 +84,7 @@ export function AssetTrendChartSVG({
               x2={width - padding.right}
               y2={y}
               stroke="#e5e7eb"
+              strokeDasharray="3 3"
               strokeWidth="1"
             />
             <text
@@ -84,8 +92,8 @@ export function AssetTrendChartSVG({
               y={y}
               textAnchor="end"
               alignmentBaseline="middle"
-              className="text-xs fill-gray-500"
-              style={{ fontSize: '10px' }}
+              className="text-xs fill-gray-600"
+              fontSize="12"
             >
               {formatCurrency(tickValue, currency)}
             </text>
@@ -108,7 +116,7 @@ export function AssetTrendChartSVG({
         />
       )}
       
-      {/* X-axis labels (chronological) */}
+      {/* X-axis labels - canonical 12px */}
       {allPoints.map((d, i) => (
         <text
           key={`x-${i}`}
@@ -117,24 +125,36 @@ export function AssetTrendChartSVG({
           x={xScale(d.date)}
           y={height - padding.bottom + 20}
           textAnchor="middle"
-          className={`text-xs ${d.isProjected ? 'fill-gray-500' : 'fill-gray-700'}`}
-          style={{ fontSize: '10px' }}
+          className="text-xs fill-gray-600"
+          fontSize="12"
         >
           {d.label}
         </text>
       ))}
       
-      {/* Actual line path */}
+      {/* Actual line path with gradient fill - canonical emerald green */}
       {actualPoints.length > 0 && (
         <>
+          {/* Gradient area fill */}
+          <path
+            data-testid="actual-area"
+            d={`
+              M ${xScale(actualPoints[0].date)} ${height - padding.bottom}
+              ${actualPoints.map(d => `L ${xScale(d.date)} ${yScale(d.value)}`).join(' ')}
+              L ${xScale(actualPoints[actualPoints.length - 1].date)} ${height - padding.bottom}
+              Z
+            `}
+            fill="url(#assetTrendGradient)"
+            stroke="none"
+          />
           <path
             data-testid="actual-path"
             d={actualPoints
               .map((d, i) => `${i === 0 ? 'M' : 'L'} ${xScale(d.date)} ${yScale(d.value)}`)
               .join(' ')}
             fill="none"
-            stroke="#8b5cf6"
-            strokeWidth="3"
+            stroke="#10b981"
+            strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
           />
@@ -146,9 +166,9 @@ export function AssetTrendChartSVG({
                 data-value={d.value}
                 cx={xScale(d.date)}
                 cy={yScale(d.value)}
-                r="5"
-                fill="#8b5cf6"
-                stroke="white"
+                r="4"
+                fill="#10b981"
+                stroke="#fff"
                 strokeWidth="2"
               />
               <title>{`${d.label}: ${formatCurrencyWithCents(d.value, currency)}`}</title>
@@ -157,7 +177,7 @@ export function AssetTrendChartSVG({
         </>
       )}
 
-      {/* Projected line path (dashed) */}
+      {/* Projected line path (dashed) - canonical emerald green dashed */}
       {projectedPoints.length > 0 && (
         <>
           {/* Connect last actual to first projected */}
@@ -168,9 +188,10 @@ export function AssetTrendChartSVG({
               y1={yScale(actualPoints[actualPoints.length - 1].value)}
               x2={xScale(projectedPoints[0].date)}
               y2={yScale(projectedPoints[0].value)}
-              stroke="#9ca3af"
+              stroke="#10b981"
               strokeWidth="2"
-              strokeDasharray="4 3"
+              strokeDasharray="5 4"
+              strokeOpacity="0.45"
             />
           )}
           <path
@@ -179,9 +200,10 @@ export function AssetTrendChartSVG({
               .map((d, i) => `${i === 0 ? 'M' : 'L'} ${xScale(d.date)} ${yScale(d.value)}`)
               .join(' ')}
             fill="none"
-            stroke="#9ca3af"
+            stroke="#10b981"
             strokeWidth="2"
-            strokeDasharray="4 3"
+            strokeDasharray="5 4"
+            strokeOpacity="0.45"
             strokeLinecap="round"
             strokeLinejoin="round"
           />
@@ -194,9 +216,10 @@ export function AssetTrendChartSVG({
                 cx={xScale(d.date)}
                 cy={yScale(d.value)}
                 r="4"
-                fill="#9ca3af"
-                stroke="white"
+                fill="#10b981"
+                stroke="#fff"
                 strokeWidth="2"
+                opacity="0.45"
               />
               <title>{`${d.label}: ${formatCurrency(d.value, currency)} (estimated)`}</title>
             </g>

@@ -46,18 +46,28 @@ export function calculateBalanceChartDomain(
     return { min: 0, max };
   }
 
-  // Detect small changes on large balances (< 5% of absolute baseline)
-  const rangeIsSmall = range < Math.abs(minValue) * 0.05;
-
-  // Canonical padding strategy from net-worth page
-  // Small ranges: 95% baseline (zoom in to show small changes)
-  // Large ranges: 10% below with $1k minimum padding
-  const baseline = rangeIsSmall && minValue > 0
-    ? minValue * 0.95
-    : minValue - Math.max(range * 0.1, 1000);
-
-  // Ceiling: 5% above with $500 minimum padding
-  const ceiling = maxValue + Math.max(range * 0.05, 500);
+  // Padding strategy: make small changes visible without excessive padding
+  // Key insight: padding should be proportional to range for visibility
+  let baseline: number;
+  let ceiling: number;
+  
+  if (range === 0) {
+    // Flat series: create artificial range for visibility
+    const artificial = Math.max(Math.abs(maxValue) * 0.05, 100);
+    baseline = maxValue - artificial;
+    ceiling = maxValue + artificial;
+  } else if (range < Math.abs(minValue) * 0.05) {
+    // Small range on large balance: use range-proportional padding
+    // For $100 change on $100k, use ~10x range as total span
+    // This gives ~9% height to the $100 change (visible!)
+    const padFactor = 5; // Each side gets 5x range padding
+    baseline = minValue - range * padFactor;
+    ceiling = maxValue + range * padFactor;
+  } else {
+    // Large ranges: standard percentage padding
+    baseline = minValue - Math.max(range * 0.1, 1000);
+    ceiling = maxValue + Math.max(range * 0.05, 500);
+  }
 
   // Range-informed rounding: step size based on range magnitude, not just baseline
   // This ensures $100k + $100 change is visible, not lost to thousand-rounding

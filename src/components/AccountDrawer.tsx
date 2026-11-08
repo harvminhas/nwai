@@ -49,15 +49,9 @@ function BalanceLineChart({ history, currency, isDebt, onMonthClick }: BalanceLi
   const paddedMax = domain.max;
   const effectiveRange = paddedMax - paddedMin;
   
-  // Determine if trend is improving
-  const firstBalance = Math.abs(validHistory[0].balance);
-  const lastBalance = Math.abs(validHistory[validHistory.length - 1].balance);
-  const isImproving = isDebt 
-    ? lastBalance < firstBalance  // Debt decreasing is good
-    : lastBalance > firstBalance; // Assets increasing is good
-  
-  const lineColor = isImproving ? "#10b981" : "#ef4444"; // green-500 : red-500
-  const fillColor = isImproving ? "rgba(16, 185, 129, 0.1)" : "rgba(239, 68, 68, 0.1)";
+  // Use canonical emerald green color (no red/green divergence)
+  const lineColor = "#10b981"; // emerald-500 (canonical)
+  const fillColor = "rgba(16, 185, 129, 0.08)"; // Canonical gradient equivalent
   
   // Chart dimensions
   const chartWidth = 400;
@@ -111,7 +105,24 @@ function BalanceLineChart({ history, currency, isDebt, onMonthClick }: BalanceLi
           viewBox={`0 0 ${chartWidth} ${chartHeight}`}
           className="overflow-visible"
         >
-          {/* Y-axis labels */}
+          {/* Horizontal grid lines - canonical style */}
+          {[0, 0.5, 1].map((fraction, idx) => {
+            const y = padding.top + fraction * plotHeight;
+            return (
+              <line
+                key={`grid-${idx}`}
+                x1={padding.left}
+                y1={y}
+                x2={padding.left + plotWidth}
+                y2={y}
+                stroke="#e5e7eb"
+                strokeDasharray="3 3"
+                strokeWidth="1"
+              />
+            );
+          })}
+          
+          {/* Y-axis labels - canonical 12px fill-gray-600 */}
           {[paddedMax, (paddedMax + paddedMin) / 2, paddedMin].map((value, idx) => {
             const y = padding.top + (idx / 2) * plotHeight;
             return (
@@ -121,7 +132,8 @@ function BalanceLineChart({ history, currency, isDebt, onMonthClick }: BalanceLi
                 y={y}
                 textAnchor="end"
                 alignmentBaseline="middle"
-                className="text-[10px] fill-gray-500"
+                className="text-xs fill-gray-600"
+                fontSize="12"
               >
                 {value >= 10000 ? `${(value / 1000).toFixed(0)}k` : value.toFixed(0)}
               </text>
@@ -144,16 +156,16 @@ function BalanceLineChart({ history, currency, isDebt, onMonthClick }: BalanceLi
             strokeLinejoin="round"
           />
           
-          {/* Points */}
+          {/* Points - canonical style: r=6 selected / r=4 ordinary, green fill, white stroke */}
           {points.map((point, idx) => (
             <g key={idx}>
               <circle
                 cx={point.x}
                 cy={point.y}
-                r={hoveredPoint === idx ? 5 : 3}
-                fill="white"
-                stroke={lineColor}
-                strokeWidth="2"
+                r={hoveredPoint === idx ? 6 : 4}
+                fill={hoveredPoint === idx ? "#059669" : "#10b981"}
+                stroke="#fff"
+                strokeWidth={hoveredPoint === idx ? 3 : 2}
                 className="cursor-pointer transition-all"
                 onMouseEnter={() => setHoveredPoint(idx)}
                 onMouseLeave={() => setHoveredPoint(null)}
@@ -162,7 +174,7 @@ function BalanceLineChart({ history, currency, isDebt, onMonthClick }: BalanceLi
             </g>
           ))}
           
-          {/* X-axis labels (every other month if too many) */}
+          {/* X-axis labels - canonical 12px */}
           {points.map((point, idx) => {
             const showLabel = sortedHistory.length <= 6 || idx % 2 === 0;
             if (!showLabel) return null;
@@ -173,7 +185,8 @@ function BalanceLineChart({ history, currency, isDebt, onMonthClick }: BalanceLi
                 x={point.x}
                 y={padding.top + plotHeight + 15}
                 textAnchor="middle"
-                className="text-[10px] fill-gray-600"
+                className="text-xs fill-gray-600"
+                fontSize="12"
               >
                 {point.monthLabel.split(' ')[0]}
               </text>
@@ -181,18 +194,18 @@ function BalanceLineChart({ history, currency, isDebt, onMonthClick }: BalanceLi
           })}
         </svg>
         
-        {/* Tooltip */}
+        {/* Tooltip - canonical style: white bg, gray border, rounded shadow */}
         {hoveredPoint !== null && (
           <div 
-            className="absolute bg-gray-900 text-white text-xs rounded px-2 py-1.5 pointer-events-none shadow-lg"
+            className="absolute bg-white border border-gray-200 text-gray-900 text-xs rounded-lg px-3 py-2 pointer-events-none shadow-lg"
             style={{
               left: `${(points[hoveredPoint].x / chartWidth) * 100}%`,
               top: `${Math.max(10, (points[hoveredPoint].y / chartHeight) * 100 - 20)}%`,
               transform: 'translate(-50%, -100%)',
             }}
           >
-            <div className="font-semibold">{sortedHistory[hoveredPoint].monthLabel}</div>
-            <div className="tabular-nums">
+            <div className="text-gray-600 mb-1">{sortedHistory[hoveredPoint].monthLabel}</div>
+            <div className="font-semibold tabular-nums">
               {formatCurrency(Math.abs(sortedHistory[hoveredPoint].balance), currency)}
             </div>
           </div>
