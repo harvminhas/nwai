@@ -21,7 +21,7 @@ export function RangeSwitch({ value, onChange }: RangeSwitchProps) {
           key={option.value}
           onClick={() => onChange(option.value)}
           className={`
-            px-3 py-1.5 text-sm font-medium rounded-md transition-colors
+            px-2.5 py-1.5 text-[13px] font-medium rounded-md transition-colors lg:px-3 lg:text-sm
             ${
               value === option.value
                 ? "bg-white text-gray-900 shadow-sm"
