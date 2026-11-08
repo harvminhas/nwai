@@ -1355,9 +1355,18 @@ export default function ManualAssetPage() {
               const chartWidth = width - padding.left - padding.right;
               const chartHeight = height - padding.top - padding.bottom;
 
-              // Scales
-              const xScale = (index: number, total: number) => 
-                padding.left + (total > 1 ? (index / (total - 1)) * chartWidth : chartWidth / 2);
+              // Date-based x-axis scale (all points share same chronological domain)
+              const allDates = allPoints.map(p => new Date(p.date).getTime());
+              const minDate = Math.min(...allDates);
+              const maxDate = Math.max(...allDates);
+              const dateRange = maxDate - minDate;
+              
+              const xScale = (dateStr: string) => {
+                const dateMs = new Date(dateStr).getTime();
+                if (dateRange === 0) return padding.left + chartWidth / 2;
+                return padding.left + ((dateMs - minDate) / dateRange) * chartWidth;
+              };
+              
               const yScale = (value: number) => 
                 padding.top + chartHeight - ((value - yMin) / (yMax - yMin)) * chartHeight;
 
@@ -1420,28 +1429,14 @@ export default function ManualAssetPage() {
                         );
                       })}
                       
-                      {/* X-axis labels for actual points */}
-                      {actualPoints.map((d, i) => (
+                      {/* X-axis labels (chronological) */}
+                      {allPoints.map((d, i) => (
                         <text
-                          key={`actual-x-${i}`}
-                          x={xScale(i, actualPoints.length)}
+                          key={`x-${i}`}
+                          x={xScale(d.date)}
                           y={height - padding.bottom + 20}
                           textAnchor="middle"
-                          className="text-xs fill-gray-700"
-                          style={{ fontSize: '10px' }}
-                        >
-                          {d.label}
-                        </text>
-                      ))}
-
-                      {/* X-axis labels for projected points */}
-                      {projectedPoints.length > 0 && projectedPoints.map((d, i) => (
-                        <text
-                          key={`proj-x-${i}`}
-                          x={xScale(actualPoints.length + i, actualPoints.length + projectedPoints.length)}
-                          y={height - padding.bottom + 20}
-                          textAnchor="middle"
-                          className="text-xs fill-gray-500"
+                          className={`text-xs ${d.isProjected ? 'fill-gray-500' : 'fill-gray-700'}`}
                           style={{ fontSize: '10px' }}
                         >
                           {d.label}
@@ -1453,7 +1448,7 @@ export default function ManualAssetPage() {
                         <>
                           <path
                             d={actualPoints
-                              .map((d, i) => `${i === 0 ? 'M' : 'L'} ${xScale(i, actualPoints.length)} ${yScale(d.value)}`)
+                              .map((d, i) => `${i === 0 ? 'M' : 'L'} ${xScale(d.date)} ${yScale(d.value)}`)
                               .join(' ')}
                             fill="none"
                             stroke="#8b5cf6"
@@ -1464,7 +1459,7 @@ export default function ManualAssetPage() {
                           {actualPoints.map((d, i) => (
                             <g key={`actual-${i}`}>
                               <circle
-                                cx={xScale(i, actualPoints.length)}
+                                cx={xScale(d.date)}
                                 cy={yScale(d.value)}
                                 r="5"
                                 fill="#8b5cf6"
@@ -1483,9 +1478,9 @@ export default function ManualAssetPage() {
                           {/* Connect last actual to first projected */}
                           {actualPoints.length > 0 && (
                             <line
-                              x1={xScale(actualPoints.length - 1, actualPoints.length)}
+                              x1={xScale(actualPoints[actualPoints.length - 1].date)}
                               y1={yScale(actualPoints[actualPoints.length - 1].value)}
-                              x2={xScale(actualPoints.length, actualPoints.length + projectedPoints.length)}
+                              x2={xScale(projectedPoints[0].date)}
                               y2={yScale(projectedPoints[0].value)}
                               stroke="#9ca3af"
                               strokeWidth="2"
@@ -1494,7 +1489,7 @@ export default function ManualAssetPage() {
                           )}
                           <path
                             d={projectedPoints
-                              .map((d, i) => `${i === 0 ? 'M' : 'L'} ${xScale(actualPoints.length + i, actualPoints.length + projectedPoints.length)} ${yScale(d.value)}`)
+                              .map((d, i) => `${i === 0 ? 'M' : 'L'} ${xScale(d.date)} ${yScale(d.value)}`)
                               .join(' ')}
                             fill="none"
                             stroke="#9ca3af"
@@ -1506,7 +1501,7 @@ export default function ManualAssetPage() {
                           {projectedPoints.map((d, i) => (
                             <g key={`proj-${i}`}>
                               <circle
-                                cx={xScale(actualPoints.length + i, actualPoints.length + projectedPoints.length)}
+                                cx={xScale(d.date)}
                                 cy={yScale(d.value)}
                                 r="4"
                                 fill="#9ca3af"
