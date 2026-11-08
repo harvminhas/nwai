@@ -4,10 +4,14 @@
  */
 
 import React from "react";
-import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, beforeEach } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { TrendsTab } from "../TrendsTab";
 import type { DebtsSummary } from "@/lib/debtsSummary";
+import {
+  buildProductionTrendsFixture,
+  installChartResizeObserver,
+} from "@/lib/__tests__/trendsMonthCompositionFixture";
 
 // @vitest-environment jsdom
 
@@ -192,5 +196,54 @@ describe("Liabilities TrendsTab integration tests", () => {
     // Should not crash with NaN
     expect(container.innerHTML).not.toContain('NaN');
     expect(container.innerHTML).toContain('Feb 2024');
+  });
+});
+
+describe("Liabilities TrendsTab production fixture — click and async", () => {
+  beforeEach(() => {
+    installChartResizeObserver();
+  });
+
+  it("defaults to latest production month and shows federal student loan summing to total", () => {
+    const { debtsSummary } = buildProductionTrendsFixture();
+    const { container } = render(<TrendsTab summary={debtsSummary} />);
+
+    expect(container.innerHTML).toContain("Mar 2026");
+    expect(container.innerHTML).toContain("Federal Student Loan");
+    expect(container.innerHTML).toContain("CAD Visa");
+    expect(container.innerHTML).toContain("OSAP Student Loan");
+
+    const mar = debtsSummary.monthlyHistory.find((m) => m.month === "2026-03")!;
+    const rowSum = mar.accountDetails!.reduce((s, r) => s + Math.abs(r.value), 0);
+    expect(rowSum).toBe(mar.totalDebt);
+    expect(container.innerHTML).toContain("CA$24,400");
+  });
+
+  it("clicking a historical month updates details and hides the later-dated manual loan", () => {
+    const { debtsSummary } = buildProductionTrendsFixture();
+    const { container } = render(<TrendsTab summary={debtsSummary} />);
+
+    const janDot = container.querySelector('circle[data-month="2026-01"]');
+    expect(janDot).toBeTruthy();
+    fireEvent.click(janDot!);
+
+    expect(container.innerHTML).toContain("Jan 2026");
+    expect(container.innerHTML).not.toContain("Federal Student Loan");
+    expect(container.innerHTML).toContain("OSAP Student Loan");
+    expect(container.innerHTML).toContain("CA$10,000");
+  });
+
+  it("async data arrival selects the latest available month", () => {
+    const { debtsSummary } = buildProductionTrendsFixture();
+    const empty: DebtsSummary = { ...debtsSummary, monthlyHistory: [] };
+    const { container, rerender } = render(<TrendsTab summary={empty} />);
+
+    expect(screen.getByText(/No historical data available/i)).toBeTruthy();
+
+    rerender(<TrendsTab summary={debtsSummary} />);
+
+    expect(container.innerHTML).toContain("Mar 2026");
+    expect(container.innerHTML).toContain("Federal Student Loan");
+    expect(container.innerHTML).toContain("CA$24,400");
   });
 });

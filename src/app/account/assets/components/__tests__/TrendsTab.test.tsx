@@ -4,10 +4,14 @@
  */
 
 import React from "react";
-import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, beforeEach } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { TrendsTab } from "../TrendsTab";
 import type { AssetsSummary } from "@/lib/assetsSummary";
+import {
+  buildProductionTrendsFixture,
+  installChartResizeObserver,
+} from "@/lib/__tests__/trendsMonthCompositionFixture";
 
 // @vitest-environment jsdom
 
@@ -176,5 +180,55 @@ describe("TrendsTab integration tests", () => {
     // Should not crash with NaN
     expect(container.innerHTML).not.toContain('NaN');
     expect(container.innerHTML).toContain('Feb 2024');
+  });
+});
+
+describe("Assets TrendsTab production fixture — click and async", () => {
+  beforeEach(() => {
+    installChartResizeObserver();
+  });
+
+  it("defaults to latest production month and shows manual asset + carried FX rows summing to total", () => {
+    const { assetsSummary } = buildProductionTrendsFixture();
+    const { container } = render(<TrendsTab summary={assetsSummary} />);
+
+    expect(container.innerHTML).toContain("Mar 2026");
+    expect(container.innerHTML).toContain("2022 Honda Civic");
+    expect(container.innerHTML).toContain("CAD Investment");
+    expect(container.innerHTML).toContain("US Checking");
+
+    const mar = assetsSummary.monthlyHistory.find((m) => m.month === "2026-03")!;
+    const rowSum = mar.accountDetails!.reduce((s, r) => s + r.value, 0);
+    expect(rowSum).toBe(mar.total);
+    expect(container.innerHTML).toContain("CA$31,620");
+  });
+
+  it("clicking a historical month updates the visible details", () => {
+    const { assetsSummary } = buildProductionTrendsFixture();
+    const { container } = render(<TrendsTab summary={assetsSummary} />);
+
+    const janDot = container.querySelector('circle[data-month="2026-01"]');
+    expect(janDot).toBeTruthy();
+    fireEvent.click(janDot!);
+
+    expect(container.innerHTML).toContain("Jan 2026");
+    expect(container.innerHTML).not.toContain("2022 Honda Civic");
+    expect(container.innerHTML).toContain("US Checking");
+    expect(container.innerHTML).toContain("CAD Investment");
+    expect(container.innerHTML).toContain("CA$6,350");
+  });
+
+  it("async data arrival selects the latest available month", () => {
+    const { assetsSummary } = buildProductionTrendsFixture();
+    const empty: AssetsSummary = { ...assetsSummary, monthlyHistory: [] };
+    const { container, rerender } = render(<TrendsTab summary={empty} />);
+
+    expect(screen.getByText(/No historical data available/i)).toBeTruthy();
+
+    rerender(<TrendsTab summary={assetsSummary} />);
+
+    expect(container.innerHTML).toContain("Mar 2026");
+    expect(container.innerHTML).toContain("2022 Honda Civic");
+    expect(container.innerHTML).toContain("CA$31,620");
   });
 });

@@ -641,6 +641,12 @@ export async function buildAndCacheFinancialProfile(
     };
   });
 
+  // Manual liabilities — constructed early so they can be included in calculateNetWorthForMonths
+  const manualLiabilities: ManualLiability[] = manualLiabSnap.docs.map((d) => ({
+    id: d.id,
+    ...(d.data() as Omit<ManualLiability, "id">),
+  }));
+
   // Balance snapshots — keep latest per account slug (same logic as assets page)
   const latestSnapBySlug = new Map<string, BalanceSnapshot>();
   for (const d of balanceSnapshotsSnap.docs) {
@@ -1317,15 +1323,13 @@ export async function buildAndCacheFinancialProfile(
     monthlyHistory,
     accountBalanceHistory,
     manualAssets,
+    manualLiabilities,
     toHome,
     accountStatusMap
   );
 
   // Build new cache fields from the parallel reads
-  const manualLiabilities: ManualLiability[] = manualLiabSnap.docs.map((d) => ({
-    id: d.id,
-    ...(d.data() as Omit<ManualLiability, "id">),
-  }));
+  // (manualLiabilities already constructed earlier before calculateNetWorthForMonths)
 
   const accountRates: CachedAccountRate[] = accountRatesSnap.docs.map((d) => ({
     accountKey: d.id,

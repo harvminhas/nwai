@@ -160,6 +160,7 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                       fill={isSelected ? "#059669" : "#10b981"}
                       stroke="#fff"
                       strokeWidth={isSelected ? 3 : 2}
+                      data-month={props.payload?.month}
                       onClick={() => handleMonthClick(props.payload.month)}
                       style={{ cursor: 'pointer' }}
                     />

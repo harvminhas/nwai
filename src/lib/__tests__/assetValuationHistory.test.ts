@@ -28,7 +28,7 @@ describe("Asset Valuation History", () => {
       { yearMonth: "2026-12", netWorth: 0, totalAssets: 0, totalDebts: 0 },
     ];
 
-    calculateNetWorthForMonths(history, [], [legacyCar], toHome, emptyStatusMap);
+    calculateNetWorthForMonths(history, [], [legacyCar], [], toHome, emptyStatusMap);
 
     // All months use the same value
     expect(history[0].totalAssets).toBe(25000);
@@ -56,7 +56,7 @@ describe("Asset Valuation History", () => {
       { yearMonth: "2026-12", netWorth: 0, totalAssets: 0, totalDebts: 0 },
     ];
 
-    calculateNetWorthForMonths(history, [], [car], toHome, emptyStatusMap);
+    calculateNetWorthForMonths(history, [], [car], [], toHome, emptyStatusMap);
 
     // Oct: $25,000 (first valuation)
     expect(history[0].totalAssets).toBe(25000);
@@ -93,7 +93,7 @@ describe("Asset Valuation History", () => {
       { yearMonth: "2026-11", netWorth: 0, totalAssets: 0, totalDebts: 0 },
     ];
 
-    calculateNetWorthForMonths(history, [], [car], toHome, emptyStatusMap);
+    calculateNetWorthForMonths(history, [], [car], [], toHome, emptyStatusMap);
 
     // Oct: $31,000
     expect(history[0].totalAssets).toBe(31000);
@@ -140,7 +140,7 @@ describe("Asset Valuation History", () => {
       { yearMonth: "2026-11", netWorth: 0, totalAssets: 0, totalDebts: 0 },
     ];
 
-    calculateNetWorthForMonths(history, [], [car], toHome, emptyStatusMap);
+    calculateNetWorthForMonths(history, [], [car], [], toHome, emptyStatusMap);
 
     // Sept: excluded (before startDate)
     expect(history[0].totalAssets).toBe(0);
@@ -170,7 +170,7 @@ describe("Asset Valuation History", () => {
       { yearMonth: "2026-11", netWorth: 0, totalAssets: 0, totalDebts: 0 },
     ];
 
-    calculateNetWorthForMonths(history, [], [car], toHome, emptyStatusMap);
+    calculateNetWorthForMonths(history, [], [car], [], toHome, emptyStatusMap);
 
     // Uses the LAST entry for that date (sorted by effectiveDate, not createdAt)
     // Since both have same effectiveDate, the array order is deterministic
@@ -197,7 +197,7 @@ describe("Asset Valuation History", () => {
       { yearMonth: "2026-12", netWorth: 0, totalAssets: 0, totalDebts: 0 },
     ];
 
-    calculateNetWorthForMonths(history, [], [car], toHome, emptyStatusMap);
+    calculateNetWorthForMonths(history, [], [car], [], toHome, emptyStatusMap);
 
     // Oct: uses backdated value ($23,000 on 10-25 is latest as of month-end)
     expect(history[0].totalAssets).toBe(23000);
@@ -226,7 +226,7 @@ describe("Asset Valuation History", () => {
       { yearMonth: "2026-11", netWorth: 0, totalAssets: 0, totalDebts: 0 },
     ];
 
-    calculateNetWorthForMonths(history, [], [car], toHome, emptyStatusMap);
+    calculateNetWorthForMonths(history, [], [car], [], toHome, emptyStatusMap);
 
     // Oct: $25,000
     expect(history[0].totalAssets).toBe(25000);
@@ -255,7 +255,7 @@ describe("Asset Valuation History", () => {
       { yearMonth: "2026-11", netWorth: 0, totalAssets: 0, totalDebts: 0 },
     ];
 
-    calculateNetWorthForMonths(history, [], [car], toHome, emptyStatusMap);
+    calculateNetWorthForMonths(history, [], [car], [], toHome, emptyStatusMap);
 
     // Sept & Oct: no valuation yet (before Nov), use legacy value
     expect(history[0].totalAssets).toBe(20000);
@@ -297,7 +297,7 @@ describe("Asset Valuation History", () => {
       { yearMonth: "2026-11", netWorth: 0, totalAssets: 0, totalDebts: 0 },
     ];
 
-    calculateNetWorthForMonths(history, [], [afterFirstEdit], toHome, emptyStatusMap);
+    calculateNetWorthForMonths(history, [], [afterFirstEdit], [], toHome, emptyStatusMap);
 
     // Oct: original baseline value
     expect(history[0].totalAssets).toBe(30000);
@@ -323,7 +323,7 @@ describe("Asset Valuation History", () => {
       { yearMonth: "2026-11", netWorth: 0, totalAssets: 0, totalDebts: 0 },
     ];
 
-    calculateNetWorthForMonths(history, [], [car], toHome, emptyStatusMap);
+    calculateNetWorthForMonths(history, [], [car], [], toHome, emptyStatusMap);
 
     // Value in cents is preserved precisely
     expect(history[0].totalAssets).toBeCloseTo(24999.99, 2);
@@ -352,7 +352,7 @@ describe("Asset Valuation History", () => {
       { yearMonth: "2026-11", netWorth: 0, totalAssets: 0, totalDebts: 0 },
     ];
 
-    calculateNetWorthForMonths(history, [], [car], toHome, emptyStatusMap);
+    calculateNetWorthForMonths(history, [], [car], [], toHome, emptyStatusMap);
 
     // Both months use same valuation (rate change doesn't affect actual values)
     expect(history[0].totalAssets).toBe(25000);
@@ -375,7 +375,7 @@ describe("Asset Valuation History", () => {
       { yearMonth: "2026-11", netWorth: 0, totalAssets: 0, totalDebts: 0 },
     ];
 
-    calculateNetWorthForMonths(history, [], [car], toHome, emptyStatusMap);
+    calculateNetWorthForMonths(history, [], [car], [], toHome, emptyStatusMap);
 
     // Uses legacy value field
     expect(history[0].totalAssets).toBe(25000);

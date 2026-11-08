@@ -27,7 +27,7 @@ describe("Manual Asset Start Date", () => {
       { yearMonth: "2026-12", netWorth: 0, totalAssets: 0, totalDebts: 0 },
     ];
 
-    calculateNetWorthForMonths(history, [], [car], toHome, emptyStatusMap);
+    calculateNetWorthForMonths(history, [], [car], [], toHome, emptyStatusMap);
 
     // Oct: before start, no car
     expect(history[0].totalAssets).toBe(0);
@@ -61,7 +61,7 @@ describe("Manual Asset Start Date", () => {
       { yearMonth: "2026-11", netWorth: 0, totalAssets: 0, totalDebts: 0 },
     ];
 
-    calculateNetWorthForMonths(history, [], [legacyCar], toHome, emptyStatusMap);
+    calculateNetWorthForMonths(history, [], [legacyCar], [], toHome, emptyStatusMap);
 
     // All months include legacy asset
     expect(history[0].totalAssets).toBe(15000);
@@ -129,7 +129,7 @@ describe("Manual Asset Start Date", () => {
       { yearMonth: "2026-11", netWorth: 0, totalAssets: 0, totalDebts: 0 },
     ];
 
-    calculateNetWorthForMonths(history, [], [car], toHome, emptyStatusMap);
+    calculateNetWorthForMonths(history, [], [car], [], toHome, emptyStatusMap);
 
     // Oct → Nov delta
     const delta = history[1].netWorth - history[0].netWorth;
@@ -186,7 +186,7 @@ describe("Manual Asset Start Date", () => {
       { yearMonth: "2026-12", netWorth: 0, totalAssets: 0, totalDebts: 0 },
     ];
 
-    calculateNetWorthForMonths(history, [], [car, house], toHome, emptyStatusMap);
+    calculateNetWorthForMonths(history, [], [car, house], [], toHome, emptyStatusMap);
 
     // Oct: neither
     expect(history[0].totalAssets).toBe(0);
