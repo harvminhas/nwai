@@ -4,6 +4,12 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { CategoryListRow } from "@/app/account/spending/CategoryListRow";
 import { formatCurrency } from "@/lib/currencyUtils";
+import {
+  ACCOUNT_CATEGORY_AMOUNT,
+  ACCOUNT_CATEGORY_ITEM,
+  ACCOUNT_CATEGORY_META,
+  ACCOUNT_CATEGORY_PRIMARY,
+} from "@/lib/accountSectionLayout";
 
 const DOT: Record<string, string> = {
   cash: "bg-blue-500",
@@ -46,14 +52,14 @@ export function AccountCategorySection({
         className="px-1"
         rowContent={
           <div
-            className="flex flex-1 items-center gap-3 py-2.5 pl-4 pr-1"
+            className="flex min-h-11 flex-1 items-center gap-3 py-3 pl-3 pr-1 lg:min-h-0 lg:py-2.5 lg:pl-4"
             aria-label={`${label}, ${count} ${accountsWord}, ${formatCurrency(total, currency)}`}
           >
             <span
               className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT[groupType] ?? "bg-gray-400"}`}
               aria-hidden
             />
-            <p className="min-w-0 flex-1 truncate text-[13px] font-semibold tracking-tight text-gray-900">
+            <p className="min-w-0 flex-1 break-words text-[13px] font-semibold tracking-tight text-gray-900 lg:truncate">
               {label}
             </p>
             <p className="shrink-0 text-[13px] font-semibold tabular-nums text-gray-900">
@@ -91,23 +97,22 @@ export function AccountCategoryItem({
   const body = (
     <>
       <span className="min-w-0 flex-1 pr-3">
-        <span className="block truncate text-[13px] leading-5 text-gray-800">
+        <span className={ACCOUNT_CATEGORY_PRIMARY}>
           {primary}
         </span>
         {meta ? (
-          <span className="mt-0.5 block truncate text-[11px] leading-4 text-gray-400">
+          <span className={ACCOUNT_CATEGORY_META}>
             {meta}
           </span>
         ) : null}
       </span>
-      <span className="w-[7.25rem] shrink-0 text-right text-[13px] leading-5 tabular-nums text-gray-900">
+      <span className={ACCOUNT_CATEGORY_AMOUNT}>
         {amountText}
       </span>
     </>
   );
 
-  const className =
-    "flex items-start gap-3 py-2 pl-9 pr-5 text-gray-800 transition-colors hover:bg-gray-50 focus-visible:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-400";
+  const className = ACCOUNT_CATEGORY_ITEM;
 
   if (href) {
     return (

@@ -7,6 +7,7 @@ import { onAuthStateChanged, signOut } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { fmt } from "@/lib/currencyUtils";
 import { getFeatureFlags } from "@/lib/features";
+import { usePreviewIsolation } from "@/lib/previewIsolation";
 
 interface NetWorthData {
   netWorth: number;
@@ -17,15 +18,17 @@ interface NetWorthData {
 export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
   const pathname = usePathname();
   const router = useRouter();
+  const previewIsolation = usePreviewIsolation();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [newChangesCount, setNewChangesCount] = useState<number>(0);
   const features = getFeatureFlags();
 
   useEffect(() => {
+    if (previewIsolation) return;
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, setUser);
-  }, []);
+  }, [previewIsolation]);
 
   // Fetch new changes count - refetch on pathname change and when user changes
   useEffect(() => {
@@ -64,6 +67,7 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
   }, []);
 
   const handleSignOut = async () => {
+    if (previewIsolation) return;
     const { auth } = getFirebaseClient();
     await signOut(auth);
     router.push("/login");
@@ -276,7 +280,7 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
               {/* Mobile Menu Button */}
               <button
                 onClick={() => setDrawerOpen(true)}
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-600 lg:hidden"
+                className="flex h-11 w-11 items-center justify-center rounded-lg border border-gray-200 text-gray-600 lg:hidden"
                 aria-label="Menu"
               >
                 <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

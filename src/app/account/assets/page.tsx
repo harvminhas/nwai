@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, Suspense } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
@@ -9,7 +8,7 @@ import type { AssetsSummary } from "@/lib/assetsSummary";
 import { OverviewTab } from "./components/OverviewTab";
 import { TrendsTab } from "./components/TrendsTab";
 import { CategoriesTab } from "./components/CategoriesTab";
-import AccountSwitcher from "@/components/AccountSwitcher";
+import { AccountSectionFrame } from "@/app/account/components/AccountSectionFrame";
 import {
   ACCOUNT_SECTION_TABS,
   resolveAccountSectionTab,
@@ -95,48 +94,11 @@ function AssetsPageContent() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8">
-      {/* Header */}
-      <div className="mb-6 flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <Link href="/account/overview" className="text-sm text-gray-500 hover:text-gray-700">
-              Account
-            </Link>
-            <span className="text-gray-400">/</span>
-            <span className="text-sm font-medium text-gray-900">Assets</span>
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900">Assets</h1>
-        </div>
-        <AccountSwitcher />
-      </div>
-
-      {/* Tabs */}
-      <div className="border-b border-gray-200 mb-6">
-        <nav className="-mb-px flex gap-6">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => handleTabChange(tab.id)}
-              className={`pb-3 px-1 border-b-2 font-medium text-sm transition-colors ${
-                activeTab === tab.id
-                  ? "border-purple-600 text-purple-600"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </nav>
-      </div>
-
-      {/* Tab Content */}
-      <div>
-        {activeTab === "overview" && <OverviewTab summary={summary} />}
-        {activeTab === "trends" && <TrendsTab summary={summary} />}
-        {activeTab === "accounts" && <CategoriesTab summary={summary} />}
-      </div>
-    </div>
+    <AccountSectionFrame title="Assets" activeTab={activeTab} onTabChange={handleTabChange}>
+      {activeTab === "overview" && <OverviewTab summary={summary} />}
+      {activeTab === "trends" && <TrendsTab summary={summary} />}
+      {activeTab === "accounts" && <CategoriesTab summary={summary} />}
+    </AccountSectionFrame>
   );
 }
 
