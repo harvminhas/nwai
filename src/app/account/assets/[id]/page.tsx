@@ -14,6 +14,7 @@ import { useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 import type { ManualAsset, AssetCategory, HubLink, ExpenseTransaction, IncomeTransaction } from "@/lib/types";
 import type { DebtsSummary, DebtAccount } from "@/lib/debtsSummary";
 import { buildTrendChartData, getDisplayValuations } from "@/lib/assetTrendChart";
+import { AssetTrendChartSVG } from "@/components/AssetTrendChartSVG";
 
 const CATEGORY_LABEL: Record<AssetCategory, string> = {
   property: "Property",
@@ -1329,43 +1330,6 @@ export default function ManualAssetPage() {
 
               if (!hasData) return null;
 
-              // Combine all points for chart scaling
-              const allPoints = [...actualPoints, ...projectedPoints];
-              const allValues = allPoints.map(p => p.value);
-              const minValue = Math.min(...allValues);
-              const maxValue = Math.max(...allValues);
-              const valueRange = maxValue - minValue;
-              const yMin = valueRange > 0 ? minValue - valueRange * 0.1 : minValue * 0.9;
-              const yMax = valueRange > 0 ? maxValue + valueRange * 0.1 : maxValue * 1.1;
-
-              // Chart dimensions
-              const width = 800;
-              const height = 300;
-              const padding = { top: 20, right: 20, bottom: 40, left: 80 };
-              const chartWidth = width - padding.left - padding.right;
-              const chartHeight = height - padding.top - padding.bottom;
-
-              // Date-based x-axis scale (all points share same chronological domain)
-              const allDates = allPoints.map(p => new Date(p.date).getTime());
-              const minDate = Math.min(...allDates);
-              const maxDate = Math.max(...allDates);
-              const dateRange = maxDate - minDate;
-              
-              const xScale = (dateStr: string) => {
-                const dateMs = new Date(dateStr).getTime();
-                if (dateRange === 0) return padding.left + chartWidth / 2;
-                return padding.left + ((dateMs - minDate) / dateRange) * chartWidth;
-              };
-              
-              const yScale = (value: number) => 
-                padding.top + chartHeight - ((value - yMin) / (yMax - yMin)) * chartHeight;
-
-              // Y-axis ticks
-              const yTicks = 5;
-              const yTickValues = Array.from({ length: yTicks }, (_, i) => 
-                yMin + (i / (yTicks - 1)) * (yMax - yMin)
-              );
-
               return (
                 <div className="rounded-xl border border-gray-200 bg-white p-5 mb-6">
                   <div className="flex items-center justify-between mb-4">
@@ -1387,137 +1351,14 @@ export default function ManualAssetPage() {
                   </div>
 
                   <div className="w-full overflow-x-auto">
-                    <svg 
-                      viewBox={`0 0 ${width} ${height}`} 
-                      className="w-full h-auto"
-                      style={{ minWidth: '600px', maxHeight: '300px' }}
-                    >
-                      {/* Y-axis grid lines and labels */}
-                      {yTickValues.map((tickValue, i) => {
-                        const y = yScale(tickValue);
-                        return (
-                          <g key={i}>
-                            <line
-                              x1={padding.left}
-                              y1={y}
-                              x2={width - padding.right}
-                              y2={y}
-                              stroke="#e5e7eb"
-                              strokeWidth="1"
-                            />
-                            <text
-                              x={padding.left - 10}
-                              y={y}
-                              textAnchor="end"
-                              alignmentBaseline="middle"
-                              className="text-xs fill-gray-500"
-                              style={{ fontSize: '10px' }}
-                            >
-                              {formatCurrency(tickValue, currency)}
-                            </text>
-                          </g>
-                        );
-                      })}
-                      
-                      {/* Today marker line (vertical dashed) */}
-                      {projectedPoints.length > 0 && (
-                        <line
-                          x1={xScale(todayDate)}
-                          y1={padding.top}
-                          x2={xScale(todayDate)}
-                          y2={height - padding.bottom}
-                          stroke="#fbbf24"
-                          strokeWidth="2"
-                          strokeDasharray="4 3"
-                          opacity="0.6"
-                        />
-                      )}
-                      
-                      {/* X-axis labels (chronological) */}
-                      {allPoints.map((d, i) => (
-                        <text
-                          key={`x-${i}`}
-                          x={xScale(d.date)}
-                          y={height - padding.bottom + 20}
-                          textAnchor="middle"
-                          className={`text-xs ${d.isProjected ? 'fill-gray-500' : 'fill-gray-700'}`}
-                          style={{ fontSize: '10px' }}
-                        >
-                          {d.label}
-                        </text>
-                      ))}
-                      
-                      {/* Actual line path */}
-                      {actualPoints.length > 0 && (
-                        <>
-                          <path
-                            d={actualPoints
-                              .map((d, i) => `${i === 0 ? 'M' : 'L'} ${xScale(d.date)} ${yScale(d.value)}`)
-                              .join(' ')}
-                            fill="none"
-                            stroke="#8b5cf6"
-                            strokeWidth="3"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                          {actualPoints.map((d, i) => (
-                            <g key={`actual-${i}`}>
-                              <circle
-                                cx={xScale(d.date)}
-                                cy={yScale(d.value)}
-                                r="5"
-                                fill="#8b5cf6"
-                                stroke="white"
-                                strokeWidth="2"
-                              />
-                              <title>{`${d.label}: ${formatCurrencyWithCents(d.value, currency)}`}</title>
-                            </g>
-                          ))}
-                        </>
-                      )}
-
-                      {/* Projected line path (dashed) */}
-                      {projectedPoints.length > 0 && (
-                        <>
-                          {/* Connect last actual to first projected */}
-                          {actualPoints.length > 0 && (
-                            <line
-                              x1={xScale(actualPoints[actualPoints.length - 1].date)}
-                              y1={yScale(actualPoints[actualPoints.length - 1].value)}
-                              x2={xScale(projectedPoints[0].date)}
-                              y2={yScale(projectedPoints[0].value)}
-                              stroke="#9ca3af"
-                              strokeWidth="2"
-                              strokeDasharray="4 3"
-                            />
-                          )}
-                          <path
-                            d={projectedPoints
-                              .map((d, i) => `${i === 0 ? 'M' : 'L'} ${xScale(d.date)} ${yScale(d.value)}`)
-                              .join(' ')}
-                            fill="none"
-                            stroke="#9ca3af"
-                            strokeWidth="2"
-                            strokeDasharray="4 3"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                          {projectedPoints.map((d, i) => (
-                            <g key={`proj-${i}`}>
-                              <circle
-                                cx={xScale(d.date)}
-                                cy={yScale(d.value)}
-                                r="4"
-                                fill="#9ca3af"
-                                stroke="white"
-                                strokeWidth="2"
-                              />
-                              <title>{`${d.label}: ${formatCurrency(d.value, currency)} (estimated)`}</title>
-                            </g>
-                          ))}
-                        </>
-                      )}
-                    </svg>
+                    <AssetTrendChartSVG
+                      actualPoints={actualPoints}
+                      projectedPoints={projectedPoints}
+                      todayDate={todayDate}
+                      currency={currency}
+                      formatCurrency={formatCurrency}
+                      formatCurrencyWithCents={formatCurrencyWithCents}
+                    />
                   </div>
                 </div>
               );
