@@ -164,20 +164,20 @@ describe("Asset Trend Chart - Production", () => {
       expect(actualPoints[0].value).toBe(31000);
       expect(actualPoints[1].value).toBe(29000);
 
-      // Projections anchored on latest (Nov 29k)
-      expect(projectedPoints).toHaveLength(3);
+      // Projections now extend to today + 3 years
+      // Anchor: Nov 2024, Today: ~Nov 2026, End: Nov 2029
+      // Years from anchor: 2025, 2026, 2027, 2028, 2029 = 5 years
+      expect(projectedPoints.length).toBeGreaterThanOrEqual(3);
       
-      // Year 1: 29000 * 0.9 = 26100
-      expect(projectedPoints[0].value).toBeCloseTo(26100, -1);
-      expect(projectedPoints[0].date).toBe("2025-11-01"); // +1 year from Nov anchor
+      // First few years from anchor still use correct compounding
+      expect(projectedPoints[0].value).toBeCloseTo(26100, -1); // Year 1
+      expect(projectedPoints[0].date).toBe("2025-11-01");
       
-      // Year 2: 29000 * 0.9^2 = 23490
-      expect(projectedPoints[1].value).toBeCloseTo(23490, -1);
-      expect(projectedPoints[1].date).toBe("2026-11-01"); // +2 years from Nov anchor
+      expect(projectedPoints[1].value).toBeCloseTo(23490, -1); // Year 2
+      expect(projectedPoints[1].date).toBe("2026-11-01");
       
-      // Year 3: 29000 * 0.9^3 = 21141
-      expect(projectedPoints[2].value).toBeCloseTo(21141, -1);
-      expect(projectedPoints[2].date).toBe("2027-11-01"); // +3 years from Nov anchor
+      expect(projectedPoints[2].value).toBeCloseTo(21141, -1); // Year 3
+      expect(projectedPoints[2].date).toBe("2027-11-01")
     });
 
     it("ignores future-dated valuations for projection anchor", () => {
@@ -229,7 +229,12 @@ describe("Asset Trend Chart - Production", () => {
       expect(actualPoints[0].value).toBe(500000);
       expect(actualPoints[0].date).toBe("2024-01-15");
 
-      expect(projectedPoints).toHaveLength(3);
+      // Projections now extend to today + 3 years (not just anchor + 3)
+      // Anchor: Jan 2024, Today: ~Nov 2026, End: Nov 2029
+      // Years: 2025, 2026, 2027, 2028, 2029 = 5 years
+      expect(projectedPoints.length).toBeGreaterThanOrEqual(3);
+      
+      // First few years still use correct yearly intervals and compounding
       expect(projectedPoints[0].date).toBe("2025-01-15"); // Exactly +1 year
       expect(projectedPoints[1].date).toBe("2026-01-15"); // Exactly +2 years
       expect(projectedPoints[2].date).toBe("2027-01-15"); // Exactly +3 years
