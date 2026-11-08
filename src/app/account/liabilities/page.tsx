@@ -28,7 +28,7 @@ interface AutoMarkedAccount {
 function LiabilitiesPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [activeTab, setActiveTab] = useState<TabId>("accounts");
+  const [activeTab, setActiveTab] = useState<TabId>("trends");
   const [summary, setSummary] = useState<DebtsSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -36,6 +36,7 @@ function LiabilitiesPageContent() {
 
   useEffect(() => {
     const tabParam = searchParams.get("tab");
+    // Respect explicit tab parameter from URL (user-specified intent)
     if (tabParam && TABS.some(t => t.id === tabParam)) {
       setActiveTab(tabParam as TabId);
     }

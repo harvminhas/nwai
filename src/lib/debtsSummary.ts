@@ -65,6 +65,13 @@ export interface DebtsSummary {
       type: string;
       balance: number;
     }>;
+    /** Authoritative month composition: accounts + manual liabilities with carry-forward, FX, historical values */
+    accountDetails?: Array<{
+      slug: string;
+      label: string;
+      type: string;
+      value: number; // In home currency, debts are negative
+    }>;
   }>;
   scheduledPayments?: ScheduledDebtPayment[]; // For diagnostic output
   /** Per-account balance history from profile.accountBalanceHistory */
@@ -178,7 +185,12 @@ export function buildDebtsSummary(
   manualLiabilities: ManualLiability[],
   fxRates: Record<string, number>,
   homeCurrency: string,
-  profileMonthlyHistory?: Array<{ yearMonth: string; totalDebts: number; debtPaymentsTotal: number }>, // From profile
+  profileMonthlyHistory?: Array<{ 
+    yearMonth: string; 
+    totalDebts: number; 
+    debtPaymentsTotal: number;
+    byAccount?: Array<{ slug: string; label: string; type: string; value: number }>;
+  }>, // From profile
   expenseTxns?: Array<{ date: string; txMonth: string; amount: number; merchant: string; accountSlug: string }>,
   incomeTxns?: Array<{ date: string; txMonth: string; amount: number; source: string; accountSlug: string }>
 ): DebtsSummary {
@@ -411,12 +423,25 @@ export function buildDebtsSummary(
         }
       }
       
+      // Extract debt account details from profile's authoritative byAccount (value < 0 = debts)
+      const accountDetails = profileMonth.byAccount
+        ? profileMonth.byAccount
+            .filter(acc => acc.value < 0)
+            .map(acc => ({
+              slug: acc.slug,
+              label: acc.label,
+              type: acc.type,
+              value: acc.value,
+            }))
+        : undefined;
+
       monthlyHistory.push({
         month,
         monthLabel: formatMonthLabel(month),
         totalDebt: profileMonth.totalDebts, // Use profile's value which includes manual assets
         totalPayments: profileMonth.debtPaymentsTotal || 0,
         groups: Array.from(groupTotals.entries()).map(([type, balance]) => ({ type, balance })),
+        accountDetails,
       });
     }
   }

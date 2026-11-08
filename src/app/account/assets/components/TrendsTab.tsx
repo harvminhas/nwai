@@ -72,16 +72,16 @@ export function TrendsTab({ summary }: TrendsTabProps) {
     ? monthlyHistory.find(m => m.month === selectedMonth)
     : null;
   
-  // Build account breakdown for selected month from accountBalanceHistory
-  const selectedMonthAccounts = selectedMonth && accountBalanceHistory
-    ? accountBalanceHistory.map(acc => {
-        const entry = acc.entries.find(e => e.yearMonth === selectedMonth);
-        return entry ? {
+  // Use authoritative account breakdown from profile's byAccount calculation
+  // This includes carry-forward, FX conversion, manual assets, and historical values
+  const selectedMonthAccounts = selectedData?.accountDetails
+    ? selectedData.accountDetails
+        .filter(acc => acc.value > 0) // Assets only
+        .map(acc => ({
           label: acc.label,
-          balance: entry.balance,
+          balance: acc.value, // Already in home currency, FX-converted
           slug: acc.slug,
-        } : null;
-      }).filter((a): a is { label: string; balance: number; slug: string } => a !== null && a.balance !== 0)
+        }))
     : [];
   
   function handleMonthClick(month: string) {

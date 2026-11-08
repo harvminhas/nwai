@@ -5,6 +5,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    setupFiles: ['./vitest.setup.ts'],
     environmentMatchGlobs: [
       ['src/components/__tests__/**/*.test.tsx', 'jsdom'],
       ['src/app/**/__tests__/**/*.test.tsx', 'jsdom'],
@@ -16,6 +17,8 @@ export default defineConfig({
       'src/lib/__tests__/**/*.test.tsx',
       'src/components/__tests__/**/*.test.ts',
       'src/components/__tests__/**/*.test.tsx',
+      'src/app/**/__tests__/**/*.test.ts',
+      'src/app/**/__tests__/**/*.test.tsx',
     ],
   },
   resolve: {
