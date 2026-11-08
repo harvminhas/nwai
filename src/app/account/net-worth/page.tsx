@@ -8,6 +8,7 @@ import { getFirebaseClient } from "@/lib/firebase";
 import { formatCurrency, formatCurrencyWithCents, getCurrencySymbol } from "@/lib/currencyUtils";
 import type { MonthNetWorthSummary } from "@/lib/netWorthChanges";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Area, ComposedChart, Dot } from "recharts";
+import { calculateBalanceChartDomain } from "@/lib/chartDomain";
 
 interface MonthlyNetWorthData {
   yearMonth: string;
@@ -371,15 +372,8 @@ function NetWorthPageContent() {
               <YAxis 
                 domain={(() => {
                   const values = data.map(d => d.netWorth);
-                  const minValue = Math.min(...values);
-                  const maxValue = Math.max(...values);
-                  const range = maxValue - minValue;
-                  const rangeIsSmall = range < Math.abs(minValue) * 0.05;
-                  const baseline = rangeIsSmall && minValue > 0
-                    ? minValue * 0.95
-                    : minValue - Math.max(range * 0.1, 1000);
-                  const ceiling = maxValue + Math.max(range * 0.05, 500);
-                  return [Math.floor(baseline / 1000) * 1000, Math.ceil(ceiling / 1000) * 1000];
+                  const domain = calculateBalanceChartDomain(values);
+                  return [domain.min, domain.max];
                 })()}
                 tick={{ fontSize: 12, fill: "#6b7280" }}
                 axisLine={{ stroke: "#e5e7eb" }}

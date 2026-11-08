@@ -20,6 +20,11 @@ import { IncomeDrawer, useIncomeDrawer } from "@/app/account/today/IncomeDrawer"
 import { EventDrawer, eventIdFromEventsDetailHref, useEventDrawer } from "@/app/account/today/EventDrawer";
 import type { NearTermBucketDiscretionaryDTO } from "@/lib/forecastNearTermDiscretionary";
 import { calculateBalanceChartDomain } from "@/lib/chartDomain";
+import {
+  CANONICAL_GRID_CONFIG,
+  CANONICAL_XAXIS_CONFIG,
+  CANONICAL_YAXIS_CONFIG,
+} from "@/lib/canonicalChartConfig";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -1185,23 +1190,18 @@ export default function ForecastPage() {
             {/* Chart */}
             <div className="px-4 pt-4" style={{ height: 256 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
+                <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
                   {/* Grid first (lowest layer) */}
-                  <CartesianGrid strokeDasharray="1 4" stroke="#e5e7eb" vertical={false} />
+                  <CartesianGrid {...CANONICAL_GRID_CONFIG} />
 
                   <XAxis
                     dataKey="xLabel"
-                    tick={{ fontSize: 10, fill: "#9ca3af" }}
-                    tickLine={false}
-                    axisLine={false}
+                    {...CANONICAL_XAXIS_CONFIG}
                     interval={0}
                   />
                   <YAxis
                     tickFormatter={(v: number) => fmtAxis(v, sym)}
-                    tick={{ fontSize: 10, fill: "#9ca3af" }}
-                    tickLine={false}
-                    axisLine={false}
-                    width={56}
+                    {...CANONICAL_YAXIS_CONFIG}
                     domain={[chartYMin, chartYMax]}
                   />
                   <Tooltip content={<ForecastTooltip sym={sym} />} />

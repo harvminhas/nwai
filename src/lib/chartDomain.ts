@@ -59,33 +59,31 @@ export function calculateBalanceChartDomain(
   // Ceiling: 5% above with $500 minimum padding
   const ceiling = maxValue + Math.max(range * 0.05, 500);
 
-  // Rounding strategy: thousands for large values, intelligent steps for small
+  // Range-informed rounding: step size based on range magnitude, not just baseline
+  // This ensures $100k + $100 change is visible, not lost to thousand-rounding
   let min: number;
   let max: number;
-
-  const absMax = Math.abs(maxValue);
   
-  if (absMax >= 1000) {
-    // Large values: round to thousands (canonical behavior)
-    min = Math.floor(baseline / 1000) * 1000;
-    max = Math.ceil(ceiling / 1000) * 1000;
-  } else if (absMax >= 100) {
-    // Medium values ($100-$999): round to $100
-    min = Math.floor(baseline / 100) * 100;
-    max = Math.ceil(ceiling / 100) * 100;
-  } else if (absMax >= 10) {
-    // Small values ($10-$99): round to $10
-    min = Math.floor(baseline / 10) * 10;
-    max = Math.ceil(ceiling / 10) * 10;
+  // Determine step size from range magnitude
+  const rangeForSteps = Math.max(range, Math.abs(maxValue) * 0.01); // At least 1% of max
+  let step: number;
+  
+  if (rangeForSteps >= 10000) {
+    step = 1000; // Large ranges: round to thousands
+  } else if (rangeForSteps >= 1000) {
+    step = 100; // Medium ranges: round to hundreds  
+  } else if (rangeForSteps >= 100) {
+    step = 10; // Small ranges: round to tens
   } else {
-    // Very small values (< $10): round to $1
-    min = Math.floor(baseline);
-    max = Math.ceil(ceiling);
+    step = 1; // Tiny ranges: round to ones
   }
+  
+  min = Math.floor(baseline / step) * step;
+  max = Math.ceil(ceiling / step) * step;
 
   // Safety: ensure non-zero range
   if (max <= min) {
-    max = min + (absMax >= 1000 ? 1000 : absMax >= 100 ? 100 : 10);
+    max = min + step;
   }
 
   return { min, max };
