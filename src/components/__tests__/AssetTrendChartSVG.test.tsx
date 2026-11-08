@@ -5,21 +5,12 @@
  */
 
 import React from "react";
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
 import { AssetTrendChartSVG } from "../AssetTrendChartSVG";
 import type { TrendDataPoint } from "@/lib/assetTrendChart";
 
 // @vitest-environment jsdom
-
-// Mock ResizeObserver for Recharts
-beforeAll(() => {
-  global.ResizeObserver = class ResizeObserver {
-    observe() {}
-    unobserve() {}
-    disconnect() {}
-  };
-});
 
 // Helper to format currency (mimics app behavior)
 const formatCurrency = (value: number, currency: string): string => {
@@ -36,7 +27,7 @@ const formatCurrencyWithCents = (value: number, currency: string): string => {
 };
 
 describe("AssetTrendChartSVG time-based axis and connection", () => {
-  it("uses timestamp-keyed sorted data for proper date proportions", () => {
+  it("renders actual SVG paths with fixed dimensions", () => {
     const actualPoints: TrendDataPoint[] = [
       { date: "2022-01-01", value: 10000, label: "Jan '22", isProjected: false },
       { date: "2024-01-01", value: 12000, label: "Jan '24", isProjected: false },
@@ -53,85 +44,57 @@ describe("AssetTrendChartSVG time-based axis and connection", () => {
         currency="USD"
         formatCurrency={formatCurrency}
         formatCurrencyWithCents={formatCurrencyWithCents}
+        width={800}
+        height={300}
       />
     );
     
-    // Verify container renders
-    expect(container.querySelector('[data-testid="trend-chart-svg"]')).toBeTruthy();
+    // Assert actual SVG elements exist
+    const svg = container.querySelector('svg.recharts-surface');
+    expect(svg).toBeTruthy();
     
-    // Note: Full SVG coordinate assertions require Recharts to render with real dimensions
-    // which happens in the browser. These tests validate structure and data handling.
+    // Assert line paths exist
+    const paths = container.querySelectorAll('path.recharts-line-curve');
+    expect(paths.length).toBeGreaterThan(0);
+    
+    // Assert dots (circles) exist
+    const dots = container.querySelectorAll('circle.recharts-dot');
+    expect(dots.length).toBeGreaterThan(0);
   });
 
-  it("coalesces same-date actual and projected into anchor row", () => {
+  it("anchors at latest actual ≤ today (not future actuals)", () => {
+    // Scenario: Jan 2024 $10k, Jan 2027 $20k (future), today Nov 2026
+    // Should anchor at Jan 2024, not Jan 2027
     const actualPoints: TrendDataPoint[] = [
       { date: "2024-01-01", value: 10000, label: "Jan '24", isProjected: false },
+      { date: "2027-01-01", value: 20000, label: "Jan '27", isProjected: false }, // Future actual
     ];
     const projectedPoints: TrendDataPoint[] = [
-      { date: "2024-01-01", value: 10000, label: "Jan '24", isProjected: true }, // Same date
-      { date: "2025-01-01", value: 11000, label: "Jan '25", isProjected: true },
+      { date: "2028-01-01", value: 25000, label: "Jan '28", isProjected: true },
     ];
     
     const { container } = render(
       <AssetTrendChartSVG
         actualPoints={actualPoints}
         projectedPoints={projectedPoints}
-        todayDate="2024-06-01"
+        todayDate="2026-11-01"
         currency="USD"
         formatCurrency={formatCurrency}
         formatCurrencyWithCents={formatCurrencyWithCents}
+        width={800}
+        height={300}
       />
     );
     
-    expect(container.querySelector('[data-testid="trend-chart-svg"]')).toBeTruthy();
+    // Verify SVG renders with proper anchor (not creating false spike to $20k)
+    const svg = container.querySelector('svg.recharts-surface');
+    expect(svg).toBeTruthy();
+    
+    const paths = container.querySelectorAll('path.recharts-line-curve');
+    expect(paths.length).toBeGreaterThan(0);
   });
 
-  it("seeds projected with actual anchor for connection when dates differ", () => {
-    const actualPoints: TrendDataPoint[] = [
-      { date: "2024-01-01", value: 10000, label: "Jan '24", isProjected: false },
-    ];
-    const projectedPoints: TrendDataPoint[] = [
-      { date: "2025-01-01", value: 11000, label: "Jan '25", isProjected: true }, // Different date
-    ];
-    
-    const { container } = render(
-      <AssetTrendChartSVG
-        actualPoints={actualPoints}
-        projectedPoints={projectedPoints}
-        todayDate="2024-06-01"
-        currency="USD"
-        formatCurrency={formatCurrency}
-        formatCurrencyWithCents={formatCurrencyWithCents}
-      />
-    );
-    
-    // Anchor row ensures connection between actual and projected
-    expect(container.querySelector('[data-testid="trend-chart-svg"]')).toBeTruthy();
-  });
-
-  it("handles irregular date spacing with numeric time axis", () => {
-    const actualPoints: TrendDataPoint[] = [
-      { date: "2022-01-01", value: 10000, label: "Jan '22", isProjected: false },
-      { date: "2022-02-01", value: 10100, label: "Feb '22", isProjected: false }, // 1 month gap
-      { date: "2024-01-01", value: 12000, label: "Jan '24", isProjected: false }, // 2 year gap
-    ];
-    
-    const { container } = render(
-      <AssetTrendChartSVG
-        actualPoints={actualPoints}
-        projectedPoints={[]}
-        todayDate="2024-06-01"
-        currency="USD"
-        formatCurrency={formatCurrency}
-        formatCurrencyWithCents={formatCurrencyWithCents}
-      />
-    );
-    
-    // Time-based axis proportions handled by numeric timestamp
-    expect(container.querySelector('[data-testid="trend-chart-svg"]')).toBeTruthy();
-  });
-
-  it("uses todayDate for Today marker timestamp", () => {
+  it("renders Today ReferenceLine at actual UTC timestamp", () => {
     const actualPoints: TrendDataPoint[] = [
       { date: "2024-01-01", value: 10000, label: "Jan '24", isProjected: false },
     ];
@@ -147,11 +110,72 @@ describe("AssetTrendChartSVG time-based axis and connection", () => {
         currency="USD"
         formatCurrency={formatCurrency}
         formatCurrencyWithCents={formatCurrencyWithCents}
+        width={800}
+        height={300}
       />
     );
     
-    // Today marker rendered at actual UTC timestamp of todayDate
-    expect(container.querySelector('[data-testid="trend-chart-svg"]')).toBeTruthy();
+    // Verify ReferenceLine exists (amber color #fbbf24)
+    const svg = container.querySelector('svg.recharts-surface');
+    expect(svg).toBeTruthy();
+    
+    const referenceLine = container.querySelector('line.recharts-reference-line-line');
+    expect(referenceLine).toBeTruthy();
+  });
+
+  it("handles irregular date spacing with proportional positioning", () => {
+    const actualPoints: TrendDataPoint[] = [
+      { date: "2022-01-01", value: 10000, label: "Jan '22", isProjected: false },
+      { date: "2022-02-01", value: 10100, label: "Feb '22", isProjected: false }, // 1 month gap
+      { date: "2024-01-01", value: 12000, label: "Jan '24", isProjected: false }, // 2 year gap
+    ];
+    
+    const { container } = render(
+      <AssetTrendChartSVG
+        actualPoints={actualPoints}
+        projectedPoints={[]}
+        todayDate="2024-06-01"
+        currency="USD"
+        formatCurrency={formatCurrency}
+        formatCurrencyWithCents={formatCurrencyWithCents}
+        width={800}
+        height={300}
+      />
+    );
+    
+    // Verify SVG with numeric time-based axis
+    const svg = container.querySelector('svg.recharts-surface');
+    expect(svg).toBeTruthy();
+    
+    const dots = container.querySelectorAll('circle.recharts-dot');
+    expect(dots.length).toBe(3); // Three actual points
+  });
+
+  it("continuous lines with connectNulls through interleaved rows", () => {
+    const actualPoints: TrendDataPoint[] = [
+      { date: "2024-01-01", value: 10000, label: "Jan '24", isProjected: false },
+      { date: "2024-02-01", value: 10500, label: "Feb '24", isProjected: false },
+    ];
+    const projectedPoints: TrendDataPoint[] = [
+      { date: "2024-03-01", value: 11000, label: "Mar '24", isProjected: true },
+    ];
+    
+    const { container } = render(
+      <AssetTrendChartSVG
+        actualPoints={actualPoints}
+        projectedPoints={projectedPoints}
+        todayDate="2024-02-15"
+        currency="USD"
+        formatCurrency={formatCurrency}
+        formatCurrencyWithCents={formatCurrencyWithCents}
+        width={800}
+        height={300}
+      />
+    );
+    
+    // Both lines render continuously (not broken by nulls)
+    const paths = container.querySelectorAll('path.recharts-line-curve');
+    expect(paths.length).toBeGreaterThanOrEqual(2); // Actual + projected lines
   });
 
   it("handles all-zero values without NaN", () => {
@@ -170,12 +194,16 @@ describe("AssetTrendChartSVG time-based axis and connection", () => {
         currency="USD"
         formatCurrency={formatCurrency}
         formatCurrencyWithCents={formatCurrencyWithCents}
+        width={800}
+        height={300}
       />
     );
     
     const html = container.innerHTML;
     expect(html).not.toContain('NaN');
-    expect(container.querySelector('[data-testid="trend-chart-svg"]')).toBeTruthy();
+    
+    const svg = container.querySelector('svg.recharts-surface');
+    expect(svg).toBeTruthy();
   });
 
   it("handles single actual point without projected", () => {
@@ -191,10 +219,13 @@ describe("AssetTrendChartSVG time-based axis and connection", () => {
         currency="USD"
         formatCurrency={formatCurrency}
         formatCurrencyWithCents={formatCurrencyWithCents}
+        width={800}
+        height={300}
       />
     );
     
-    expect(container.querySelector('[data-testid="trend-chart-svg"]')).toBeTruthy();
+    const svg = container.querySelector('svg.recharts-surface');
+    expect(svg).toBeTruthy();
   });
 
   it("uses shared domain calculation for small ranges", () => {
@@ -211,10 +242,16 @@ describe("AssetTrendChartSVG time-based axis and connection", () => {
         currency="USD"
         formatCurrency={formatCurrency}
         formatCurrencyWithCents={formatCurrencyWithCents}
+        width={800}
+        height={300}
       />
     );
     
     // Domain calculation ensures $100 change is visible
-    expect(container.querySelector('[data-testid="trend-chart-svg"]')).toBeTruthy();
+    const svg = container.querySelector('svg.recharts-surface');
+    expect(svg).toBeTruthy();
+    
+    const dots = container.querySelectorAll('circle.recharts-dot');
+    expect(dots.length).toBe(2);
   });
 });

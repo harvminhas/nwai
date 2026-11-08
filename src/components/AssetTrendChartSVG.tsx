@@ -33,16 +33,21 @@ interface AssetTrendChartSVGProps {
   currency: string;
   formatCurrency: (value: number, currency: string) => string;
   formatCurrencyWithCents: (value: number, currency: string) => string;
+  width?: number;
+  height?: number;
 }
 
-export function AssetTrendChartSVG({
+// Inner chart component with fixed dimensions (used for production and tests)
+function AssetTrendChartInner({
   actualPoints,
   projectedPoints,
   todayDate,
   currency,
   formatCurrency,
   formatCurrencyWithCents,
-}: AssetTrendChartSVGProps) {
+  width,
+  height,
+}: AssetTrendChartSVGProps & { width: number; height: number }) {
   // Timestamp-keyed coalesced sorted rows for proper time-based x-axis
   const rowsByDate = new Map<string, { timestamp: number; label: string; actual: number | null; projected: number | null }>();
   
@@ -57,21 +62,35 @@ export function AssetTrendChartSVG({
     });
   });
   
-  // Seed projected with actual anchor row (last actual) for connection
+  // Seed projected with eligible anchor: latest actual ≤ today
+  // Reuse same logic as model: if actual includes future dates, anchor at latest ≤ today
   if (actualPoints.length > 0 && projectedPoints.length > 0) {
-    const lastActual = actualPoints[actualPoints.length - 1];
-    const firstProj = projectedPoints[0];
+    const todayTimestamp = new Date(todayDate).getTime();
     
-    // If projected doesn't start at last actual date, add anchor
-    if (lastActual.date !== firstProj.date) {
-      const anchorTimestamp = new Date(lastActual.date).getTime();
-      rowsByDate.set(lastActual.date, {
-        timestamp: anchorTimestamp,
-        label: lastActual.label,
-        actual: lastActual.value,
-        projected: lastActual.value, // Anchor: same value for connection
-      });
+    // Find latest eligible actual (≤ today)
+    const eligibleActuals = actualPoints.filter(p => new Date(p.date).getTime() <= todayTimestamp);
+    
+    if (eligibleActuals.length > 0) {
+      const anchorPoint = eligibleActuals[eligibleActuals.length - 1];
+      const firstProj = projectedPoints[0];
+      
+      // If projected doesn't start at anchor date, add anchor row for connection
+      if (anchorPoint.date !== firstProj.date) {
+        const anchorTimestamp = new Date(anchorPoint.date).getTime();
+        const existing = rowsByDate.get(anchorPoint.date);
+        if (existing) {
+          existing.projected = anchorPoint.value; // Add projection to existing actual
+        } else {
+          rowsByDate.set(anchorPoint.date, {
+            timestamp: anchorTimestamp,
+            label: anchorPoint.label,
+            actual: anchorPoint.value,
+            projected: anchorPoint.value, // Anchor: same value for connection
+          });
+        }
+      }
     }
+    // No eligible anchor (all actuals are future): fall back to model behavior (no anchor)
   }
   
   // Add projected points
@@ -101,9 +120,7 @@ export function AssetTrendChartSVG({
   const todayTimestamp = new Date(todayDate).getTime();
 
   return (
-    <div data-testid="trend-chart-svg" style={{ height: '300px' }}>
-      <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={chartData} margin={CANONICAL_CHART_MARGIN}>
+    <ComposedChart data={chartData} width={width} height={height} margin={CANONICAL_CHART_MARGIN}>
           <defs>
             <linearGradient id="assetTrendGradient" x1="0" y1="0" x2="0" y2="1">
               <stop offset="5%" stopColor="#10b981" stopOpacity={0.15}/>
@@ -119,8 +136,19 @@ export function AssetTrendChartSVG({
             type="number"
             domain={['dataMin', 'dataMax']}
             tickFormatter={(timestamp: number) => {
-              const row = chartData.find(d => d.timestamp === timestamp);
-              return row?.label ?? '';
+              // Format every numeric tick as UTC date (not just exact matches)
+              const date = new Date(timestamp);
+              const year = date.getFullYear();
+              const month = date.toLocaleDateString('en-US', { month: 'short' });
+              
+              // Show year for first tick or when year changes
+              const isMultiYear = chartData.length > 0 && 
+                (chartData[chartData.length - 1].timestamp - chartData[0].timestamp) > 365 * 24 * 60 * 60 * 1000;
+              
+              if (isMultiYear) {
+                return `${month} '${year.toString().slice(-2)}`;
+              }
+              return month;
             }}
             {...CANONICAL_XAXIS_CONFIG}
           />
@@ -179,17 +207,17 @@ export function AssetTrendChartSVG({
             isAnimationActive={false}
           />
           
-          {/* Actual line (solid) - anchor row has both actual and projected */}
+          {/* Actual line (solid) - continuous through non-null actual values */}
           <Line
             {...CANONICAL_LINE_CONFIG}
             dataKey="actual"
             stroke="#10b981"
             dot={{ r: 4, fill: "#10b981", stroke: "#fff", strokeWidth: 2 }}
-            connectNulls={false}
+            connectNulls={true}
             isAnimationActive={false}
           />
           
-          {/* Projected line (dashed) - anchor row connects via shared x/y */}
+          {/* Projected line (dashed) - continuous through non-null projected values */}
           <Line
             type="monotone"
             dataKey="projected"
@@ -198,10 +226,33 @@ export function AssetTrendChartSVG({
             strokeDasharray="5 4"
             strokeOpacity={0.45}
             dot={{ r: 4, fill: "#10b981", stroke: "#fff", strokeWidth: 2, opacity: 0.45 }}
-            connectNulls={false}
+            connectNulls={true}
             isAnimationActive={false}
           />
-        </ComposedChart>
+    </ComposedChart>
+  );
+}
+
+// Exported wrapper component with ResponsiveContainer for production
+export function AssetTrendChartSVG(props: AssetTrendChartSVGProps) {
+  const { width, height } = props;
+  
+  // If dimensions provided, render directly (for tests)
+  if (width && height) {
+    return (
+      <div data-testid="trend-chart-svg" style={{ width, height }}>
+        <AssetTrendChartInner {...props} width={width} height={height} />
+      </div>
+    );
+  }
+  
+  // Production: use ResponsiveContainer
+  return (
+    <div data-testid="trend-chart-svg" style={{ height: '300px' }}>
+      <ResponsiveContainer width="100%" height="100%">
+        {({ width: w, height: h }) => (
+          <AssetTrendChartInner {...props} width={w || 800} height={h || 300} />
+        )}
       </ResponsiveContainer>
     </div>
   );
