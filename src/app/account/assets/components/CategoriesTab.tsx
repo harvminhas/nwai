@@ -16,6 +16,7 @@ import {
   AccountCategorySection,
   AccountCategoryItem,
 } from "@/app/account/components/AccountCategoryList";
+import { usePreviewIsolation } from "@/lib/previewIsolation";
 
 interface CategoriesTabProps {
   summary: AssetsSummary;
@@ -28,6 +29,7 @@ interface CategoriesTabProps {
  * Clicking a row expands it in place; clicking the name opens the category page.
  */
 export function CategoriesTab({ summary }: CategoriesTabProps) {
+  const previewIsolation = usePreviewIsolation();
   const { groups, currency } = summary;
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -44,6 +46,7 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
   // Pre-fill when arriving from a mortgage/loan page ("Add asset" there).
   const linkedFromQuery = searchParams.get("link") ?? "";
   useEffect(() => {
+    if (previewIsolation) return;
     if (searchParams.get("add") === "1" || searchParams.get("link")) {
       setShowAdd(true);
       setAddStartDate(new Date().toISOString().slice(0, 10)); // Default today
@@ -53,12 +56,13 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
       setAddCategory(cat as AssetCategory);
     }
     if (searchParams.get("link")) setAddLink(searchParams.get("link") as string);
-  }, [searchParams]);
+  }, [searchParams, previewIsolation]);
 
   const toggle = (type: string) =>
     setUserGroupOpen((prev) => toggleCategoryGroup(prev, type));
 
   const submitAdd = async () => {
+    if (previewIsolation) return;
     const num = Number(addValue.replace(/[^0-9.-]/g, ""));
     if (!addLabel.trim() || Number.isNaN(num) || num <= 0) {
       setAddError("Add a name and a value.");
@@ -97,7 +101,7 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
 
   const ordered = [...groups].sort((a, b) => b.total - a.total);
 
-  const addPanel = showAdd ? (
+  const addPanel = !previewIsolation && showAdd ? (
     <div className="rounded-xl border border-purple-200 bg-purple-50/40 p-5">
       <p className="text-sm font-semibold text-gray-900">New asset</p>
       <p className="mt-0.5 text-xs text-gray-500">
@@ -166,9 +170,7 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
     </div>
   ) : null;
 
-  if (groups.length === 0) {
-    return (
-      <div className="space-y-4">
+  const addToggle = previewIsolation ? null : (
         <div className="flex items-center justify-end">
           <button
             onClick={() => setShowAdd((v) => !v)}
@@ -181,6 +183,12 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
             {showAdd ? "Cancel" : "+ Add asset"}
           </button>
         </div>
+  );
+
+  if (groups.length === 0) {
+    return (
+      <div className="space-y-4">
+        {addToggle}
         {addPanel}
         {!showAdd && (
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-8 text-center">
@@ -202,18 +210,7 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-end">
-        <button
-          onClick={() => setShowAdd((v) => !v)}
-          className={`min-h-11 rounded-lg border px-3 py-1.5 text-sm font-semibold transition lg:min-h-0 lg:text-xs ${
-            showAdd
-              ? "border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100"
-              : "border-gray-200 text-gray-600 hover:border-purple-300 hover:bg-purple-50 hover:text-purple-700"
-          }`}
-        >
-          {showAdd ? "Cancel" : "+ Add asset"}
-        </button>
-      </div>
+      {addToggle}
       {addPanel}
       <AccountCategoryList>
       {ordered.map((group) => {

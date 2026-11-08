@@ -7,6 +7,7 @@ import type { DebtsSummary } from "@/lib/debtsSummary";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { formatChange, getChangeColor } from "@/lib/colorHelpers";
 import { ReviewList } from "@/components/ReviewList";
+import { usePreviewIsolation } from "@/lib/previewIsolation";
 import { calculatePayoffInsight, type DebtForPayoff } from "@/lib/payoffInsight";
 import {
   ACCOUNT_CARD,
@@ -21,10 +22,12 @@ interface OverviewTabProps {
 }
 
 export function OverviewTab({ summary }: OverviewTabProps) {
+  const previewIsolation = usePreviewIsolation();
   const [token, setToken] = useState<string | null>(null);
   const [showInterestInfo, setShowInterestInfo] = useState(false);
 
   useEffect(() => {
+    if (previewIsolation) return;
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
       if (user) {
@@ -34,7 +37,7 @@ export function OverviewTab({ summary }: OverviewTabProps) {
         setToken(null);
       }
     });
-  }, []);
+  }, [previewIsolation]);
 
   const {
     totalDebt,
@@ -308,10 +311,12 @@ export function OverviewTab({ summary }: OverviewTabProps) {
       </div>
 
       {/* Debt Payment Reviews */}
-      <ReviewList 
-        token={token}
-        reviewType="debt_payment"
-      />
+      {!previewIsolation && (
+        <ReviewList 
+          token={token}
+          reviewType="debt_payment"
+        />
+      )}
     </div>
   );
 }

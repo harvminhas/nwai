@@ -7,6 +7,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { formatAccountLast4 } from "@/lib/rangeUtils";
+import { usePreviewIsolation } from "@/lib/previewIsolation";
 
 export interface AccountSwitcherItem {
   key: string;
@@ -38,10 +39,11 @@ export default function AccountSwitcher({
   const [fetchedItems, setFetchedItems] = useState<Item[]>([]);
   const [fallbackCurrency, setFallbackCurrency] = useState("USD");
   const boxRef = useRef<HTMLDivElement>(null);
+  const previewIsolation = usePreviewIsolation();
   const items = previewItems ?? fetchedItems;
 
   useEffect(() => {
-    if (previewItems) return;
+    if (previewItems || previewIsolation) return;
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
       if (!user) return;
@@ -102,7 +104,7 @@ export default function AccountSwitcher({
       const seen = new Set<string>();
       setFetchedItems(next.filter((i) => (seen.has(i.href) ? false : (seen.add(i.href), true))));
     });
-  }, [previewItems]);
+  }, [previewItems, previewIsolation]);
 
   useEffect(() => {
     if (!open) return;

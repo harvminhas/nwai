@@ -20,6 +20,7 @@ import {
   buildPreviewSwitcherItems,
   type PreviewMonthKind,
 } from "@/lib/accountSectionPreviewFixture";
+import { PreviewIsolationProvider } from "@/lib/previewIsolation";
 
 function parseSide(raw: string | null): "assets" | "debts" {
   return raw === "debts" ? "debts" : "assets";
@@ -31,6 +32,14 @@ function parseMonths(raw: string | null): PreviewMonthKind {
 }
 
 export function AccountSurfacesPreview() {
+  return (
+    <PreviewIsolationProvider>
+      <AccountSurfacesPreviewInner />
+    </PreviewIsolationProvider>
+  );
+}
+
+function AccountSurfacesPreviewInner() {
   const searchParams = useSearchParams();
   const side = parseSide(searchParams.get("side"));
   const months = parseMonths(searchParams.get("months"));
@@ -64,9 +73,14 @@ export function AccountSurfacesPreview() {
   const title = side === "debts" ? "Debts" : "Assets";
 
   return (
-    <div className="min-h-screen bg-gray-50" data-preview-side={side} data-preview-tab={activeTab}>
+    <div
+      className="min-h-screen bg-gray-50"
+      data-preview-side={side}
+      data-preview-tab={activeTab}
+      data-preview-isolation="true"
+    >
       <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900">
-        Synthetic preview — production React tabs, mocked summaries, no live financial data.
+        Synthetic preview — production React tabs, mocked summaries. Financial mutations disabled.
         {overflow ? (
           <span className="ml-2 font-semibold text-red-700">
             HORIZONTAL OVERFLOW {overflow.sw}px vs {overflow.cw}px

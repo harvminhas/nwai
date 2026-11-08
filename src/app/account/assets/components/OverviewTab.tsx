@@ -7,6 +7,7 @@ import type { AssetsSummary } from "@/lib/assetsSummary";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { formatChange, getChangeColor } from "@/lib/colorHelpers";
 import { ReviewList } from "@/components/ReviewList";
+import { usePreviewIsolation } from "@/lib/previewIsolation";
 import {
   ACCOUNT_CARD,
   ACCOUNT_COMPARISON_ROW,
@@ -20,9 +21,11 @@ interface OverviewTabProps {
 }
 
 export function OverviewTab({ summary }: OverviewTabProps) {
+  const previewIsolation = usePreviewIsolation();
   const [token, setToken] = useState<string | null>(null);
 
   useEffect(() => {
+    if (previewIsolation) return;
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
       if (user) {
@@ -32,7 +35,7 @@ export function OverviewTab({ summary }: OverviewTabProps) {
         setToken(null);
       }
     });
-  }, []);
+  }, [previewIsolation]);
 
   const {
     totalAssets,
@@ -104,7 +107,7 @@ export function OverviewTab({ summary }: OverviewTabProps) {
       </div>
 
       {/* Stale Accounts Review */}
-      {summary.staleAccounts.length > 0 && (
+      {!previewIsolation && summary.staleAccounts.length > 0 && (
         <ReviewList 
           token={token}
           reviewType="stale_account"
