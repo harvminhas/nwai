@@ -43,26 +43,62 @@ export function AssetTrendChartSVG({
   formatCurrency,
   formatCurrencyWithCents,
 }: AssetTrendChartSVGProps) {
-  // Merge actual and projected into single dataset for Recharts
-  const chartData = [
-    ...actualPoints.map(p => ({
-      date: p.date,
+  // Timestamp-keyed coalesced sorted rows for proper time-based x-axis
+  const rowsByDate = new Map<string, { timestamp: number; label: string; actual: number | null; projected: number | null }>();
+  
+  // Add actual points
+  actualPoints.forEach(p => {
+    const timestamp = new Date(p.date).getTime();
+    rowsByDate.set(p.date, {
+      timestamp,
       label: p.label,
       actual: p.value,
       projected: null,
-      isProjected: false,
-    })),
-    ...projectedPoints.map(p => ({
-      date: p.date,
-      label: p.label,
-      actual: null,
-      projected: p.value,
-      isProjected: true,
-    })),
-  ];
+    });
+  });
+  
+  // Seed projected with actual anchor row (last actual) for connection
+  if (actualPoints.length > 0 && projectedPoints.length > 0) {
+    const lastActual = actualPoints[actualPoints.length - 1];
+    const firstProj = projectedPoints[0];
+    
+    // If projected doesn't start at last actual date, add anchor
+    if (lastActual.date !== firstProj.date) {
+      const anchorTimestamp = new Date(lastActual.date).getTime();
+      rowsByDate.set(lastActual.date, {
+        timestamp: anchorTimestamp,
+        label: lastActual.label,
+        actual: lastActual.value,
+        projected: lastActual.value, // Anchor: same value for connection
+      });
+    }
+  }
+  
+  // Add projected points
+  projectedPoints.forEach(p => {
+    const timestamp = new Date(p.date).getTime();
+    const existing = rowsByDate.get(p.date);
+    if (existing) {
+      // Same-date coalescing
+      existing.projected = p.value;
+    } else {
+      rowsByDate.set(p.date, {
+        timestamp,
+        label: p.label,
+        actual: null,
+        projected: p.value,
+      });
+    }
+  });
+  
+  // Sort by timestamp chronologically
+  const chartData = Array.from(rowsByDate.values()).sort((a, b) => a.timestamp - b.timestamp);
   
   const allValues = [...actualPoints, ...projectedPoints].map(p => p.value);
   const domain = calculateBalanceChartDomain(allValues);
+  
+  // Today marker at actual UTC timestamp
+  const todayTimestamp = new Date(todayDate).getTime();
 
   return (
     <div data-testid="trend-chart-svg" style={{ height: '300px' }}>
@@ -77,8 +113,15 @@ export function AssetTrendChartSVG({
           
           <CartesianGrid {...CANONICAL_GRID_CONFIG} />
           
+          {/* Numeric UTC time-based XAxis for proper date proportions */}
           <XAxis
-            dataKey="label"
+            dataKey="timestamp"
+            type="number"
+            domain={['dataMin', 'dataMax']}
+            tickFormatter={(timestamp: number) => {
+              const row = chartData.find(d => d.timestamp === timestamp);
+              return row?.label ?? '';
+            }}
             {...CANONICAL_XAXIS_CONFIG}
           />
           
@@ -93,23 +136,26 @@ export function AssetTrendChartSVG({
               if (!active || !payload?.length) return null;
               const data = payload.find(p => p.value != null);
               if (!data || !data.payload) return null;
-              const isProjected = data.payload.isProjected;
+              const hasProjected = data.payload.projected != null;
+              const value = (data.payload.actual ?? data.payload.projected) as number;
               return (
                 <div className="bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2">
                   <p className="text-xs text-gray-600 mb-1">{data.payload.label}</p>
                   <p className="text-sm font-semibold text-gray-900">
-                    {formatCurrencyWithCents(data.value as number, currency)}
-                    {isProjected && <span className="text-xs text-gray-500 ml-1">(estimated)</span>}
+                    {formatCurrencyWithCents(value, currency)}
+                    {!data.payload.actual && hasProjected && (
+                      <span className="text-xs text-gray-500 ml-1">(estimated)</span>
+                    )}
                   </p>
                 </div>
               );
             }}
           />
           
-          {/* Today marker - vertical reference line */}
+          {/* Today marker at actual UTC timestamp */}
           {projectedPoints.length > 0 && (
             <ReferenceLine
-              x={actualPoints[actualPoints.length - 1]?.label}
+              x={todayTimestamp}
               stroke="#fbbf24"
               strokeWidth={2}
               strokeDasharray="4 3"
@@ -133,7 +179,7 @@ export function AssetTrendChartSVG({
             isAnimationActive={false}
           />
           
-          {/* Actual line (solid) */}
+          {/* Actual line (solid) - anchor row has both actual and projected */}
           <Line
             {...CANONICAL_LINE_CONFIG}
             dataKey="actual"
@@ -143,7 +189,7 @@ export function AssetTrendChartSVG({
             isAnimationActive={false}
           />
           
-          {/* Projected line (dashed) */}
+          {/* Projected line (dashed) - anchor row connects via shared x/y */}
           <Line
             type="monotone"
             dataKey="projected"
