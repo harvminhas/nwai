@@ -3,6 +3,23 @@
 import { useEffect, useState } from "react";
 import { formatCurrency, formatCurrencyWithCents } from "@/lib/currencyUtils";
 import { calculateBalanceChartDomain } from "@/lib/chartDomain";
+import {
+  ResponsiveContainer,
+  ComposedChart,
+  Area,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+} from "recharts";
+import {
+  CANONICAL_CHART_MARGIN,
+  CANONICAL_GRID_CONFIG,
+  CANONICAL_XAXIS_CONFIG,
+  CANONICAL_YAXIS_CONFIG,
+  CANONICAL_LINE_CONFIG,
+} from "@/lib/canonicalChartConfig";
 
 interface BalanceLineChartProps {
   history: Array<{
@@ -18,7 +35,7 @@ interface BalanceLineChartProps {
 }
 
 function BalanceLineChart({ history, currency, isDebt, onMonthClick }: BalanceLineChartProps) {
-  const [hoveredPoint, setHoveredPoint] = useState<number | null>(null);
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   
   // Filter out null values (gaps) and narrow type
   const validHistory = history.filter((h): h is typeof h & { balance: number } => h.balance !== null && Number.isFinite(h.balance));
@@ -34,63 +51,22 @@ function BalanceLineChart({ history, currency, isDebt, onMonthClick }: BalanceLi
   // Sort chronologically (oldest first)
   const sortedHistory = [...validHistory].sort((a, b) => a.month.localeCompare(b.month));
   
-  if (validHistory.length === 0) {
-    return (
-      <div className="bg-gray-50 rounded-lg p-6 text-center">
-        <p className="text-sm text-gray-600">Not enough history yet</p>
-      </div>
-    );
-  }
+  // Prepare chart data with absolute values for display
+  const chartData = sortedHistory.map(h => ({
+    month: h.month,
+    label: h.monthLabel.split(' ')[0], // Short label
+    balance: Math.abs(h.balance),
+    isSelected: h.month === selectedMonth,
+  }));
   
   // Use canonical chart domain calculation
-  const values = validHistory.map(h => Math.abs(h.balance));
+  const values = chartData.map(d => d.balance);
   const domain = calculateBalanceChartDomain(values);
-  const paddedMin = domain.min;
-  const paddedMax = domain.max;
-  const effectiveRange = paddedMax - paddedMin;
   
-  // Use canonical emerald green color (no red/green divergence)
-  const lineColor = "#10b981"; // emerald-500 (canonical)
-  const fillColor = "rgba(16, 185, 129, 0.08)"; // Canonical gradient equivalent
-  
-  // Chart dimensions
-  const chartWidth = 400;
-  const chartHeight = 200;
-  const padding = { top: 20, right: 20, bottom: 30, left: 50 };
-  const plotWidth = chartWidth - padding.left - padding.right;
-  const plotHeight = chartHeight - padding.top - padding.bottom;
-  
-  // Map data to coordinates with safeguards
-  const points = validHistory.map((entry, idx) => {
-    let x: number;
-    let y: number;
-    
-    if (validHistory.length === 1) {
-      // Single point - center it
-      x = padding.left + plotWidth / 2;
-      y = padding.top + plotHeight / 2;
-    } else {
-      x = padding.left + (idx / (validHistory.length - 1)) * plotWidth;
-      y = padding.top + (1 - ((Math.abs(entry.balance) - paddedMin) / effectiveRange)) * plotHeight;
-    }
-    
-    // Final safeguard - ensure no NaN
-    x = Number.isFinite(x) ? x : padding.left + plotWidth / 2;
-    y = Number.isFinite(y) ? y : padding.top + plotHeight / 2;
-    
-    return { x, y, ...entry };
-  });
-  
-  // Create path for line
-  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x},${p.y}`).join(' ');
-  
-  // Create path for area fill
-  const areaPath = [
-    `M ${points[0].x},${padding.top + plotHeight}`,
-    ...points.map(p => `L ${p.x},${p.y}`),
-    `L ${points[points.length - 1].x},${padding.top + plotHeight}`,
-    'Z'
-  ].join(' ');
+  function handlePointClick(month: string) {
+    setSelectedMonth(prev => prev === month ? null : month);
+    onMonthClick?.(month);
+  }
 
   return (
     <div>
@@ -98,119 +74,80 @@ function BalanceLineChart({ history, currency, isDebt, onMonthClick }: BalanceLi
         Balance History (Last {sortedHistory.length} Months)
       </h3>
       
-      <div className="relative bg-gray-50 rounded-lg p-4">
-        <svg 
-          width="100%" 
-          height={chartHeight}
-          viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-          className="overflow-visible"
-        >
-          {/* Horizontal grid lines - canonical style */}
-          {[0, 0.5, 1].map((fraction, idx) => {
-            const y = padding.top + fraction * plotHeight;
-            return (
-              <line
-                key={`grid-${idx}`}
-                x1={padding.left}
-                y1={y}
-                x2={padding.left + plotWidth}
-                y2={y}
-                stroke="#e5e7eb"
-                strokeDasharray="3 3"
-                strokeWidth="1"
-              />
-            );
-          })}
-          
-          {/* Y-axis labels - canonical 12px fill-gray-600 */}
-          {[paddedMax, (paddedMax + paddedMin) / 2, paddedMin].map((value, idx) => {
-            const y = padding.top + (idx / 2) * plotHeight;
-            return (
-              <text
-                key={idx}
-                x={padding.left - 8}
-                y={y}
-                textAnchor="end"
-                alignmentBaseline="middle"
-                className="text-xs fill-gray-600"
-                fontSize="12"
-              >
-                {value >= 10000 ? `${(value / 1000).toFixed(0)}k` : value.toFixed(0)}
-              </text>
-            );
-          })}
-          
-          {/* Area fill */}
-          <path
-            d={areaPath}
-            fill={fillColor}
-          />
-          
-          {/* Line */}
-          <path
-            d={linePath}
-            fill="none"
-            stroke={lineColor}
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-          
-          {/* Points - canonical style: r=6 selected / r=4 ordinary, green fill, white stroke */}
-          {points.map((point, idx) => (
-            <g key={idx}>
-              <circle
-                cx={point.x}
-                cy={point.y}
-                r={hoveredPoint === idx ? 6 : 4}
-                fill={hoveredPoint === idx ? "#059669" : "#10b981"}
-                stroke="#fff"
-                strokeWidth={hoveredPoint === idx ? 3 : 2}
-                className="cursor-pointer transition-all"
-                onMouseEnter={() => setHoveredPoint(idx)}
-                onMouseLeave={() => setHoveredPoint(null)}
-                onClick={() => onMonthClick?.(sortedHistory[idx].month)}
-              />
-            </g>
-          ))}
-          
-          {/* X-axis labels - canonical 12px */}
-          {points.map((point, idx) => {
-            const showLabel = sortedHistory.length <= 6 || idx % 2 === 0;
-            if (!showLabel) return null;
+      <div style={{ height: '200px' }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={chartData} margin={CANONICAL_CHART_MARGIN}>
+            <defs>
+              <linearGradient id="balanceGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#10b981" stopOpacity={0.15}/>
+                <stop offset="95%" stopColor="#10b981" stopOpacity={0.02}/>
+              </linearGradient>
+            </defs>
             
-            return (
-              <text
-                key={idx}
-                x={point.x}
-                y={padding.top + plotHeight + 15}
-                textAnchor="middle"
-                className="text-xs fill-gray-600"
-                fontSize="12"
-              >
-                {point.monthLabel.split(' ')[0]}
-              </text>
-            );
-          })}
-        </svg>
-        
-        {/* Tooltip - canonical style: white bg, gray border, rounded shadow */}
-        {hoveredPoint !== null && (
-          <div 
-            className="absolute bg-white border border-gray-200 text-gray-900 text-xs rounded-lg px-3 py-2 pointer-events-none shadow-lg"
-            style={{
-              left: `${(points[hoveredPoint].x / chartWidth) * 100}%`,
-              top: `${Math.max(10, (points[hoveredPoint].y / chartHeight) * 100 - 20)}%`,
-              transform: 'translate(-50%, -100%)',
-            }}
-          >
-            <div className="text-gray-600 mb-1">{sortedHistory[hoveredPoint].monthLabel}</div>
-            <div className="font-semibold tabular-nums">
-              {formatCurrency(Math.abs(sortedHistory[hoveredPoint].balance), currency)}
-            </div>
-          </div>
-        )}
+            <CartesianGrid {...CANONICAL_GRID_CONFIG} />
+            
+            <XAxis
+              dataKey="label"
+              {...CANONICAL_XAXIS_CONFIG}
+            />
+            
+            <YAxis
+              domain={[domain.min, domain.max]}
+              tickFormatter={(v: number) => v >= 10000 ? `${(v / 1000).toFixed(0)}k` : v.toFixed(0)}
+              {...CANONICAL_YAXIS_CONFIG}
+            />
+            
+            <Tooltip
+              content={({ active, payload }) => {
+                if (!active || !payload?.[0]) return null;
+                const data = payload[0].payload;
+                return (
+                  <div className="bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2">
+                    <p className="text-xs text-gray-600 mb-1">{data.month}</p>
+                    <p className="text-sm font-semibold text-gray-900">
+                      {formatCurrency(data.balance, currency)}
+                    </p>
+                  </div>
+                );
+              }}
+            />
+            
+            {/* Gradient area fill */}
+            <Area
+              type="monotone"
+              dataKey="balance"
+              fill="url(#balanceGradient)"
+              stroke="none"
+              isAnimationActive={false}
+            />
+            
+            {/* Line with canonical monotone curve */}
+            <Line
+              {...CANONICAL_LINE_CONFIG}
+              dataKey="balance"
+              stroke="#10b981"
+              dot={(props: any) => {
+                const isSelected = props.payload?.isSelected;
+                return (
+                  <circle
+                    cx={props.cx}
+                    cy={props.cy}
+                    r={isSelected ? 6 : 4}
+                    fill={isSelected ? "#059669" : "#10b981"}
+                    stroke="#fff"
+                    strokeWidth={isSelected ? 3 : 2}
+                    onClick={() => handlePointClick(props.payload.month)}
+                    style={{ cursor: 'pointer' }}
+                  />
+                );
+              }}
+              isAnimationActive={false}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
       </div>
+      
+      <p className="mt-2 text-xs text-gray-400">Click a point to see details</p>
     </div>
   );
 }

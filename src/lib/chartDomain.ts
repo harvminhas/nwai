@@ -46,8 +46,7 @@ export function calculateBalanceChartDomain(
     return { min: 0, max };
   }
 
-  // Padding strategy: make small changes visible without excessive padding
-  // Key insight: padding should be proportional to range for visibility
+  // Padding strategy: make all changes visible with magnitude/range-proportional padding
   let baseline: number;
   let ceiling: number;
   
@@ -56,17 +55,29 @@ export function calculateBalanceChartDomain(
     const artificial = Math.max(Math.abs(maxValue) * 0.05, 100);
     baseline = maxValue - artificial;
     ceiling = maxValue + artificial;
-  } else if (range < Math.abs(minValue) * 0.05) {
-    // Small range on large balance: use range-proportional padding
-    // For $100 change on $100k, use ~10x range as total span
-    // This gives ~9% height to the $100 change (visible!)
-    const padFactor = 5; // Each side gets 5x range padding
-    baseline = minValue - range * padFactor;
-    ceiling = maxValue + range * padFactor;
   } else {
-    // Large ranges: standard percentage padding
-    baseline = minValue - Math.max(range * 0.1, 1000);
-    ceiling = maxValue + Math.max(range * 0.05, 500);
+    // Magnitude/range-proportional padding for ALL branches
+    // Key: use range itself for padding when it's small relative to total span needed
+    const avgMagnitude = (Math.abs(minValue) + Math.abs(maxValue)) / 2;
+    
+    // Detect small range: either absolutely small OR small relative to magnitude
+    const isAbsolutelySmall = range < 100; // [10,11], [20,21]
+    const isRelativelySmall = range < avgMagnitude * 0.05; // [100k, 100.1k]
+    
+    if (isAbsolutelySmall || isRelativelySmall) {
+      // Small range: use 5x padding each side (10x total span)
+      // This makes the range occupy ~9% of chart height (1/11)
+      const padFactor = 5;
+      baseline = minValue - range * padFactor;
+      ceiling = maxValue + range * padFactor;
+    } else {
+      // Large visible range: use percentage-based padding
+      // Cap minimums to avoid excessive padding on large magnitudes
+      const lowerPad = Math.max(range * 0.1, Math.min(avgMagnitude * 0.02, 1000));
+      const upperPad = Math.max(range * 0.05, Math.min(avgMagnitude * 0.01, 500));
+      baseline = minValue - lowerPad;
+      ceiling = maxValue + upperPad;
+    }
   }
 
   // Range-informed rounding: step size based on range magnitude, not just baseline

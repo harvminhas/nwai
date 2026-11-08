@@ -39,6 +39,45 @@ describe("calculateBalanceChartDomain", () => {
     expect(actualRange).toBeLessThan(2000); // But not excessive padding
   });
 
+  it("small absolute ranges: [20, 21] occupies visible height", () => {
+    // Edge case: small absolute values with $1 change
+    const values = [20, 21];
+    const domain = calculateBalanceChartDomain(values);
+    
+    // Range=1, avgValue=20.5, isSmallRange = 1 < 20.5*0.05 = 1 < 1.025 = true
+    // Padding: 5x range = 5 → [15, 26]
+    const actualRange = domain.max - domain.min;
+    const changeRatio = 1 / actualRange;
+    
+    // $1 change should occupy at least 5% of display height
+    expect(changeRatio).toBeGreaterThan(0.05);
+    expect(domain.min).toBeLessThanOrEqual(20);
+    expect(domain.max).toBeGreaterThanOrEqual(21);
+    expect(actualRange).toBeLessThan(20); // Not blown up with $1000 padding
+    
+    // Verify actual pixel height: 340px canonical chart
+    const pixelHeight = 340 * changeRatio;
+    expect(pixelHeight).toBeGreaterThan(17); // At least 5% of 340px = 17px
+  });
+
+  it("small absolute ranges: [10, 11] occupies visible height", () => {
+    const values = [10, 11];
+    const domain = calculateBalanceChartDomain(values);
+    
+    // Range=1, avgValue=10.5, isSmallRange = 1 < 10.5*0.05 = 1 < 0.525 = false
+    // But still small enough that padding should be proportional
+    const actualRange = domain.max - domain.min;
+    const changeRatio = 1 / actualRange;
+    
+    expect(changeRatio).toBeGreaterThan(0.05);
+    expect(domain.min).toBeLessThanOrEqual(10);
+    expect(domain.max).toBeGreaterThanOrEqual(11);
+    
+    // Verify actual pixel height: 340px canonical chart
+    const pixelHeight = 340 * changeRatio;
+    expect(pixelHeight).toBeGreaterThan(17); // At least 5% of 340px
+  });
+
   it("applies standard padding for large changes ($10k change on $100k)", () => {
     // $100k to $110k - 10% change (large)
     const values = [100000, 110000];
