@@ -7,6 +7,13 @@ import type { AssetsSummary } from "@/lib/assetsSummary";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { formatChange, getChangeColor } from "@/lib/colorHelpers";
 import { ReviewList } from "@/components/ReviewList";
+import {
+  ACCOUNT_CARD,
+  ACCOUNT_COMPARISON_ROW,
+  ACCOUNT_TYPE_AMOUNT,
+  ACCOUNT_TYPE_LABEL,
+  ACCOUNT_TYPE_ROW,
+} from "@/lib/accountSectionLayout";
 
 interface OverviewTabProps {
   summary: AssetsSummary;
@@ -38,12 +45,12 @@ export function OverviewTab({ summary }: OverviewTabProps) {
   return (
     <div className="space-y-6">
       {/* Total Assets Card */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
+      <div className={ACCOUNT_CARD}>
         <p className="text-sm text-gray-600 mb-1">Total Assets</p>
-        <p className="text-3xl font-bold text-gray-900 mb-3">
+        <p className="text-2xl font-bold text-gray-900 mb-3 break-words lg:text-3xl">
           {formatCurrency(totalAssets, currency)}
         </p>
-        <div className="flex gap-4 text-sm">
+        <div className={ACCOUNT_COMPARISON_ROW}>
           <div>
             <span className="text-gray-600">vs last month: </span>
             <span className={getChangeColor(changeVsLastMonth, "positive")}>
@@ -60,7 +67,7 @@ export function OverviewTab({ summary }: OverviewTabProps) {
       </div>
 
       {/* Assets by Type */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
+      <div className={ACCOUNT_CARD}>
         <h2 className="text-lg font-semibold text-gray-900 mb-4">By Type</h2>
         <div className="space-y-3">
           {groups.map((group) => {
@@ -69,15 +76,16 @@ export function OverviewTab({ summary }: OverviewTabProps) {
             
             return (
               <div key={group.type}>
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-2">
+                <div className={ACCOUNT_TYPE_ROW}>
+                  <div className={ACCOUNT_TYPE_LABEL}>
                     <span className="text-sm font-medium text-gray-900">{group.label}</span>
-                    <span className="text-xs text-gray-500">
+                    {" "}
+                    <span className="text-xs text-gray-500 whitespace-nowrap">
                       ({accountCount} {accountCount === 1 ? "account" : "accounts"})
                     </span>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-semibold text-gray-900">
+                  <div className={ACCOUNT_TYPE_AMOUNT}>
+                    <p className="text-sm font-semibold tabular-nums text-gray-900">
                       {formatCurrency(group.total, currency)}
                     </p>
                     <p className="text-xs text-gray-500">{pct.toFixed(1)}%</p>

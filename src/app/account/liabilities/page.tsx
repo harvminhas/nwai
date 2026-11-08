@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, Suspense } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
@@ -9,7 +8,7 @@ import type { DebtsSummary } from "@/lib/debtsSummary";
 import { OverviewTab } from "./components/OverviewTab";
 import { TrendsTab } from "./components/TrendsTab";
 import { CategoriesTab } from "./components/CategoriesTab";
-import AccountSwitcher from "@/components/AccountSwitcher";
+import { AccountSectionFrame } from "@/app/account/components/AccountSectionFrame";
 import {
   ACCOUNT_SECTION_TABS,
   resolveAccountSectionTab,
@@ -158,81 +157,47 @@ function LiabilitiesPageContent() {
     );
   }
 
-  return (
-    <div className="mx-auto max-w-5xl px-4 pt-4 pb-8 sm:py-8">
-      {/* Header */}
-      <div className="mb-6 flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <Link href="/account/overview" className="text-sm text-gray-500 hover:text-gray-700">
-              Account
-            </Link>
-            <span className="text-gray-400">/</span>
-            <span className="text-sm font-medium text-gray-900">Debts</span>
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900">Debts</h1>
-        </div>
-        <AccountSwitcher />
-      </div>
-
-      {/* Auto-marked Payoff Undo Banners */}
-      {autoMarkedAccounts.length > 0 && (
-        <div className="mb-6 space-y-3">
-          {autoMarkedAccounts.map((account) => (
-            <div
-              key={account.accountSlug}
-              className="flex items-start justify-between p-4 bg-green-50 border border-green-200 rounded-lg"
-            >
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <svg className="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                  </svg>
-                  <span className="font-semibold text-green-900">
-                    {account.accountLabel} marked as paid off
-                  </span>
-                </div>
-                <p className="text-sm text-green-700 ml-7">{account.reason}</p>
+  const payoffBanners =
+    autoMarkedAccounts.length > 0 ? (
+      <div className="mb-6 space-y-3">
+        {autoMarkedAccounts.map((account) => (
+          <div
+            key={account.accountSlug}
+            className="flex items-start justify-between gap-3 p-4 bg-green-50 border border-green-200 rounded-lg"
+          >
+            <div className="min-w-0 flex-1">
+              <div className="flex items-start gap-2 mb-1">
+                <svg className="w-5 h-5 shrink-0 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+                <span className="font-semibold text-green-900 break-words">
+                  {account.accountLabel} marked as paid off
+                </span>
               </div>
-              <button
-                onClick={() => handleUndoPayoff(account.accountSlug, account.statementId)}
-                className="px-3 py-1.5 text-sm font-medium text-green-700 hover:text-green-900 hover:bg-green-100 rounded transition-colors"
-              >
-                Undo
-              </button>
+              <p className="text-sm text-green-700 ml-7">{account.reason}</p>
             </div>
-          ))}
-        </div>
-      )}
-
-      {/* Tabs */}
-      <div className="border-b border-gray-200 mb-6">
-        <nav className="-mb-px flex gap-6">
-          {TABS.map((tab) => (
             <button
-              key={tab.id}
-              onClick={() => handleTabChange(tab.id)}
-              className={`pb-3 px-1 border-b-2 font-medium text-sm transition-colors ${
-                activeTab === tab.id
-                  ? "border-purple-600 text-purple-600"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-              }`}
+              onClick={() => handleUndoPayoff(account.accountSlug, account.statementId)}
+              className="shrink-0 min-h-11 px-3 py-1.5 text-sm font-medium text-green-700 hover:text-green-900 hover:bg-green-100 rounded transition-colors lg:min-h-0"
             >
-              {tab.label}
+              Undo
             </button>
-          ))}
-        </nav>
+          </div>
+        ))}
       </div>
+    ) : null;
 
-      {/* Tab Content */}
-      <div>
-        {activeTab === "overview" && <OverviewTab summary={summary} />}
-        {activeTab === "trends" && <TrendsTab summary={summary} />}
-        {activeTab === "accounts" && (
-          <CategoriesTab summary={summary} />
-        )}
-      </div>
-    </div>
+  return (
+    <AccountSectionFrame
+      title="Debts"
+      activeTab={activeTab}
+      onTabChange={handleTabChange}
+      extraHeader={payoffBanners}
+    >
+      {activeTab === "overview" && <OverviewTab summary={summary} />}
+      {activeTab === "trends" && <TrendsTab summary={summary} />}
+      {activeTab === "accounts" && <CategoriesTab summary={summary} />}
+    </AccountSectionFrame>
   );
 }
 

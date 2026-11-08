@@ -1,7 +1,18 @@
 import { useState, useEffect } from "react";
 import type { DebtsSummary } from "@/lib/debtsSummary";
-import { formatCurrency } from "@/lib/currencyUtils";
+import { formatCurrency, fmtCompact } from "@/lib/currencyUtils";
 import { calculateBalanceChartDomain } from "@/lib/chartDomain";
+import { useIsDesktopLg } from "@/lib/useMediaMinWidth";
+import {
+  ACCOUNT_CARD,
+  ACCOUNT_DETAIL_AMOUNT,
+  ACCOUNT_DETAIL_LABEL,
+  ACCOUNT_DETAIL_PCT,
+  ACCOUNT_DETAIL_ROW,
+  PHONE_CHART_HEIGHT,
+  PHONE_CHART_MARGIN,
+  PHONE_YAXIS_WIDTH,
+} from "@/lib/accountSectionLayout";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -27,6 +38,7 @@ interface TrendsTabProps {
 }
 
 export function TrendsTab({ summary }: TrendsTabProps) {
+  const isLg = useIsDesktopLg();
   const { monthlyHistory, currency, accountBalanceHistory } = summary;
   
   // Default selected month: LATEST AVAILABLE DATA (not wall clock empty future)
@@ -96,16 +108,16 @@ export function TrendsTab({ summary }: TrendsTabProps) {
   return (
     <div className="space-y-6">
       {/* Canonical Line Chart */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6" data-testid="debts-trends-chart">
+      <div className={ACCOUNT_CARD} data-testid="debts-trends-chart">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">
           Total Debt Over Time
         </h2>
         
-        <div style={{ height: `${CANONICAL_CHART_HEIGHT}px` }}>
+        <div style={{ height: `${isLg ? CANONICAL_CHART_HEIGHT : PHONE_CHART_HEIGHT}px` }}>
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
               data={chartData}
-              margin={CANONICAL_CHART_MARGIN}
+              margin={isLg ? CANONICAL_CHART_MARGIN : PHONE_CHART_MARGIN}
               style={{ cursor: "pointer" }}
               onClick={handleChartClick}
             >
@@ -121,12 +133,24 @@ export function TrendsTab({ summary }: TrendsTabProps) {
               <XAxis
                 dataKey="label"
                 {...CANONICAL_XAXIS_CONFIG}
+                tick={{
+                  ...CANONICAL_XAXIS_CONFIG.tick,
+                  fontSize: isLg ? CANONICAL_XAXIS_CONFIG.tick.fontSize : 10,
+                }}
+                minTickGap={isLg ? 5 : 18}
               />
               
               <YAxis
                 domain={[domain.min, domain.max]}
-                tickFormatter={(v: number) => formatCurrency(v, currency)}
+                width={isLg ? 60 : PHONE_YAXIS_WIDTH}
+                tickFormatter={(v: number) =>
+                  isLg ? formatCurrency(v, currency) : fmtCompact(v, currency)
+                }
                 {...CANONICAL_YAXIS_CONFIG}
+                tick={{
+                  ...CANONICAL_YAXIS_CONFIG.tick,
+                  fontSize: isLg ? CANONICAL_YAXIS_CONFIG.tick.fontSize : 10,
+                }}
               />
               
               <Tooltip
@@ -181,14 +205,16 @@ export function TrendsTab({ summary }: TrendsTabProps) {
           </ResponsiveContainer>
         </div>
         
-        <p className="mt-2 text-xs text-gray-400">Click a point to see details</p>
+        <p className="mt-2 text-xs text-gray-400">
+          {isLg ? "Click a point to see details" : "Tap a month to see the breakdown"}
+        </p>
       </div>
 
       {/* Month Detail */}
       {selectedData && (
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div>
+        <div className={ACCOUNT_CARD}>
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div className="min-w-0">
               <h3 className="text-sm font-semibold text-gray-900">
                 {selectedData.monthLabel}
               </h3>
@@ -196,9 +222,9 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                 {selectedMonthAccounts.length} account{selectedMonthAccounts.length !== 1 ? 's' : ''}
               </p>
             </div>
-            <div className="text-right">
+            <div className="shrink-0 text-right">
               <p className="text-xs text-gray-500">Total Debt</p>
-              <p className="text-xl font-bold text-gray-900">
+              <p className="text-lg font-bold tabular-nums text-gray-900 lg:text-xl">
                 {formatCurrency(Math.abs(selectedData.totalDebt), currency)}
               </p>
             </div>
@@ -206,7 +232,7 @@ export function TrendsTab({ summary }: TrendsTabProps) {
 
           {/* Account List */}
           {selectedMonthAccounts.length > 0 ? (
-            <div className="space-y-2">
+            <div>
               {selectedMonthAccounts
                 .sort((a, b) => b.balance - a.balance)
                 .map((account) => {
@@ -216,13 +242,13 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                     : 0;
                   
                   return (
-                    <div key={account.slug} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-                      <span className="text-sm text-gray-700">{account.label}</span>
-                      <div className="text-right">
-                        <span className="text-sm font-semibold text-gray-900">
+                    <div key={account.slug} className={ACCOUNT_DETAIL_ROW}>
+                      <span className={ACCOUNT_DETAIL_LABEL}>{account.label}</span>
+                      <div className={ACCOUNT_DETAIL_AMOUNT}>
+                        <span className="text-sm font-semibold tabular-nums text-gray-900">
                           {formatCurrency(account.balance, currency)}
                         </span>
-                        <span className="text-xs text-gray-500 ml-2">
+                        <span className={ACCOUNT_DETAIL_PCT}>
                           {pct.toFixed(1)}%
                         </span>
                       </div>

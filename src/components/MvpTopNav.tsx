@@ -276,7 +276,7 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
               {/* Mobile Menu Button */}
               <button
                 onClick={() => setDrawerOpen(true)}
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-600 lg:hidden"
+                className="flex h-11 w-11 items-center justify-center rounded-lg border border-gray-200 text-gray-600 lg:hidden"
                 aria-label="Menu"
               >
                 <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

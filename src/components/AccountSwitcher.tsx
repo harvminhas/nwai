@@ -8,7 +8,7 @@ import { getFirebaseClient } from "@/lib/firebase";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { formatAccountLast4 } from "@/lib/rangeUtils";
 
-interface Item {
+export interface AccountSwitcherItem {
   key: string;
   label: string;
   sub: string;
@@ -19,19 +19,29 @@ interface Item {
   cur: string;
 }
 
+type Item = AccountSwitcherItem;
+
 /**
  * Jump-to-account menu for the Accounts area. Replaces a search box with a
  * plain list of every account and manual asset, grouped like the pages.
  */
-export default function AccountSwitcher() {
+export default function AccountSwitcher({
+  previewItems,
+  previewOpen,
+}: {
+  previewItems?: AccountSwitcherItem[];
+  previewOpen?: boolean;
+} = {}) {
   const pathname = usePathname() ?? "";
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!previewOpen);
   const [query, setQuery] = useState("");
-  const [items, setItems] = useState<Item[]>([]);
+  const [fetchedItems, setFetchedItems] = useState<Item[]>([]);
   const [fallbackCurrency, setFallbackCurrency] = useState("USD");
   const boxRef = useRef<HTMLDivElement>(null);
+  const items = previewItems ?? fetchedItems;
 
   useEffect(() => {
+    if (previewItems) return;
     const { auth } = getFirebaseClient();
     return onAuthStateChanged(auth, async (user) => {
       if (!user) return;
@@ -90,9 +100,9 @@ export default function AccountSwitcher() {
         }
       }
       const seen = new Set<string>();
-      setItems(next.filter((i) => (seen.has(i.href) ? false : (seen.add(i.href), true))));
+      setFetchedItems(next.filter((i) => (seen.has(i.href) ? false : (seen.add(i.href), true))));
     });
-  }, []);
+  }, [previewItems]);
 
   useEffect(() => {
     if (!open) return;
@@ -108,7 +118,10 @@ export default function AccountSwitcher() {
     };
   }, [open]);
 
-  useEffect(() => { setOpen(false); }, [pathname]);
+  useEffect(() => {
+    if (previewOpen) return;
+    setOpen(false);
+  }, [pathname, previewOpen]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -146,7 +159,7 @@ export default function AccountSwitcher() {
     <div ref={boxRef} className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:border-purple-300 hover:text-purple-700 transition"
+        className="flex min-h-11 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:border-purple-300 hover:text-purple-700 lg:min-h-0"
         aria-haspopup="listbox"
         aria-expanded={open}
       >
@@ -160,7 +173,7 @@ export default function AccountSwitcher() {
       </button>
 
       {open && (
-        <div className="absolute right-0 z-40 mt-2 w-80 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
+        <div className="absolute right-0 z-40 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
           <div className="border-b border-gray-100 p-2">
             <input
               autoFocus
@@ -181,7 +194,7 @@ export default function AccountSwitcher() {
                   <Link
                     key={item.key}
                     href={item.href}
-                    className="flex items-center gap-3 px-4 py-2 hover:bg-gray-50"
+                    className="flex min-h-11 items-center gap-3 px-4 py-2.5 hover:bg-gray-50 lg:min-h-0 lg:py-2"
                   >
                     <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${item.icon === "debt" ? "bg-red-400" : "bg-purple-400"}`} />
                     <span className="min-w-0 flex-1">

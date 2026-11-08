@@ -8,6 +8,13 @@ import { formatCurrency } from "@/lib/currencyUtils";
 import { formatChange, getChangeColor } from "@/lib/colorHelpers";
 import { ReviewList } from "@/components/ReviewList";
 import { calculatePayoffInsight, type DebtForPayoff } from "@/lib/payoffInsight";
+import {
+  ACCOUNT_CARD,
+  ACCOUNT_COMPARISON_ROW,
+  ACCOUNT_TYPE_AMOUNT,
+  ACCOUNT_TYPE_LABEL,
+  ACCOUNT_TYPE_ROW,
+} from "@/lib/accountSectionLayout";
 
 interface OverviewTabProps {
   summary: DebtsSummary;
@@ -66,12 +73,12 @@ export function OverviewTab({ summary }: OverviewTabProps) {
   return (
     <div className="space-y-6">
       {/* Total Debt Card */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
+      <div className={ACCOUNT_CARD}>
         <p className="text-sm text-gray-600 mb-1">Total Debt</p>
-        <p className="text-3xl font-bold text-gray-900 mb-3">
+        <p className="text-2xl font-bold text-gray-900 mb-3 break-words lg:text-3xl">
           {formatCurrency(totalDebt, currency)}
         </p>
-        <div className="flex gap-4 text-sm">
+        <div className={ACCOUNT_COMPARISON_ROW}>
           <div>
             <span className="text-gray-600">vs last month: </span>
             <span className={getChangeColor(changeVsLastMonth, "negative")}>
@@ -99,14 +106,14 @@ export function OverviewTab({ summary }: OverviewTabProps) {
 
         {/* Interest Last 3 Months */}
         <div className="bg-white rounded-lg border border-gray-200 p-4 relative">
-          <div className="flex items-center gap-2 mb-1">
-            <p className="text-xs text-gray-600">Est. Interest (Last 3 Months)</p>
+          <div className="flex items-start gap-1 mb-1 lg:items-center">
+            <p className="min-w-0 flex-1 text-xs leading-4 text-gray-600">Est. Interest (Last 3 Months)</p>
             <span 
               role="button" 
               tabIndex={0}
               onClick={() => setShowInterestInfo(!showInterestInfo)}
               onKeyDown={(e) => e.key === 'Enter' && setShowInterestInfo(!showInterestInfo)}
-              className="text-gray-400 hover:text-gray-600 cursor-pointer"
+              className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center text-gray-400 hover:text-gray-600 lg:h-4 lg:w-4"
               aria-label="Interest calculation info"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -126,7 +133,7 @@ export function OverviewTab({ summary }: OverviewTabProps) {
                 onClick={() => setShowInterestInfo(false)}
                 aria-hidden="true"
               />
-              <div className="absolute right-0 top-full mt-2 w-72 bg-white border border-gray-200 rounded-lg shadow-lg p-4 z-20">
+              <div className="absolute right-0 top-full mt-2 w-72 max-w-[calc(100vw-2rem)] bg-white border border-gray-200 rounded-lg shadow-lg p-4 z-20">
                 <p className="text-xs text-gray-600 mb-3">
                   Estimated from each debt's current balance × its interest rate ÷ 12 × 3. 
                   Not the actual interest charged on your statements.
@@ -200,15 +207,15 @@ export function OverviewTab({ summary }: OverviewTabProps) {
               return (
                 <div key={scenario.accountSlug} className="bg-white rounded-lg p-4 border border-violet-100">
                   <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <p className="font-medium text-gray-900">{scenario.accountName || "Account"}</p>
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-900 break-words">{scenario.accountName || "Account"}</p>
                       <p className="text-sm text-gray-600">
                         {formatCurrency(scenario.balance, currency)} @ {scenario.rate.toFixed(2)}%
                       </p>
                     </div>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div className="grid grid-cols-1 gap-4 text-sm min-[480px]:grid-cols-2">
                     <div>
                       <p className="text-gray-600 mb-1">Current Payment</p>
                       <p className="font-semibold text-gray-900">
@@ -249,8 +256,8 @@ export function OverviewTab({ summary }: OverviewTabProps) {
 
       {/* Interest by Year */}
       {interestPaidByYear.length > 0 && (
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="flex items-center gap-2 mb-4">
+        <div className={ACCOUNT_CARD}>
+          <div className="flex flex-wrap items-center gap-2 mb-4">
             <h2 className="text-lg font-semibold text-gray-900">Est. Annual Interest</h2>
             <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-600 rounded">Estimated</span>
           </div>
@@ -264,7 +271,7 @@ export function OverviewTab({ summary }: OverviewTabProps) {
       )}
 
       {/* Debts by Type */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
+      <div className={ACCOUNT_CARD}>
         <h2 className="text-lg font-semibold text-gray-900 mb-4">By Type</h2>
         <div className="space-y-3">
           {groups.map((group) => {
@@ -273,15 +280,16 @@ export function OverviewTab({ summary }: OverviewTabProps) {
             
             return (
               <div key={group.type}>
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-2">
+                <div className={ACCOUNT_TYPE_ROW}>
+                  <div className={ACCOUNT_TYPE_LABEL}>
                     <span className="text-sm font-medium text-gray-900">{group.label}</span>
-                    <span className="text-xs text-gray-500">
+                    {" "}
+                    <span className="text-xs text-gray-500 whitespace-nowrap">
                       ({accountCount} {accountCount === 1 ? "account" : "accounts"})
                     </span>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-semibold text-gray-900">
+                  <div className={ACCOUNT_TYPE_AMOUNT}>
+                    <p className="text-sm font-semibold tabular-nums text-gray-900">
                       {formatCurrency(group.totalBalance, currency)}
                     </p>
                     <p className="text-xs text-gray-500">{pct.toFixed(1)}%</p>

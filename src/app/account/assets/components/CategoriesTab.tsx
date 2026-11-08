@@ -172,7 +172,7 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
         <div className="flex items-center justify-end">
           <button
             onClick={() => setShowAdd((v) => !v)}
-            className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+            className={`min-h-11 rounded-lg border px-3 py-1.5 text-sm font-semibold transition lg:min-h-0 lg:text-xs ${
               showAdd
                 ? "border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100"
                 : "border-gray-200 text-gray-600 hover:border-purple-300 hover:bg-purple-50 hover:text-purple-700"
@@ -205,7 +205,7 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
       <div className="flex items-center justify-end">
         <button
           onClick={() => setShowAdd((v) => !v)}
-          className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+          className={`min-h-11 rounded-lg border px-3 py-1.5 text-sm font-semibold transition lg:min-h-0 lg:text-xs ${
             showAdd
               ? "border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100"
               : "border-gray-200 text-gray-600 hover:border-purple-300 hover:bg-purple-50 hover:text-purple-700"
