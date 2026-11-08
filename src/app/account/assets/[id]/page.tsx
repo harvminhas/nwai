@@ -102,6 +102,14 @@ export default function ManualAssetPage() {
     setMainTab("expenses");
   }, [id]);
 
+  // Reset projection state when asset ID changes
+  useEffect(() => {
+    setGrowthType("appreciation");
+    setGrowthPercent("");
+    setRateToast(null);
+    setShowProjectionTable(false);
+  }, [id]);
+
   // History tab state
   const [showAddValuationModal, setShowAddValuationModal] = useState(false);
   const [newValuationValue, setNewValuationValue] = useState("");
@@ -111,6 +119,11 @@ export default function ManualAssetPage() {
   // Projections tab state
   const [annualGrowthRate, setAnnualGrowthRate] = useState<string>("");
   const [projectionYears, setProjectionYears] = useState(5);
+  const [growthType, setGrowthType] = useState<"appreciation" | "depreciation">("appreciation");
+  const [growthPercent, setGrowthPercent] = useState<string>("");
+  const [savingRate, setSavingRate] = useState(false);
+  const [rateToast, setRateToast] = useState<{ msg: string; ok: boolean } | null>(null);
+  const [showProjectionTable, setShowProjectionTable] = useState(false);
   
   const { requestProfileRefresh } = useProfileRefresh();
 
@@ -135,7 +148,17 @@ export default function ManualAssetPage() {
         setCategory(found.category);
         setValue(String(found.value));
         setStartDate(found.startDate || "");
-        setAnnualGrowthRate(found.annualGrowthRate !== undefined && found.annualGrowthRate !== null ? String(found.annualGrowthRate) : "");
+        const savedRate = found.annualGrowthRate !== undefined && found.annualGrowthRate !== null ? found.annualGrowthRate : null;
+        setAnnualGrowthRate(savedRate !== null ? String(savedRate) : "");
+        
+        // Initialize projection UI from saved rate
+        if (savedRate !== null && savedRate !== 0) {
+          setGrowthType(savedRate >= 0 ? "appreciation" : "depreciation");
+          setGrowthPercent(String(Math.abs(savedRate)));
+        } else {
+          setGrowthType("appreciation");
+          setGrowthPercent("");
+        }
         
         // Initialize newValuationDate to today (America/New_York)
         const now = new Date();
@@ -340,6 +363,47 @@ export default function ManualAssetPage() {
       setToast({ msg: "Could not add valuation", ok: false });
     } finally {
       setAddingValuation(false);
+    }
+  };
+
+  const saveGrowthRate = async () => {
+    if (!token || !asset) return;
+    
+    setSavingRate(true);
+    setRateToast(null);
+    
+    try {
+      // Convert UI state to signed rate
+      const percent = growthPercent.trim() === "" ? 0 : Number(growthPercent);
+      if (isNaN(percent) || percent < 0 || percent > 100) {
+        setRateToast({ msg: "Rate must be between 0 and 100", ok: false });
+        setSavingRate(false);
+        return;
+      }
+      
+      const signedRate = growthType === "appreciation" ? percent : -percent;
+      const rateToSave = percent === 0 ? null : signedRate;
+      
+      const res = await fetch(`/api/user/assets/${asset.id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ annualGrowthRate: rateToSave }),
+      });
+      
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: "Failed to save" }));
+        throw new Error(errData.error || "Failed to save");
+      }
+      
+      // Reload asset to get saved rate
+      await load(token);
+      setRateToast({ msg: "Saved", ok: true });
+      setTimeout(() => setRateToast(null), 2000);
+    } catch (err) {
+      console.error("Save growth rate error:", err);
+      setRateToast({ msg: err instanceof Error ? err.message : "Failed to save", ok: false });
+    } finally {
+      setSavingRate(false);
     }
   };
 
@@ -1347,63 +1411,95 @@ export default function ManualAssetPage() {
         {/* Projections Tab */}
         {mainTab === "projections" && (
           <div>
-            <div className="mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">Asset Projections</h2>
-              <p className="text-sm text-gray-500 mt-1">Estimate future value based on annual growth or depreciation</p>
-            </div>
+            {/* Settings Card */}
+            <div className="rounded-xl border border-gray-200 bg-white p-6 mb-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-base font-semibold text-gray-900">Projection Settings</h3>
+                {asset?.annualGrowthRate !== null && asset?.annualGrowthRate !== undefined && (
+                  <span className="text-sm text-gray-500">
+                    Current: {asset.annualGrowthRate >= 0 ? "+" : ""}{asset.annualGrowthRate}%/year
+                  </span>
+                )}
+              </div>
 
-            {/* Projection Settings */}
-            <div className="rounded-xl border border-gray-200 bg-white p-5 mb-6">
-              <h3 className="text-sm font-semibold text-gray-900 mb-4">Projection Settings</h3>
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-4">
+                {/* Segmented Control */}
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-2">
-                    Annual Growth/Depreciation Rate (%)
-                  </label>
-                  <input
-                    type="number"
-                    value={annualGrowthRate}
-                    onChange={(e) => setAnnualGrowthRate(e.target.value)}
-                    onBlur={async () => {
-                      if (!token || !asset) return;
-                      // Save rate when user changes it
-                      const rate = annualGrowthRate === "" ? null : Number(annualGrowthRate);
-                      try {
-                        const res = await fetch(`/api/user/assets/${asset.id}`, {
-                          method: "PUT",
-                          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            label: asset.label,
-                            category: asset.category,
-                            value: asset.value,
-                            startDate: asset.startDate,
-                            linkedAccountSlug: asset.linkedAccountSlug,
-                            annualGrowthRate: rate,
-                          }),
-                        });
-                        if (res.ok) {
-                          await load(token);
-                        }
-                      } catch {
-                        // Silent fail - non-critical
-                      }
-                    }}
-                    placeholder="0"
-                    step="0.1"
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Positive for appreciation, negative for depreciation
-                  </p>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Type</label>
+                  <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setGrowthType("appreciation")}
+                      className={`px-4 py-2 text-sm font-medium rounded-md transition ${
+                        growthType === "appreciation"
+                          ? "bg-white text-gray-900 shadow-sm"
+                          : "text-gray-600 hover:text-gray-900"
+                      }`}
+                    >
+                      Appreciation
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setGrowthType("depreciation")}
+                      className={`px-4 py-2 text-sm font-medium rounded-md transition ${
+                        growthType === "depreciation"
+                          ? "bg-white text-gray-900 shadow-sm"
+                          : "text-gray-600 hover:text-gray-900"
+                      }`}
+                    >
+                      Depreciation
+                    </button>
+                  </div>
                 </div>
+
+                {/* Rate Input and Save */}
+                <div className="flex gap-3 items-end">
+                  <div className="flex-1 max-w-xs">
+                    <label htmlFor="growth-percent" className="block text-sm font-medium text-gray-700 mb-2">
+                      Annual Rate (%)
+                    </label>
+                    <input
+                      id="growth-percent"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      value={growthPercent}
+                      onChange={(e) => setGrowthPercent(e.target.value)}
+                      placeholder="5.0"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none disabled:opacity-50"
+                      disabled={savingRate}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={saveGrowthRate}
+                    disabled={savingRate || growthPercent.trim() === ""}
+                    className="rounded-lg bg-purple-600 px-6 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                  >
+                    {savingRate ? "Saving..." : "Save"}
+                  </button>
+                </div>
+
+                {/* Toast */}
+                {rateToast && (
+                  <div className={`rounded-lg px-4 py-2 text-sm font-medium ${
+                    rateToast.ok ? "bg-green-50 text-green-800" : "bg-red-50 text-red-800"
+                  }`}>
+                    {rateToast.msg}
+                  </div>
+                )}
+
+                {/* Horizon */}
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-2">
-                    Projection Horizon (years)
+                  <label htmlFor="projection-years" className="block text-sm font-medium text-gray-700 mb-2">
+                    Projection Horizon
                   </label>
                   <select
+                    id="projection-years"
                     value={projectionYears}
                     onChange={(e) => setProjectionYears(Number(e.target.value))}
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
+                    className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-purple-400 focus:outline-none"
                   >
                     <option value="3">3 years</option>
                     <option value="5">5 years</option>
@@ -1416,23 +1512,17 @@ export default function ManualAssetPage() {
             </div>
 
             {/* Projection Chart/Table */}
-            {annualGrowthRate && annualGrowthRate !== "0" ? (
+            {asset?.annualGrowthRate !== null && asset?.annualGrowthRate !== undefined && asset?.annualGrowthRate !== 0 ? (
               <>
                 {/* Chart */}
                 <div className="rounded-xl border border-gray-200 bg-white p-6 mb-6">
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4">
-                    <div className="flex items-center gap-2 text-sm font-medium text-amber-900">
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      <span>ESTIMATES ONLY - Not included in actual net worth</span>
-                    </div>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-base font-semibold text-gray-900">Projected Value</h3>
+                    <span className="text-xs text-gray-500 font-medium">Estimate only</span>
                   </div>
                   
-                  <h3 className="text-sm font-semibold text-gray-900 mb-4">Projected Value Over Time</h3>
-                  
                   {(() => {
-                    const rate = Number(annualGrowthRate) / 100;
+                    const rate = (asset.annualGrowthRate ?? 0) / 100;
                     const currentYear = new Date().getFullYear();
                     
                     // Find most recent ACTUAL valuation (not future)
@@ -1575,11 +1665,19 @@ export default function ManualAssetPage() {
                   })()}
                 </div>
                 
-                {/* Table */}
+                {/* Table (Collapsible) */}
                 <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
-                  <div className="bg-gray-50 border-b border-gray-200 px-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowProjectionTable(!showProjectionTable)}
+                    className="w-full bg-gray-50 border-b border-gray-200 px-4 py-3 flex items-center justify-between hover:bg-gray-100 transition"
+                  >
                     <h3 className="text-sm font-semibold text-gray-900">Detailed Projections</h3>
-                  </div>
+                    <svg className={`h-5 w-5 text-gray-500 transition-transform ${showProjectionTable ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {showProjectionTable && (
                   <table className="w-full">
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
@@ -1610,7 +1708,7 @@ export default function ManualAssetPage() {
                       
                       return Array.from({ length: projectionYears }, (_, i) => {
                         const year = new Date().getFullYear() + i + 1;
-                        const rate = Number(annualGrowthRate) / 100;
+                        const rate = (asset.annualGrowthRate ?? 0) / 100;
                         const projectedValue = currentValue * Math.pow(1 + rate, i + 1);
                         const change = projectedValue - currentValue;
                         const changePercent = ((change / currentValue) * 100);
@@ -1633,31 +1731,14 @@ export default function ManualAssetPage() {
                     })()}
                   </tbody>
                 </table>
+                  )}
               </div>
               </>
             ) : (
               <div className="rounded-xl border border-gray-200 bg-gray-50 p-8 text-center">
-                <p className="text-sm text-gray-500">Enter a growth or depreciation rate above to see projections</p>
+                <p className="text-sm text-gray-500">Set a growth rate above to see projections</p>
               </div>
             )}
-
-            <div className="mt-6 rounded-lg border border-blue-100 bg-blue-50 p-4">
-              <div className="flex gap-3">
-                <svg className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <div className="text-sm text-blue-900">
-                  <p className="font-medium mb-1">About projections</p>
-                  <ul className="text-blue-800 space-y-1 list-disc list-inside">
-                    <li>Projections use compound annual growth from your current value</li>
-                    <li>These are estimates only and do NOT affect your actual recorded net worth</li>
-                    <li>Changing the rate does not add a valuation entry</li>
-                    <li>Use positive rates for appreciation (e.g., 5 for 5% annual growth)</li>
-                    <li>Use negative rates for depreciation (e.g., -10 for 10% annual decline)</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
           </div>
         )}
       </div>

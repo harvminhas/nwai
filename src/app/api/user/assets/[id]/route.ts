@@ -153,6 +153,58 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
+/**
+ * PATCH /api/user/assets/[id]
+ * Update only annualGrowthRate field atomically.
+ * Does NOT append valuations or modify any other asset properties.
+ */
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const token = authToken(req);
+  if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  
+  try {
+    const { auth, db } = getFirebaseAdmin();
+    const { uid } = await auth.verifyIdToken(token);
+    const { id } = await params;
+    const body = await req.json();
+    const { annualGrowthRate } = body;
+    
+    // Validate annualGrowthRate
+    if (annualGrowthRate !== undefined && annualGrowthRate !== null) {
+      if (typeof annualGrowthRate !== 'number' || !Number.isFinite(annualGrowthRate)) {
+        return NextResponse.json({ error: "annualGrowthRate must be a finite number or null" }, { status: 400 });
+      }
+      if (annualGrowthRate < -100 || annualGrowthRate > 100) {
+        return NextResponse.json({ error: "annualGrowthRate must be between -100 and 100" }, { status: 400 });
+      }
+    }
+    
+    const assetRef = db.collection("users").doc(uid).collection("manualAssets").doc(id);
+    
+    // Use transaction for atomic update
+    await db.runTransaction(async (transaction) => {
+      const assetDoc = await transaction.get(assetRef);
+      if (!assetDoc.exists) {
+        throw new Error("Asset not found");
+      }
+      
+      transaction.update(assetRef, {
+        annualGrowthRate: annualGrowthRate === null || annualGrowthRate === "" ? null : annualGrowthRate,
+        updatedAt: new Date(),
+      });
+    });
+    
+    await invalidateFinancialProfileCache(uid, db);
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error("PATCH /api/user/assets/[id] error:", err);
+    if (err instanceof Error && err.message === "Asset not found") {
+      return NextResponse.json({ error: "Asset not found" }, { status: 404 });
+    }
+    return NextResponse.json({ error: "Failed to update growth rate" }, { status: 500 });
+  }
+}
+
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const token = authToken(req);
   if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
