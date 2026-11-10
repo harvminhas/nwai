@@ -1,5 +1,5 @@
 /**
- * Plan cards: click body opens the plan; Delete does not.
+ * Plan cards: click body opens the plan; title Enter opens it; Delete does not.
  * @vitest-environment jsdom
  */
 
@@ -8,6 +8,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { PlanCard } from "../PlanCard";
 import type { Plan } from "@/app/api/user/plans/route";
+import { formatCurrency } from "@/lib/currencyUtils";
 
 function plan(overrides: Partial<Plan> = {}): Plan {
   return {
@@ -25,35 +26,25 @@ function plan(overrides: Partial<Plan> = {}): Plan {
 }
 
 describe("PlanCard click target", () => {
-  it("opens the plan when the card body is clicked, and does not open when Delete is clicked", () => {
+  it("opens the plan from the card body and title Enter, and Delete does not open it", () => {
     const onSelect = vi.fn();
     const onDelete = vi.fn();
-    render(<PlanCard plan={plan()} onSelect={onSelect} onDelete={onDelete} />);
+    const item = plan();
+    render(<PlanCard plan={item} onSelect={onSelect} onDelete={onDelete} />);
 
-    fireEvent.click(screen.getByText("CA$0 of CA$5,000"));
+    fireEvent.click(
+      screen.getByText(`${formatCurrency(0, "CAD")} of ${formatCurrency(item.budget, "CAD")}`)
+    );
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(onDelete).not.toHaveBeenCalled();
 
     onSelect.mockClear();
-    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    expect(onDelete).toHaveBeenCalledTimes(1);
-    expect(onSelect).not.toHaveBeenCalled();
-  });
-
-  it("opens on Enter and Space only when the event target is the card itself", () => {
-    const onSelect = vi.fn();
-    const onDelete = vi.fn();
-    render(<PlanCard plan={plan()} onSelect={onSelect} onDelete={onDelete} />);
-
-    const card = screen.getByRole("button", { name: "Europe Trip" });
-    fireEvent.keyDown(card, { key: "Enter" });
-    fireEvent.keyDown(card, { key: " " });
-    expect(onSelect).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(screen.getByRole("button", { name: item.name }), { key: "Enter" });
+    expect(onSelect).toHaveBeenCalledTimes(1);
 
     onSelect.mockClear();
-    const deleteButton = screen.getByRole("button", { name: "Delete" });
-    fireEvent.keyDown(deleteButton, { key: "Enter" });
-    fireEvent.keyDown(deleteButton, { key: " " });
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(onDelete).toHaveBeenCalledTimes(1);
     expect(onSelect).not.toHaveBeenCalled();
   });
 });

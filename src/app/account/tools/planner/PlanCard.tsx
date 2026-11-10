@@ -30,9 +30,15 @@ export function PlanCard({
     return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   };
 
-  function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    if ((e.key !== "Enter" && e.key !== " ") || e.target !== e.currentTarget) return;
+  function handleTitleClick(e: MouseEvent<HTMLButtonElement>) {
+    e.stopPropagation();
+    onSelect();
+  }
+
+  function handleTitleKeyDown(e: KeyboardEvent<HTMLButtonElement>) {
+    if (e.key !== "Enter" && e.key !== " ") return;
     e.preventDefault();
+    e.stopPropagation();
     onSelect();
   }
 
@@ -43,16 +49,19 @@ export function PlanCard({
 
   return (
     <div
-      role="button"
-      tabIndex={0}
-      aria-label={plan.name}
       onClick={onSelect}
-      onKeyDown={handleKeyDown}
       className="rounded-lg border border-gray-200 bg-white p-4 cursor-pointer hover:border-gray-300"
     >
       <div className="flex items-start justify-between">
         <div className="flex-1">
-          <h3 className="font-semibold text-gray-900">{plan.name}</h3>
+          <button
+            type="button"
+            onClick={handleTitleClick}
+            onKeyDown={handleTitleKeyDown}
+            className="text-left hover:text-purple-600"
+          >
+            <h3 className="font-semibold text-gray-900">{plan.name}</h3>
+          </button>
           <p className="mt-1 text-sm text-gray-600">
             {formatDate(plan.startDate)} – {formatDate(plan.endDate)}
           </p>
