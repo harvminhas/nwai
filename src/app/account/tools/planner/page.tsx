@@ -8,6 +8,14 @@ import type { Plan, PlanLinkedTransaction, PlanCashEntry } from "@/app/api/user/
 import { formatCurrency } from "@/lib/currencyUtils";
 import { useConfirm } from "@/components/useConfirm";
 import { useToast } from "@/components/useToast";
+import {
+  PLANNER_SPENDING_TXNS_URL,
+  filterPlannerLinkableTransactions,
+  mapSpendingTransactionsToLinkable,
+  reselectPlanById,
+  togglePlannerTxSelection,
+  type PlannerLinkableTransaction,
+} from "./linkTransactions";
 
 export default function PlannerPage() {
   const router = useRouter();
@@ -33,17 +41,21 @@ export default function PlannerPage() {
   }, [router]);
 
   async function loadPlans(tok: string) {
-    setLoading(true);
     try {
       const res = await fetch("/api/user/plans", {
         headers: { Authorization: `Bearer ${tok}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setPlans(data.items || []);
+      if (!res.ok) {
+        error("Failed to load plans. Please try again.");
+        return;
       }
-    } catch (error) {
-      console.error("Failed to load plans:", error);
+      const data = await res.json();
+      const items: Plan[] = data.items || [];
+      setPlans(items);
+      setSelectedPlan((p) => reselectPlanById(items, p));
+    } catch (err) {
+      console.error("Failed to load plans:", err);
+      error("Failed to load plans. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -184,6 +196,7 @@ export default function PlannerPage() {
           plan={selectedPlan}
           token={token}
           onClose={() => setSelectedPlan(null)}
+          onError={error}
           onUpdate={() => {
             if (token) loadPlans(token);
           }}
@@ -435,11 +448,13 @@ function PlanDetailModal({
   token,
   onClose,
   onUpdate,
+  onError,
 }: {
   plan: Plan;
   token: string | null;
   onClose: () => void;
   onUpdate: () => void;
+  onError: (message: string) => void;
 }) {
   const [showLinkTx, setShowLinkTx] = useState(false);
   const [showAddCash, setShowAddCash] = useState(false);
@@ -456,7 +471,7 @@ function PlanDetailModal({
     };
 
     try {
-      await fetch("/api/user/plans", {
+      const res = await fetch("/api/user/plans", {
         method: "PUT",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -464,9 +479,14 @@ function PlanDetailModal({
         },
         body: JSON.stringify(updated),
       });
+      if (!res.ok) {
+        onError("Failed to unlink transaction. Please try again.");
+        return;
+      }
       onUpdate();
-    } catch (error) {
-      console.error("Failed to unlink transaction:", error);
+    } catch (err) {
+      console.error("Failed to unlink transaction:", err);
+      onError("Failed to unlink transaction. Please try again.");
     }
   }
 
@@ -479,7 +499,7 @@ function PlanDetailModal({
     };
 
     try {
-      await fetch("/api/user/plans", {
+      const res = await fetch("/api/user/plans", {
         method: "PUT",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -487,9 +507,14 @@ function PlanDetailModal({
         },
         body: JSON.stringify(updated),
       });
+      if (!res.ok) {
+        onError("Failed to remove cash entry. Please try again.");
+        return;
+      }
       onUpdate();
-    } catch (error) {
-      console.error("Failed to remove cash entry:", error);
+    } catch (err) {
+      console.error("Failed to remove cash entry:", err);
+      onError("Failed to remove cash entry. Please try again.");
     }
   }
 
@@ -616,6 +641,7 @@ function PlanDetailModal({
           token={token}
           onClose={() => setShowLinkTx(false)}
           onUpdate={onUpdate}
+          onError={onError}
         />
       )}
 
@@ -626,6 +652,7 @@ function PlanDetailModal({
           token={token}
           onClose={() => setShowAddCash(false)}
           onUpdate={onUpdate}
+          onError={onError}
         />
       )}
     </>
@@ -637,15 +664,20 @@ function LinkTransactionModal({
   token,
   onClose,
   onUpdate,
+  onError,
 }: {
   plan: Plan;
   token: string | null;
   onClose: () => void;
   onUpdate: () => void;
+  onError: (message: string) => void;
 }) {
   const [search, setSearch] = useState("");
-  const [transactions, setTransactions] = useState<any[]>([]);
+  const [showAll, setShowAll] = useState(false);
+  const [transactions, setTransactions] = useState<PlannerLinkableTransaction[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   // Load transactions when modal opens
@@ -658,44 +690,53 @@ function LinkTransactionModal({
   async function loadTransactions() {
     if (!token) return;
     setLoading(true);
+    setLoadError(null);
     try {
-      const res = await fetch("/api/user/statements/consolidated", {
+      const res = await fetch(PLANNER_SPENDING_TXNS_URL, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setTransactions(data.expenseTxns || []);
+      if (!res.ok) {
+        setLoadError("Failed to load transactions. Please try again.");
+        onError("Failed to load transactions. Please try again.");
+        setTransactions([]);
+        return;
       }
-    } catch (error) {
-      console.error("Failed to load transactions:", error);
+      const data = await res.json();
+      setTransactions(mapSpendingTransactionsToLinkable(data.transactions));
+    } catch (err) {
+      console.error("Failed to load transactions:", err);
+      setLoadError("Failed to load transactions. Please try again.");
+      onError("Failed to load transactions. Please try again.");
+      setTransactions([]);
     } finally {
       setLoading(false);
     }
   }
 
-  const filtered = transactions.filter((tx) => {
-    if (!search) return true;
-    const query = search.toLowerCase();
-    return (
-      tx.merchant?.toLowerCase().includes(query) ||
-      tx.date?.includes(query) ||
-      tx.amount?.toString().includes(query)
-    );
+  const filtered = filterPlannerLinkableTransactions(transactions, {
+    startDate: plan.startDate,
+    endDate: plan.endDate,
+    linkedFingerprints: plan.linkedTransactions.map((tx) => tx.txFingerprint),
+    showAll,
+    search,
   });
 
   async function handleSave() {
     if (!token) return;
+    setSaveError(null);
 
-    const newLinked: PlanLinkedTransaction[] = Array.from(selected).map((txFingerprint) => {
-      const tx = transactions.find((t) => t.txFingerprint === txFingerprint)!;
-      return {
+    const newLinked: PlanLinkedTransaction[] = [];
+    for (const txFingerprint of selected) {
+      const tx = transactions.find((t) => t.txFingerprint === txFingerprint);
+      if (!tx) continue;
+      newLinked.push({
         txFingerprint,
         merchant: tx.merchant,
         date: tx.date,
         amount: tx.amount,
         category: tx.category || "Other",
-      };
-    });
+      });
+    }
 
     const updated = {
       ...plan,
@@ -703,7 +744,7 @@ function LinkTransactionModal({
     };
 
     try {
-      await fetch("/api/user/plans", {
+      const res = await fetch("/api/user/plans", {
         method: "PUT",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -711,10 +752,19 @@ function LinkTransactionModal({
         },
         body: JSON.stringify(updated),
       });
+      if (!res.ok) {
+        const message = "Failed to link transactions. Please try again.";
+        setSaveError(message);
+        onError(message);
+        return;
+      }
       onUpdate();
       onClose();
-    } catch (error) {
-      console.error("Failed to link transactions:", error);
+    } catch (err) {
+      console.error("Failed to link transactions:", err);
+      const message = "Failed to link transactions. Please try again.";
+      setSaveError(message);
+      onError(message);
     }
   }
 
@@ -724,7 +774,18 @@ function LinkTransactionModal({
       <div className="fixed inset-0 z-70 flex items-center justify-center p-4">
         <div className="w-full max-w-2xl max-h-[80vh] rounded-xl bg-white shadow-2xl flex flex-col">
           <div className="border-b border-gray-200 p-6">
-            <h2 className="text-xl font-semibold text-gray-900">Link Transactions</h2>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-xl font-semibold text-gray-900">Link Transactions</h2>
+              <label className="flex shrink-0 items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showAll}
+                  onChange={(e) => setShowAll(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                />
+                Show all
+              </label>
+            </div>
             <input
               type="text"
               value={search}
@@ -739,6 +800,10 @@ function LinkTransactionModal({
               <div className="flex items-center justify-center py-12">
                 <div className="h-6 w-6 animate-spin rounded-full border-4 border-purple-600 border-t-transparent" />
               </div>
+            ) : loadError && transactions.length === 0 ? (
+              <p className="py-8 text-center text-sm text-red-600">{loadError}</p>
+            ) : filtered.length === 0 ? (
+              <p className="py-8 text-center text-sm text-gray-500">No transactions found</p>
             ) : (
               <div className="space-y-2">
                 {filtered.slice(0, 50).map((tx) => (
@@ -750,13 +815,7 @@ function LinkTransactionModal({
                       type="checkbox"
                       checked={selected.has(tx.txFingerprint)}
                       onChange={(e) => {
-                        const next = new Set(selected);
-                        if (e.target.checked) {
-                          next.add(tx.txFingerprint);
-                        } else {
-                          next.delete(tx.txFingerprint);
-                        }
-                        setSelected(next);
+                        setSelected(togglePlannerTxSelection(selected, tx.txFingerprint, e.target.checked));
                       }}
                       className="h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
                     />
@@ -773,20 +832,23 @@ function LinkTransactionModal({
             )}
           </div>
 
-          <div className="border-t border-gray-200 p-6 flex gap-3">
-            <button
-              onClick={onClose}
-              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={selected.size === 0}
-              className="flex-1 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
-            >
-              Link {selected.size} Transaction{selected.size !== 1 ? "s" : ""}
-            </button>
+          <div className="border-t border-gray-200 p-6 flex flex-col gap-3">
+            {saveError && <p className="text-sm text-red-600">{saveError}</p>}
+            <div className="flex gap-3">
+              <button
+                onClick={onClose}
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={selected.size === 0}
+                className="flex-1 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
+              >
+                Link {selected.size} Transaction{selected.size !== 1 ? "s" : ""}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -799,22 +861,26 @@ function AddCashModal({
   token,
   onClose,
   onUpdate,
+  onError,
 }: {
   plan: Plan;
   token: string | null;
   onClose: () => void;
   onUpdate: () => void;
+  onError: (message: string) => void;
 }) {
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!token || !amount || !note) return;
 
     setSaving(true);
+    setSaveError(null);
     try {
       const newEntry: PlanCashEntry = {
         id: crypto.randomUUID(),
@@ -829,7 +895,7 @@ function AddCashModal({
         cashEntries: [...plan.cashEntries, newEntry],
       };
 
-      await fetch("/api/user/plans", {
+      const res = await fetch("/api/user/plans", {
         method: "PUT",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -837,10 +903,19 @@ function AddCashModal({
         },
         body: JSON.stringify(updated),
       });
+      if (!res.ok) {
+        const message = "Failed to add cash entry. Please try again.";
+        setSaveError(message);
+        onError(message);
+        return;
+      }
       onUpdate();
       onClose();
-    } catch (error) {
-      console.error("Failed to add cash entry:", error);
+    } catch (err) {
+      console.error("Failed to add cash entry:", err);
+      const message = "Failed to add cash entry. Please try again.";
+      setSaveError(message);
+      onError(message);
     } finally {
       setSaving(false);
     }
@@ -852,6 +927,7 @@ function AddCashModal({
       <div className="fixed inset-0 z-70 flex items-center justify-center p-4">
         <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
           <h2 className="mb-4 text-xl font-semibold text-gray-900">Add Cash</h2>
+          {saveError && <p className="mb-4 text-sm text-red-600">{saveError}</p>}
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Amount</label>
