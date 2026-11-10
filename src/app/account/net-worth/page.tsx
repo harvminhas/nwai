@@ -8,7 +8,20 @@ import { getFirebaseClient } from "@/lib/firebase";
 import { formatCurrency, formatCurrencyWithCents, getCurrencySymbol } from "@/lib/currencyUtils";
 import type { MonthNetWorthSummary } from "@/lib/netWorthChanges";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Area, ComposedChart, Dot } from "recharts";
-import { calculateBalanceChartDomain } from "@/lib/chartDomain";
+import { calculateBalanceChartDomain, formatChartAxisValue } from "@/lib/chartDomain";
+import { useLgUp } from "@/lib/useLgUp";
+import { IntactAmount } from "@/components/IntactAmount";
+import {
+  NET_WORTH_CARD_CLASS,
+  NET_WORTH_CHANGE_LINE_CLASS,
+  NET_WORTH_HEADER_STACK_CLASS,
+  NET_WORTH_HEADER_VALUE_CLASS,
+  NET_WORTH_LABEL_CLASS,
+  NET_WORTH_MONTH_DESKTOP_CLASS,
+  NET_WORTH_MONTH_MOBILE_CLASS,
+  NET_WORTH_TAB_BUTTON_BASE,
+  NET_WORTH_TABS_ROW_CLASS,
+} from "@/components/netWorthReadLayout";
 
 interface MonthlyNetWorthData {
   yearMonth: string;
@@ -35,6 +48,7 @@ function NetWorthPageContent() {
   const [viewMonth, setViewMonth] = useState<string | null>(null); // For interactive header
   const [currency, setCurrency] = useState<string>("CAD");
   const [activeTab, setActiveTab] = useState<"changes" | "assets" | "debts">("changes");
+  const isLgUp = useLgUp();
 
   const loadData = async (tok: string) => {
     try {
@@ -179,6 +193,7 @@ function NetWorthPageContent() {
     : latestMonth;
   const isViewingLatest = !viewMonth || viewMonth === latestMonth.yearMonth;
   const selectedData = data.find(d => d.yearMonth === selectedMonth) || latestMonth;
+  const chartDomain = calculateBalanceChartDomain(data.map(d => d.netWorth));
 
   // Helper to categorize items by filter type
 
@@ -280,16 +295,16 @@ function NetWorthPageContent() {
           <span className="text-gray-400">/</span>
           <span className="text-sm font-medium text-gray-900">Net Worth</span>
         </div>
-        <div className="flex items-end justify-between">
+        <div className={NET_WORTH_HEADER_STACK_CLASS}>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Net Worth</h1>
             <p className="text-sm text-gray-500 mt-1">
               Track your wealth over time
             </p>
           </div>
-          <div className="text-right">
-            <div className="flex items-center justify-end gap-2 mb-1">
-              <div className="text-3xl font-bold text-gray-900 tabular-nums">
+          <div className={NET_WORTH_HEADER_VALUE_CLASS}>
+            <div className="flex items-center gap-2 mb-1 lg:justify-end">
+              <div className="text-3xl font-bold text-gray-900 tabular-nums whitespace-nowrap">
                 {formatCurrency(viewData.netWorth, currency)}
               </div>
               {!isViewingLatest && (
@@ -311,7 +326,7 @@ function NetWorthPageContent() {
               </div>
             )}
             {viewData.change !== null && (
-              <div className={`text-sm font-medium ${
+              <div className={`${NET_WORTH_CHANGE_LINE_CLASS} ${
                 viewData.change > 0 ? "text-green-600" : 
                 viewData.change < 0 ? "text-red-600" : "text-gray-500"
               }`}>
@@ -331,7 +346,7 @@ function NetWorthPageContent() {
       </div>
 
       {/* 12-Month Chart */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+      <div className={NET_WORTH_CARD_CLASS}>
         <h2 className="text-lg font-semibold text-gray-900 mb-4">12-Month Trend</h2>
         <div className="relative" style={{ height: "340px" }}>
           <ResponsiveContainer width="100%" height="100%">
@@ -370,20 +385,24 @@ function NetWorthPageContent() {
                 tickLine={{ stroke: "#e5e7eb" }}
               />
               <YAxis 
-                domain={(() => {
-                  const values = data.map(d => d.netWorth);
-                  const domain = calculateBalanceChartDomain(values);
-                  return [domain.min, domain.max];
-                })()}
+                domain={[chartDomain.min, chartDomain.max]}
                 tick={{ fontSize: 12, fill: "#6b7280" }}
                 axisLine={{ stroke: "#e5e7eb" }}
                 tickLine={{ stroke: "#e5e7eb" }}
+                {...(!isLgUp ? { tickCount: 4, width: 80, interval: 0 } : {})}
                 tickFormatter={(value: number) => {
-                  const sym = getCurrencySymbol(currency);
-                  const abs = Math.abs(value);
-                  if (abs >= 1_000_000) return `${sym}${(value / 1_000_000).toFixed(1)}M`;
-                  if (abs >= 1_000) return `${sym}${Math.round(value / 1_000)}k`;
-                  return `${sym}${value}`;
+                  if (isLgUp) {
+                    const sym = getCurrencySymbol(currency);
+                    const abs = Math.abs(value);
+                    if (abs >= 1_000_000) return `${sym}${(value / 1_000_000).toFixed(1)}M`;
+                    if (abs >= 1_000) return `${sym}${Math.round(value / 1_000)}k`;
+                    return `${sym}${value}`;
+                  }
+                  return formatChartAxisValue(
+                    value,
+                    getCurrencySymbol(currency),
+                    { precision: "distinct", domain: chartDomain }
+                  );
                 }}
               />
               <Tooltip 
@@ -444,41 +463,45 @@ function NetWorthPageContent() {
       </div>
 
       {/* Breakdown Section with Tabs */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+      <div className={NET_WORTH_CARD_CLASS}>
         {/* Tab Headers */}
-        <div className="flex items-center gap-4 border-b border-gray-200 mb-4">
-          <button
-            onClick={() => setActiveTab("changes")}
-            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
-              activeTab === "changes"
-                ? "border-purple-600 text-purple-600"
-                : "border-transparent text-gray-600 hover:text-gray-900"
-            }`}
-          >
-            What Changed
-          </button>
-          <button
-            onClick={() => setActiveTab("assets")}
-            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
-              activeTab === "assets"
-                ? "border-purple-600 text-purple-600"
-                : "border-transparent text-gray-600 hover:text-gray-900"
-            }`}
-          >
-            Assets
-          </button>
-          <button
-            onClick={() => setActiveTab("debts")}
-            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
-              activeTab === "debts"
-                ? "border-purple-600 text-purple-600"
-                : "border-transparent text-gray-600 hover:text-gray-900"
-            }`}
-          >
-            Debts
-          </button>
-          <div className="flex-1" />
-          <div className="text-sm text-gray-500">
+        <div className="mb-4">
+          <div className={NET_WORTH_TABS_ROW_CLASS}>
+            <button
+              onClick={() => setActiveTab("changes")}
+              className={`${NET_WORTH_TAB_BUTTON_BASE} ${
+                activeTab === "changes"
+                  ? "border-purple-600 text-purple-600"
+                  : "border-transparent text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              What Changed
+            </button>
+            <button
+              onClick={() => setActiveTab("assets")}
+              className={`${NET_WORTH_TAB_BUTTON_BASE} ${
+                activeTab === "assets"
+                  ? "border-purple-600 text-purple-600"
+                  : "border-transparent text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              Assets
+            </button>
+            <button
+              onClick={() => setActiveTab("debts")}
+              className={`${NET_WORTH_TAB_BUTTON_BASE} ${
+                activeTab === "debts"
+                  ? "border-purple-600 text-purple-600"
+                  : "border-transparent text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              Debts
+            </button>
+            <div className={NET_WORTH_MONTH_DESKTOP_CLASS}>
+              {formatMonthLabel(selectedData.yearMonth)}
+            </div>
+          </div>
+          <div className={NET_WORTH_MONTH_MOBILE_CLASS}>
             {formatMonthLabel(selectedData.yearMonth)}
           </div>
         </div>
@@ -489,20 +512,20 @@ function NetWorthPageContent() {
         
         {selectedData.change !== null && (
           <div className="mb-4 p-4 bg-gray-50 rounded-lg">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-700">
+            <div className="flex items-center justify-between gap-3">
+              <span className="min-w-0 text-sm font-medium text-gray-700">
                 Total Change
                 {baselineLines.length > 0 && (
                   <span className="ml-2 text-xs text-gray-500">(includes {baselineLines.length} baseline{baselineLines.length > 1 ? 's' : ''})</span>
                 )}
               </span>
-              <span className={`text-lg font-bold ${
+              <IntactAmount className={`text-lg font-bold ${
                 selectedData.change > 0 ? "text-green-600" : 
                 selectedData.change < 0 ? "text-red-600" : "text-gray-900"
               }`}>
                 {selectedData.change > 0 ? "+" : ""}
                 {formatCurrency(selectedData.change, currency)}
-              </span>
+              </IntactAmount>
             </div>
           </div>
         )}
@@ -520,14 +543,14 @@ function NetWorthPageContent() {
                     : null;
                   
                   const lineContent = (
-                    <div className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-                      <span className="text-sm text-gray-700">{line.label}</span>
-                      <span className={`text-sm font-semibold ${
+                    <div className="flex items-center justify-between gap-3 py-2 border-b border-gray-100 last:border-0">
+                      <span className={NET_WORTH_LABEL_CLASS}>{line.label}</span>
+                      <IntactAmount className={`text-sm font-semibold ${
                         line.amount > 0 ? "text-green-600" : line.amount < 0 ? "text-red-600" : "text-gray-900"
                       }`}>
                         {line.amount > 0 ? "+" : ""}
                         {formatCurrency(line.amount, currency)}
-                      </span>
+                      </IntactAmount>
                     </div>
                   );
                   
@@ -545,15 +568,15 @@ function NetWorthPageContent() {
             {/* Real change subtotal (if baselines exist) */}
             {baselineLines.length > 0 && breakdownLines.length > 0 && (
               <div className="py-2 border-t-2 border-gray-300">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-700">Real Change</span>
-                  <span className={`text-sm font-bold ${
+                <div className="flex items-center justify-between gap-3">
+                  <span className="min-w-0 text-sm font-medium text-gray-700">Real Change</span>
+                  <IntactAmount className={`text-sm font-bold ${
                     breakdownLines.reduce((sum, line) => sum + line.amount, 0) > 0 ? "text-green-600" : 
                     breakdownLines.reduce((sum, line) => sum + line.amount, 0) < 0 ? "text-red-600" : "text-gray-900"
                   }`}>
                     {breakdownLines.reduce((sum, line) => sum + line.amount, 0) > 0 ? "+" : ""}
                     {formatCurrency(breakdownLines.reduce((sum, line) => sum + line.amount, 0), currency)}
-                  </span>
+                  </IntactAmount>
                 </div>
               </div>
             )}
@@ -570,12 +593,12 @@ function NetWorthPageContent() {
                     : null;
                   
                   const lineContent = (
-                    <div className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-                      <span className="text-sm text-gray-600 italic">{line.label}</span>
-                      <span className="text-sm text-gray-600 italic">
+                    <div className="flex items-center justify-between gap-3 py-2 border-b border-gray-100 last:border-0">
+                      <span className={`${NET_WORTH_LABEL_CLASS} text-gray-600 italic`}>{line.label}</span>
+                      <IntactAmount className="text-sm text-gray-600 italic">
                         {line.amount > 0 ? "+" : ""}
                         {formatCurrency(line.amount, currency)}
-                      </span>
+                      </IntactAmount>
                     </div>
                   );
                   
@@ -612,23 +635,23 @@ function NetWorthPageContent() {
                       <Link
                         key={idx}
                         href={accountPage}
-                        className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0 hover:bg-gray-50 -mx-2 px-2 rounded transition-colors"
+                        className="flex items-center justify-between gap-3 py-2 border-b border-gray-100 last:border-0 hover:bg-gray-50 -mx-2 px-2 rounded transition-colors"
                       >
-                        <span className="text-sm text-gray-700">
+                        <span className={NET_WORTH_LABEL_CLASS}>
                           {item.label}
                           {isManual && <span className="ml-2 text-xs text-gray-500">(manual)</span>}
                         </span>
-                        <span className="text-sm font-semibold text-gray-900">
+                        <IntactAmount className="text-sm font-semibold text-gray-900">
                           {formatCurrencyWithCents(item.value, currency)}
-                        </span>
+                        </IntactAmount>
                       </Link>
                     );
                   })}
-                <div className="flex items-center justify-between py-3 border-t-2 border-gray-300 mt-2">
-                  <span className="text-sm font-bold text-gray-900">Total Assets</span>
-                  <span className="text-lg font-bold text-gray-900">
+                <div className="flex items-center justify-between gap-3 py-3 border-t-2 border-gray-300 mt-2">
+                  <span className="min-w-0 text-sm font-bold text-gray-900">Total Assets</span>
+                  <IntactAmount className="text-lg font-bold text-gray-900">
                     {formatCurrencyWithCents(selectedData.totalAssets, currency)}
-                  </span>
+                  </IntactAmount>
                 </div>
               </div>
             ) : (
@@ -648,19 +671,19 @@ function NetWorthPageContent() {
                     <Link
                       key={idx}
                       href="/account/liabilities"
-                      className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0 hover:bg-gray-50 -mx-2 px-2 rounded transition-colors"
+                      className="flex items-center justify-between gap-3 py-2 border-b border-gray-100 last:border-0 hover:bg-gray-50 -mx-2 px-2 rounded transition-colors"
                     >
-                      <span className="text-sm text-gray-700">{item.label}</span>
-                      <span className="text-sm font-semibold text-red-600">
+                      <span className={NET_WORTH_LABEL_CLASS}>{item.label}</span>
+                      <IntactAmount className="text-sm font-semibold text-red-600">
                         {formatCurrencyWithCents(Math.abs(item.value), currency)}
-                      </span>
+                      </IntactAmount>
                     </Link>
                   ))}
-                <div className="flex items-center justify-between py-3 border-t-2 border-gray-300 mt-2">
-                  <span className="text-sm font-bold text-gray-900">Total Debts</span>
-                  <span className="text-lg font-bold text-red-600">
+                <div className="flex items-center justify-between gap-3 py-3 border-t-2 border-gray-300 mt-2">
+                  <span className="min-w-0 text-sm font-bold text-gray-900">Total Debts</span>
+                  <IntactAmount className="text-lg font-bold text-red-600">
                     {formatCurrencyWithCents(selectedData.totalDebts, currency)}
-                  </span>
+                  </IntactAmount>
                 </div>
               </div>
             ) : (
@@ -672,15 +695,16 @@ function NetWorthPageContent() {
         {/* Net Worth Reconciliation */}
         {(activeTab === "assets" || activeTab === "debts") && selectedData.byAccount && (
           <div className="mt-4 pt-4 border-t-2 border-purple-200">
-            <div className="flex items-center justify-between">
-              <span className="text-base font-bold text-gray-900">Net Worth</span>
-              <span className="text-xl font-bold text-purple-600">
+            <div className="flex items-center justify-between gap-3">
+              <span className="min-w-0 text-base font-bold text-gray-900">Net Worth</span>
+              <IntactAmount className="text-xl font-bold text-purple-600">
                 {formatCurrencyWithCents(selectedData.netWorth, currency)}
-              </span>
+              </IntactAmount>
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              Assets ({formatCurrencyWithCents(selectedData.totalAssets, currency)}) 
-              - Debts ({formatCurrencyWithCents(selectedData.totalDebts, currency)})
+              <span className="whitespace-nowrap">Assets ({formatCurrencyWithCents(selectedData.totalAssets, currency)})</span>
+              {" - "}
+              <span className="whitespace-nowrap">Debts ({formatCurrencyWithCents(selectedData.totalDebts, currency)})</span>
             </p>
           </div>
         )}

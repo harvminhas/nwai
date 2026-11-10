@@ -110,22 +110,48 @@ export function calculateBalanceChartDomain(
   return { min, max };
 }
 
+export type ChartAxisPrecision = "default" | "distinct";
+
+/**
+ * Million-tick decimals so ~4 ticks across `domain` stay unique.
+ * Desktop canonical formatting stays 1 decimal; this is for tight phone scales.
+ */
+export function millionDecimalsForDomain(min: number, max: number): number {
+  const range = Math.abs(max - min);
+  const step = range / 1_000_000 / 4;
+  if (step >= 0.1) return 1;
+  if (step >= 0.01) return 2;
+  return 3;
+}
+
 /**
  * Format Y-axis tick labels for currency values.
  * Matches canonical chart formatting: $1M, $500k, or full amount for small values.
- * 
- * @param value - Numeric value to format
- * @param currencySymbol - Currency symbol (e.g., "$", "CA$")
- * @returns Formatted string
+ *
+ * Pass `{ precision: "distinct", domain }` on narrow viewports so nearby ticks
+ * (e.g. CA$1.22M vs CA$1.28M) do not round to the same 1-decimal label.
  */
-export function formatChartAxisValue(value: number, currencySymbol: string = "$"): string {
+export function formatChartAxisValue(
+  value: number,
+  currencySymbol: string = "$",
+  options?: { precision?: ChartAxisPrecision; domain?: DomainResult }
+): string {
   const abs = Math.abs(value);
   const sign = value < 0 ? "-" : "";
-  
+  const distinct = options?.precision === "distinct";
+  const domain = options?.domain;
+
   if (abs >= 1_000_000) {
-    return `${sign}${currencySymbol}${(abs / 1_000_000).toFixed(1)}M`;
+    const decimals =
+      distinct && domain
+        ? millionDecimalsForDomain(domain.min, domain.max)
+        : 1;
+    return `${sign}${currencySymbol}${(abs / 1_000_000).toFixed(decimals)}M`;
   }
   if (abs >= 1_000) {
+    if (distinct && domain && Math.abs(domain.max - domain.min) < 10_000) {
+      return `${sign}${currencySymbol}${(abs / 1_000).toFixed(1)}k`;
+    }
     return `${sign}${currencySymbol}${Math.round(abs / 1_000)}k`;
   }
   return `${sign}${currencySymbol}${abs}`;

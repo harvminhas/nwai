@@ -10,6 +10,7 @@ import {
   DashboardSampleQuestions,
   SAMPLE_QUESTIONS_CHIPS_CLASS,
   SAMPLE_QUESTIONS_DROPDOWN_CLASS,
+  SAMPLE_QUESTIONS_MENU_CLASS,
   SAMPLE_QUESTIONS_TRIGGER_CLASS,
 } from "../DashboardSampleQuestions";
 
@@ -143,6 +144,18 @@ describe("DashboardSampleQuestions", () => {
       screen.getByRole("button", { name: "Where is my money going?" })
     );
     expect(onAsk).not.toHaveBeenCalled();
+  });
+
+  it("keeps the compact menu in-flow so it does not overlay the money-goes title", () => {
+    render(
+      <DashboardSampleQuestions suggestions={SUGGESTIONS} onAsk={() => {}} />
+    );
+    openMenu();
+    const menu = screen.getByRole("menu");
+    expect(menu.className).toBe(SAMPLE_QUESTIONS_MENU_CLASS);
+    expect(SAMPLE_QUESTIONS_MENU_CLASS).not.toContain("absolute");
+    expect(SAMPLE_QUESTIONS_MENU_CLASS).toContain("mx-auto");
+    expect(SAMPLE_QUESTIONS_MENU_CLASS).toContain("w-[min(17.5rem,calc(100vw-2rem))]");
   });
 
   it("wires accessible menu semantics on the compact trigger", () => {
