@@ -3,6 +3,11 @@
 import type { IncomeSummary } from "@/lib/incomeSummary";
 import { formatMonthYear, formatDate } from "@/lib/dateFormatting";
 import { formatCurrency, formatCurrencyWithCents } from "@/lib/currencyUtils";
+import {
+  INCOME_SO_FAR_HEADER_CLASS,
+  INCOME_SO_FAR_PERIOD_CLASS,
+  INCOME_SO_FAR_TYPICAL_CLASS,
+} from "./incomeReadLayout";
 
 interface OverviewTabProps {
   summary: IncomeSummary;
@@ -65,9 +70,9 @@ export function OverviewTab({ summary, windowNote }: OverviewTabProps) {
     <div className="space-y-6">
       {/* Current month progress */}
       <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <div className="flex items-baseline justify-between mb-2">
-          <h3 className="text-sm font-medium text-gray-500">{currentMonthLabel} SO FAR</h3>
-          <p className="text-sm text-gray-400">
+        <div className={INCOME_SO_FAR_HEADER_CLASS}>
+          <h3 className={INCOME_SO_FAR_PERIOD_CLASS}>{currentMonthLabel} SO FAR</h3>
+          <p className={INCOME_SO_FAR_TYPICAL_CLASS}>
             of ~{formatCurrency(typicalMonthly, currency)} in a typical month
           </p>
         </div>

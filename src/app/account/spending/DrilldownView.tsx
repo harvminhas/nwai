@@ -16,6 +16,7 @@ import {
   CANONICAL_LINE_CONFIG,
   getCanonicalLineColor,
 } from "@/lib/canonicalChartConfig";
+import { SpendingCategoryRow } from "./SpendingCategoryRow";
 
 interface MonthlySeries {
   yearMonth: string;
@@ -1086,73 +1087,25 @@ export function DrilldownView({ token }: DrilldownViewProps) {
         ) : (
           // Regular ranked items view
           <div className="space-y-2">
-            {displayedItems.map((item, idx) => {
-              const isOther = item.slug === "other";
-              const isDebt = item.slug === "debt";
-              const isClickable = !isOther;
-              
-              return (
-                <div
+            {displayedItems.map((item) => (
+                <SpendingCategoryRow
                   key={item.slug}
-                  className={`flex items-center gap-3 p-3 rounded-lg transition-colors ${
-                    isClickable ? "hover:bg-neutral-50 cursor-pointer" : "cursor-default"
-                  }`}
-                  onClick={() => isClickable && handleItemClick(item)}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <div>
-                        <div className="font-medium text-neutral-900">{item.name}</div>
-                        {item.subLabel && (
-                          <div className="text-xs text-neutral-500" style={{ fontSize: "12px" }}>
-                            {item.subLabel}
-                          </div>
-                        )}
-                      </div>
-                      {!selectedMonth && item.monthlySeries.length > 0 && !isOther && (
-                        <div className="flex-shrink-0" style={{ width: "60px", height: "20px" }}>
-                          <ResponsiveContainer width="100%" height="100%">
-                            <ComposedChart data={item.monthlySeries.map(m => ({ amount: m.amount }))} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
-                              <Line type="monotone" dataKey="amount" stroke={getCanonicalLineColor("spending")} strokeWidth={1} dot={false} />
-                            </ComposedChart>
-                          </ResponsiveContainer>
-                        </div>
-                      )}
-                    </div>
-                    <div className="w-full bg-neutral-100 rounded-full h-1.5 mb-1">
-                      <div 
-                        className="bg-emerald-500 h-1.5 rounded-full" 
-                        style={{ width: `${Math.min(item.displayShare * 100, 100)}%` }}
-                      ></div>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-center gap-3">
-                    <div className="text-right">
-                      <div className="font-semibold text-neutral-900 tabular-nums">
-                        {formatCurrency(item.displayTotal, displayData.currency)}
-                      </div>
-                      {!selectedMonth && !isDebt && item.trend !== 0 && Math.round(Math.abs(item.trend)) !== 0 && (
-                        <div className={`text-xs tabular-nums ${item.trend > 0 ? "text-red-600" : "text-green-600"}`}>
-                          {item.trend > 0 ? "↑" : "↓"} {formatCurrency(Math.abs(item.trend), displayData.currency)}/mo vs avg
-                        </div>
-                      )}
-                      {isDebt && item.subLabel && (
-                        <div className="text-xs text-neutral-500">
-                          {item.subLabel}
-                        </div>
-                      )}
-                    </div>
-                    
-                    {isClickable && (
-                      <svg className="w-5 h-5 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+                  item={{
+                    name: item.name,
+                    slug: item.slug,
+                    subLabel: item.subLabel,
+                    monthlySeries: item.monthlySeries,
+                    displayShare: item.displayShare,
+                    displayTotal: item.displayTotal,
+                    trend: item.trend,
+                  }}
+                  currency={displayData.currency}
+                  selectedMonth={selectedMonth}
+                  onClick={() => {
+                    if (item.slug !== "other") handleItemClick(item);
+                  }}
+                />
+            ))}
             
             {/* Note under level 1 (All spending) */}
             {displayData.level === "all" && (
