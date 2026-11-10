@@ -77,35 +77,41 @@ describe("mapSpendingTransactionsToLinkable", () => {
 });
 
 describe("filterPlannerLinkableTransactions", () => {
-  const txns: PlannerLinkableTransaction[] = [
-    linkable("before", { date: "2026-05-31", merchant: "Before" }),
-    linkable("start", { date: "2026-06-01", merchant: "Start" }),
-    linkable("mid", { date: "2026-06-15", merchant: "Mid" }),
-    linkable("end", { date: "2026-06-30", merchant: "End" }),
-    linkable("after", { date: "2026-07-01", merchant: "After" }),
-    linkable("linked", { date: "2026-06-10", merchant: "Linked" }),
-  ];
-
-  const range = {
-    startDate: "2026-06-01",
-    endDate: "2026-06-30",
-    linkedFingerprints: ["linked"],
-  };
-
-  it("defaults to the plan date window, inclusive, and drops already-linked txns", () => {
-    const result = filterPlannerLinkableTransactions(txns, { ...range, showAll: false });
-    expect(result.map((tx) => tx.txFingerprint)).toEqual(["start", "mid", "end"]);
+  it("a future plan with only past transactions returns all of them", () => {
+    const pastTxns: PlannerLinkableTransaction[] = [
+      linkable("tickets", { date: "2026-03-01", merchant: "Airline" }),
+      linkable("hotel", { date: "2026-04-15", merchant: "Hotel" }),
+      linkable("gear", { date: "2026-05-20", merchant: "REI" }),
+    ];
+    const result = filterPlannerLinkableTransactions(pastTxns, {
+      linkedFingerprints: [],
+    });
+    expect(result.map((tx) => tx.txFingerprint)).toEqual(["tickets", "hotel", "gear"]);
   });
 
-  it("show all includes out-of-window txns but still excludes already-linked ones", () => {
-    const result = filterPlannerLinkableTransactions(txns, { ...range, showAll: true });
-    expect(result.map((tx) => tx.txFingerprint)).toEqual([
-      "before",
-      "start",
-      "mid",
-      "end",
-      "after",
-    ]);
+  it("results are ordered newest first", () => {
+    const txns: PlannerLinkableTransaction[] = [
+      linkable("new", { date: "2026-11-01", merchant: "New" }),
+      linkable("mid", { date: "2026-06-15", merchant: "Mid" }),
+      linkable("old", { date: "2026-01-01", merchant: "Old" }),
+    ];
+    const result = filterPlannerLinkableTransactions(txns, {
+      linkedFingerprints: [],
+    });
+    expect(result.map((tx) => tx.txFingerprint)).toEqual(["new", "mid", "old"]);
+    expect(result.map((tx) => tx.date)).toEqual(["2026-11-01", "2026-06-15", "2026-01-01"]);
+  });
+
+  it("already-linked transactions are excluded", () => {
+    const txns: PlannerLinkableTransaction[] = [
+      linkable("keep-a", { date: "2026-06-15", merchant: "Keep A" }),
+      linkable("linked", { date: "2026-06-10", merchant: "Linked" }),
+      linkable("keep-b", { date: "2026-05-01", merchant: "Keep B" }),
+    ];
+    const result = filterPlannerLinkableTransactions(txns, {
+      linkedFingerprints: ["linked"],
+    });
+    expect(result.map((tx) => tx.txFingerprint)).toEqual(["keep-a", "keep-b"]);
   });
 });
 

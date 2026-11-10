@@ -40,10 +40,7 @@ export function mapSpendingTransactionsToLinkable(
 export function filterPlannerLinkableTransactions(
   transactions: PlannerLinkableTransaction[],
   opts: {
-    startDate: string;
-    endDate: string;
     linkedFingerprints: Iterable<string>;
-    showAll: boolean;
     search?: string;
   }
 ): PlannerLinkableTransaction[] {
@@ -54,10 +51,6 @@ export function filterPlannerLinkableTransactions(
 
   return transactions.filter((tx) => {
     if (linked.has(tx.txFingerprint)) return false;
-    if (!opts.showAll) {
-      const date = tx.date.slice(0, 10);
-      if (!date || date < opts.startDate || date > opts.endDate) return false;
-    }
     if (!query) return true;
     return (
       tx.merchant.toLowerCase().includes(query) ||

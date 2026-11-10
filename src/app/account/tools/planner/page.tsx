@@ -673,7 +673,6 @@ function LinkTransactionModal({
   onError: (message: string) => void;
 }) {
   const [search, setSearch] = useState("");
-  const [showAll, setShowAll] = useState(false);
   const [transactions, setTransactions] = useState<PlannerLinkableTransaction[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -714,10 +713,7 @@ function LinkTransactionModal({
   }
 
   const filtered = filterPlannerLinkableTransactions(transactions, {
-    startDate: plan.startDate,
-    endDate: plan.endDate,
     linkedFingerprints: plan.linkedTransactions.map((tx) => tx.txFingerprint),
-    showAll,
     search,
   });
 
@@ -774,18 +770,7 @@ function LinkTransactionModal({
       <div className="fixed inset-0 z-70 flex items-center justify-center p-4">
         <div className="w-full max-w-2xl max-h-[80vh] rounded-xl bg-white shadow-2xl flex flex-col">
           <div className="border-b border-gray-200 p-6">
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="text-xl font-semibold text-gray-900">Link Transactions</h2>
-              <label className="flex shrink-0 items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={showAll}
-                  onChange={(e) => setShowAll(e.target.checked)}
-                  className="h-3.5 w-3.5 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-                />
-                Show all
-              </label>
-            </div>
+            <h2 className="text-xl font-semibold text-gray-900">Link Transactions</h2>
             <input
               type="text"
               value={search}
