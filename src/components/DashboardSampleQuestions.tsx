@@ -8,7 +8,7 @@ export const SAMPLE_QUESTIONS_DROPDOWN_CLASS = "relative lg:hidden";
 export const SAMPLE_QUESTIONS_TRIGGER_CLASS =
   "inline-flex min-h-11 max-w-max items-center gap-1 rounded-md px-2 text-sm text-gray-500 hover:bg-gray-50 hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300 disabled:cursor-not-allowed disabled:opacity-40";
 export const SAMPLE_QUESTIONS_MENU_CLASS =
-  "absolute left-1/2 top-full z-50 mt-1 w-[min(17.5rem,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-gray-200 bg-white py-1 shadow-lg";
+  "mx-auto mt-1 w-[min(17.5rem,calc(100vw-2rem))] rounded-xl border border-gray-200 bg-white py-1 shadow-lg";
 
 interface DashboardSampleQuestionsProps {
   suggestions: string[];

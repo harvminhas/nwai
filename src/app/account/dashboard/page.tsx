@@ -12,6 +12,12 @@ import { Drawer, type DrawerType } from "@/components/Drawer";
 import { ReviewList } from "@/components/ReviewList";
 import { DashboardSampleQuestions } from "@/components/DashboardSampleQuestions";
 import { WhereMoneyGoesHeader } from "@/components/WhereMoneyGoesHeader";
+import {
+  ASK_INPUT_CLASS,
+  ASK_MOBILE_PLACEHOLDER_CLASS,
+  ASK_PLACEHOLDER_DESKTOP,
+  ASK_PLACEHOLDER_MOBILE,
+} from "@/components/dashboardAskLayout";
 import type { TimeRange } from "@/lib/rangeUtils";
 import { formatMonthList, getSelectableMonths, type SelectableMonth } from "@/lib/rangeUtils";
 import type { GapReconciliation } from "@/lib/gapReconciliation";
@@ -238,9 +244,12 @@ function QuestionBox({
           onMouseDown={handleMouseDown}
           onFocus={handleFocus}
           disabled={loading}
-          placeholder="Ask about your spending, savings, or goals…"
-          className="w-full rounded-2xl border-2 border-gray-200 px-6 py-5 pr-28 text-lg shadow-sm transition-all placeholder:text-gray-400 focus:border-purple-500 focus:shadow-lg focus:shadow-purple-100 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+          placeholder={ASK_PLACEHOLDER_DESKTOP}
+          className={ASK_INPUT_CLASS}
         />
+        <span aria-hidden="true" className={ASK_MOBILE_PLACEHOLDER_CLASS}>
+          {ASK_PLACEHOLDER_MOBILE}
+        </span>
         <button
           onClick={handleSubmit}
           disabled={!query.trim() || loading}
@@ -497,7 +506,7 @@ function WhereMoneyGoes({
             {/* Income Card */}
             <button
               onClick={() => onOpenDrawer("income")}
-              className="rounded-2xl border border-gray-200 bg-gradient-to-br from-purple-50 to-white p-5 shadow-sm transition hover:shadow-md hover:border-purple-300 text-left"
+              className="min-w-0 rounded-2xl border border-gray-200 bg-gradient-to-br from-purple-50 to-white p-5 shadow-sm transition hover:shadow-md hover:border-purple-300 text-left"
             >
               <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-gray-500">
                 <span className="h-2.5 w-2.5 rounded" style={{ backgroundColor: "#9333ea" }} />
@@ -506,13 +515,13 @@ function WhereMoneyGoes({
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </div>
-              <p className="text-2xl font-bold tracking-tight text-gray-900">
+              <p className="text-2xl font-bold tracking-tight text-gray-900 whitespace-nowrap">
                 {fmt(incomeAmount, currency)}
                 <span className="text-sm font-medium text-gray-400">/mo</span>
               </p>
-              <p className="mt-1 text-xs text-gray-500">{rangeLabel} · take-home</p>
+              <p className="mt-1 text-xs text-gray-500 break-words">{rangeLabel} · take-home</p>
               {breakdown.window && breakdown.window.months && (
-                <p className="mt-1 text-xs text-gray-400">
+                <p className="mt-1 text-xs text-gray-400 break-words">
                   {formatWindowBasis(breakdown.window.months, breakdown.window.note)}
                 </p>
               )}
@@ -528,7 +537,7 @@ function WhereMoneyGoes({
               <span className="mt-3 inline-block rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-800">
                 Stable
               </span>
-              <p className="mt-2 min-h-[2.5rem] text-xs leading-relaxed text-gray-700">
+              <p className="mt-2 min-h-[2.5rem] text-xs leading-relaxed text-gray-700 break-words">
                 Consistent pay — a solid base to plan around.
               </p>
               <p className="mt-2 text-xs text-purple-600 font-medium">
@@ -622,7 +631,7 @@ function WhereMoneyGoes({
                 <button
                   key={bucket.bucket}
                   onClick={() => onOpenDrawer(bucket.bucket as DrawerType)}
-                  className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition hover:shadow-md hover:border-purple-300 text-left"
+                  className="min-w-0 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition hover:shadow-md hover:border-purple-300 text-left"
                 >
                   <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-gray-500">
                     <span 
@@ -704,12 +713,12 @@ function WhereMoneyGoes({
                       )}
                     </div>
                   </div>
-                  <p className="mt-1 text-xs text-gray-500">
+                  <p className="mt-1 text-xs text-gray-500 break-words">
                     {rangeLabel} · {Math.round(bucket.pctOfIncome)}% of take-home
                     {bucket.bucket === "savings" && ` · target ${bucket.targetPct}%`}
                   </p>
                   {breakdown.window && breakdown.window.months && (
-                    <p className="mt-1 text-xs text-gray-400">
+                    <p className="mt-1 text-xs text-gray-400 break-words">
                       {formatWindowBasis(breakdown.window.months, breakdown.window.note)}
                     </p>
                   )}
@@ -739,7 +748,7 @@ function WhereMoneyGoes({
                   <span className={`mt-3 inline-block rounded-full border px-2 py-0.5 text-[11px] font-semibold ${statusBgColor} ${statusTextColor} ${statusBorderColor}`}>
                     {statusTag}
                   </span>
-                  <p className="mt-2 min-h-[2.5rem] text-xs leading-relaxed text-gray-700">
+                  <p className="mt-2 min-h-[2.5rem] text-xs leading-relaxed text-gray-700 break-words">
                     {bucket.advice}
                   </p>
                   <p className="mt-2 text-xs text-purple-600 font-medium">

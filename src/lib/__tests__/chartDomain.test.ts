@@ -4,7 +4,11 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { calculateBalanceChartDomain, formatChartAxisValue } from "../chartDomain";
+import {
+  calculateBalanceChartDomain,
+  formatChartAxisValue,
+  millionDecimalsForDomain,
+} from "../chartDomain";
 
 describe("calculateBalanceChartDomain", () => {
   it("handles empty values array", () => {
@@ -182,5 +186,34 @@ describe("formatChartAxisValue", () => {
 
   it("defaults to $ symbol", () => {
     expect(formatChartAxisValue(10000)).toBe("$10k");
+  });
+
+  it("keeps canonical 1-decimal millions without distinct precision", () => {
+    expect(formatChartAxisValue(1222583, "CA$")).toBe("CA$1.2M");
+    expect(formatChartAxisValue(1280000, "CA$")).toBe("CA$1.3M");
+  });
+
+  it("uses more million decimals when the domain is tight", () => {
+    expect(millionDecimalsForDomain(1_150_000, 1_320_000)).toBe(2);
+    expect(millionDecimalsForDomain(1_000_000, 3_000_000)).toBe(1);
+  });
+
+  it("distinct precision keeps tight net-worth ticks unique", () => {
+    const domain = { min: 1_150_000, max: 1_320_000 };
+    const ticks = [1_150_000, 1_200_000, 1_250_000, 1_300_000, 1_320_000];
+    const distinct = ticks.map((v) =>
+      formatChartAxisValue(v, "CA$", { precision: "distinct", domain })
+    );
+    expect(distinct).toEqual([
+      "CA$1.15M",
+      "CA$1.20M",
+      "CA$1.25M",
+      "CA$1.30M",
+      "CA$1.32M",
+    ]);
+    expect(new Set(distinct).size).toBe(ticks.length);
+
+    const canonical = ticks.map((v) => formatChartAxisValue(v, "CA$"));
+    expect(new Set(canonical).size).toBeLessThan(ticks.length);
   });
 });
