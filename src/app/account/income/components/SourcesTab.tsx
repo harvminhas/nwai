@@ -7,6 +7,20 @@ import { formatCurrency } from "@/lib/currencyUtils";
 import { INCOME_CATEGORIES, FREQUENCY_CONFIG, type Frequency, type IncomeCategory } from "@/lib/incomeEngine";
 import { useConfirm } from "@/components/useConfirm";
 import { useToast } from "@/components/useToast";
+import {
+  SOURCE_ROW_ACTIONS_CLASS,
+  SOURCE_ROW_AMOUNT_CLASS,
+  SOURCE_ROW_BADGE_CLASS,
+  SOURCE_ROW_CLASS,
+  SOURCE_ROW_DESKTOP_NAME_BADGE_CLASS,
+  SOURCE_ROW_IDENTITY_CLASS,
+  SOURCE_ROW_META_DESKTOP_CLASS,
+  SOURCE_ROW_META_PHONE_CLASS,
+  SOURCE_ROW_NAME_DESKTOP_CLASS,
+  SOURCE_ROW_NAME_PHONE_CLASS,
+  SOURCE_ROW_PHONE_META_ROW_CLASS,
+  SOURCE_ROW_TOP_CLASS,
+} from "./incomeReadLayout";
 
 interface SourcesTabProps {
   summary: IncomeSummary;
@@ -407,12 +421,14 @@ function SourceRow({
   
   return (
     <div>
-      <div className="px-6 py-4 flex items-center gap-4 hover:bg-gray-50 transition">
+      <div className={SOURCE_ROW_CLASS}>
+        <div className={SOURCE_ROW_TOP_CLASS}>
         <button
-          className="flex-1 flex items-center gap-2 text-left"
+          type="button"
+          className="flex-1 flex items-center gap-2 text-left min-w-0"
           onClick={onToggle}
         >
-          <div className="flex-1 min-w-0">
+          <div className={SOURCE_ROW_IDENTITY_CLASS}>
             {isEditing ? (
               <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                 <input
@@ -439,13 +455,14 @@ function SourceRow({
               </div>
             ) : (
               <>
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium text-gray-900 truncate">{source.description}</p>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-50 text-purple-700 uppercase tracking-wide">
+                <p className={SOURCE_ROW_NAME_PHONE_CLASS}>{source.description}</p>
+                <div className={SOURCE_ROW_DESKTOP_NAME_BADGE_CLASS}>
+                  <p className={SOURCE_ROW_NAME_DESKTOP_CLASS}>{source.description}</p>
+                  <span className={SOURCE_ROW_BADGE_CLASS}>
                     {freqLabel}
                   </span>
                 </div>
-                <p className="text-xs text-gray-500 mt-0.5">
+                <p className={SOURCE_ROW_META_DESKTOP_CLASS}>
                   {visibleTransactions.length} deposit{visibleTransactions.length !== 1 ? "s" : ""} · {Math.round(source.reliabilityScore)}% reliable
                 </p>
               </>
@@ -453,8 +470,8 @@ function SourceRow({
           </div>
         </button>
         
-        <div className="flex items-center gap-3">
-          <span className="text-base font-semibold text-gray-900 tabular-nums">
+        <div className={SOURCE_ROW_ACTIONS_CLASS}>
+          <span className={SOURCE_ROW_AMOUNT_CLASS}>
             {formatCurrency(visibleTotal, currency)}
           </span>
           
@@ -523,6 +540,15 @@ function SourceRow({
             </svg>
           </button>
         </div>
+        </div>
+        {!isEditing && (
+          <button type="button" className={SOURCE_ROW_PHONE_META_ROW_CLASS} onClick={onToggle}>
+            <span className={SOURCE_ROW_BADGE_CLASS}>{freqLabel}</span>
+            <span className={SOURCE_ROW_META_PHONE_CLASS}>
+              {visibleTransactions.length} deposit{visibleTransactions.length !== 1 ? "s" : ""} · {Math.round(source.reliabilityScore)}% reliable
+            </span>
+          </button>
+        )}
       </div>
       
       {isExpanded && visibleTransactions.length > 0 && (
