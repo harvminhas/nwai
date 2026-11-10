@@ -47,7 +47,7 @@ export function SpendingCategoryRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">
           <div className="min-w-0">
-            <div className={SPENDING_CATEGORY_NAME_CLASS}>{item.name}</div>
+            <div className={SPENDING_CATEGORY_NAME_CLASS} title={item.name}>{item.name}</div>
             {item.subLabel && (
               <div className="text-xs text-neutral-500" style={{ fontSize: "12px" }}>
                 {item.subLabel}

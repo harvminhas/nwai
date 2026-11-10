@@ -3,8 +3,9 @@
 export const SPENDING_CATEGORY_ROW_CLASS =
   "flex items-center gap-3 p-3 rounded-lg transition-colors";
 
+/** Phone: wrap up to 2 lines inside the left column. Desktop (lg+): original `font-medium text-neutral-900` wrapping. */
 export const SPENDING_CATEGORY_NAME_CLASS =
-  "font-medium whitespace-nowrap text-neutral-900";
+  "min-w-0 break-words line-clamp-2 font-medium text-neutral-900 lg:line-clamp-none lg:break-normal";
 
 export const SPENDING_CATEGORY_SPARKLINE_CLASS = "hidden flex-shrink-0 lg:block";
 

@@ -15,8 +15,13 @@ describe("spending category phone read layout", () => {
     expect(SPENDING_CATEGORY_SPARKLINE_CLASS).toContain("lg:block");
   });
 
-  it("keeps the category name, amount, and vs-avg line on one line each", () => {
-    expect(SPENDING_CATEGORY_NAME_CLASS).toContain("whitespace-nowrap");
+  it("lets long names wrap on phone without overlapping the amount, and restores main wrapping at lg", () => {
+    expect(SPENDING_CATEGORY_NAME_CLASS).toContain("min-w-0");
+    expect(SPENDING_CATEGORY_NAME_CLASS).toContain("break-words");
+    expect(SPENDING_CATEGORY_NAME_CLASS).toContain("line-clamp-2");
+    expect(SPENDING_CATEGORY_NAME_CLASS).not.toContain("whitespace-nowrap");
+    expect(SPENDING_CATEGORY_NAME_CLASS).toContain("lg:line-clamp-none");
+    expect(SPENDING_CATEGORY_NAME_CLASS).toContain("lg:break-normal");
     expect(SPENDING_CATEGORY_AMOUNT_CLASS).toContain("whitespace-nowrap");
     expect(SPENDING_CATEGORY_AMOUNT_CLASS).toContain("tabular-nums");
     expect(SPENDING_CATEGORY_TREND_CLASS).toContain("whitespace-nowrap");
