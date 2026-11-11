@@ -297,9 +297,11 @@ describe('Closing date assignment rule', () => {
     
     const months = getSelectableMonths(accountSnapshots, now);
     
-    // November must NEVER appear as selectable (it's the current month)
+    // November appears (it has data) but is flagged as in progress, never complete
     const novMonth = months.find(m => m.yearMonth === '2026-11');
-    expect(novMonth).toBeUndefined();
+    expect(novMonth).toBeDefined();
+    expect(novMonth?.isCurrent).toBe(true);
+    expect(novMonth?.isComplete).toBe(false);
     
     // October should be complete
     const octMonth = months.find(m => m.yearMonth === '2026-10');

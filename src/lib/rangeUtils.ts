@@ -733,9 +733,12 @@ export function resolveWindowMonths(
   const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   
   // Get all available months sorted, excluding current and future months
+  const isSingleMonthRange = range.startsWith("month:");
   const availableMonths = monthlyHistory
     .map(m => m.yearMonth)
-    .filter(m => m < currentYearMonth)  // Only past months
+    // Range windows only cover finished months; an explicit month selection may
+    // target the current (in-progress) month, which is where fresh CSV data lands.
+    .filter(m => m < currentYearMonth || (isSingleMonthRange && m === currentYearMonth))
     .sort();
   
   if (availableMonths.length === 0) {
@@ -819,8 +822,9 @@ export function resolveWindowMonths(
       if (range.startsWith("month:")) {
         const selectedMonth = range.substring(6); // Remove "month:" prefix
         
-        // Check if this month has data
-        if (monthsToUse.includes(selectedMonth)) {
+        // Check if this month has data. An explicit selection can target a month
+        // that is incomplete or still in progress - that is the point of picking it.
+        if (availableMonths.includes(selectedMonth)) {
           selectedMonths = [selectedMonth];
           requestedCount = 1;
           windowStart = selectedMonth;
@@ -990,6 +994,8 @@ export interface SelectableMonth {
   label: string;
   /** True if all active checking/credit accounts have complete coverage for this month */
   isComplete: boolean;
+  /** True for the calendar month in progress (never "complete") */
+  isCurrent?: boolean;
   /** Names of accounts missing coverage (if incomplete) */
   missingAccounts: string[];
 }
@@ -1016,9 +1022,16 @@ export function getSelectableMonths(
   const now = nowOverride || new Date();
   const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   
-  // Generate last 12 finished months (excluding current month)
+  // The current month is listed too when something has actually landed in it -
+  // imported data can run to today while the month is still in progress.
+  const hasCurrentMonthData = (statementHistory ?? []).some(
+    (s) => typeof s.statementDate === "string" && s.statementDate.slice(0, 7) === currentYearMonth
+  );
+  const firstOffset = hasCurrentMonthData ? 0 : 1;
+
+  // Newest first: the current month (if it has data), then the last 12 finished months
   const months: SelectableMonth[] = [];
-  for (let i = 1; i <= 12; i++) {
+  for (let i = firstOffset; i <= 12; i++) {
     const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
     const yearMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
     const label = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
@@ -1098,6 +1111,7 @@ export function getSelectableMonths(
       yearMonth,
       label,
       isComplete,
+      isCurrent: yearMonth === currentYearMonth,
       missingAccounts,
     });
   }

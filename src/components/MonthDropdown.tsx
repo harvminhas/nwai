@@ -62,24 +62,21 @@ export function MonthDropdown({ months, selectedMonth, onChange }: MonthDropdown
             <button
               key={month.yearMonth}
               onClick={() => {
-                if (month.isComplete) {
-                  onChange(`month:${month.yearMonth}`);
-                  setIsOpen(false);
-                }
+                onChange(`month:${month.yearMonth}`);
+                setIsOpen(false);
               }}
-              disabled={!month.isComplete}
               className={`
                 w-full px-4 py-2 text-left text-sm transition-colors
-                ${month.isComplete
-                  ? "hover:bg-gray-50 text-gray-900 cursor-pointer"
-                  : "text-gray-400 cursor-not-allowed"
-                }
+                hover:bg-gray-50 cursor-pointer
+                ${month.isComplete ? "text-gray-900" : "text-gray-600"}
                 ${selectedMonth === month.yearMonth ? "bg-purple-50 text-purple-700" : ""}
               `}
             >
               <div className="flex items-start justify-between gap-2">
                 <span className={month.isComplete ? "font-medium" : ""}>{month.label}</span>
-                {!month.isComplete && (
+                {month.isCurrent ? (
+                  <span className="text-xs text-purple-600 flex-shrink-0">In progress</span>
+                ) : !month.isComplete && (
                   <span className="text-xs text-gray-500 flex-shrink-0">Incomplete</span>
                 )}
               </div>
