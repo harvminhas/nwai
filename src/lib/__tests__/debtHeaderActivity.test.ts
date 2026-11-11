@@ -1,5 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { monthAbbrev, resolveDebtHeaderActivity } from "../debtHeaderActivity";
+import { monthAbbrev, resolveDebtHeaderActivity, txnCountLabel } from "../debtHeaderActivity";
+
+describe("txnCountLabel", () => {
+  it("uses the singular for one transaction", () => {
+    expect(txnCountLabel(1)).toBe("1 transaction");
+  });
+
+  it("uses the plural otherwise", () => {
+    expect(txnCountLabel(0)).toBe("0 transactions");
+    expect(txnCountLabel(4)).toBe("4 transactions");
+  });
+});
 
 describe("monthAbbrev", () => {
   it("returns the short month matching the statement month (Oct from 2026-10)", () => {

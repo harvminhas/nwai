@@ -22,6 +22,7 @@ import { formatLastTransactionDate } from "@/lib/formatLastTransactionDate";
 import { MerchantDrawer, useMerchantDrawer } from "@/app/account/spending/MerchantDrawer";
 import { merchantSlug } from "@/lib/applyRules";
 import { monthAbbrev, resolveDebtHeaderActivity } from "@/lib/debtHeaderActivity";
+import { commitAccountMonth } from "@/lib/accountMonthPayload";
 import DebtHeaderActivity from "./DebtHeaderActivity";
 
 // ── constants ─────────────────────────────────────────────────────────────────
@@ -733,6 +734,9 @@ export default function AccountDetailPage() {
   const [txSubTab, setTxSubTab]       = useState<"expenses" | "income">("expenses");
   const [txPayments, setTxPayments]   = useState<number>(0);
   const [txLoading, setTxLoading]     = useState(false);
+  /** Optimistic chart selection; header figures stay on txMonth until the fetch commits. */
+  const [optimisticYm, setOptimisticYm] = useState<string | null>(null);
+  const monthRequestId = useRef(0);
   const [openPicker, setOpenPicker]   = useState<number | null>(null);
   const pickerBtnRefs                 = useRef<Map<number, HTMLButtonElement>>(new Map());
 
@@ -774,6 +778,24 @@ export default function AccountDetailPage() {
       .catch(() => { /* silent */ });
   }, [slug]);
 
+  /** Apply data + payments + month label from one consolidated response so they cannot drift. */
+  const applyConsolidatedMonth = useCallback((
+    json: { data?: ParsedStatementData | null; paymentsMade?: number; yearMonth?: string | null; previousMonth?: { netWorth: number; assets: number; debts: number } | null },
+    requestedYm?: string | null,
+  ) => {
+    const committed = commitAccountMonth(json, requestedYm ?? "", json.data != null);
+    if (!committed) return false;
+    setData(committed.data as ParsedStatementData);
+    if (json.previousMonth !== undefined) setPreviousMonth(json.previousMonth);
+    setYearMonth(committed.yearMonth);
+    setTxMonth(committed.yearMonth);
+    setTxData((committed.data as ParsedStatementData).expenses ?? null);
+    setTxIncomeData((committed.data as ParsedStatementData).income ?? null);
+    setTxPayments(committed.paymentsMade);
+    setOptimisticYm(null);
+    return true;
+  }, []);
+
   const loadAccountData = useCallback(async (token: string) => {
     setLoading(true); setError(null);
     try {
@@ -793,6 +815,7 @@ export default function AccountDetailPage() {
       setTxIncomeData((json.data as ParsedStatementData | null)?.income ?? null);
       setTxPayments(json.paymentsMade ?? 0);
       setLastTransactionDate(json.lastTransactionDate);
+      setOptimisticYm(null);
 
       const acctHistory: StatementHistoryEntry[] = json.accountStatementHistory?.[slug] ?? [];
       setStmtHistory(acctHistory);
@@ -806,9 +829,9 @@ export default function AccountDetailPage() {
       const apiMonthHasReal = realForAccount.some(e => e.yearMonth === json.yearMonth);
       if (!apiMonthHasReal && realForAccount.length > 0) {
         const latestReal = realForAccount[0].yearMonth;
-        setTxMonth(latestReal);
-        loadCashflow(token, latestReal);
-        // Reload that month so the balance, KPI cards and transaction list all match.
+        // Don't move txMonth until this month's payload lands — otherwise the
+        // · Mon label can sit on latestReal while payments/expenses are still
+        // the carry-forward response above.
         setTxLoading(true);
         try {
           const mres = await fetch(
@@ -816,13 +839,10 @@ export default function AccountDetailPage() {
             { headers: { Authorization: `Bearer ${token}` } }
           );
           const mjson = await mres.json().catch(() => ({}));
-          if (mres.ok && mjson.data) {
-            setData(mjson.data as ParsedStatementData);
-            if (mjson.previousMonth !== undefined) setPreviousMonth(mjson.previousMonth);
-            if (mjson.yearMonth) setYearMonth(mjson.yearMonth);
-            setTxData((mjson.data as ParsedStatementData | null)?.expenses ?? null);
-            setTxIncomeData((mjson.data as ParsedStatementData | null)?.income ?? null);
-            setTxPayments(mjson.paymentsMade ?? 0);
+          if (mres.ok && applyConsolidatedMonth(mjson, latestReal)) {
+            loadCashflow(token, latestReal);
+          } else if (json.yearMonth) {
+            loadCashflow(token, json.yearMonth);
           }
         } finally { setTxLoading(false); }
       } else if (json.yearMonth) {
@@ -889,7 +909,7 @@ export default function AccountDetailPage() {
 
     } catch { setError("Failed to load account"); }
     finally { setLoading(false); }
-  }, [slug]);
+  }, [slug, applyConsolidatedMonth, loadCashflow]);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -930,8 +950,19 @@ export default function AccountDetailPage() {
         { headers: { Authorization: `Bearer ${idToken}` } }
       );
       const json = await res.json().catch(() => ({}));
-      setData(json.data ?? null);
       setStatementCount(json.count ?? 0);
+      monthRequestId.current++;
+      if (!applyConsolidatedMonth(json, json.yearMonth)) {
+        setData(json.data ?? null);
+        setPreviousMonth(json.previousMonth ?? null);
+        setYearMonth(json.yearMonth ?? null);
+        setTxMonth(json.yearMonth ?? null);
+        setTxData(json.data?.expenses ?? null);
+        setTxIncomeData(json.data?.income ?? null);
+        setTxPayments(json.paymentsMade ?? 0);
+        setOptimisticYm(null);
+      }
+      if (json.yearMonth) loadCashflow(idToken, json.yearMonth);
       const acctHistory: StatementHistoryEntry[] = json.accountStatementHistory?.[slug] ?? [];
       setStmtHistory(acctHistory);
       setHistory((Array.isArray(json.history) ? json.history : []).map(
@@ -1015,25 +1046,26 @@ export default function AccountDetailPage() {
 
   async function handleTxMonthSelect(ym: string) {
     if (!idToken || ym === txMonth) return;
-    setTxMonth(ym);
+    const req = ++monthRequestId.current;
+    setOptimisticYm(ym);
     setTxLoading(true);
     try {
       const res = await fetch(
-        `/api/user/statements/consolidated?account=${encodeURIComponent(slug)}&month=${ym}`,
+        `/api/user/statements/consolidated?account=${encodeURIComponent(slug)}&month=${encodeURIComponent(ym)}`,
         { headers: { Authorization: `Bearer ${idToken}` } }
       );
       const json = await res.json().catch(() => ({}));
-      // Update all account state so KPI cards, equity, sub-accounts etc. reflect the selected month
-      if (json.data) setData(json.data as ParsedStatementData);
-      if (json.previousMonth !== undefined) setPreviousMonth(json.previousMonth);
-      if (json.yearMonth) setYearMonth(json.yearMonth);
-      setTxData((json.data as ParsedStatementData | null)?.expenses ?? null);
-      setTxIncomeData((json.data as ParsedStatementData | null)?.income ?? null);
-      setTxPayments(json.paymentsMade ?? 0);
-      // Refresh heatmap for the newly selected month
-      loadCashflow(idToken, ym);
+      if (req !== monthRequestId.current) return;
+      // Commit label + payload together. On failure keep the previous month.
+      if (!res.ok || !applyConsolidatedMonth(json, ym)) {
+        setOptimisticYm(null);
+        return;
+      }
+      loadCashflow(idToken, json.yearMonth || ym);
+    } catch {
+      if (req === monthRequestId.current) setOptimisticYm(null);
     } finally {
-      setTxLoading(false);
+      if (req === monthRequestId.current) setTxLoading(false);
     }
   }
 
@@ -1255,7 +1287,8 @@ export default function AccountDetailPage() {
 
   const formattedLastTxDate = formatLastTransactionDate(lastTransactionDate);
 
-  // Statement-month activity only (same month as the balance). Independent of the chart 3M/6M/All range.
+  // Statement-month activity for the committed header month (txMonth). Chart 3M/6M/All
+  // only changes the visible window; selecting a point loads that month via handleTxMonthSelect.
   const debtActivity = resolveDebtHeaderActivity({
     paymentsMade: txPayments > 0 ? txPayments : (data.paymentsMade ?? 0),
     incomeTotal: data.income?.total ?? 0,
@@ -1447,6 +1480,8 @@ export default function AccountDetailPage() {
             onPointSelect={handleTxMonthSelect}
             header={balanceHeader}
             showMonthDetail={false}
+            followSelection={isDebtAccount}
+            selectedYearMonth={isDebtAccount ? (optimisticYm ?? txMonth) : undefined}
           />
         ) : (
           <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">{balanceHeader}</div>

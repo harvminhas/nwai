@@ -26,7 +26,7 @@ describe("DebtHeaderActivity", () => {
 
     expect(screen.getByText("Paid · Oct")).toBeTruthy();
     expect(screen.getByText("CA$1,142")).toBeTruthy();
-    expect(screen.getByText("1 transactions")).toBeTruthy();
+    expect(screen.getByText("1 transaction")).toBeTruthy();
     expect(screen.getByText("New charges · Oct")).toBeTruthy();
     expect(screen.getByText("CA$18,540")).toBeTruthy();
     expect(screen.getByText("4 transactions")).toBeTruthy();

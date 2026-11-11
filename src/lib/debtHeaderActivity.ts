@@ -5,9 +5,14 @@
  * not as `income`. Income is checking/savings only; on debt accounts it is a
  * legacy fallback when paymentsMade is missing.
  *
- * These figures are for the loaded statement month (headerYm). They must not
- * be derived from the chart's 3M/6M/All range.
+ * Figures are for the loaded statement month (headerYm / the month selected
+ * on Balance Over Time). The chart 3M/6M/All range only changes which points
+ * are visible — it does not aggregate these totals.
  */
+
+export function txnCountLabel(count: number): string {
+  return count === 1 ? "1 transaction" : `${count} transactions`;
+}
 
 const AMOUNT_EPS = 0.01;
 

@@ -21,6 +21,11 @@ import {
   CANONICAL_DOT_CONFIG,
   getCanonicalLineColor,
 } from "@/lib/canonicalChartConfig";
+import {
+  latestSelectableMonth,
+  selectionAfterRangeChange,
+  sliceHistoryByRange,
+} from "@/lib/chartMonthSelection";
 
 function shortMonthLabel(yearMonth: string): string {
   const [y, m] = yearMonth.split("-");
@@ -71,7 +76,8 @@ const RANGES = [
   { label: "All", months: 0 },
 ];
 
-// Standalone clickable dot component — canonical green emerald, r=6 selected / r=4 ordinary
+// Standalone clickable dot — canonical green emerald, r=6 selected / r=4 ordinary.
+// Invisible hit ring so a finger tap on mobile hits the point.
 function ChartDot({
   cx, cy, yearMonth, isVisible, isSelected, opacity,
   onSelect,
@@ -81,18 +87,31 @@ function ChartDot({
   onSelect: (ym: string) => void;
 }) {
   if (!isVisible || cx == null || cy == null) return <g />;
+  const vis = isSelected ? CANONICAL_DOT_CONFIG.selected : CANONICAL_DOT_CONFIG.ordinary;
+  function select(e: { stopPropagation: () => void; preventDefault: () => void }) {
+    e.stopPropagation();
+    e.preventDefault();
+    onSelect(yearMonth);
+  }
   return (
-    <circle
-      cx={cx} cy={cy}
-      r={isSelected ? 6 : 4}
-      fill={isSelected ? "#059669" : "#10b981"}
-      stroke="#fff"
-      strokeWidth={isSelected ? 3 : 2}
-      fillOpacity={opacity ?? 1}
-      style={{ cursor: "pointer", outline: "none" }}
-      onMouseDown={(e) => e.preventDefault()}
-      onClick={(e) => { e.stopPropagation(); onSelect(yearMonth); }}
-    />
+    <g>
+      <circle
+        cx={cx} cy={cy}
+        r={16}
+        fill="transparent"
+        style={{ cursor: "pointer", outline: "none" }}
+        onPointerDown={select}
+      />
+      <circle
+        cx={cx} cy={cy}
+        r={vis.r}
+        fill={isSelected ? "#059669" : "#10b981"}
+        stroke="#fff"
+        strokeWidth={vis.strokeWidth}
+        fillOpacity={opacity ?? 1}
+        style={{ pointerEvents: "none" }}
+      />
+    </g>
   );
 }
 
@@ -103,6 +122,8 @@ export default function NetWorthChart({
   onPointSelect,
   header,
   showMonthDetail = true,
+  followSelection = false,
+  selectedYearMonth,
 }: {
   history: { yearMonth: string; netWorth: number; totalAssets?: number; totalDebts?: number; expensesTotal?: number; isEstimate?: boolean }[];
   isDebt?: boolean;
@@ -113,9 +134,19 @@ export default function NetWorthChart({
   header?: ReactNode;
   /** Show the click-a-point month detail panel. Off where the page has its own header. */
   showMonthDetail?: boolean;
+  /**
+   * Debt-account header mode: keep a month selected (default = latest),
+   * show a Latest reset, and snap back to latest if range hides the selection.
+   * Non-debt charts leave this false (toggle-to-deselect, no Latest).
+   */
+  followSelection?: boolean;
+  /** Controlled selected month. When omitted, selection is internal. */
+  selectedYearMonth?: string | null;
 }) {
   const [range, setRange] = useState(3);
-  const [selectedYm, setSelectedYm] = useState<string | null>(null);
+  const [internalYm, setInternalYm] = useState<string | null>(null);
+  const isControlled = selectedYearMonth !== undefined;
+  const selectedYm = isControlled ? selectedYearMonth : internalYm;
 
   // Onboarding: first 3 real months of data — avoid alarming red colours
   const realPoints = history.filter((h) => !h.isEstimate);
@@ -154,15 +185,18 @@ export default function NetWorthChart({
     }
 
     return { ...pt, netWorthSolid: solid, netWorthDotted: dotted };
-  });  const data = range === 0 ? connected : connected.slice(-range);
+  });
+  const data = sliceHistoryByRange(connected, range);
   const hasEstimates = data.some((p) => p.isEstimate);
+  const latestYm = latestSelectableMonth(data);
+  const displaySelected = followSelection ? (selectedYm ?? latestYm) : selectedYm;
   
   // Calculate adaptive domain for better visibility of changes
   const values = data.map(p => p.netWorth);
   const domain = calculateBalanceChartDomain(values);
 
   // Month detail for the selected point
-  const selIdx   = selectedYm ? data.findIndex((p) => p.yearMonth === selectedYm) : -1;
+  const selIdx   = displaySelected ? data.findIndex((p) => p.yearMonth === displaySelected) : -1;
   const selPt    = selIdx >= 0 ? data[selIdx] : null;
   const prevPt   = selIdx > 0  ? data[selIdx - 1] : null;
   const selDelta = selPt && prevPt ? selPt.netWorth - prevPt.netWorth : null;
@@ -174,11 +208,23 @@ export default function NetWorthChart({
   const isLargeJump = selDelta !== null && baseline > 0 && Math.abs(selDelta) / baseline > 0.25;
 
   function handleSelect(ym: string) {
-    setSelectedYm((prev) => prev === ym ? null : ym);
-    if (onPointSelect) {
-      const pt = data.find((p) => p.yearMonth === ym);
-      if (pt && !pt.isEstimate) onPointSelect(ym);
+    const pt = data.find((p) => p.yearMonth === ym);
+    if (!pt || pt.isEstimate) return;
+    if (followSelection) {
+      if (!isControlled) setInternalYm(ym);
+      onPointSelect?.(ym);
+      return;
     }
+    setInternalYm((prev) => prev === ym ? null : ym);
+    onPointSelect?.(ym);
+  }
+
+  function handleRangeClick(months: number) {
+    setRange(months);
+    if (!followSelection) return;
+    const next = sliceHistoryByRange(connected, months);
+    const nextYm = selectionAfterRangeChange(displaySelected ?? null, next);
+    if (nextYm && nextYm !== displaySelected) onPointSelect?.(nextYm);
   }
 
   return (
@@ -196,10 +242,19 @@ export default function NetWorthChart({
           )}
         </div>
         <div className="flex gap-1">
+          {followSelection && latestYm && displaySelected && displaySelected !== latestYm && (
+            <button
+              type="button"
+              onClick={() => onPointSelect?.(latestYm)}
+              className="rounded-full px-3 py-1 text-xs font-medium text-gray-400 hover:text-gray-600 transition"
+            >
+              Latest
+            </button>
+          )}
           {RANGES.map((r) => (
             <button
               key={r.label}
-              onClick={() => setRange(r.months)}
+              onClick={() => handleRangeClick(r.months)}
               className={`rounded-full px-3 py-1 text-xs font-medium transition ${
                 range === r.months
                   ? "bg-purple-100 text-purple-700"
@@ -257,6 +312,7 @@ export default function NetWorthChart({
             {/* Solid line — real data */}
             <Line
               {...CANONICAL_LINE_CONFIG}
+              activeDot={followSelection ? false : CANONICAL_LINE_CONFIG.activeDot}
               dataKey="netWorthSolid"
               stroke={getCanonicalLineColor("balance")}
               dot={(props) => {
@@ -267,7 +323,7 @@ export default function NetWorthChart({
                     cx={p.cx} cy={p.cy}
                     yearMonth={p.payload.yearMonth}
                     isVisible={p.payload.netWorthSolid != null}
-                    isSelected={p.payload.yearMonth === selectedYm}
+                    isSelected={p.payload.yearMonth === displaySelected}
                     onSelect={handleSelect}
                   />
                 );
@@ -291,7 +347,7 @@ export default function NetWorthChart({
                     cx={p.cx} cy={p.cy}
                     yearMonth={p.payload.yearMonth}
                     isVisible={p.payload.netWorthDotted != null}
-                    isSelected={p.payload.yearMonth === selectedYm}
+                    isSelected={p.payload.yearMonth === displaySelected}
                     opacity={0.45}
                     onSelect={handleSelect}
                   />
@@ -391,7 +447,7 @@ export default function NetWorthChart({
               )}
             </div>
             <button
-              onClick={() => setSelectedYm(null)}
+              onClick={() => setInternalYm(null)}
               className="shrink-0 rounded-full p-1 text-gray-400 hover:bg-purple-100 hover:text-gray-600"
               aria-label="Close"
             >
