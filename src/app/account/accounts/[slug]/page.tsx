@@ -21,6 +21,8 @@ import { accountGroup } from "@/lib/assetsSummary";
 import { formatLastTransactionDate } from "@/lib/formatLastTransactionDate";
 import { MerchantDrawer, useMerchantDrawer } from "@/app/account/spending/MerchantDrawer";
 import { merchantSlug } from "@/lib/applyRules";
+import { monthAbbrev, resolveDebtHeaderActivity } from "@/lib/debtHeaderActivity";
+import DebtHeaderActivity from "./DebtHeaderActivity";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -1253,6 +1255,15 @@ export default function AccountDetailPage() {
 
   const formattedLastTxDate = formatLastTransactionDate(lastTransactionDate);
 
+  // Statement-month activity only (same month as the balance). Independent of the chart 3M/6M/All range.
+  const debtActivity = resolveDebtHeaderActivity({
+    paymentsMade: txPayments > 0 ? txPayments : (data.paymentsMade ?? 0),
+    incomeTotal: data.income?.total ?? 0,
+    incomeTxnCount: data.income?.transactions?.length ?? 0,
+    expensesTotal: data.expenses?.total ?? 0,
+    expensesTxnCount: data.expenses?.transactions?.length ?? 0,
+  });
+
   const balanceHeader = (
     <div className="mb-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -1281,7 +1292,14 @@ export default function AccountDetailPage() {
             <p className="mt-1 text-[10px] text-gray-400">1 {currency} = {fxRate.toFixed(4)} {homeCurrency}</p>
           )}
         </div>
-        {!isInvestment && (hasActualIncome || hasActualExpenses) && (
+        {isDebtAccount ? (
+          <DebtHeaderActivity
+            monthAbbrev={headerYm ? monthAbbrev(headerYm) : ""}
+            paid={debtActivity.paid}
+            newCharges={debtActivity.newCharges}
+            formatAmount={(n) => fmt(n, currency)}
+          />
+        ) : !isInvestment && (hasActualIncome || hasActualExpenses) ? (
           <div className="flex shrink-0 gap-6 text-right">
             {hasActualIncome && (
               <div>
@@ -1297,7 +1315,7 @@ export default function AccountDetailPage() {
               </div>
             )}
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   );
