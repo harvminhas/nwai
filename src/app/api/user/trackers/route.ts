@@ -28,6 +28,8 @@ export interface TrackerLinkedTransaction {
   amount: number;
   category: string;
   kind: TrackerTxKind;
+  /** Snapshot of the spending/income API `accountLabel` (e.g. "TD Chequing"). */
+  accountLabel?: string;
 }
 
 export interface Tracker {
@@ -57,6 +59,7 @@ function normalizeLinkedTransactions(value: unknown): TrackerLinkedTransaction[]
     if (!raw || typeof raw !== "object") continue;
     const tx = raw as Partial<TrackerLinkedTransaction>;
     if (typeof tx.txFingerprint !== "string" || tx.txFingerprint.length === 0) continue;
+    const accountLabel = typeof tx.accountLabel === "string" ? tx.accountLabel.trim() : "";
     items.push({
       txFingerprint: tx.txFingerprint,
       merchant: typeof tx.merchant === "string" ? tx.merchant : "",
@@ -64,6 +67,7 @@ function normalizeLinkedTransactions(value: unknown): TrackerLinkedTransaction[]
       amount: typeof tx.amount === "number" ? tx.amount : 0,
       category: typeof tx.category === "string" && tx.category.length > 0 ? tx.category : "Other",
       kind: tx.kind === "income" ? "income" : "expense",
+      ...(accountLabel ? { accountLabel } : {}),
     });
   }
   return items;

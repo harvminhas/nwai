@@ -11,6 +11,8 @@ export interface TxApiTransaction {
   merchant?: string;
   amount?: number;
   category?: string;
+  accountLabel?: string;
+  accountName?: string;
 }
 
 /** Alias used by Planner tests and call sites. */
@@ -23,6 +25,8 @@ export interface LinkableTransaction {
   amount: number;
   category: string;
   kind: LinkableTransactionKind;
+  /** Display name from spending/income APIs (`accountLabel`, e.g. "TD Chequing"). */
+  accountLabel?: string;
 }
 
 /** Alias used by Planner tests and call sites. */
@@ -51,6 +55,13 @@ export function kindForTransactionSource(source: "spending" | "income"): Linkabl
   return source === "income" ? "income" : "expense";
 }
 
+/** Prefer the spending/income API display label; fall back to accountName. Never use slug/id. */
+export function accountLabelFromApi(tx: TxApiTransaction): string {
+  if (typeof tx.accountLabel === "string" && tx.accountLabel.trim()) return tx.accountLabel.trim();
+  if (typeof tx.accountName === "string" && tx.accountName.trim()) return tx.accountName.trim();
+  return "";
+}
+
 /** Map API `fingerprint` onto `txFingerprint`. Drop rows with no fingerprint. */
 export function mapApiTransactionsToLinkable(
   transactions: TxApiTransaction[] | null | undefined,
@@ -60,6 +71,7 @@ export function mapApiTransactionsToLinkable(
   const mapped: LinkableTransaction[] = [];
   for (const tx of transactions) {
     if (typeof tx.fingerprint !== "string" || tx.fingerprint.length === 0) continue;
+    const accountLabel = accountLabelFromApi(tx);
     mapped.push({
       txFingerprint: tx.fingerprint,
       date: tx.date ?? "",
@@ -67,6 +79,7 @@ export function mapApiTransactionsToLinkable(
       amount: typeof tx.amount === "number" ? tx.amount : 0,
       category: tx.category || (kind === "income" ? "Income" : "Other"),
       kind,
+      ...(accountLabel ? { accountLabel } : {}),
     });
   }
   return mapped;
@@ -90,8 +103,71 @@ function matchesSearch(tx: LinkableTransaction, query: string): boolean {
   return (
     tx.merchant.toLowerCase().includes(query) ||
     tx.date.includes(query) ||
-    tx.amount.toString().includes(query)
+    tx.amount.toString().includes(query) ||
+    (tx.accountLabel ?? "").toLowerCase().includes(query)
   );
+}
+
+/** date · account · Spending · category — omit empty account labels. */
+export function transactionMetaLine(
+  tx: {
+    date: string;
+    accountLabel?: string;
+    category: string;
+    kind?: LinkableTransactionKind;
+  },
+  opts?: { includeKind?: boolean }
+): string {
+  const parts: string[] = [];
+  if (tx.date) parts.push(tx.date);
+  const account = (tx.accountLabel ?? "").trim();
+  if (account) parts.push(account);
+  if (opts?.includeKind && tx.kind) {
+    parts.push(tx.kind === "income" ? "Income" : "Spending");
+  }
+  if (tx.category) parts.push(tx.category);
+  return parts.join(" · ");
+}
+
+export function resolveAccountLabel(
+  stored: string | undefined,
+  txFingerprint: string,
+  lookup: ReadonlyMap<string, string>
+): string {
+  const fromStore = (stored ?? "").trim();
+  if (fromStore) return fromStore;
+  return (lookup.get(txFingerprint) ?? "").trim();
+}
+
+export function accountLabelLookup(
+  transactions: Array<{ txFingerprint: string; accountLabel?: string }>
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const tx of transactions) {
+    const label = (tx.accountLabel ?? "").trim();
+    if (label) map.set(tx.txFingerprint, label);
+  }
+  return map;
+}
+
+export async function fetchLinkableTransactions(
+  token: string,
+  context: TransactionPickerContext
+): Promise<LinkableTransaction[]> {
+  const sources = transactionSourcesForContext(context);
+  const results = await Promise.all(
+    sources.map(async (source) => {
+      const res = await fetch(urlForTransactionSource(source), {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        throw new Error("Failed to load transactions. Please try again.");
+      }
+      const data = await res.json();
+      return mapApiTransactionsToLinkable(data.transactions, kindForTransactionSource(source));
+    })
+  );
+  return results.flat();
 }
 
 function matchesContextAndFilter(

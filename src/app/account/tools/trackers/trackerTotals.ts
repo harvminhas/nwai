@@ -30,12 +30,13 @@ export function trackerTransactionsToCsv(
   transactions: TrackerLinkedTransaction[] | null | undefined
 ): string {
   const rows = [...(transactions ?? [])].sort((a, b) => b.date.localeCompare(a.date));
-  const header = ["Date", "Type", "Merchant", "Category", "Amount"].map(csvCell).join(",");
+  const header = ["Date", "Type", "Merchant", "Account", "Category", "Amount"].map(csvCell).join(",");
   const body = rows.map((tx) =>
     [
       csvCell(tx.date),
       csvCell(tx.kind === "income" ? "Income" : "Spending"),
       csvCell(tx.merchant),
+      csvCell(tx.accountLabel ?? ""),
       csvCell(tx.category),
       csvCell(tx.amount),
     ].join(",")

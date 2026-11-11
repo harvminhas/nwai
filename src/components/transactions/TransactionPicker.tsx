@@ -4,12 +4,10 @@ import { useEffect, useState } from "react";
 import { formatCurrency } from "@/lib/currencyUtils";
 import {
   PICKER_VISIBLE_LIMIT,
+  fetchLinkableTransactions,
   filterLinkableTransactions,
-  kindForTransactionSource,
-  mapApiTransactionsToLinkable,
   toggleTxSelection,
-  transactionSourcesForContext,
-  urlForTransactionSource,
+  transactionMetaLine,
   type LinkableTransaction,
   type TransactionPickerContext,
   type TransactionPickerFilterMode,
@@ -52,27 +50,16 @@ export function TransactionPicker({
 
   useEffect(() => {
     if (!token) return;
+    const tok = token;
     let cancelled = false;
 
     async function loadTransactions() {
       setLoading(true);
       setLoadError(null);
       try {
-        const sources = transactionSourcesForContext(context);
-        const results = await Promise.all(
-          sources.map(async (source) => {
-            const res = await fetch(urlForTransactionSource(source), {
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            if (!res.ok) {
-              throw new Error("Failed to load transactions. Please try again.");
-            }
-            const data = await res.json();
-            return mapApiTransactionsToLinkable(data.transactions, kindForTransactionSource(source));
-          })
-        );
+        const loaded = await fetchLinkableTransactions(tok, context);
         if (cancelled) return;
-        setTransactions(results.flat());
+        setTransactions(loaded);
       } catch (err) {
         console.error("Failed to load transactions:", err);
         const message = "Failed to load transactions. Please try again.";
@@ -180,9 +167,8 @@ export function TransactionPicker({
                     />
                     <div className="min-w-0 flex-1">
                       <p className="break-words text-sm font-medium text-gray-900">{tx.merchant}</p>
-                      <p className="text-xs text-gray-500">
-                        {tx.date} · {tx.category}
-                        {context === "both" ? ` · ${tx.kind === "income" ? "Income" : "Spending"}` : ""}
+                      <p className="break-words text-xs text-gray-500">
+                        {transactionMetaLine(tx, { includeKind: context === "both" })}
                       </p>
                     </div>
                     <span className="shrink-0 text-sm font-semibold text-gray-900">

@@ -58,13 +58,14 @@ describe("trackerTransactionsToCsv", () => {
         date: "2026-06-01",
         merchant: "CRA",
         category: "Income",
+        accountLabel: "TD Chequing",
       }),
     ]);
     expect(csv).toBe(
       [
-        "Date,Type,Merchant,Category,Amount",
-        "2026-06-01,Income,CRA,Income,400",
-        '2026-01-01,Spending,"Cafe, ""Main""",Dining,12.5',
+        "Date,Type,Merchant,Account,Category,Amount",
+        "2026-06-01,Income,CRA,TD Chequing,Income,400",
+        '2026-01-01,Spending,"Cafe, ""Main""",,Dining,12.5',
       ].join("\n")
     );
   });

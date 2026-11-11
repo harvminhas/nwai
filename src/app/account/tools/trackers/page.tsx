@@ -13,7 +13,13 @@ import { formatCurrency } from "@/lib/currencyUtils";
 import { useConfirm } from "@/components/useConfirm";
 import { useToast } from "@/components/useToast";
 import { TransactionPicker } from "@/components/transactions/TransactionPicker";
-import { reselectById } from "@/components/transactions/linkTransactions";
+import {
+  accountLabelLookup,
+  fetchLinkableTransactions,
+  reselectById,
+  resolveAccountLabel,
+  transactionMetaLine,
+} from "@/components/transactions/linkTransactions";
 import { TrackerCard } from "./TrackerCard";
 import {
   computeTrackerTotals,
@@ -322,8 +328,34 @@ function TrackerDetailModal({
   onError: (message: string) => void;
 }) {
   const [showLinkTx, setShowLinkTx] = useState(false);
+  const [accountLookup, setAccountLookup] = useState<Map<string, string>>(new Map());
   const totals = computeTrackerTotals(tracker.linkedTransactions);
-  const linked = [...tracker.linkedTransactions].sort((a, b) => b.date.localeCompare(a.date));
+  const missingAccountKey = tracker.linkedTransactions
+    .filter((tx) => !(tx.accountLabel ?? "").trim())
+    .map((tx) => tx.txFingerprint)
+    .join(",");
+  const linked = [...tracker.linkedTransactions]
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .map((tx) => ({
+      ...tx,
+      accountLabel: resolveAccountLabel(tx.accountLabel, tx.txFingerprint, accountLookup) || undefined,
+    }));
+
+  useEffect(() => {
+    if (!token || !missingAccountKey) return;
+    let cancelled = false;
+    void fetchLinkableTransactions(token, "both")
+      .then((rows) => {
+        if (!cancelled) setAccountLookup(accountLabelLookup(rows));
+      })
+      .catch(() => {
+        // Display-time lookup is best-effort; omit the account if it fails.
+        if (!cancelled) setAccountLookup(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, tracker.id, missingAccountKey]);
 
   async function handleUnlinkTransaction(txFingerprint: string) {
     if (!token) return;
@@ -352,7 +384,7 @@ function TrackerDetailModal({
   }
 
   function handleExportCsv() {
-    const csv = trackerTransactionsToCsv(tracker.linkedTransactions);
+    const csv = trackerTransactionsToCsv(linked);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -432,8 +464,8 @@ function TrackerDetailModal({
                   >
                     <div className="min-w-0 flex-1">
                       <p className="break-words text-sm font-medium text-gray-900">{tx.merchant}</p>
-                      <p className="text-xs text-gray-500">
-                        {tx.date} · {tx.kind === "income" ? "Income" : "Spending"} · {tx.category}
+                      <p className="break-words text-xs text-gray-500">
+                        {transactionMetaLine(tx, { includeKind: true })}
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-3">
@@ -481,6 +513,7 @@ function TrackerDetailModal({
               amount: tx.amount,
               category: tx.category || (tx.kind === "income" ? "Income" : "Other"),
               kind: tx.kind,
+              ...(tx.accountLabel ? { accountLabel: tx.accountLabel } : {}),
             }));
             const res = await fetch("/api/user/trackers", {
               method: "PUT",
