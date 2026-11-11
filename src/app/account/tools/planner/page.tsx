@@ -8,14 +8,8 @@ import type { Plan, PlanLinkedTransaction, PlanCashEntry } from "@/app/api/user/
 import { formatCurrency } from "@/lib/currencyUtils";
 import { useConfirm } from "@/components/useConfirm";
 import { useToast } from "@/components/useToast";
-import {
-  PLANNER_SPENDING_TXNS_URL,
-  filterPlannerLinkableTransactions,
-  mapSpendingTransactionsToLinkable,
-  reselectPlanById,
-  togglePlannerTxSelection,
-  type PlannerLinkableTransaction,
-} from "./linkTransactions";
+import { TransactionPicker } from "@/components/transactions/TransactionPicker";
+import { reselectPlanById } from "./linkTransactions";
 import { PlanCard } from "./PlanCard";
 
 export default function PlannerPage() {
@@ -545,12 +539,39 @@ function PlanDetailModal({
 
       {/* Link Transaction Modal */}
       {showLinkTx && (
-        <LinkTransactionModal
-          plan={plan}
+        <TransactionPicker
           token={token}
+          context="expenses"
+          linkedFingerprints={plan.linkedTransactions.map((tx) => tx.txFingerprint)}
           onClose={() => setShowLinkTx(false)}
-          onUpdate={onUpdate}
           onError={onError}
+          onConfirm={async (selectedTxs) => {
+            if (!token) {
+              throw new Error("Failed to link transactions. Please try again.");
+            }
+            const newLinked: PlanLinkedTransaction[] = selectedTxs.map((tx) => ({
+              txFingerprint: tx.txFingerprint,
+              merchant: tx.merchant,
+              date: tx.date,
+              amount: tx.amount,
+              category: tx.category || "Other",
+            }));
+            const res = await fetch("/api/user/plans", {
+              method: "PUT",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                ...plan,
+                linkedTransactions: [...plan.linkedTransactions, ...newLinked],
+              }),
+            });
+            if (!res.ok) {
+              throw new Error("Failed to link transactions. Please try again.");
+            }
+            onUpdate();
+          }}
         />
       )}
 
@@ -564,188 +585,6 @@ function PlanDetailModal({
           onError={onError}
         />
       )}
-    </>
-  );
-}
-
-function LinkTransactionModal({
-  plan,
-  token,
-  onClose,
-  onUpdate,
-  onError,
-}: {
-  plan: Plan;
-  token: string | null;
-  onClose: () => void;
-  onUpdate: () => void;
-  onError: (message: string) => void;
-}) {
-  const [search, setSearch] = useState("");
-  const [transactions, setTransactions] = useState<PlannerLinkableTransaction[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-
-  // Load transactions when modal opens
-  useEffect(() => {
-    if (token) {
-      loadTransactions();
-    }
-  }, [token]);
-
-  async function loadTransactions() {
-    if (!token) return;
-    setLoading(true);
-    setLoadError(null);
-    try {
-      const res = await fetch(PLANNER_SPENDING_TXNS_URL, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        setLoadError("Failed to load transactions. Please try again.");
-        onError("Failed to load transactions. Please try again.");
-        setTransactions([]);
-        return;
-      }
-      const data = await res.json();
-      setTransactions(mapSpendingTransactionsToLinkable(data.transactions));
-    } catch (err) {
-      console.error("Failed to load transactions:", err);
-      setLoadError("Failed to load transactions. Please try again.");
-      onError("Failed to load transactions. Please try again.");
-      setTransactions([]);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const filtered = filterPlannerLinkableTransactions(transactions, {
-    linkedFingerprints: plan.linkedTransactions.map((tx) => tx.txFingerprint),
-    search,
-  });
-
-  async function handleSave() {
-    if (!token) return;
-    setSaveError(null);
-
-    const newLinked: PlanLinkedTransaction[] = [];
-    for (const txFingerprint of selected) {
-      const tx = transactions.find((t) => t.txFingerprint === txFingerprint);
-      if (!tx) continue;
-      newLinked.push({
-        txFingerprint,
-        merchant: tx.merchant,
-        date: tx.date,
-        amount: tx.amount,
-        category: tx.category || "Other",
-      });
-    }
-
-    const updated = {
-      ...plan,
-      linkedTransactions: [...plan.linkedTransactions, ...newLinked],
-    };
-
-    try {
-      const res = await fetch("/api/user/plans", {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(updated),
-      });
-      if (!res.ok) {
-        const message = "Failed to link transactions. Please try again.";
-        setSaveError(message);
-        onError(message);
-        return;
-      }
-      onUpdate();
-      onClose();
-    } catch (err) {
-      console.error("Failed to link transactions:", err);
-      const message = "Failed to link transactions. Please try again.";
-      setSaveError(message);
-      onError(message);
-    }
-  }
-
-  return (
-    <>
-      <div className="fixed inset-0 z-60 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="fixed inset-0 z-70 flex items-center justify-center p-4">
-        <div className="w-full max-w-2xl max-h-[80vh] rounded-xl bg-white shadow-2xl flex flex-col">
-          <div className="border-b border-gray-200 p-6">
-            <h2 className="text-xl font-semibold text-gray-900">Link Transactions</h2>
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search merchant, date, or amount..."
-              className="mt-4 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none"
-            />
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-6">
-            {loading ? (
-              <div className="flex items-center justify-center py-12">
-                <div className="h-6 w-6 animate-spin rounded-full border-4 border-purple-600 border-t-transparent" />
-              </div>
-            ) : loadError && transactions.length === 0 ? (
-              <p className="py-8 text-center text-sm text-red-600">{loadError}</p>
-            ) : filtered.length === 0 ? (
-              <p className="py-8 text-center text-sm text-gray-500">No transactions found</p>
-            ) : (
-              <div className="space-y-2">
-                {filtered.slice(0, 50).map((tx) => (
-                  <label
-                    key={tx.txFingerprint}
-                    className="flex items-center gap-3 rounded-lg border border-gray-200 p-3 hover:bg-gray-50 cursor-pointer"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selected.has(tx.txFingerprint)}
-                      onChange={(e) => {
-                        setSelected(togglePlannerTxSelection(selected, tx.txFingerprint, e.target.checked));
-                      }}
-                      className="h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-                    />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-gray-900">{tx.merchant}</p>
-                      <p className="text-xs text-gray-500">{tx.date} · {tx.category}</p>
-                    </div>
-                    <span className="text-sm font-semibold text-gray-900">
-                      {formatCurrency(tx.amount, "CAD")}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="border-t border-gray-200 p-6 flex flex-col gap-3">
-            {saveError && <p className="text-sm text-red-600">{saveError}</p>}
-            <div className="flex gap-3">
-              <button
-                onClick={onClose}
-                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={selected.size === 0}
-                className="flex-1 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
-              >
-                Link {selected.size} Transaction{selected.size !== 1 ? "s" : ""}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
     </>
   );
 }

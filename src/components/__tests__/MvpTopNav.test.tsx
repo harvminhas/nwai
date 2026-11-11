@@ -119,6 +119,7 @@ describe("MvpTopNav phone header and drawer", () => {
     expect(footer.textContent).toContain("Privacy & Terms");
     expect(footer.textContent).toContain("Sign out");
     expect(drawer.querySelector('a[href="/account/tools/planner"]')).toBeTruthy();
+    expect(drawer.querySelector('a[href="/account/tools/trackers"]')).toBeTruthy();
     expect(drawer.querySelector('a[href="/account/tools/debt-payoff"]')).toBeTruthy();
   });
 });

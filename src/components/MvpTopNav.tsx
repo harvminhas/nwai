@@ -204,6 +204,12 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
                     Planner
                   </Link>
                   <Link
+                    href="/account/tools/trackers"
+                    className="block rounded-xl px-3 py-2 text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-700"
+                  >
+                    Trackers
+                  </Link>
+                  <Link
                     href="/account/tools/debt-payoff"
                     className="block rounded-xl px-3 py-2 text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-700"
                   >
@@ -407,6 +413,13 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
               className={drawerLinkClass(isActive("/account/tools/planner"))}
             >
               Planner
+            </Link>
+            <Link
+              href="/account/tools/trackers"
+              onClick={() => setDrawerOpen(false)}
+              className={drawerLinkClass(isActive("/account/tools/trackers"))}
+            >
+              Trackers
             </Link>
             <Link
               href="/account/tools/debt-payoff"
