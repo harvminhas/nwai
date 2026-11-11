@@ -29,6 +29,7 @@ const linkable = (
   merchant: "Cafe",
   amount: 12.5,
   category: "Dining",
+  kind: "expense",
   ...overrides,
 });
 
@@ -44,6 +45,7 @@ describe("mapSpendingTransactionsToLinkable", () => {
         date: "2026-01-15",
         amount: 10,
         category: "Shopping",
+        kind: "expense",
       },
     ]);
   });
@@ -86,7 +88,7 @@ describe("filterPlannerLinkableTransactions", () => {
     const result = filterPlannerLinkableTransactions(pastTxns, {
       linkedFingerprints: [],
     });
-    expect(result.map((tx) => tx.txFingerprint)).toEqual(["tickets", "hotel", "gear"]);
+    expect(result.map((tx) => tx.txFingerprint)).toEqual(["gear", "hotel", "tickets"]);
   });
 
   it("results are ordered newest first", () => {
