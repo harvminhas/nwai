@@ -10,6 +10,7 @@ import SubscriptionsCard from "@/components/SubscriptionsCard";
 import InsightsSection from "@/components/InsightsSection";
 import type { ParsedStatementData, ManualAsset, InvestmentHolding, Subscription, ExpenseTransaction, IncomeTransaction } from "@/lib/types";
 import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
+import { findAccountHistoryLabel, resolveAccountDisplayName } from "@/lib/accountListLabel";
 import CsvImportPanel from "@/components/CsvImportPanel";
 import type { PaymentFrequency } from "@/app/api/user/account-rates/route";
 import { CategoryPicker, categoryColor } from "@/app/account/spending/shared";
@@ -605,6 +606,8 @@ export default function AccountDetailPage() {
   const searchParams = useSearchParams();
 
   const [data, setData]                   = useState<ParsedStatementData | null>(null);
+  /** Stable What Changed / balance-history label — does not change with the selected month. */
+  const [historyLabel, setHistoryLabel]   = useState<string | null>(null);
   const [previousMonth, setPreviousMonth] = useState<{ netWorth: number; assets: number; debts: number } | null>(null);
   const [lastTransactionDate, setLastTransactionDate] = useState<string | undefined>(undefined);
   const [yearMonth, setYearMonth]         = useState<string | null>(null);
@@ -806,6 +809,14 @@ export default function AccountDetailPage() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) { setError(json.error || "Failed to load account"); return; }
       setData(json.data ?? null);
+      const snapshotEntry = (json.accountSnapshots as Array<{ slug?: string; accountName?: string }> | undefined)
+        ?.find((entry) => (entry.slug ?? "").toLowerCase() === slug.toLowerCase());
+      setHistoryLabel(
+        findAccountHistoryLabel(json.accountBalanceHistory, slug)
+        || snapshotEntry?.accountName
+        || json.data?.accountName
+        || null
+      );
       setStatementCount(json.count ?? 0);
       setPreviousMonth(json.previousMonth ?? null);
       setYearMonth(json.yearMonth ?? null);
@@ -1201,6 +1212,12 @@ export default function AccountDetailPage() {
   );
 
   const accountType      = data.accountType ?? "other";
+  const accountDisplay   = resolveAccountDisplayName({
+    accountName: data.accountName,
+    bankName: data.bankName,
+    historyLabel,
+    fallback: slug,
+  });
   const isDebtAccount    = DEBT_TYPES.has(accountType);
   const isInvestment     = accountType === "investment";
   const currency         = (data as ParsedStatementData & { currency?: string }).currency ?? homeCurrency;
@@ -1367,15 +1384,17 @@ export default function AccountDetailPage() {
       )}
 
       {/* Breadcrumb */}
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-sm text-gray-500">
-          <Link href={isDebtAccount ? "/account/liabilities?tab=accounts" : "/account/assets?tab=accounts"} className="hover:text-purple-600">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 text-sm text-gray-500">
+          <Link href={isDebtAccount ? "/account/liabilities?tab=accounts" : "/account/assets?tab=accounts"} className="shrink-0 hover:text-purple-600">
             {isDebtAccount ? "Debts" : "Assets"}
           </Link>
-          <span>/</span>
-          <span className="font-medium text-gray-700">{data.accountName ?? data.bankName ?? slug}</span>
+          <span className="shrink-0">/</span>
+          <span className="min-w-0 font-medium text-gray-700 break-words">{accountDisplay.primary}</span>
         </div>
-        <AccountSwitcher />
+        <div className="shrink-0">
+          <AccountSwitcher />
+        </div>
       </div>
 
       {/* Account header */}

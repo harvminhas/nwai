@@ -11,6 +11,7 @@ import { formatLastTransactionDate } from "@/lib/formatLastTransactionDate";
 import { triggerProfileRefetch } from "@/lib/profileRefetch";
 import { isCategoryGroupOpen, toggleCategoryGroup } from "@/lib/categoryGroupExpand";
 import { accountDisplayLabel, joinAccountMeta } from "@/lib/accountListLabel";
+import { accountDetailHref } from "@/lib/accountDetailHref";
 import {
   AccountCategoryList,
   AccountCategorySection,
@@ -254,7 +255,7 @@ function AccountLine({ account, currency }: { account: AssetAccount; currency: s
   ]);
   return (
     <AccountCategoryItem
-      href={`/account/accounts/${account.slug}`}
+      href={accountDetailHref({ slug: account.slug, type: account.accountType, side: "asset" }) ?? undefined}
       primary={label.primary}
       meta={meta}
       fullName={label.full}
@@ -267,7 +268,7 @@ function AccountLine({ account, currency }: { account: AssetAccount; currency: s
 function ManualLine({ asset, currency }: { asset: ManualAsset; currency: string }) {
   return (
     <AccountCategoryItem
-      href={`/account/assets/${asset.id}`}
+      href={accountDetailHref({ slug: `manual-${asset.id}`, type: `manual-${asset.category}`, side: "asset" }) ?? undefined}
       primary={asset.label}
       meta="Manual"
       fullName={asset.label}

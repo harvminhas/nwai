@@ -22,6 +22,7 @@ import type { SourceMapping } from "@/lib/sourceMappings";
 import { occurrencesInMonth, datesInMonth } from "@/lib/cashIncome";
 import type { CashIncomeEntry } from "@/lib/cashIncome";
 import { resolveTxnCurrencyFromSnapshots, getHomeCurrency } from "@/lib/currencyUtils";
+import { findAccountHistoryLabel, resolveAccountDisplayName } from "@/lib/accountListLabel";
 
 /** Human-readable label for a statement's account, e.g. "TD ••••7780" */
 function accountDisplayLabel(parsed: ParsedStatementData): string {
@@ -283,11 +284,19 @@ export async function GET(request: NextRequest) {
       );
       const snapCurrency = accountSnap?.currency;
       accountLastTransactionDate = accountSnap?.lastTransactionDate;
+      const display = resolveAccountDisplayName({
+        accountName: consolidatedWithRules.accountName ?? accountSnap?.accountName,
+        bankName: consolidatedWithRules.bankName ?? accountSnap?.bankName,
+        historyLabel: findAccountHistoryLabel(profile.accountBalanceHistory, accountFilter),
+        fallback: accountFilter,
+      });
       enrichedConsolidated = {
         ...consolidatedWithRules,
         // Always carry the currency override through — even CAD, so a user who
         // changed from USD back to CAD sees the correct symbol immediately.
         ...(snapCurrency ? { currency: snapCurrency } : {}),
+        // Display-only: prefer account product name / nickname (same as What Changed).
+        ...(display.primary ? { accountName: display.primary } : {}),
       };
     } else {
       // monthlyHistory is now the single source of truth — same pipeline as the

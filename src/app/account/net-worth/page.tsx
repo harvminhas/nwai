@@ -22,6 +22,7 @@ import {
   NET_WORTH_TAB_BUTTON_BASE,
   NET_WORTH_TABS_ROW_CLASS,
 } from "@/components/netWorthReadLayout";
+import { netWorthAccountRow } from "@/lib/accountDetailHref";
 
 interface MonthlyNetWorthData {
   yearMonth: string;
@@ -206,7 +207,7 @@ function NetWorthPageContent() {
     category: "assets" | "debts";
     label: string;
     amount: number;
-    accountSlug: string;
+    href: string | null;
     isBaseline?: boolean; // First appearance of account (not a real change)
   }
   
@@ -243,15 +244,19 @@ function NetWorthPageContent() {
         item => item.type === "new_asset" && item.accountSlug === slug
       );
       
+      const row = netWorthAccountRow({
+        slug,
+        label: current?.label || previous?.label || slug,
+        type: current?.type || previous?.type,
+        side: category === "debts" ? "debt" : "asset",
+        isBaseline,
+        isNewAsset,
+      });
       const line: BreakdownLine = {
         category,
-        label: isNewAsset
-          ? `New asset: ${current?.label || slug}`
-          : isBaseline 
-            ? `${current?.label || slug} (first statement)` 
-            : (current?.label || previous?.label || slug),
+        label: row.label,
         amount: change,
-        accountSlug: slug,
+        href: row.href,
         isBaseline,
       };
       
@@ -536,11 +541,7 @@ function NetWorthPageContent() {
             {breakdownLines.length > 0 && (
               <div className="space-y-2">
                 {breakdownLines.map((line, idx) => {
-                  const accountPage = line.accountSlug 
-                    ? line.category === "debts" 
-                      ? `/account/liabilities`
-                      : `/account/assets`
-                    : null;
+                  const accountPage = line.href;
                   
                   const lineContent = (
                     <div className="flex items-center justify-between gap-3 py-2 border-b border-gray-100 last:border-0">
@@ -586,11 +587,7 @@ function NetWorthPageContent() {
               <div className="space-y-2 pt-2 border-t border-gray-200">
                 <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">First Statements (Baseline)</div>
                 {baselineLines.map((line, idx) => {
-                  const accountPage = line.accountSlug 
-                    ? line.category === "debts" 
-                      ? `/account/liabilities`
-                      : `/account/assets`
-                    : null;
+                  const accountPage = line.href;
                   
                   const lineContent = (
                     <div className="flex items-center justify-between gap-3 py-2 border-b border-gray-100 last:border-0">
@@ -630,21 +627,38 @@ function NetWorthPageContent() {
                   .filter((item) => item.value > 0)
                   .map((item, idx) => {
                     const isManual = item.slug.startsWith("manual-");
-                    const accountPage = isManual ? "/account/assets" : "/account/assets";
-                    return (
-                      <Link
-                        key={idx}
-                        href={accountPage}
-                        className="flex items-center justify-between gap-3 py-2 border-b border-gray-100 last:border-0 hover:bg-gray-50 -mx-2 px-2 rounded transition-colors"
-                      >
+                    const row = netWorthAccountRow({
+                      slug: item.slug,
+                      label: item.label,
+                      type: item.type,
+                      side: "asset",
+                    });
+                    const accountPage = row.href;
+                    const rowClass =
+                      "flex items-center justify-between gap-3 py-2 border-b border-gray-100 last:border-0 -mx-2 px-2 rounded";
+                    const lineContent = (
+                      <>
                         <span className={NET_WORTH_LABEL_CLASS}>
-                          {item.label}
+                          {row.label}
                           {isManual && <span className="ml-2 text-xs text-gray-500">(manual)</span>}
                         </span>
                         <IntactAmount className="text-sm font-semibold text-gray-900">
                           {formatCurrencyWithCents(item.value, currency)}
                         </IntactAmount>
+                      </>
+                    );
+                    return accountPage ? (
+                      <Link
+                        key={idx}
+                        href={accountPage}
+                        className={`${rowClass} hover:bg-gray-50 transition-colors`}
+                      >
+                        {lineContent}
                       </Link>
+                    ) : (
+                      <div key={idx} className={rowClass}>
+                        {lineContent}
+                      </div>
                     );
                   })}
                 <div className="flex items-center justify-between gap-3 py-3 border-t-2 border-gray-300 mt-2">
@@ -667,18 +681,38 @@ function NetWorthPageContent() {
               <div className="space-y-2">
                 {selectedData.byAccount
                   .filter((item) => item.value < 0)
-                  .map((item, idx) => (
-                    <Link
-                      key={idx}
-                      href="/account/liabilities"
-                      className="flex items-center justify-between gap-3 py-2 border-b border-gray-100 last:border-0 hover:bg-gray-50 -mx-2 px-2 rounded transition-colors"
-                    >
-                      <span className={NET_WORTH_LABEL_CLASS}>{item.label}</span>
-                      <IntactAmount className="text-sm font-semibold text-red-600">
-                        {formatCurrencyWithCents(Math.abs(item.value), currency)}
-                      </IntactAmount>
-                    </Link>
-                  ))}
+                  .map((item, idx) => {
+                    const row = netWorthAccountRow({
+                      slug: item.slug,
+                      label: item.label,
+                      type: item.type,
+                      side: "debt",
+                    });
+                    const accountPage = row.href;
+                    const rowClass =
+                      "flex items-center justify-between gap-3 py-2 border-b border-gray-100 last:border-0 -mx-2 px-2 rounded";
+                    const lineContent = (
+                      <>
+                        <span className={NET_WORTH_LABEL_CLASS}>{row.label}</span>
+                        <IntactAmount className="text-sm font-semibold text-red-600">
+                          {formatCurrencyWithCents(Math.abs(item.value), currency)}
+                        </IntactAmount>
+                      </>
+                    );
+                    return accountPage ? (
+                      <Link
+                        key={idx}
+                        href={accountPage}
+                        className={`${rowClass} hover:bg-gray-50 transition-colors`}
+                      >
+                        {lineContent}
+                      </Link>
+                    ) : (
+                      <div key={idx} className={rowClass}>
+                        {lineContent}
+                      </div>
+                    );
+                  })}
                 <div className="flex items-center justify-between gap-3 py-3 border-t-2 border-gray-300 mt-2">
                   <span className="min-w-0 text-sm font-bold text-gray-900">Total Debts</span>
                   <IntactAmount className="text-lg font-bold text-red-600">
