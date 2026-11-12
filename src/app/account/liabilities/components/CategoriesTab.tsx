@@ -8,6 +8,7 @@ import { formatAccountLast4 } from "@/lib/rangeUtils";
 import { formatLastTransactionDate } from "@/lib/formatLastTransactionDate";
 import { isCategoryGroupOpen, toggleCategoryGroup } from "@/lib/categoryGroupExpand";
 import { accountDisplayLabel, joinAccountMeta } from "@/lib/accountListLabel";
+import { accountDetailHref } from "@/lib/accountDetailHref";
 import {
   AccountCategoryList,
   AccountCategorySection,
@@ -80,7 +81,7 @@ function DebtLine({ account, currency }: { account: DebtAccount; currency: strin
   ]);
   return (
     <AccountCategoryItem
-      href={`/account/accounts/${account.slug}`}
+      href={accountDetailHref({ slug: account.slug, type: account.accountType, side: "debt" }) ?? undefined}
       primary={label.primary}
       meta={meta}
       fullName={label.full}
