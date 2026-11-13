@@ -28,13 +28,6 @@ import {
   selectionAfterRangeChange,
   sliceHistoryByRange,
 } from "@/lib/chartMonthSelection";
-import {
-  formatGrowthChartTitle,
-  formatGrowthRangeLabel,
-  sumGrowthBreakdowns,
-  type PeriodGrowth,
-} from "@/lib/netWorthGrowth";
-import GrowthTab, { type GrowthScope } from "./GrowthTab";
 
 const CHART_RANGES = [
   { label: "3M", months: 3 },
@@ -66,10 +59,8 @@ function NetWorthPageContent() {
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [viewMonth, setViewMonth] = useState<string | null>(null); // For interactive header
   const [currency, setCurrency] = useState<string>("CAD");
-  const [activeTab, setActiveTab] = useState<"changes" | "assets" | "debts" | "growth">("changes");
+  const [activeTab, setActiveTab] = useState<"changes" | "assets" | "debts">("changes");
   const [chartRange, setChartRange] = useState(0); // All — preserves the existing 12-month window
-  const [growthMonths, setGrowthMonths] = useState<PeriodGrowth[]>([]);
-  const [growthScope, setGrowthScope] = useState<GrowthScope>("month");
   const [priorMonth, setPriorMonth] = useState<MonthlyNetWorthData | null>(null);
   const isLgUp = useLgUp();
 
@@ -122,20 +113,12 @@ function NetWorthPageContent() {
         return;
       }
 
-      // Fetch change items + growth breakdown in parallel (growth is display-only)
-      const [changesRes, growthRes] = await Promise.all([
-        fetch("/api/user/net-worth-changes", {
-          headers: { Authorization: `Bearer ${tok}` },
-        }),
-        fetch("/api/user/net-worth-growth", {
-          headers: { Authorization: `Bearer ${tok}` },
-        }),
-      ]);
+      const changesRes = await fetch("/api/user/net-worth-changes", {
+        headers: { Authorization: `Bearer ${tok}` },
+      });
 
       const changesData = await changesRes.json().catch(() => ({ changes: [] }));
       const changes = (changesData.changes || []) as MonthNetWorthSummary[];
-      const growthData = await growthRes.json().catch(() => ({ months: [] }));
-      setGrowthMonths((growthData.months || []) as PeriodGrowth[]);
 
       // Build change items map by month
       const changesByMonth = new Map<string, MonthNetWorthSummary["items"]>();
@@ -259,14 +242,7 @@ function NetWorthPageContent() {
   const isViewingLatest = !viewMonth || viewMonth === latestMonth.yearMonth;
   const selectedData = data.find(d => d.yearMonth === selectedMonth) || latestMonth;
   const chartDomain = calculateBalanceChartDomain(chartData.map(d => d.netWorth));
-  const visibleYearMonths = chartData.map((d) => d.yearMonth);
-  const monthGrowth = growthMonths.find((m) => m.yearMonth === selectedData.yearMonth) ?? null;
-  const rangeGrowth = sumGrowthBreakdowns(growthMonths, visibleYearMonths);
-  const growthBreakdown = growthScope === "range" ? rangeGrowth : monthGrowth;
-  const breakdownPeriodLabel =
-    activeTab === "growth" && growthScope === "range"
-      ? formatGrowthRangeLabel(visibleYearMonths)
-      : formatMonthLabel(selectedData.yearMonth);
+  const breakdownPeriodLabel = formatMonthLabel(selectedData.yearMonth);
 
   // Helper to categorize items by filter type
 
@@ -425,7 +401,7 @@ function NetWorthPageContent() {
       {/* Trend chart */}
       <div className={NET_WORTH_CARD_CLASS}>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-lg font-semibold text-gray-900">{formatGrowthChartTitle(chartRange)}</h2>
+          <h2 className="text-lg font-semibold text-gray-900">{formatNetWorthChartTitle(chartRange)}</h2>
           <div className="flex gap-1">
             {latestVisibleYm && selectedMonth && selectedMonth !== latestVisibleYm && (
               <button
@@ -603,16 +579,6 @@ function NetWorthPageContent() {
               }`}
             >
               Debts
-            </button>
-            <button
-              onClick={() => setActiveTab("growth")}
-              className={`${NET_WORTH_TAB_BUTTON_BASE} ${
-                activeTab === "growth"
-                  ? "border-purple-600 text-purple-600"
-                  : "border-transparent text-gray-600 hover:text-gray-900"
-              }`}
-            >
-              Growth
             </button>
             <div className={NET_WORTH_MONTH_DESKTOP_CLASS}>
               {breakdownPeriodLabel}
@@ -838,17 +804,6 @@ function NetWorthPageContent() {
           </div>
         )}
 
-        {activeTab === "growth" && (
-          <GrowthTab
-            breakdown={growthBreakdown}
-            currency={currency}
-            scope={growthScope}
-            onScopeChange={setGrowthScope}
-            monthLabel={formatMonthLabel(selectedData.yearMonth)}
-            rangeLabel={formatGrowthRangeLabel(visibleYearMonths)}
-          />
-        )}
-
         {(activeTab === "assets" || activeTab === "debts") && selectedData.byAccount && (
           <div className="mt-4 pt-4 border-t-2 border-purple-200">
             <div className="flex items-center justify-between gap-3">
@@ -873,6 +828,12 @@ function formatMonthLabel(month: string): string {
   const [year, monthNum] = month.split("-");
   const date = new Date(parseInt(year), parseInt(monthNum) - 1);
   return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+}
+
+function formatNetWorthChartTitle(rangeMonths: number): string {
+  if (rangeMonths === 3) return "3-Month Trend";
+  if (rangeMonths === 6) return "6-Month Trend";
+  return "All-time Trend";
 }
 
 export default function NetWorthPage() {

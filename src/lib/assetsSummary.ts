@@ -81,6 +81,7 @@ export interface AssetsSummary {
     amount: number;
     merchant: string;
     accountSlug: string;
+    category?: string;
   }>;
   incomeTxns: Array<{
     date: string;
@@ -88,6 +89,7 @@ export interface AssetsSummary {
     amount: number;
     source: string;
     accountSlug: string;
+    category?: string;
   }>;
 }
 
@@ -100,6 +102,18 @@ const REGISTERED_NAME_KEYWORDS = [
   "registered retirement", "tax-free savings",
   "retirement savings plan"
 ];
+
+export function assetGroupLabel(type: AssetGroup["type"]): string {
+  return groupLabel(type);
+}
+
+/** Same grouping as the Assets Accounts / Overview pages, including manuals. */
+export function assetCategory(type: string, label?: string): AssetGroup["type"] {
+  const t = type.toLowerCase();
+  if (t === "manual-property" || t === "property") return "property";
+  if (t.startsWith("manual-")) return "other";
+  return accountGroup(t, label);
+}
 
 export function accountGroup(accountType: string, accountName?: string): AssetGroup["type"] {
   if (accountType === "checking" || accountType === "savings") return "cash";
@@ -162,8 +176,8 @@ export function buildAssetsSummary(
     totalAssets: number;
     byAccount?: Array<{ slug: string; label: string; type: string; value: number }>;
   }>, // From profile
-  expenseTxns?: Array<{ date: string; txMonth: string; amount: number; merchant: string; accountSlug: string }>,
-  incomeTxns?: Array<{ date: string; txMonth: string; amount: number; source: string; accountSlug: string }>
+  expenseTxns?: Array<{ date: string; txMonth: string; amount: number; merchant: string; accountSlug: string; category?: string }>,
+  incomeTxns?: Array<{ date: string; txMonth: string; amount: number; source: string; accountSlug: string; category?: string }>
 ): AssetsSummary {
   // Filter to asset accounts only (positive balance or asset types)
   const assetAccounts = accountSnapshots.filter(acc => 
@@ -279,14 +293,12 @@ export function buildAssetsSummary(
   const changeVsLastMonth = lastMonthTotal > 0 ? totalAssets - lastMonthTotal : 0;
   const changeVs12Months = month12Total > 0 ? totalAssets - month12Total : 0;
 
-  // Build monthly history (last 12 months) - use profile's monthlyHistory for totals
+  // Full monthly history so Trends can slice 6M / YTD / 1Y / 3Y / All.
   const monthlyHistory: AssetsSummary["monthlyHistory"] = [];
   
   if (profileMonthlyHistory && profileMonthlyHistory.length > 0) {
     // Use profile's totalAssets which already has correct carry-forward logic
-    const last12Months = profileMonthlyHistory.slice(-12);
-    
-    for (const profileMonth of last12Months) {
+    for (const profileMonth of profileMonthlyHistory) {
       const month = profileMonth.yearMonth;
       
       // Compute per-group breakdown with carry-forward

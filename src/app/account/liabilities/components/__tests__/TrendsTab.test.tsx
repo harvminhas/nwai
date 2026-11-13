@@ -4,9 +4,15 @@
  */
 
 import React from "react";
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { TrendsTab } from "../TrendsTab";
+
+vi.mock("next/link", () => ({
+  default: ({ href, children }: { href: string; children: React.ReactNode }) => (
+    <a href={href}>{children}</a>
+  ),
+}));
 import type { DebtsSummary } from "@/lib/debtsSummary";
 import {
   buildProductionTrendsFixture,
@@ -80,6 +86,10 @@ describe("Liabilities TrendsTab integration tests", () => {
     const html = container.innerHTML;
     expect(html).toContain("Mar 2024");
     expect(html).toContain("Total Debt Over Time");
+    expect(html).toContain("By category");
+    expect(html).toContain("6M");
+    expect(html).toContain("Credit Cards");
+    expect(html).toContain("Paid down");
   });
 
   it("shows month details with authoritative breakdown including manual liabilities", () => {
@@ -233,22 +243,24 @@ describe("Liabilities TrendsTab production fixture — click and async", () => {
     clickRenderedChartMonth(container, "2026-02");
 
     await waitFor(() => {
-      expect(container.innerHTML).toContain("Feb 2026");
+      expect(container.querySelector('[data-testid="trends-month-detail"]')?.innerHTML).toContain("Feb 2026");
     });
-    expect(container.innerHTML).not.toContain("Mar 2026");
-    expect(container.innerHTML).toContain("Federal Student Loan");
-    expect(container.innerHTML).toContain("CAD Visa");
-    expect(container.innerHTML).toContain("OSAP Student Loan");
-    expect(container.innerHTML).toContain("CA$24,700");
-    expect(container.innerHTML).not.toContain("CA$24,400");
+    let detail = container.querySelector('[data-testid="trends-month-detail"]')!;
+    expect(detail.innerHTML).not.toContain("Mar 2026");
+    expect(detail.innerHTML).toContain("Federal Student Loan");
+    expect(detail.innerHTML).toContain("CAD Visa");
+    expect(detail.innerHTML).toContain("OSAP Student Loan");
+    expect(detail.innerHTML).toContain("CA$24,700");
+    expect(detail.innerHTML).not.toContain("CA$24,400");
 
     clickRenderedChartMonth(container, "2026-01");
     await waitFor(() => {
-      expect(container.innerHTML).toContain("Jan 2026");
+      expect(container.querySelector('[data-testid="trends-month-detail"]')?.innerHTML).toContain("Jan 2026");
     });
-    expect(container.innerHTML).not.toContain("Federal Student Loan");
-    expect(container.innerHTML).toContain("OSAP Student Loan");
-    expect(container.innerHTML).toContain("CA$10,000");
+    detail = container.querySelector('[data-testid="trends-month-detail"]')!;
+    expect(detail.innerHTML).not.toContain("Federal Student Loan");
+    expect(detail.innerHTML).toContain("OSAP Student Loan");
+    expect(detail.innerHTML).toContain("CA$10,000");
   });
 
   it("async data arrival selects the latest available month", () => {

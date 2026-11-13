@@ -101,6 +101,7 @@ export interface DebtsSummary {
     amount: number;
     merchant: string;
     accountSlug: string;
+    category?: string;
   }>;
   incomeTxns: Array<{
     date: string;
@@ -108,10 +109,22 @@ export interface DebtsSummary {
     amount: number;
     source: string;
     accountSlug: string;
+    category?: string;
   }>;
 }
 
 const DEBT_TYPES = new Set(["mortgage", "credit", "credit_card", "loc", "line_of_credit", "loan", "auto_loan", "student_loan", "personal_loan", "other_debt"]);
+
+export function debtGroupLabel(type: DebtGroup["type"]): string {
+  return groupLabel(type);
+}
+
+/** Same grouping as the Debts Accounts / Overview pages, including manuals. */
+export function debtCategory(type: string, label?: string): DebtGroup["type"] {
+  const t = type.toLowerCase();
+  const raw = t.startsWith("manual-") ? t.slice("manual-".length) : t;
+  return debtGroup(raw, label);
+}
 
 export function debtGroup(accountType: string, accountName?: string): DebtGroup["type"] {
   // Use the actual account type from the snapshot
@@ -205,8 +218,8 @@ export function buildDebtsSummary(
     debtPaymentsTotal: number;
     byAccount?: Array<{ slug: string; label: string; type: string; value: number }>;
   }>, // From profile
-  expenseTxns?: Array<{ date: string; txMonth: string; amount: number; merchant: string; accountSlug: string }>,
-  incomeTxns?: Array<{ date: string; txMonth: string; amount: number; source: string; accountSlug: string }>
+  expenseTxns?: Array<{ date: string; txMonth: string; amount: number; merchant: string; accountSlug: string; category?: string }>,
+  incomeTxns?: Array<{ date: string; txMonth: string; amount: number; source: string; accountSlug: string; category?: string }>
 ): DebtsSummary {
   // Compute scheduled debt payments using the same logic as computeMonthlyBuckets
   const scheduledPayments = computeScheduledDebtPayments(
@@ -402,14 +415,12 @@ export function buildDebtsSummary(
       };
     });
 
-  // Build monthly history (last 12 months) - use profile's monthlyHistory for totals
+  // Full monthly history so Trends can slice 6M / YTD / 1Y / 3Y / All.
   const monthlyHistory: DebtsSummary["monthlyHistory"] = [];
   
   if (profileMonthlyHistory && profileMonthlyHistory.length > 0) {
     // Use profile's totalDebts which already has correct carry-forward logic
-    const last12Months = profileMonthlyHistory.slice(-12);
-    
-    for (const profileMonth of last12Months) {
+    for (const profileMonth of profileMonthlyHistory) {
       const month = profileMonth.yearMonth;
       
       // Compute per-group breakdown with carry-forward

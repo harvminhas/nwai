@@ -4,9 +4,15 @@
  */
 
 import React from "react";
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { TrendsTab } from "../TrendsTab";
+
+vi.mock("next/link", () => ({
+  default: ({ href, children }: { href: string; children: React.ReactNode }) => (
+    <a href={href}>{children}</a>
+  ),
+}));
 import type { AssetsSummary } from "@/lib/assetsSummary";
 import {
   buildProductionTrendsFixture,
@@ -70,6 +76,11 @@ describe("TrendsTab integration tests", () => {
     const html = container.innerHTML;
     expect(html).toContain("Mar 2024");
     expect(html).toContain("Total Assets Over Time");
+    expect(html).toContain("By category");
+    expect(html).toContain("6M");
+    expect(html).toContain("YTD");
+    expect(html).toContain("1Y");
+    expect(html).toContain("Cash &amp; Savings");
   });
 
   it("shows month details with authoritative breakdown including manual assets", () => {
@@ -217,14 +228,15 @@ describe("Assets TrendsTab production fixture — click and async", () => {
     clickRenderedChartMonth(container, "2026-02");
 
     await waitFor(() => {
-      expect(container.innerHTML).toContain("Feb 2026");
+      expect(container.querySelector('[data-testid="trends-month-detail"]')?.innerHTML).toContain("Feb 2026");
     });
-    expect(container.innerHTML).not.toContain("Mar 2026");
-    expect(container.innerHTML).toContain("2022 Honda Civic");
-    expect(container.innerHTML).toContain("US Checking");
-    expect(container.innerHTML).toContain("CAD Investment");
-    expect(container.innerHTML).toContain("CA$31,485");
-    expect(container.innerHTML).not.toContain("CA$31,620");
+    const detail = container.querySelector('[data-testid="trends-month-detail"]')!;
+    expect(detail.innerHTML).not.toContain("Mar 2026");
+    expect(detail.innerHTML).toContain("2022 Honda Civic");
+    expect(detail.innerHTML).toContain("US Checking");
+    expect(detail.innerHTML).toContain("CAD Investment");
+    expect(detail.innerHTML).toContain("CA$31,485");
+    expect(detail.innerHTML).not.toContain("CA$31,620");
   });
 
   it("async data arrival selects the latest available month", () => {
