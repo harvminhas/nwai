@@ -10,9 +10,6 @@ export type ChartMonthPoint = {
   isEstimate?: boolean;
 };
 
-/** Last-N window used by the net-worth chart / summary (`getNetWorthForMonth`). */
-export const NET_WORTH_SUMMARY_MONTHS = 12;
-
 export function sliceHistoryByRange<T>(history: T[], rangeMonths: number): T[] {
   if (rangeMonths === 0) return history;
   return history.slice(-rangeMonths);

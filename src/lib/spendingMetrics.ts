@@ -62,62 +62,6 @@ export function isCoreExcluded(category: string, opts?: CoreExcludeOpts): boolea
 export const INCOME_TRANSFER_RE =
   /\bTFR[-\s]?(TO|FR|FROM)\b|\bE[-\s]?TFR\b|\bETFR\b|\bXFER\b|\bTRANSFER\b/i;
 
-export function incomeSourceSlug(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 60);
-}
-
-export function isNonCoreIncomeCategoryLabel(cat: string): boolean {
-  const c = cat.trim().toLowerCase();
-  return c === "transfer" || c === "transfer in" || c === "other";
-}
-
-export type IncomeClassificationOpts = {
-  userTransferSources?: Iterable<string>;
-  incomeCategoryRules?: Map<string, string> | Record<string, string>;
-};
-
-function transferSourceSet(opts?: IncomeClassificationOpts): Set<string> {
-  return opts?.userTransferSources instanceof Set
-    ? opts.userTransferSources
-    : new Set(opts?.userTransferSources ?? []);
-}
-
-function incomeRuleMap(opts?: IncomeClassificationOpts): Map<string, string> {
-  if (!opts?.incomeCategoryRules) return new Map();
-  return opts.incomeCategoryRules instanceof Map
-    ? opts.incomeCategoryRules
-    : new Map(Object.entries(opts.incomeCategoryRules));
-}
-
-export function resolveIncomeCategory(
-  txn: { source?: string; description?: string; category?: string },
-  opts?: IncomeClassificationOpts,
-): string {
-  const src = (txn.source ?? txn.description ?? "").trim();
-  return incomeRuleMap(opts).get(incomeSourceSlug(src)) ?? txn.category ?? "Other";
-}
-
-/** Inter-account transfer: TFR/XFER/E-TFR descriptor, user-marked source, or Transfer rule. */
-export function isIncomeTransfer(
-  txn: { source?: string; description?: string; category?: string },
-  opts?: IncomeClassificationOpts,
-): boolean {
-  const src = (txn.source ?? txn.description ?? "").trim();
-  if (INCOME_TRANSFER_RE.test(src)) return true;
-  if (transferSourceSet(opts).has(src)) return true;
-  if (incomeRuleMap(opts).get(incomeSourceSlug(src)) === "Transfer") return true;
-  return false;
-}
-
-/** Same filter `incomeTotal` uses — already-excluded deposits must not be stripped again. */
-export function isExcludedFromCoreIncomeTotal(
-  txn: { source?: string; description?: string; category?: string },
-  opts?: IncomeClassificationOpts,
-): boolean {
-  if (isIncomeTransfer(txn, opts)) return true;
-  return isNonCoreIncomeCategoryLabel(resolveIncomeCategory(txn, opts));
-}
-
 export interface TypicalSpend {
   /** Median monthly core spend across all historical months. */
   median: number;

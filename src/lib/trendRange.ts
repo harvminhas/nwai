@@ -16,3 +16,14 @@ export function sliceMonthsByTrendRange<T extends { month: string }>(
   const n = range === "6M" ? 6 : range === "1Y" ? 12 : 36;
   return sorted.slice(-n);
 }
+
+/** Ending snapshot of the month immediately before `ranged[0]`, if history has one. */
+export function priorMonthBeforeRange<T extends { month: string }>(
+  allMonths: T[],
+  ranged: T[],
+): T | null {
+  if (ranged.length === 0) return null;
+  const sorted = [...allMonths].sort((a, b) => a.month.localeCompare(b.month));
+  const idx = sorted.findIndex((m) => m.month === ranged[0].month);
+  return idx > 0 ? sorted[idx - 1] : null;
+}

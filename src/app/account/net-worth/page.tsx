@@ -23,17 +23,6 @@ import {
   NET_WORTH_TABS_ROW_CLASS,
 } from "@/components/netWorthReadLayout";
 import { netWorthAccountRow } from "@/lib/accountDetailHref";
-import {
-  latestSelectableMonth,
-  selectionAfterRangeChange,
-  sliceHistoryByRange,
-} from "@/lib/chartMonthSelection";
-
-const CHART_RANGES = [
-  { label: "3M", months: 3 },
-  { label: "6M", months: 6 },
-  { label: "All", months: 0 },
-] as const;
 
 interface MonthlyNetWorthData {
   yearMonth: string;
@@ -60,8 +49,6 @@ function NetWorthPageContent() {
   const [viewMonth, setViewMonth] = useState<string | null>(null); // For interactive header
   const [currency, setCurrency] = useState<string>("CAD");
   const [activeTab, setActiveTab] = useState<"changes" | "assets" | "debts">("changes");
-  const [chartRange, setChartRange] = useState(0); // All — preserves the existing 12-month window
-  const [priorMonth, setPriorMonth] = useState<MonthlyNetWorthData | null>(null);
   const isLgUp = useLgUp();
 
   const loadData = async (tok: string) => {
@@ -84,28 +71,7 @@ function NetWorthPageContent() {
         totalDebts: number;
         byAccount: Array<{ slug: string; label: string; type: string; value: number }>;
       }>;
-      const prior = summary.priorMonth as {
-        yearMonth: string;
-        netWorth: number;
-        totalAssets?: number;
-        totalDebts?: number;
-        byAccount?: Array<{ slug: string; label: string; type: string; value: number }>;
-      } | null;
       setCurrency(summary.currency || "CAD");
-      setPriorMonth(
-        prior
-          ? {
-              yearMonth: prior.yearMonth,
-              netWorth: prior.netWorth,
-              totalAssets: prior.totalAssets ?? 0,
-              totalDebts: prior.totalDebts ?? 0,
-              change: null,
-              changePercent: null,
-              items: [],
-              byAccount: prior.byAccount || [],
-            }
-          : null,
-      );
 
       if (monthlyHistory.length === 0) {
         setError("No net worth data available yet. Upload some statements to get started.");
@@ -113,6 +79,7 @@ function NetWorthPageContent() {
         return;
       }
 
+      // Fetch change items (may be empty for existing users)
       const changesRes = await fetch("/api/user/net-worth-changes", {
         headers: { Authorization: `Bearer ${tok}` },
       });
@@ -128,7 +95,7 @@ function NetWorthPageContent() {
 
       // Build final data structure: net worth values from profile, change items from feed
       const combinedData: MonthlyNetWorthData[] = monthlyHistory.map((month, idx) => {
-        const prevMonth = idx > 0 ? monthlyHistory[idx - 1] : prior ?? null;
+        const prevMonth = idx > 0 ? monthlyHistory[idx - 1] : null;
         const change = prevMonth ? month.netWorth - prevMonth.netWorth : null;
         const changePercent = prevMonth && prevMonth.netWorth !== 0 
           ? (change! / Math.abs(prevMonth.netWorth)) * 100 
@@ -221,35 +188,20 @@ function NetWorthPageContent() {
   const latestMonth = data.reduce((max, m) => 
     m.yearMonth > max.yearMonth ? m : max
   , data[0]);
-
-  const sortedData = [...data].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
-  const chartData = sliceHistoryByRange(sortedData, chartRange);
-  const latestVisibleYm = latestSelectableMonth(chartData);
-
-  const handleChartRange = (months: number) => {
-    setChartRange(months);
-    const next = sliceHistoryByRange(sortedData, months);
-    const nextYm = selectionAfterRangeChange(selectedMonth, next);
-    if (nextYm && nextYm !== selectedMonth) {
-      setSelectedMonth(nextYm);
-      setViewMonth(nextYm);
-    }
-  };
   
   const viewData = viewMonth 
     ? data.find(d => d.yearMonth === viewMonth) || latestMonth 
     : latestMonth;
   const isViewingLatest = !viewMonth || viewMonth === latestMonth.yearMonth;
   const selectedData = data.find(d => d.yearMonth === selectedMonth) || latestMonth;
-  const chartDomain = calculateBalanceChartDomain(chartData.map(d => d.netWorth));
-  const breakdownPeriodLabel = formatMonthLabel(selectedData.yearMonth);
+  const chartDomain = calculateBalanceChartDomain(data.map(d => d.netWorth));
 
   // Helper to categorize items by filter type
 
   // Calculate breakdown using per-account contributions (byAccount)
   // This adds up EXACTLY by construction since it uses the same carry-forward logic
   const selectedIdx = data.findIndex(d => d.yearMonth === selectedMonth);
-  const previousData = selectedIdx > 0 ? data[selectedIdx - 1] : selectedIdx === 0 ? priorMonth : null;
+  const previousData = selectedIdx > 0 ? data[selectedIdx - 1] : null;
   
   interface BreakdownLine {
     category: "assets" | "debts";
@@ -398,43 +350,13 @@ function NetWorthPageContent() {
         </div>
       </div>
 
-      {/* Trend chart */}
+      {/* 12-Month Chart */}
       <div className={NET_WORTH_CARD_CLASS}>
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-lg font-semibold text-gray-900">{formatNetWorthChartTitle(chartRange)}</h2>
-          <div className="flex gap-1">
-            {latestVisibleYm && selectedMonth && selectedMonth !== latestVisibleYm && (
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedMonth(latestVisibleYm);
-                  setViewMonth(latestVisibleYm);
-                }}
-                className="rounded-full px-3 py-1 text-xs font-medium text-gray-400 hover:text-gray-600 transition"
-              >
-                Latest
-              </button>
-            )}
-            {CHART_RANGES.map((r) => (
-              <button
-                key={r.label}
-                type="button"
-                onClick={() => handleChartRange(r.months)}
-                className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-                  chartRange === r.months
-                    ? "bg-purple-100 text-purple-700"
-                    : "text-gray-400 hover:text-gray-600"
-                }`}
-              >
-                {r.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">12-Month Trend</h2>
         <div className="relative" style={{ height: "340px" }}>
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
-              data={chartData.map(d => ({
+              data={data.map(d => ({
                 month: formatMonthLabel(d.yearMonth),
                 yearMonth: d.yearMonth,
                 netWorth: d.netWorth,
@@ -445,7 +367,7 @@ function NetWorthPageContent() {
               onClick={(e: any) => {
                 if (e?.activeLabel) {
                   const month = e.activeLabel;
-                  const matchedData = chartData.find(d => formatMonthLabel(d.yearMonth) === month);
+                  const matchedData = data.find(d => formatMonthLabel(d.yearMonth) === month);
                   if (matchedData) {
                     setSelectedMonth(matchedData.yearMonth);
                     setViewMonth(matchedData.yearMonth);
@@ -581,11 +503,11 @@ function NetWorthPageContent() {
               Debts
             </button>
             <div className={NET_WORTH_MONTH_DESKTOP_CLASS}>
-              {breakdownPeriodLabel}
+              {formatMonthLabel(selectedData.yearMonth)}
             </div>
           </div>
           <div className={NET_WORTH_MONTH_MOBILE_CLASS}>
-            {breakdownPeriodLabel}
+            {formatMonthLabel(selectedData.yearMonth)}
           </div>
         </div>
 
@@ -804,6 +726,7 @@ function NetWorthPageContent() {
           </div>
         )}
 
+        {/* Net Worth Reconciliation */}
         {(activeTab === "assets" || activeTab === "debts") && selectedData.byAccount && (
           <div className="mt-4 pt-4 border-t-2 border-purple-200">
             <div className="flex items-center justify-between gap-3">
@@ -828,12 +751,6 @@ function formatMonthLabel(month: string): string {
   const [year, monthNum] = month.split("-");
   const date = new Date(parseInt(year), parseInt(monthNum) - 1);
   return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
-}
-
-function formatNetWorthChartTitle(rangeMonths: number): string {
-  if (rangeMonths === 3) return "3-Month Trend";
-  if (rangeMonths === 6) return "6-Month Trend";
-  return "All-time Trend";
 }
 
 export default function NetWorthPage() {

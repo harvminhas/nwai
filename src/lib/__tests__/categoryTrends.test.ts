@@ -6,7 +6,7 @@ import {
   describeDebtChangePill,
 } from "../categoryTrends";
 import { debtCategory } from "../debtsSummary";
-import { sliceMonthsByTrendRange } from "../trendRange";
+import { priorMonthBeforeRange, sliceMonthsByTrendRange } from "../trendRange";
 
 const months = [
   {
@@ -38,6 +38,9 @@ const months = [
   },
 ];
 
+const priorAugust = months[0];
+const rangeSepOct = months.slice(1);
+
 describe("buildCategoryTrendCards", () => {
   it("matches page totals from accountDetails for each category", () => {
     const cards = buildCategoryTrendCards({
@@ -58,62 +61,235 @@ describe("buildCategoryTrendCards", () => {
     );
   });
 
-  it("does not treat a new account's opening balance as growth", () => {
+  it("starts existing accounts from the prior month, not the first in-range ending balance", () => {
     const cards = buildCategoryTrendCards({
       kind: "asset",
-      months,
+      months: rangeSepOct,
+      priorMonth: priorAugust,
       expenseTxns: [],
       incomeTxns: [],
       currency: "CAD",
     });
     const cash = cards.find((c) => c.key === "cash")!;
-    // Chequing 8000→11000 (+3000) and EQ first-balance 4000→4100 (+100), not +4100
-    expect(cash.start).toBe(8000 + 4000);
+    // Chequing: Aug $8,000 → Oct $11,000. EQ is new (start 0).
+    expect(cash.start).toBe(8000);
     expect(cash.current).toBe(15100);
-    expect(cash.change).toBe(3100);
-    expect(cash.newAccountNote).toMatch(/EQ Bank Savings/);
-    const eq = cash.accounts.find((a) => a.slug === "eq")!;
-    expect(eq.openedInRange).toBe(true);
-    expect(eq.start).toBe(4000);
+    expect(cash.change).toBe(7100);
+    const chk = cash.accounts.find((a) => a.slug === "chk")!;
+    expect(chk.start).toBe(8000);
+    expect(chk.openedInRange).toBe(false);
+  });
+
+  it("counts a new account's opening deposit as a contribution, not as the start balance", () => {
+    const cards = buildCategoryTrendCards({
+      kind: "asset",
+      months: [
+        {
+          month: "2026-12",
+          accountDetails: [{ slug: "tfsa", label: "TFSA", type: "tfsa", value: 5300 }],
+        },
+      ],
+      priorMonth: { month: "2026-11", accountDetails: [] },
+      expenseTxns: [],
+      incomeTxns: [{ txMonth: "2026-12", amount: 5000, accountSlug: "tfsa", category: "Transfer In" }],
+      currency: "CAD",
+    });
+    const registered = cards.find((c) => c.key === "registered")!;
+    expect(registered.start).toBe(0);
+    expect(registered.current).toBe(5300);
+    expect(registered.change).toBe(5300);
+    expect(registered.subtitle).toMatch(/Contributions CA\$5,000/);
+    expect(registered.subtitle).toMatch(/Market growth CA\$300/);
+    expect(registered.subtitle).not.toMatch(/−CA\$4,700/);
+    expect(registered.newAccountNote).toMatch(/Opened this period: TFSA/);
+    expect(registered.accounts[0].openedInRange).toBe(true);
+  });
+
+  it("does not double-count the first in-range month's deposit against that month's ending balance", () => {
+    // Bug: start = Dec end $10,000 (includes $1,000 Dec deposit) + count Dec+$1,000 later
+    //   → Contributions $2,000 · Market growth $0
+    // Fix: start = Nov $9,000, count both in-range deposits
+    //   → Contributions $2,000 · Market growth $1,000
+    // One-month form: Nov $8,000 → Dec $10,000 with $1,000 Dec deposit
+    //   → Contributions $1,000 · Market growth $1,000
+    const oneMonth = buildCategoryTrendCards({
+      kind: "asset",
+      months: [
+        {
+          month: "2026-12",
+          accountDetails: [{ slug: "tfsa", label: "TFSA", type: "tfsa", value: 10000 }],
+        },
+      ],
+      priorMonth: {
+        month: "2026-11",
+        accountDetails: [{ slug: "tfsa", label: "TFSA", type: "tfsa", value: 8000 }],
+      },
+      expenseTxns: [],
+      incomeTxns: [{ txMonth: "2026-12", amount: 1000, accountSlug: "tfsa", category: "Transfer In" }],
+      currency: "CAD",
+    });
+    const dec = oneMonth.find((c) => c.key === "registered")!;
+    expect(dec.start).toBe(8000);
+    expect(dec.current).toBe(10000);
+    expect(dec.subtitle).toMatch(/Contributions CA\$1,000/);
+    expect(dec.subtitle).toMatch(/Market growth CA\$1,000/);
+
+    const twoMonth = buildCategoryTrendCards({
+      kind: "asset",
+      months: [
+        {
+          month: "2025-12",
+          accountDetails: [{ slug: "tfsa", label: "TFSA", type: "tfsa", value: 10000 }],
+        },
+        {
+          month: "2026-11",
+          accountDetails: [{ slug: "tfsa", label: "TFSA", type: "tfsa", value: 12000 }],
+        },
+      ],
+      priorMonth: {
+        month: "2025-11",
+        accountDetails: [{ slug: "tfsa", label: "TFSA", type: "tfsa", value: 9000 }],
+      },
+      expenseTxns: [],
+      incomeTxns: [
+        { txMonth: "2025-12", amount: 1000, accountSlug: "tfsa", category: "Transfer In" },
+        { txMonth: "2026-11", amount: 1000, accountSlug: "tfsa", category: "Transfer In" },
+      ],
+      currency: "CAD",
+    });
+    const span = twoMonth.find((c) => c.key === "registered")!;
+    expect(span.start).toBe(9000);
+    expect(span.current).toBe(12000);
+    expect(span.subtitle).toMatch(/Contributions CA\$2,000/);
+    expect(span.subtitle).toMatch(/Market growth CA\$1,000/);
+    expect(span.subtitle).not.toMatch(/Market growth CA\$0/);
+  });
+
+  it("prints a minus sign when market growth is negative", () => {
+    const cards = buildCategoryTrendCards({
+      kind: "asset",
+      months: [
+        {
+          month: "2026-12",
+          accountDetails: [{ slug: "tfsa", label: "TFSA", type: "tfsa", value: 5300 }],
+        },
+      ],
+      priorMonth: {
+        month: "2026-11",
+        accountDetails: [{ slug: "tfsa", label: "TFSA", type: "tfsa", value: 10000 }],
+      },
+      expenseTxns: [],
+      incomeTxns: [{ txMonth: "2026-12", amount: 0, accountSlug: "tfsa", category: "Transfer In" }],
+      currency: "CAD",
+    });
+    // Known flows, start 10000, end 5300, put-in ~0 → market −$4,700
+    const registered = cards.find((c) => c.key === "registered")!;
+    expect(registered.change).toBe(-4700);
+    expect(registered.subtitle).toMatch(/Market growth −CA\$4,700/);
+    expect(registered.subtitle).not.toMatch(/Market growth CA\$4,700/);
   });
 
   it("counts dividends as market growth, not contributions", () => {
     const cards = buildCategoryTrendCards({
       kind: "asset",
-      months,
+      months: rangeSepOct,
+      priorMonth: priorAugust,
       expenseTxns: [],
       incomeTxns: [
         { txMonth: "2026-10", amount: 100, accountSlug: "tfsa", category: "Dividend" },
-        { txMonth: "2026-08", amount: 500, accountSlug: "tfsa", category: "Transfer In" },
         { txMonth: "2026-09", amount: 500, accountSlug: "tfsa", category: "Transfer In" },
         { txMonth: "2026-10", amount: 500, accountSlug: "tfsa", category: "Transfer In" },
       ],
       currency: "CAD",
     });
     const registered = cards.find((c) => c.key === "registered")!;
-    expect(registered.subtitle).toMatch(/Contributions/);
-    expect(registered.subtitle).not.toMatch(/CA\$1,600/);
-    expect(registered.subtitle).toMatch(/CA\$1,500/);
+    expect(registered.start).toBe(20000);
+    expect(registered.current).toBe(22100);
+    expect(registered.subtitle).toMatch(/Contributions CA\$1,000/);
+    expect(registered.subtitle).not.toMatch(/Contributions CA\$1,100/);
+    expect(registered.subtitle).toMatch(/Market growth CA\$1,100/);
+  });
+
+  it("uses prior-month owed for debt flows so first-month payments are not double counted", () => {
+    const cards = buildCategoryTrendCards({
+      kind: "debt",
+      months: [
+        {
+          month: "2026-12",
+          accountDetails: [{ slug: "visa", label: "Visa", type: "credit", value: -1750 }],
+        },
+      ],
+      priorMonth: {
+        month: "2026-11",
+        accountDetails: [{ slug: "visa", label: "Visa", type: "credit", value: -2000 }],
+      },
+      expenseTxns: [
+        { txMonth: "2026-12", amount: 50, accountSlug: "visa", category: "Interest" },
+        { txMonth: "2026-12", amount: 200, accountSlug: "visa", category: "Shopping" },
+      ],
+      incomeTxns: [{ txMonth: "2026-12", amount: 500, accountSlug: "visa", category: "Other" }],
+      currency: "CAD",
+    });
+    const credit = cards.find((c) => c.key === "credit_card")!;
+    expect(credit.start).toBe(2000);
+    expect(credit.current).toBe(1750);
+    expect(credit.change).toBe(-250);
+    expect(credit.subtitle).toBe("Paid CA$500 · New charges CA$200 · Interest CA$50");
+  });
+
+  it("omits the debt flow line unless every account in the card has transactions", () => {
+    const cards = buildCategoryTrendCards({
+      kind: "debt",
+      months: [
+        {
+          month: "2026-12",
+          accountDetails: [
+            { slug: "visa", label: "Visa", type: "credit", value: -1500 },
+            { slug: "amex", label: "Amex", type: "credit", value: -800 },
+          ],
+        },
+      ],
+      priorMonth: {
+        month: "2026-11",
+        accountDetails: [
+          { slug: "visa", label: "Visa", type: "credit", value: -1600 },
+          { slug: "amex", label: "Amex", type: "credit", value: -800 },
+        ],
+      },
+      expenseTxns: [{ txMonth: "2026-12", amount: 40, accountSlug: "visa", category: "Interest" }],
+      incomeTxns: [{ txMonth: "2026-12", amount: 140, accountSlug: "visa", category: "Other" }],
+      currency: "CAD",
+    });
+    const credit = cards.find((c) => c.key === "credit_card")!;
+    expect(credit.accountCount).toBe(2);
+    expect(credit.subtitle).toBeNull();
   });
 
   it("uses debt grouping and Paid down / Grew colour semantics", () => {
     const cards = buildCategoryTrendCards({
       kind: "debt",
-      months,
+      months: rangeSepOct,
+      priorMonth: priorAugust,
       expenseTxns: [
         { txMonth: "2026-10", amount: 40, accountSlug: "visa", category: "Interest" },
         { txMonth: "2026-10", amount: 200, accountSlug: "visa", category: "Shopping" },
+        { txMonth: "2026-09", amount: 40, accountSlug: "visa", category: "Interest" },
+        { txMonth: "2026-09", amount: 200, accountSlug: "visa", category: "Shopping" },
       ],
-      incomeTxns: [{ txMonth: "2026-10", amount: 740, accountSlug: "visa", category: "Other" }],
+      incomeTxns: [
+        { txMonth: "2026-10", amount: 740, accountSlug: "visa", category: "Other" },
+        { txMonth: "2026-09", amount: 740, accountSlug: "visa", category: "Other" },
+      ],
       currency: "CAD",
     });
-    const cardsOnly = cards.find((c) => c.key === "credit_card")!;
-    expect(cardsOnly.current).toBe(1500);
-    expect(cardsOnly.change).toBe(-500);
-    expect(cardsOnly.subtitle).toMatch(/Paid/);
-    expect(cardsOnly.subtitle).toMatch(/New charges/);
-    expect(cardsOnly.subtitle).toMatch(/Interest/);
-    const pill = describeDebtChangePill(cardsOnly.change, "CAD");
+    const credit = cards.find((c) => c.key === "credit_card")!;
+    expect(credit.current).toBe(1500);
+    expect(credit.start).toBe(2000);
+    expect(credit.change).toBe(-500);
+    expect(credit.subtitle).toMatch(/Paid/);
+    expect(credit.subtitle).toMatch(/New charges/);
+    expect(credit.subtitle).toMatch(/Interest/);
+    const pill = describeDebtChangePill(credit.change, "CAD");
     expect(pill.text).toMatch(/Paid down/);
     expect(pill.tone).toBe("down");
     const grew = describeDebtChangePill(200, "CAD");
@@ -134,6 +310,10 @@ describe("buildCategoryTrendCards", () => {
           accountDetails: [],
         },
       ],
+      priorMonth: {
+        month: "2026-08",
+        accountDetails: [{ slug: "visa", label: "Visa", type: "credit", value: -900 }],
+      },
       expenseTxns: [],
       incomeTxns: [],
       currency: "CAD",
@@ -204,11 +384,12 @@ describe("asset change pill", () => {
   it("is green for increases and red for decreases", () => {
     expect(describeAssetChangePill(1300, 0.16, "CAD").tone).toBe("up");
     expect(describeAssetChangePill(-400, -0.05, "CAD").tone).toBe("down");
+    expect(describeAssetChangePill(-4700, -0.47, "CAD").text).toMatch(/^−/);
   });
 });
 
 describe("trend range", () => {
-  it("slices 6M / YTD / 1Y from a longer series", () => {
+  it("slices 6M / YTD / 1Y from a longer series and keeps a prior month for 1Y", () => {
     const history = [];
     for (let i = 0; i < 18; i++) {
       const d = new Date(2025, i, 1);
@@ -216,7 +397,10 @@ describe("trend range", () => {
       history.push({ month });
     }
     expect(sliceMonthsByTrendRange(history, "6M")).toHaveLength(6);
-    expect(sliceMonthsByTrendRange(history, "1Y")).toHaveLength(12);
+    const oneYear = sliceMonthsByTrendRange(history, "1Y");
+    expect(oneYear).toHaveLength(12);
+    const prior = priorMonthBeforeRange(history, oneYear);
+    expect(prior?.month).toBe(history[history.length - 13].month);
     const ytd = sliceMonthsByTrendRange(history, "YTD");
     expect(ytd.every((m) => m.month.startsWith("2026-"))).toBe(true);
   });

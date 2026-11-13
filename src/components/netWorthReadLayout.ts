@@ -10,7 +10,7 @@ export const NET_WORTH_CARD_CLASS =
   "bg-white rounded-lg border border-gray-200 p-4 mb-6 lg:p-6";
 
 export const NET_WORTH_TABS_ROW_CLASS =
-  "flex flex-wrap items-center gap-2 border-b border-gray-200 lg:flex-nowrap lg:gap-4";
+  "flex items-center gap-2 border-b border-gray-200 lg:gap-4";
 
 export const NET_WORTH_TAB_BUTTON_BASE =
   "shrink-0 whitespace-nowrap px-2.5 py-2 text-sm font-medium transition-colors border-b-2 -mb-px lg:px-4";

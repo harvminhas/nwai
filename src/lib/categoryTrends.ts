@@ -77,8 +77,14 @@ function monthsBetween(fromIso: string, asOf: Date): number {
   return (asOf.getTime() - from.getTime()) / (1000 * 60 * 60 * 24 * 30.4375);
 }
 
-function money(n: number, currency: string): string {
+function moneyAbs(n: number, currency: string): string {
   return fmt(Math.abs(n), currency);
+}
+
+/** Absolute currency with a minus sign when `n` is negative (unicode minus). */
+function moneySigned(n: number, currency: string): string {
+  const formatted = fmt(Math.abs(n), currency);
+  return n < -0.005 ? `−${formatted}` : formatted;
 }
 
 function pct(start: number, change: number): number | null {
@@ -198,8 +204,8 @@ function assetSubtitle(
       interest += f.interestIn;
     }
     const net = deposits - withdrawals;
-    const netLine = net >= 0 ? `Net inflow ${money(net, currency)}` : `Net outflow ${money(net, currency)}`;
-    const interestLine = interest > 0.005 ? `Interest earned ${money(interest, currency)}` : null;
+    const netLine = net >= 0 ? `Net inflow ${moneyAbs(net, currency)}` : `Net outflow ${moneyAbs(net, currency)}`;
+    const interestLine = interest > 0.005 ? `Interest earned ${moneyAbs(interest, currency)}` : null;
     return joinParts([netLine, interestLine]);
   }
 
@@ -214,12 +220,12 @@ function assetSubtitle(
       const market = card.change - putIn;
       const marketPct = pct(card.start, market);
       const contrib = putIn >= 0
-        ? `Contributions ${money(putIn, currency)}`
-        : `Withdrawals ${money(putIn, currency)}`;
+        ? `Contributions ${moneyAbs(putIn, currency)}`
+        : `Withdrawals ${moneyAbs(putIn, currency)}`;
       const marketLine =
         marketPct != null
-          ? `Market growth ${money(market, currency)} (${market >= 0 ? "+" : "−"}${Math.round(Math.abs(marketPct) * 100)}%)`
-          : `Market growth ${money(market, currency)}`;
+          ? `Market growth ${moneySigned(market, currency)} (${market >= 0 ? "+" : "−"}${Math.round(Math.abs(marketPct) * 100)}%)`
+          : `Market growth ${moneySigned(market, currency)}`;
       return joinParts([contrib, marketLine]);
     }
     if (card.changePercent != null) {
@@ -257,7 +263,7 @@ function debtSubtitle(
   flows: Map<string, { deposits: number; withdrawals: number; interestIn: number; interestOut: number; known: boolean }>,
   currency: string,
 ): string | null {
-  const known = accounts.some((a) => flows.get(a.slug)?.known);
+  const known = accounts.length > 0 && accounts.every((a) => flows.get(a.slug)?.known);
   if (!known) return null;
   let paid = 0;
   let charges = 0;
@@ -270,9 +276,9 @@ function debtSubtitle(
     interest += f.interestOut;
   }
   return joinParts([
-    paid > 0.005 ? `Paid ${money(paid, currency)}` : null,
-    charges > 0.005 ? `New charges ${money(charges, currency)}` : null,
-    interest > 0.005 ? `Interest ${money(interest, currency)}` : null,
+    paid > 0.005 ? `Paid ${moneyAbs(paid, currency)}` : null,
+    charges > 0.005 ? `New charges ${moneyAbs(charges, currency)}` : null,
+    interest > 0.005 ? `Interest ${moneyAbs(interest, currency)}` : null,
   ]);
 }
 
@@ -300,60 +306,67 @@ export function buildCategoryTrendCards(opts: {
   incomeTxns: CategoryTrendTxn[];
   currency: string;
   manualAssets?: ManualAsset[];
+  /** Ending snapshot of the month immediately before `months[0]`. */
+  priorMonth?: CategoryTrendMonth | null;
 }): CategoryTrendCard[] {
   const { kind, currency, manualAssets = [] } = opts;
   const months = [...opts.months].sort((a, b) => a.month.localeCompare(b.month));
   if (months.length === 0) return [];
   const monthKeys = new Set(months.map((m) => m.month));
 
-  const firstBySlug = new Map<string, TrendAccountRow & { category: string }>();
-  const endMonth = months[months.length - 1];
-  const endBySlug = new Map<string, { slug: string; label: string; type: string; value: number; category: string }>();
+  const priorBySlug = new Map<string, { slug: string; label: string; type: string; value: number; category: string }>();
+  for (const row of opts.priorMonth?.accountDetails ?? []) {
+    if (!includeRow(kind, row.value)) continue;
+    priorBySlug.set(row.slug, {
+      slug: row.slug,
+      label: displayName(row.label, row.slug),
+      type: row.type,
+      value: signedAmount(kind, row.value),
+      category: categoryOf(kind, row.type, row.label),
+    });
+  }
 
+  const seenBySlug = new Map<string, { slug: string; label: string; type: string; category: string }>();
   for (const m of months) {
     for (const row of m.accountDetails ?? []) {
       if (!includeRow(kind, row.value)) continue;
-      const category = categoryOf(kind, row.type, row.label);
-      const amount = signedAmount(kind, row.value);
-      if (!firstBySlug.has(row.slug)) {
-        firstBySlug.set(row.slug, {
-          slug: row.slug,
-          label: displayName(row.label, row.slug),
-          type: row.type,
-          start: amount,
-          end: amount,
-          change: 0,
-          openedInRange: m.month !== months[0].month,
-          category,
-        });
-      }
+      seenBySlug.set(row.slug, {
+        slug: row.slug,
+        label: displayName(row.label, row.slug),
+        type: row.type,
+        category: categoryOf(kind, row.type, row.label),
+      });
     }
   }
+
+  const endMonth = months[months.length - 1];
+  const endBySlug = new Map<string, { slug: string; label: string; type: string; value: number; category: string }>();
   for (const row of endMonth.accountDetails ?? []) {
     if (!includeRow(kind, row.value)) continue;
-    const category = categoryOf(kind, row.type, row.label);
     endBySlug.set(row.slug, {
       slug: row.slug,
       label: displayName(row.label, row.slug),
       type: row.type,
       value: signedAmount(kind, row.value),
-      category,
+      category: categoryOf(kind, row.type, row.label),
     });
   }
 
   const grouped = new Map<string, TrendAccountRow[]>();
-  for (const [slug, first] of firstBySlug) {
+  for (const [slug, seen] of seenBySlug) {
+    const prior = priorBySlug.get(slug);
     const last = endBySlug.get(slug);
-    const category = last?.category ?? first.category;
+    const start = prior?.value ?? 0;
     const end = last?.value ?? 0;
+    const category = last?.category ?? seen.category;
     const row: TrendAccountRow = {
       slug,
-      label: last?.label || first.label,
-      type: last?.type ?? first.type,
-      start: first.start,
+      label: last?.label || seen.label,
+      type: last?.type ?? seen.type,
+      start,
       end,
-      change: end - first.start,
-      openedInRange: first.openedInRange,
+      change: end - start,
+      openedInRange: !prior,
     };
     const list = grouped.get(category) ?? [];
     list.push(row);
@@ -375,7 +388,7 @@ export function buildCategoryTrendCards(opts: {
     }
   }
 
-  const allSlugs = new Set([...firstBySlug.keys()]);
+  const allSlugs = new Set([...seenBySlug.keys()]);
   const flows = flowsFor(allSlugs, monthKeys, opts.incomeTxns, opts.expenseTxns);
 
   const cards: CategoryTrendCard[] = [];
@@ -412,7 +425,7 @@ export function buildCategoryTrendCards(opts: {
       accounts,
       newAccountNote:
         opened.length > 0
-          ? `Opened this period (start from first balance): ${opened.map((a) => a.label).join(", ")}`
+          ? `Opened this period: ${opened.map((a) => a.label).join(", ")}`
           : null,
     });
   }
@@ -422,8 +435,8 @@ export function buildCategoryTrendCards(opts: {
 
 export function describeDebtChangePill(change: number, currency: string): { text: string; tone: "up" | "down" | "flat" } {
   if (Math.abs(change) < 0.5) return { text: "No change", tone: "flat" };
-  if (change < 0) return { text: `Paid down ${money(change, currency)}`, tone: "down" };
-  return { text: `Grew ${money(change, currency)}`, tone: "up" };
+  if (change < 0) return { text: `Paid down ${moneyAbs(change, currency)}`, tone: "down" };
+  return { text: `Grew ${moneyAbs(change, currency)}`, tone: "up" };
 }
 
 export function describeAssetChangePill(
@@ -438,7 +451,7 @@ export function describeAssetChangePill(
       : "";
   const sign = change >= 0 ? "+" : "−";
   return {
-    text: `${sign}${money(change, currency)}${pctPart}`,
+    text: `${sign}${moneyAbs(change, currency)}${pctPart}`,
     tone: change > 0 ? "up" : "down",
   };
 }

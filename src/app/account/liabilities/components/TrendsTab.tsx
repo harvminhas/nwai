@@ -4,7 +4,7 @@ import { formatCurrency } from "@/lib/currencyUtils";
 import { calculateBalanceChartDomain } from "@/lib/chartDomain";
 import { CategoryTrendCardGrid, TrendRangeSelector } from "@/components/CategoryTrendCards";
 import { buildCategoryTrendCards } from "@/lib/categoryTrends";
-import { sliceMonthsByTrendRange, type TrendRangeKey } from "@/lib/trendRange";
+import { priorMonthBeforeRange, sliceMonthsByTrendRange, type TrendRangeKey } from "@/lib/trendRange";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -55,16 +55,23 @@ export function TrendsTab({ summary }: TrendsTabProps) {
     () => sliceMonthsByTrendRange(sortedHistory, range),
     [sortedHistory, range],
   );
+  const priorMonth = useMemo(
+    () => priorMonthBeforeRange(sortedHistory, rangedHistory),
+    [sortedHistory, rangedHistory],
+  );
   const categoryCards = useMemo(
     () =>
       buildCategoryTrendCards({
         kind: "debt",
         months: rangedHistory.map((m) => ({ month: m.month, accountDetails: m.accountDetails })),
+        priorMonth: priorMonth
+          ? { month: priorMonth.month, accountDetails: priorMonth.accountDetails }
+          : null,
         expenseTxns: summary.expenseTxns,
         incomeTxns: summary.incomeTxns,
         currency,
       }),
-    [rangedHistory, summary.expenseTxns, summary.incomeTxns, currency],
+    [rangedHistory, priorMonth, summary.expenseTxns, summary.incomeTxns, currency],
   );
 
   if (monthlyHistory.length === 0) {
