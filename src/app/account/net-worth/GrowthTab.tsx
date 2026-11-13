@@ -311,7 +311,7 @@ export default function GrowthTab({
                 </IntactAmount>
               </div>
               <p className="text-xs text-gray-500 break-words pb-1">
-                Includes contributions already counted in savings plus market growth; not added to the total.
+                May include contributions and market growth; not added to the total.
               </p>
               {breakdown.investmentAccounts
                 .filter((a) => a.split === "unsplit" && !a.isBaseline)
@@ -393,6 +393,11 @@ export default function GrowthTab({
                     />
                   );
                 })}
+              {breakdown.investedAlreadyInSpending > 0.005 && (
+                <p className="text-xs text-gray-500 break-words pt-1">
+                  plus {formatCurrencyWithCents(breakdown.investedAlreadyInSpending, currency)} counted as spending
+                </p>
+              )}
             </Section>
           </div>
         </div>

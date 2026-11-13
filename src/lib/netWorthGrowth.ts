@@ -22,8 +22,9 @@
  * Card/LOC paydown and investment contributions are a separate
  * "Where your savings went" allocation (cash kept, debt paid down, invested net).
  * Identity: cash kept + revolving paydown + invested (net) = savings.
- * They are NOT added into the reconciliation total — savings already holds
- * that money because those outflows are not spending.
+ * Invested (net) excludes the contribution portion already in spending, so cash
+ * kept matches the actual cash change. They are NOT added into the
+ * reconciliation total.
  *
  * Fees (Bank / NSF / annual card) and mortgage interest inside an installment
  * payment ARE in spending: do not subtract them again.
@@ -138,8 +139,13 @@ export interface MonthGrowthBreakdown {
 
   /** Residual of gross savings after revolving paydown and invested (net). */
   cashKept: number;
-  /** Split deposits − withdrawals. Negative when money returns from investments. */
+  /**
+   * Split deposits − withdrawals, minus the portion already in spending.
+   * Negative when money returns from investments.
+   */
   investedFromSavings: number;
+  /** Investments & Savings already in spending — shown as a note under Invested. */
+  investedAlreadyInSpending: number;
 
   /** Gross savings — interest is a separate recon term. */
   savingsForReconciliation: number;
@@ -504,14 +510,15 @@ export function computeMonthGrowth(
     })
     .reduce((sum, t) => sum + convert(Math.abs(t.amount), t.currency), 0);
   const netSplitContributions = investmentContributions - investmentWithdrawals;
-  // Net figure so Cash kept + Debt paid down + Invested = savings (withdrawals negative).
-  const investedFromSavings = netSplitContributions;
+  const investedAlreadyInSpending = contributionsAlreadyInSpending;
   // Only add back when the same dollars also appear as split contributions;
   // unsplit Δ already includes those contributions.
   const spendingInvestmentAddBack = Math.min(
     contributionsAlreadyInSpending,
     Math.max(0, netSplitContributions),
   );
+  // Portion not already in spending, so cash kept matches the actual cash change.
+  const investedFromSavings = netSplitContributions - spendingInvestmentAddBack;
 
   const newAccounts: GrowthAccountLine[] = [];
   const otherAssets: GrowthAccountLine[] = [];
@@ -584,6 +591,7 @@ export function computeMonthGrowth(
     spendingInvestmentAddBack,
     cashKept,
     investedFromSavings,
+    investedAlreadyInSpending,
     savingsForReconciliation,
     unexplained,
   };
@@ -702,6 +710,7 @@ export function sumGrowthBreakdowns(
   const otherAssetChanges = selected.reduce((s, m) => s + m.otherAssetChanges, 0);
   const newAccountsTotal = selected.reduce((s, m) => s + m.newAccountsTotal, 0);
   const investedFromSavings = selected.reduce((s, m) => s + m.investedFromSavings, 0);
+  const investedAlreadyInSpending = selected.reduce((s, m) => s + m.investedAlreadyInSpending, 0);
   const cashKept = selected.reduce((s, m) => s + m.cashKept, 0);
   const spendingInvestmentAddBack = selected.reduce((s, m) => s + m.spendingInvestmentAddBack, 0);
   const savingsForReconciliation = grossSavings;
@@ -755,6 +764,7 @@ export function sumGrowthBreakdowns(
     spendingInvestmentAddBack,
     cashKept,
     investedFromSavings,
+    investedAlreadyInSpending,
     savingsForReconciliation,
     unexplained,
   };

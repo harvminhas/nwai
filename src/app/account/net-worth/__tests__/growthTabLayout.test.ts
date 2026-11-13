@@ -47,6 +47,8 @@ describe("Growth tab read layout", () => {
     expect(savingsWent).toBeGreaterThan(unsplit);
     expect(growthSrc).not.toContain("of which");
     expect(growthSrc).not.toContain("sits in unexplained");
+    expect(growthSrc).toContain("May include contributions and market growth; not added to the total.");
+    expect(growthSrc).toContain("counted as spending");
   });
 
   it("does not add a public dev route", () => {

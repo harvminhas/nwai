@@ -636,6 +636,7 @@ describe("investment split", () => {
     expect(result.investmentMarketGrowth).toBe(0);
     expect(result.investmentUnsplit).toBe(2000);
     expect(result.investedFromSavings).toBe(0);
+    expect(result.investedAlreadyInSpending).toBe(500);
     expect(result.spendingInvestmentAddBack).toBe(0);
     expect(result.grossSavings).toBe(2500);
     expectSavingsWentSumsToSavings(result);
@@ -812,10 +813,56 @@ describe("investment split", () => {
     });
     expect(result.grossSavings).toBe(1000);
     expect(result.spendingInvestmentAddBack).toBe(500);
-    expect(result.investedFromSavings).toBe(500);
+    expect(result.investedFromSavings).toBe(0);
+    expect(result.investedAlreadyInSpending).toBe(500);
+    expect(result.cashKept).toBe(1000);
     expect(result.investmentMarketGrowth).toBe(100);
     expect(result.unexplained).toBeCloseTo(0);
     expectSavingsWentSumsToSavings(result);
+  });
+
+  it("cash kept matches checking when a TFSA contribution was counted as spending", () => {
+    const previous = month({
+      yearMonth: "2026-09",
+      netWorth: 14000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 5000 },
+        { slug: "visa", label: "Visa", type: "credit", value: -1000 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 10000 },
+      ],
+    });
+    const current = month({
+      yearMonth: "2026-10",
+      netWorth: 16000,
+      incomeTotal: 5000,
+      coreExpensesTotal: 3500,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 6300 },
+        { slug: "visa", label: "Visa", type: "credit", value: -800 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 10500 },
+      ],
+    });
+    const result = computeMonthGrowth(current, previous, {
+      expenseTxns: [
+        { txMonth: "2026-10", amount: 2200, category: "Groceries", accountSlug: "chk" },
+        { txMonth: "2026-10", amount: 800, category: "Shopping", accountSlug: "visa" },
+        { txMonth: "2026-10", amount: 1000, category: "Card Servicing", accountSlug: "chk" },
+        { txMonth: "2026-10", amount: 500, category: "Investments & Savings", accountSlug: "chk" },
+      ],
+      incomeTxns: [{ txMonth: "2026-10", amount: 500, accountSlug: "tfsa", category: "Transfer In" }],
+      debtPaymentHistory: [{ accountSlug: "visa", statementMonth: "2026-10", paymentsMade: 1000, currency: "CAD" }],
+    });
+    const checkingChange =
+      current.byAccount!.find((a) => a.slug === "chk")!.value -
+      previous.byAccount!.find((a) => a.slug === "chk")!.value;
+    expect(result.grossSavings).toBe(1500);
+    expect(result.revolvingPaydown).toBe(200);
+    expect(result.investedFromSavings).toBe(0);
+    expect(result.investedAlreadyInSpending).toBe(500);
+    expect(result.cashKept).toBe(1300);
+    expect(result.cashKept).toBe(checkingChange);
+    expectSavingsWentSumsToSavings(result);
+    expect(result.unexplained).toBeCloseTo(0);
   });
 });
 

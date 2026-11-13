@@ -67,6 +67,7 @@ const breakdown: MonthGrowthBreakdown = {
   spendingInvestmentAddBack: 0,
   cashKept: 1300,
   investedFromSavings: 500,
+  investedAlreadyInSpending: 0,
   savingsForReconciliation: 2000,
   unexplained: 0,
 };
@@ -146,5 +147,28 @@ describe("GrowthTab", () => {
     expect(screen.queryByText(/of which/i)).toBeNull();
     expect(screen.queryByText(/sits in unexplained/i)).toBeNull();
     expect(total.compareDocumentPosition(unsplit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("May include contributions and market growth; not added to the total.")).toBeTruthy();
+  });
+
+  it("notes investment contributions already counted as spending under Invested (net)", () => {
+    render(
+      <GrowthTab
+        breakdown={{
+          ...breakdown,
+          grossSavings: 1500,
+          cashKept: 1300,
+          investedFromSavings: 0,
+          investedAlreadyInSpending: 500,
+          savingsForReconciliation: 1500,
+        }}
+        currency="CAD"
+        scope="month"
+        onScopeChange={vi.fn()}
+        monthLabel="Oct 2026"
+        rangeLabel="Aug 2026 – Oct 2026"
+      />,
+    );
+    expect(screen.getByText("Invested (net)")).toBeTruthy();
+    expect(screen.getByText(/plus .+ counted as spending/)).toBeTruthy();
   });
 });
