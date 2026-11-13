@@ -15,52 +15,64 @@ vi.mock("next/link", () => ({
 
 const breakdown: MonthGrowthBreakdown = {
   yearMonth: "2026-10",
-  netWorthChange: 1500,
+  netWorthChange: 2100,
   hasPreviousMonth: true,
-  income: 5000,
-  spending: 3000,
+  income: 6000,
+  spending: 4000,
   grossSavings: 2000,
-  savingsRate: 0.4,
-  interestAndFees: 0,
+  savingsRate: 2000 / 6000,
+  interestFeesNotInSpending: 0,
   interestAndFeesIdentifiable: false,
-  interestAndFeesMissingNote: true,
+  interestAndFeesMissingNote: false,
   netSavings: null,
+  installmentPrincipalAddBack: 0,
+  installmentAccounts: [],
+  revolvingPaydown: 200,
   debtPaydown: 200,
   debtAccounts: [{
     slug: "visa",
     label: "Visa",
     type: "credit",
     amount: 200,
-    paid: 500,
-    newCharges: 300,
+    kind: "revolving",
+    paid: 1000,
+    newCharges: 800,
     interestAndFees: 0,
     paydown: 200,
+    principalChange: 200,
     usedActivity: true,
+    isBaseline: false,
   }],
-  investmentDelta: 300,
-  investmentContributions: 0,
+  investmentDelta: 600,
+  investmentContributions: 500,
   investmentWithdrawals: 0,
-  investmentMarketGrowth: 0,
-  investmentUnsplit: 300,
+  investmentMarketGrowth: 100,
+  investmentUnsplit: 0,
   investmentAccounts: [{
     slug: "tfsa",
     label: "TFSA",
     type: "investment",
-    amount: 300,
-    delta: 300,
-    contributions: null,
-    withdrawals: null,
-    marketGrowth: null,
-    split: "unsplit",
+    amount: 600,
+    delta: 600,
+    contributions: 500,
+    withdrawals: 0,
+    marketGrowth: 100,
+    split: "split",
+    isBaseline: false,
   }],
   otherAssetChanges: 0,
   otherAssets: [],
+  newAccountsTotal: 0,
+  newAccounts: [],
+  spendingInvestmentAddBack: 0,
+  cashKept: 1300,
+  investedFromSavings: 500,
   savingsForReconciliation: 2000,
-  unexplained: -1000,
+  unexplained: 0,
 };
 
 describe("GrowthTab", () => {
-  it("shows gross savings, unsplit investment, and unexplained remainder", () => {
+  it("shows flow recon and a separate Where your savings went allocation", () => {
     render(
       <GrowthTab
         breakdown={breakdown}
@@ -72,9 +84,12 @@ describe("GrowthTab", () => {
       />,
     );
     expect(screen.getByText("Gross savings")).toBeTruthy();
-    expect(screen.getByText(/40% savings rate/)).toBeTruthy();
-    expect(screen.getByText("Debt paydown")).toBeTruthy();
-    expect(screen.getByText(/Unsplit/)).toBeTruthy();
+    expect(screen.getByText(/33% savings rate/)).toBeTruthy();
+    expect(screen.getByText("Investment market growth")).toBeTruthy();
+    expect(screen.getByText("Where your savings went")).toBeTruthy();
+    expect(screen.getByText("Cash kept")).toBeTruthy();
+    expect(screen.getByText("Debt paid down (cards / LOC)")).toBeTruthy();
+    expect(screen.getByText("Invested")).toBeTruthy();
     expect(screen.getByText("Other / unexplained")).toBeTruthy();
     expect(screen.getByText("Total (matches What Changed)")).toBeTruthy();
   });

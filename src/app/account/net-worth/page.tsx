@@ -29,6 +29,7 @@ import {
   sliceHistoryByRange,
 } from "@/lib/chartMonthSelection";
 import {
+  formatGrowthChartTitle,
   formatGrowthRangeLabel,
   sumGrowthBreakdowns,
   type MonthGrowthBreakdown,
@@ -402,7 +403,7 @@ function NetWorthPageContent() {
       {/* Trend chart */}
       <div className={NET_WORTH_CARD_CLASS}>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-lg font-semibold text-gray-900">12-Month Trend</h2>
+          <h2 className="text-lg font-semibold text-gray-900">{formatGrowthChartTitle(chartRange)}</h2>
           <div className="flex gap-1">
             {latestVisibleYm && selectedMonth && selectedMonth !== latestVisibleYm && (
               <button

@@ -3,7 +3,12 @@ import type { MonthlyHistoryEntry } from "../financialProfile";
 import {
   computeMonthGrowth,
   computeNetWorthGrowth,
+  flowExplained,
+  formatGrowthChartTitle,
+  isDebtAccountType,
+  isInterestNotInSpending,
   isInterestOrFeeCategory,
+  isInvestmentAccountType,
   sumGrowthBreakdowns,
   type NetWorthGrowthInput,
 } from "../netWorthGrowth";
@@ -24,33 +29,32 @@ function month(partial: Partial<MonthlyHistoryEntry> & { yearMonth: string; netW
   };
 }
 
-function explained(b: ReturnType<typeof computeMonthGrowth>): number {
-  return (
-    b.savingsForReconciliation +
-    b.debtPaydown +
-    b.investmentDelta +
-    b.otherAssetChanges +
-    (b.unexplained ?? 0)
-  );
-}
-
-describe("isInterestOrFeeCategory", () => {
-  it("treats Interest and Fees parents as identifiable", () => {
-    expect(isInterestOrFeeCategory("Interest")).toBe(true);
-    expect(isInterestOrFeeCategory("Fees")).toBe(true);
-    expect(isInterestOrFeeCategory("Bank Fees")).toBe(true);
-    expect(isInterestOrFeeCategory("NSF/OD Fees")).toBe(true);
-    expect(isInterestOrFeeCategory("Annual Card Fee")).toBe(true);
+describe("account type classification", () => {
+  it("does not treat an overdrawn chequing account as debt", () => {
+    expect(isDebtAccountType("checking", -400)).toBe(false);
+    expect(isDebtAccountType("credit", -400)).toBe(true);
+    expect(isDebtAccountType("line_of_credit", -20000)).toBe(true);
   });
 
-  it("does not treat similarly named non-fee categories as fees", () => {
-    expect(isInterestOrFeeCategory("Condo Fees")).toBe(false);
-    expect(isInterestOrFeeCategory("School Fees")).toBe(false);
-    expect(isInterestOrFeeCategory("Dining")).toBe(false);
+  it("treats TFSA/RRSP savings labels as investment-type", () => {
+    expect(isInvestmentAccountType("investment", "Brokerage")).toBe(true);
+    expect(isInvestmentAccountType("savings", "TD TFSA")).toBe(true);
+    expect(isInvestmentAccountType("savings", "Everyday Savings")).toBe(false);
   });
 });
 
-describe("gross and net savings", () => {
+describe("interest vs fees already in spending", () => {
+  it("Fees stay in spending; Interest is core-excluded", () => {
+    expect(isInterestOrFeeCategory("Bank Fees")).toBe(true);
+    expect(isInterestOrFeeCategory("Annual Card Fee")).toBe(true);
+    expect(isInterestNotInSpending("Bank Fees")).toBe(false);
+    expect(isInterestNotInSpending("Annual Card Fee")).toBe(false);
+    expect(isInterestNotInSpending("Interest")).toBe(true);
+    expect(isInterestNotInSpending("Installment Servicing")).toBe(false);
+  });
+});
+
+describe("gross savings", () => {
   const previous = month({
     yearMonth: "2026-09",
     netWorth: 10000,
@@ -72,88 +76,89 @@ describe("gross and net savings", () => {
     });
     expect(result.grossSavings).toBe(2000);
     expect(result.savingsRate).toBeCloseTo(0.4);
-    expect(result.netSavings).toBeNull();
     expect(result.savingsForReconciliation).toBe(2000);
+    expect(result.unexplained).toBe(0);
+    expect(flowExplained(result)).toBe(result.netWorthChange);
   });
 
-  it("savings rate is null when income is 0", () => {
+  it("strips investment-statement deposits out of income", () => {
     const current = month({
       yearMonth: "2026-10",
-      netWorth: 9000,
-      incomeTotal: 0,
-      coreExpensesTotal: 1000,
-      byAccount: [{ slug: "chk", label: "Checking", type: "checking", value: 9000 }],
-    });
-    const result = computeMonthGrowth(current, previous, {
-      expenseTxns: [],
-      incomeTxns: [],
-      debtPaymentHistory: [],
-    });
-    expect(result.grossSavings).toBe(-1000);
-    expect(result.savingsRate).toBeNull();
-  });
-
-  it("net savings = gross − identifiable interest and fees", () => {
-    const current = month({
-      yearMonth: "2026-10",
-      netWorth: 11900,
-      incomeTotal: 5000,
-      coreExpensesTotal: 3000,
-      byAccount: [
-        { slug: "chk", label: "Checking", type: "checking", value: 12800 },
-        { slug: "visa", label: "Visa", type: "credit", value: -900 },
-      ],
-    });
-    const result = computeMonthGrowth(current, previous, {
-      expenseTxns: [
-        { txMonth: "2026-10", amount: 80, category: "Interest", accountSlug: "visa" },
-        { txMonth: "2026-10", amount: 20, category: "Bank Fees", accountSlug: "visa" },
-        { txMonth: "2026-10", amount: 200, category: "Shopping", accountSlug: "visa" },
-      ],
-      incomeTxns: [],
-      debtPaymentHistory: [{ accountSlug: "visa", statementMonth: "2026-10", paymentsMade: 400, currency: "CAD" }],
-    });
-    expect(result.interestAndFeesIdentifiable).toBe(true);
-    expect(result.interestAndFees).toBe(100);
-    expect(result.netSavings).toBe(1900);
-    expect(result.savingsForReconciliation).toBe(1900);
-  });
-
-  it("shows gross only when debt statements have charges but no interest/fee lines", () => {
-    const current = month({
-      yearMonth: "2026-10",
-      netWorth: 11000,
-      incomeTotal: 5000,
-      coreExpensesTotal: 3000,
-      byAccount: [
-        { slug: "chk", label: "Checking", type: "checking", value: 12000 },
-        { slug: "visa", label: "Visa", type: "credit", value: -1000 },
-      ],
-    });
-    const result = computeMonthGrowth(current, previous, {
-      expenseTxns: [
-        { txMonth: "2026-10", amount: 300, category: "Shopping", accountSlug: "visa" },
-      ],
-      incomeTxns: [],
-      debtPaymentHistory: [{ accountSlug: "visa", statementMonth: "2026-10", paymentsMade: 200, currency: "CAD" }],
-    });
-    expect(result.interestAndFeesIdentifiable).toBe(false);
-    expect(result.netSavings).toBeNull();
-    expect(result.interestAndFeesMissingNote).toBe(true);
-    expect(result.savingsForReconciliation).toBe(2000);
-  });
-
-  it("counts installmentInterestAmount on a mortgage payment as identifiable interest", () => {
-    const current = month({
-      yearMonth: "2026-10",
-      netWorth: 10500,
-      incomeTotal: 5000,
+      netWorth: 15500,
+      incomeTotal: 6500, // 6000 salary + 500 TFSA deposit wrongly included
       coreExpensesTotal: 4000,
       byAccount: [
-        { slug: "chk", label: "Checking", type: "checking", value: 110500 },
-        { slug: "mtg", label: "Mortgage", type: "mortgage", value: -100000 },
+        { slug: "chk", label: "Checking", type: "checking", value: 5000 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 10500 },
       ],
     });
+    const prior = month({
+      yearMonth: "2026-09",
+      netWorth: 14000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 4000 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 10000 },
+      ],
+    });
+    const result = computeMonthGrowth(current, prior, {
+      expenseTxns: [],
+      incomeTxns: [{ txMonth: "2026-10", amount: 500, accountSlug: "tfsa", category: "Salary" }],
+      debtPaymentHistory: [],
+    });
+    expect(result.income).toBe(6000);
+    expect(result.grossSavings).toBe(2000);
+  });
+});
+
+describe("flow identity: review example (no double counting)", () => {
+  it("income 6000, spending 4000 with 800 card charges, pay card 1000, TFSA transfer 500, market +100 → ΔNW 2100, unexplained 0", () => {
+    const previous = month({
+      yearMonth: "2026-09",
+      netWorth: 14000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 5000 },
+        { slug: "visa", label: "Visa", type: "credit", value: -1000 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 10000 },
+      ],
+    });
+    const current = month({
+      yearMonth: "2026-10",
+      netWorth: 16100,
+      incomeTotal: 6000,
+      coreExpensesTotal: 4000, // 3200 cash + 800 card charges; payment and TFSA transfer excluded
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 6300 },
+        { slug: "visa", label: "Visa", type: "credit", value: -800 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 10600 },
+      ],
+    });
+    const result = computeMonthGrowth(current, previous, {
+      expenseTxns: [
+        { txMonth: "2026-10", amount: 3200, category: "Groceries", accountSlug: "chk" },
+        { txMonth: "2026-10", amount: 800, category: "Shopping", accountSlug: "visa" },
+        { txMonth: "2026-10", amount: 1000, category: "Card Servicing", accountSlug: "chk" },
+        { txMonth: "2026-10", amount: 500, category: "Transfers", accountSlug: "chk" },
+      ],
+      incomeTxns: [{ txMonth: "2026-10", amount: 500, accountSlug: "tfsa", category: "Transfer In" }],
+      debtPaymentHistory: [{ accountSlug: "visa", statementMonth: "2026-10", paymentsMade: 1000, currency: "CAD" }],
+    });
+
+    expect(result.grossSavings).toBe(2000);
+    expect(result.revolvingPaydown).toBe(200);
+    expect(result.investedFromSavings).toBe(500);
+    expect(result.investmentMarketGrowth).toBe(100);
+    expect(result.installmentPrincipalAddBack).toBe(0);
+    expect(result.interestFeesNotInSpending).toBe(0);
+    expect(result.netWorthChange).toBe(2100);
+    expect(result.unexplained).toBeCloseTo(0);
+    expect(flowExplained(result)).toBeCloseTo(2100);
+    // Allocation is NOT part of the recon total
+    expect(result.cashKept).toBe(2000 - 200 - 500);
+  });
+});
+
+describe("installment principal add-back and fees already in spending", () => {
+  it("adds back mortgage principal already counted in spending; does not subtract installment interest again", () => {
     const prior = month({
       yearMonth: "2026-09",
       netWorth: 10000,
@@ -162,26 +167,173 @@ describe("gross and net savings", () => {
         { slug: "mtg", label: "Mortgage", type: "mortgage", value: -100500 },
       ],
     });
+    const current = month({
+      yearMonth: "2026-10",
+      netWorth: 11500,
+      incomeTotal: 5000,
+      coreExpensesTotal: 4000, // includes the $2000 installment payment
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 111500 },
+        { slug: "mtg", label: "Mortgage", type: "mortgage", value: -100000 },
+      ],
+    });
     const result = computeMonthGrowth(current, prior, {
       expenseTxns: [
         {
           txMonth: "2026-10",
           amount: 2000,
           category: "Installment Servicing",
-          accountSlug: "mtg",
+          accountSlug: "chk",
           installmentInterestAmount: 1500,
         },
       ],
       incomeTxns: [],
       debtPaymentHistory: [{ accountSlug: "mtg", statementMonth: "2026-10", paymentsMade: 2000, currency: "CAD" }],
     });
-    expect(result.interestAndFeesIdentifiable).toBe(true);
-    expect(result.interestAndFees).toBe(1500);
-    expect(result.netSavings).toBe(1000 - 1500);
+    expect(result.grossSavings).toBe(1000);
+    expect(result.interestFeesNotInSpending).toBe(0);
+    expect(result.installmentPrincipalAddBack).toBe(500);
+    expect(result.installmentAccounts[0].principalChange).toBe(500);
+    expect(result.installmentAccounts[0].paydown).toBe(2000);
+    expect(result.revolvingPaydown).toBe(0);
+    expect(result.netWorthChange).toBe(1500);
+    expect(result.unexplained).toBeCloseTo(0);
+  });
+
+  it("does not subtract annual card fees already in spending", () => {
+    const previous = month({
+      yearMonth: "2026-09",
+      netWorth: 9000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 10000 },
+        { slug: "visa", label: "Visa", type: "credit", value: -1000 },
+      ],
+    });
+    const current = month({
+      yearMonth: "2026-10",
+      netWorth: 8861,
+      incomeTotal: 0,
+      coreExpensesTotal: 139,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 10000 },
+        { slug: "visa", label: "Visa", type: "credit", value: -1139 },
+      ],
+    });
+    const result = computeMonthGrowth(current, previous, {
+      expenseTxns: [{ txMonth: "2026-10", amount: 139, category: "Annual Card Fee", accountSlug: "visa" }],
+      incomeTxns: [],
+      debtPaymentHistory: [],
+    });
+    expect(result.interestFeesNotInSpending).toBe(0);
+    expect(result.grossSavings).toBe(-139);
+    expect(result.unexplained).toBeCloseTo(0);
+  });
+
+  it("does not subtract bank/NSF fees already in spending", () => {
+    const previous = month({
+      yearMonth: "2026-09",
+      netWorth: 10000,
+      byAccount: [{ slug: "chk", label: "Checking", type: "checking", value: 10000 }],
+    });
+    const current = month({
+      yearMonth: "2026-10",
+      netWorth: 9955,
+      incomeTotal: 0,
+      coreExpensesTotal: 45,
+      byAccount: [{ slug: "chk", label: "Checking", type: "checking", value: 9955 }],
+    });
+    const result = computeMonthGrowth(current, previous, {
+      expenseTxns: [{ txMonth: "2026-10", amount: 45, category: "NSF/OD Fees", accountSlug: "chk" }],
+      incomeTxns: [],
+      debtPaymentHistory: [],
+    });
+    expect(result.interestFeesNotInSpending).toBe(0);
+    expect(result.grossSavings).toBe(-45);
+    expect(result.unexplained).toBeCloseTo(0);
+  });
+
+  it("subtracts CC Interest that is not in spending", () => {
+    const previous = month({
+      yearMonth: "2026-09",
+      netWorth: 9000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 10000 },
+        { slug: "visa", label: "Visa", type: "credit", value: -1000 },
+      ],
+    });
+    const current = month({
+      yearMonth: "2026-10",
+      netWorth: 8920,
+      incomeTotal: 0,
+      coreExpensesTotal: 0,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 10000 },
+        { slug: "visa", label: "Visa", type: "credit", value: -1080 },
+      ],
+    });
+    const result = computeMonthGrowth(current, previous, {
+      expenseTxns: [{ txMonth: "2026-10", amount: 80, category: "Interest", accountSlug: "visa" }],
+      incomeTxns: [],
+      debtPaymentHistory: [],
+    });
+    expect(result.interestFeesNotInSpending).toBe(80);
+    expect(result.netSavings).toBe(-80);
+    expect(result.unexplained).toBeCloseTo(0);
   });
 });
 
-describe("debt paydown (Paid − New charges)", () => {
+describe("new accounts and overdrawn chequing", () => {
+  it("puts a first-statement LOC on New accounts, not unexplained", () => {
+    const previous = month({
+      yearMonth: "2026-09",
+      netWorth: 10000,
+      byAccount: [{ slug: "chk", label: "Checking", type: "checking", value: 10000 }],
+    });
+    const current = month({
+      yearMonth: "2026-10",
+      netWorth: -10000,
+      incomeTotal: 0,
+      coreExpensesTotal: 0,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 10000 },
+        { slug: "loc", label: "Home LOC", type: "line_of_credit", value: -20000 },
+      ],
+    });
+    const result = computeMonthGrowth(current, previous, {
+      expenseTxns: [],
+      incomeTxns: [],
+      debtPaymentHistory: [],
+    });
+    expect(result.newAccountsTotal).toBe(-20000);
+    expect(result.debtPaydown).toBe(0);
+    expect(result.unexplained).toBeCloseTo(0);
+  });
+
+  it("keeps overdrawn chequing as cash, not a debt account", () => {
+    const previous = month({
+      yearMonth: "2026-09",
+      netWorth: 500,
+      byAccount: [{ slug: "chk", label: "Checking", type: "checking", value: 500 }],
+    });
+    const current = month({
+      yearMonth: "2026-10",
+      netWorth: -400,
+      incomeTotal: 0,
+      coreExpensesTotal: 900,
+      byAccount: [{ slug: "chk", label: "Checking", type: "checking", value: -400 }],
+    });
+    const result = computeMonthGrowth(current, previous, {
+      expenseTxns: [{ txMonth: "2026-10", amount: 900, category: "Groceries", accountSlug: "chk" }],
+      incomeTxns: [],
+      debtPaymentHistory: [],
+    });
+    expect(result.debtAccounts).toHaveLength(0);
+    expect(result.grossSavings).toBe(-900);
+    expect(result.unexplained).toBeCloseTo(0);
+  });
+});
+
+describe("debt paydown stays an allocation (PR #76 Paid − New charges)", () => {
   const previous = month({
     yearMonth: "2026-09",
     netWorth: 9000,
@@ -191,111 +343,58 @@ describe("debt paydown (Paid − New charges)", () => {
     ],
   });
 
-  it("paydown = paymentsMade − new charges, matching PR #76 Paid/New charges", () => {
+  it("paydown = paymentsMade − new charges", () => {
     const current = month({
       yearMonth: "2026-10",
-      netWorth: 9400,
+      netWorth: 8700,
       incomeTotal: 0,
-      coreExpensesTotal: 0,
+      coreExpensesTotal: 300,
       byAccount: [
-        { slug: "chk", label: "Checking", type: "checking", value: 10200 },
+        { slug: "chk", label: "Checking", type: "checking", value: 9500 },
         { slug: "visa", label: "Visa", type: "credit", value: -800 },
       ],
     });
     const result = computeMonthGrowth(current, previous, {
-      expenseTxns: [
-        { txMonth: "2026-10", amount: 300, category: "Shopping", accountSlug: "visa" },
-      ],
+      expenseTxns: [{ txMonth: "2026-10", amount: 300, category: "Shopping", accountSlug: "visa" }],
       incomeTxns: [],
       debtPaymentHistory: [{ accountSlug: "visa", statementMonth: "2026-10", paymentsMade: 500, currency: "CAD" }],
     });
-    expect(result.debtPaydown).toBe(200);
-    expect(result.debtAccounts[0].paid).toBe(500);
-    expect(result.debtAccounts[0].newCharges).toBe(300);
-    expect(result.debtAccounts[0].usedActivity).toBe(true);
-  });
-
-  it("falls back to legacy income credits when paymentsMade is 0 (PR #76)", () => {
-    const current = month({
-      yearMonth: "2026-10",
-      netWorth: 9200,
-      incomeTotal: 0,
-      coreExpensesTotal: 0,
-      byAccount: [
-        { slug: "chk", label: "Checking", type: "checking", value: 10000 },
-        { slug: "visa", label: "Visa", type: "credit", value: -800 },
-      ],
-    });
-    const result = computeMonthGrowth(current, previous, {
-      expenseTxns: [],
-      incomeTxns: [{ txMonth: "2026-10", amount: 200, accountSlug: "visa" }],
-      debtPaymentHistory: [],
-    });
-    expect(result.debtAccounts[0].paid).toBe(200);
-    expect(result.debtPaydown).toBe(200);
+    expect(result.revolvingPaydown).toBe(200);
+    expect(result.debtAccounts[0].kind).toBe("revolving");
+    expect(result.unexplained).toBeCloseTo(0);
   });
 
   it("treats CSV-shaped and PDF-shaped debt txns the same", () => {
     const current = month({
       yearMonth: "2026-10",
-      netWorth: 9100,
+      netWorth: 8950,
       incomeTotal: 0,
       coreExpensesTotal: 0,
       byAccount: [
-        { slug: "chk", label: "Checking", type: "checking", value: 10000 },
-        { slug: "visa", label: "Visa", type: "credit", value: -900 },
+        { slug: "chk", label: "Checking", type: "checking", value: 9900 },
+        { slug: "visa", label: "Visa", type: "credit", value: -950 },
       ],
     });
-    const csv = computeMonthGrowth(current, previous, {
+    const input = {
       expenseTxns: [{ txMonth: "2026-10", amount: 50, category: "Interest", accountSlug: "visa" }],
       incomeTxns: [],
-      debtPaymentHistory: [{ accountSlug: "visa", statementMonth: "2026-10", paymentsMade: 150, currency: "CAD" }],
-    });
-    const pdf = computeMonthGrowth(current, previous, {
-      expenseTxns: [{ txMonth: "2026-10", amount: 50, category: "Interest", accountSlug: "visa" }],
-      incomeTxns: [],
-      debtPaymentHistory: [{ accountSlug: "visa", statementMonth: "2026-10", paymentsMade: 150, currency: "CAD" }],
-    });
-    expect(csv.debtPaydown).toBe(pdf.debtPaydown);
-    expect(csv.interestAndFees).toBe(pdf.interestAndFees);
-    expect(csv.debtPaydown).toBe(100);
-  });
-
-  it("does not treat a first-statement debt baseline as paydown", () => {
-    const priorNoVisa = month({
-      yearMonth: "2026-09",
-      netWorth: 10000,
-      byAccount: [{ slug: "chk", label: "Checking", type: "checking", value: 10000 }],
-    });
-    const current = month({
-      yearMonth: "2026-10",
-      netWorth: 8000,
-      incomeTotal: 0,
-      coreExpensesTotal: 0,
-      byAccount: [
-        { slug: "chk", label: "Checking", type: "checking", value: 10000 },
-        { slug: "visa", label: "Visa", type: "credit", value: -2000 },
-      ],
-    });
-    const result = computeMonthGrowth(current, priorNoVisa, {
-      expenseTxns: [],
-      incomeTxns: [],
-      debtPaymentHistory: [],
-    });
-    expect(result.debtPaydown).toBe(0);
+      debtPaymentHistory: [{ accountSlug: "visa", statementMonth: "2026-10", paymentsMade: 100, currency: "CAD" }],
+    };
+    const csv = computeMonthGrowth(current, previous, input);
+    const pdf = computeMonthGrowth(current, previous, input);
+    expect(csv.revolvingPaydown).toBe(pdf.revolvingPaydown);
+    expect(csv.interestFeesNotInSpending).toBe(pdf.interestFeesNotInSpending);
+    expect(csv.unexplained).toBeCloseTo(0);
   });
 });
 
-describe("investment contribution split", () => {
-  const previous = month({
-    yearMonth: "2026-09",
-    netWorth: 50000,
-    byAccount: [
-      { slug: "tfsa", label: "TFSA", type: "investment", value: 50000 },
-    ],
-  });
-
-  it("splits Δ into contributions, withdrawals, and market growth when the account has its own txns", () => {
+describe("investment split", () => {
+  it("splits Δ into contributions and market growth", () => {
+    const previous = month({
+      yearMonth: "2026-09",
+      netWorth: 50000,
+      byAccount: [{ slug: "tfsa", label: "TFSA", type: "investment", value: 50000 }],
+    });
     const current = month({
       yearMonth: "2026-10",
       netWorth: 53000,
@@ -305,18 +404,23 @@ describe("investment contribution split", () => {
     });
     const result = computeMonthGrowth(current, previous, {
       expenseTxns: [{ txMonth: "2026-10", amount: 200, category: "Transfers", accountSlug: "tfsa" }],
-      incomeTxns: [{ txMonth: "2026-10", amount: 1000, accountSlug: "tfsa" }],
+      incomeTxns: [{ txMonth: "2026-10", amount: 1000, accountSlug: "tfsa", category: "Transfer In" }],
       debtPaymentHistory: [],
     });
-    const acc = result.investmentAccounts[0];
-    expect(acc.split).toBe("split");
-    expect(acc.contributions).toBe(1000);
-    expect(acc.withdrawals).toBe(200);
-    expect(acc.marketGrowth).toBe(2200); // 3000 − (1000 − 200)
-    expect(result.investmentDelta).toBe(3000);
+    expect(result.investmentAccounts[0].split).toBe("split");
+    expect(result.investmentMarketGrowth).toBe(2200);
+    expect(result.investedFromSavings).toBe(800);
   });
 
-  it("labels growth unsplit when the investment account has no own deposits/withdrawals", () => {
+  it("labels growth unsplit when contributions cannot be determined", () => {
+    const prior = month({
+      yearMonth: "2026-09",
+      netWorth: 50000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 2000 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 48000 },
+      ],
+    });
     const current = month({
       yearMonth: "2026-10",
       netWorth: 52000,
@@ -327,32 +431,86 @@ describe("investment contribution split", () => {
         { slug: "tfsa", label: "TFSA", type: "investment", value: 50000 },
       ],
     });
-    const prior = month({
-      yearMonth: "2026-09",
-      netWorth: 50000,
-      byAccount: [
-        { slug: "chk", label: "Checking", type: "checking", value: 2000 },
-        { slug: "tfsa", label: "TFSA", type: "investment", value: 48000 },
-      ],
-    });
     const result = computeMonthGrowth(current, prior, {
-      // Checking-side "Investments & Savings" must not be guessed as TFSA contributions
-      expenseTxns: [
-        { txMonth: "2026-10", amount: 500, category: "Investments & Savings", accountSlug: "chk" },
-      ],
+      expenseTxns: [{ txMonth: "2026-10", amount: 500, category: "Investments & Savings", accountSlug: "chk" }],
       incomeTxns: [],
       debtPaymentHistory: [],
     });
     expect(result.investmentAccounts[0].split).toBe("unsplit");
-    expect(result.investmentAccounts[0].contributions).toBeNull();
-    expect(result.investmentAccounts[0].marketGrowth).toBeNull();
+    expect(result.investmentMarketGrowth).toBe(0);
     expect(result.investmentUnsplit).toBe(2000);
-    expect(result.investmentContributions).toBe(0);
+  });
+
+  it("splits a savings-type TFSA the same way as an investment account", () => {
+    const previous = month({
+      yearMonth: "2026-09",
+      netWorth: 10000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 5000 },
+        { slug: "tfsa", label: "TD TFSA", type: "savings", value: 5000 },
+      ],
+    });
+    const current = month({
+      yearMonth: "2026-10",
+      netWorth: 11600,
+      incomeTotal: 2000,
+      coreExpensesTotal: 500,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 6000 },
+        { slug: "tfsa", label: "TD TFSA", type: "savings", value: 5600 },
+      ],
+    });
+    const result = computeMonthGrowth(current, previous, {
+      expenseTxns: [
+        { txMonth: "2026-10", amount: 500, category: "Groceries", accountSlug: "chk" },
+        { txMonth: "2026-10", amount: 500, category: "Transfers", accountSlug: "chk" },
+      ],
+      incomeTxns: [{ txMonth: "2026-10", amount: 500, accountSlug: "tfsa", category: "Transfer In" }],
+      debtPaymentHistory: [],
+    });
+    expect(result.investmentAccounts[0].split).toBe("split");
+    expect(result.investedFromSavings).toBe(500);
+    expect(result.investmentMarketGrowth).toBe(100);
+    expect(result.unexplained).toBeCloseTo(0);
+  });
+
+  it("adds back Investments & Savings already in spending when the TFSA split is known", () => {
+    const previous = month({
+      yearMonth: "2026-09",
+      netWorth: 10000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 5000 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 5000 },
+      ],
+    });
+    const current = month({
+      yearMonth: "2026-10",
+      netWorth: 11600,
+      incomeTotal: 2000,
+      coreExpensesTotal: 1000, // 500 groceries + 500 Investments & Savings
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 6000 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 5600 },
+      ],
+    });
+    const result = computeMonthGrowth(current, previous, {
+      expenseTxns: [
+        { txMonth: "2026-10", amount: 500, category: "Groceries", accountSlug: "chk" },
+        { txMonth: "2026-10", amount: 500, category: "CA: TFSA", accountSlug: "chk" },
+      ],
+      incomeTxns: [{ txMonth: "2026-10", amount: 500, accountSlug: "tfsa", category: "Transfer In" }],
+      debtPaymentHistory: [],
+    });
+    expect(result.grossSavings).toBe(1000);
+    expect(result.spendingInvestmentAddBack).toBe(500);
+    expect(result.investedFromSavings).toBe(0);
+    expect(result.investmentMarketGrowth).toBe(100);
+    expect(result.unexplained).toBeCloseTo(0);
   });
 });
 
-describe("other assets and reconciliation", () => {
-  it("counts manual asset valuation changes", () => {
+describe("other assets", () => {
+  it("counts manual asset valuation changes for existing assets", () => {
     const previous = month({
       yearMonth: "2026-09",
       netWorth: 300000,
@@ -377,13 +535,11 @@ describe("other assets and reconciliation", () => {
       debtPaymentHistory: [],
     });
     expect(result.otherAssetChanges).toBe(14000);
-    expect(result.grossSavings).toBe(1000);
-    expect(result.netWorthChange).toBe(15000);
-    expect(result.unexplained).toBe(0);
-    expect(explained(result)).toBe(result.netWorthChange);
+    expect(result.newAccountsTotal).toBe(0);
+    expect(result.unexplained).toBeCloseTo(0);
   });
 
-  it("always surfaces the remainder as unexplained — never drops it", () => {
+  it("always surfaces a remainder as unexplained when data is incomplete", () => {
     const previous = month({
       yearMonth: "2026-09",
       netWorth: 10000,
@@ -401,52 +557,82 @@ describe("other assets and reconciliation", () => {
       incomeTxns: [],
       debtPaymentHistory: [],
     });
-    // Gross savings 1000; cash rose 1250.5 → remainder 250.5
-    expect(result.grossSavings).toBe(1000);
     expect(result.unexplained).toBeCloseTo(250.5);
-    expect(explained(result)).toBeCloseTo(1250.5);
-    expect(result.unexplained).not.toBe(0);
+    expect(flowExplained(result)).toBeCloseTo(1250.5);
   });
+});
 
-  it("reconciliation identity holds with savings + paydown + investments + other + unexplained", () => {
+describe("complete realistic month — unexplained ≈ 0", () => {
+  it("card payment + TFSA transfer + mortgage installment + annual fee + new LOC + overdrawn chequing", () => {
     const previous = month({
       yearMonth: "2026-09",
-      netWorth: 40000,
+      netWorth: -190500,
       byAccount: [
-        { slug: "chk", label: "Checking", type: "checking", value: 8000 },
-        { slug: "tfsa", label: "TFSA", type: "investment", value: 20000 },
-        { slug: "visa", label: "Visa", type: "credit", value: -3000 },
-        { slug: "manual-car", label: "Car", type: "manual-vehicle", value: 15000 },
+        { slug: "chk", label: "Checking", type: "checking", value: 500 },
+        { slug: "visa", label: "Visa", type: "credit", value: -1000 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 10000 },
+        { slug: "mtg", label: "Mortgage", type: "mortgage", value: -200000 },
       ],
     });
+    // Checking: 500+6000-4000 groc -1000 card pay -500 TFSA -2000 mtg = -1000
+    // Visa: -1000-800-139-50+1000 = -989
+    // TFSA: 10000+500+100 = 10600
+    // Mtg: -199500
+    // LOC new: -20000
+    // NW = -1000-989+10600-199500-20000 = -210889
     const current = month({
       yearMonth: "2026-10",
-      netWorth: 44500,
+      netWorth: -210889,
       incomeTotal: 6000,
-      coreExpensesTotal: 3500,
+      coreExpensesTotal: 4000 + 800 + 139 + 2000, // groc + card charges + annual fee + installment
       byAccount: [
-        { slug: "chk", label: "Checking", type: "checking", value: 9000 },
-        { slug: "tfsa", label: "TFSA", type: "investment", value: 21500 },
-        { slug: "visa", label: "Visa", type: "credit", value: -2500 },
-        { slug: "manual-car", label: "Car", type: "manual-vehicle", value: 16500 },
+        { slug: "chk", label: "Checking", type: "checking", value: -1000 },
+        { slug: "visa", label: "Visa", type: "credit", value: -989 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 10600 },
+        { slug: "mtg", label: "Mortgage", type: "mortgage", value: -199500 },
+        { slug: "loc", label: "Home LOC", type: "line_of_credit", value: -20000 },
       ],
     });
     const result = computeMonthGrowth(current, previous, {
       expenseTxns: [
-        { txMonth: "2026-10", amount: 200, category: "Shopping", accountSlug: "visa" },
+        { txMonth: "2026-10", amount: 4000, category: "Groceries", accountSlug: "chk" },
+        { txMonth: "2026-10", amount: 1000, category: "Card Servicing", accountSlug: "chk" },
+        { txMonth: "2026-10", amount: 500, category: "Transfers", accountSlug: "chk" },
+        {
+          txMonth: "2026-10",
+          amount: 2000,
+          category: "Installment Servicing",
+          accountSlug: "chk",
+          installmentInterestAmount: 1500,
+        },
+        { txMonth: "2026-10", amount: 800, category: "Shopping", accountSlug: "visa" },
+        { txMonth: "2026-10", amount: 139, category: "Annual Card Fee", accountSlug: "visa" },
         { txMonth: "2026-10", amount: 50, category: "Interest", accountSlug: "visa" },
       ],
-      incomeTxns: [{ txMonth: "2026-10", amount: 500, accountSlug: "tfsa" }],
-      debtPaymentHistory: [{ accountSlug: "visa", statementMonth: "2026-10", paymentsMade: 750, currency: "CAD" }],
+      incomeTxns: [{ txMonth: "2026-10", amount: 500, accountSlug: "tfsa", category: "Transfer In" }],
+      debtPaymentHistory: [
+        { accountSlug: "visa", statementMonth: "2026-10", paymentsMade: 1000, currency: "CAD" },
+        { accountSlug: "mtg", statementMonth: "2026-10", paymentsMade: 2000, currency: "CAD" },
+      ],
     });
-    expect(result.netWorthChange).toBe(4500);
-    expect(explained(result)).toBeCloseTo(4500);
-    expect(result.unexplained).not.toBeNull();
+
+    expect(result.debtAccounts.find((a) => a.slug === "chk")).toBeUndefined();
+    expect(result.grossSavings).toBe(6000 - 6939);
+    expect(result.interestFeesNotInSpending).toBe(50);
+    expect(result.installmentPrincipalAddBack).toBe(500);
+    expect(result.investmentMarketGrowth).toBe(100);
+    expect(result.newAccountsTotal).toBe(-20000);
+    expect(result.revolvingPaydown).toBe(1000 - (800 + 139));
+    expect(result.investedFromSavings).toBe(500);
+    expect(result.cashKept).toBeCloseTo(-1500);
+    expect(result.netWorthChange).toBe(-20389);
+    expect(result.unexplained).toBeCloseTo(0, 6);
+    expect(flowExplained(result)).toBeCloseTo(-20389);
   });
 });
 
 describe("range summation", () => {
-  it("sums components and computes savings rate over the range", () => {
+  it("sums flow components and savings rate over the range", () => {
     const history: MonthlyHistoryEntry[] = [
       month({
         yearMonth: "2026-08",
@@ -464,10 +650,10 @@ describe("range summation", () => {
       }),
       month({
         yearMonth: "2026-10",
-        netWorth: 13000,
+        netWorth: 13500,
         incomeTotal: 5000,
         coreExpensesTotal: 3000,
-        byAccount: [{ slug: "chk", label: "Checking", type: "checking", value: 13000 }],
+        byAccount: [{ slug: "chk", label: "Checking", type: "checking", value: 13500 }],
       }),
     ];
     const input: NetWorthGrowthInput = {
@@ -478,40 +664,25 @@ describe("range summation", () => {
     };
     const months = computeNetWorthGrowth(input);
     const range = sumGrowthBreakdowns(months, ["2026-09", "2026-10"]);
-    expect(range).not.toBeNull();
     expect(range!.income).toBe(9000);
-    expect(range!.spending).toBe(5500);
     expect(range!.grossSavings).toBe(3500);
     expect(range!.savingsRate).toBeCloseTo(3500 / 9000);
-    expect(range!.netWorthChange).toBe(3000); // 1500 + 1500
-    expect(explained(range!)).toBeCloseTo(range!.netWorthChange!);
-  });
+    expect(range!.netWorthChange).toBe(3500);
+    expect(range!.unexplained).toBeCloseTo(0);
+    expect(flowExplained(range!)).toBeCloseTo(3500);
 
-  it("marks mixed split/unsplit investment accounts as unsplit over the range", () => {
-    const months = computeNetWorthGrowth({
-      monthlyHistory: [
-        month({
-          yearMonth: "2026-09",
-          netWorth: 20000,
-          byAccount: [{ slug: "tfsa", label: "TFSA", type: "investment", value: 20000 }],
-        }),
-        month({
-          yearMonth: "2026-10",
-          netWorth: 21000,
-          byAccount: [{ slug: "tfsa", label: "TFSA", type: "investment", value: 21000 }],
-        }),
-        month({
-          yearMonth: "2026-11",
-          netWorth: 22000,
-          byAccount: [{ slug: "tfsa", label: "TFSA", type: "investment", value: 22000 }],
-        }),
-      ],
-      expenseTxns: [],
-      incomeTxns: [{ txMonth: "2026-10", amount: 400, accountSlug: "tfsa" }],
-      debtPaymentHistory: [],
-    });
-    const range = sumGrowthBreakdowns(months, ["2026-10", "2026-11"]);
-    expect(range!.investmentAccounts[0].split).toBe("unsplit");
-    expect(range!.investmentAccounts[0].contributions).toBeNull();
+    const all = sumGrowthBreakdowns(months);
+    // First history month is the baseline, not a growth month.
+    expect(all!.grossSavings).toBe(3500);
+    expect(all!.netWorthChange).toBe(3500);
+    expect(all!.unexplained).toBeCloseTo(0);
+  });
+});
+
+describe("chart title", () => {
+  it("reflects the selected 3M/6M/All range", () => {
+    expect(formatGrowthChartTitle(3)).toBe("3-Month Trend");
+    expect(formatGrowthChartTitle(6)).toBe("6-Month Trend");
+    expect(formatGrowthChartTitle(0)).toBe("All-time Trend");
   });
 });

@@ -29,6 +29,9 @@ describe("Growth tab read layout", () => {
     expect(pageSrc).toContain("<GrowthTab");
     expect(growthSrc).toContain("This month");
     expect(growthSrc).toContain("Chart range");
+    expect(growthSrc).toContain("Where your savings went");
+    expect(pageSrc).toContain("formatGrowthChartTitle");
+    expect(pageSrc).not.toContain("12-Month Trend");
   });
 
   it("does not add a public dev route", () => {

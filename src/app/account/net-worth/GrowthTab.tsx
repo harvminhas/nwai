@@ -6,7 +6,7 @@ import { IntactAmount } from "@/components/IntactAmount";
 import { NET_WORTH_LABEL_CLASS } from "@/components/netWorthReadLayout";
 import { netWorthAccountRow } from "@/lib/accountDetailHref";
 import { formatCurrencyWithCents } from "@/lib/currencyUtils";
-import type { MonthGrowthBreakdown } from "@/lib/netWorthGrowth";
+import { isDebtAccountType, type MonthGrowthBreakdown } from "@/lib/netWorthGrowth";
 
 export type GrowthScope = "month" | "range";
 
@@ -101,6 +101,8 @@ export default function GrowthTab({
   monthLabel: string;
   rangeLabel: string;
 }) {
+  const revolving = breakdown?.debtAccounts.filter((a) => a.kind === "revolving" && !a.isBaseline) ?? [];
+
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-1">
@@ -148,50 +150,61 @@ export default function GrowthTab({
             }`}
           />
 
-          {breakdown.interestAndFeesIdentifiable && breakdown.netSavings != null ? (
+          {breakdown.interestFeesNotInSpending > 0.005 && breakdown.netSavings != null ? (
             <Section
-              title="Net savings"
-              amount={breakdown.netSavings}
+              title="Interest not in spending"
+              amount={-breakdown.interestFeesNotInSpending}
               currency={currency}
-              note={`Gross savings − ${formatCurrencyWithCents(breakdown.interestAndFees, currency)} interest & fees`}
+              note="Card/loan interest categorized as Interest (excluded from spending). Fees and installment interest already in spending are not subtracted again."
             />
-          ) : breakdown.interestAndFeesMissingNote || breakdown.debtAccounts.length > 0 ? (
+          ) : breakdown.interestAndFeesMissingNote ? (
             <p className="text-xs text-gray-500 break-words">
-              {breakdown.interestAndFeesMissingNote
-                ? "Interest and fees aren't itemized on these debt statements, so only gross savings is shown."
-                : "No itemized debt interest or fees this period — showing gross savings."}
+              Interest isn't itemized on these debt statements. Fees already in spending are left there.
             </p>
           ) : null}
 
-          <Section title="Debt paydown" amount={breakdown.debtPaydown} currency={currency}>
-            {breakdown.debtAccounts.filter((a) => Math.abs(a.paydown) >= 0.005 || a.usedActivity).map((acc) => {
-              const row = netWorthAccountRow({
-                slug: acc.slug,
-                label: acc.label,
-                type: acc.type,
-                side: "debt",
-              });
-              const sub = acc.usedActivity
-                ? `Paid ${formatCurrencyWithCents(acc.paid, currency)} − New charges ${formatCurrencyWithCents(acc.newCharges, currency)}`
-                : "From balance change";
-              return (
-                <Row
-                  key={acc.slug}
-                  label={row.label}
-                  amount={acc.paydown}
-                  currency={currency}
-                  href={row.href}
-                  sub={sub}
-                />
-              );
-            })}
-            {breakdown.debtAccounts.length === 0 && (
-              <p className="text-xs text-gray-400">No debt accounts this period</p>
-            )}
-          </Section>
+          {Math.abs(breakdown.installmentPrincipalAddBack) >= 0.005 && (
+            <Section
+              title="Installment principal"
+              amount={breakdown.installmentPrincipalAddBack}
+              currency={currency}
+              note="Principal portion of mortgage/loan payments already counted as spending — added back so only interest reduces net worth."
+            >
+              {breakdown.installmentAccounts.map((acc) => {
+                const row = netWorthAccountRow({
+                  slug: acc.slug,
+                  label: acc.label,
+                  type: acc.type,
+                  side: "debt",
+                });
+                return (
+                  <Row
+                    key={acc.slug}
+                    label={row.label}
+                    amount={acc.principalChange}
+                    currency={currency}
+                    href={row.href}
+                  />
+                );
+              })}
+            </Section>
+          )}
 
-          <Section title="Investment growth" amount={breakdown.investmentDelta} currency={currency}>
-            {breakdown.investmentAccounts.map((acc) => {
+          {breakdown.spendingInvestmentAddBack > 0.005 && (
+            <Section
+              title="Investment contributions in spending"
+              amount={breakdown.spendingInvestmentAddBack}
+              currency={currency}
+              note="Investments & Savings already counted as spending — added back because those dollars increased investment accounts."
+            />
+          )}
+
+          <Section
+            title="Investment market growth"
+            amount={breakdown.investmentMarketGrowth}
+            currency={currency}
+          >
+            {breakdown.investmentAccounts.filter((a) => !a.isBaseline).map((acc) => {
               const row = netWorthAccountRow({
                 slug: acc.slug,
                 label: acc.label,
@@ -206,41 +219,23 @@ export default function GrowthTab({
                     amount={acc.delta}
                     currency={currency}
                     href={row.href}
-                    sub="Unsplit — contributions aren't identifiable for this account"
+                    muted
+                    sub="Unsplit — contributions aren't identifiable, so this change is not in the total"
                   />
                 );
               }
               return (
-                <div key={acc.slug} className="pl-0 sm:pl-1">
-                  <Row
-                    label={row.label}
-                    amount={acc.delta}
-                    currency={currency}
-                    href={row.href}
-                  />
-                  <div className="pl-3">
-                    <Row
-                      label="Contributions"
-                      amount={(acc.contributions ?? 0) - (acc.withdrawals ?? 0)}
-                      currency={currency}
-                      muted
-                      sub={
-                        (acc.withdrawals ?? 0) > 0
-                          ? `Deposits ${formatCurrencyWithCents(acc.contributions ?? 0, currency)} − Withdrawals ${formatCurrencyWithCents(acc.withdrawals ?? 0, currency)}`
-                          : undefined
-                      }
-                    />
-                    <Row
-                      label="Market growth"
-                      amount={acc.marketGrowth ?? 0}
-                      currency={currency}
-                      muted
-                    />
-                  </div>
-                </div>
+                <Row
+                  key={acc.slug}
+                  label={row.label}
+                  amount={acc.marketGrowth ?? 0}
+                  currency={currency}
+                  href={row.href}
+                  sub="Market growth (contributions are under Where your savings went)"
+                />
               );
             })}
-            {breakdown.investmentAccounts.length === 0 && (
+            {breakdown.investmentAccounts.filter((a) => !a.isBaseline).length === 0 && (
               <p className="text-xs text-gray-400">No investment accounts this period</p>
             )}
           </Section>
@@ -269,6 +264,35 @@ export default function GrowthTab({
             )}
           </Section>
 
+          {breakdown.newAccounts.length > 0 && (
+            <Section
+              title="New accounts (first statement)"
+              amount={breakdown.newAccountsTotal}
+              currency={currency}
+              note="Same baselines as What Changed — opening balances, not growth."
+            >
+              {breakdown.newAccounts.map((acc) => {
+                const side = isDebtAccountType(acc.type) ? "debt" : "asset";
+                const row = netWorthAccountRow({
+                  slug: acc.slug,
+                  label: acc.label,
+                  type: acc.type,
+                  side,
+                  isBaseline: true,
+                });
+                return (
+                  <Row
+                    key={acc.slug}
+                    label={row.label}
+                    amount={acc.amount}
+                    currency={currency}
+                    href={row.href}
+                  />
+                );
+              })}
+            </Section>
+          )}
+
           {breakdown.netWorthChange != null && breakdown.unexplained != null && (
             <>
               <Section
@@ -290,6 +314,66 @@ export default function GrowthTab({
               </div>
             </>
           )}
+
+          <div className="pt-4 mt-2 border-t border-gray-200">
+            <p className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
+              Where your savings went
+            </p>
+            <p className="text-xs text-gray-500 break-words mb-2">
+              Card/LOC payments and investment contributions are uses of savings, not extra net-worth change.
+            </p>
+            <Section title="Cash kept" amount={breakdown.cashKept} currency={currency} />
+            <Section title="Debt paid down (cards / LOC)" amount={breakdown.revolvingPaydown} currency={currency}>
+              {revolving.filter((a) => Math.abs(a.paydown) >= 0.005 || a.usedActivity).map((acc) => {
+                const row = netWorthAccountRow({
+                  slug: acc.slug,
+                  label: acc.label,
+                  type: acc.type,
+                  side: "debt",
+                });
+                const sub = acc.usedActivity
+                  ? `Paid ${formatCurrencyWithCents(acc.paid, currency)} − New charges ${formatCurrencyWithCents(acc.newCharges, currency)}`
+                  : "From balance change";
+                return (
+                  <Row
+                    key={acc.slug}
+                    label={row.label}
+                    amount={acc.paydown}
+                    currency={currency}
+                    href={row.href}
+                    sub={sub}
+                  />
+                );
+              })}
+            </Section>
+            <Section title="Invested" amount={breakdown.investedFromSavings} currency={currency}>
+              {breakdown.investmentAccounts
+                .filter((a) => a.split === "split" && !a.isBaseline)
+                .map((acc) => {
+                  const row = netWorthAccountRow({
+                    slug: acc.slug,
+                    label: acc.label,
+                    type: acc.type,
+                    side: "asset",
+                  });
+                  const net = (acc.contributions ?? 0) - (acc.withdrawals ?? 0);
+                  return (
+                    <Row
+                      key={acc.slug}
+                      label={row.label}
+                      amount={net}
+                      currency={currency}
+                      href={row.href}
+                      sub={
+                        (acc.withdrawals ?? 0) > 0
+                          ? `Deposits ${formatCurrencyWithCents(acc.contributions ?? 0, currency)} − Withdrawals ${formatCurrencyWithCents(acc.withdrawals ?? 0, currency)}`
+                          : undefined
+                      }
+                    />
+                  );
+                })}
+            </Section>
+          </div>
         </div>
       )}
     </div>
