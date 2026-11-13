@@ -3,9 +3,9 @@
  */
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import GrowthTab from "../GrowthTab";
-import type { MonthGrowthBreakdown } from "@/lib/netWorthGrowth";
+import type { PeriodGrowth } from "@/lib/netWorthGrowth";
 
 vi.mock("next/link", () => ({
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => (
@@ -13,67 +13,65 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-const breakdown: MonthGrowthBreakdown = {
+const emptySection = {
+  start: 0,
+  end: 0,
+  change: 0,
+  changePercent: null as number | null,
+  accounts: [] as PeriodGrowth["cash"]["accounts"],
+  putIn: null as number | null,
+  marketChange: null as number | null,
+};
+
+const breakdown: PeriodGrowth = {
   yearMonth: "2026-10",
-  netWorthChange: 2100,
-  hasPreviousMonth: true,
-  income: 6000,
-  spending: 4000,
-  grossSavings: 2000,
-  savingsRate: 2000 / 6000,
-  interestFeesNotInSpending: 0,
-  interestAndFeesIdentifiable: false,
-  interestAndFeesMissingNote: false,
-  netSavings: null,
-  installmentPrincipalAddBack: 0,
-  installmentAccounts: [],
-  revolvingPaydown: 200,
-  debtPaydown: 200,
-  debtAccounts: [{
-    slug: "visa",
-    label: "Visa",
-    type: "credit",
-    amount: 200,
-    kind: "revolving",
-    paid: 1000,
-    newCharges: 800,
-    interestAndFees: 0,
-    paydown: 200,
-    principalChange: 200,
-    usedActivity: true,
-    isBaseline: false,
-  }],
-  investmentDelta: 600,
-  investmentContributions: 500,
-  investmentWithdrawals: 0,
-  investmentMarketGrowth: 100,
-  investmentUnsplit: 0,
-  investmentAccounts: [{
-    slug: "tfsa",
-    label: "TFSA",
-    type: "investment",
-    amount: 600,
-    delta: 600,
-    contributions: 500,
-    withdrawals: 0,
-    marketGrowth: 100,
-    split: "split",
-    isBaseline: false,
-  }],
-  otherAssetChanges: 0,
-  otherAssets: [],
-  newAccountsTotal: 0,
-  newAccounts: [],
-  spendingInvestmentAddBack: 0,
-  cashKept: 1300,
-  investedFromSavings: 500,
-  investedAlreadyInSpending: 0,
-  savingsForReconciliation: 2000,
-  unexplained: 0,
+  startMonth: "2026-09",
+  endMonth: "2026-10",
+  hasPrevious: true,
+  cash: {
+    start: 8000,
+    end: 9300,
+    change: 1300,
+    changePercent: 1300 / 8000,
+    accounts: [
+      { slug: "chk", label: "Chequing", type: "checking", start: 5000, end: 6200, change: 1200 },
+      { slug: "sav", label: "Everyday Savings", type: "savings", start: 3000, end: 3100, change: 100 },
+    ],
+    putIn: null,
+    marketChange: null,
+  },
+  investments: {
+    start: 20000,
+    end: 22100,
+    change: 2100,
+    changePercent: 2100 / 20000,
+    accounts: [
+      { slug: "tfsa", label: "TFSA", type: "investment", start: 20000, end: 22100, change: 2100 },
+    ],
+    putIn: 1500,
+    marketChange: 600,
+  },
+  debts: {
+    start: 212000,
+    end: 211200,
+    change: -800,
+    changePercent: -800 / 212000,
+    accounts: [
+      { slug: "visa", label: "Visa", type: "credit", start: 2000, end: 1800, change: -200 },
+    ],
+    putIn: null,
+    marketChange: null,
+  },
+  newAccounts: [
+    { slug: "eq", label: "EQ Bank Savings", type: "savings", bucket: "cash", amount: 4000 },
+  ],
+  startAccounts: [],
+  endAccounts: [],
+  investmentFlows: [],
 };
 
 describe("GrowthTab", () => {
-  it("shows flow recon and a separate Where your savings went allocation", () => {
+  it("shows three plain sections and not the old flow reconciliation", () => {
     render(
       <GrowthTab
         breakdown={breakdown}
@@ -84,16 +82,18 @@ describe("GrowthTab", () => {
         rangeLabel="Aug 2026 – Oct 2026"
       />,
     );
-    expect(screen.getByText("Gross savings")).toBeTruthy();
-    expect(screen.getByText(/33% savings rate/)).toBeTruthy();
-    expect(screen.getByText("Investment market growth")).toBeTruthy();
-    expect(screen.queryByText("Investment change (unsplit)")).toBeNull();
-    expect(screen.getByText("Where your savings went")).toBeTruthy();
-    expect(screen.getByText("Cash kept")).toBeTruthy();
-    expect(screen.getByText("Debt paid down (cards / LOC)")).toBeTruthy();
-    expect(screen.getByText("Invested (net)")).toBeTruthy();
-    expect(screen.getByText("Other / unexplained")).toBeTruthy();
-    expect(screen.getByText("Total (matches What Changed)")).toBeTruthy();
+    expect(screen.getByText("Savings & cash")).toBeTruthy();
+    expect(screen.getByText("Investments")).toBeTruthy();
+    expect(screen.getByText("Debts")).toBeTruthy();
+    expect(screen.getByText(/Your savings went up/)).toBeTruthy();
+    expect(screen.getByText(/Your investments grew/)).toBeTruthy();
+    expect(screen.getByText(/You put in/)).toBeTruthy();
+    expect(screen.getByText(/You paid down/)).toBeTruthy();
+    expect(screen.getByText(/New accounts added this period/)).toBeTruthy();
+    expect(screen.queryByText("Gross savings")).toBeNull();
+    expect(screen.queryByText("Where your savings went")).toBeNull();
+    expect(screen.queryByText("Other / unexplained")).toBeNull();
+    expect(screen.queryByText(/savings rate/i)).toBeNull();
   });
 
   it("toggles This month vs Chart range", () => {
@@ -112,26 +112,10 @@ describe("GrowthTab", () => {
     expect(onScopeChange).toHaveBeenCalledWith("range");
   });
 
-  it("shows unsplit investment change as a muted reference row after the reconciling total", () => {
+  it("expands a section to the per-account list", () => {
     render(
       <GrowthTab
-        breakdown={{
-          ...breakdown,
-          investmentMarketGrowth: 0,
-          investmentUnsplit: 2000,
-          investmentAccounts: [{
-            slug: "tfsa",
-            label: "TFSA",
-            type: "investment",
-            amount: 2000,
-            delta: 2000,
-            contributions: null,
-            withdrawals: null,
-            marketGrowth: null,
-            split: "unsplit",
-            isBaseline: false,
-          }],
-        }}
+        breakdown={breakdown}
         currency="CAD"
         scope="month"
         onScopeChange={vi.fn()}
@@ -139,27 +123,22 @@ describe("GrowthTab", () => {
         rangeLabel="Aug 2026 – Oct 2026"
       />,
     );
-    const unsplit = screen.getByText("Investment change, not split");
-    const total = screen.getByText("Total (matches What Changed)");
-    expect(unsplit).toBeTruthy();
-    expect(screen.getByText("Other / unexplained")).toBeTruthy();
-    expect(screen.getByText(/not added to the total/)).toBeTruthy();
-    expect(screen.queryByText(/of which/i)).toBeNull();
-    expect(screen.queryByText(/sits in unexplained/i)).toBeNull();
-    expect(total.compareDocumentPosition(unsplit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByText("May include contributions and market growth; not added to the total.")).toBeTruthy();
+    expect(screen.queryByText("Chequing")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "2 accounts" }));
+    expect(screen.getByText("Chequing")).toBeTruthy();
+    expect(screen.getByText("Everyday Savings")).toBeTruthy();
   });
 
-  it("notes investment contributions already counted as spending under Invested (net)", () => {
+  it("asks for another month when there is no previous snapshot", () => {
     render(
       <GrowthTab
         breakdown={{
           ...breakdown,
-          grossSavings: 1500,
-          cashKept: 1300,
-          investedFromSavings: 0,
-          investedAlreadyInSpending: 500,
-          savingsForReconciliation: 1500,
+          hasPrevious: false,
+          cash: emptySection,
+          investments: emptySection,
+          debts: emptySection,
+          newAccounts: [],
         }}
         currency="CAD"
         scope="month"
@@ -168,7 +147,6 @@ describe("GrowthTab", () => {
         rangeLabel="Aug 2026 – Oct 2026"
       />,
     );
-    expect(screen.getByText("Invested (net)")).toBeTruthy();
-    expect(screen.getByText(/plus .+ counted as spending/)).toBeTruthy();
+    expect(screen.getByText(/Need another month of statements/)).toBeTruthy();
   });
 });

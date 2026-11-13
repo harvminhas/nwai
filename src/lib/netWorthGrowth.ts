@@ -1,186 +1,79 @@
 /**
- * Net Worth Growth — display-only flow decomposition of a month's (or
- * range's) net-worth change.
- *
- * Spending is `coreExpensesTotal`: transfers and Card Servicing are excluded;
- * installment-loan payments, fees, and card *charges* are included.
- *
- * Flow identity (never drop the remainder):
- *
- *   ΔNW = savings (income − spending)
- *       − revolving-debt interest NOT already in spending   (CC/LOC "Interest")
- *       + principal portion of installment payments already in spending
- *       + Investments & Savings already in spending that also hit a split account
- *       + investment market growth                (split accounts)
- *       + other asset revaluation
- *       + new accounts (first statement)
- *       + Other/unexplained
- *
- * Unsplit investment Δ is NOT in that sum (never guess contributions vs market).
- * It is a muted reference row outside the reconciling list.
- *
- * Card/LOC paydown and investment contributions are a separate
- * "Where your savings went" allocation (cash kept, debt paid down, invested net).
- * Identity: cash kept + revolving paydown + invested (net) = savings.
- * Invested (net) excludes the contribution portion already in spending, so cash
- * kept matches the actual cash change. They are NOT added into the
- * reconciliation total.
- *
- * Fees (Bank / NSF / annual card) and mortgage interest inside an installment
- * payment ARE in spending: do not subtract them again.
- *
- * CSV and PDF transactions use the same ExpenseTxnRecord / IncomeTxnRecord
- * shape — there is no source split.
+ * Net Worth Growth — plain start-vs-end balance changes for cash, investments,
+ * and debts. Display-only; uses the same monthlyHistory.byAccount balances as
+ * What Changed.
  */
 
+import { accountGroup } from "./assetsSummary";
 import { getParentCategory } from "./categoryTaxonomy";
-import { resolveDebtHeaderActivity } from "./debtHeaderActivity";
-import {
-  isCoreExcluded,
-  isExcludedFromCoreIncomeTotal,
-  type IncomeClassificationOpts,
-} from "./spendingMetrics";
-import type { DebtPaymentHistoryEntry, ExpenseTxnRecord, IncomeTxnRecord } from "./extractTransactions";
+import { fmt } from "./currencyUtils";
+import type { ExpenseTxnRecord, IncomeTxnRecord } from "./extractTransactions";
 import type { MonthlyHistoryEntry } from "./financialProfile";
 
-const REVOLVING_TYPES = new Set(["credit", "credit_card", "line_of_credit", "loc"]);
-const INSTALLMENT_TYPES = new Set([
+const DEBT_TYPES = new Set([
+  "credit",
+  "credit_card",
+  "line_of_credit",
+  "loc",
   "mortgage",
   "loan",
   "auto_loan",
   "student_loan",
   "personal_loan",
 ]);
-const MANUAL_DEBT_CATEGORIES = new Set([
-  "mortgage",
-  "auto_loan",
-  "student_loan",
-  "personal_loan",
-  "credit_card",
-  "line_of_credit",
-]);
-const REGISTERED_INVESTMENT_RE =
-  /\b(tfsa|rrsp|resp|fhsa|rdsp|401k|401\(k\)|ira|roth|hsa|529)\b/i;
 
-export type InvestmentSplit = "split" | "unsplit";
-export type DebtKind = "revolving" | "installment";
+export type GrowthBucket = "cash" | "investments" | "debts";
 
 export interface GrowthAccountLine {
   slug: string;
   label: string;
   type: string;
+  start: number;
+  end: number;
+  change: number;
+}
+
+export interface GrowthNewAccount {
+  slug: string;
+  label: string;
+  type: string;
+  bucket: GrowthBucket;
   amount: number;
 }
 
-export interface DebtGrowthAccount extends GrowthAccountLine {
-  kind: DebtKind;
-  paid: number;
-  newCharges: number;
-  interestAndFees: number;
-  /** paid − new spending charges (interest not in spending is excluded). */
-  paydown: number;
-  /** Signed byAccount delta — installment principal add-back uses this. */
-  principalChange: number;
-  usedActivity: boolean;
-  isBaseline: boolean;
+export interface GrowthSection {
+  start: number;
+  end: number;
+  change: number;
+  changePercent: number | null;
+  accounts: GrowthAccountLine[];
+  /** Investments only: net deposits this period. Null if some accounts have no deposit/withdrawal lines. */
+  putIn: number | null;
+  /** Investments only: balance change minus put-in. Null when putIn is null. */
+  marketChange: number | null;
 }
 
-export interface InvestmentGrowthAccount extends GrowthAccountLine {
-  delta: number;
-  contributions: number | null;
-  withdrawals: number | null;
-  marketGrowth: number | null;
-  split: InvestmentSplit;
-  isBaseline: boolean;
-}
-
-export interface MonthGrowthBreakdown {
+export interface PeriodGrowth {
   yearMonth: string;
-  netWorthChange: number | null;
-  hasPreviousMonth: boolean;
-
-  income: number;
-  spending: number;
-  grossSavings: number;
-  savingsRate: number | null;
-
-  /** Interest (core-excluded) on debt statements — NOT fees already in spending. */
-  interestFeesNotInSpending: number;
-  interestAndFeesIdentifiable: boolean;
-  interestAndFeesMissingNote: boolean;
-  /** Gross − interestFeesNotInSpending when that interest is identifiable. */
-  netSavings: number | null;
-
-  installmentPrincipalAddBack: number;
-  installmentAccounts: DebtGrowthAccount[];
-
-  revolvingPaydown: number;
-  debtPaydown: number;
-  debtAccounts: DebtGrowthAccount[];
-
-  investmentDelta: number;
-  investmentContributions: number;
-  investmentWithdrawals: number;
-  investmentMarketGrowth: number;
-  investmentUnsplit: number;
-  investmentAccounts: InvestmentGrowthAccount[];
-
-  otherAssetChanges: number;
-  otherAssets: GrowthAccountLine[];
-
-  newAccountsTotal: number;
-  newAccounts: GrowthAccountLine[];
-
-  /**
-   * Investments & Savings already in spending that also landed as split
-   * contributions — added back so those outflows don't open a hole in ΔNW.
-   */
-  spendingInvestmentAddBack: number;
-
-  /** Residual of gross savings after revolving paydown and invested (net). */
-  cashKept: number;
-  /**
-   * Split deposits − withdrawals, minus the portion already in spending.
-   * Negative when money returns from investments.
-   */
-  investedFromSavings: number;
-  /** Investments & Savings already in spending — shown as a note under Invested. */
-  investedAlreadyInSpending: number;
-
-  /** Gross savings — interest is a separate recon term. */
-  savingsForReconciliation: number;
-  unexplained: number | null;
+  startMonth: string | null;
+  endMonth: string;
+  hasPrevious: boolean;
+  cash: GrowthSection;
+  investments: GrowthSection;
+  debts: GrowthSection;
+  newAccounts: GrowthNewAccount[];
+  startAccounts: GrowthAccountLine[];
+  endAccounts: GrowthAccountLine[];
+  investmentFlows: Array<{ slug: string; deposits: number; withdrawals: number }>;
 }
 
-export type GrowthExpenseTxn = Pick<
-  ExpenseTxnRecord,
-  "txMonth" | "amount" | "category" | "accountSlug"
-> &
-  Partial<Pick<ExpenseTxnRecord, "installmentInterestAmount" | "currency" | "debtType" | "merchant">>;
-
-export type GrowthIncomeTxn = Pick<IncomeTxnRecord, "txMonth" | "amount" | "accountSlug"> &
-  Partial<Pick<IncomeTxnRecord, "currency" | "category" | "source" | "description">>;
+export type GrowthExpenseTxn = Pick<ExpenseTxnRecord, "txMonth" | "amount" | "category" | "accountSlug">;
+export type GrowthIncomeTxn = Pick<IncomeTxnRecord, "txMonth" | "amount" | "accountSlug">;
 
 export interface NetWorthGrowthInput {
   monthlyHistory: MonthlyHistoryEntry[];
   expenseTxns: GrowthExpenseTxn[];
   incomeTxns: GrowthIncomeTxn[];
-  debtPaymentHistory: Array<Pick<DebtPaymentHistoryEntry, "accountSlug" | "statementMonth" | "paymentsMade" | "currency">>;
-  homeCurrency?: string;
-  fxRates?: Record<string, number>;
-  userTransferSources?: Iterable<string>;
-  incomeCategoryRules?: Map<string, string> | Record<string, string>;
-}
-
-function toHome(
-  amount: number,
-  currency: string | undefined,
-  homeCurrency: string,
-  fxRates: Record<string, number>,
-): number {
-  if (!currency || currency.toUpperCase() === homeCurrency.toUpperCase()) return amount;
-  const rate = fxRates[currency.toUpperCase()];
-  return rate != null ? amount * rate : amount;
 }
 
 function normalizeType(type: string): string {
@@ -189,418 +82,230 @@ function normalizeType(type: string): string {
     : type.toLowerCase();
 }
 
-/** Debt by declared account type only — an overdrawn chequing account is not debt. */
-export function isDebtAccountType(type: string, _value?: number): boolean {
-  const t = normalizeType(type);
-  if (REVOLVING_TYPES.has(t) || INSTALLMENT_TYPES.has(t)) return true;
-  return type.toLowerCase().startsWith("manual-") && MANUAL_DEBT_CATEGORIES.has(t);
+export function isDebtAccountType(type: string): boolean {
+  return DEBT_TYPES.has(normalizeType(type));
 }
 
-export function isRevolvingDebtType(type: string): boolean {
-  return REVOLVING_TYPES.has(normalizeType(type));
+/** Cash / investments / debts using the same grouping as the Assets and Debts pages. */
+export function growthBucket(type: string, label?: string): GrowthBucket | null {
+  if (isDebtAccountType(type)) return "debts";
+  const group = accountGroup(normalizeType(type), label);
+  if (group === "cash") return "cash";
+  if (group === "investments" || group === "registered") return "investments";
+  return null;
 }
 
-export function isInstallmentDebtType(type: string): boolean {
-  return INSTALLMENT_TYPES.has(normalizeType(type));
+function displayValue(type: string, label: string | undefined, signed: number): number {
+  return growthBucket(type, label) === "debts" ? Math.abs(signed) : signed;
 }
 
-/**
- * Investment / registered accounts eligible for contribution vs market split.
- * Bank `savings` counts only when the label is a TFSA/RRSP/etc.
- */
-export function isInvestmentAccountType(type: string, label?: string): boolean {
-  const t = normalizeType(type);
-  if (t === "investment") return true;
-  if (t === "savings" && label && REGISTERED_INVESTMENT_RE.test(label)) return true;
-  return false;
+function changePercent(start: number, change: number): number | null {
+  if (Math.abs(start) < 0.005) return null;
+  return change / Math.abs(start);
 }
 
-export function isManualAssetSlug(slug: string, type: string): boolean {
-  return slug.startsWith("manual-") && !isDebtAccountType(type);
+function emptySection(): GrowthSection {
+  return { start: 0, end: 0, change: 0, changePercent: null, accounts: [], putIn: null, marketChange: null };
 }
 
-export function isInterestOrFeeCategory(category: string): boolean {
-  const parent = getParentCategory(category);
-  return parent === "Interest" || parent === "Fees";
+function sortByChangeSize(accounts: GrowthAccountLine[]): GrowthAccountLine[] {
+  return [...accounts].sort((a, b) => {
+    const diff = Math.abs(b.change) - Math.abs(a.change);
+    return diff !== 0 ? diff : a.slug.localeCompare(b.slug);
+  });
 }
 
-/** Core-excluded interest (not Fees, not installment interest already in the payment). */
-export function isInterestNotInSpending(category: string): boolean {
-  return isCoreExcluded(category) && getParentCategory(category) === "Interest";
+function snapshotLines(
+  accounts: NonNullable<MonthlyHistoryEntry["byAccount"]> | GrowthAccountLine[],
+): Map<string, GrowthAccountLine> {
+  const map = new Map<string, GrowthAccountLine>();
+  for (const row of accounts ?? []) {
+    const signed = "value" in row ? (row as { value: number }).value : (row as GrowthAccountLine).end;
+    map.set(row.slug, {
+      slug: row.slug,
+      label: row.label,
+      type: row.type,
+      start: signed,
+      end: signed,
+      change: 0,
+    });
+  }
+  return map;
 }
 
-function bySlug(accounts: MonthlyHistoryEntry["byAccount"]): Map<string, NonNullable<MonthlyHistoryEntry["byAccount"]>[number]> {
-  return new Map((accounts ?? []).map((a) => [a.slug, a]));
+function flowsForPeriod(
+  slugs: Set<string>,
+  months: Set<string>,
+  input: Pick<NetWorthGrowthInput, "expenseTxns" | "incomeTxns">,
+): Map<string, { deposits: number; withdrawals: number }> {
+  const flows = new Map<string, { deposits: number; withdrawals: number }>();
+  const ensure = (slug: string) => {
+    const prev = flows.get(slug) ?? { deposits: 0, withdrawals: 0 };
+    flows.set(slug, prev);
+    return prev;
+  };
+  for (const t of input.incomeTxns) {
+    if (!months.has(t.txMonth) || !slugs.has(t.accountSlug)) continue;
+    ensure(t.accountSlug).deposits += Math.abs(t.amount);
+  }
+  for (const t of input.expenseTxns) {
+    if (!months.has(t.txMonth) || !slugs.has(t.accountSlug)) continue;
+    const parent = getParentCategory(t.category);
+    if (parent === "Interest" || parent === "Fees") continue;
+    ensure(t.accountSlug).withdrawals += Math.abs(t.amount);
+  }
+  return flows;
 }
 
-export function flowExplained(b: Pick<
-  MonthGrowthBreakdown,
-  | "savingsForReconciliation"
-  | "interestFeesNotInSpending"
-  | "installmentPrincipalAddBack"
-  | "spendingInvestmentAddBack"
-  | "investmentMarketGrowth"
-  | "otherAssetChanges"
-  | "newAccountsTotal"
-  | "unexplained"
->): number {
-  return (
-    b.savingsForReconciliation -
-    b.interestFeesNotInSpending +
-    b.installmentPrincipalAddBack +
-    b.spendingInvestmentAddBack +
-    b.investmentMarketGrowth +
-    b.otherAssetChanges +
-    b.newAccountsTotal +
-    (b.unexplained ?? 0)
-  );
-}
+export function buildPeriodGrowth(
+  startAccounts: NonNullable<MonthlyHistoryEntry["byAccount"]> | GrowthAccountLine[],
+  endAccounts: NonNullable<MonthlyHistoryEntry["byAccount"]> | GrowthAccountLine[],
+  opts: {
+    startMonth: string | null;
+    endMonth: string;
+    periodMonths: string[];
+    expenseTxns: GrowthExpenseTxn[];
+    incomeTxns: GrowthIncomeTxn[];
+    investmentFlows?: Array<{ slug: string; deposits: number; withdrawals: number }>;
+  },
+): PeriodGrowth {
+  const startMap = snapshotLines(startAccounts);
+  const endMap = snapshotLines(endAccounts);
+  const startSlugs = new Set(startMap.keys());
+  const endSlugs = new Set(endMap.keys());
 
-/** Where your savings went: cash kept + revolving paydown + invested (net). */
-export function allocationExplained(
-  b: Pick<MonthGrowthBreakdown, "cashKept" | "revolvingPaydown" | "investedFromSavings">,
-): number {
-  return b.cashKept + b.revolvingPaydown + b.investedFromSavings;
+  const sections: Record<GrowthBucket, GrowthAccountLine[]> = {
+    cash: [],
+    investments: [],
+    debts: [],
+  };
+  const newAccounts: GrowthNewAccount[] = [];
+
+  for (const slug of endSlugs) {
+    const endRow = endMap.get(slug)!;
+    const bucket = growthBucket(endRow.type, endRow.label);
+    if (!bucket) continue;
+    const startRow = startMap.get(slug);
+    const endDisplay = displayValue(endRow.type, endRow.label, endRow.end);
+    if (!startRow || !startSlugs.has(slug)) {
+      newAccounts.push({
+        slug,
+        label: endRow.label,
+        type: endRow.type,
+        bucket,
+        amount: endDisplay,
+      });
+      continue;
+    }
+    const startDisplay = displayValue(startRow.type, startRow.label, startRow.end);
+    sections[bucket].push({
+      slug,
+      label: endRow.label || startRow.label,
+      type: endRow.type,
+      start: startDisplay,
+      end: endDisplay,
+      change: endDisplay - startDisplay,
+    });
+  }
+
+  // Closed or paid-off: present at the start, gone by the end. Count as going to $0,
+  // not as "new". (New accounts are the opposite — first seen this period.)
+  for (const slug of startSlugs) {
+    if (endSlugs.has(slug)) continue;
+    const startRow = startMap.get(slug)!;
+    const bucket = growthBucket(startRow.type, startRow.label);
+    if (!bucket) continue;
+    const startDisplay = displayValue(startRow.type, startRow.label, startRow.end);
+    sections[bucket].push({
+      slug,
+      label: startRow.label,
+      type: startRow.type,
+      start: startDisplay,
+      end: 0,
+      change: 0 - startDisplay,
+    });
+  }
+
+  const investmentSlugs = new Set(sections.investments.map((a) => a.slug));
+  const flowMap = opts.investmentFlows
+    ? new Map(opts.investmentFlows.map((f) => [f.slug, f]))
+    : flowsForPeriod(investmentSlugs, new Set(opts.periodMonths), opts);
+
+  let putIn: number | null = null;
+  let marketChange: number | null = null;
+  if (sections.investments.length > 0) {
+    const unknown = sections.investments.some((a) => !flowMap.has(a.slug));
+    if (!unknown) {
+      putIn = 0;
+      for (const a of sections.investments) {
+        const f = flowMap.get(a.slug)!;
+        putIn += f.deposits - f.withdrawals;
+      }
+      const investedChange = sections.investments.reduce((s, a) => s + a.change, 0);
+      marketChange = investedChange - putIn;
+    }
+  }
+
+  const makeSection = (bucket: GrowthBucket): GrowthSection => {
+    const accounts = sortByChangeSize(sections[bucket]);
+    const start = accounts.reduce((s, a) => s + a.start, 0);
+    const end = accounts.reduce((s, a) => s + a.end, 0);
+    const change = end - start;
+    return {
+      start,
+      end,
+      change,
+      changePercent: changePercent(start, change),
+      accounts,
+      putIn: bucket === "investments" ? putIn : null,
+      marketChange: bucket === "investments" ? marketChange : null,
+    };
+  };
+
+  const startAccountList = [...startMap.values()].map((a) => ({
+    ...a,
+    start: a.end,
+    change: 0,
+  }));
+  const endAccountList = [...endMap.values()].map((a) => ({
+    ...a,
+    start: a.end,
+    change: 0,
+  }));
+
+  return {
+    yearMonth: opts.endMonth,
+    startMonth: opts.startMonth,
+    endMonth: opts.endMonth,
+    hasPrevious: opts.startMonth != null,
+    cash: makeSection("cash"),
+    investments: makeSection("investments"),
+    debts: makeSection("debts"),
+    newAccounts: newAccounts.sort((a, b) => a.label.localeCompare(b.label)),
+    startAccounts: startAccountList,
+    endAccounts: endAccountList,
+    investmentFlows: [...flowMap.entries()].map(([slug, f]) => ({ slug, ...f })),
+  };
 }
 
 export function computeMonthGrowth(
   current: MonthlyHistoryEntry,
   previous: MonthlyHistoryEntry | null,
-  input: Pick<
-    NetWorthGrowthInput,
-    | "expenseTxns"
-    | "incomeTxns"
-    | "debtPaymentHistory"
-    | "homeCurrency"
-    | "fxRates"
-    | "userTransferSources"
-    | "incomeCategoryRules"
-  >,
-): MonthGrowthBreakdown {
-  const homeCurrency = input.homeCurrency ?? "CAD";
-  const fxRates = input.fxRates ?? {};
-  const convert = (amount: number, currency?: string) =>
-    toHome(amount, currency, homeCurrency, fxRates);
-
-  const month = current.yearMonth;
-  const currentMap = bySlug(current.byAccount);
-  const previousMap = bySlug(previous?.byAccount);
-  const allSlugs = new Set([...currentMap.keys(), ...previousMap.keys()]);
-
-  const debtSlugs = new Set<string>();
-  const investmentSlugs = new Set<string>();
-  for (const slug of allSlugs) {
-    const row = currentMap.get(slug) ?? previousMap.get(slug);
-    if (!row) continue;
-    if (isDebtAccountType(row.type)) debtSlugs.add(slug);
-    if (isInvestmentAccountType(row.type, row.label)) investmentSlugs.add(slug);
-  }
-
-  const monthExpenses = input.expenseTxns.filter((t) => t.txMonth === month);
-  const monthIncome = input.incomeTxns.filter((t) => t.txMonth === month);
-  const incomeClassOpts: IncomeClassificationOpts = {
-    userTransferSources: input.userTransferSources,
-    incomeCategoryRules: input.incomeCategoryRules,
-  };
-
-  const investmentIncomeInTotal = monthIncome
-    .filter(
-      (t) =>
-        investmentSlugs.has(t.accountSlug) && !isExcludedFromCoreIncomeTotal(t, incomeClassOpts),
-    )
-    .reduce((sum, t) => sum + convert(Math.abs(t.amount), t.currency), 0);
-  const income = Math.max(0, (current.incomeTotal ?? 0) - investmentIncomeInTotal);
-
-  const investmentWithdrawalsInSpending = monthExpenses
-    .filter((t) => {
-      if (!investmentSlugs.has(t.accountSlug)) return false;
-      if (isInterestOrFeeCategory(t.category)) return false;
-      return !isCoreExcluded(t.category, { debtType: t.debtType, merchant: t.merchant });
-    })
-    .reduce((sum, t) => sum + convert(Math.abs(t.amount), t.currency), 0);
-  const spending = (current.coreExpensesTotal ?? 0) - investmentWithdrawalsInSpending;
-  const grossSavings = income - spending;
-  const savingsRate = income > 0 ? grossSavings / income : null;
-
-  const debtTypeBySlug = new Map<string, string>();
-  for (const slug of debtSlugs) {
-    const row = currentMap.get(slug) ?? previousMap.get(slug);
-    if (row) debtTypeBySlug.set(slug, row.type);
-  }
-
-  let interestFeesNotInSpending = 0;
-  let identifiableHits = 0;
-  for (const t of monthExpenses) {
-    const onDebt = debtSlugs.has(t.accountSlug);
-    if (onDebt && isInterestNotInSpending(t.category)) {
-      identifiableHits += 1;
-      // Installment principal add-back already nets statement interest via the
-      // balance change — only revolving (card/LOC) interest is subtracted here.
-      if (isRevolvingDebtType(debtTypeBySlug.get(t.accountSlug) ?? "")) {
-        interestFeesNotInSpending += convert(Math.abs(t.amount), t.currency);
-      }
-    } else if (isInterestOrFeeCategory(t.category) || (t.installmentInterestAmount ?? 0) > 0) {
-      identifiableHits += 1;
-    }
-  }
-  const interestAndFeesIdentifiable = identifiableHits > 0;
-  const netSavings =
-    interestFeesNotInSpending > 0 ? grossSavings - interestFeesNotInSpending : null;
-
-  const debtAccounts: DebtGrowthAccount[] = [];
-  let revolvingPaydown = 0;
-  let installmentPrincipalAddBack = 0;
-  let debtPaydown = 0;
-
-  for (const slug of [...debtSlugs].sort()) {
-    const currentRow = currentMap.get(slug);
-    const previousRow = previousMap.get(slug);
-    const type = currentRow?.type || previousRow?.type || "credit";
-    const label = currentRow?.label || previousRow?.label || slug;
-    const isBaseline = previousRow === undefined && currentRow !== undefined;
-    const kind: DebtKind = isRevolvingDebtType(type) ? "revolving" : "installment";
-
-    const paymentsMade = input.debtPaymentHistory
-      .filter((p) => p.accountSlug === slug && p.statementMonth === month)
-      .reduce((sum, p) => sum + convert(p.paymentsMade, p.currency), 0);
-
-    const debtExpenses = monthExpenses.filter((t) => t.accountSlug === slug);
-    const expensesTotal = debtExpenses.reduce((sum, t) => sum + convert(Math.abs(t.amount), t.currency), 0);
-    const incomeTotal = monthIncome
-      .filter((t) => t.accountSlug === slug)
-      .reduce((sum, t) => sum + convert(Math.abs(t.amount), t.currency), 0);
-
-    const activity = resolveDebtHeaderActivity({
-      paymentsMade,
-      incomeTotal,
-      incomeTxnCount: monthIncome.filter((t) => t.accountSlug === slug).length,
-      expensesTotal,
-      expensesTxnCount: debtExpenses.length,
-    });
-    const paid = activity.paid?.amount ?? 0;
-    const newCharges = activity.newCharges?.amount ?? 0;
-    const usedActivity = paid > 0 || newCharges > 0;
-
-    const accountInterest = debtExpenses.reduce((sum, t) => {
-      if (isInterestOrFeeCategory(t.category)) return sum + convert(Math.abs(t.amount), t.currency);
-      const inst = t.installmentInterestAmount ?? 0;
-      return inst > 0 ? sum + convert(inst, t.currency) : sum;
-    }, 0);
-    const accountInterestNotInSpending = debtExpenses.reduce((sum, t) => {
-      if (isInterestNotInSpending(t.category)) return sum + convert(Math.abs(t.amount), t.currency);
-      return sum;
-    }, 0);
-
-    const balanceDelta = (currentRow?.value ?? 0) - (previousRow?.value ?? 0);
-    const principalChange = isBaseline ? 0 : balanceDelta;
-    // Interest not in spending is a separate recon term — don't treat it as a
-    // new charge that savings "paid for".
-    const newChargesInSpending = Math.max(0, newCharges - accountInterestNotInSpending);
-
-    let paydown = 0;
-    if (!isBaseline) {
-      paydown = usedActivity ? paid - newChargesInSpending : balanceDelta;
-    }
-
-    debtPaydown += paydown;
-    if (!isBaseline && kind === "revolving") revolvingPaydown += paydown;
-    if (!isBaseline && kind === "installment") installmentPrincipalAddBack += principalChange;
-
-    debtAccounts.push({
-      slug,
-      label,
-      type,
-      amount: kind === "installment" ? principalChange : paydown,
-      kind,
-      paid,
-      newCharges,
-      interestAndFees: accountInterest,
-      paydown,
-      principalChange,
-      usedActivity,
-      isBaseline,
-    });
-  }
-
-  const installmentAccounts = debtAccounts.filter((a) => a.kind === "installment" && !a.isBaseline);
-  const interestAndFeesMissingNote =
-    !interestAndFeesIdentifiable && debtAccounts.some((a) => a.usedActivity && !a.isBaseline);
-
-  const investmentAccounts: InvestmentGrowthAccount[] = [];
-  let investmentDelta = 0;
-  let investmentContributions = 0;
-  let investmentWithdrawals = 0;
-  let investmentMarketGrowth = 0;
-  let investmentUnsplit = 0;
-
-  for (const slug of [...investmentSlugs].sort()) {
-    const currentRow = currentMap.get(slug);
-    const previousRow = previousMap.get(slug);
-    const type = currentRow?.type || previousRow?.type || "investment";
-    const label = currentRow?.label || previousRow?.label || slug;
-    const isBaseline = previousRow === undefined && currentRow !== undefined;
-    const delta = isBaseline ? 0 : (currentRow?.value ?? 0) - (previousRow?.value ?? 0);
-
-    const deposits = monthIncome
-      .filter((t) => t.accountSlug === slug)
-      .reduce((sum, t) => sum + convert(Math.abs(t.amount), t.currency), 0);
-    const withdrawals = monthExpenses
-      .filter((t) => t.accountSlug === slug)
-      .reduce((sum, t) => sum + convert(Math.abs(t.amount), t.currency), 0);
-    const hasOwnTxns = deposits > 0 || withdrawals > 0;
-
-    investmentDelta += delta;
-
-    if (isBaseline) {
-      investmentAccounts.push({
-        slug,
-        label,
-        type,
-        amount: 0,
-        delta: 0,
-        contributions: null,
-        withdrawals: null,
-        marketGrowth: null,
-        split: "unsplit",
-        isBaseline: true,
-      });
-      continue;
-    }
-
-    if (hasOwnTxns) {
-      const netContrib = deposits - withdrawals;
-      const market = delta - netContrib;
-      investmentContributions += deposits;
-      investmentWithdrawals += withdrawals;
-      investmentMarketGrowth += market;
-      investmentAccounts.push({
-        slug,
-        label,
-        type,
-        amount: delta,
-        delta,
-        contributions: deposits,
-        withdrawals,
-        marketGrowth: market,
-        split: "split",
-        isBaseline: false,
-      });
-    } else {
-      investmentUnsplit += delta;
-      investmentAccounts.push({
-        slug,
-        label,
-        type,
-        amount: delta,
-        delta,
-        contributions: null,
-        withdrawals: null,
-        marketGrowth: null,
-        split: "unsplit",
-        isBaseline: false,
-      });
-    }
-  }
-
-  const contributionsAlreadyInSpending = monthExpenses
-    .filter((t) => {
-      if (investmentSlugs.has(t.accountSlug) || debtSlugs.has(t.accountSlug)) return false;
-      if (isCoreExcluded(t.category, { debtType: t.debtType, merchant: t.merchant })) return false;
-      return getParentCategory(t.category) === "Investments & Savings";
-    })
-    .reduce((sum, t) => sum + convert(Math.abs(t.amount), t.currency), 0);
-  const netSplitContributions = investmentContributions - investmentWithdrawals;
-  const investedAlreadyInSpending = contributionsAlreadyInSpending;
-  // Only add back when the same dollars also appear as split contributions;
-  // unsplit Δ already includes those contributions.
-  const spendingInvestmentAddBack = Math.min(
-    contributionsAlreadyInSpending,
-    Math.max(0, netSplitContributions),
-  );
-  // Portion not already in spending, so cash kept matches the actual cash change.
-  const investedFromSavings = netSplitContributions - spendingInvestmentAddBack;
-
-  const newAccounts: GrowthAccountLine[] = [];
-  const otherAssets: GrowthAccountLine[] = [];
-  let newAccountsTotal = 0;
-  let otherAssetChanges = 0;
-
-  for (const slug of [...allSlugs].sort()) {
-    const currentRow = currentMap.get(slug);
-    const previousRow = previousMap.get(slug);
-    const type = currentRow?.type || previousRow?.type || "";
-    const label = currentRow?.label || previousRow?.label || slug;
-    const isBaseline = previousRow === undefined && currentRow !== undefined;
-
-    if (isBaseline && currentRow) {
-      newAccountsTotal += currentRow.value;
-      newAccounts.push({ slug, label, type, amount: currentRow.value });
-      continue;
-    }
-
-    if (!isManualAssetSlug(slug, type)) continue;
-    const amount = (currentRow?.value ?? 0) - (previousRow?.value ?? 0);
-    if (Math.abs(amount) < 0.005) continue;
-    otherAssetChanges += amount;
-    otherAssets.push({ slug, label, type, amount });
-  }
-
-  // Identity: cash kept + revolving paydown + invested (net) = gross savings.
-  const cashKept = grossSavings - revolvingPaydown - investedFromSavings;
-  const savingsForReconciliation = grossSavings;
-  const netWorthChange = previous ? current.netWorth - previous.netWorth : null;
-  const unexplained =
-    netWorthChange === null
-      ? null
-      : netWorthChange -
-        (savingsForReconciliation -
-          interestFeesNotInSpending +
-          installmentPrincipalAddBack +
-          spendingInvestmentAddBack +
-          investmentMarketGrowth +
-          otherAssetChanges +
-          newAccountsTotal);
-
-  return {
-    yearMonth: month,
-    netWorthChange,
-    hasPreviousMonth: previous != null,
-    income,
-    spending,
-    grossSavings,
-    savingsRate,
-    interestFeesNotInSpending,
-    interestAndFeesIdentifiable,
-    interestAndFeesMissingNote,
-    netSavings,
-    installmentPrincipalAddBack,
-    installmentAccounts,
-    revolvingPaydown,
-    debtPaydown,
-    debtAccounts,
-    investmentDelta,
-    investmentContributions,
-    investmentWithdrawals,
-    investmentMarketGrowth,
-    investmentUnsplit,
-    investmentAccounts,
-    otherAssetChanges,
-    otherAssets,
-    newAccountsTotal,
-    newAccounts,
-    spendingInvestmentAddBack,
-    cashKept,
-    investedFromSavings,
-    investedAlreadyInSpending,
-    savingsForReconciliation,
-    unexplained,
-  };
+  input: Pick<NetWorthGrowthInput, "expenseTxns" | "incomeTxns">,
+): PeriodGrowth {
+  return buildPeriodGrowth(previous?.byAccount ?? [], current.byAccount ?? [], {
+    startMonth: previous?.yearMonth ?? null,
+    endMonth: current.yearMonth,
+    periodMonths: [current.yearMonth],
+    expenseTxns: input.expenseTxns,
+    incomeTxns: input.incomeTxns,
+  });
 }
 
 export function computeNetWorthGrowth(
   input: NetWorthGrowthInput,
   opts?: { windowMonths?: number },
-): MonthGrowthBreakdown[] {
+): PeriodGrowth[] {
   const sorted = [...input.monthlyHistory].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
   const windowMonths = opts?.windowMonths;
   const startIdx =
@@ -612,162 +317,40 @@ export function computeNetWorthGrowth(
   });
 }
 
-function mergeDebt(into: Map<string, DebtGrowthAccount>, acc: DebtGrowthAccount) {
-  const prev = into.get(acc.slug);
-  if (!prev) {
-    into.set(acc.slug, { ...acc });
-    return;
+function mergeFlows(
+  months: PeriodGrowth[],
+): Array<{ slug: string; deposits: number; withdrawals: number }> {
+  const map = new Map<string, { deposits: number; withdrawals: number }>();
+  for (const m of months) {
+    for (const f of m.investmentFlows) {
+      const prev = map.get(f.slug) ?? { deposits: 0, withdrawals: 0 };
+      prev.deposits += f.deposits;
+      prev.withdrawals += f.withdrawals;
+      map.set(f.slug, prev);
+    }
   }
-  prev.paid += acc.paid;
-  prev.newCharges += acc.newCharges;
-  prev.interestAndFees += acc.interestAndFees;
-  prev.paydown += acc.paydown;
-  prev.principalChange += acc.principalChange;
-  prev.amount += acc.amount;
-  prev.usedActivity = prev.usedActivity || acc.usedActivity;
-  prev.isBaseline = prev.isBaseline && acc.isBaseline;
+  return [...map.entries()].map(([slug, f]) => ({ slug, ...f }));
 }
 
 export function sumGrowthBreakdowns(
-  months: MonthGrowthBreakdown[],
+  months: PeriodGrowth[],
   rangeYearMonths?: string[],
-): MonthGrowthBreakdown | null {
+): PeriodGrowth | null {
   const inRange = rangeYearMonths
     ? months.filter((m) => rangeYearMonths.includes(m.yearMonth))
     : months;
   if (inRange.length === 0) return null;
-  // Range = first visible month's change through last. Skip only a month that
-  // has no previous anywhere (true first history point).
-  const selected = inRange.filter((m) => m.hasPreviousMonth);
-  if (selected.length === 0) return inRange[0];
-  if (selected.length === 1) return selected[0];
-
-  const income = selected.reduce((s, m) => s + m.income, 0);
-  const spending = selected.reduce((s, m) => s + m.spending, 0);
-  const grossSavings = selected.reduce((s, m) => s + m.grossSavings, 0);
-  const interestFeesNotInSpending = selected.reduce((s, m) => s + m.interestFeesNotInSpending, 0);
-  const interestAndFeesIdentifiable = selected.some((m) => m.interestAndFeesIdentifiable);
-  const interestAndFeesMissingNote =
-    !interestAndFeesIdentifiable && selected.some((m) => m.interestAndFeesMissingNote);
-  const netSavings = interestFeesNotInSpending > 0 ? grossSavings - interestFeesNotInSpending : null;
-
-  const debtBySlug = new Map<string, DebtGrowthAccount>();
-  for (const m of selected) {
-    for (const acc of m.debtAccounts) mergeDebt(debtBySlug, acc);
-  }
-
-  const investBySlug = new Map<string, InvestmentGrowthAccount>();
-  for (const m of selected) {
-    for (const acc of m.investmentAccounts) {
-      const prev = investBySlug.get(acc.slug);
-      if (!prev) {
-        investBySlug.set(acc.slug, { ...acc });
-        continue;
-      }
-      prev.delta += acc.delta;
-      prev.amount += acc.amount;
-      prev.isBaseline = prev.isBaseline && acc.isBaseline;
-      if (prev.split === "split" && acc.split === "split") {
-        prev.contributions = (prev.contributions ?? 0) + (acc.contributions ?? 0);
-        prev.withdrawals = (prev.withdrawals ?? 0) + (acc.withdrawals ?? 0);
-        prev.marketGrowth = (prev.marketGrowth ?? 0) + (acc.marketGrowth ?? 0);
-      } else if (prev.split === "unsplit" && acc.split === "unsplit") {
-        // keep
-      } else {
-        prev.split = "unsplit";
-        prev.contributions = null;
-        prev.withdrawals = null;
-        prev.marketGrowth = null;
-      }
-    }
-  }
-
-  const otherBySlug = new Map<string, GrowthAccountLine>();
-  for (const m of selected) {
-    for (const acc of m.otherAssets) {
-      const prev = otherBySlug.get(acc.slug);
-      if (!prev) otherBySlug.set(acc.slug, { ...acc });
-      else prev.amount += acc.amount;
-    }
-  }
-  const newBySlug = new Map<string, GrowthAccountLine>();
-  for (const m of selected) {
-    for (const acc of m.newAccounts) {
-      const prev = newBySlug.get(acc.slug);
-      if (!prev) newBySlug.set(acc.slug, { ...acc });
-      else prev.amount += acc.amount;
-    }
-  }
-
-  const installmentPrincipalAddBack = selected.reduce((s, m) => s + m.installmentPrincipalAddBack, 0);
-  const revolvingPaydown = selected.reduce((s, m) => s + m.revolvingPaydown, 0);
-  const debtPaydown = selected.reduce((s, m) => s + m.debtPaydown, 0);
-  const investmentDelta = selected.reduce((s, m) => s + m.investmentDelta, 0);
-  const investmentContributions = selected.reduce((s, m) => s + m.investmentContributions, 0);
-  const investmentWithdrawals = selected.reduce((s, m) => s + m.investmentWithdrawals, 0);
-  const investmentMarketGrowth = selected.reduce((s, m) => s + m.investmentMarketGrowth, 0);
-  const investmentUnsplit = selected.reduce((s, m) => s + m.investmentUnsplit, 0);
-  const otherAssetChanges = selected.reduce((s, m) => s + m.otherAssetChanges, 0);
-  const newAccountsTotal = selected.reduce((s, m) => s + m.newAccountsTotal, 0);
-  const investedFromSavings = selected.reduce((s, m) => s + m.investedFromSavings, 0);
-  const investedAlreadyInSpending = selected.reduce((s, m) => s + m.investedAlreadyInSpending, 0);
-  const cashKept = selected.reduce((s, m) => s + m.cashKept, 0);
-  const spendingInvestmentAddBack = selected.reduce((s, m) => s + m.spendingInvestmentAddBack, 0);
-  const savingsForReconciliation = grossSavings;
-
-  const changes = selected.map((m) => m.netWorthChange);
-  const netWorthChange = changes.every((c) => c === null)
-    ? null
-    : changes.reduce<number>((s, c) => s + (c ?? 0), 0);
-  const unexplained =
-    netWorthChange === null
-      ? null
-      : netWorthChange -
-        (savingsForReconciliation -
-          interestFeesNotInSpending +
-          installmentPrincipalAddBack +
-          spendingInvestmentAddBack +
-          investmentMarketGrowth +
-          otherAssetChanges +
-          newAccountsTotal);
-
-  const last = selected[selected.length - 1];
-  const debtAccounts = [...debtBySlug.values()];
-
-  return {
-    yearMonth: last.yearMonth,
-    netWorthChange,
-    hasPreviousMonth: selected.some((m) => m.hasPreviousMonth),
-    income,
-    spending,
-    grossSavings,
-    savingsRate: income > 0 ? grossSavings / income : null,
-    interestFeesNotInSpending,
-    interestAndFeesIdentifiable,
-    interestAndFeesMissingNote,
-    netSavings,
-    installmentPrincipalAddBack,
-    installmentAccounts: debtAccounts.filter((a) => a.kind === "installment" && !a.isBaseline),
-    revolvingPaydown,
-    debtPaydown,
-    debtAccounts,
-    investmentDelta,
-    investmentContributions,
-    investmentWithdrawals,
-    investmentMarketGrowth,
-    investmentUnsplit,
-    investmentAccounts: [...investBySlug.values()],
-    otherAssetChanges,
-    otherAssets: [...otherBySlug.values()],
-    newAccountsTotal,
-    newAccounts: [...newBySlug.values()],
-    spendingInvestmentAddBack,
-    cashKept,
-    investedFromSavings,
-    investedAlreadyInSpending,
-    savingsForReconciliation,
-    unexplained,
-  };
+  if (inRange.length === 1) return inRange[0];
+  const first = inRange[0];
+  const last = inRange[inRange.length - 1];
+  return buildPeriodGrowth(first.startAccounts, last.endAccounts, {
+    startMonth: first.startMonth,
+    endMonth: last.endMonth,
+    periodMonths: inRange.map((m) => m.yearMonth),
+    expenseTxns: [],
+    incomeTxns: [],
+    investmentFlows: mergeFlows(inRange),
+  });
 }
 
 export function formatGrowthRangeLabel(yearMonths: string[]): string {
@@ -787,4 +370,50 @@ export function formatGrowthChartTitle(rangeMonths: number): string {
   if (rangeMonths === 3) return "3-Month Trend";
   if (rangeMonths === 6) return "6-Month Trend";
   return "All-time Trend";
+}
+
+function money(n: number, currency: string): string {
+  return fmt(Math.abs(n), currency);
+}
+
+function pctLabel(percent: number | null): string {
+  if (percent == null) return "";
+  const rounded = Math.round(Math.abs(percent) * 100);
+  if (rounded === 0) return "";
+  return ` (${rounded}%)`;
+}
+
+export function describeCashChange(section: GrowthSection, currency: string): string {
+  if (Math.abs(section.change) < 0.5) return "Your savings stayed about the same.";
+  if (section.change > 0) {
+    return `Your savings went up ${money(section.change, currency)}${pctLabel(section.changePercent)}.`;
+  }
+  return `Your savings went down ${money(section.change, currency)}${pctLabel(section.changePercent)}.`;
+}
+
+export function describeInvestmentChange(section: GrowthSection, currency: string): string {
+  if (Math.abs(section.change) < 0.5) return "Your investments stayed about the same.";
+  if (section.change > 0) {
+    return `Your investments grew ${money(section.change, currency)}${pctLabel(section.changePercent)}.`;
+  }
+  return `Your investments fell ${money(section.change, currency)}${pctLabel(section.changePercent)}.`;
+}
+
+export function describeInvestmentPutIn(section: GrowthSection, currency: string): string | null {
+  if (section.putIn == null || section.marketChange == null) return null;
+  const put =
+    section.putIn >= 0
+      ? `You put in ${money(section.putIn, currency)}`
+      : `You took out ${money(section.putIn, currency)}`;
+  const market =
+    section.marketChange >= 0
+      ? `markets added ${money(section.marketChange, currency)}`
+      : `markets lost ${money(section.marketChange, currency)}`;
+  return `${put}; ${market}.`;
+}
+
+export function describeDebtChange(section: GrowthSection, currency: string): string {
+  if (Math.abs(section.change) < 0.5) return "Your debt stayed about the same.";
+  if (section.change < 0) return `You paid down ${money(section.change, currency)}.`;
+  return `Your debt grew by ${money(section.change, currency)}.`;
 }

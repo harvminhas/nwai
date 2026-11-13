@@ -32,7 +32,7 @@ import {
   formatGrowthChartTitle,
   formatGrowthRangeLabel,
   sumGrowthBreakdowns,
-  type MonthGrowthBreakdown,
+  type PeriodGrowth,
 } from "@/lib/netWorthGrowth";
 import GrowthTab, { type GrowthScope } from "./GrowthTab";
 
@@ -68,7 +68,7 @@ function NetWorthPageContent() {
   const [currency, setCurrency] = useState<string>("CAD");
   const [activeTab, setActiveTab] = useState<"changes" | "assets" | "debts" | "growth">("changes");
   const [chartRange, setChartRange] = useState(0); // All — preserves the existing 12-month window
-  const [growthMonths, setGrowthMonths] = useState<MonthGrowthBreakdown[]>([]);
+  const [growthMonths, setGrowthMonths] = useState<PeriodGrowth[]>([]);
   const [growthScope, setGrowthScope] = useState<GrowthScope>("month");
   const [priorMonth, setPriorMonth] = useState<MonthlyNetWorthData | null>(null);
   const isLgUp = useLgUp();
@@ -135,7 +135,7 @@ function NetWorthPageContent() {
       const changesData = await changesRes.json().catch(() => ({ changes: [] }));
       const changes = (changesData.changes || []) as MonthNetWorthSummary[];
       const growthData = await growthRes.json().catch(() => ({ months: [] }));
-      setGrowthMonths((growthData.months || []) as MonthGrowthBreakdown[]);
+      setGrowthMonths((growthData.months || []) as PeriodGrowth[]);
 
       // Build change items map by month
       const changesByMonth = new Map<string, MonthNetWorthSummary["items"]>();

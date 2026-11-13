@@ -23,32 +23,24 @@ describe("Growth tab read layout", () => {
     expect(growthSrc).toContain("break-words");
   });
 
-  it("is wired as a fourth tab on the net worth page", () => {
+  it("is wired as a fourth tab and shows three plain sections", () => {
     expect(pageSrc).toContain("Growth");
     expect(pageSrc).toContain('setActiveTab("growth")');
     expect(pageSrc).toContain("<GrowthTab");
     expect(growthSrc).toContain("This month");
     expect(growthSrc).toContain("Chart range");
-    expect(growthSrc).toContain("Where your savings went");
-    expect(growthSrc).toContain("Invested (net)");
+    expect(growthSrc).toContain("Savings & cash");
+    expect(growthSrc).toContain("Investments");
+    expect(growthSrc).toContain("Debts");
     expect(pageSrc).toContain("formatGrowthChartTitle");
     expect(pageSrc).toContain("priorMonth");
     expect(pageSrc).not.toContain("12-Month Trend");
-  });
-
-  it("places the unsplit investment row outside the reconciling list", () => {
-    const unexplained = growthSrc.indexOf('title="Other / unexplained"');
-    const total = growthSrc.indexOf("Total (matches What Changed)");
-    const unsplit = growthSrc.indexOf("Investment change, not split");
-    const savingsWent = growthSrc.lastIndexOf("Where your savings went");
-    expect(unexplained).toBeGreaterThan(-1);
-    expect(total).toBeGreaterThan(unexplained);
-    expect(unsplit).toBeGreaterThan(total);
-    expect(savingsWent).toBeGreaterThan(unsplit);
-    expect(growthSrc).not.toContain("of which");
-    expect(growthSrc).not.toContain("sits in unexplained");
-    expect(growthSrc).toContain("May include contributions and market growth; not added to the total.");
-    expect(growthSrc).toContain("counted as spending");
+    expect(growthSrc).not.toContain("Gross savings");
+    expect(growthSrc).not.toContain("Where your savings went");
+    expect(growthSrc).not.toContain("unsplit");
+    expect(growthSrc).not.toContain("unexplained");
+    expect(growthSrc).not.toContain("Installment principal");
+    expect(growthSrc).not.toContain("savings rate");
   });
 
   it("does not add a public dev route", () => {
