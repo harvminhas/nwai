@@ -4,8 +4,7 @@ import { getFinancialProfile } from "@/lib/financialProfile";
 import { loadUserReviewContext } from "@/lib/userReviewContext";
 import { buildIncomeSummary } from "@/lib/incomeSummary";
 import { computeBucketBreakdown, compute3MonthTrend } from "@/lib/bucketBreakdown";
-import { computeWindowSavings } from "@/lib/savingsCalculations";
-import { formatMonthYear } from "@/lib/dateFormatting";
+import { averageCashFlow, cashFlowInputFromProfile } from "@/lib/monthlyCashFlow";
 import { resolveWindowMonths, formatMonthList, formatMonthName, type TimeRange } from "@/lib/rangeUtils";
 import type { MoneyCoachBucket } from "@/lib/moneyCoachBuckets";
 import type { IncomeDrawerData, BucketDrawerData, SavingsDrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
@@ -200,25 +199,24 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       return NextResponse.json(response);
     }
 
-    // Savings drawer data (special handling with NET balance approach)
+    // Savings drawer — leftover from getMonthlyCashFlow (same as Net savings card)
     if (bucket === "savings") {
       if (windowResult.months.length === 0) {
         return NextResponse.json({ error: "No complete months available for selected window" }, { status: 404 });
       }
-      
-      // Compute window savings with per-month reconciliation (using shared review context)
-      const windowSavings = computeWindowSavings(
-        profile.monthlyHistory,
-        profile.accountBalanceHistory,
-        profile.expenseTxns,
-        windowResult.months,
-        reviewContext.savingsConfirmedItems
+
+      const averaged = averageCashFlow(
+        cashFlowInputFromProfile(profile, reviewContext),
+        { rangeMonths: windowResult.months },
       );
-      
+
       const response: SavingsDrawerData = {
         type: "savings",
         range,
-        windowSavings,
+        monthlyAverage: averaged.leftover,
+        moneyIn: averaged.moneyIn,
+        moneyOut: averaged.moneyOut,
+        monthlyBreakdown: averaged.monthlyBreakdown,
         homeCurrency: profile.homeCurrency,
         basisLabel: windowResult.months.length > 0
           ? `Monthly average, ${formatMonthList(windowResult.months)}`

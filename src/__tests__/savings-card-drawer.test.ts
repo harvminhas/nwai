@@ -1,166 +1,139 @@
 /**
- * Net Savings Card vs Drawer Consistency Test
- * 
- * Verifies that the Net Savings card value on the dashboard
- * matches the total shown in the drill-down drawer.
+ * Net savings card, drawer, and chat must each equal independently
+ * computed leftover from getMonthlyCashFlow — not each other by copying
+ * the same helper result into both sides of the assertion.
  */
 
-import { describe, test, expect } from 'vitest';
-import { computeMoneyCoachBreakdown } from '../lib/moneyCoach';
-import { computeBucketBreakdown, getMonthsForWindow } from '../lib/bucketBreakdown';
-import type { FinancialProfileCache } from '../lib/financialProfile';
-import type { ExpenseTxnRecord, AccountSnapshot, DebtPaymentHistoryEntry } from '../lib/extractTransactions';
+import { describe, expect, test } from "vitest";
+import { executeGetSavingsSummary } from "../lib/chat/executor";
+import type { ExpenseTxnRecord, IncomeTxnRecord } from "../lib/extractTransactions";
+import type { FinancialProfileCache } from "../lib/financialProfile";
+import { computeMoneyCoachBreakdown } from "../lib/moneyCoach";
+import {
+  averageCashFlow,
+  cashFlowInputFromProfile,
+  getMonthlyCashFlow,
+} from "../lib/monthlyCashFlow";
+import type { UserReviewContext } from "../lib/userReviewContext";
 
-describe('Net Savings Card vs Drawer Consistency', () => {
-  // Create a minimal financial profile for testing
-  const createTestProfile = (expenseTxns: ExpenseTxnRecord[]): FinancialProfileCache => {
-    const monthlyHistory = [
-      { yearMonth: '2026-07', expensesTotal: 1000, coreExpensesTotal: 900, incomeTotal: 5000, incomeTotalAllCredits: 5000, debtPaymentsTotal: 100, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 100 },
-      { yearMonth: '2026-08', expensesTotal: 1000, coreExpensesTotal: 900, incomeTotal: 5000, incomeTotalAllCredits: 5000, debtPaymentsTotal: 100, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 100 },
-      { yearMonth: '2026-09', expensesTotal: 1000, coreExpensesTotal: 900, incomeTotal: 5000, incomeTotalAllCredits: 5000, debtPaymentsTotal: 100, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 100 },
-    ];
-
-    return {
-      updatedAt: new Date().toISOString(),
-      sourceVersion: 'test',
-      schemaVersion: '56',
-      expenseTxns,
-      incomeTxns: [],
-      accountSnapshots: [{
-        slug: 'td-1234',
-        bankName: 'TD',
-        accountName: 'TD Chequing',
-        accountType: 'checking',
+function makeProfile(
+  incomeTxns: IncomeTxnRecord[],
+  expenseTxns: ExpenseTxnRecord[],
+): FinancialProfileCache {
+  const months = ["2026-07", "2026-08", "2026-09"];
+  return {
+    updatedAt: new Date().toISOString(),
+    sourceVersion: "test",
+    schemaVersion: "56",
+    expenseTxns,
+    incomeTxns,
+    accountSnapshots: [
+      {
+        slug: "td-1234",
+        bankName: "TD",
+        accountName: "TD Chequing",
+        accountType: "checking",
         balance: 5000,
-        currency: 'CAD',
-        accountId: '1234',
-        statementMonth: '2026-09',
-      }],
-      allTxMonths: ['2026-07', '2026-08', '2026-09'],
-      latestTxMonth: '2026-09',
-      monthlyHistory,
-      netWorth: 5000,
-      homeCurrency: 'CAD',
-      accountBalanceHistory: [],
-      debtPaymentHistory: [],
-      cashIncomeEntries: [],
-      cashCommitmentEntries: [],
-    } as FinancialProfileCache;
-  };
+        currency: "CAD",
+        accountId: "1234",
+        statementMonth: "2026-09",
+      },
+    ],
+    allTxMonths: months,
+    latestTxMonth: "2026-09",
+    monthlyHistory: months.map((yearMonth) => ({
+      yearMonth,
+      expensesTotal: 1000,
+      coreExpensesTotal: 900,
+      incomeTotal: 5000,
+      incomeTotalAllCredits: 5000,
+      debtPaymentsTotal: 0,
+      cardServicingPaymentsTotal: 0,
+      minDebtPaymentsTotal: 0,
+    })),
+    netWorth: 5000,
+    homeCurrency: "CAD",
+    accountBalanceHistory: [],
+    debtPaymentHistory: [],
+    cashIncomeEntries: [],
+    cashCommitmentEntries: [],
+    statementHistory: [],
+    accountStatusRecords: [],
+  } as unknown as FinancialProfileCache;
+}
 
-  test('card value equals drawer total for savings bucket', () => {
-    const expenseTxns: ExpenseTxnRecord[] = [
-      // Investments & Savings category transactions
-      { merchant: 'Wealthsimple', description: 'TFSA contribution', amount: 500.00, category: 'Investments & Savings', date: '2026-06-15', txMonth: '2026-06', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
-      { merchant: 'Wealthsimple', description: 'TFSA contribution', amount: 500.00, category: 'Investments & Savings', date: '2026-07-15', txMonth: '2026-07', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
-      { merchant: 'Wealthsimple', description: 'TFSA contribution', amount: 500.00, category: 'Investments & Savings', date: '2026-08-15', txMonth: '2026-08', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
-      { merchant: 'Wealthsimple', description: 'TFSA contribution', amount: 500.00, category: 'Investments & Savings', date: '2026-09-15', txMonth: '2026-09', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
-    ];
+const emptyReviews: UserReviewContext = {
+  incomeDepositReviews: new Map(),
+  debtPaymentReviews: [],
+  savingsConfirmedItems: new Map(),
+};
 
-    const monthlyHistory = [
-      { yearMonth: '2026-06', expensesTotal: 1000, coreExpensesTotal: 900, incomeTotal: 5000, incomeTotalAllCredits: 5000, debtPaymentsTotal: 100, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 100 },
-      { yearMonth: '2026-07', expensesTotal: 1000, coreExpensesTotal: 900, incomeTotal: 5000, incomeTotalAllCredits: 5000, debtPaymentsTotal: 100, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 100 },
-      { yearMonth: '2026-08', expensesTotal: 1000, coreExpensesTotal: 900, incomeTotal: 5000, incomeTotalAllCredits: 5000, debtPaymentsTotal: 100, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 100 },
-      { yearMonth: '2026-09', expensesTotal: 1000, coreExpensesTotal: 900, incomeTotal: 5000, incomeTotalAllCredits: 5000, debtPaymentsTotal: 100, cardServicingPaymentsTotal: 0, minDebtPaymentsTotal: 100 },
-    ];
+describe("Net savings card vs drawer vs chat", () => {
+  const months = ["2026-07", "2026-08", "2026-09"];
+  const incomeTxns: IncomeTxnRecord[] = months.map((txMonth) => ({
+    txMonth,
+    date: `${txMonth}-01`,
+    source: "ACME CORP",
+    description: "ACME CORP",
+    category: "Salary",
+    amount: 5000,
+    accountSlug: "td-1234",
+    accountLabel: "TD Chequing",
+    currency: "CAD",
+  }));
+  const expenseTxns: ExpenseTxnRecord[] = months.map((txMonth) => ({
+    txMonth,
+    date: `${txMonth}-15`,
+    merchant: "Loblaws",
+    category: "Groceries",
+    amount: 1000,
+    accountSlug: "td-1234",
+    accountLabel: "TD Chequing",
+    currency: "CAD",
+  }));
 
-    const profile = {
-      updatedAt: new Date().toISOString(),
-      sourceVersion: 'test',
-      schemaVersion: '56',
-      expenseTxns,
-      incomeTxns: [],
-      accountSnapshots: [{
-        slug: 'td-1234',
-        bankName: 'TD',
-        accountName: 'TD Chequing',
-        accountType: 'checking',
-        balance: 5000,
-        currency: 'CAD',
-        accountId: '1234',
-        statementMonth: '2026-09',
-      }],
-      allTxMonths: ['2026-06', '2026-07', '2026-08', '2026-09'],
-      latestTxMonth: '2026-09',
-      monthlyHistory,
-      netWorth: 5000,
-      homeCurrency: 'CAD',
-      accountBalanceHistory: [],
-      debtPaymentHistory: [],
-      cashIncomeEntries: [],
-      cashCommitmentEntries: [],
-    } as FinancialProfileCache;
+  const profile = makeProfile(incomeTxns, expenseTxns);
+  const input = cashFlowInputFromProfile(profile, emptyReviews);
 
-    // Compute card value (from money coach)
-    const moneyCoachBreakdown = computeMoneyCoachBreakdown(profile, []);
-    const savingsCard = moneyCoachBreakdown.buckets.find(b => b.bucket === 'savings');
-    expect(savingsCard).toBeDefined();
-    const cardValue = savingsCard!.monthlyAverage;
+  test("card, drawer, and chat each equal independently computed leftover", () => {
+    const independent = months.map((m) => getMonthlyCashFlow(input, m).leftover);
+    const expected = independent.reduce((s, v) => s + v, 0) / independent.length;
+    expect(expected).toBeCloseTo(4000, 5);
 
-    // Compute drawer value (from bucket breakdown)
-    const currentYear = new Date().getFullYear();
-    const months = getMonthsForWindow(profile.monthlyHistory, 'last3', currentYear);
-    const drawerBreakdown = computeBucketBreakdown(
-      'savings',
-      profile.expenseTxns,
-      profile.accountSnapshots,
-      profile.debtPaymentHistory,
-      months,
-      profile.homeCurrency,
+    const card = computeMoneyCoachBreakdown(
+      profile,
       [],
-      {},
-      {},
-      []
-    );
-    const drawerValue = drawerBreakdown.monthlyAverage;
+      profile.incomeTxns,
+      profile.accountSnapshots,
+      "CAD",
+      new Map(),
+      months,
+    ).buckets.find((b) => b.bucket === "savings")!.monthlyAverage;
 
-    // Card and drawer values MUST match
-    expect(cardValue).toBeCloseTo(drawerValue, 2);
-    
-    // New behavior: savings calculation requires prior month for balance comparison
-    // With months Jun, Jul, Aug, Sep:
-    // - Jul can compute (prior = Jun): 500
-    // - Aug can compute (prior = Jul): 500
-    // - Sep can compute (prior = Aug): 500
-    // Average: (500 + 500 + 500) / 3 = 500
-    expect(cardValue).toBeCloseTo(500.00, 2);
-    expect(drawerValue).toBeCloseTo(500.00, 2);
+    const drawer = averageCashFlow(input, { rangeMonths: months }).leftover;
+
+    const chat = executeGetSavingsSummary(profile, { range: months.join(",") }, emptyReviews);
+    expect(chat.ok).toBe(true);
+
+    expect(card).toBeCloseTo(expected, 5);
+    expect(drawer).toBeCloseTo(expected, 5);
+    expect(chat.data.leftover).toBeCloseTo(expected, 5);
   });
 
-  test('card value equals drawer total for empty savings bucket', () => {
-    const expenseTxns: ExpenseTxnRecord[] = [
-      // No savings transactions - only other categories
-      { merchant: 'Walmart', description: 'Groceries', amount: 100.00, category: 'Groceries', date: '2026-07-15', txMonth: '2026-07', accountSlug: 'td-1234', accountLabel: 'TD Chequing', currency: 'CAD' },
-    ];
+  test("savingsConfirmedItems does not change leftover Net savings", () => {
+    const withConfirm: UserReviewContext = {
+      ...emptyReviews,
+      savingsConfirmedItems: new Map([["life-insurance", true]]),
+    };
+    const without = averageCashFlow(input, { rangeMonths: months }).leftover;
+    const withItems = averageCashFlow(
+      cashFlowInputFromProfile(profile, withConfirm),
+      { rangeMonths: months },
+    ).leftover;
+    expect(withItems).toBe(without);
 
-    const profile = createTestProfile(expenseTxns);
-
-    // Compute card value
-    const moneyCoachBreakdown = computeMoneyCoachBreakdown(profile, []);
-    const savingsCard = moneyCoachBreakdown.buckets.find(b => b.bucket === 'savings');
-    expect(savingsCard).toBeDefined();
-    const cardValue = savingsCard!.monthlyAverage;
-
-    // Compute drawer value
-    const currentYear = new Date().getFullYear();
-    const months = getMonthsForWindow(profile.monthlyHistory, 'last3', currentYear);
-    const drawerBreakdown = computeBucketBreakdown(
-      'savings',
-      profile.expenseTxns,
-      profile.accountSnapshots,
-      profile.debtPaymentHistory,
-      months,
-      profile.homeCurrency,
-      [],
-      {},
-      {},
-      []
-    );
-    const drawerValue = drawerBreakdown.monthlyAverage;
-
-    // Both should be CA$0 (no savings)
-    expect(cardValue).toBeCloseTo(drawerValue, 2);
-    expect(cardValue).toBe(0);
-    expect(drawerValue).toBe(0);
+    const chatWith = executeGetSavingsSummary(profile, { range: months.join(",") }, withConfirm);
+    const chatWithout = executeGetSavingsSummary(profile, { range: months.join(",") }, emptyReviews);
+    expect(chatWith.data.leftover).toBe(chatWithout.data.leftover);
   });
 });

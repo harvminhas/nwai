@@ -11,7 +11,8 @@
 import { describe, test, expect } from "vitest";
 import { computeMoneyCoachBreakdown } from "@/lib/moneyCoach";
 import { buildSpendingSummary } from "@/lib/spendingSummary";
-import type { FinancialProfileCache, ExpenseTxnRecord, AccountSnapshot, DebtPaymentHistoryEntry, IncomeTxnRecord } from "@/lib/types";
+import type { FinancialProfileCache } from "@/lib/financialProfile";
+import type { ExpenseTxnRecord, AccountSnapshot, DebtPaymentHistoryEntry, IncomeTxnRecord } from "@/lib/extractTransactions";
 
 describe("Card vs Page Divergence", () => {
   test("card and page must compute identical spending from same data", () => {
@@ -52,7 +53,7 @@ describe("Card vs Page Divergence", () => {
     
     const accountSnapshots: AccountSnapshot[] = [
       { slug: "checking", accountName: "Checking", currency: "CAD", accountType: "checking" },
-      { slug: "cc-visa", accountName: "Visa", currency: "CAD", accountType: "credit_card" },
+      { slug: "cc-visa", accountName: "Visa", currency: "CAD", accountType: "credit_card", balance: 0 },
     ];
     
     const debtPaymentHistory: DebtPaymentHistoryEntry[] = [

@@ -21,6 +21,7 @@ import { computeMoneyCoachBreakdown } from "../src/lib/moneyCoach";
 import { computeGapReconciliation } from "../src/lib/gapReconciliation";
 import { computeBucketBreakdown } from "../src/lib/bucketBreakdown";
 import { computeAverageSavings, computeMonthlySavings, computeWindowSavings } from "../src/lib/savingsCalculations";
+import { averageCashFlow, cashFlowInputFromProfile } from "../src/lib/monthlyCashFlow";
 import { buildIncomeSummary, makeIncomeTxnId } from "../src/lib/incomeSummary";
 import { buildSpendingSummary } from "../src/lib/spendingSummary";
 import { buildSubscriptionSummary } from "../src/lib/subscriptionEngine";
@@ -223,7 +224,6 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     currency,
     incomeDepositReviews,
     undefined,
-    savingsConfirmedItems
   );
   
   // Get last 3 complete months
@@ -993,70 +993,19 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
     let loans: Array<{ name: string; amount: number }> = [];
     
     if (bucket === "savings") {
-      // Savings drawer uses NET balance calculation, not category breakdown
-      // Compute with confirmations to match dashboard card
-      const windowSavings = computeWindowSavings(
-        profile.monthlyHistory,
-        profile.accountBalanceHistory,
-        profile.expenseTxns,
-        completeMonths,
-        savingsConfirmedItems
+      // Savings drawer uses leftover (money in − money out), same as the card
+      const averaged = averageCashFlow(
+        cashFlowInputFromProfile(profile, {
+          debtPaymentReviews: userReviews,
+          incomeDepositReviews,
+        }),
+        { rangeMonths: breakdown.months?.length ? breakdown.months : completeMonths },
       );
-      
-      drawerTotal = windowSavings.monthlyAverage.total;
-      
-      // Verify reconciliation: components sum to total for each month
-      let hasReconciliationError = false;
-      for (const month of windowSavings.monthlyBreakdown) {
-        const sum = month.netCashChange + month.netDebtChange + month.contributionsToOutside;
-        const diff = Math.abs(sum - month.total);
-        if (diff > 0.01) { // Allow 1 cent rounding
-          hasReconciliationError = true;
-          console.error(`❌ RECONCILIATION ERROR for ${month.month}:`);
-          console.error(`   Cash + Debt + Contributions = ${formatCurrency(sum, currency)}`);
-          console.error(`   Total = ${formatCurrency(month.total, currency)}`);
-          console.error(`   Difference = ${formatCurrency(diff, currency)}\n`);
-        }
-      }
-      
-      // Verify monthly average matches mean
-      const meanTotal = windowSavings.monthlyBreakdown.reduce((s, m) => s + m.total, 0) / completeMonths.length;
-      if (Math.abs(meanTotal - windowSavings.monthlyAverage.total) > 0.01) {
-        hasReconciliationError = true;
-        console.error(`❌ MONTHLY AVERAGE MISMATCH:`);
-        console.error(`   Mean of monthly totals = ${formatCurrency(meanTotal, currency)}`);
-        console.error(`   Reported average = ${formatCurrency(windowSavings.monthlyAverage.total, currency)}\n`);
-      }
-      
-      // Verify account changes sum to components
-      const totalCashFromMonths = windowSavings.monthlyBreakdown.reduce((s, m) => s + m.netCashChange, 0);
-      const totalCashFromAccounts = windowSavings.windowPeriodAccounts.cashAccounts.reduce((s, a) => s + a.change, 0);
-      if (Math.abs(totalCashFromMonths - totalCashFromAccounts) > 0.01) {
-        hasReconciliationError = true;
-        console.error(`❌ CASH ACCOUNT SUM MISMATCH:`);
-        console.error(`   Sum of monthly cash changes = ${formatCurrency(totalCashFromMonths, currency)}`);
-        console.error(`   Sum of account changes = ${formatCurrency(totalCashFromAccounts, currency)}\n`);
-      }
-      
-      const totalDebtFromMonths = windowSavings.monthlyBreakdown.reduce((s, m) => s + m.netDebtChange, 0);
-      const totalDebtFromAccounts = windowSavings.windowPeriodAccounts.debtAccounts.reduce((s, a) => s + a.change, 0);
-      if (Math.abs(totalDebtFromMonths - totalDebtFromAccounts) > 0.01) {
-        hasReconciliationError = true;
-        console.error(`❌ DEBT ACCOUNT SUM MISMATCH:`);
-        console.error(`   Sum of monthly debt changes = ${formatCurrency(totalDebtFromMonths, currency)}`);
-        console.error(`   Sum of account changes = ${formatCurrency(totalDebtFromAccounts, currency)}\n`);
-      }
-      
-      if (hasReconciliationError) {
-        console.error("❌ Savings reconciliation failed\n");
-        process.exit(1);
-      }
-      
-      // Store reconciliation for display
+      drawerTotal = averaged.leftover;
       categories = [
-        { name: "Cash change", amount: windowSavings.monthlyAverage.netCashChange },
-        { name: "Debt paydown", amount: windowSavings.monthlyAverage.netDebtChange },
-        { name: "Outside contributions", amount: windowSavings.monthlyAverage.contributionsToOutside },
+        { name: "Money in", amount: averaged.moneyIn },
+        { name: "Money out", amount: averaged.moneyOut },
+        { name: "Leftover", amount: averaged.leftover },
       ].filter(c => Math.abs(c.amount) > 0.5);
     } else {
       // Other buckets use category breakdown
@@ -1667,7 +1616,6 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         profile.homeCurrency || "CAD",
         incomeDepositReviews,
         rangeMonths,
-        savingsConfirmedItems
       );
       
       const cardIncome = breakdown.incomeAmount;
@@ -2135,7 +2083,6 @@ async function generateReport(uid: string, saveBaseline: boolean): Promise<void>
         profile.homeCurrency || "CAD",
         reviewContext.incomeDepositReviews,
         rangeMonths,
-        reviewContext.savingsConfirmedItems
       );
       
       // Call computeGapReconciliation same way the API does

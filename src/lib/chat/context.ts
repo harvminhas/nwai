@@ -250,7 +250,7 @@ NEW comprehensive tools (use these first — they match page calculations exactl
   **Period label**: Always mention the actual period from the tool result (period.label and period.start_month / end_month).
 - Spending analysis / "how much did I spend" → get_spending_summary (buildSpendingSummary, same as Spending page, includes cash)
 - Cash/manual expenses / "recurring cash expenses" → list_cash_expenses (name, amount, frequency, monthly equiv, next due)
-- Savings questions / "how much am I saving" → get_savings_summary (computeWindowSavings, same as Savings drawer)
+- Savings questions / "how much am I saving" → get_savings_summary (leftover from getMonthlyCashFlow, same as Net savings card and drawer)
 - Net worth / "what's my net worth" → get_net_worth (same as dashboard card)
 - Account list / "what accounts do I have" → list_accounts (assets & debts with balance history)
 - Subscriptions only / "what subscriptions" → list_subscriptions (confirmed recurring merchants)

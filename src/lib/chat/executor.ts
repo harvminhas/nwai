@@ -16,6 +16,8 @@ import { getParentCategory } from "@/lib/categoryTaxonomy";
 import { getHomeCurrency, toHome as toHomeCurrency } from "@/lib/currencyUtils";
 import type { ToolName } from "@/lib/chat/tools";
 import { TOOL_NAMES } from "@/lib/chat/tools";
+import { averageCashFlow, cashFlowInputFromProfile } from "@/lib/monthlyCashFlow";
+import { resolveWindowMonths, type TimeRange } from "@/lib/rangeUtils";
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -757,42 +759,45 @@ export function executeGetSavingsSummary(
   params: ToolParams,
   context: UserReviewContext,
 ): ToolResult {
-  const { computeWindowSavings } = require("@/lib/savingsCalculations");
-  const { getRangeMonths } = require("@/lib/rangeUtils");
-  
   const home = getHomeCurrency(profile);
   const fmt = makeFmt(home);
   
   const rangeParam = (params.range as string | undefined) ?? "3mo";
   let rangeMonths: string[];
   
-  if (rangeParam === "3mo" || rangeParam === "12mo" || rangeParam === "ytd") {
-    const availableMonths = profile.allTxMonths.sort();
-    rangeMonths = getRangeMonths(rangeParam, availableMonths);
+  if (rangeParam === "3mo" || rangeParam === "12mo" || rangeParam === "ytd" || rangeParam.startsWith("month:")) {
+    const accountStatusMap = new Map(
+      (profile.accountStatusRecords ?? []).map((r: { accountSlug: string; status: string; statusDate: string }) => [
+        r.accountSlug,
+        { status: r.status, statusDate: r.statusDate },
+      ]),
+    );
+    rangeMonths = resolveWindowMonths(
+      rangeParam as TimeRange,
+      profile.monthlyHistory,
+      profile.statementHistory,
+      accountStatusMap,
+    ).months;
   } else {
     rangeMonths = rangeParam.split(",").map(m => m.trim()).filter(Boolean);
   }
-  
-  // Use savingsConfirmedItems from context (loaded from Firestore by caller)
-  const savings = computeWindowSavings(
-    profile.monthlyHistory,
-    profile.accountBalanceHistory ?? [],
-    profile.expenseTxns,
-    rangeMonths,
-    context.savingsConfirmedItems,
+
+  const averaged = averageCashFlow(
+    cashFlowInputFromProfile(profile, context),
+    { rangeMonths },
   );
   
   return {
     ok: true,
     data: {
-      typical_monthly: fmt(savings.monthlyAverage.total),
-      range_months: rangeMonths,
+      typical_monthly: fmt(averaged.leftover),
+      leftover: averaged.leftover,
+      money_in: averaged.moneyIn,
+      money_out: averaged.moneyOut,
+      savings_rate: averaged.savingsRate,
+      range_months: averaged.months,
       currency: home,
-      breakdown: {
-        cash_change: fmt(savings.monthlyAverage.netCashChange),
-        debt_paydown: fmt(savings.monthlyAverage.netDebtChange),
-        contributions: fmt(savings.monthlyAverage.contributionsToOutside),
-      },
+      note: "Net savings is leftover: money in minus money out. Same as the dashboard Net savings card and drawer.",
     },
   };
 }

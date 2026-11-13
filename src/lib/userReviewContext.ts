@@ -22,7 +22,19 @@ export interface UserReviewContext {
   incomeDepositReviews: Map<string, string>;
   /** Debt payment classifications for spending bucket assignment */
   debtPaymentReviews: DebtPaymentReview[];
-  /** Savings item confirmations: txId → is_savings (true) or excluded (false) */
+  /**
+   * Savings item confirmations: txId → is_savings (true) or excluded (false).
+   *
+   * These used to decide whether ambiguous Investments & Savings merchants
+   * (life insurance, etc.) counted as "outside contributions" in the
+   * balance-change savings formula (computeMonthlySavings).
+   *
+   * Net savings is now leftover (money in − money out) from
+   * getMonthlyCashFlow, so these reviews do not change the Net savings
+   * card, drawer, or chat answer. Still loaded so existing reviews are
+   * not dropped from Firestore; they only matter if the balance-change
+   * path is used by inspect-savings / regression-report.
+   */
   savingsConfirmedItems: Map<string, boolean>;
 }
 

@@ -5,10 +5,8 @@ import Link from "next/link";
 import type { DrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
 import { formatMonthYear } from "@/lib/dateFormatting";
 import { getSignColor, getSignBgColor } from "@/lib/colorHelpers";
-import { ReviewList } from "./ReviewList";
 import type { TimeRange } from "@/lib/rangeUtils";
-import { formatMonthName, formatAccountLast4, formatMonthList } from "@/lib/rangeUtils";
-import { resolveAccountDisplayName } from "@/lib/accountListLabel";
+import { formatMonthName, formatAccountLast4 } from "@/lib/rangeUtils";
 
 export type DrawerType = "income" | "fixed" | "essentials" | "flexible" | "savings";
 
@@ -183,25 +181,7 @@ export function Drawer({ type, isOpen, onClose, token, currency, initialRange }:
           )}
 
           {!loading && !error && data && data.type === "savings" && (
-            <SavingsDrawerContent 
-              data={data} 
-              currency={currency} 
-              token={token}
-              onRefresh={() => {
-                setError(null);
-                setData(null);
-                // Trigger refetch
-                fetch(`/api/user/dashboard-drawers?window=${window}&bucket=${type}`, {
-                  headers: { Authorization: `Bearer ${token}` },
-                })
-                  .then(async (res) => {
-                    if (res.ok) {
-                      setData(await res.json());
-                    }
-                  })
-                  .catch(console.error);
-              }}
-            />
+            <SavingsDrawerContent data={data} currency={currency} />
           )}
         </div>
       </div>
@@ -746,17 +726,12 @@ function BucketDrawerContent({
 function SavingsDrawerContent({
   data,
   currency,
-  token,
-  onRefresh,
 }: {
   data: import("@/lib/drawerTypes").SavingsDrawerData;
   currency: string;
-  token: string | null;
-  onRefresh: () => void;
 }) {
   const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
-  const [expandedCategories, setExpandedCategories] = useState<Record<string, Set<string>>>({});
-  
+
   const fmt = (amount: number) =>
     new Intl.NumberFormat("en-US", {
       style: "currency",
@@ -764,70 +739,30 @@ function SavingsDrawerContent({
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     }).format(amount);
-  
-  const fmtChange = (amount: number) => {
-    if (amount === 0) {
-      return fmt(0).replace(/^[+-]/, ''); // Remove any sign for zero
-    }
-    const formatted = fmt(amount);
-    return amount > 0 ? `+${formatted}` : formatted;
-  };
 
-  const { windowSavings, basisLabel } = data;
-  const { monthlyBreakdown, monthlyAverage, windowPeriodAccounts } = windowSavings;
-  
-  const toggleMonth = (month: string) => {
-    setExpandedMonth(expandedMonth === month ? null : month);
-  };
-  
-  const toggleCategory = (month: string, category: string) => {
-    setExpandedCategories(prev => {
-      const monthCategories = prev[month] || new Set<string>();
-      const newMonthCategories = new Set(monthCategories);
-      
-      if (newMonthCategories.has(category)) {
-        newMonthCategories.delete(category);
-      } else {
-        newMonthCategories.add(category);
-      }
-      
-      return {
-        ...prev,
-        [month]: newMonthCategories
-      };
-    });
-  };
-  
-  const isCategoryExpanded = (month: string, category: string) => {
-    return expandedCategories[month]?.has(category) || false;
-  };
+  const { monthlyAverage, monthlyBreakdown, basisLabel, moneyIn, moneyOut } = data;
+  const maxAbs = Math.max(...monthlyBreakdown.map((m) => Math.abs(m.leftover)), 1);
 
   return (
     <div className="space-y-6">
-      {/* Savings Reviews */}
-      <ReviewList 
-        token={token} 
-        reviewType="savings_item"
-        onReviewComplete={onRefresh}
-      />
-      
-      {/* Monthly Average Summary */}
       <div className="rounded-xl border border-gray-200 bg-white p-6">
         <div className="text-center">
           <p className="text-sm font-medium uppercase tracking-wide text-gray-500">
-            Monthly average
+            Monthly average leftover
           </p>
-          <p className={`mt-2 text-4xl font-bold ${getSignColor(monthlyAverage.total)}`}>
-            {fmt(monthlyAverage.total)}
+          <p className={`mt-2 text-4xl font-bold ${getSignColor(monthlyAverage)}`}>
+            {fmt(monthlyAverage)}
           </p>
           <p className="mt-1 text-xs text-gray-500">{basisLabel}</p>
           {data.windowNote && (
             <p className="mt-1 text-xs text-gray-400">{data.windowNote}</p>
           )}
+          <p className="mt-3 text-xs text-gray-500">
+            Money in {fmt(moneyIn)} − money out {fmt(moneyOut)}
+          </p>
         </div>
       </div>
 
-      {/* Per-Month Bars */}
       <div>
         <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500">
           Monthly breakdown
@@ -835,35 +770,34 @@ function SavingsDrawerContent({
         <div className="space-y-1.5">
           {monthlyBreakdown.map((month) => {
             const isExpanded = expandedMonth === month.month;
-            
             return (
               <div key={month.month}>
                 <button
-                  onClick={() => toggleMonth(month.month)}
+                  onClick={() => setExpandedMonth(isExpanded ? null : month.month)}
                   className="w-full text-left hover:bg-gray-50 rounded p-1.5 -mx-1.5 transition flex items-center gap-2"
                 >
                   <span className="w-12 text-xs font-medium text-gray-700">
-                    {formatMonthYear(month.month).split(' ')[0]}
+                    {formatMonthYear(month.month).split(" ")[0]}
                   </span>
                   <div className="flex-1">
                     <div className="relative h-2 rounded-full bg-gray-100">
-                      {month.total !== 0 && (
+                      {month.leftover !== 0 && (
                         <div
-                          className={`absolute top-0 h-full rounded-full ${getSignBgColor(month.total)}`}
+                          className={`absolute top-0 h-full rounded-full ${getSignBgColor(month.leftover)}`}
                           style={{
-                            width: `${Math.min(Math.abs(month.total) / Math.max(...monthlyBreakdown.map(m => Math.abs(m.total)), 1) * 100, 100)}%`,
-                            left: month.total >= 0 ? '0' : 'auto',
-                            right: month.total < 0 ? '0' : 'auto',
+                            width: `${Math.min((Math.abs(month.leftover) / maxAbs) * 100, 100)}%`,
+                            left: month.leftover >= 0 ? "0" : "auto",
+                            right: month.leftover < 0 ? "0" : "auto",
                           }}
                         />
                       )}
                     </div>
                   </div>
-                  <span className={`w-20 text-right text-xs font-semibold whitespace-nowrap ${getSignColor(month.total)}`}>
-                    {fmt(month.total)}
+                  <span className={`w-20 text-right text-xs font-semibold whitespace-nowrap ${getSignColor(month.leftover)}`}>
+                    {fmt(month.leftover)}
                   </span>
                   <svg
-                    className={`w-3.5 h-3.5 text-gray-400 transition-transform flex-shrink-0 ${isExpanded ? 'rotate-180' : ''}`}
+                    className={`w-3.5 h-3.5 text-gray-400 transition-transform flex-shrink-0 ${isExpanded ? "rotate-180" : ""}`}
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
@@ -871,322 +805,37 @@ function SavingsDrawerContent({
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                   </svg>
                 </button>
-                
-                {/* Expanded per-account detail */}
+
                 {isExpanded && (
-                  <div className="mt-2 ml-2 p-4 bg-gray-50 rounded-lg border border-gray-200 space-y-3">
-                    {/* Cash & Savings accounts */}
-                    {month.accounts.cashAccounts.length > 0 && (
-                      <div>
-                        {/* Category Header - Collapsible */}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleCategory(month.month, 'cash');
-                          }}
-                          className="w-full flex items-center justify-between py-2 rounded hover:bg-gray-50 transition"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="text-base">💵</span>
-                            <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">
-                              Cash & Savings
-                            </span>
-                            <span className="text-xs text-gray-500">
-                              ({month.accounts.cashAccounts.length})
-                            </span>
-                            <svg
-                              className={`w-3 h-3 text-gray-400 transition-transform ${
-                                isCategoryExpanded(month.month, 'cash') ? 'rotate-180' : ''
-                              }`}
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                            >
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                            </svg>
-                          </div>
-                          <span className={`text-sm font-bold whitespace-nowrap ${getSignColor(month.netCashChange)}`}>
-                            {fmtChange(month.netCashChange)}
-                          </span>
-                        </button>
-                        
-                        {/* Account Cards - Expandable */}
-                        {isCategoryExpanded(month.month, 'cash') && (
-                          <div className="space-y-2 mt-2">
-                            {month.accounts.cashAccounts.map((acc) => {
-                              // Helper to format month label
-                              const formatMonth = (ym: string) => {
-                                if (!ym) return '';
-                                const [year, monthNum] = ym.split('-');
-                                const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                                return `${monthNames[parseInt(monthNum) - 1]} ${year}`;
-                              };
-                              
-                              // Determine badge text based on derived status
-                              let badgeText = null;
-                              let badgeTitle = '';
-                              
-                              if (acc.currentDerived && acc.currentSourceStatement) {
-                                badgeText = `Calculated from ${formatMonth(acc.currentSourceStatement)} statement`;
-                                badgeTitle = 'This month\'s balance was calculated from a multi-month statement';
-                              } else if (acc.currentCarriedForward && !acc.currentDerived) {
-                                badgeText = `No ${formatMonthYear(month.month).split(' ')[0]} statement`;
-                                badgeTitle = 'No statement uploaded for this month, so the last known balance is used';
-                              }
-                              
-                              // Show actual months used for Prior and Current
-                              const priorMonthShort = acc.priorActualMonth ? formatMonth(acc.priorActualMonth) : '';
-                              const currentMonthShort = acc.currentActualMonth ? formatMonth(acc.currentActualMonth) : '';
-                              
-                              // For current: show "End of X" if it matches the month, otherwise "Latest (X)"
-                              let currentLabel: string;
-                              if (acc.currentActualMonth === month.month) {
-                                currentLabel = `End of ${formatMonthYear(month.month).split(' ')[0]}`;
-                              } else if (acc.currentCarriedForward) {
-                                currentLabel = `Latest (${currentMonthShort})`;
-                              } else {
-                                currentLabel = 'Latest';
-                              }
-                              
-                              // For prior: show month if it's not the immediately previous month
-                              const expectedPriorMonth = (() => {
-                                const [year, monthNum] = month.month.split('-').map(Number);
-                                const priorDate = new Date(year, monthNum - 2, 1); // -2 because month-1 gets current, -2 gets prior
-                                return `${priorDate.getFullYear()}-${String(priorDate.getMonth() + 1).padStart(2, '0')}`;
-                              })();
-                              
-                              let priorLabel: string;
-                              if (!acc.priorActualMonth) {
-                                priorLabel = 'Prior';
-                              } else if (acc.priorActualMonth === expectedPriorMonth) {
-                                priorLabel = 'Prior';
-                              } else {
-                                priorLabel = `Prior (${priorMonthShort})`;
-                              }
-                              
-                              return (
-                                <div key={acc.slug} className="bg-white rounded p-2 text-xs border border-gray-200">
-                                  <div className="flex items-start justify-between mb-1">
-                                    <div>
-                                      <span className="font-medium text-gray-900">{resolveAccountDisplayName({ historyLabel: acc.accountLabel.split(' (')[0] }).primary}</span>
-                                      <span className="text-gray-500 ml-1">(...{acc.accountLast4})</span>
-                                      {badgeText && (
-                                        <span 
-                                          className={`ml-2 rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                                            acc.currentDerived ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
-                                          }`}
-                                          title={badgeTitle}
-                                        >
-                                          {badgeText}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <span className={`font-semibold whitespace-nowrap ${getSignColor(acc.change)}`}>
-                                      {fmtChange(acc.change)}
-                                    </span>
-                                  </div>
-                                  <div className="flex gap-4 text-gray-600">
-                                    <span>{priorLabel}: {fmt(acc.priorBalance)}</span>
-                                    <span>→</span>
-                                    <span>{currentLabel}: {fmt(acc.currentBalance)}</span>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
+                  <div className="mt-2 ml-2 p-4 bg-gray-50 rounded-lg border border-gray-200 space-y-2 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Money in</span>
+                      <span className="font-semibold text-gray-900">{fmt(month.moneyIn)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Money out</span>
+                      <span className="font-semibold text-gray-900">{fmt(month.moneyOut)}</span>
+                    </div>
+                    <div className="pl-3 space-y-1 text-gray-500">
+                      <div className="flex justify-between">
+                        <span>Fixed</span>
+                        <span>{fmt(month.buckets.fixed)}</span>
                       </div>
-                    )}
-                    
-                    {/* Debt accounts */}
-                    {month.accounts.debtAccounts.length > 0 && (
-                      <div>
-                        {/* Category Header - Collapsible */}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleCategory(month.month, 'debt');
-                          }}
-                          className="w-full flex items-center justify-between py-2 rounded hover:bg-gray-50 transition"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="text-base">💳</span>
-                            <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">
-                              Debt
-                            </span>
-                            <span className="text-xs text-gray-500">
-                              ({month.accounts.debtAccounts.length})
-                            </span>
-                            <svg
-                              className={`w-3 h-3 text-gray-400 transition-transform ${
-                                isCategoryExpanded(month.month, 'debt') ? 'rotate-180' : ''
-                              }`}
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                            >
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                            </svg>
-                          </div>
-                          <span className={`text-sm font-bold whitespace-nowrap ${getSignColor(month.netDebtChange)}`}>
-                            {fmtChange(month.netDebtChange)}
-                          </span>
-                        </button>
-                        
-                        {/* Account Cards - Expandable */}
-                        {isCategoryExpanded(month.month, 'debt') && (
-                          <div className="space-y-2 mt-2">
-                            {month.accounts.debtAccounts.map((acc) => {
-                              const isPaidDown = acc.change > 0;
-                              const isBorrowing = acc.change < 0;
-                              
-                              // Helper to format month label
-                              const formatMonth = (ym: string) => {
-                                if (!ym) return '';
-                                const [year, monthNum] = ym.split('-');
-                                const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                                return `${monthNames[parseInt(monthNum) - 1]} ${year}`;
-                              };
-                              
-                              // Determine badge text based on derived status
-                              let badgeText = null;
-                              let badgeTitle = '';
-                              
-                              if (acc.currentDerived && acc.currentSourceStatement) {
-                                badgeText = `Calculated from ${formatMonth(acc.currentSourceStatement)} statement`;
-                                badgeTitle = 'This month\'s balance was calculated from a multi-month statement';
-                              } else if (acc.currentCarriedForward && !acc.currentDerived) {
-                                badgeText = `No ${formatMonthYear(month.month).split(' ')[0]} statement`;
-                                badgeTitle = 'No statement uploaded for this month, so the last known balance is used';
-                              }
-                              
-                              // Show actual months used for Prior and Current
-                              const priorMonthShort = acc.priorActualMonth ? formatMonth(acc.priorActualMonth) : '';
-                              const currentMonthShort = acc.currentActualMonth ? formatMonth(acc.currentActualMonth) : '';
-                              
-                              // For current: show "End of X" if it matches the month, otherwise "Latest (X)"
-                              let currentLabel: string;
-                              if (acc.currentActualMonth === month.month) {
-                                currentLabel = `End of ${formatMonthYear(month.month).split(' ')[0]}`;
-                              } else if (acc.currentCarriedForward) {
-                                currentLabel = `Latest (${currentMonthShort})`;
-                              } else {
-                                currentLabel = 'Latest';
-                              }
-                              
-                              // For prior: show month if it's not the immediately previous month
-                              const expectedPriorMonth = (() => {
-                                const [year, monthNum] = month.month.split('-').map(Number);
-                                const priorDate = new Date(year, monthNum - 2, 1); // -2 because month-1 gets current, -2 gets prior
-                                return `${priorDate.getFullYear()}-${String(priorDate.getMonth() + 1).padStart(2, '0')}`;
-                              })();
-                              
-                              let priorLabel: string;
-                              if (!acc.priorActualMonth) {
-                                priorLabel = 'Prior';
-                              } else if (acc.priorActualMonth === expectedPriorMonth) {
-                                priorLabel = 'Prior';
-                              } else {
-                                priorLabel = `Prior (${priorMonthShort})`;
-                              }
-                              
-                              return (
-                                <div key={acc.slug} className="bg-white rounded p-2 text-xs border border-gray-200">
-                                  <div className="flex items-start justify-between mb-1">
-                                    <div>
-                                      <span className="font-medium text-gray-900">{resolveAccountDisplayName({ historyLabel: acc.accountLabel.split(' (')[0] }).primary}</span>
-                                      <span className="text-gray-500 ml-1">(...{acc.accountLast4})</span>
-                                      {badgeText && (
-                                        <span 
-                                          className={`ml-2 rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                                            acc.currentDerived ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
-                                          }`}
-                                          title={badgeTitle}
-                                        >
-                                          {badgeText}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="text-right">
-                                      <div className={`font-semibold whitespace-nowrap ${getSignColor(acc.change)}`}>
-                                        {fmtChange(acc.change)}
-                                      </div>
-                                      <div className="text-xs text-gray-500">
-                                        {isPaidDown ? 'Paid down' : isBorrowing ? 'New borrowing' : 'No change'}
-                                      </div>
-                                    </div>
-                                  </div>
-                                  <div className="flex gap-4 text-gray-600">
-                                    <span>{priorLabel}: {fmt(acc.priorBalance)}</span>
-                                    <span>→</span>
-                                    <span>{currentLabel}: {fmt(acc.currentBalance)}</span>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
+                      <div className="flex justify-between">
+                        <span>Essentials</span>
+                        <span>{fmt(month.buckets.essentials)}</span>
                       </div>
-                    )}
-                    
-                    {/* Outside contributions */}
-                    {month.accounts.contributions.length > 0 && (
-                      <div>
-                        {/* Category Header - Collapsible */}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleCategory(month.month, 'contributions');
-                          }}
-                          className="w-full flex items-center justify-between py-2 rounded hover:bg-gray-50 transition"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="text-base">🏦</span>
-                            <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">
-                              Outside Contributions
-                            </span>
-                            <span className="text-xs text-gray-500">
-                              ({month.accounts.contributions.length})
-                            </span>
-                            <svg
-                              className={`w-3 h-3 text-gray-400 transition-transform ${
-                                isCategoryExpanded(month.month, 'contributions') ? 'rotate-180' : ''
-                              }`}
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                            >
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                            </svg>
-                          </div>
-                          <span className={`text-sm font-bold whitespace-nowrap ${getSignColor(month.contributionsToOutside)}`}>
-                            {fmtChange(month.contributionsToOutside)}
-                          </span>
-                        </button>
-                        
-                        {/* Contribution Cards - Expandable */}
-                        {isCategoryExpanded(month.month, 'contributions') && (
-                          <div className="space-y-2 mt-2">
-                            {month.accounts.contributions.map((contrib, idx) => (
-                              <div key={idx} className="bg-white rounded p-2 text-xs border border-gray-200">
-                                <div className="flex items-start justify-between">
-                                  <div>
-                                    <span className="font-medium text-gray-900">{contrib.merchant}</span>
-                                    <div className="text-gray-500">{contrib.category}</div>
-                                    {contrib.needsConfirmation && (
-                                      <span className="text-orange-600 font-semibold">⚠️ Needs confirmation</span>
-                                    )}
-                                  </div>
-                                  <span className="font-semibold text-gray-900 whitespace-nowrap">
-                                    {fmt(contrib.amount)}
-                                  </span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                      <div className="flex justify-between">
+                        <span>Flexible</span>
+                        <span>{fmt(month.buckets.flexible)}</span>
                       </div>
-                    )}
+                    </div>
+                    <div className="flex justify-between border-t border-gray-200 pt-2">
+                      <span className="font-semibold text-gray-700">Leftover</span>
+                      <span className={`font-semibold ${getSignColor(month.leftover)}`}>
+                        {fmt(month.leftover)}
+                      </span>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1195,82 +844,43 @@ function SavingsDrawerContent({
         </div>
       </div>
 
-      {/* Reconciliation Table */}
       <div>
         <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-gray-500">
           How the numbers add up
         </h3>
-        <p className="mb-3 text-xs text-gray-500">Tap a month to see accounts</p>
         <div className="overflow-x-auto">
           <table className="w-full text-xs border-collapse">
             <thead>
               <tr className="border-b border-gray-300">
-                <th className="text-left py-2 pr-2 font-semibold text-gray-700 w-12">
-                  <div className="flex items-center gap-1">
-                    Month
-                    <svg className="w-3 h-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </div>
-                </th>
-                <th className="text-right py-2 px-2 font-semibold text-gray-700">Cash</th>
-                <th className="text-right py-2 px-2 font-semibold text-gray-700">Debt</th>
-                <th className="text-right py-2 px-2 font-semibold text-gray-700">Contrib</th>
-                <th className="text-right py-2 pl-2 font-semibold text-gray-700">Net</th>
+                <th className="text-left py-2 pr-2 font-semibold text-gray-700">Month</th>
+                <th className="text-right py-2 px-2 font-semibold text-gray-700">In</th>
+                <th className="text-right py-2 px-2 font-semibold text-gray-700">Out</th>
+                <th className="text-right py-2 pl-2 font-semibold text-gray-700">Leftover</th>
               </tr>
             </thead>
             <tbody>
               {monthlyBreakdown.map((month) => (
-                <tr
-                  key={month.month}
-                  onClick={() => toggleMonth(month.month)}
-                  className={`border-b border-gray-200 cursor-pointer hover:bg-gray-50 transition ${
-                    expandedMonth === month.month ? 'bg-gray-50' : ''
-                  }`}
-                >
+                <tr key={month.month} className="border-b border-gray-200">
                   <td className="py-2 pr-2 text-gray-900">
-                    <div className="flex items-center gap-1">
-                      {formatMonthYear(month.month).split(' ')[0]}
-                      <svg
-                        className={`w-3 h-3 text-gray-400 transition-transform ${
-                          expandedMonth === month.month ? 'rotate-180' : ''
-                        }`}
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </div>
-                  </td>
-                  <td className={`text-right py-2 px-2 whitespace-nowrap ${getSignColor(month.netCashChange)}`}>
-                    {fmt(month.netCashChange)}
-                  </td>
-                  <td className={`text-right py-2 px-2 whitespace-nowrap ${getSignColor(month.netDebtChange)}`}>
-                    {fmt(month.netDebtChange)}
+                    {formatMonthYear(month.month).split(" ")[0]}
                   </td>
                   <td className="text-right py-2 px-2 text-gray-900 whitespace-nowrap">
-                    {fmt(month.contributionsToOutside)}
+                    {fmt(month.moneyIn)}
                   </td>
-                  <td className={`text-right py-2 pl-2 font-semibold whitespace-nowrap ${getSignColor(month.total)}`}>
-                    {fmt(month.total)}
+                  <td className="text-right py-2 px-2 text-gray-900 whitespace-nowrap">
+                    {fmt(month.moneyOut)}
+                  </td>
+                  <td className={`text-right py-2 pl-2 font-semibold whitespace-nowrap ${getSignColor(month.leftover)}`}>
+                    {fmt(month.leftover)}
                   </td>
                 </tr>
               ))}
-              {/* Monthly average row */}
               <tr className="border-t-2 border-gray-400 bg-gray-50 font-semibold">
                 <td className="py-2 pr-2 text-gray-900">Avg</td>
-                <td className={`text-right py-2 px-2 whitespace-nowrap ${getSignColor(monthlyAverage.netCashChange)}`}>
-                  {fmt(monthlyAverage.netCashChange)}
-                </td>
-                <td className={`text-right py-2 px-2 whitespace-nowrap ${getSignColor(monthlyAverage.netDebtChange)}`}>
-                  {fmt(monthlyAverage.netDebtChange)}
-                </td>
-                <td className="text-right py-2 px-2 text-gray-900 whitespace-nowrap">
-                  {fmt(monthlyAverage.contributionsToOutside)}
-                </td>
-                <td className={`text-right py-2 pl-2 whitespace-nowrap ${getSignColor(monthlyAverage.total)}`}>
-                  {fmt(monthlyAverage.total)}
+                <td className="text-right py-2 px-2 text-gray-900 whitespace-nowrap">{fmt(moneyIn)}</td>
+                <td className="text-right py-2 px-2 text-gray-900 whitespace-nowrap">{fmt(moneyOut)}</td>
+                <td className={`text-right py-2 pl-2 whitespace-nowrap ${getSignColor(monthlyAverage)}`}>
+                  {fmt(monthlyAverage)}
                 </td>
               </tr>
             </tbody>
@@ -1278,13 +888,11 @@ function SavingsDrawerContent({
         </div>
       </div>
 
-      {/* Coach Note */}
       <div className="rounded-xl border border-purple-200 bg-purple-50 p-4">
         <p className="text-sm leading-relaxed text-purple-900">
-          <strong>💡 Coach:</strong> This shows your NET savings using month-end balances.
-          Savings = (cash account changes) + (debt paid down) + (outside contributions).
-          Debt transfers (like paying off a credit card with a line of credit) net to zero.
-          Negative months mean you spent more than you saved.
+          <strong>Coach:</strong> Net savings is leftover: money in minus money out,
+          the same number as the dashboard card. Transfers, credit card payments,
+          and investments are left out of money out, same as Income and Spending.
         </p>
       </div>
     </div>

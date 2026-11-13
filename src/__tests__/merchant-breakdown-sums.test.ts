@@ -7,7 +7,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { computeBucketBreakdown } from '@/lib/bucketBreakdown';
-import type { ExpenseTxnRecord, AccountSnapshot } from '@/lib/types';
+import type { ExpenseTxnRecord, AccountSnapshot } from '@/lib/extractTransactions';
 
 describe('Merchant breakdown sums', () => {
   it('merchant rows plus Other equal category total', () => {

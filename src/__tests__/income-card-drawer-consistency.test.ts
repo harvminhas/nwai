@@ -94,8 +94,8 @@ describe("Income Card vs Drawer Consistency", () => {
     console.log(`Monthly breakdown:`, summary.monthlyHistory.map(m => ({ month: m.yearMonth, total: m.total, regular: m.regular, bonus: m.bonus })));
     
     // Both should show regular + bonus (unreviewed deposits count)
-    expect(cardIncome.amount).toBe(8333);
-    expect(summary.typicalMonthly).toBe(8333);
+    expect(cardIncome.amount).toBeCloseTo(25000 / 3, 5);
+    expect(summary.typicalMonthly).toBeCloseTo(25000 / 3, 5);
     
     // Bonus should be 10000 total across last 3 months (10000 / 3 = 3333 per month avg in totals)
     expect(cardIncome.bonusAmount).toBe(10000);
@@ -307,8 +307,8 @@ describe("Income Card vs Drawer Consistency", () => {
 
     const summary = buildIncomeSummary(incomeTxns, accountSnapshots, "CAD", reviews);
 
-    // Both should count: Last 3 months (Jul 5000 + Aug 5000 + Sep 15000) / 3 = 8333
-    expect(summary.typicalMonthly).toBe(8333);
+    // Both should count: Last 3 months (Jul 5000 + Aug 5000 + Sep 15000) / 3
+    expect(summary.typicalMonthly).toBeCloseTo(25000 / 3, 5);
     expect(summary.last3MonthsTotal).toBe(25000);
     expect(summary.last3MonthsBonus).toBe(10000);
     expect(summary.bonusTransactions.length).toBe(1);
@@ -400,11 +400,8 @@ describe("Income Card vs Drawer Consistency", () => {
     // Before fix: summaryWithRange would use Jul-Aug-Sep, summaryDefault would use Jul-Sep-Oct
     // After fix: both routes pass rangeMonths, so both use Jul-Aug-Sep
     
-    // The key assertion: when rangeMonths includes zero-income month (Aug),
-    // the average should be (5000 + 0 + 5000) / 2 = 5000 (dividing by months with data > 0)
-    // NOT (5000 + 5000 + 5000) / 3 = 5000 (which would happen if Aug was excluded)
-    
-    expect(summaryWithRange.typicalMonthly).toBe(5000);
+    // $0-income months count, so (5000 + 0 + 5000) / 3 — same rule as dashboard leftover.
+    expect(summaryWithRange.typicalMonthly).toBeCloseTo(10000 / 3, 5);
     
     // The actual bug: summaryDefault (without rangeMonths) would pick different months
     // It would use last 3 income months: [Jul, Sep, Oct] → (5000 + 5000 + 5000)/3 = 5000

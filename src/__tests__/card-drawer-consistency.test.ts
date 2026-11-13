@@ -93,7 +93,6 @@ describe('Card vs Drawer consistency', () => {
       'CAD',
       new Map(),
       months,
-      new Map()
     );
     const cardFixed = cardBreakdown.buckets.find(b => b.bucket === 'fixed')?.monthlyAverage || 0;
     
@@ -130,7 +129,6 @@ describe('Card vs Drawer consistency', () => {
       'CAD',
       new Map(),
       months,
-      new Map()
     );
     const cardEssentials = cardBreakdown.buckets.find(b => b.bucket === 'essentials')?.monthlyAverage || 0;
     
@@ -160,7 +158,6 @@ describe('Card vs Drawer consistency', () => {
       'CAD',
       new Map(),
       months,
-      new Map()
     );
     const cardFlexible = cardBreakdown.buckets.find(b => b.bucket === 'flexible')?.monthlyAverage || 0;
     

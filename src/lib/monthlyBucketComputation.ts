@@ -15,6 +15,7 @@ import type { DebtPaymentReview } from "./types";
 import { getCategoryBucket, type MoneyCoachBucket } from "./moneyCoachBuckets";
 import { isCoreExcluded } from "./spendingMetrics";
 import { getParentCategory } from "./categoryTaxonomy";
+import { mean, monthsForCashFlowAverage } from "./cashFlowAverage";
 import { computeScheduledDebtPayments, type ScheduledDebtPayment } from "./debtPayments";
 
 export interface MonthlyBucketItem {
@@ -159,7 +160,9 @@ export function computeMonthlyBuckets(
 }
 
 /**
- * Compute bucket breakdown for multiple months and return averages.
+ * Average Fixed / Essentials / Flexible over the shared cash-flow month set.
+ * Net savings (leftover) is {@link averageCashFlow}, not the Investments
+ * category that used to live in `averages.savings`.
  */
 export function computeAverageBuckets(
   yearMonths: string[],
@@ -173,31 +176,19 @@ export function computeAverageBuckets(
   averages: Record<MoneyCoachBucket, number>;
   monthlyResults: MonthlyBucketResult[];
 } {
-  const monthlyResults = yearMonths.map(ym =>
+  const months = monthsForCashFlowAverage(yearMonths, { rangeMonths: yearMonths });
+  const monthlyResults = months.map((ym) =>
     computeMonthlyBuckets(ym, expenseTxns, accountSnapshots, debtPaymentHistory, userReviews, fxRates, homeCurrency)
   );
-  
-  const averages: Record<MoneyCoachBucket, number> = {
-    fixed: 0,
-    essentials: 0,
-    flexible: 0,
-    savings: 0,
-    uncategorized: 0,
+
+  return {
+    averages: {
+      fixed: mean(monthlyResults.map((r) => r.buckets.fixed)),
+      essentials: mean(monthlyResults.map((r) => r.buckets.essentials)),
+      flexible: mean(monthlyResults.map((r) => r.buckets.flexible)),
+      savings: 0,
+      uncategorized: mean(monthlyResults.map((r) => r.buckets.uncategorized)),
+    },
+    monthlyResults,
   };
-  
-  if (monthlyResults.length > 0) {
-    for (const result of monthlyResults) {
-      averages.fixed += result.buckets.fixed;
-      averages.essentials += result.buckets.essentials;
-      averages.flexible += result.buckets.flexible;
-      averages.savings += result.buckets.savings;
-      averages.uncategorized += result.buckets.uncategorized;
-    }
-    
-    for (const key in averages) {
-      averages[key as MoneyCoachBucket] /= monthlyResults.length;
-    }
-  }
-  
-  return { averages, monthlyResults };
 }
