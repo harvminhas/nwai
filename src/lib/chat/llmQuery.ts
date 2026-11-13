@@ -6,14 +6,13 @@
  * - /api/user/ai-ask (single-turn question answering)
  */
 
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import type { Part } from "@google/generative-ai";
 import type { FinancialProfileCache } from "@/lib/financialProfile";
 import type { UserReviewContext } from "@/lib/userReviewContext";
-import { CHAT_TOOLS } from "@/lib/chat/tools";
 import { executeTool } from "@/lib/chat/executor";
 import type { ToolParams } from "@/lib/chat/executor";
 import { buildChatContext } from "@/lib/chat/context";
+import { getChatModel } from "@/lib/chat/chatModel";
 
 const MAX_TOOL_ROUNDS = 4;
 
@@ -42,12 +41,8 @@ export async function queryLLMWithTools(
 ): Promise<string> {
   const systemContext = buildChatContext(profile);
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",
-    systemInstruction: systemContext,
-    tools: CHAT_TOOLS,
-  });
+  // Use cost-optimized lite model
+  const model = getChatModel(apiKey, systemContext);
 
   // Convert history to Gemini format
   const rawHistory = history.slice(-20).map((m) => ({
@@ -65,6 +60,18 @@ export async function queryLLMWithTools(
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const result = await chat.sendMessage(pendingParts);
     const response = result.response;
+
+    // Log token usage for this round
+    const usage = response.usageMetadata;
+    if (usage) {
+      console.log(
+        `[llmQuery] round=${round + 1} tokens: ` +
+        `prompt=${usage.promptTokenCount ?? 0} ` +
+        `candidates=${usage.candidatesTokenCount ?? 0} ` +
+        `thoughts=${(usage as any).thoughtsTokenCount ?? 0} ` +
+        `total=${usage.totalTokenCount ?? 0}`
+      );
+    }
 
     const functionCalls = response.functionCalls();
 
