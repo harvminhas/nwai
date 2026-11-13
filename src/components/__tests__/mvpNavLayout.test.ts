@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  CASH_FLOW_NAV_ITEMS,
   DESKTOP_NET_WORTH_PILL_CLASS,
   DESKTOP_NET_WORTH_SKELETON_CLASS,
   DRAWER_FOOTER_CLASS,
@@ -42,6 +43,24 @@ describe("mobile header and drawer layout", () => {
     expect(drawerLinkClass(true)).toContain("bg-violet-50");
     expect(drawerLinkClass(true)).toContain("text-violet-700");
     expect(drawerLinkClass(false)).not.toContain("bg-violet-50");
+  });
+
+  it("lists Cash Flow first in the cash-flow group and highlights only that route", () => {
+    expect(CASH_FLOW_NAV_ITEMS.map(({ href, label }) => ({ href, label }))).toEqual([
+      { href: "/account/cash-flow", label: "Cash Flow" },
+      { href: "/account/income", label: "Income" },
+      { href: "/account/spending", label: "Spending" },
+    ]);
+
+    expect(isMvpNavActive("/account/cash-flow", "/account/cash-flow")).toBe(true);
+    expect(isMvpNavActive("/account/income", "/account/cash-flow")).toBe(false);
+    expect(isMvpNavActive("/account/spending", "/account/cash-flow")).toBe(false);
+    expect(isMvpNavActive("/account/income", "/account/income")).toBe(true);
+    expect(isMvpNavActive("/account/cash-flow", "/account/income")).toBe(false);
+
+    expect(dropdownLinkClass(true)).toContain("bg-violet-50 font-semibold text-violet-700");
+    expect(dropdownLinkClass(false)).not.toContain("font-semibold");
+    expect(dropdownLinkClass(false)).toContain("hover:bg-violet-50");
   });
 
   it("lists Net Worth first in the net-worth group and highlights only that route", () => {

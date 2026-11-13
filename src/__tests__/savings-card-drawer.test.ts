@@ -7,9 +7,9 @@
 
 import { describe, test, expect } from 'vitest';
 import { computeMoneyCoachBreakdown } from '../lib/moneyCoach';
-import { computeBucketBreakdown, getMonthsForWindow } from '../lib/bucketBreakdown';
+import { averageMonthlyCashFlow, getMonthlyCashFlowForMonths } from '../lib/monthlyCashFlow';
 import type { FinancialProfileCache } from '../lib/financialProfile';
-import type { ExpenseTxnRecord, AccountSnapshot, DebtPaymentHistoryEntry } from '../lib/extractTransactions';
+import type { ExpenseTxnRecord } from '../lib/extractTransactions';
 
 describe('Net Savings Card vs Drawer Consistency', () => {
   // Create a minimal financial profile for testing
@@ -91,40 +91,38 @@ describe('Net Savings Card vs Drawer Consistency', () => {
       cashCommitmentEntries: [],
     } as FinancialProfileCache;
 
-    // Compute card value (from money coach)
-    const moneyCoachBreakdown = computeMoneyCoachBreakdown(profile, []);
+    const months = ['2026-07', '2026-08', '2026-09'];
+    const moneyCoachBreakdown = computeMoneyCoachBreakdown(
+      profile,
+      [],
+      profile.incomeTxns,
+      profile.accountSnapshots,
+      'CAD',
+      new Map(),
+      months,
+    );
     const savingsCard = moneyCoachBreakdown.buckets.find(b => b.bucket === 'savings');
     expect(savingsCard).toBeDefined();
     const cardValue = savingsCard!.monthlyAverage;
 
-    // Compute drawer value (from bucket breakdown)
-    const currentYear = new Date().getFullYear();
-    const months = getMonthsForWindow(profile.monthlyHistory, 'last3', currentYear);
-    const drawerBreakdown = computeBucketBreakdown(
-      'savings',
-      profile.expenseTxns,
-      profile.accountSnapshots,
-      profile.debtPaymentHistory,
-      months,
-      profile.homeCurrency,
-      [],
-      {},
-      {},
-      []
-    );
-    const drawerValue = drawerBreakdown.monthlyAverage;
+    const leftover = averageMonthlyCashFlow(
+      getMonthlyCashFlowForMonths(
+        {
+          expenseTxns: profile.expenseTxns,
+          incomeTxns: profile.incomeTxns,
+          homeCurrency: 'CAD',
+          accountSnapshots: profile.accountSnapshots,
+          debtPaymentHistory: profile.debtPaymentHistory,
+        },
+        months,
+      ),
+    ).leftover;
 
-    // Card and drawer values MUST match
-    expect(cardValue).toBeCloseTo(drawerValue, 2);
-    
-    // New behavior: savings calculation requires prior month for balance comparison
-    // With months Jun, Jul, Aug, Sep:
-    // - Jul can compute (prior = Jun): 500
-    // - Aug can compute (prior = Jul): 500
-    // - Sep can compute (prior = Aug): 500
-    // Average: (500 + 500 + 500) / 3 = 500
-    expect(cardValue).toBeCloseTo(500.00, 2);
-    expect(drawerValue).toBeCloseTo(500.00, 2);
+    expect(cardValue).toBeCloseTo(leftover, 2);
+    expect(cardValue).toBeCloseTo(
+      moneyCoachBreakdown.incomeAmount - moneyCoachBreakdown.totalSpending,
+      2,
+    );
   });
 
   test('card value equals drawer total for empty savings bucket', () => {
@@ -135,32 +133,22 @@ describe('Net Savings Card vs Drawer Consistency', () => {
 
     const profile = createTestProfile(expenseTxns);
 
-    // Compute card value
-    const moneyCoachBreakdown = computeMoneyCoachBreakdown(profile, []);
+    const months = ['2026-07', '2026-08', '2026-09'];
+    const moneyCoachBreakdown = computeMoneyCoachBreakdown(
+      profile,
+      [],
+      profile.incomeTxns,
+      profile.accountSnapshots,
+      'CAD',
+      new Map(),
+      months,
+    );
     const savingsCard = moneyCoachBreakdown.buckets.find(b => b.bucket === 'savings');
     expect(savingsCard).toBeDefined();
     const cardValue = savingsCard!.monthlyAverage;
-
-    // Compute drawer value
-    const currentYear = new Date().getFullYear();
-    const months = getMonthsForWindow(profile.monthlyHistory, 'last3', currentYear);
-    const drawerBreakdown = computeBucketBreakdown(
-      'savings',
-      profile.expenseTxns,
-      profile.accountSnapshots,
-      profile.debtPaymentHistory,
-      months,
-      profile.homeCurrency,
-      [],
-      {},
-      {},
-      []
+    expect(cardValue).toBeCloseTo(
+      moneyCoachBreakdown.incomeAmount - moneyCoachBreakdown.totalSpending,
+      2,
     );
-    const drawerValue = drawerBreakdown.monthlyAverage;
-
-    // Both should be CA$0 (no savings)
-    expect(cardValue).toBeCloseTo(drawerValue, 2);
-    expect(cardValue).toBe(0);
-    expect(drawerValue).toBe(0);
   });
 });

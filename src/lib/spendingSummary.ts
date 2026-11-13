@@ -151,6 +151,43 @@ function computeInsights(
 }
 
 /**
+ * Spending for one calendar month — same buckets as {@link buildSpendingSummary}.
+ * Works for any month with data, including the current unfinished month and
+ * months older than the last 12 complete months.
+ */
+export function spendingForMonth(
+  yearMonth: string,
+  expenseTxns: ExpenseTxnRecord[],
+  accountSnapshots: AccountSnapshot[],
+  debtPaymentHistory: DebtPaymentHistoryEntry[],
+  userReviews: DebtPaymentReview[],
+  fxRates: Record<string, number>,
+  currency: string = "CAD",
+): MonthlySpendingSummary {
+  const result = computeMonthlyBuckets(
+    yearMonth,
+    expenseTxns,
+    accountSnapshots,
+    debtPaymentHistory,
+    userReviews,
+    fxRates,
+    currency,
+  );
+  return {
+    yearMonth: result.yearMonth,
+    total: result.total,
+    fixed: result.buckets.fixed,
+    essentials: result.buckets.essentials,
+    flexible: result.buckets.flexible,
+    categories: result.items.map((item) => ({
+      category: item.category,
+      amount: item.amount,
+      bucket: item.bucket,
+    })),
+  };
+}
+
+/**
  * Build complete spending summary with categories, buckets, and trends.
  * 
  * @param rangeMonths - Optional: specific months to use for calculations (YYYY-MM format, oldest first)
@@ -179,32 +216,17 @@ export function buildSpendingSummary(
   const calculationMonths = rangeMonths || allMonths.slice(-3);
   const last12Months = allMonths.slice(-12); // Keep for backwards compatibility
   
-  // Use shared bucket computation for each month
-  const monthlyHistory: MonthlySpendingSummary[] = last12Months.map(yearMonth => {
-    const result = computeMonthlyBuckets(
+  const monthlyHistory: MonthlySpendingSummary[] = last12Months.map((yearMonth) =>
+    spendingForMonth(
       yearMonth,
       expenseTxns,
       accountSnapshots,
       debtPaymentHistory,
       userReviews,
       fxRates,
-      currency
-    );
-    
-    return {
-      yearMonth: result.yearMonth,
-      total: result.total,
-      fixed: result.buckets.fixed,
-      essentials: result.buckets.essentials,
-      flexible: result.buckets.flexible,
-      categories: result.items.map(item => ({
-        category: item.category,
-        amount: item.amount,
-        bucket: item.bucket
-      }))
-      // Note: result.excludedItems (savings, uncategorized) are NOT included in categories
-    };
-  });
+      currency,
+    ),
+  );
   
   // Calculate typical monthly based on range
   const calculationData = monthlyHistory.filter(m => calculationMonths.includes(m.yearMonth));

@@ -1,5 +1,11 @@
 /** Phone-only top-bar and drawer layout. Desktop (lg+) nav is unchanged. */
 
+export const CASH_FLOW_NAV_ITEMS = [
+  { href: "/account/cash-flow", label: "Cash Flow" },
+  { href: "/account/income", label: "Income" },
+  { href: "/account/spending", label: "Spending" },
+] as const;
+
 export const NET_WORTH_NAV_ITEMS = [
   { href: "/account/net-worth", label: "Net Worth" },
   { href: "/account/assets", label: "Assets" },

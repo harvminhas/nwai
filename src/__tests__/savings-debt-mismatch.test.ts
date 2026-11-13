@@ -14,7 +14,6 @@
 
 import { describe, test, expect } from "vitest";
 import { computeMoneyCoachBreakdown } from "../lib/moneyCoach";
-import { computeBucketBreakdown } from "../lib/bucketBreakdown";
 import type { FinancialProfileCache } from "../lib/financialProfile";
 import type { ExpenseTxnRecord, AccountSnapshot, DebtPaymentHistoryEntry } from "../lib/extractTransactions";
 import type { MonthlyHistoryEntry } from "../lib/financialProfile";
@@ -149,55 +148,42 @@ describe("Net savings card vs drawer consistency", () => {
     cashCommitmentEntries: [],
   };
 
-  test("money coach breakdown should only include savings category + extra paydown in savings bucket", () => {
-    const breakdown = computeMoneyCoachBreakdown(profile, []);
-    
+  function coach() {
+    return computeMoneyCoachBreakdown(
+      profile,
+      [],
+      profile.incomeTxns,
+      accountSnapshots,
+      "CAD",
+      new Map(),
+      ["2026-07", "2026-08", "2026-09"],
+    );
+  }
+
+  test("net savings equals income minus fixed, essentials, and flexible", () => {
+    const breakdown = coach();
     const savingsBucket = breakdown.buckets.find(b => b.bucket === "savings");
     expect(savingsBucket).toBeDefined();
-    
-    // Expected: average of (300 + 350 + 350) / 3 = 333.33
-    // Should NOT include scheduled debt payments (4434)
-    expect(savingsBucket!.monthlyAverage).toBeCloseTo(333, 0);
-    expect(savingsBucket!.monthlyAverage).toBeLessThan(1000);  // Definitely not 5,219
-  });
-
-  test("bucket breakdown should return same value as money coach for savings", () => {
-    const months = ["2026-07", "2026-08", "2026-09"];
-    
-    const bucketDetail = computeBucketBreakdown(
-      "savings",
-      expenseTxns,
-      accountSnapshots,
-      debtPaymentHistory,
-      months,
-      "CAD",
-      [],
-      {},
-      undefined,
-      undefined
+    expect(savingsBucket!.monthlyAverage).toBeCloseTo(
+      breakdown.incomeAmount - breakdown.totalSpending,
+      2,
     );
-
-    const moneyCoach = computeMoneyCoachBreakdown(profile, []);
-    const savingsBucket = moneyCoach.buckets.find(b => b.bucket === "savings");
-
-    // Both should show ~CA$333 (savings category only)
-    expect(bucketDetail.monthlyAverage).toBeCloseTo(savingsBucket!.monthlyAverage, 0);
-    expect(bucketDetail.monthlyAverage).toBeCloseTo(333, 0);
   });
 
-  test("scheduled debt payments should be in fixed bucket, not savings", () => {
-    const breakdown = computeMoneyCoachBreakdown(profile, []);
-    
+  test("scheduled debt payments are in fixed and therefore reduce leftover", () => {
+    const breakdown = coach();
     const fixedBucket = breakdown.buckets.find(b => b.bucket === "fixed");
     const savingsBucket = breakdown.buckets.find(b => b.bucket === "savings");
-    
+
     expect(fixedBucket).toBeDefined();
     expect(savingsBucket).toBeDefined();
-    
-    // Fixed should include scheduled debt payments (~4434)
     expect(fixedBucket!.monthlyAverage).toBeGreaterThan(4000);
-    
-    // Savings should NOT include scheduled debt payments
-    expect(savingsBucket!.monthlyAverage).toBeLessThan(1000);
+    expect(savingsBucket!.monthlyAverage).toBeCloseTo(
+      breakdown.incomeAmount
+        - (breakdown.buckets.find(b => b.bucket === "fixed")?.monthlyAverage ?? 0)
+        - (breakdown.buckets.find(b => b.bucket === "essentials")?.monthlyAverage ?? 0)
+        - (breakdown.buckets.find(b => b.bucket === "flexible")?.monthlyAverage ?? 0),
+      2,
+    );
   });
 });

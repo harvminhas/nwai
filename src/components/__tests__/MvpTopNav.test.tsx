@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { MvpTopNav } from "../MvpTopNav";
 import {
+  CASH_FLOW_NAV_ITEMS,
   DESKTOP_NET_WORTH_PILL_CLASS,
   DRAWER_FOOTER_CLASS,
   DRAWER_HEADER_CLASS,
@@ -30,13 +31,7 @@ vi.mock("next/link", () => ({
     children,
     href,
     ...rest
-  }: {
-    children: React.ReactNode;
-    href: string;
-    className?: string;
-    "aria-label"?: string;
-    onClick?: () => void;
-  }) => (
+  }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) => (
     <a href={href} {...rest}>
       {children}
     </a>
@@ -61,6 +56,30 @@ const netWorthData = {
   currency: "CAD",
 };
 
+function isDesktopNetWorthLabel(_content: string, el: Element | null): boolean {
+  return (
+    el instanceof HTMLElement &&
+    el.tagName === "SPAN" &&
+    el.textContent === "Net worth" &&
+    el.className.includes("uppercase")
+  );
+}
+
+function drawerGroupLinks(drawer: HTMLElement, sectionName: string): HTMLAnchorElement[] {
+  const section = Array.from(drawer.querySelectorAll("h6")).find(
+    (node) => node.textContent === sectionName,
+  );
+  const groupLinks: HTMLAnchorElement[] = [];
+  for (
+    let el: Element | null = section?.nextElementSibling ?? null;
+    el && el.tagName !== "H6";
+    el = el.nextElementSibling
+  ) {
+    if (el instanceof HTMLAnchorElement) groupLinks.push(el);
+  }
+  return groupLinks;
+}
+
 describe("MvpTopNav phone header and drawer", () => {
   beforeEach(() => {
     pathname.mockReturnValue("/account/income");
@@ -78,9 +97,7 @@ describe("MvpTopNav phone header and drawer", () => {
 
   it("keeps the desktop pill as lg-only and does not wrap the compact value", () => {
     render(<MvpTopNav netWorthData={netWorthData} />);
-    const desktopLabel = screen.getByText((_, el) =>
-      el?.tagName === "SPAN" && el.textContent === "Net worth" && el.className.includes("uppercase")
-    );
+    const desktopLabel = screen.getByText(isDesktopNetWorthLabel);
     const desktop = desktopLabel.closest("a");
     expect(desktop?.className).toBe(DESKTOP_NET_WORTH_PILL_CLASS);
     expect(desktop?.className).toContain("lg:flex");
@@ -113,6 +130,7 @@ describe("MvpTopNav phone header and drawer", () => {
     const section = (name: string) =>
       Array.from(drawer.querySelectorAll("h6")).find((el) => el.textContent === name);
     expect(section("Cash flow")?.className).toContain("uppercase");
+    expect(section("Net worth")?.className).toContain("uppercase");
     expect(section("Tools")?.className).toContain("uppercase");
     expect(section("Account")?.className).toContain("uppercase");
 
@@ -125,21 +143,62 @@ describe("MvpTopNav phone header and drawer", () => {
     expect(drawer.querySelector('a[href="/account/tools/debt-payoff"]')).toBeTruthy();
   });
 
+  it("puts Cash Flow first in the cash-flow group and highlights only /account/cash-flow", () => {
+    pathname.mockReturnValue("/account/cash-flow");
+    const { container } = render(<MvpTopNav netWorthData={netWorthData} />);
+    fireEvent.click(screen.getByLabelText("Menu"));
+
+    const drawer = container.querySelector("aside") as HTMLElement;
+    const groupLinks = drawerGroupLinks(drawer, "Cash flow");
+
+    expect(groupLinks.map((link) => link.getAttribute("href"))).toEqual(
+      CASH_FLOW_NAV_ITEMS.map((item) => item.href),
+    );
+    expect(groupLinks[0].textContent).toBe("Cash Flow");
+    expect(groupLinks[0].className).toBe(drawerLinkClass(true));
+    expect(groupLinks[1].className).toBe(drawerLinkClass(false));
+    expect(groupLinks[2].className).toBe(drawerLinkClass(false));
+
+    const desktopCashFlow = Array.from(container.querySelectorAll('a[href="/account/cash-flow"]')).find(
+      (el) => el instanceof HTMLAnchorElement && el.textContent === "Cash Flow",
+    );
+    expect(desktopCashFlow?.className).toBe(dropdownLinkClass(true));
+    const desktopIncome = Array.from(container.querySelectorAll('a[href="/account/income"]')).find(
+      (el) => el instanceof HTMLAnchorElement && !drawer.contains(el),
+    );
+    expect(desktopIncome?.className).toBe(dropdownLinkClass(false));
+  });
+
+  it("does not highlight the Cash Flow item on Income or Spending pages", () => {
+    pathname.mockReturnValue("/account/income");
+    const { container, unmount } = render(<MvpTopNav netWorthData={netWorthData} />);
+    fireEvent.click(screen.getByLabelText("Menu"));
+    const drawer = container.querySelector("aside") as HTMLElement;
+    const cashFlow = drawer.querySelector('a[href="/account/cash-flow"]') as HTMLElement;
+    const income = drawer.querySelector('a[href="/account/income"]') as HTMLElement;
+    expect(cashFlow.className).toBe(drawerLinkClass(false));
+    expect(income.className).toBe(drawerLinkClass(true));
+    unmount();
+
+    pathname.mockReturnValue("/account/spending");
+    const second = render(<MvpTopNav netWorthData={netWorthData} />);
+    fireEvent.click(screen.getByLabelText("Menu"));
+    const drawer2 = second.container.querySelector("aside") as HTMLElement;
+    expect(drawer2.querySelector('a[href="/account/cash-flow"]')?.className).toBe(
+      drawerLinkClass(false),
+    );
+    expect(drawer2.querySelector('a[href="/account/spending"]')?.className).toBe(
+      drawerLinkClass(true),
+    );
+  });
+
   it("puts Net Worth first in the net-worth group and highlights only /account/net-worth", () => {
     pathname.mockReturnValue("/account/net-worth");
     const { container } = render(<MvpTopNav netWorthData={netWorthData} />);
     fireEvent.click(screen.getByLabelText("Menu"));
 
     const drawer = container.querySelector("aside") as HTMLElement;
-    const section = Array.from(drawer.querySelectorAll("h6")).find(
-      (el) => el.textContent === "Net worth",
-    );
-    expect(section).toBeTruthy();
-
-    const groupLinks: HTMLAnchorElement[] = [];
-    for (let el = section!.nextElementSibling; el && el.tagName !== "H6"; el = el.nextElementSibling) {
-      if (el.tagName === "A") groupLinks.push(el as HTMLAnchorElement);
-    }
+    const groupLinks = drawerGroupLinks(drawer, "Net worth");
 
     expect(groupLinks.map((link) => link.getAttribute("href"))).toEqual(
       NET_WORTH_NAV_ITEMS.map((item) => item.href),
@@ -150,11 +209,11 @@ describe("MvpTopNav phone header and drawer", () => {
     expect(groupLinks[2].className).toBe(drawerLinkClass(false));
 
     const desktopNetWorth = Array.from(container.querySelectorAll('a[href="/account/net-worth"]')).find(
-      (el) => el.textContent === "Net Worth",
+      (el) => el instanceof HTMLAnchorElement && el.textContent === "Net Worth",
     );
     expect(desktopNetWorth?.className).toBe(dropdownLinkClass(true));
     const desktopAssets = Array.from(container.querySelectorAll('a[href="/account/assets"]')).find(
-      (el) => !drawer.contains(el),
+      (el) => el instanceof HTMLAnchorElement && !drawer.contains(el),
     );
     expect(desktopAssets?.className).toBe(dropdownLinkClass(false));
   });

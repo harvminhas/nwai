@@ -52,7 +52,7 @@ describe("Card vs Page Divergence", () => {
     
     const accountSnapshots: AccountSnapshot[] = [
       { slug: "checking", accountName: "Checking", currency: "CAD", accountType: "checking" },
-      { slug: "cc-visa", accountName: "Visa", currency: "CAD", accountType: "credit_card" },
+      { slug: "cc-visa", accountName: "Visa", currency: "CAD", accountType: "credit_card", balance: 0 },
     ];
     
     const debtPaymentHistory: DebtPaymentHistoryEntry[] = [
