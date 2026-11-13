@@ -129,7 +129,7 @@ describe("GrowthTab", () => {
     expect(screen.getByText("Everyday Savings")).toBeTruthy();
   });
 
-  it("shows an overpaid card as a credit, not as debt owed", () => {
+  it("shows an overpaid card as $0 owed with a muted credit note", () => {
     render(
       <GrowthTab
         breakdown={{
@@ -137,12 +137,12 @@ describe("GrowthTab", () => {
           cash: { ...emptySection },
           investments: { ...emptySection },
           debts: {
-            start: -50,
-            end: -50,
+            start: 0,
+            end: 0,
             change: 0,
             changePercent: null,
             accounts: [
-              { slug: "visa", label: "Visa", type: "credit", start: -50, end: -50, change: 0 },
+              { slug: "visa", label: "Visa", type: "credit", start: 0, end: 0, change: 0, credit: true },
             ],
             putIn: null,
             marketChange: null,
@@ -155,10 +155,11 @@ describe("GrowthTab", () => {
         rangeLabel="Aug 2026 – Oct 2026"
       />,
     );
-    expect(screen.getAllByText(/credit CA\$50/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/credit CA\$/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "1 account" }));
     expect(screen.getByText("Visa")).toBeTruthy();
-    expect(screen.getAllByText(/credit CA\$50/).length).toBeGreaterThan(1);
+    expect(screen.getByText("credit")).toBeTruthy();
+    expect(screen.getAllByText(/CA\$0\.00/).length).toBeGreaterThan(0);
   });
 
   it("asks for another month when there is no previous snapshot", () => {

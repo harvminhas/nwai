@@ -530,7 +530,7 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
     expect(slugs).toEqual(["manual-osap-other", "osap-imported"]);
   });
 
-  it("keeps an overpaid card as a credit, not as abs'd debt", () => {
+  it("matches main totals for a positive-signed owed card", () => {
     const monthlyHistory: MonthNetWorthHistory[] = [
       { yearMonth: "2026-10", netWorth: 0, totalAssets: 0, totalDebts: 0, byAccount: [] },
     ];
@@ -541,17 +541,52 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
         label: "Visa",
         accountType: "credit",
         currency: "CAD",
-        entries: [{ yearMonth: "2026-10", balance: 50 }],
+        entries: [{ yearMonth: "2026-10", balance: 1500 }],
       }],
       [],
       [],
       toHomeCAD,
       new Map()
     );
-    expect(monthlyHistory[0].totalDebts).toBe(0);
-    expect(monthlyHistory[0].totalAssets).toBe(50);
+    expect(monthlyHistory[0].totalAssets).toBe(0);
+    expect(monthlyHistory[0].totalDebts).toBe(1500);
+    expect(monthlyHistory[0].netWorth).toBe(-1500);
     expect(monthlyHistory[0].byAccount).toEqual([
-      { slug: "visa", label: "Visa", type: "credit", value: 50 },
+      { slug: "visa", label: "Visa", type: "credit", value: -1500 },
+    ]);
+  });
+
+  it("matches main totals for an asset account with one negative month", () => {
+    const monthlyHistory: MonthNetWorthHistory[] = [
+      { yearMonth: "2026-09", netWorth: 0, totalAssets: 0, totalDebts: 0, byAccount: [] },
+      { yearMonth: "2026-10", netWorth: 0, totalAssets: 0, totalDebts: 0, byAccount: [] },
+    ];
+    calculateNetWorthForMonths(
+      monthlyHistory,
+      [{
+        slug: "chk",
+        label: "Chequing",
+        accountType: "checking",
+        currency: "CAD",
+        entries: [
+          { yearMonth: "2026-09", balance: -1000 },
+          { yearMonth: "2026-10", balance: 4000 },
+        ],
+      }],
+      [],
+      [],
+      toHomeCAD,
+      new Map()
+    );
+    expect(monthlyHistory[0].totalAssets).toBe(0);
+    expect(monthlyHistory[0].totalDebts).toBe(1000);
+    expect(monthlyHistory[0].netWorth).toBe(-1000);
+    expect(monthlyHistory[1].totalAssets).toBe(4000);
+    expect(monthlyHistory[1].totalDebts).toBe(4000);
+    expect(monthlyHistory[1].netWorth).toBe(0);
+    expect(monthlyHistory[1].byAccount).toEqual([
+      { slug: "chk", label: "Chequing", type: "checking", value: 4000 },
+      { slug: "chk", label: "Chequing", type: "checking", value: -4000 },
     ]);
   });
 });

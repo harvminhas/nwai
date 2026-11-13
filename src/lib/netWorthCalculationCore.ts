@@ -181,26 +181,14 @@ export function calculateNetWorthForMonths(
         else break;
       }
       if (bal === null) continue;
-      const homeBal = toHome(bal, acct.currency);
-      if (homeBal > 0) {
-        // Overpaid / credit balance — the bank owes the user, not the other way around.
-        ta += homeBal;
-        accountContributions.push({
-          slug: acct.slug,
-          label: acct.label,
-          type: acct.accountType,
-          value: homeBal,
-        });
-      } else {
-        const absValue = Math.abs(homeBal);
-        td += absValue;
-        accountContributions.push({
-          slug: acct.slug,
-          label: acct.label,
-          type: acct.accountType,
-          value: -absValue,
-        });
-      }
+      const absValue = Math.abs(toHome(bal, acct.currency)); // abs — same as liabilities page
+      td += absValue;
+      accountContributions.push({
+        slug: acct.slug,
+        label: acct.label,
+        type: acct.accountType,
+        value: -absValue, // Debts are negative
+      });
       importedContributingSlugs.add(acct.slug);
     }
 

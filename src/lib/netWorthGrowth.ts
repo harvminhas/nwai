@@ -31,6 +31,8 @@ export interface GrowthAccountLine {
   start: number;
   end: number;
   change: number;
+  /** Debt account with a credit/overpaid signed balance — shown as $0 owed. */
+  credit?: boolean;
 }
 
 export interface GrowthNewAccount {
@@ -95,9 +97,15 @@ export function growthBucket(type: string, label?: string): GrowthBucket | null 
   return null;
 }
 
-/** Amount owed for debts (negative = credit / overpaid). Assets keep their signed value. */
-function displayValue(type: string, label: string | undefined, signed: number): number {
-  return growthBucket(type, label) === "debts" ? -signed : signed;
+/**
+ * Growth-only debt display. Shared byAccount math is unchanged (debts are
+ * -Math.abs). If a debt row still has a positive signed value, treat it as a
+ * credit/overpaid balance: $0 owed, never as debt.
+ */
+function debtOwed(signed: number): { amount: number; credit: boolean } {
+  const owed = -signed;
+  if (owed < -0.005) return { amount: 0, credit: true };
+  return { amount: owed, credit: false };
 }
 
 /** Dividends, interest, and distributions in an investment account are market growth, not deposits. */
@@ -202,25 +210,28 @@ export function buildPeriodGrowth(
     const bucket = growthBucket(endRow.type, endRow.label);
     if (!bucket) continue;
     const startRow = startMap.get(slug);
-    const endDisplay = displayValue(endRow.type, endRow.label, endRow.end);
+    const endDisp =
+      bucket === "debts" ? debtOwed(endRow.end) : { amount: endRow.end, credit: false };
     if (!startRow || !startSlugs.has(slug)) {
       newAccounts.push({
         slug,
         label: endRow.label,
         type: endRow.type,
         bucket,
-        amount: endDisplay,
+        amount: endDisp.amount,
       });
       continue;
     }
-    const startDisplay = displayValue(startRow.type, startRow.label, startRow.end);
+    const startDisp =
+      bucket === "debts" ? debtOwed(startRow.end) : { amount: startRow.end, credit: false };
     sections[bucket].push({
       slug,
       label: endRow.label || startRow.label,
       type: endRow.type,
-      start: startDisplay,
-      end: endDisplay,
-      change: endDisplay - startDisplay,
+      start: startDisp.amount,
+      end: endDisp.amount,
+      change: endDisp.amount - startDisp.amount,
+      credit: startDisp.credit || endDisp.credit,
     });
   }
 
@@ -231,14 +242,16 @@ export function buildPeriodGrowth(
     const startRow = startMap.get(slug)!;
     const bucket = growthBucket(startRow.type, startRow.label);
     if (!bucket) continue;
-    const startDisplay = displayValue(startRow.type, startRow.label, startRow.end);
+    const startDisp =
+      bucket === "debts" ? debtOwed(startRow.end) : { amount: startRow.end, credit: false };
     sections[bucket].push({
       slug,
       label: startRow.label,
       type: startRow.type,
-      start: startDisplay,
+      start: startDisp.amount,
       end: 0,
-      change: 0 - startDisplay,
+      change: 0 - startDisp.amount,
+      credit: startDisp.credit,
     });
   }
 

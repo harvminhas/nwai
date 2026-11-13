@@ -168,7 +168,7 @@ describe("this month start vs end", () => {
     expect(result.investments.marketChange).toBe(600);
   });
 
-  it("shows a card credit as negative debt, not as amount owed", () => {
+  it("shows a debt credit as $0 owed, not as debt", () => {
     const current = month({
       yearMonth: "2026-10",
       netWorth: 5050,
@@ -186,9 +186,10 @@ describe("this month start vs end", () => {
       ],
     });
     const result = computeMonthGrowth(current, prior, { expenseTxns: [], incomeTxns: [] });
-    expect(result.debts.start).toBe(-50);
-    expect(result.debts.end).toBe(-50);
-    expect(result.debts.accounts[0].end).toBe(-50);
+    expect(result.debts.start).toBe(0);
+    expect(result.debts.end).toBe(0);
+    expect(result.debts.accounts[0].end).toBe(0);
+    expect(result.debts.accounts[0].credit).toBe(true);
   });
 
   it("shows you put in vs markets when every investment account has deposit or withdrawal lines", () => {

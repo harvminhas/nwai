@@ -29,13 +29,6 @@ function signed(n: number, currency: string): string {
   return `${prefix}${formatCurrencyWithCents(Math.abs(n), currency)}`;
 }
 
-function formatBalance(n: number, currency: string, bucket: GrowthBucket): string {
-  if (bucket === "debts" && n < -0.005) {
-    return `credit ${formatCurrencyWithCents(Math.abs(n), currency)}`;
-  }
-  return formatCurrencyWithCents(n, currency);
-}
-
 function sideFor(bucket: GrowthBucket): "asset" | "debt" {
   return bucket === "debts" ? "debt" : "asset";
 }
@@ -63,9 +56,9 @@ function SectionCard({
       <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <p className={`${NET_WORTH_LABEL_CLASS} text-gray-500`}>
-          {formatBalance(section.start, currency, bucket)}
+          {formatCurrencyWithCents(section.start, currency)}
           <span className="px-1.5 text-gray-400">→</span>
-          {formatBalance(section.end, currency, bucket)}
+          {formatCurrencyWithCents(section.end, currency)}
         </p>
         <IntactAmount className={`text-sm font-semibold ${changeClass}`}>
           {signed(section.change, currency)}
@@ -103,11 +96,16 @@ function SectionCard({
                 const body = (
                   <div className="flex items-start justify-between gap-3 py-2 border-b border-gray-100 last:border-0">
                     <div className="min-w-0">
-                      <p className={NET_WORTH_LABEL_CLASS}>{row.label}</p>
+                      <p className={NET_WORTH_LABEL_CLASS}>
+                        {row.label}
+                        {acc.credit && (
+                          <span className="ml-2 text-xs font-normal text-gray-400">credit</span>
+                        )}
+                      </p>
                       <p className="text-xs text-gray-400 break-words">
-                        {formatBalance(acc.start, currency, bucket)}
+                        {formatCurrencyWithCents(acc.start, currency)}
                         <span className="px-1">→</span>
-                        {formatBalance(acc.end, currency, bucket)}
+                        {formatCurrencyWithCents(acc.end, currency)}
                       </p>
                     </div>
                     <IntactAmount className={`shrink-0 text-sm font-semibold ${amountClass(acc.change)}`}>
