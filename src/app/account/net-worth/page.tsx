@@ -23,6 +23,23 @@ import {
   NET_WORTH_TABS_ROW_CLASS,
 } from "@/components/netWorthReadLayout";
 import { netWorthAccountRow } from "@/lib/accountDetailHref";
+import {
+  latestSelectableMonth,
+  selectionAfterRangeChange,
+  sliceHistoryByRange,
+} from "@/lib/chartMonthSelection";
+import {
+  formatGrowthRangeLabel,
+  sumGrowthBreakdowns,
+  type MonthGrowthBreakdown,
+} from "@/lib/netWorthGrowth";
+import GrowthTab, { type GrowthScope } from "./GrowthTab";
+
+const CHART_RANGES = [
+  { label: "3M", months: 3 },
+  { label: "6M", months: 6 },
+  { label: "All", months: 0 },
+] as const;
 
 interface MonthlyNetWorthData {
   yearMonth: string;
@@ -48,7 +65,10 @@ function NetWorthPageContent() {
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [viewMonth, setViewMonth] = useState<string | null>(null); // For interactive header
   const [currency, setCurrency] = useState<string>("CAD");
-  const [activeTab, setActiveTab] = useState<"changes" | "assets" | "debts">("changes");
+  const [activeTab, setActiveTab] = useState<"changes" | "assets" | "debts" | "growth">("changes");
+  const [chartRange, setChartRange] = useState(0); // All — preserves the existing 12-month window
+  const [growthMonths, setGrowthMonths] = useState<MonthGrowthBreakdown[]>([]);
+  const [growthScope, setGrowthScope] = useState<GrowthScope>("month");
   const isLgUp = useLgUp();
 
   const loadData = async (tok: string) => {
@@ -79,13 +99,20 @@ function NetWorthPageContent() {
         return;
       }
 
-      // Fetch change items (may be empty for existing users)
-      const changesRes = await fetch("/api/user/net-worth-changes", {
-        headers: { Authorization: `Bearer ${tok}` },
-      });
+      // Fetch change items + growth breakdown in parallel (growth is display-only)
+      const [changesRes, growthRes] = await Promise.all([
+        fetch("/api/user/net-worth-changes", {
+          headers: { Authorization: `Bearer ${tok}` },
+        }),
+        fetch("/api/user/net-worth-growth", {
+          headers: { Authorization: `Bearer ${tok}` },
+        }),
+      ]);
 
       const changesData = await changesRes.json().catch(() => ({ changes: [] }));
       const changes = (changesData.changes || []) as MonthNetWorthSummary[];
+      const growthData = await growthRes.json().catch(() => ({ months: [] }));
+      setGrowthMonths((growthData.months || []) as MonthGrowthBreakdown[]);
 
       // Build change items map by month
       const changesByMonth = new Map<string, MonthNetWorthSummary["items"]>();
@@ -188,13 +215,35 @@ function NetWorthPageContent() {
   const latestMonth = data.reduce((max, m) => 
     m.yearMonth > max.yearMonth ? m : max
   , data[0]);
+
+  const sortedData = [...data].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
+  const chartData = sliceHistoryByRange(sortedData, chartRange);
+  const latestVisibleYm = latestSelectableMonth(chartData);
+
+  const handleChartRange = (months: number) => {
+    setChartRange(months);
+    const next = sliceHistoryByRange(sortedData, months);
+    const nextYm = selectionAfterRangeChange(selectedMonth, next);
+    if (nextYm && nextYm !== selectedMonth) {
+      setSelectedMonth(nextYm);
+      setViewMonth(nextYm);
+    }
+  };
   
   const viewData = viewMonth 
     ? data.find(d => d.yearMonth === viewMonth) || latestMonth 
     : latestMonth;
   const isViewingLatest = !viewMonth || viewMonth === latestMonth.yearMonth;
   const selectedData = data.find(d => d.yearMonth === selectedMonth) || latestMonth;
-  const chartDomain = calculateBalanceChartDomain(data.map(d => d.netWorth));
+  const chartDomain = calculateBalanceChartDomain(chartData.map(d => d.netWorth));
+  const visibleYearMonths = chartData.map((d) => d.yearMonth);
+  const monthGrowth = growthMonths.find((m) => m.yearMonth === selectedData.yearMonth) ?? null;
+  const rangeGrowth = sumGrowthBreakdowns(growthMonths, visibleYearMonths);
+  const growthBreakdown = growthScope === "range" ? rangeGrowth : monthGrowth;
+  const breakdownPeriodLabel =
+    activeTab === "growth" && growthScope === "range"
+      ? formatGrowthRangeLabel(visibleYearMonths)
+      : formatMonthLabel(selectedData.yearMonth);
 
   // Helper to categorize items by filter type
 
@@ -350,13 +399,43 @@ function NetWorthPageContent() {
         </div>
       </div>
 
-      {/* 12-Month Chart */}
+      {/* Trend chart */}
       <div className={NET_WORTH_CARD_CLASS}>
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">12-Month Trend</h2>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold text-gray-900">12-Month Trend</h2>
+          <div className="flex gap-1">
+            {latestVisibleYm && selectedMonth && selectedMonth !== latestVisibleYm && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedMonth(latestVisibleYm);
+                  setViewMonth(latestVisibleYm);
+                }}
+                className="rounded-full px-3 py-1 text-xs font-medium text-gray-400 hover:text-gray-600 transition"
+              >
+                Latest
+              </button>
+            )}
+            {CHART_RANGES.map((r) => (
+              <button
+                key={r.label}
+                type="button"
+                onClick={() => handleChartRange(r.months)}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                  chartRange === r.months
+                    ? "bg-purple-100 text-purple-700"
+                    : "text-gray-400 hover:text-gray-600"
+                }`}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="relative" style={{ height: "340px" }}>
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
-              data={data.map(d => ({
+              data={chartData.map(d => ({
                 month: formatMonthLabel(d.yearMonth),
                 yearMonth: d.yearMonth,
                 netWorth: d.netWorth,
@@ -367,7 +446,7 @@ function NetWorthPageContent() {
               onClick={(e: any) => {
                 if (e?.activeLabel) {
                   const month = e.activeLabel;
-                  const matchedData = data.find(d => formatMonthLabel(d.yearMonth) === month);
+                  const matchedData = chartData.find(d => formatMonthLabel(d.yearMonth) === month);
                   if (matchedData) {
                     setSelectedMonth(matchedData.yearMonth);
                     setViewMonth(matchedData.yearMonth);
@@ -502,12 +581,22 @@ function NetWorthPageContent() {
             >
               Debts
             </button>
+            <button
+              onClick={() => setActiveTab("growth")}
+              className={`${NET_WORTH_TAB_BUTTON_BASE} ${
+                activeTab === "growth"
+                  ? "border-purple-600 text-purple-600"
+                  : "border-transparent text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              Growth
+            </button>
             <div className={NET_WORTH_MONTH_DESKTOP_CLASS}>
-              {formatMonthLabel(selectedData.yearMonth)}
+              {breakdownPeriodLabel}
             </div>
           </div>
           <div className={NET_WORTH_MONTH_MOBILE_CLASS}>
-            {formatMonthLabel(selectedData.yearMonth)}
+            {breakdownPeriodLabel}
           </div>
         </div>
 
@@ -724,6 +813,17 @@ function NetWorthPageContent() {
               <p className="text-sm text-gray-500 text-center py-8">No debt data</p>
             )}
           </div>
+        )}
+
+        {activeTab === "growth" && (
+          <GrowthTab
+            breakdown={growthBreakdown}
+            currency={currency}
+            scope={growthScope}
+            onScopeChange={setGrowthScope}
+            monthLabel={formatMonthLabel(selectedData.yearMonth)}
+            rangeLabel={formatGrowthRangeLabel(visibleYearMonths)}
+          />
         )}
 
         {/* Net Worth Reconciliation */}

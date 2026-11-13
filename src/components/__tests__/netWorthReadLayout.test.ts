@@ -33,6 +33,8 @@ describe("net worth mobile read layout", () => {
     expect(NET_WORTH_TAB_BUTTON_BASE).toContain("whitespace-nowrap");
     expect(NET_WORTH_TAB_BUTTON_BASE).toContain("lg:px-4");
     expect(NET_WORTH_TABS_ROW_CLASS).toContain("lg:gap-4");
+    expect(NET_WORTH_TABS_ROW_CLASS).toContain("flex-wrap");
+    expect(NET_WORTH_TABS_ROW_CLASS).toContain("lg:flex-nowrap");
   });
 
   it("restores card padding at lg", () => {
