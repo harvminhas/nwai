@@ -113,7 +113,7 @@ function categoryLabel(kind: CategoryTrendKind, key: string): string {
   return assetGroupLabel(key as AssetGroup["type"]);
 }
 
-type AccountFlows = {
+export type AccountFlows = {
   deposits: number;
   withdrawals: number;
   interestIn: number;
@@ -126,7 +126,7 @@ function emptyFlows(): AccountFlows {
   return { deposits: 0, withdrawals: 0, interestIn: 0, interestOut: 0, fees: 0, known: false };
 }
 
-function flowsFor(
+export function computeAccountFlows(
   slugs: Set<string>,
   months: Set<string>,
   incomeTxns: CategoryTrendTxn[],
@@ -401,7 +401,7 @@ export function buildCategoryTrendCards(opts: {
   }
 
   const allSlugs = new Set([...seenBySlug.keys()]);
-  const flows = flowsFor(allSlugs, flowMonths, opts.incomeTxns, opts.expenseTxns);
+  const flows = computeAccountFlows(allSlugs, flowMonths, opts.incomeTxns, opts.expenseTxns);
 
   const cards: CategoryTrendCard[] = [];
   for (const [key, accounts] of grouped) {

@@ -9,6 +9,7 @@ import type { DebtsSummary } from "@/lib/debtsSummary";
 import { OverviewTab } from "./components/OverviewTab";
 import { TrendsTab } from "./components/TrendsTab";
 import { PerformanceTab } from "./components/PerformanceTab";
+import { WhatChangedTab } from "./components/WhatChangedTab";
 import { CategoriesTab } from "./components/CategoriesTab";
 import AccountSwitcher from "@/components/AccountSwitcher";
 import { statementAccountDisplayName } from "@/lib/accountListLabel";
@@ -233,6 +234,7 @@ function LiabilitiesPageContent() {
         {activeTab === "overview" && <OverviewTab summary={summary} />}
         {activeTab === "trends" && <TrendsTab summary={summary} />}
         {activeTab === "performance" && <PerformanceTab summary={summary} />}
+        {activeTab === "what-changed" && <WhatChangedTab summary={summary} />}
         {activeTab === "accounts" && (
           <CategoriesTab summary={summary} />
         )}

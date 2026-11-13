@@ -12,6 +12,7 @@ describe("account section tab intent", () => {
       "accounts",
       "trends",
       "performance",
+      "what-changed",
     ]);
     expect(ACCOUNT_SECTION_TABS[0]).toEqual({ id: "overview", label: "Overview" });
     expect(DEFAULT_ACCOUNT_SECTION_TAB).toBe("overview");
@@ -27,10 +28,11 @@ describe("account section tab intent", () => {
     expect(resolveAccountSectionTab("accounts")).toBe("accounts");
   });
 
-  it("honors explicit overview, trends, and performance query values", () => {
+  it("honors explicit overview, trends, performance, and what-changed query values", () => {
     expect(resolveAccountSectionTab("overview")).toBe("overview");
     expect(resolveAccountSectionTab("trends")).toBe("trends");
     expect(resolveAccountSectionTab("performance")).toBe("performance");
+    expect(resolveAccountSectionTab("what-changed")).toBe("what-changed");
   });
 
   it("ignores unknown query tabs such as insights ?tab=payoff", () => {

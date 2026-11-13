@@ -7,13 +7,14 @@
  * Intent (t598u):
  * - No query / unknown query (e.g. insights `?tab=payoff`) → Overview
  * - Explicit `?tab=accounts` (account-detail breadcrumbs) → Accounts
- * - Explicit `?tab=overview` / `?tab=trends` / `?tab=performance` → that tab
+ * - Explicit `?tab=overview` / `?tab=trends` / `?tab=performance` / `?tab=what-changed` → that tab
  */
 export const ACCOUNT_SECTION_TABS = [
   { id: "overview", label: "Overview" },
   { id: "accounts", label: "Accounts" },
   { id: "trends", label: "Trends" },
   { id: "performance", label: "Performance" },
+  { id: "what-changed", label: "What changed" },
 ] as const;
 
 export type AccountSectionTabId = (typeof ACCOUNT_SECTION_TABS)[number]["id"];
