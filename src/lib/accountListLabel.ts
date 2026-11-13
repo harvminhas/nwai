@@ -129,7 +129,61 @@ export function resolveAccountDisplayName(
   return resolved;
 }
 
-/** Primary display string for a parsed statement / snapshot. */
+/**
+ * Masked last-4 from a slug or id-like token. Digits only — never returns a
+ * raw account number, and never invents a mask from letters.
+ */
+export function maskedAccountLast4(slugOrId?: string | null): string {
+  if (!slugOrId) return "";
+  const trimmed = slugOrId.trim();
+  if (!trimmed || /^unknown(-account)?$/i.test(trimmed)) return "";
+  const digits = trimmed.replace(/\D/g, "");
+  if (digits.length >= 4) return `•••${digits.slice(-4)}`;
+  return "";
+}
+
+function alreadyHasMaskedLast4(value: string): boolean {
+  return /••+\s*\d{2,4}/.test(value);
+}
+
+function isInstitutionOnlyPrimary(display: AccountDisplayLabel, bankName: string): boolean {
+  if (!display.primary || !bankName || display.secondary) return false;
+  return namesAreEquivalent(display.primary, bankName);
+}
+
+/**
+ * Single-line label for transaction rows, merchants, and CSV Account columns.
+ * Same generic resolution as resolveAccountDisplayName, then:
+ *   - if the name is the institution (no nickname/product), append masked last4
+ *     so two same-bank accounts stay distinguishable
+ *   - never emit a raw slug or account number (masked last4 or "Account")
+ *
+ * Do not use this where last4 is already shown as secondary meta (switcher, lists).
+ */
+export function compactAccountDisplayName(
+  input: AccountDisplayNameInput,
+  last4Source?: string | null,
+): string {
+  const bankName = normalizeName(input.bankName ?? "");
+  const display = resolveAccountDisplayName({
+    ...input,
+    fallback: undefined,
+  });
+  const masked = maskedAccountLast4(last4Source ?? input.fallback);
+  if (display.primary) {
+    if (
+      isInstitutionOnlyPrimary(display, bankName) &&
+      masked &&
+      !alreadyHasMaskedLast4(display.primary)
+    ) {
+      return `${display.primary} ${masked}`;
+    }
+    return display.primary;
+  }
+  return masked || "Account";
+}
+
+/** Primary display string for a parsed statement / snapshot (compact / txn label). */
 export function statementAccountDisplayName(
   parsed: {
     nickname?: string | null;
@@ -139,13 +193,15 @@ export function statementAccountDisplayName(
   slug?: string | null,
   historyLabel?: string | null,
 ): string {
-  return resolveAccountDisplayName({
-    nickname: parsed.nickname,
-    accountName: parsed.accountName,
-    bankName: parsed.bankName,
-    historyLabel,
-    fallback: slug,
-  }).primary;
+  return compactAccountDisplayName(
+    {
+      nickname: parsed.nickname,
+      accountName: parsed.accountName,
+      bankName: parsed.bankName,
+      historyLabel,
+    },
+    slug,
+  );
 }
 
 export function joinAccountMeta(parts: Array<string | null | undefined>): string {
@@ -198,13 +254,15 @@ export function displayNameFromProfileAccount(
   existingLabel?: string | null,
 ): string {
   const snap = (profile.accountSnapshots ?? []).find((entry) => entry.slug === slug);
-  return resolveAccountDisplayName({
-    accountName: snap?.accountName,
-    bankName: snap?.bankName,
-    // What Changed / history outranks a stale txn cache like "Bank · •••1234".
-    historyLabel: findAccountHistoryLabel(profile.accountBalanceHistory, slug) || existingLabel,
-    fallback: slug,
-  }).primary;
+  return compactAccountDisplayName(
+    {
+      accountName: snap?.accountName,
+      bankName: snap?.bankName,
+      // What Changed / history outranks a stale txn cache like "Bank · •••1234".
+      historyLabel: findAccountHistoryLabel(profile.accountBalanceHistory, slug) || existingLabel,
+    },
+    slug,
+  );
 }
 
 export interface SwitcherAccountFields {

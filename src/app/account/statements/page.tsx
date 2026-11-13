@@ -662,6 +662,7 @@ export default function StatementsPage() {
                   const isDeleting = deletingId === s.id;
                   const isConfirm = confirmId === s.id;
                   const isReparsing = reparsingId === s.id;
+                  // accountId is last4-source only — never shown raw (may be a full number).
                   const acctLabel = statementAccountDisplayName(
                     { accountName: s.accountName, bankName: s.bankName },
                     s.accountId,

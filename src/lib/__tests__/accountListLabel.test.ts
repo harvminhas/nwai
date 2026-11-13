@@ -2,9 +2,11 @@ import { describe, it, expect } from "vitest";
 import {
   accountDisplayLabel,
   accountMatchesQuery,
+  compactAccountDisplayName,
   displayNameFromProfileAccount,
   findAccountHistoryLabel,
   joinAccountMeta,
+  maskedAccountLast4,
   resolveAccountDisplayName,
   statementAccountDisplayName,
   switcherAccountPresentation,
@@ -238,6 +240,59 @@ describe("resolveAccountDisplayName", () => {
   });
 });
 
+describe("compactAccountDisplayName", () => {
+  it("appends masked last4 when the resolved name is the institution, so same-bank accounts stay distinct", () => {
+    expect(
+      statementAccountDisplayName({ bankName: "Example Bank" }, "7780")
+    ).toBe("Example Bank •••7780");
+    expect(
+      statementAccountDisplayName({ bankName: "Example Bank" }, "3156")
+    ).toBe("Example Bank •••3156");
+    expect(
+      compactAccountDisplayName(
+        { accountName: "Example Bank", bankName: "Example Bank" },
+        "ex-checking-7780"
+      )
+    ).toBe("Example Bank •••7780");
+  });
+
+  it("does not append last4 when a product or nickname is the primary name", () => {
+    expect(
+      statementAccountDisplayName(
+        { accountName: "Chequing", bankName: "Example Bank" },
+        "2002"
+      )
+    ).toBe("Chequing");
+    expect(
+      compactAccountDisplayName(
+        { nickname: "Rainy Day", bankName: "Example Bank" },
+        "1001"
+      )
+    ).toBe("Rainy Day");
+  });
+
+  it("never emits a raw account number; uses masked last4 or Account", () => {
+    const fullId = "1234567890123456";
+    expect(statementAccountDisplayName({ bankName: "Example Bank" }, fullId)).toBe(
+      "Example Bank •••3456"
+    );
+    expect(statementAccountDisplayName({}, fullId)).toBe("•••3456");
+    expect(statementAccountDisplayName({})).toBe("Account");
+    expect(statementAccountDisplayName({ bankName: "Example Bank" }, fullId)).not.toContain(fullId);
+    expect(maskedAccountLast4(fullId)).toBe("•••3456");
+    expect(maskedAccountLast4("unknown")).toBe("");
+  });
+
+  it("does not fold last4 into resolveAccountDisplayName primary (lists / switcher keep it as meta)", () => {
+    expect(
+      resolveAccountDisplayName({
+        bankName: "Example Bank",
+        fallback: "7780",
+      }).primary
+    ).toBe("Example Bank");
+  });
+});
+
 describe("displayNameFromProfileAccount", () => {
   it("uses each account's own snapshot/history, not a cached institution · last4 label", () => {
     const profile = {
@@ -258,6 +313,17 @@ describe("displayNameFromProfileAccount", () => {
       "Real Estate Co"
     );
   });
+
+  it("distinguishes two same-institution accounts with last4 when neither has a product name", () => {
+    const profile = {
+      accountSnapshots: [
+        { slug: "7780", accountName: "Example Bank", bankName: "Example Bank" },
+        { slug: "3156", bankName: "Example Bank" },
+      ],
+    };
+    expect(displayNameFromProfileAccount("7780", profile)).toBe("Example Bank •••7780");
+    expect(displayNameFromProfileAccount("3156", profile)).toBe("Example Bank •••3156");
+  });
 });
 
 describe("switcherAccountPresentation", () => {
@@ -274,6 +340,16 @@ describe("switcherAccountPresentation", () => {
     expect(accountMatchesQuery("example", row.label, row.sub, row.searchText)).toBe(true);
     expect(accountMatchesQuery("2002", row.label, row.sub, row.searchText)).toBe(true);
     expect(accountMatchesQuery("zzz", row.label, row.sub, row.searchText)).toBe(false);
+  });
+
+  it("keeps last4 on the meta line only when the title is the institution", () => {
+    const row = switcherAccountPresentation(
+      { slug: "7780", bankName: "Example Bank" },
+      { groupLabel: "Cash & Savings", last4: "•••7780" }
+    );
+    expect(row.label).toBe("Example Bank");
+    expect(row.label).not.toContain("•••7780");
+    expect(row.sub).toContain("•••7780");
   });
 
   it("matches a history product name and last4 even when the latest snapshot has no product", () => {
