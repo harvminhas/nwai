@@ -6,7 +6,7 @@ import {
   describeDebtChangePill,
 } from "../categoryTrends";
 import { debtCategory } from "../debtsSummary";
-import { priorMonthBeforeRange, sliceMonthsByTrendRange } from "../trendRange";
+import { isTrendRangeKey, parseTrendRange, priorMonthBeforeRange, sliceMonthsByTrendRange } from "../trendRange";
 
 const months = [
   {
@@ -507,6 +507,10 @@ describe("trend range", () => {
     expect(prior?.month).toBe(history[history.length - 13].month);
     const ytd = sliceMonthsByTrendRange(history, "YTD");
     expect(ytd.every((m) => m.month.startsWith("2026-"))).toBe(true);
+    expect(isTrendRangeKey("3Y")).toBe(true);
+    expect(isTrendRangeKey("range")).toBe(false);
+    expect(parseTrendRange(null)).toBe("1Y");
+    expect(parseTrendRange("6M")).toBe("6M");
   });
 });
 

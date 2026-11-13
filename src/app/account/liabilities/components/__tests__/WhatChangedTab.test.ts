@@ -12,5 +12,8 @@ describe("Debts WhatChangedTab", () => {
     expect(src).toContain("allMonthlyHistory");
     expect(page).toContain('activeTab === "what-changed"');
     expect(page.indexOf("performance")).toBeLessThan(page.indexOf("what-changed"));
+    expect(src).toContain("onRangeChange");
+    expect(page).toContain("useAccountTrendRange");
+    expect(page).toContain("gap-x-6 gap-y-2");
   });
 });

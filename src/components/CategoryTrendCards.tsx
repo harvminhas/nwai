@@ -235,6 +235,8 @@ export function CategoryPerformancePanel({
   incomeTxns,
   currency,
   manualAssets,
+  range: rangeProp,
+  onRangeChange,
 }: {
   kind: CategoryTrendKind;
   months: CategoryTrendMonth[];
@@ -242,8 +244,15 @@ export function CategoryPerformancePanel({
   incomeTxns: CategoryTrendTxn[];
   currency: string;
   manualAssets?: ManualAsset[];
+  range?: TrendRangeKey;
+  onRangeChange?: (range: TrendRangeKey) => void;
 }) {
-  const [range, setRange] = useState<TrendRangeKey>("1Y");
+  const [innerRange, setInnerRange] = useState<TrendRangeKey>("1Y");
+  const range = rangeProp ?? innerRange;
+  const setRange = (next: TrendRangeKey) => {
+    setInnerRange(next);
+    onRangeChange?.(next);
+  };
   const sortedHistory = useMemo(
     () => [...months].sort((a, b) => a.month.localeCompare(b.month)),
     [months],

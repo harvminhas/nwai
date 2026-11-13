@@ -1,6 +1,14 @@
 export const TREND_RANGES = ["6M", "YTD", "1Y", "3Y", "All"] as const;
 export type TrendRangeKey = (typeof TREND_RANGES)[number];
 
+export function isTrendRangeKey(value: string | null | undefined): value is TrendRangeKey {
+  return !!value && (TREND_RANGES as readonly string[]).includes(value);
+}
+
+export function parseTrendRange(value: string | null | undefined): TrendRangeKey {
+  return isTrendRangeKey(value) ? value : "1Y";
+}
+
 export function sliceMonthsByTrendRange<T extends { month: string }>(
   months: T[],
   range: TrendRangeKey,

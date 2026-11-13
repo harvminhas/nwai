@@ -1,7 +1,7 @@
 /**
  * What-changed waterfall for Assets / Debts.
  * Reuses Performance start/end, new-account, and contribution/market split rules.
- * Drivers are partitioned so start + rows = end.
+ * Transaction rows are exact totals; any leftover is a grey gap row.
  */
 
 import { assetGroupLabel, type AssetGroup } from "./assetsSummary";
@@ -20,6 +20,9 @@ import type { TrendRangeKey } from "./trendRange";
 import type { ManualAsset } from "./types";
 
 const ZERO = 0.5;
+const CENT = 0.005;
+const GAP_KEY = "other-gap";
+const GAP_LABEL = "Other changes (not in your transactions)";
 
 export type WaterfallRowKind = "start" | "driver" | "end";
 export type WaterfallTone = "up" | "down" | "neutral";
@@ -52,16 +55,22 @@ type DriverDraft = {
   badge?: "Manual";
 };
 
+export function roundCents(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
 function monthLabel(ym: string): string {
   const [y, m] = ym.split("-");
   const date = new Date(Number(y), Number(m) - 1, 1);
   return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
 }
 
-function periodPhrase(range: TrendRangeKey): string {
+export function periodPhrase(range: TrendRangeKey, firstMonth?: string): string {
   if (range === "6M") return "over the last 6 months";
-  if (range === "3Y") return "over the past 3 years";
-  if (range === "All") return "over this period";
+  if (range === "1Y") return "over the last 12 months";
+  if (range === "3Y") return "over the last 3 years";
+  if (range === "YTD") return "this year";
+  if (range === "All") return firstMonth ? `since ${monthLabel(firstMonth)}` : "over this period";
   return "this year";
 }
 
@@ -114,20 +123,32 @@ function changeLabel(kind: CategoryTrendKind, key: string): string {
   return `Change — ${name}`;
 }
 
+function contribPair(key: "registered" | "investments", amount: number): { key: string; label: string } {
+  const cat = key === "registered" ? "registered accounts" : "investments";
+  return {
+    key: key === "registered" ? "contrib-registered" : "contrib-investments",
+    label: amount < 0 ? `Withdrawals from ${cat}` : `Contributions to ${cat}`,
+  };
+}
+
 function pushDriver(rows: DriverDraft[], draft: DriverDraft) {
-  if (Math.abs(draft.amount) < ZERO) return;
   const existing = rows.find((r) => r.key === draft.key);
   if (existing) {
     existing.amount += draft.amount;
+    if (draft.key.startsWith("contrib-")) {
+      const kind = draft.key === "contrib-registered" ? "registered" : "investments";
+      existing.label = contribPair(kind, existing.amount).label;
+    }
     return;
   }
   rows.push({ ...draft });
 }
 
-function toneFor(kind: CategoryTrendKind, amount: number): WaterfallTone {
-  if (Math.abs(amount) < ZERO) return "neutral";
-  if (kind === "debt") return amount < 0 ? "up" : "down";
-  return amount > 0 ? "up" : "down";
+function toneFor(kind: CategoryTrendKind, row: DriverDraft): WaterfallTone {
+  if (row.key === GAP_KEY) return "neutral";
+  if (Math.abs(row.amount) < ZERO) return "neutral";
+  if (kind === "debt") return row.amount < 0 ? "up" : "down";
+  return row.amount > 0 ? "up" : "down";
 }
 
 function assetDrivers(
@@ -143,38 +164,35 @@ function assetDrivers(
     const opened = card.accounts.filter((a) => a.openedInRange);
 
     if (card.key === "registered" || card.key === "investments") {
-      const contribLabel =
-        card.key === "registered"
-          ? "Contributions to registered accounts"
-          : "Contributions to investments";
       const marketLabel =
         card.key === "registered" ? "Market growth — registered" : "Market growth — investments";
-      const contribKey = card.key === "registered" ? "contrib-registered" : "contrib-investments";
       const marketKey = card.key === "registered" ? "market-registered" : "market-investments";
 
-      if (existing.length && allKnown(existing, flows)) {
+      if (!allKnown(card.accounts, flows)) {
+        if (card.accounts.length) {
+          pushDriver(drivers, {
+            key: `change-${card.key}`,
+            label: changeLabel("asset", card.key),
+            amount: card.change,
+          });
+        }
+        continue;
+      }
+
+      if (existing.length) {
         const contrib = putIn(existing, flows);
         const change = existing.reduce((s, a) => s + a.change, 0);
-        pushDriver(drivers, { key: contribKey, label: contribLabel, amount: contrib });
+        const pair = contribPair(card.key, contrib);
+        pushDriver(drivers, { key: pair.key, label: pair.label, amount: contrib });
         pushDriver(drivers, { key: marketKey, label: marketLabel, amount: change - contrib });
         contribTotal += Math.max(contrib, 0);
-      } else if (existing.length) {
-        pushDriver(drivers, {
-          key: `change-${card.key}`,
-          label: changeLabel("asset", card.key),
-          amount: existing.reduce((s, a) => s + a.change, 0),
-        });
       }
 
       for (const a of opened) {
-        if (allKnown([a], flows)) {
-          const contrib = putIn([a], flows);
-          pushDriver(drivers, { key: "new-accounts", label: "New accounts", amount: contrib });
-          pushDriver(drivers, { key: marketKey, label: marketLabel, amount: a.change - contrib });
-          contribTotal += Math.max(contrib, 0);
-        } else {
-          pushDriver(drivers, { key: "new-accounts", label: "New accounts", amount: a.change });
-        }
+        const contrib = putIn([a], flows);
+        pushDriver(drivers, { key: "new-accounts", label: "New accounts", amount: contrib });
+        pushDriver(drivers, { key: marketKey, label: marketLabel, amount: a.change - contrib });
+        contribTotal += Math.max(contrib, 0);
       }
       continue;
     }
@@ -193,7 +211,12 @@ function assetDrivers(
       continue;
     }
 
-    const existingByBucket = { property: [] as TrendAccountRow[], vehicle: [] as TrendAccountRow[], otherManual: [] as TrendAccountRow[], other: [] as TrendAccountRow[] };
+    const existingByBucket = {
+      property: [] as TrendAccountRow[],
+      vehicle: [] as TrendAccountRow[],
+      otherManual: [] as TrendAccountRow[],
+      other: [] as TrendAccountRow[],
+    };
     for (const a of existing) {
       if (isManualType(a.type)) {
         const bucket = manualBucket(a.type);
@@ -255,62 +278,98 @@ function debtDrivers(
   let paid = 0;
   let charges = 0;
   let interest = 0;
-
-  const knownExisting: TrendAccountRow[] = [];
-  const unknownByCat = new Map<string, TrendAccountRow[]>();
+  let knownChange = 0;
+  let hasKnownCard = false;
 
   for (const card of cards) {
-    const existing = card.accounts.filter((a) => !a.openedInRange);
-    const opened = card.accounts.filter((a) => a.openedInRange);
-    const known: TrendAccountRow[] = [];
-    const unknown: TrendAccountRow[] = [];
-    for (const a of existing) {
-      if (flows.get(a.slug)?.known) known.push(a);
-      else unknown.push(a);
+    if (allKnown(card.accounts, flows)) {
+      hasKnownCard = true;
+      knownChange += card.change;
+      for (const a of card.accounts) {
+        const f = flows.get(a.slug)!;
+        paid += f.deposits;
+        charges += f.withdrawals;
+        interest += f.interestOut + f.fees;
+      }
+      continue;
     }
-    knownExisting.push(...known);
-    if (unknown.length) unknownByCat.set(card.key, unknown);
 
-    for (const a of opened) {
-      pushDriver(drivers, { key: "new-debts", label: "New debts", amount: a.change });
-    }
-  }
-
-  if (knownExisting.length) {
-    for (const a of knownExisting) {
-      const f = flows.get(a.slug)!;
-      paid += f.deposits;
-      charges += f.withdrawals;
-      interest += f.interestOut + f.fees;
-    }
-    const knownChange = knownExisting.reduce((s, a) => s + a.change, 0);
-    const flowEffect = -paid + charges + interest;
-    const residual = knownChange - flowEffect;
-    if (residual > ZERO) charges += residual;
-    else if (residual < -ZERO) paid += -residual;
-    pushDriver(drivers, { key: "payments", label: "Payments", amount: -paid });
-    pushDriver(drivers, { key: "charges", label: "New charges/draws", amount: charges });
-    pushDriver(drivers, { key: "interest-fees", label: "Interest & fees", amount: interest });
-  }
-
-  for (const [key, accounts] of unknownByCat) {
-    const paidOff = accounts.filter((a) => a.start > ZERO && Math.abs(a.end) < ZERO);
-    const openUnknown = accounts.filter((a) => Math.abs(a.end) >= ZERO);
-    pushDriver(drivers, {
-      key: "paid-off",
-      label: "Debts paid off/closed",
-      amount: paidOff.reduce((s, a) => s + a.change, 0),
-    });
-    if (openUnknown.length) {
+    const allNew = card.accounts.every((a) => a.openedInRange);
+    const allClosed = card.accounts.every(
+      (a) => !a.openedInRange && a.start > ZERO && Math.abs(a.end) < ZERO,
+    );
+    if (allNew) {
       pushDriver(drivers, {
-        key: `change-${key}`,
-        label: changeLabel("debt", key),
-        amount: openUnknown.reduce((s, a) => s + a.change, 0),
+        key: "new-debts",
+        label: "New debts",
+        amount: card.accounts.reduce((s, a) => s + a.change, 0),
+      });
+    } else if (allClosed) {
+      pushDriver(drivers, {
+        key: "paid-off",
+        label: "Debts paid off/closed",
+        amount: card.accounts.reduce((s, a) => s + a.change, 0),
+      });
+    } else {
+      pushDriver(drivers, {
+        key: `change-${card.key}`,
+        label: changeLabel("debt", card.key),
+        amount: card.change,
       });
     }
   }
 
+  if (hasKnownCard) {
+    pushDriver(drivers, { key: "payments", label: "Payments", amount: -paid });
+    pushDriver(drivers, { key: "charges", label: "New charges/draws", amount: charges });
+    pushDriver(drivers, { key: "interest-fees", label: "Interest & fees", amount: interest });
+    const residual = knownChange - (-paid + charges + interest);
+    if (Math.abs(residual) >= CENT) {
+      pushDriver(drivers, { key: GAP_KEY, label: GAP_LABEL, amount: residual });
+    }
+  }
+
   return { drivers, paid, charges, interest };
+}
+
+export function finalizeDrivers(
+  start: number,
+  end: number,
+  drivers: DriverDraft[],
+): { start: number; end: number; drivers: DriverDraft[] } {
+  const startR = roundCents(start);
+  const endR = roundCents(end);
+  const merged = new Map<string, DriverDraft>();
+  for (const d of drivers) {
+    const amt = roundCents(d.amount);
+    const prev = merged.get(d.key);
+    if (prev) {
+      prev.amount = roundCents(prev.amount + amt);
+      if (d.key.startsWith("contrib-")) prev.label = d.label;
+    } else {
+      merged.set(d.key, { ...d, amount: amt });
+    }
+  }
+
+  const kept: DriverDraft[] = [];
+  for (const d of merged.values()) {
+    if (d.key === GAP_KEY) continue;
+    if (Math.abs(d.amount) >= ZERO) kept.push(d);
+  }
+
+  const keptSum = roundCents(kept.reduce((s, d) => s + d.amount, 0));
+  const gap = roundCents(endR - startR - keptSum);
+  if (Math.abs(gap) >= ZERO) {
+    kept.push({ key: GAP_KEY, label: GAP_LABEL, amount: gap });
+  } else if (Math.abs(gap) >= CENT) {
+    if (kept.length) {
+      kept.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+      kept[0].amount = roundCents(kept[0].amount + gap);
+    } else {
+      kept.push({ key: GAP_KEY, label: GAP_LABEL, amount: gap });
+    }
+  }
+  return { start: startR, end: endR, drivers: kept };
 }
 
 function assetSummary(
@@ -319,25 +378,35 @@ function assetSummary(
   manualsAmt: number,
   range: TrendRangeKey,
   currency: string,
+  firstMonth: string,
 ): string {
-  const period = periodPhrase(range);
-  if (Math.abs(change) < ZERO) return `Your total was unchanged ${period}.`;
-  const direction = moneySigned(change, currency);
+  const period = periodPhrase(range, firstMonth);
+  const head =
+    Math.abs(change) < ZERO
+      ? `Your assets were unchanged ${period}`
+      : `Your assets went ${change > 0 ? "up" : "down"} ${moneyAbs(change, currency)} ${period}`;
   const hasPutIn = putInAmt > ZERO;
   const hasManuals = Math.abs(manualsAmt) >= ZERO;
-  if (!hasPutIn && !hasManuals) {
-    return change > 0
-      ? `Your total went up ${moneyAbs(change, currency)} ${period}.`
-      : `Your total went down ${moneyAbs(change, currency)} ${period}.`;
+  const contribExceedsChange = hasPutIn && putInAmt > change + ZERO;
+  const useExplainer = hasPutIn && (change < ZERO || contribExceedsChange);
+
+  if (useExplainer) {
+    const other = change - putInAmt;
+    let s = `${head}. You put in ${moneyAbs(putInAmt, currency)}, so markets and other changes were ${moneySigned(other, currency)}.`;
+    if (hasManuals) s += ` ${moneySigned(manualsAmt, currency)} came from manual estimates.`;
+    return s;
   }
-  const pctPart =
-    hasPutIn && Math.abs(change) >= ZERO
-      ? ` (${Math.round((putInAmt / Math.abs(change)) * 100)}%)`
-      : "";
+
+  if (!hasPutIn && !hasManuals) return `${head}.`;
+
   const bits: string[] = [];
-  if (hasPutIn) bits.push(`${moneyAbs(putInAmt, currency)}${pctPart} was money you put in`);
-  if (hasManuals) bits.push(`${moneyAbs(manualsAmt, currency)} came from manual estimates`);
-  return `Of the ${direction} change ${period}, ${bits.join(", and ")}.`;
+  if (hasPutIn) {
+    const pct =
+      Math.abs(change) >= ZERO ? ` (${Math.round((putInAmt / Math.abs(change)) * 100)}%)` : "";
+    bits.push(`${moneyAbs(putInAmt, currency)}${pct} was money you put in`);
+  }
+  if (hasManuals) bits.push(`${moneySigned(manualsAmt, currency)} came from manual estimates`);
+  return `Of the ${moneySigned(change, currency)} change ${period}, ${bits.join(", and ")}.`;
 }
 
 function debtSummary(
@@ -347,13 +416,13 @@ function debtSummary(
   interest: number,
   range: TrendRangeKey,
   currency: string,
+  firstMonth: string,
 ): string {
-  const period = periodPhrase(range);
-  const went = change < -ZERO ? "went down" : change > ZERO ? "went up" : "was unchanged";
+  const period = periodPhrase(range, firstMonth);
   const head =
     Math.abs(change) < ZERO
       ? `Your debt was unchanged ${period}`
-      : `Your debt ${went} ${moneyAbs(change, currency)} ${period}`;
+      : `Your debt went ${change < 0 ? "down" : "up"} ${moneyAbs(change, currency)} ${period}`;
   const bits: string[] = [];
   if (paid > ZERO) bits.push(`you paid ${moneyAbs(paid, currency)}`);
   if (charges > ZERO) bits.push(`new charges ${moneyAbs(charges, currency)}`);
@@ -368,6 +437,7 @@ function driverOrder(kind: CategoryTrendKind): string[] {
       "payments",
       "charges",
       "interest-fees",
+      GAP_KEY,
       "new-debts",
       "paid-off",
       "change-mortgage",
@@ -391,21 +461,20 @@ function driverOrder(kind: CategoryTrendKind): string[] {
     "change-property",
     "change-other",
     "new-accounts",
+    GAP_KEY,
   ];
 }
 
 function sortDrivers(kind: CategoryTrendKind, drivers: DriverDraft[]): DriverDraft[] {
   const order = driverOrder(kind);
-  return [...drivers]
-    .filter((d) => Math.abs(d.amount) >= ZERO)
-    .sort((a, b) => {
-      const ia = order.indexOf(a.key);
-      const ib = order.indexOf(b.key);
-      const sa = ia === -1 ? 100 : ia;
-      const sb = ib === -1 ? 100 : ib;
-      if (sa !== sb) return sa - sb;
-      return Math.abs(b.amount) - Math.abs(a.amount);
-    });
+  return [...drivers].sort((a, b) => {
+    const ia = order.indexOf(a.key);
+    const ib = order.indexOf(b.key);
+    const sa = ia === -1 ? 100 : ia;
+    const sb = ib === -1 ? 100 : ib;
+    if (sa !== sb) return sa - sb;
+    return Math.abs(b.amount) - Math.abs(a.amount);
+  });
 }
 
 export function buildWhatChanged(opts: {
@@ -437,27 +506,36 @@ export function buildWhatChanged(opts: {
     opts.expenseTxns,
   );
 
-  const start = cards.reduce((s, c) => s + c.start, 0);
-  const end = cards.reduce((s, c) => s + c.current, 0);
-  const change = end - start;
+  const rawStart = cards.reduce((s, c) => s + c.start, 0);
+  const rawEnd = cards.reduce((s, c) => s + c.current, 0);
   const split =
     opts.kind === "debt" ? debtDrivers(cards, flows) : assetDrivers(cards, flows);
-  const sorted = sortDrivers(opts.kind, split.drivers);
+  const finalized = finalizeDrivers(rawStart, rawEnd, split.drivers);
+  const sorted = sortDrivers(opts.kind, finalized.drivers);
   const maxAbs = Math.max(0, ...sorted.map((d) => Math.abs(d.amount)));
+  const change = roundCents(finalized.end - finalized.start);
+  const firstMonth = months[0].month;
   const summary =
     "paid" in split
-      ? debtSummary(change, split.paid, split.charges, split.interest, opts.range, opts.currency)
-      : assetSummary(change, split.putIn, split.manuals, opts.range, opts.currency);
+      ? debtSummary(
+          change,
+          split.paid,
+          split.charges,
+          split.interest,
+          opts.range,
+          opts.currency,
+          firstMonth,
+        )
+      : assetSummary(change, split.putIn, split.manuals, opts.range, opts.currency, firstMonth);
 
-  const startMonth = months[0].month;
   const endMonth = months[months.length - 1].month;
   const accountCount = slugs.size;
-  const header = `${monthLabel(startMonth)} – ${monthLabel(endMonth)} · ${accountCount} account${accountCount === 1 ? "" : "s"}`;
+  const header = `${monthLabel(firstMonth)} – ${monthLabel(endMonth)} · ${accountCount} account${accountCount === 1 ? "" : "s"}`;
 
   const startRow: WaterfallRow = {
     key: "start",
-    label: `Start of range (${monthLabel(startMonth)})`,
-    amount: start,
+    label: `Start of range (${monthLabel(firstMonth)})`,
+    amount: finalized.start,
     kind: "start",
     tone: "neutral",
     barPct: null,
@@ -467,14 +545,14 @@ export function buildWhatChanged(opts: {
     label: d.label,
     amount: d.amount,
     kind: "driver" as const,
-    tone: toneFor(opts.kind, d.amount),
+    tone: toneFor(opts.kind, d),
     badge: d.badge,
     barPct: maxAbs > 0 ? (Math.abs(d.amount) / maxAbs) * 100 : 0,
   }));
   const endRow: WaterfallRow = {
     key: "end",
     label: `End of range (${monthLabel(endMonth)})`,
-    amount: end,
+    amount: finalized.end,
     kind: "end",
     tone: "neutral",
     barPct: null,
@@ -485,8 +563,8 @@ export function buildWhatChanged(opts: {
     title: opts.kind === "debt" ? "What moved your debt" : "What moved your total",
     header,
     summary,
-    start,
-    end,
+    start: finalized.start,
+    end: finalized.end,
     rows: [startRow, ...driverRows, endRow],
     currency: opts.currency,
   };
