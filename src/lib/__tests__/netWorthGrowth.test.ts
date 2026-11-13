@@ -10,6 +10,7 @@ import {
   formatGrowthChartTitle,
   growthBucket,
   isDebtAccountType,
+  isInvestmentMarketIncome,
   sumGrowthBreakdowns,
   type NetWorthGrowthInput,
 } from "../netWorthGrowth";
@@ -138,6 +139,58 @@ describe("this month start vs end", () => {
     expect(describeInvestmentPutIn(result.investments, "CAD")).toBeNull();
   });
 
+  it("does not count dividends, interest, or distributions as money you put in", () => {
+    const current = month({
+      yearMonth: "2026-10",
+      netWorth: 42100,
+      byAccount: [
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 22100 },
+      ],
+    });
+    const prior = month({
+      yearMonth: "2026-09",
+      netWorth: 40000,
+      byAccount: [
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 20000 },
+      ],
+    });
+    expect(isInvestmentMarketIncome("Dividend")).toBe(true);
+    expect(isInvestmentMarketIncome("Income - Distribution")).toBe(true);
+    const result = computeMonthGrowth(current, prior, {
+      expenseTxns: [],
+      incomeTxns: [
+        { txMonth: "2026-10", amount: 80, accountSlug: "tfsa", category: "Dividend" },
+        { txMonth: "2026-10", amount: 20, accountSlug: "tfsa", category: "Interest" },
+        { txMonth: "2026-10", amount: 1500, accountSlug: "tfsa", category: "Transfer In" },
+      ],
+    });
+    expect(result.investments.putIn).toBe(1500);
+    expect(result.investments.marketChange).toBe(600);
+  });
+
+  it("shows a card credit as negative debt, not as amount owed", () => {
+    const current = month({
+      yearMonth: "2026-10",
+      netWorth: 5050,
+      byAccount: [
+        { slug: "chk", label: "Chequing", type: "checking", value: 5000 },
+        { slug: "visa", label: "Visa", type: "credit", value: 50 },
+      ],
+    });
+    const prior = month({
+      yearMonth: "2026-09",
+      netWorth: 5000,
+      byAccount: [
+        { slug: "chk", label: "Chequing", type: "checking", value: 5000 },
+        { slug: "visa", label: "Visa", type: "credit", value: 50 },
+      ],
+    });
+    const result = computeMonthGrowth(current, prior, { expenseTxns: [], incomeTxns: [] });
+    expect(result.debts.start).toBe(-50);
+    expect(result.debts.end).toBe(-50);
+    expect(result.debts.accounts[0].end).toBe(-50);
+  });
+
   it("shows you put in vs markets when every investment account has deposit or withdrawal lines", () => {
     const current = month({
       yearMonth: "2026-10",
@@ -241,6 +294,130 @@ describe("this month vs chart range", () => {
     expect(range!.cash.start).toBe(10000 + 2 * 500);
     expect(range!.cash.end).toBe(10000 + 14 * 500);
     expect(range!.cash.change).toBe(12 * 500);
+  });
+
+  it("All with short history uses the first month's ending balances as the range start", () => {
+    const history: MonthlyHistoryEntry[] = [
+      month({
+        yearMonth: "2026-07",
+        netWorth: 10000,
+        byAccount: [{ slug: "chk", label: "Chequing", type: "checking", value: 10000 }],
+      }),
+      month({
+        yearMonth: "2026-08",
+        netWorth: 11000,
+        byAccount: [{ slug: "chk", label: "Chequing", type: "checking", value: 11000 }],
+      }),
+      month({
+        yearMonth: "2026-09",
+        netWorth: 12000,
+        byAccount: [{ slug: "chk", label: "Chequing", type: "checking", value: 12000 }],
+      }),
+      month({
+        yearMonth: "2026-10",
+        netWorth: 14000,
+        byAccount: [{ slug: "chk", label: "Chequing", type: "checking", value: 14000 }],
+      }),
+    ];
+    const months = computeNetWorthGrowth(
+      { monthlyHistory: history, expenseTxns: [], incomeTxns: [] },
+      { windowMonths: 12 },
+    );
+    expect(months).toHaveLength(4);
+    expect(months[0].hasPrevious).toBe(false);
+    expect(months[0].cash.change).toBe(0);
+
+    const range = sumGrowthBreakdowns(months, months.map((m) => m.yearMonth));
+    expect(range!.hasPrevious).toBe(true);
+    expect(range!.cash.start).toBe(10000);
+    expect(range!.cash.end).toBe(14000);
+    expect(range!.cash.change).toBe(4000);
+    expect(range!.newAccounts).toEqual([]);
+  });
+
+  it("3M whose range starts at the first-ever month is not all-new / $0", () => {
+    const history: MonthlyHistoryEntry[] = [
+      month({
+        yearMonth: "2026-08",
+        netWorth: 8000,
+        byAccount: [
+          { slug: "chk", label: "Chequing", type: "checking", value: 8000 },
+          { slug: "tfsa", label: "TFSA", type: "investment", value: 20000 },
+        ],
+      }),
+      month({
+        yearMonth: "2026-09",
+        netWorth: 9000,
+        byAccount: [
+          { slug: "chk", label: "Chequing", type: "checking", value: 9000 },
+          { slug: "tfsa", label: "TFSA", type: "investment", value: 20500 },
+        ],
+      }),
+      month({
+        yearMonth: "2026-10",
+        netWorth: 11000,
+        byAccount: [
+          { slug: "chk", label: "Chequing", type: "checking", value: 11000 },
+          { slug: "tfsa", label: "TFSA", type: "investment", value: 21000 },
+        ],
+      }),
+    ];
+    const months = computeNetWorthGrowth(
+      { monthlyHistory: history, expenseTxns: [], incomeTxns: [] },
+      { windowMonths: 3 },
+    );
+    expect(months[0].hasPrevious).toBe(false);
+    const visible = months.map((m) => m.yearMonth);
+    expect(visible).toEqual(["2026-08", "2026-09", "2026-10"]);
+    const range = sumGrowthBreakdowns(months, visible);
+    expect(range!.cash.start).toBe(8000);
+    expect(range!.cash.end).toBe(11000);
+    expect(range!.cash.change).toBe(3000);
+    expect(range!.investments.start).toBe(20000);
+    expect(range!.investments.end).toBe(21000);
+    expect(range!.investments.change).toBe(1000);
+    expect(range!.newAccounts).toEqual([]);
+  });
+
+  it("omits the put-in / markets split over a range unless every month has known lines", () => {
+    const history: MonthlyHistoryEntry[] = [
+      month({
+        yearMonth: "2026-08",
+        netWorth: 20000,
+        byAccount: [{ slug: "tfsa", label: "TFSA", type: "investment", value: 20000 }],
+      }),
+      month({
+        yearMonth: "2026-09",
+        netWorth: 21000,
+        byAccount: [{ slug: "tfsa", label: "TFSA", type: "investment", value: 21000 }],
+      }),
+      month({
+        yearMonth: "2026-10",
+        netWorth: 23000,
+        byAccount: [{ slug: "tfsa", label: "TFSA", type: "investment", value: 23000 }],
+      }),
+    ];
+    const unknown = computeNetWorthGrowth({
+      monthlyHistory: history,
+      expenseTxns: [],
+      incomeTxns: [{ txMonth: "2026-10", amount: 1500, accountSlug: "tfsa", category: "Transfer In" }],
+    });
+    const unknownRange = sumGrowthBreakdowns(unknown, unknown.map((m) => m.yearMonth));
+    expect(unknownRange!.investments.change).toBe(3000);
+    expect(unknownRange!.investments.putIn).toBeNull();
+
+    const known = computeNetWorthGrowth({
+      monthlyHistory: history,
+      expenseTxns: [],
+      incomeTxns: [
+        { txMonth: "2026-08", amount: 100, accountSlug: "tfsa", category: "Transfer In" },
+        { txMonth: "2026-09", amount: 200, accountSlug: "tfsa", category: "Transfer In" },
+        { txMonth: "2026-10", amount: 1500, accountSlug: "tfsa", category: "Transfer In" },
+      ],
+    });
+    const knownRange = sumGrowthBreakdowns(known, known.map((m) => m.yearMonth));
+    expect(knownRange!.investments.putIn).toBe(1800);
+    expect(knownRange!.investments.marketChange).toBe(1200);
   });
 
   it("sums this-month rows independently of the chart-range total", () => {

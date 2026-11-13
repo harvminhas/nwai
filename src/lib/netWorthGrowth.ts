@@ -68,7 +68,7 @@ export interface PeriodGrowth {
 }
 
 export type GrowthExpenseTxn = Pick<ExpenseTxnRecord, "txMonth" | "amount" | "category" | "accountSlug">;
-export type GrowthIncomeTxn = Pick<IncomeTxnRecord, "txMonth" | "amount" | "accountSlug">;
+export type GrowthIncomeTxn = Pick<IncomeTxnRecord, "txMonth" | "amount" | "accountSlug" | "category">;
 
 export interface NetWorthGrowthInput {
   monthlyHistory: MonthlyHistoryEntry[];
@@ -95,17 +95,29 @@ export function growthBucket(type: string, label?: string): GrowthBucket | null 
   return null;
 }
 
+/** Amount owed for debts (negative = credit / overpaid). Assets keep their signed value. */
 function displayValue(type: string, label: string | undefined, signed: number): number {
-  return growthBucket(type, label) === "debts" ? Math.abs(signed) : signed;
+  return growthBucket(type, label) === "debts" ? -signed : signed;
+}
+
+/** Dividends, interest, and distributions in an investment account are market growth, not deposits. */
+export function isInvestmentMarketIncome(category?: string | null): boolean {
+  if (!category) return false;
+  const raw = category.trim().toLowerCase().replace(/^income\s*[-—]\s*/, "");
+  return (
+    raw === "dividend" ||
+    raw === "dividends" ||
+    raw === "interest" ||
+    raw === "distribution" ||
+    raw === "distributions" ||
+    raw.includes("dividend") ||
+    raw.includes("distribution")
+  );
 }
 
 function changePercent(start: number, change: number): number | null {
   if (Math.abs(start) < 0.005) return null;
   return change / Math.abs(start);
-}
-
-function emptySection(): GrowthSection {
-  return { start: 0, end: 0, change: 0, changePercent: null, accounts: [], putIn: null, marketChange: null };
 }
 
 function sortByChangeSize(accounts: GrowthAccountLine[]): GrowthAccountLine[] {
@@ -146,6 +158,10 @@ function flowsForPeriod(
   };
   for (const t of input.incomeTxns) {
     if (!months.has(t.txMonth) || !slugs.has(t.accountSlug)) continue;
+    if (isInvestmentMarketIncome(t.category)) {
+      ensure(t.accountSlug);
+      continue;
+    }
     ensure(t.accountSlug).deposits += Math.abs(t.amount);
   }
   for (const t of input.expenseTxns) {
@@ -226,7 +242,10 @@ export function buildPeriodGrowth(
     });
   }
 
-  const investmentSlugs = new Set(sections.investments.map((a) => a.slug));
+  const investmentSlugs = new Set<string>();
+  for (const row of [...startMap.values(), ...endMap.values()]) {
+    if (growthBucket(row.type, row.label) === "investments") investmentSlugs.add(row.slug);
+  }
   const flowMap = opts.investmentFlows
     ? new Map(opts.investmentFlows.map((f) => [f.slug, f]))
     : flowsForPeriod(investmentSlugs, new Set(opts.periodMonths), opts);
@@ -343,13 +362,30 @@ export function sumGrowthBreakdowns(
   if (inRange.length === 1) return inRange[0];
   const first = inRange[0];
   const last = inRange[inRange.length - 1];
-  return buildPeriodGrowth(first.startAccounts, last.endAccounts, {
-    startMonth: first.startMonth,
+  // Earliest month with no prior: use that month's own ending balances as the
+  // range start. Accounts already on the books that month are not "new".
+  const startFromFirstEnd = !first.hasPrevious;
+  const startAccounts = startFromFirstEnd ? first.endAccounts : first.startAccounts;
+  const startMonth = startFromFirstEnd ? first.endMonth : first.startMonth;
+
+  const startSlugs = new Set(startAccounts.map((a) => a.slug));
+  const comparableInvestments = last.endAccounts
+    .filter((a) => startSlugs.has(a.slug) && growthBucket(a.type, a.label) === "investments")
+    .map((a) => a.slug);
+  const flowsKnown =
+    comparableInvestments.length === 0 ||
+    inRange.every((m) => {
+      const known = new Set(m.investmentFlows.map((f) => f.slug));
+      return comparableInvestments.every((slug) => known.has(slug));
+    });
+
+  return buildPeriodGrowth(startAccounts, last.endAccounts, {
+    startMonth,
     endMonth: last.endMonth,
     periodMonths: inRange.map((m) => m.yearMonth),
     expenseTxns: [],
     incomeTxns: [],
-    investmentFlows: mergeFlows(inRange),
+    investmentFlows: flowsKnown ? mergeFlows(inRange) : [],
   });
 }
 

@@ -529,4 +529,29 @@ describe("calculateNetWorthForMonths - Core Authoritative Calculation", () => {
     const slugs = monthlyHistory[0].byAccount?.map(a => a.slug).sort();
     expect(slugs).toEqual(["manual-osap-other", "osap-imported"]);
   });
+
+  it("keeps an overpaid card as a credit, not as abs'd debt", () => {
+    const monthlyHistory: MonthNetWorthHistory[] = [
+      { yearMonth: "2026-10", netWorth: 0, totalAssets: 0, totalDebts: 0, byAccount: [] },
+    ];
+    calculateNetWorthForMonths(
+      monthlyHistory,
+      [{
+        slug: "visa",
+        label: "Visa",
+        accountType: "credit",
+        currency: "CAD",
+        entries: [{ yearMonth: "2026-10", balance: 50 }],
+      }],
+      [],
+      [],
+      toHomeCAD,
+      new Map()
+    );
+    expect(monthlyHistory[0].totalDebts).toBe(0);
+    expect(monthlyHistory[0].totalAssets).toBe(50);
+    expect(monthlyHistory[0].byAccount).toEqual([
+      { slug: "visa", label: "Visa", type: "credit", value: 50 },
+    ]);
+  });
 });

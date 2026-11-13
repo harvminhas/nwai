@@ -29,6 +29,13 @@ function signed(n: number, currency: string): string {
   return `${prefix}${formatCurrencyWithCents(Math.abs(n), currency)}`;
 }
 
+function formatBalance(n: number, currency: string, bucket: GrowthBucket): string {
+  if (bucket === "debts" && n < -0.005) {
+    return `credit ${formatCurrencyWithCents(Math.abs(n), currency)}`;
+  }
+  return formatCurrencyWithCents(n, currency);
+}
+
 function sideFor(bucket: GrowthBucket): "asset" | "debt" {
   return bucket === "debts" ? "debt" : "asset";
 }
@@ -56,9 +63,9 @@ function SectionCard({
       <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <p className={`${NET_WORTH_LABEL_CLASS} text-gray-500`}>
-          {formatCurrencyWithCents(section.start, currency)}
+          {formatBalance(section.start, currency, bucket)}
           <span className="px-1.5 text-gray-400">→</span>
-          {formatCurrencyWithCents(section.end, currency)}
+          {formatBalance(section.end, currency, bucket)}
         </p>
         <IntactAmount className={`text-sm font-semibold ${changeClass}`}>
           {signed(section.change, currency)}
@@ -98,9 +105,9 @@ function SectionCard({
                     <div className="min-w-0">
                       <p className={NET_WORTH_LABEL_CLASS}>{row.label}</p>
                       <p className="text-xs text-gray-400 break-words">
-                        {formatCurrencyWithCents(acc.start, currency)}
+                        {formatBalance(acc.start, currency, bucket)}
                         <span className="px-1">→</span>
-                        {formatCurrencyWithCents(acc.end, currency)}
+                        {formatBalance(acc.end, currency, bucket)}
                       </p>
                     </div>
                     <IntactAmount className={`shrink-0 text-sm font-semibold ${amountClass(acc.change)}`}>

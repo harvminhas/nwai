@@ -69,7 +69,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-export const SCHEMA_VERSION = "70"; // Manual liability inclusion in monthly net-worth / Trends history
+export const SCHEMA_VERSION = "71"; // Overpaid debt accounts keep a credit balance, not abs'd debt
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -134,7 +134,8 @@ export interface MonthlyHistoryEntry {
   /**
    * Per-account contributions to net worth for this month.
    * Uses same carry-forward, FX, and paid-off exclusion logic as netWorth.
-   * For assets: Math.max(0, balance). For debts: -Math.abs(balance).
+   * For assets: Math.max(0, balance). For debts: signed (negative = amount owed,
+   * positive = overpaid / credit).
    * Used by What moved it breakdown to show exact account-level changes.
    */
   byAccount?: Array<{

@@ -41,6 +41,7 @@ describe("Growth tab read layout", () => {
     expect(growthSrc).not.toContain("unexplained");
     expect(growthSrc).not.toContain("Installment principal");
     expect(growthSrc).not.toContain("savings rate");
+    expect(pageSrc).not.toContain("Net Worth Reconciliation");
   });
 
   it("does not add a public dev route", () => {

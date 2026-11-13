@@ -129,6 +129,38 @@ describe("GrowthTab", () => {
     expect(screen.getByText("Everyday Savings")).toBeTruthy();
   });
 
+  it("shows an overpaid card as a credit, not as debt owed", () => {
+    render(
+      <GrowthTab
+        breakdown={{
+          ...breakdown,
+          cash: { ...emptySection },
+          investments: { ...emptySection },
+          debts: {
+            start: -50,
+            end: -50,
+            change: 0,
+            changePercent: null,
+            accounts: [
+              { slug: "visa", label: "Visa", type: "credit", start: -50, end: -50, change: 0 },
+            ],
+            putIn: null,
+            marketChange: null,
+          },
+        }}
+        currency="CAD"
+        scope="month"
+        onScopeChange={vi.fn()}
+        monthLabel="Oct 2026"
+        rangeLabel="Aug 2026 – Oct 2026"
+      />,
+    );
+    expect(screen.getAllByText(/credit CA\$50/).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "1 account" }));
+    expect(screen.getByText("Visa")).toBeTruthy();
+    expect(screen.getAllByText(/credit CA\$50/).length).toBeGreaterThan(1);
+  });
+
   it("asks for another month when there is no previous snapshot", () => {
     render(
       <GrowthTab
