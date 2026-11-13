@@ -22,22 +22,12 @@ import type { SourceMapping } from "@/lib/sourceMappings";
 import { occurrencesInMonth, datesInMonth } from "@/lib/cashIncome";
 import type { CashIncomeEntry } from "@/lib/cashIncome";
 import { resolveTxnCurrencyFromSnapshots, getHomeCurrency } from "@/lib/currencyUtils";
-import { findAccountHistoryLabel, resolveAccountDisplayName } from "@/lib/accountListLabel";
-
-/** Human-readable label for a statement's account, e.g. "TD ••••7780" */
-function accountDisplayLabel(parsed: ParsedStatementData): string {
-  if (parsed.accountName) return parsed.accountName;
-  const slug = getAccountSlug(parsed);
-  const bank = (parsed.bankName ?? "").trim();
-  if (slug === "unknown") return bank || "Unknown Account";
-  const parts = [bank, `••••${slug}`].filter(Boolean);
-  return parts.join(" ");
-}
+import { findAccountHistoryLabel, resolveAccountDisplayName, statementAccountDisplayName } from "@/lib/accountListLabel";
 
 /** Tag every expense and income transaction in a statement with its account label. */
 function tagTransactions(stmt: ParsedStatementData): ParsedStatementData {
-  const label = accountDisplayLabel(stmt);
   const acctSlug = getAccountSlug(stmt);
+  const label = statementAccountDisplayName(stmt, acctSlug);
 
   const incomeTxns = (stmt.income?.transactions ?? []).map((txn) => ({
     ...txn,

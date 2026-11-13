@@ -175,4 +175,43 @@ describe("Debts Accounts tab labels and density", () => {
     expect(container.textContent).not.toContain("%");
     expect(screen.getAllByText("CA$200,000").length).toBeGreaterThanOrEqual(1);
   });
+
+  it("uses resolveAccountDisplayName: product first, no placeholder prefix, history when latest repeats the bank", () => {
+    const data = summary([
+      group({
+        type: "credit_card",
+        label: "Credit Cards",
+        totalBalance: -900,
+        accounts: [
+          account({
+            slug: "card-1001",
+            bankName: "Example Credit Union",
+            accountName: "Example Credit Union",
+            balance: -100,
+          }),
+          account({
+            slug: "card-2002",
+            bankName: "Example Bank",
+            accountName: "Travel Card",
+            balance: -200,
+          }),
+          account({
+            slug: "card-6006",
+            bankName: "Unknown Bank",
+            accountName: "Store Card",
+            balance: -300,
+          }),
+        ],
+      }),
+    ]);
+    data.accountBalanceHistory = [
+      { slug: "card-1001", label: "Rewards Visa", entries: [] },
+    ];
+    render(<CategoriesTab summary={data} />);
+
+    expect(screen.getByText("Rewards Visa")).toBeTruthy();
+    expect(screen.getByText("Travel Card")).toBeTruthy();
+    expect(screen.getByText("Store Card")).toBeTruthy();
+    expect(screen.queryByText("Unknown Bank · Store Card")).toBeNull();
+  });
 });

@@ -2,12 +2,14 @@
 
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
+import { resolveAccountDisplayName } from "@/lib/accountListLabel";
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
 interface KnownAccount {
   slug: string;
   bankName: string;
+  accountName?: string;
   accountId: string;
   accountType: string;
   lastMonth: string;
@@ -373,7 +375,16 @@ export default function CsvImportPanel({ idToken, initialFile, onReset, onImport
                       <input type="radio" name="account" value={acc.slug} checked={selectedAccount === acc.slug}
                         onChange={() => handleAccountChange(acc.slug)} className="accent-teal-600" />
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-800">{acc.bankName} ••••{acc.accountId.replace(/\D/g, "").slice(-4)}</p>
+                        <p className="text-sm font-medium text-gray-800">
+                          {resolveAccountDisplayName({
+                            accountName: acc.accountName,
+                            bankName: acc.bankName,
+                            fallback: acc.slug,
+                          }).primary}
+                          {acc.accountId.replace(/\D/g, "").slice(-4)
+                            ? ` · ••••${acc.accountId.replace(/\D/g, "").slice(-4)}`
+                            : ""}
+                        </p>
                         <p className="text-xs text-gray-400">{acc.accountType} · last statement {fmtShortMonth(acc.lastMonth)}</p>
                       </div>
                     </label>

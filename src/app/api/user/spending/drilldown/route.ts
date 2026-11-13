@@ -19,6 +19,7 @@ import { computeScheduledDebtPayments } from "@/lib/debtPayments";
 import { classifyDebtAccount } from "@/lib/debtPaymentKinds";
 import { buildMerchantAliasResolver } from "@/lib/merchantAliases";
 import type { DebtPaymentReview } from "@/lib/types";
+import { displayNameFromProfileAccount } from "@/lib/accountListLabel";
 
 export const dynamic = "force-dynamic";
 
@@ -630,7 +631,7 @@ export async function GET(req: NextRequest) {
           merchant: canonicalName,
           category: txn.category,
           amount: absAmount,
-          accountLabel: txn.accountLabel,
+          accountLabel: displayNameFromProfileAccount(txn.accountSlug, profile, txn.accountLabel),
         });
 
         // Add to monthly series
@@ -690,7 +691,7 @@ export async function GET(req: NextRequest) {
       // Cadence stats and account breakdown
       const allTxns = Array.from(merchantMap.values()).flatMap(m => m.transactions);
       const cadence = computeCadenceStats(allTxns, parentCategory);
-      const accounts = computeAccountsBreakdown(scopedTxns, categoryTotal);
+      const accounts = computeAccountsBreakdown(scopedTxns, categoryTotal, profile);
 
       return NextResponse.json({
         level: "category",
@@ -851,7 +852,7 @@ export async function GET(req: NextRequest) {
         .map(txn => {
           const absAmount = Math.abs(txn.amount);
           return {
-            name: `${new Date(txn.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })} • ${txn.accountLabel || ""}`,
+            name: `${new Date(txn.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })} • ${displayNameFromProfileAccount(txn.accountSlug ?? "", profile, txn.accountLabel)}`,
             slug: `${txn.date}-${txn.amount}`,
             total: absAmount,
             share: merchantTotal > 0 ? absAmount / merchantTotal : 0,
@@ -871,7 +872,7 @@ export async function GET(req: NextRequest) {
         category: t.category,
         amount: Math.abs(t.amount),
       })), merchantName);
-      const accounts = computeAccountsBreakdown(scopedTxns, merchantTotal);
+      const accounts = computeAccountsBreakdown(scopedTxns, merchantTotal, profile);
 
       return NextResponse.json({
         level: "merchant",
@@ -1068,13 +1069,17 @@ function computeCadenceStats(
 
 function computeAccountsBreakdown(
   transactions: Array<{ accountLabel?: string; accountSlug?: string; amount: number }>,
-  levelTotal: number
+  levelTotal: number,
+  profile?: {
+    accountSnapshots?: Array<{ slug: string; accountName?: string | null; bankName?: string | null }>;
+    accountBalanceHistory?: Array<{ slug?: string | null; label?: string | null }>;
+  },
 ): AccountBreakdown[] {
   const accountMap = new Map<string, { label: string; total: number; count: number }>();
 
   for (const txn of transactions) {
     const slug = txn.accountSlug || "unknown";
-    const label = txn.accountLabel || "Unknown Account";
+    const label = displayNameFromProfileAccount(slug, profile ?? {}, txn.accountLabel) || "Unknown Account";
     const absAmount = Math.abs(txn.amount);
 
     if (!accountMap.has(slug)) {

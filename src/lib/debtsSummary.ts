@@ -10,6 +10,20 @@ import type { AccountBalanceHistory } from "./financialProfile";
 import type { ManualLiability, DebtPaymentReview } from "./types";
 import { computeScheduledDebtPayments, type ScheduledDebtPayment } from "./debtPayments";
 import { fmtCompact } from "./currencyUtils";
+import { resolveAccountDisplayName } from "./accountListLabel";
+
+function snapshotDisplayName(
+  slug: string,
+  historyLabel: string | undefined,
+  snap: Pick<AccountSnapshot, "accountName" | "bankName"> | undefined,
+): string {
+  return resolveAccountDisplayName({
+    accountName: snap?.accountName,
+    bankName: snap?.bankName,
+    historyLabel,
+    fallback: slug,
+  }).primary;
+}
 
 export interface DebtAccount {
   slug: string;
@@ -429,7 +443,11 @@ export function buildDebtsSummary(
             .filter(acc => acc.value < 0)
             .map(acc => ({
               slug: acc.slug,
-              label: acc.label,
+              label: snapshotDisplayName(
+                acc.slug,
+                acc.label,
+                debtAccounts.find((snap) => snap.slug === acc.slug),
+              ),
               type: acc.type,
               value: acc.value,
             }))
@@ -468,7 +486,11 @@ export function buildDebtsSummary(
       .filter(h => debtAccountSlugs.has(h.slug))
       .map(h => ({
         slug: h.slug,
-        label: h.label,
+        label: snapshotDisplayName(
+          h.slug,
+          h.label,
+          debtAccounts.find((snap) => snap.slug === h.slug),
+        ),
         entries: h.entries,
       })),
     expenseTxns: filteredExpenseTxns,

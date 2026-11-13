@@ -8,6 +8,7 @@ import { getFirebaseClient } from "@/lib/firebase";
 import type { AccountSnapshot } from "@/lib/extractTransactions";
 import { fmt as formatCurrency } from "@/lib/currencyUtils";
 import { formatLastTransactionDate } from "@/lib/formatLastTransactionDate";
+import { joinAccountMeta, resolveAccountDisplayName } from "@/lib/accountListLabel";
 
 type AccountType = "checking" | "savings" | "credit" | "mortgage" | "investment" | "loan" | "other";
 
@@ -116,7 +117,12 @@ export default function AccountsPage() {
                 </h2>
                 <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {accounts.map((acct) => {
-                    const displayName = acct.accountName ?? acct.bankName ?? "Account";
+                    const display = resolveAccountDisplayName({
+                      accountName: acct.accountName,
+                      bankName: acct.bankName,
+                      fallback: acct.slug,
+                    });
+                    const displayName = display.primary || "Account";
                     const currency    = acct.currency ?? "CAD";
                     const lastTxDate  = formatLastTransactionDate(acct.lastTransactionDate);
                     return (
@@ -129,10 +135,10 @@ export default function AccountsPage() {
                             <div className="min-w-0">
                               <p className="truncate font-semibold text-gray-900">{displayName}</p>
                               <p className="mt-0.5 text-xs text-gray-500">
-                                {acct.bankName}
-                                {acct.accountId && acct.accountId !== "unknown" && (
-                                  <span className="ml-1 text-gray-400">· {acct.accountId}</span>
-                                )}
+                                {joinAccountMeta([
+                                  display.secondary,
+                                  acct.accountId && acct.accountId !== "unknown" ? acct.accountId : null,
+                                ])}
                               </p>
                               {lastTxDate && (
                                 <p className="mt-0.5 text-xs text-gray-400">

@@ -13,6 +13,7 @@ import { resolveMerchantAlias, resolveCanonicalMerchantSlug } from "./merchantUt
 import { getLastCompleteMonth } from "./monthAnchor";
 import { computeMonthlyBuckets } from "./monthlyBucketComputation";
 import { computeScheduledDebtPayments } from "./debtPayments";
+import { displayNameFromProfileAccount } from "./accountListLabel";
 
 export interface SpendingTransaction {
   date: string;
@@ -265,7 +266,11 @@ export function buildSpendingSummary(
           merchantSlug: canonicalSlug,
           category: t.category,
           amount: Math.abs(t.amount),
-          accountLabel: t.accountLabel,
+          accountLabel: displayNameFromProfileAccount(
+            t.accountSlug,
+            { accountSnapshots },
+            t.accountLabel,
+          ),
           accountSlug: t.accountSlug,
           txMonth: t.txMonth
         });

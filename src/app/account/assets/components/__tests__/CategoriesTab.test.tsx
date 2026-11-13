@@ -206,4 +206,45 @@ describe("Assets Accounts tab labels and density", () => {
     expect(screen.getAllByText("CA$1,300,000").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("CA$419,778").length).toBeGreaterThanOrEqual(1);
   });
+
+  it("uses resolveAccountDisplayName: product first, no placeholder prefix, history when latest repeats the bank", () => {
+    const groups = [
+      group({
+        type: "cash",
+        label: "Cash",
+        total: 9000,
+        accounts: [
+          account({
+            slug: "1001",
+            bankName: "Example Credit Union",
+            accountName: "Example Credit Union",
+            balance: 1200,
+          }),
+          account({
+            slug: "ex-chequing-2002",
+            bankName: "Example Bank",
+            accountName: "Chequing",
+            balance: 3400,
+          }),
+          account({
+            slug: "broker-6006",
+            bankName: "Unknown Bank",
+            accountName: "Real Estate Co",
+            balance: 50000,
+          }),
+        ],
+      }),
+    ];
+    const data = summary(groups);
+    data.accountBalanceHistory = [
+      { slug: "1001", label: "Everyday Chequing", entries: [] },
+    ];
+    render(<CategoriesTab summary={data} />);
+
+    expect(screen.getByText("Everyday Chequing")).toBeTruthy();
+    expect(screen.getByText("Chequing")).toBeTruthy();
+    expect(screen.getByText("Real Estate Co")).toBeTruthy();
+    expect(screen.queryByText("Unknown Bank · Real Estate Co")).toBeNull();
+    expect(screen.queryByText("Example Credit Union · Everyday Chequing")).toBeNull();
+  });
 });

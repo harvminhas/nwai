@@ -10,7 +10,7 @@ import { getFirebaseClient } from "@/lib/firebase";
 import { formatLastTransactionDate } from "@/lib/formatLastTransactionDate";
 import { triggerProfileRefetch } from "@/lib/profileRefetch";
 import { isCategoryGroupOpen, toggleCategoryGroup } from "@/lib/categoryGroupExpand";
-import { accountDisplayLabel, joinAccountMeta } from "@/lib/accountListLabel";
+import { findAccountHistoryLabel, joinAccountMeta, resolveAccountDisplayName } from "@/lib/accountListLabel";
 import { accountDetailHref } from "@/lib/accountDetailHref";
 import {
   AccountCategoryList,
@@ -233,7 +233,12 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
             onToggle={() => toggle(group.type)}
           >
             {group.accounts.map((acc) => (
-              <AccountLine key={acc.slug} account={acc} currency={currency} />
+              <AccountLine
+                key={acc.slug}
+                account={acc}
+                currency={currency}
+                historyLabel={findAccountHistoryLabel(summary.accountBalanceHistory, acc.slug)}
+              />
             ))}
             {group.manualAssets.map((asset) => (
               <ManualLine key={asset.id} asset={asset} currency={currency} />
@@ -246,8 +251,21 @@ export function CategoriesTab({ summary }: CategoriesTabProps) {
   );
 }
 
-function AccountLine({ account, currency }: { account: AssetAccount; currency: string }) {
-  const label = accountDisplayLabel(account.bankName, account.accountName);
+function AccountLine({
+  account,
+  currency,
+  historyLabel,
+}: {
+  account: AssetAccount;
+  currency: string;
+  historyLabel?: string | null;
+}) {
+  const label = resolveAccountDisplayName({
+    accountName: account.accountName,
+    bankName: account.bankName,
+    historyLabel,
+    fallback: account.slug,
+  });
   const meta = joinAccountMeta([
     label.secondary,
     formatAccountLast4(account.slug),

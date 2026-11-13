@@ -8,6 +8,7 @@ import { formatCurrency } from "@/lib/currencyUtils";
 import { formatChange, getChangeColor } from "@/lib/colorHelpers";
 import { ReviewList } from "@/components/ReviewList";
 import { calculatePayoffInsight, type DebtForPayoff } from "@/lib/payoffInsight";
+import { findAccountHistoryLabel, resolveAccountDisplayName } from "@/lib/accountListLabel";
 
 interface OverviewTabProps {
   summary: DebtsSummary;
@@ -141,7 +142,12 @@ export function OverviewTab({ summary }: OverviewTabProps) {
                     return (
                       <div key={acc.slug} className="text-xs flex justify-between gap-2">
                         <span className="text-gray-700 truncate">
-                          {acc.accountName || acc.bankName}
+                          {resolveAccountDisplayName({
+                            accountName: acc.accountName,
+                            bankName: acc.bankName,
+                            historyLabel: findAccountHistoryLabel(summary.accountBalanceHistory, acc.slug),
+                            fallback: acc.slug,
+                          }).primary}
                         </span>
                         <span className="text-gray-600 whitespace-nowrap">
                           {acc.interestRate ? `${acc.interestRate.toFixed(2)}% → ${formatCurrency(threeMonthInterest, currency)}` : 'No rate'}

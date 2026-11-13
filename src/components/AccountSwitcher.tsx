@@ -7,16 +7,47 @@ import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { formatAccountLast4 } from "@/lib/rangeUtils";
+import {
+  accountMatchesQuery,
+  findAccountHistoryLabel,
+  switcherAccountPresentation,
+} from "@/lib/accountListLabel";
 
 interface Item {
   key: string;
   label: string;
   sub: string;
+  searchText: string;
   amount: number | null;
   href: string;
   group: string;
   icon: "asset" | "debt";
   cur: string;
+}
+
+function historyFromSummary(data: {
+  accountBalanceHistory?: Array<{ slug?: string; label?: string }>;
+}): Array<{ slug?: string; label?: string }> {
+  return data.accountBalanceHistory ?? [];
+}
+
+function itemFromSummaryAccount(
+  acc: { slug: string; bankName?: string; accountName?: string },
+  groupLabel: string,
+  history: Array<{ slug?: string; label?: string }>,
+  extra: Omit<Item, "label" | "sub" | "searchText">,
+): Item {
+  const presentation = switcherAccountPresentation(acc, {
+    groupLabel,
+    last4: formatAccountLast4(acc.slug),
+    historyLabel: findAccountHistoryLabel(history, acc.slug),
+  });
+  return {
+    ...extra,
+    label: presentation.label,
+    sub: presentation.sub,
+    searchText: presentation.searchText,
+  };
 }
 
 /**
@@ -45,24 +76,26 @@ export default function AccountSwitcher() {
       if (assetsRes.ok) {
         const a = await assetsRes.json();
         setFallbackCurrency(a.currency ?? "USD");
+        const assetHistory = historyFromSummary(a);
         for (const g of a.groups ?? []) {
           for (const acc of g.accounts ?? []) {
-            next.push({
-              key: `acc-${acc.slug}`,
-              label: acc.bankName + (acc.accountName ? ` · ${acc.accountName}` : ""),
-              sub: `${g.label} · ${formatAccountLast4(acc.slug)}`,
-              amount: acc.balance,
-              href: `/account/accounts/${acc.slug}`,
-              group: g.label,
-              icon: "asset",
-              cur: a.currency ?? "USD",
-            });
+            next.push(
+              itemFromSummaryAccount(acc, g.label, assetHistory, {
+                key: `acc-${acc.slug}`,
+                amount: acc.balance,
+                href: `/account/accounts/${acc.slug}`,
+                group: g.label,
+                icon: "asset",
+                cur: a.currency ?? "USD",
+              })
+            );
           }
           for (const asset of g.manualAssets ?? []) {
             next.push({
               key: `man-${asset.id}`,
               label: asset.label,
               sub: `${g.label} · manual`,
+              searchText: `${asset.label} ${g.label} manual`.toLowerCase(),
               amount: asset.value,
               href: `/account/assets/${asset.id}`,
               group: g.label,
@@ -74,18 +107,19 @@ export default function AccountSwitcher() {
       }
       if (debtsRes.ok) {
         const d = await debtsRes.json();
+        const debtHistory = historyFromSummary(d);
         for (const g of d.groups ?? []) {
           for (const acc of g.accounts ?? []) {
-            next.push({
-              key: `debt-${acc.slug}`,
-              label: acc.bankName + (acc.accountName ? ` · ${acc.accountName}` : ""),
-              sub: `${g.label} · ${formatAccountLast4(acc.slug)}`,
-              amount: Math.abs(acc.balance ?? 0),
-              href: `/account/accounts/${acc.slug}`,
-              group: g.label,
-              icon: "debt",
-              cur: d.currency ?? "USD",
-            });
+            next.push(
+              itemFromSummaryAccount(acc, g.label, debtHistory, {
+                key: `debt-${acc.slug}`,
+                amount: Math.abs(acc.balance ?? 0),
+                href: `/account/accounts/${acc.slug}`,
+                group: g.label,
+                icon: "debt",
+                cur: d.currency ?? "USD",
+              })
+            );
           }
         }
       }
@@ -131,7 +165,7 @@ export default function AccountSwitcher() {
     }
     
     const list = q
-      ? contextFiltered.filter((i) => i.label.toLowerCase().includes(q) || i.sub.toLowerCase().includes(q))
+      ? contextFiltered.filter((i) => accountMatchesQuery(q, i.label, i.sub, i.searchText))
       : contextFiltered;
     const byGroup = new Map<string, Item[]>();
     for (const i of list) {
