@@ -126,15 +126,28 @@ function categoryHref(kind: CategoryTrendKind, key: string, accounts: TrendAccou
   return `/account/assets/category/${key}`;
 }
 
+type AccountFlows = {
+  deposits: number;
+  withdrawals: number;
+  interestIn: number;
+  interestOut: number;
+  fees: number;
+  known: boolean;
+};
+
+function emptyFlows(): AccountFlows {
+  return { deposits: 0, withdrawals: 0, interestIn: 0, interestOut: 0, fees: 0, known: false };
+}
+
 function flowsFor(
   slugs: Set<string>,
   months: Set<string>,
   incomeTxns: CategoryTrendTxn[],
   expenseTxns: CategoryTrendTxn[],
-): Map<string, { deposits: number; withdrawals: number; interestIn: number; interestOut: number; known: boolean }> {
-  const map = new Map<string, { deposits: number; withdrawals: number; interestIn: number; interestOut: number; known: boolean }>();
+): Map<string, AccountFlows> {
+  const map = new Map<string, AccountFlows>();
   const ensure = (slug: string) => {
-    const prev = map.get(slug) ?? { deposits: 0, withdrawals: 0, interestIn: 0, interestOut: 0, known: false };
+    const prev = map.get(slug) ?? emptyFlows();
     prev.known = true;
     map.set(slug, prev);
     return prev;
@@ -156,7 +169,10 @@ function flowsFor(
       row.interestOut += Math.abs(t.amount);
       continue;
     }
-    if (parent === "Fees") continue;
+    if (parent === "Fees") {
+      row.fees += Math.abs(t.amount);
+      continue;
+    }
     row.withdrawals += Math.abs(t.amount);
   }
   return map;
@@ -185,7 +201,7 @@ function joinParts(parts: Array<string | null | undefined>): string | null {
 function assetSubtitle(
   key: string,
   card: Pick<CategoryTrendCard, "start" | "change" | "changePercent" | "accounts">,
-  flows: Map<string, { deposits: number; withdrawals: number; interestIn: number; interestOut: number; known: boolean }>,
+  flows: Map<string, AccountFlows>,
   manuals: ManualAsset[],
   currency: string,
 ): string | null {
@@ -260,7 +276,7 @@ function assetSubtitle(
 
 function debtSubtitle(
   accounts: TrendAccountRow[],
-  flows: Map<string, { deposits: number; withdrawals: number; interestIn: number; interestOut: number; known: boolean }>,
+  flows: Map<string, AccountFlows>,
   currency: string,
 ): string | null {
   const known = accounts.length > 0 && accounts.every((a) => flows.get(a.slug)?.known);
@@ -268,17 +284,20 @@ function debtSubtitle(
   let paid = 0;
   let charges = 0;
   let interest = 0;
+  let fees = 0;
   for (const a of accounts) {
     const f = flows.get(a.slug);
     if (!f) continue;
     paid += f.deposits;
     charges += f.withdrawals;
     interest += f.interestOut;
+    fees += f.fees;
   }
   return joinParts([
     paid > 0.005 ? `Paid ${moneyAbs(paid, currency)}` : null,
     charges > 0.005 ? `New charges ${moneyAbs(charges, currency)}` : null,
     interest > 0.005 ? `Interest ${moneyAbs(interest, currency)}` : null,
+    fees > 0.005 ? `Fees ${moneyAbs(fees, currency)}` : null,
   ]);
 }
 
@@ -312,12 +331,16 @@ export function buildCategoryTrendCards(opts: {
   const { kind, currency, manualAssets = [] } = opts;
   const months = [...opts.months].sort((a, b) => a.month.localeCompare(b.month));
   if (months.length === 0) return [];
-  const monthKeys = new Set(months.map((m) => m.month));
+  const hasPrior = opts.priorMonth != null;
+  // With a prior snapshot, count every in-range month. With no prior, the first
+  // in-range month IS the start, so flows begin at the second month.
+  const flowMonths = new Set((hasPrior ? months : months.slice(1)).map((m) => m.month));
+  const startSnapshot = hasPrior ? opts.priorMonth! : months[0];
 
-  const priorBySlug = new Map<string, { slug: string; label: string; type: string; value: number; category: string }>();
-  for (const row of opts.priorMonth?.accountDetails ?? []) {
+  const startBySlug = new Map<string, { slug: string; label: string; type: string; value: number; category: string }>();
+  for (const row of startSnapshot.accountDetails ?? []) {
     if (!includeRow(kind, row.value)) continue;
-    priorBySlug.set(row.slug, {
+    startBySlug.set(row.slug, {
       slug: row.slug,
       label: displayName(row.label, row.slug),
       type: row.type,
@@ -354,9 +377,9 @@ export function buildCategoryTrendCards(opts: {
 
   const grouped = new Map<string, TrendAccountRow[]>();
   for (const [slug, seen] of seenBySlug) {
-    const prior = priorBySlug.get(slug);
+    const startRow = startBySlug.get(slug);
     const last = endBySlug.get(slug);
-    const start = prior?.value ?? 0;
+    const start = startRow?.value ?? 0;
     const end = last?.value ?? 0;
     const category = last?.category ?? seen.category;
     const row: TrendAccountRow = {
@@ -366,7 +389,7 @@ export function buildCategoryTrendCards(opts: {
       start,
       end,
       change: end - start,
-      openedInRange: !prior,
+      openedInRange: !startRow,
     };
     const list = grouped.get(category) ?? [];
     list.push(row);
@@ -389,7 +412,7 @@ export function buildCategoryTrendCards(opts: {
   }
 
   const allSlugs = new Set([...seenBySlug.keys()]);
-  const flows = flowsFor(allSlugs, monthKeys, opts.incomeTxns, opts.expenseTxns);
+  const flows = flowsFor(allSlugs, flowMonths, opts.incomeTxns, opts.expenseTxns);
 
   const cards: CategoryTrendCard[] = [];
   for (const [key, accounts] of grouped) {

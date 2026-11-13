@@ -324,6 +324,110 @@ describe("buildCategoryTrendCards", () => {
     expect(credit.change).toBe(-900);
   });
 
+  it("with no prior month uses the first in-range ending balances and skips that month's flows", () => {
+    const cards = buildCategoryTrendCards({
+      kind: "asset",
+      months,
+      expenseTxns: [],
+      incomeTxns: [
+        { txMonth: "2026-08", amount: 5000, accountSlug: "tfsa", category: "Transfer In" },
+        { txMonth: "2026-10", amount: 100, accountSlug: "tfsa", category: "Transfer In" },
+      ],
+      currency: "CAD",
+    });
+    const cash = cards.find((c) => c.key === "cash")!;
+    const registered = cards.find((c) => c.key === "registered")!;
+    expect(cash.start).toBe(8000);
+    expect(cash.current).toBe(15100);
+    expect(cash.accounts.find((a) => a.slug === "chk")!.openedInRange).toBe(false);
+    expect(cash.accounts.find((a) => a.slug === "eq")!.openedInRange).toBe(true);
+    expect(cash.accounts.find((a) => a.slug === "eq")!.start).toBe(0);
+    expect(cash.newAccountNote).toMatch(/EQ Bank Savings/);
+    expect(cash.newAccountNote).not.toMatch(/Chequing/);
+    expect(registered.start).toBe(20000);
+    expect(registered.accounts[0].openedInRange).toBe(false);
+    expect(registered.newAccountNote).toBeNull();
+    expect(registered.subtitle).toMatch(/Contributions CA\$100/);
+    expect(registered.subtitle).not.toMatch(/CA\$5,000/);
+  });
+
+  it("All with short history does not treat first-month accounts as opened at $0", () => {
+    const history = months;
+    const ranged = sliceMonthsByTrendRange(history, "All");
+    const prior = priorMonthBeforeRange(history, ranged);
+    expect(prior).toBeNull();
+    const cards = buildCategoryTrendCards({
+      kind: "asset",
+      months: ranged,
+      priorMonth: prior,
+      expenseTxns: [],
+      incomeTxns: [],
+      currency: "CAD",
+    });
+    const cash = cards.find((c) => c.key === "cash")!;
+    expect(cash.start).toBe(8000);
+    expect(cash.change).toBe(7100);
+    expect(cash.change).not.toBe(cash.current);
+    expect(cash.newAccountNote).not.toMatch(/Chequing/);
+  });
+
+  it("1Y with exactly 12 months uses the first month as start, not $0", () => {
+    const history = [];
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(2025, i, 1);
+      const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      history.push({
+        month,
+        accountDetails: [{ slug: "tfsa", label: "TFSA", type: "tfsa", value: 10000 + i * 100 }],
+      });
+    }
+    const ranged = sliceMonthsByTrendRange(history, "1Y");
+    const prior = priorMonthBeforeRange(history, ranged);
+    expect(ranged).toHaveLength(12);
+    expect(prior).toBeNull();
+    const cards = buildCategoryTrendCards({
+      kind: "asset",
+      months: ranged,
+      priorMonth: prior,
+      expenseTxns: [],
+      incomeTxns: [{ txMonth: ranged[0].month, amount: 9999, accountSlug: "tfsa", category: "Transfer In" }],
+      currency: "CAD",
+    });
+    const registered = cards.find((c) => c.key === "registered")!;
+    expect(registered.start).toBe(10000);
+    expect(registered.current).toBe(10000 + 11 * 100);
+    expect(registered.change).toBe(1100);
+    expect(registered.accounts[0].openedInRange).toBe(false);
+    expect(registered.newAccountNote).toBeNull();
+    expect(registered.subtitle).not.toMatch(/CA\$9,999/);
+  });
+
+  it("includes fees on the debt flow line when fees > 0", () => {
+    const cards = buildCategoryTrendCards({
+      kind: "debt",
+      months: [
+        {
+          month: "2026-12",
+          accountDetails: [{ slug: "visa", label: "Visa", type: "credit", value: -1780 }],
+        },
+      ],
+      priorMonth: {
+        month: "2026-11",
+        accountDetails: [{ slug: "visa", label: "Visa", type: "credit", value: -2000 }],
+      },
+      expenseTxns: [
+        { txMonth: "2026-12", amount: 50, accountSlug: "visa", category: "Interest" },
+        { txMonth: "2026-12", amount: 200, accountSlug: "visa", category: "Shopping" },
+        { txMonth: "2026-12", amount: 30, accountSlug: "visa", category: "Fees" },
+      ],
+      incomeTxns: [{ txMonth: "2026-12", amount: 500, accountSlug: "visa", category: "Other" }],
+      currency: "CAD",
+    });
+    const credit = cards.find((c) => c.key === "credit_card")!;
+    expect(credit.change).toBe(-220);
+    expect(credit.subtitle).toBe("Paid CA$500 · New charges CA$200 · Interest CA$50 · Fees CA$30");
+  });
+
   it("omits unknown purchase-price placeholders and flags stale manual valuations", () => {
     const cards = buildCategoryTrendCards({
       kind: "asset",
