@@ -87,6 +87,8 @@ export interface DebtsSummary {
       value: number; // In home currency, debts are negative
     }>;
   }>;
+  /** Full history for Performance (6M/YTD/1Y/3Y/All). Trends still uses last-12 `monthlyHistory`. */
+  allMonthlyHistory?: DebtsSummary["monthlyHistory"];
   scheduledPayments?: ScheduledDebtPayment[]; // For diagnostic output
   /** Per-account balance history from profile.accountBalanceHistory */
   accountBalanceHistory: Array<{
@@ -415,8 +417,8 @@ export function buildDebtsSummary(
       };
     });
 
-  // Full monthly history so Trends can slice 6M / YTD / 1Y / 3Y / All.
-  const monthlyHistory: DebtsSummary["monthlyHistory"] = [];
+  // Full history for Performance; Trends receives the last 12 months.
+  const allMonthlyHistory: DebtsSummary["monthlyHistory"] = [];
   
   if (profileMonthlyHistory && profileMonthlyHistory.length > 0) {
     // Use profile's totalDebts which already has correct carry-forward logic
@@ -464,7 +466,7 @@ export function buildDebtsSummary(
             }))
         : undefined;
 
-      monthlyHistory.push({
+      allMonthlyHistory.push({
         month,
         monthLabel: formatMonthLabel(month),
         totalDebt: profileMonth.totalDebts, // Use profile's value which includes manual assets
@@ -474,6 +476,7 @@ export function buildDebtsSummary(
       });
     }
   }
+  const monthlyHistory = allMonthlyHistory.slice(-12);
   
   // Filter transactions to only those belonging to debt accounts
   const debtAccountSlugs = new Set(debtAccounts.map(a => a.slug));
@@ -492,6 +495,7 @@ export function buildDebtsSummary(
     groups,
     payoffEstimates,
     monthlyHistory,
+    allMonthlyHistory,
     scheduledPayments, // For diagnostic output,
     accountBalanceHistory: balanceHistory
       .filter(h => debtAccountSlugs.has(h.slug))

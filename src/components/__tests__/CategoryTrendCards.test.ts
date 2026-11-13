@@ -32,4 +32,10 @@ describe("CategoryTrendCards layout", () => {
     expect(src).toContain("account.href");
     expect(src).not.toContain("href={card.href}");
   });
+
+  it("hosts the Performance range selector and category cards", () => {
+    expect(src).toContain("CategoryPerformancePanel");
+    expect(src).toContain("TrendRangeSelector");
+    expect(src).toContain('useState<TrendRangeKey>("1Y")');
+  });
 });

@@ -67,6 +67,8 @@ export interface AssetsSummary {
       value: number; // In home currency, assets are positive
     }>;
   }>;
+  /** Full history for Performance (6M/YTD/1Y/3Y/All). Trends still uses last-12 `monthlyHistory`. */
+  allMonthlyHistory?: AssetsSummary["monthlyHistory"];
   staleAccounts: AssetAccount[];
   /** Per-account balance history from profile.accountBalanceHistory */
   accountBalanceHistory: Array<{
@@ -293,8 +295,8 @@ export function buildAssetsSummary(
   const changeVsLastMonth = lastMonthTotal > 0 ? totalAssets - lastMonthTotal : 0;
   const changeVs12Months = month12Total > 0 ? totalAssets - month12Total : 0;
 
-  // Full monthly history so Trends can slice 6M / YTD / 1Y / 3Y / All.
-  const monthlyHistory: AssetsSummary["monthlyHistory"] = [];
+  // Full history for Performance; Trends receives the last 12 months.
+  const allMonthlyHistory: AssetsSummary["monthlyHistory"] = [];
   
   if (profileMonthlyHistory && profileMonthlyHistory.length > 0) {
     // Use profile's totalAssets which already has correct carry-forward logic
@@ -347,7 +349,7 @@ export function buildAssetsSummary(
             }))
         : undefined;
 
-      monthlyHistory.push({
+      allMonthlyHistory.push({
         month,
         monthLabel: formatMonthLabel(month),
         total: profileMonth.totalAssets, // Use profile's value which includes manual assets
@@ -356,6 +358,7 @@ export function buildAssetsSummary(
       });
     }
   }
+  const monthlyHistory = allMonthlyHistory.slice(-12);
 
   const staleAccounts = accounts.filter(a => a.isStale);
   
@@ -371,6 +374,7 @@ export function buildAssetsSummary(
     changeVs12Months,
     groups,
     monthlyHistory,
+    allMonthlyHistory,
     staleAccounts,
     accountBalanceHistory: balanceHistory
       .filter(h => assetAccountSlugs.has(h.slug))

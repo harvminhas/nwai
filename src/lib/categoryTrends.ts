@@ -1,5 +1,5 @@
 /**
- * Start-vs-end category cards for Assets / Debts Trends.
+ * Start-vs-end category cards for Assets / Debts Performance.
  * Uses the same byAccount balances the Trends month detail uses.
  * Does not change shared net-worth math.
  */
@@ -41,7 +41,6 @@ export interface CategoryTrendCard {
   subtitle: string | null;
   staleNote: string | null;
   accountCount: number;
-  href: string;
   accounts: TrendAccountRow[];
   newAccountNote: string | null;
 }
@@ -112,19 +111,6 @@ function categoryOf(
 function categoryLabel(kind: CategoryTrendKind, key: string): string {
   if (kind === "debt") return debtGroupLabel(key as DebtGroup["type"]);
   return assetGroupLabel(key as AssetGroup["type"]);
-}
-
-function categoryHref(kind: CategoryTrendKind, key: string, accounts: TrendAccountRow[]): string {
-  if (accounts.length === 1) {
-    const href = accountDetailHref({
-      slug: accounts[0].slug,
-      type: accounts[0].type,
-      side: kind === "debt" ? "debt" : "asset",
-    });
-    if (href) return href;
-  }
-  if (kind === "debt") return `/account/liabilities/category/${key}`;
-  return `/account/assets/category/${key}`;
 }
 
 type AccountFlows = {
@@ -447,7 +433,6 @@ export function buildCategoryTrendCards(opts: {
       subtitle,
       staleNote: kind === "asset" ? staleNoteFor(accounts, manualAssets) : null,
       accountCount: accounts.length,
-      href: categoryHref(kind, key, accounts),
       accounts,
       newAccountNote:
         opened.length > 0

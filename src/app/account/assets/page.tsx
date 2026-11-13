@@ -8,6 +8,7 @@ import { getFirebaseClient } from "@/lib/firebase";
 import type { AssetsSummary } from "@/lib/assetsSummary";
 import { OverviewTab } from "./components/OverviewTab";
 import { TrendsTab } from "./components/TrendsTab";
+import { PerformanceTab } from "./components/PerformanceTab";
 import { CategoriesTab } from "./components/CategoriesTab";
 import AccountSwitcher from "@/components/AccountSwitcher";
 import {
@@ -113,7 +114,7 @@ function AssetsPageContent() {
 
       {/* Tabs */}
       <div className="border-b border-gray-200 mb-6">
-        <nav className="-mb-px flex gap-6">
+        <nav className="-mb-px flex flex-wrap gap-x-6">
           {TABS.map((tab) => (
             <button
               key={tab.id}
@@ -134,6 +135,7 @@ function AssetsPageContent() {
       <div>
         {activeTab === "overview" && <OverviewTab summary={summary} />}
         {activeTab === "trends" && <TrendsTab summary={summary} />}
+        {activeTab === "performance" && <PerformanceTab summary={summary} />}
         {activeTab === "accounts" && <CategoriesTab summary={summary} />}
       </div>
     </div>

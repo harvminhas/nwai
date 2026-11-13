@@ -1,18 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { IntactAmount } from "@/components/IntactAmount";
 import { formatCurrency } from "@/lib/currencyUtils";
 import {
+  buildCategoryTrendCards,
   describeAssetChangePill,
   describeDebtChangePill,
   type CategoryTrendCard,
   type CategoryTrendKind,
+  type CategoryTrendMonth,
+  type CategoryTrendTxn,
   type TrendAccountRow,
 } from "@/lib/categoryTrends";
 import { sparklineYDomain } from "@/lib/sparklineScale";
-import { TREND_RANGES, type TrendRangeKey } from "@/lib/trendRange";
+import { priorMonthBeforeRange, sliceMonthsByTrendRange, TREND_RANGES, type TrendRangeKey } from "@/lib/trendRange";
+import type { ManualAsset } from "@/lib/types";
 
 const DOT: Record<string, string> = {
   cash: "bg-blue-500",
@@ -220,6 +224,67 @@ export function CategoryTrendCardGrid({
           <CategoryCard key={card.key} card={card} currency={currency} />
         ))}
       </div>
+    </div>
+  );
+}
+
+export function CategoryPerformancePanel({
+  kind,
+  months,
+  expenseTxns,
+  incomeTxns,
+  currency,
+  manualAssets,
+}: {
+  kind: CategoryTrendKind;
+  months: CategoryTrendMonth[];
+  expenseTxns: CategoryTrendTxn[];
+  incomeTxns: CategoryTrendTxn[];
+  currency: string;
+  manualAssets?: ManualAsset[];
+}) {
+  const [range, setRange] = useState<TrendRangeKey>("1Y");
+  const sortedHistory = useMemo(
+    () => [...months].sort((a, b) => a.month.localeCompare(b.month)),
+    [months],
+  );
+  const rangedHistory = useMemo(
+    () => sliceMonthsByTrendRange(sortedHistory, range),
+    [sortedHistory, range],
+  );
+  const priorMonth = useMemo(
+    () => priorMonthBeforeRange(sortedHistory, rangedHistory),
+    [sortedHistory, rangedHistory],
+  );
+  const cards = useMemo(
+    () =>
+      buildCategoryTrendCards({
+        kind,
+        months: rangedHistory,
+        priorMonth,
+        expenseTxns,
+        incomeTxns,
+        currency,
+        manualAssets,
+      }),
+    [kind, rangedHistory, priorMonth, expenseTxns, incomeTxns, currency, manualAssets],
+  );
+
+  if (months.length === 0) {
+    return (
+      <div className="bg-gray-50 border border-gray-200 rounded-lg p-8 text-center">
+        <p className="text-gray-600">No historical data available yet.</p>
+        <p className="text-sm text-gray-500 mt-2">
+          Upload more statements to see performance over time.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <TrendRangeSelector value={range} onChange={setRange} />
+      <CategoryTrendCardGrid cards={cards} currency={currency} />
     </div>
   );
 }

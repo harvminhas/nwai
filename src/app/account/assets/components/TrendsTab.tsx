@@ -1,10 +1,7 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import type { AssetsSummary } from "@/lib/assetsSummary";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { calculateBalanceChartDomain } from "@/lib/chartDomain";
-import { CategoryTrendCardGrid, TrendRangeSelector } from "@/components/CategoryTrendCards";
-import { buildCategoryTrendCards } from "@/lib/categoryTrends";
-import { priorMonthBeforeRange, sliceMonthsByTrendRange, type TrendRangeKey } from "@/lib/trendRange";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -30,7 +27,7 @@ interface TrendsTabProps {
 }
 
 export function TrendsTab({ summary }: TrendsTabProps) {
-  const { monthlyHistory, currency } = summary;
+  const { monthlyHistory, currency, accountBalanceHistory } = summary;
   
   // Default selected month: LATEST AVAILABLE DATA (not wall clock empty future)
   const latestMonth = monthlyHistory.length > 0
@@ -38,7 +35,6 @@ export function TrendsTab({ summary }: TrendsTabProps) {
     : null;
   
   const [selectedMonth, setSelectedMonth] = useState<string | null>(latestMonth);
-  const [range, setRange] = useState<TrendRangeKey>("1Y");
 
   // Update selected month when data arrives (async) if not explicitly set by user
   useEffect(() => {
@@ -46,34 +42,6 @@ export function TrendsTab({ summary }: TrendsTabProps) {
       setSelectedMonth(latestMonth);
     }
   }, [latestMonth, selectedMonth]);
-
-  const sortedHistory = useMemo(
-    () => [...monthlyHistory].sort((a, b) => a.month.localeCompare(b.month)),
-    [monthlyHistory],
-  );
-  const rangedHistory = useMemo(
-    () => sliceMonthsByTrendRange(sortedHistory, range),
-    [sortedHistory, range],
-  );
-  const priorMonth = useMemo(
-    () => priorMonthBeforeRange(sortedHistory, rangedHistory),
-    [sortedHistory, rangedHistory],
-  );
-  const categoryCards = useMemo(
-    () =>
-      buildCategoryTrendCards({
-        kind: "asset",
-        months: rangedHistory.map((m) => ({ month: m.month, accountDetails: m.accountDetails })),
-        priorMonth: priorMonth
-          ? { month: priorMonth.month, accountDetails: priorMonth.accountDetails }
-          : null,
-        expenseTxns: summary.expenseTxns,
-        incomeTxns: summary.incomeTxns,
-        currency,
-        manualAssets: summary.groups.flatMap((g) => g.manualAssets),
-      }),
-    [rangedHistory, priorMonth, summary.expenseTxns, summary.incomeTxns, summary.groups, currency],
-  );
 
   if (monthlyHistory.length === 0) {
     return (
@@ -85,9 +53,12 @@ export function TrendsTab({ summary }: TrendsTabProps) {
       </div>
     );
   }
+
+  // Sort chronologically (oldest to newest)
+  const sortedHistory = [...monthlyHistory].sort((a, b) => a.month.localeCompare(b.month));
   
   // Prepare chart data
-  const chartData = rangedHistory.map(m => ({
+  const chartData = sortedHistory.map(m => ({
     month: m.month,
     label: m.monthLabel.split(' ')[0], // Short label (e.g., "Jan")
     total: m.total,
@@ -124,7 +95,6 @@ export function TrendsTab({ summary }: TrendsTabProps) {
 
   return (
     <div className="space-y-6">
-      <TrendRangeSelector value={range} onChange={setRange} />
       {/* Canonical Line Chart */}
       <div className="bg-white rounded-lg border border-gray-200 p-6" data-testid="assets-trends-chart">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">
@@ -166,7 +136,7 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                   return (
                     <div className="bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2">
                       <p className="text-xs text-gray-600 mb-1">
-                        {rangedHistory.find(h => h.month === data.month)?.monthLabel}
+                        {sortedHistory.find(h => h.month === data.month)?.monthLabel}
                       </p>
                       <p className="text-sm font-semibold text-gray-900">
                         {formatCurrency(data.total, currency)}
@@ -214,11 +184,9 @@ export function TrendsTab({ summary }: TrendsTabProps) {
         <p className="mt-2 text-xs text-gray-400">Click a point to see details</p>
       </div>
 
-      <CategoryTrendCardGrid cards={categoryCards} currency={currency} />
-
       {/* Month Detail */}
       {selectedData && (
-        <div className="bg-white rounded-lg border border-gray-200 p-6" data-testid="trends-month-detail">
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="text-sm font-semibold text-gray-900">
