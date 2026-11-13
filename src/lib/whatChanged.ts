@@ -444,6 +444,10 @@ export function buildWhatChanged(opts: {
     opts.kind === "debt" ? debtDrivers(cards, flows) : assetDrivers(cards, flows);
   const sorted = sortDrivers(opts.kind, split.drivers);
   const maxAbs = Math.max(0, ...sorted.map((d) => Math.abs(d.amount)));
+  const summary =
+    "paid" in split
+      ? debtSummary(change, split.paid, split.charges, split.interest, opts.range, opts.currency)
+      : assetSummary(change, split.putIn, split.manuals, opts.range, opts.currency);
 
   const startMonth = months[0].month;
   const endMonth = months[months.length - 1].month;
@@ -475,11 +479,6 @@ export function buildWhatChanged(opts: {
     tone: "neutral",
     barPct: null,
   };
-
-  const summary =
-    opts.kind === "debt"
-      ? debtSummary(change, split.paid, split.charges, split.interest, opts.range, opts.currency)
-      : assetSummary(change, split.putIn, split.manuals, opts.range, opts.currency);
 
   return {
     kind: opts.kind,
