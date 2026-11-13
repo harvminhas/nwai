@@ -509,3 +509,62 @@ describe("trend range", () => {
     expect(ytd.every((m) => m.month.startsWith("2026-"))).toBe(true);
   });
 });
+
+describe("expanded account list", () => {
+  it("sorts by size of change and sets account-detail hrefs", () => {
+    const cards = buildCategoryTrendCards({
+      kind: "asset",
+      months: rangeSepOct,
+      priorMonth: priorAugust,
+      expenseTxns: [],
+      incomeTxns: [],
+      currency: "CAD",
+    });
+    const cash = cards.find((c) => c.key === "cash")!;
+    expect(cash.accounts.map((a) => a.slug)).toEqual(["eq", "chk"]);
+    expect(Math.abs(cash.accounts[0].change)).toBeGreaterThanOrEqual(Math.abs(cash.accounts[1].change));
+    const chk = cash.accounts.find((a) => a.slug === "chk")!;
+    const eq = cash.accounts.find((a) => a.slug === "eq")!;
+    expect(chk.label).toBe("Chequing");
+    expect(chk.end).toBe(11000);
+    expect(chk.change).toBe(3000);
+    expect(chk.href).toBe("/account/accounts/chk");
+    expect(eq.href).toBe("/account/accounts/eq");
+    expect(eq.end).toBe(4100);
+
+    const other = cards.find((c) => c.key === "other")!;
+    expect(other.accounts[0].href).toBe("/account/assets/civic");
+  });
+
+  it("uses debt colour semantics and leaves manual liabilities without a href", () => {
+    const cards = buildCategoryTrendCards({
+      kind: "debt",
+      months: [
+        {
+          month: "2026-12",
+          accountDetails: [
+            { slug: "visa", label: "Visa", type: "credit", value: -1500 },
+            { slug: "manual-osap", label: "OSAP", type: "manual-student_loan", value: -8000 },
+          ],
+        },
+      ],
+      priorMonth: {
+        month: "2026-11",
+        accountDetails: [
+          { slug: "visa", label: "Visa", type: "credit", value: -2000 },
+          { slug: "manual-osap", label: "OSAP", type: "manual-student_loan", value: -8200 },
+        ],
+      },
+      expenseTxns: [],
+      incomeTxns: [],
+      currency: "CAD",
+    });
+    const credit = cards.find((c) => c.key === "credit_card")!;
+    expect(credit.accounts[0].href).toBe("/account/accounts/visa");
+    expect(credit.accounts[0].change).toBe(-500);
+    expect(describeDebtChangePill(credit.accounts[0].change, "CAD").tone).toBe("down");
+    const loans = cards.find((c) => c.key === "other")!;
+    expect(loans.accounts[0].href).toBeNull();
+    expect(loans.accounts[0].change).toBe(-200);
+  });
+});

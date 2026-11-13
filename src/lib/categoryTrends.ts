@@ -26,6 +26,7 @@ export interface TrendAccountRow {
   end: number;
   change: number;
   openedInRange: boolean;
+  href: string | null;
 }
 
 export interface CategoryTrendCard {
@@ -382,14 +383,16 @@ export function buildCategoryTrendCards(opts: {
     const start = startRow?.value ?? 0;
     const end = last?.value ?? 0;
     const category = last?.category ?? seen.category;
+    const type = last?.type ?? seen.type;
     const row: TrendAccountRow = {
       slug,
       label: last?.label || seen.label,
-      type: last?.type ?? seen.type,
+      type,
       start,
       end,
       change: end - start,
       openedInRange: !startRow,
+      href: accountDetailHref({ slug, type, side: kind }),
     };
     const list = grouped.get(category) ?? [];
     list.push(row);

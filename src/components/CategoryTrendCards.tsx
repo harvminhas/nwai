@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { IntactAmount } from "@/components/IntactAmount";
 import { formatCurrency } from "@/lib/currencyUtils";
@@ -7,7 +8,10 @@ import {
   describeAssetChangePill,
   describeDebtChangePill,
   type CategoryTrendCard,
+  type CategoryTrendKind,
+  type TrendAccountRow,
 } from "@/lib/categoryTrends";
+import { sparklineYDomain } from "@/lib/sparklineScale";
 import { TREND_RANGES, type TrendRangeKey } from "@/lib/trendRange";
 
 const DOT: Record<string, string> = {
@@ -34,9 +38,8 @@ const STROKE: Record<string, string> = {
 
 function Sparkline({ data, color }: { data: number[]; color: string }) {
   if (data.length < 2) return null;
-  const max = Math.max(...data, 1);
-  const min = Math.min(...data, 0);
-  const span = Math.max(max - min, 1);
+  const { min, max } = sparklineYDomain(data);
+  const span = Math.max(max - min, 1e-9);
   const W = 88;
   const H = 28;
   const pts = data
@@ -95,6 +98,47 @@ function pillClass(tone: "up" | "down" | "flat", kind: "asset" | "debt"): string
   return tone === "up" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700";
 }
 
+function accountChangePill(account: TrendAccountRow, kind: CategoryTrendKind, currency: string) {
+  if (kind === "debt") return describeDebtChangePill(account.change, currency);
+  const changePercent =
+    Math.abs(account.start) < 0.005 ? null : account.change / Math.abs(account.start);
+  return describeAssetChangePill(account.change, changePercent, currency);
+}
+
+function ExpandedAccountRow({
+  account,
+  kind,
+  currency,
+}: {
+  account: TrendAccountRow;
+  kind: CategoryTrendKind;
+  currency: string;
+}) {
+  const pill = accountChangePill(account, kind, currency);
+  const body = (
+    <>
+      <span className="min-w-0 break-words text-sm text-gray-800">{account.label}</span>
+      <div className="shrink-0 text-right">
+        <IntactAmount className="block text-sm font-semibold text-gray-900">
+          {formatCurrency(account.end, currency)}
+        </IntactAmount>
+        <span className={`mt-0.5 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${pillClass(pill.tone, kind)}`}>
+          {pill.text}
+        </span>
+      </div>
+    </>
+  );
+  const rowClass = "flex items-start justify-between gap-3 py-2 first:pt-0 last:pb-0";
+  if (!account.href) {
+    return <div className={rowClass}>{body}</div>;
+  }
+  return (
+    <Link href={account.href} className={`${rowClass} rounded-md hover:bg-gray-50`}>
+      {body}
+    </Link>
+  );
+}
+
 function CategoryCard({
   card,
   currency,
@@ -102,6 +146,7 @@ function CategoryCard({
   card: CategoryTrendCard;
   currency: string;
 }) {
+  const [open, setOpen] = useState(false);
   const pill =
     card.kind === "debt"
       ? describeDebtChangePill(card.change, currency)
@@ -136,12 +181,25 @@ function CategoryCard({
       {card.newAccountNote && (
         <p className="text-xs text-gray-400 break-words">{card.newAccountNote}</p>
       )}
-      <Link
-        href={card.href}
-        className="inline-block pt-1 text-xs font-medium text-purple-700 hover:text-purple-900"
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="pt-1 text-xs font-medium text-purple-700 hover:text-purple-900"
       >
-        {viewLabel}
-      </Link>
+        {open ? "Hide accounts" : viewLabel}
+      </button>
+      {open && (
+        <div className="border-t border-gray-100 pt-2">
+          {card.accounts.map((account) => (
+            <ExpandedAccountRow
+              key={account.slug}
+              account={account}
+              kind={card.kind}
+              currency={currency}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -24,8 +24,12 @@ describe("CategoryTrendCards layout", () => {
     expect(up.tone).toBe("up");
   });
 
-  it("links to a single account or N accounts", () => {
+  it("expands accounts in place instead of navigating away", () => {
     expect(src).toContain("View account →");
     expect(src).toContain("View ${card.accountCount} accounts →");
+    expect(src).toContain("Hide accounts");
+    expect(src).toContain("sparklineYDomain");
+    expect(src).toContain("account.href");
+    expect(src).not.toContain("href={card.href}");
   });
 });
