@@ -13,7 +13,9 @@ import {
   DRAWER_HEADER_CLASS,
   MOBILE_NET_WORTH_LINK_CLASS,
   MOBILE_NET_WORTH_SKELETON_CLASS,
+  NET_WORTH_NAV_ITEMS,
   drawerLinkClass,
+  dropdownLinkClass,
 } from "../mvpNavLayout";
 
 const pathname = vi.fn(() => "/account/income");
@@ -121,5 +123,62 @@ describe("MvpTopNav phone header and drawer", () => {
     expect(drawer.querySelector('a[href="/account/tools/planner"]')).toBeTruthy();
     expect(drawer.querySelector('a[href="/account/tools/trackers"]')).toBeTruthy();
     expect(drawer.querySelector('a[href="/account/tools/debt-payoff"]')).toBeTruthy();
+  });
+
+  it("puts Net Worth first in the net-worth group and highlights only /account/net-worth", () => {
+    pathname.mockReturnValue("/account/net-worth");
+    const { container } = render(<MvpTopNav netWorthData={netWorthData} />);
+    fireEvent.click(screen.getByLabelText("Menu"));
+
+    const drawer = container.querySelector("aside") as HTMLElement;
+    const section = Array.from(drawer.querySelectorAll("h6")).find(
+      (el) => el.textContent === "Net worth",
+    );
+    expect(section).toBeTruthy();
+
+    const groupLinks: HTMLAnchorElement[] = [];
+    for (let el = section!.nextElementSibling; el && el.tagName !== "H6"; el = el.nextElementSibling) {
+      if (el.tagName === "A") groupLinks.push(el as HTMLAnchorElement);
+    }
+
+    expect(groupLinks.map((link) => link.getAttribute("href"))).toEqual(
+      NET_WORTH_NAV_ITEMS.map((item) => item.href),
+    );
+    expect(groupLinks[0].textContent).toBe("Net Worth");
+    expect(groupLinks[0].className).toBe(drawerLinkClass(true));
+    expect(groupLinks[1].className).toBe(drawerLinkClass(false));
+    expect(groupLinks[2].className).toBe(drawerLinkClass(false));
+
+    const desktopNetWorth = Array.from(container.querySelectorAll('a[href="/account/net-worth"]')).find(
+      (el) => el.textContent === "Net Worth",
+    );
+    expect(desktopNetWorth?.className).toBe(dropdownLinkClass(true));
+    const desktopAssets = Array.from(container.querySelectorAll('a[href="/account/assets"]')).find(
+      (el) => !drawer.contains(el),
+    );
+    expect(desktopAssets?.className).toBe(dropdownLinkClass(false));
+  });
+
+  it("does not highlight the Net Worth item on Assets or Debts pages", () => {
+    pathname.mockReturnValue("/account/assets");
+    const { container, unmount } = render(<MvpTopNav netWorthData={netWorthData} />);
+    fireEvent.click(screen.getByLabelText("Menu"));
+    const drawer = container.querySelector("aside") as HTMLElement;
+    const netWorth = drawer.querySelector('a[href="/account/net-worth"]') as HTMLElement;
+    const assets = drawer.querySelector('a[href="/account/assets"]') as HTMLElement;
+    expect(netWorth.className).toBe(drawerLinkClass(false));
+    expect(assets.className).toBe(drawerLinkClass(true));
+    unmount();
+
+    pathname.mockReturnValue("/account/liabilities");
+    const second = render(<MvpTopNav netWorthData={netWorthData} />);
+    fireEvent.click(screen.getByLabelText("Menu"));
+    const drawer2 = second.container.querySelector("aside") as HTMLElement;
+    expect(drawer2.querySelector('a[href="/account/net-worth"]')?.className).toBe(
+      drawerLinkClass(false),
+    );
+    expect(drawer2.querySelector('a[href="/account/liabilities"]')?.className).toBe(
+      drawerLinkClass(true),
+    );
   });
 });

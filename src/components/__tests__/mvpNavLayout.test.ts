@@ -9,7 +9,10 @@ import {
   MOBILE_NET_WORTH_LINK_CLASS,
   MOBILE_NET_WORTH_SKELETON_CLASS,
   MOBILE_NET_WORTH_VALUE_CLASS,
+  NET_WORTH_NAV_ITEMS,
   drawerLinkClass,
+  dropdownLinkClass,
+  isMvpNavActive,
 } from "../mvpNavLayout";
 
 describe("mobile header and drawer layout", () => {
@@ -39,5 +42,23 @@ describe("mobile header and drawer layout", () => {
     expect(drawerLinkClass(true)).toContain("bg-violet-50");
     expect(drawerLinkClass(true)).toContain("text-violet-700");
     expect(drawerLinkClass(false)).not.toContain("bg-violet-50");
+  });
+
+  it("lists Net Worth first in the net-worth group and highlights only that route", () => {
+    expect(NET_WORTH_NAV_ITEMS.map(({ href, label }) => ({ href, label }))).toEqual([
+      { href: "/account/net-worth", label: "Net Worth" },
+      { href: "/account/assets", label: "Assets" },
+      { href: "/account/liabilities", label: "Debts" },
+    ]);
+
+    expect(isMvpNavActive("/account/net-worth", "/account/net-worth")).toBe(true);
+    expect(isMvpNavActive("/account/assets", "/account/net-worth")).toBe(false);
+    expect(isMvpNavActive("/account/liabilities", "/account/net-worth")).toBe(false);
+    expect(isMvpNavActive("/account/assets", "/account/assets")).toBe(true);
+    expect(isMvpNavActive("/account/net-worth", "/account/assets")).toBe(false);
+
+    expect(dropdownLinkClass(true)).toContain("bg-violet-50 font-semibold text-violet-700");
+    expect(dropdownLinkClass(false)).not.toContain("font-semibold");
+    expect(dropdownLinkClass(false)).toContain("hover:bg-violet-50");
   });
 });

@@ -21,7 +21,10 @@ import {
   MOBILE_NET_WORTH_LINK_CLASS,
   MOBILE_NET_WORTH_SKELETON_CLASS,
   MOBILE_NET_WORTH_VALUE_CLASS,
+  NET_WORTH_NAV_ITEMS,
   drawerLinkClass,
+  dropdownLinkClass,
+  isMvpNavActive,
 } from "@/components/mvpNavLayout";
 
 interface NetWorthData {
@@ -85,7 +88,8 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
     router.push("/login");
   };
 
-  const isActive = (path: string) => pathname === path || pathname?.startsWith(path + "/");
+  const isActive = (path: string) => isMvpNavActive(pathname, path);
+  const netWorthGroupActive = NET_WORTH_NAV_ITEMS.some(({ href }) => isActive(href));
 
   const { netWorth = 0, monthlyChange = 0, currency = "CAD" } = netWorthData || {};
   const isLoading = netWorthData === undefined;
@@ -156,7 +160,7 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
               <div className="group relative">
                 <button
                   className={`flex items-center gap-1 rounded-full px-3.5 py-2 text-sm font-medium transition-colors ${
-                    isActive("/account/assets") || isActive("/account/liabilities")
+                    netWorthGroupActive
                       ? "bg-violet-50 text-violet-700"
                       : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
                   }`}
@@ -167,18 +171,15 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
                   </svg>
                 </button>
                 <div className="invisible absolute left-0 top-full mt-1.5 w-40 rounded-2xl border border-gray-200 bg-white p-2 opacity-0 shadow-xl shadow-gray-900/10 transition-all group-hover:visible group-hover:opacity-100">
-                  <Link
-                    href="/account/assets"
-                    className="block rounded-xl px-3 py-2 text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-700"
-                  >
-                    Assets
-                  </Link>
-                  <Link
-                    href="/account/liabilities"
-                    className="block rounded-xl px-3 py-2 text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-700"
-                  >
-                    Debts
-                  </Link>
+                  {NET_WORTH_NAV_ITEMS.map(({ href, label }) => (
+                    <Link
+                      key={href}
+                      href={href}
+                      className={dropdownLinkClass(isActive(href))}
+                    >
+                      {label}
+                    </Link>
+                  ))}
                 </div>
               </div>
 
@@ -432,20 +433,16 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
             <h6 className={DRAWER_SECTION_LABEL_CLASS}>
               Net worth
             </h6>
-            <Link
-              href="/account/assets"
-              onClick={() => setDrawerOpen(false)}
-              className={drawerLinkClass(isActive("/account/assets"))}
-            >
-              Assets
-            </Link>
-            <Link
-              href="/account/liabilities"
-              onClick={() => setDrawerOpen(false)}
-              className={drawerLinkClass(isActive("/account/liabilities"))}
-            >
-              Debts
-            </Link>
+            {NET_WORTH_NAV_ITEMS.map(({ href, label }) => (
+              <Link
+                key={href}
+                href={href}
+                onClick={() => setDrawerOpen(false)}
+                className={drawerLinkClass(isActive(href))}
+              >
+                {label}
+              </Link>
+            ))}
 
             <h6 className={DRAWER_SECTION_LABEL_CLASS}>
               Account

@@ -1,5 +1,26 @@
 /** Phone-only top-bar and drawer layout. Desktop (lg+) nav is unchanged. */
 
+export const NET_WORTH_NAV_ITEMS = [
+  { href: "/account/net-worth", label: "Net Worth" },
+  { href: "/account/assets", label: "Assets" },
+  { href: "/account/liabilities", label: "Debts" },
+] as const;
+
+export function isMvpNavActive(
+  pathname: string | null | undefined,
+  path: string,
+): boolean {
+  return pathname === path || Boolean(pathname?.startsWith(path + "/"));
+}
+
+export function dropdownLinkClass(active: boolean): string {
+  return `block rounded-xl px-3 py-2 text-sm ${
+    active
+      ? "bg-violet-50 font-semibold text-violet-700"
+      : "text-gray-700 hover:bg-violet-50 hover:text-violet-700"
+  }`;
+}
+
 export const DESKTOP_NET_WORTH_PILL_CLASS =
   "relative hidden items-center gap-2.5 whitespace-nowrap rounded-full border border-gray-200 bg-white px-3.5 py-1.5 text-[13px] transition-colors hover:border-gray-300 lg:flex";
 
