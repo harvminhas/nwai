@@ -13,6 +13,7 @@ import type { DebtPlan } from "@/lib/debtPlanTypes";
 import PlanModal from "./PlanModal";
 import { useConfirm } from "@/components/useConfirm";
 import { useToast } from "@/components/useToast";
+import { resolveAccountDisplayName } from "@/lib/accountListLabel";
 
 export default function DebtPayoffPage() {
   const router = useRouter();
@@ -54,7 +55,11 @@ export default function DebtPayoffPage() {
         const debtInputs: DebtInput[] = summary.groups.flatMap(g =>
           g.accounts.map(acc => ({
             id: acc.slug,
-            name: acc.accountName || acc.bankName,
+            name: resolveAccountDisplayName({
+              accountName: acc.accountName,
+              bankName: acc.bankName,
+              fallback: acc.slug,
+            }).primary,
             balance: acc.balance,
             interestRate: acc.interestRate,
             monthlyPayment: acc.monthlyPayment, // Detected regular payment from Debts page

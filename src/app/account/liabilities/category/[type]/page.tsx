@@ -10,6 +10,7 @@ import { formatCurrency } from "@/lib/currencyUtils";
 import { formatAccountLast4 } from "@/lib/rangeUtils";
 import type { DebtAccount } from "@/lib/debtsSummary";
 import AccountSwitcher from "@/components/AccountSwitcher";
+import { findAccountHistoryLabel, resolveAccountDisplayName } from "@/lib/accountListLabel";
 
 function formatMonth(ym: string | null): string {
   if (!ym) return "";
@@ -121,6 +122,7 @@ export default function LiabilityCategoryPage() {
               key={acc.slug}
               account={acc}
               currency={currency}
+              historyLabel={findAccountHistoryLabel(summary?.accountBalanceHistory, acc.slug)}
               payoffDate={payoff?.payoffDate ?? null}
               isUpdating={statusUpdating === acc.slug}
               onStatusChange={(status) => handleStatusChange(acc.slug, status)}
@@ -158,17 +160,25 @@ export default function LiabilityCategoryPage() {
 function AccountRow({
   account,
   currency,
+  historyLabel,
   payoffDate,
   isUpdating,
   onStatusChange,
 }: {
   account: DebtAccount;
   currency: string;
+  historyLabel?: string | null;
   payoffDate: string | null;
   isUpdating: boolean;
   onStatusChange: (status: "open" | "paid_off" | "closed") => void;
 }) {
   const [showMenu, setShowMenu] = useState(false);
+  const display = resolveAccountDisplayName({
+    accountName: account.accountName,
+    bankName: account.bankName,
+    historyLabel,
+    fallback: account.slug,
+  });
 
   return (
     <div className="relative flex items-center border-b border-gray-100 last:border-0 hover:bg-gray-50">
@@ -178,11 +188,11 @@ function AccountRow({
       >
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium text-gray-900">{account.bankName}</span>
+            <span className="truncate text-sm font-medium text-gray-900">{display.primary}</span>
             <span className="shrink-0 text-xs text-gray-400">{formatAccountLast4(account.slug)}</span>
           </div>
           <div className="mt-0.5 flex flex-wrap gap-3 text-xs text-gray-500">
-            {account.accountName && <span className="truncate">{account.accountName}</span>}
+            {display.secondary && <span className="truncate">{display.secondary}</span>}
             {account.interestRate !== null && <span>{account.interestRate.toFixed(2)}% APR</span>}
             {payoffDate && <span className="text-green-600">Payoff {formatMonth(payoffDate)}</span>}
           </div>

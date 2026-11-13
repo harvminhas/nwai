@@ -18,6 +18,7 @@ import { txFingerprint } from "./txFingerprint";
 import { isBalanceMarker } from "./balanceMarkers";
 import { isIncomeCategory } from "./applyRules";
 import { normalizeDebtExpenseCategory } from "./debtServicing";
+import { statementAccountDisplayName } from "./accountListLabel";
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -32,7 +33,7 @@ export interface ExpenseTxnRecord {
   installmentPrincipalAmount?: number;
   category: string;
   accountSlug: string;
-  accountLabel: string; // e.g. "TD ••••7780" — for display in transaction lists
+  accountLabel: string; // display name from resolveAccountDisplayName
   /** ISO 4217 currency of the source account (e.g. "CAD", "USD"). */
   currency?: string;
   recurring?: string;
@@ -49,7 +50,7 @@ export interface IncomeTxnRecord {
   currency?: string;
   /** Income type: "Salary" | "Government" | "Transfer In" | "Other" */
   category?: string;
-  /** Human-readable account label e.g. "TD ••••7780". */
+  /** Display name from resolveAccountDisplayName. */
   accountLabel?: string;
 }
 
@@ -264,9 +265,7 @@ export async function extractAllTransactions(
       const stmtYm = docYearMonth(d);
       const parsed = d.parsedData as ParsedStatementData;
       const slug = canonicalAccountSlug(d, parsed, slugByLabelKey);
-      const bank  = (parsed.bankName ?? "").trim();
-      const label = parsed.accountName
-        ?? (slug === "unknown" ? bank || "Unknown Account" : [bank, `••••${slug}`].filter(Boolean).join(" "));
+      const label = statementAccountDisplayName(parsed, slug);
 
       // Statement-level currency is the single source of truth for all transactions.
       // Every transaction from this statement is in the account's native currency,
@@ -299,6 +298,7 @@ export async function extractAllTransactions(
               source: txn.merchant ?? "Unknown",
               description: txn.merchant ?? "Unknown",
               accountSlug: slug,
+              accountLabel: label,
               currency: statementCurrency,
             });
             continue;
@@ -368,6 +368,7 @@ export async function extractAllTransactions(
           source: txn.source ?? "Income",
           description: txn.source ?? txn.category ?? "Income",
           accountSlug: slug,
+          accountLabel: statementAccountDisplayName(parsed, slug),
           currency: statementCurrency,
           category: txn.category,
         });

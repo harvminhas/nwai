@@ -20,6 +20,7 @@ import {
   CANONICAL_YAXIS_CONFIG,
   CANONICAL_LINE_CONFIG,
 } from "@/lib/canonicalChartConfig";
+import { resolveAccountDisplayName } from "@/lib/accountListLabel";
 
 interface BalanceLineChartProps {
   history: Array<{
@@ -260,7 +261,10 @@ export function AccountDrawer({ isOpen, onClose, data }: AccountDrawerProps) {
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1 min-w-0">
               <h2 className="text-lg font-semibold text-gray-900 truncate">
-                {data.bankName} {data.accountName}
+                {resolveAccountDisplayName({
+                  accountName: data.accountName,
+                  bankName: data.bankName,
+                }).primary}
               </h2>
               <p className="text-sm text-gray-600 mt-0.5">{data.accountType}</p>
             </div>

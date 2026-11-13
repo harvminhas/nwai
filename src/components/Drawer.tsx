@@ -8,6 +8,7 @@ import { getSignColor, getSignBgColor } from "@/lib/colorHelpers";
 import { ReviewList } from "./ReviewList";
 import type { TimeRange } from "@/lib/rangeUtils";
 import { formatMonthName, formatAccountLast4, formatMonthList } from "@/lib/rangeUtils";
+import { resolveAccountDisplayName } from "@/lib/accountListLabel";
 
 export type DrawerType = "income" | "fixed" | "essentials" | "flexible" | "savings";
 
@@ -967,7 +968,7 @@ function SavingsDrawerContent({
                                 <div key={acc.slug} className="bg-white rounded p-2 text-xs border border-gray-200">
                                   <div className="flex items-start justify-between mb-1">
                                     <div>
-                                      <span className="font-medium text-gray-900">{acc.accountLabel.split(' (')[0]}</span>
+                                      <span className="font-medium text-gray-900">{resolveAccountDisplayName({ historyLabel: acc.accountLabel.split(' (')[0] }).primary}</span>
                                       <span className="text-gray-500 ml-1">(...{acc.accountLast4})</span>
                                       {badgeText && (
                                         <span 
@@ -1093,7 +1094,7 @@ function SavingsDrawerContent({
                                 <div key={acc.slug} className="bg-white rounded p-2 text-xs border border-gray-200">
                                   <div className="flex items-start justify-between mb-1">
                                     <div>
-                                      <span className="font-medium text-gray-900">{acc.accountLabel.split(' (')[0]}</span>
+                                      <span className="font-medium text-gray-900">{resolveAccountDisplayName({ historyLabel: acc.accountLabel.split(' (')[0] }).primary}</span>
                                       <span className="text-gray-500 ml-1">(...{acc.accountLast4})</span>
                                       {badgeText && (
                                         <span 

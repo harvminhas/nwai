@@ -8,6 +8,7 @@ import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
 import { inferCurrencyFromBankName } from "@/lib/currencyUtils";
 import { buildMerchantAliasResolver } from "@/lib/merchantAliases";
 import type { ParsedStatementData, ExpenseTransaction } from "@/lib/types";
+import { statementAccountDisplayName } from "@/lib/accountListLabel";
 
 export interface MerchantSummary {
   slug: string;
@@ -33,11 +34,7 @@ export interface MerchantSummary {
 }
 
 function accountDisplayLabel(parsed: ParsedStatementData): string {
-  if (parsed.accountName) return parsed.accountName;
-  const slug = getAccountSlug(parsed);
-  const bank = (parsed.bankName ?? "").trim();
-  if (slug === "unknown") return bank || "Unknown Account";
-  return [bank, `••••${slug}`].filter(Boolean).join(" ");
+  return statementAccountDisplayName(parsed, getAccountSlug(parsed));
 }
 
 function docYearMonth(d: FirebaseFirestore.DocumentData): string {

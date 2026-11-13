@@ -15,6 +15,7 @@ import type { CsvParseResult, ParsedRow } from "./csvParser";
 export interface CsvAccountMeta {
   slug: string;
   bankName: string;
+  accountName?: string;
   accountId: string;
   accountType: string;
   lastMonth: string;
@@ -89,6 +90,7 @@ export function buildCsvCoverage(docs: FirebaseFirestore.QueryDocumentSnapshot[]
       knownAccounts.push({
         slug,
         bankName: p.bankName ?? "Unknown",
+        accountName: p.accountName,
         accountId: p.accountId ?? "",
         accountType: p.accountType ?? "checking",
         lastMonth: ym,

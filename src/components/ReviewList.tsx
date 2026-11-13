@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { ReviewItem, ReviewClassification } from "@/lib/reviewTypes";
+import { resolveAccountDisplayName } from "@/lib/accountListLabel";
 
 interface ReviewListProps {
   token: string | null;
@@ -628,7 +629,10 @@ function StaleAccountReviewCard({
     >
       <div className="mb-3">
         <div className="font-semibold text-gray-900" style={{ fontFamily: "Inter, sans-serif" }}>
-          {item.bankName} {item.accountName}
+          {resolveAccountDisplayName({
+            accountName: item.accountName,
+            bankName: item.bankName,
+          }).primary}
         </div>
         <div className="flex items-center gap-2 mt-1 text-sm text-gray-600">
           <span>{item.accountType}</span>

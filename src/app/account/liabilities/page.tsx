@@ -10,6 +10,7 @@ import { OverviewTab } from "./components/OverviewTab";
 import { TrendsTab } from "./components/TrendsTab";
 import { CategoriesTab } from "./components/CategoriesTab";
 import AccountSwitcher from "@/components/AccountSwitcher";
+import { statementAccountDisplayName } from "@/lib/accountListLabel";
 import {
   ACCOUNT_SECTION_TABS,
   resolveAccountSectionTab,
@@ -70,8 +71,10 @@ function LiabilitiesPageContent() {
         
         for (const stmt of (statementsData.statements || [])) {
           if (stmt.payoffAutoMarked && stmt.parsedData) {
-            const accountLabel = stmt.parsedData.accountName || 
-              `${stmt.parsedData.bankName} ${stmt.parsedData.accountType}`;
+            const accountLabel = statementAccountDisplayName(
+              stmt.parsedData,
+              stmt.accountSlug,
+            ) || `${stmt.parsedData.bankName} ${stmt.parsedData.accountType}`;
             autoMarked.push({
               accountSlug: stmt.accountSlug,
               accountLabel,

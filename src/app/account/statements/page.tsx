@@ -10,6 +10,7 @@ import ParseStatusBanner, { addPendingParse } from "@/components/ParseStatusBann
 import type { UserStatementSummary } from "@/lib/types";
 import { computeStatementCoverage } from "@/lib/statementCoverage";
 import type { StatementCoverageGrid } from "@/lib/statementCoverage";
+import { resolveAccountDisplayName, statementAccountDisplayName } from "@/lib/accountListLabel";
 
 // ── bank lists ────────────────────────────────────────────────────────────────
 
@@ -499,7 +500,13 @@ export default function StatementsPage() {
                           {group.accounts.map((acc) => (
                             <div key={acc.accountSlug} className="grid grid-cols-[minmax(220px,1fr)_repeat(13,46px)_96px] gap-1 items-center px-2 py-1">
                               <div className="min-w-0 px-3">
-                                <p className="truncate text-sm font-semibold text-gray-800">{acc.accountName || "Unnamed Account"}</p>
+                                <p className="truncate text-sm font-semibold text-gray-800">
+                                  {resolveAccountDisplayName({
+                                    accountName: acc.accountName,
+                                    bankName: group.bankName,
+                                    fallback: acc.accountSlug,
+                                  }).primary || "Unnamed Account"}
+                                </p>
                                 <p className="text-xs text-gray-500">
                                   {acc.accountType.charAt(0).toUpperCase() + acc.accountType.slice(1)} · ••{acc.accountId.slice(-4)}
                                 </p>
@@ -572,7 +579,13 @@ export default function StatementsPage() {
                         <div key={acc.accountSlug} className="px-4 py-3">
                           <div className="flex items-start justify-between gap-2 mb-2">
                             <div className="min-w-0 flex-1">
-                              <p className="text-sm font-semibold text-gray-800">{acc.accountName || "Unnamed Account"}</p>
+                              <p className="text-sm font-semibold text-gray-800">
+                                {resolveAccountDisplayName({
+                                  accountName: acc.accountName,
+                                  bankName: group.bankName,
+                                  fallback: acc.accountSlug,
+                                }).primary || "Unnamed Account"}
+                              </p>
                               <p className="text-xs text-gray-500">{group.bankName} · {acc.accountType.charAt(0).toUpperCase() + acc.accountType.slice(1)} · ••{acc.accountId.slice(-4)}</p>
                             </div>
                             {acc.missingCount > 0 ? (
@@ -649,7 +662,10 @@ export default function StatementsPage() {
                   const isDeleting = deletingId === s.id;
                   const isConfirm = confirmId === s.id;
                   const isReparsing = reparsingId === s.id;
-                  const acctLabel = [s.bankName, s.accountName].filter(Boolean).join(" ");
+                  const acctLabel = statementAccountDisplayName(
+                    { accountName: s.accountName, bankName: s.bankName },
+                    s.accountId,
+                  );
 
                   return (
                     <div

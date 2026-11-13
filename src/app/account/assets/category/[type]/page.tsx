@@ -10,6 +10,7 @@ import type { ManualAsset } from "@/lib/types";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { formatAccountLast4 } from "@/lib/rangeUtils";
 import AccountSwitcher from "@/components/AccountSwitcher";
+import { findAccountHistoryLabel, resolveAccountDisplayName } from "@/lib/accountListLabel";
 
 interface AccountRow {
   slug: string;
@@ -89,7 +90,14 @@ export default function AssetCategoryPage() {
       </div>
 
       <div className="mt-5 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-        {accounts.map((acc) => (
+        {accounts.map((acc) => {
+          const display = resolveAccountDisplayName({
+            accountName: acc.accountName,
+            bankName: acc.bankName,
+            historyLabel: findAccountHistoryLabel(summary?.accountBalanceHistory, acc.slug),
+            fallback: acc.slug,
+          });
+          return (
           <Link
             key={acc.slug}
             href={`/account/accounts/${acc.slug}`}
@@ -97,14 +105,14 @@ export default function AssetCategoryPage() {
           >
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <span className="truncate text-sm font-medium text-gray-900">{acc.bankName}</span>
+                <span className="truncate text-sm font-medium text-gray-900">{display.primary}</span>
                 <span className="shrink-0 text-xs text-gray-400">{formatAccountLast4(acc.slug)}</span>
                 {acc.isStale && (
                   <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">Stale</span>
                 )}
               </div>
               <p className="mt-0.5 truncate text-xs text-gray-500">
-                {acc.accountName ? `${acc.accountName} · ` : ""}Last statement {acc.statementMonth}
+                {display.secondary ? `${display.secondary} · ` : ""}Last statement {acc.statementMonth}
               </p>
             </div>
             <div className="shrink-0 text-right">
@@ -112,7 +120,8 @@ export default function AssetCategoryPage() {
               <p className="text-[11px] capitalize text-gray-400">{acc.accountType.replace("_", " ")}</p>
             </div>
           </Link>
-        ))}
+          );
+        })}
 
         {manualAssets.map((asset) => (
           <Link

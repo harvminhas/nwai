@@ -5,6 +5,7 @@
  */
 
 import { formatMonthYear } from './dateFormatting';
+import { resolveAccountDisplayName } from './accountListLabel';
 
 export type TimeRange = "3mo" | "12mo" | "ytd" | `month:${string}`;
 
@@ -221,8 +222,11 @@ export function formatAccountName(acc: { name?: string; slug: string; type: stri
   const last4 = parts[parts.length - 1].slice(-4);
   
   if (acc.name) {
-    // Use full account name if available (e.g., "The Bank of Nova Scotia TFSA")
-    return `${acc.name} •••${last4}`;
+    const primary = resolveAccountDisplayName({
+      accountName: acc.name,
+      fallback: acc.slug,
+    }).primary;
+    return `${primary} •••${last4}`;
   }
   
   // Fall back to bank name from slug + type + last 4

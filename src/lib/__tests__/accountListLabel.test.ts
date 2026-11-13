@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { accountDisplayLabel, findAccountHistoryLabel, joinAccountMeta, resolveAccountDisplayName } from "../accountListLabel";
+import {
+  accountDisplayLabel,
+  accountMatchesQuery,
+  displayNameFromProfileAccount,
+  findAccountHistoryLabel,
+  joinAccountMeta,
+  resolveAccountDisplayName,
+  statementAccountDisplayName,
+  switcherAccountPresentation,
+} from "../accountListLabel";
 
 describe("accountDisplayLabel", () => {
   it("drops a repeated institution + account name", () => {
@@ -123,6 +132,163 @@ describe("resolveAccountDisplayName", () => {
       primary: "Honda Finance",
       full: "Honda Finance",
     });
+  });
+
+  it("applies the same generic priority across several account shapes", () => {
+    const shapes: Array<{
+      input: Parameters<typeof resolveAccountDisplayName>[0];
+      primary: string;
+      secondary?: string;
+      fullMustNotPrefixProduct?: boolean;
+    }> = [
+      {
+        input: {
+          nickname: "Rainy Day",
+          accountName: "High Interest Savings",
+          bankName: "Example Credit Union",
+          fallback: "1001",
+        },
+        primary: "Rainy Day",
+        secondary: "Example Credit Union",
+      },
+      {
+        input: {
+          accountName: "Chequing",
+          bankName: "Example Bank",
+          fallback: "2002",
+        },
+        primary: "Chequing",
+        secondary: "Example Bank",
+      },
+      {
+        input: {
+          accountName: "Example Bank",
+          bankName: "Example Bank",
+          historyLabel: "Everyday Chequing",
+          fallback: "3003",
+        },
+        primary: "Everyday Chequing",
+        secondary: "Example Bank",
+      },
+      {
+        input: {
+          bankName: "Example Bank",
+          historyLabel: "Everyday Chequing",
+          fallback: "3003",
+        },
+        primary: "Everyday Chequing",
+        secondary: "Example Bank",
+      },
+      {
+        input: { bankName: "Example Bank", fallback: "4004" },
+        primary: "Example Bank",
+      },
+      {
+        input: { fallback: "5005" },
+        primary: "5005",
+      },
+      {
+        input: {
+          accountName: "Real Estate Co",
+          bankName: "Unknown Bank",
+          fallback: "6006",
+        },
+        primary: "Real Estate Co",
+        fullMustNotPrefixProduct: true,
+      },
+      {
+        input: {
+          accountName: "Product Truncated",
+          bankName: "Unknown Bank",
+        },
+        primary: "Product Truncated",
+        fullMustNotPrefixProduct: true,
+      },
+    ];
+
+    for (const shape of shapes) {
+      const resolved = resolveAccountDisplayName(shape.input);
+      expect(resolved.primary, JSON.stringify(shape.input)).toBe(shape.primary);
+      if (shape.secondary) {
+        expect(resolved.secondary, JSON.stringify(shape.input)).toBe(shape.secondary);
+      }
+      if (shape.fullMustNotPrefixProduct) {
+        expect(resolved.full.startsWith("Unknown Bank")).toBe(false);
+        expect(resolved.secondary).toBeUndefined();
+      }
+    }
+  });
+
+  it("does not prefix a placeholder institution onto a product name", () => {
+    expect(
+      resolveAccountDisplayName({
+        accountName: "Brokerage",
+        bankName: "Unknown Bank",
+      })
+    ).toEqual({
+      primary: "Brokerage",
+      full: "Brokerage",
+    });
+    expect(
+      statementAccountDisplayName(
+        { accountName: "Chequing", bankName: "Unknown" },
+        "abc-chequing-1111"
+      )
+    ).toBe("Chequing");
+  });
+});
+
+describe("displayNameFromProfileAccount", () => {
+  it("uses each account's own snapshot/history, not a cached institution · last4 label", () => {
+    const profile = {
+      accountSnapshots: [
+        { slug: "1001", accountName: "Example Credit Union", bankName: "Example Credit Union" },
+        { slug: "2002", accountName: "Chequing", bankName: "Example Bank" },
+        { slug: "6006", accountName: "Real Estate Co", bankName: "Unknown Bank" },
+      ],
+      accountBalanceHistory: [{ slug: "1001", label: "Everyday Chequing" }],
+    };
+    expect(
+      displayNameFromProfileAccount("1001", profile, "Example Credit Union · •••1001")
+    ).toBe("Everyday Chequing");
+    expect(displayNameFromProfileAccount("2002", profile, "Example Bank · •••2002")).toBe(
+      "Chequing"
+    );
+    expect(displayNameFromProfileAccount("6006", profile, "Unknown Bank · REAL ES...")).toBe(
+      "Real Estate Co"
+    );
+  });
+});
+
+describe("switcherAccountPresentation", () => {
+  it("uses the resolved product name, with institution and last4 as search/meta", () => {
+    const row = switcherAccountPresentation(
+      { slug: "ex-checking-2002", bankName: "Example Bank", accountName: "Chequing" },
+      { groupLabel: "Cash & Savings", last4: "•••2002" }
+    );
+    expect(row.label).toBe("Chequing");
+    expect(row.sub).toContain("Example Bank");
+    expect(row.sub).toContain("•••2002");
+    expect(row.label.startsWith("Example Bank ·")).toBe(false);
+    expect(accountMatchesQuery("cheq", row.label, row.sub, row.searchText)).toBe(true);
+    expect(accountMatchesQuery("example", row.label, row.sub, row.searchText)).toBe(true);
+    expect(accountMatchesQuery("2002", row.label, row.sub, row.searchText)).toBe(true);
+    expect(accountMatchesQuery("zzz", row.label, row.sub, row.searchText)).toBe(false);
+  });
+
+  it("matches a history product name and last4 even when the latest snapshot has no product", () => {
+    const row = switcherAccountPresentation(
+      { slug: "1001", bankName: "Example Credit Union" },
+      {
+        groupLabel: "Cash & Savings",
+        last4: "•••1001",
+        historyLabel: "Everyday Chequing",
+      }
+    );
+    expect(row.label).toBe("Everyday Chequing");
+    expect(accountMatchesQuery("everyday", row.searchText)).toBe(true);
+    expect(accountMatchesQuery("credit union", row.searchText)).toBe(true);
+    expect(accountMatchesQuery("1001", row.searchText)).toBe(true);
   });
 });
 

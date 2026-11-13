@@ -13,6 +13,7 @@ import { triggerProfileRefetch } from "@/lib/profileRefetch";
 import { useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 import type { ManualAsset, AssetCategory, HubLink, ExpenseTransaction, IncomeTransaction } from "@/lib/types";
 import type { DebtsSummary, DebtAccount } from "@/lib/debtsSummary";
+import { resolveAccountDisplayName } from "@/lib/accountListLabel";
 import { buildTrendChartData, getDisplayValuations } from "@/lib/assetTrendChart";
 import { AssetTrendChartSVG } from "@/components/AssetTrendChartSVG";
 
@@ -814,17 +815,23 @@ export default function ManualAssetPage() {
           </p>
           {linkedAccounts.length > 0 && (
             <div className="mt-3 space-y-2">
-              {linkedAccounts.map(({ account, role, isLegacy }) => (
+              {linkedAccounts.map(({ account, role, isLegacy }) => {
+                const display = resolveAccountDisplayName({
+                  accountName: account.accountName,
+                  bankName: account.bankName,
+                  fallback: account.slug,
+                });
+                return (
                 <div key={account.slug} className="flex items-start justify-between gap-2 text-xs">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
-                      <p className="text-gray-700 truncate">{account.bankName}</p>
+                      <p className="text-gray-700 truncate">{display.primary}</p>
                       {isLegacy && (
                         <span className="text-gray-400 shrink-0">(auto)</span>
                       )}
                     </div>
-                    {account.accountName && (
-                      <p className="text-gray-400 truncate">{account.accountName}</p>
+                    {display.secondary && (
+                      <p className="text-gray-400 truncate">{display.secondary}</p>
                     )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -842,7 +849,8 @@ export default function ManualAssetPage() {
                     )}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -1635,7 +1643,11 @@ export default function ManualAssetPage() {
                     .filter((a) => !linkedAccounts.some(({ account }) => account.slug === a.slug))
                     .map((a) => (
                       <option key={a.slug} value={a.slug}>
-                        {a.bankName}{a.accountName ? ` — ${a.accountName}` : ""} ({formatCurrency(Math.abs(a.balance), currency)})
+                        {resolveAccountDisplayName({
+                          accountName: a.accountName,
+                          bankName: a.bankName,
+                          fallback: a.slug,
+                        }).primary} ({formatCurrency(Math.abs(a.balance), currency)})
                       </option>
                     ))}
                 </select>

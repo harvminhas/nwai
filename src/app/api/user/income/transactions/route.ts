@@ -15,6 +15,7 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { txFingerprint } from "@/lib/txFingerprint";
+import { displayNameFromProfileAccount } from "@/lib/accountListLabel";
 
 export async function GET(req: NextRequest) {
   const { db } = getFirebaseAdmin();
@@ -45,7 +46,7 @@ export async function GET(req: NextRequest) {
         merchant:     tx.source,  // Map source to merchant for consistency
         amount:       Math.abs(tx.amount),
         category:     "Income",
-        accountLabel: tx.accountLabel,
+        accountLabel: displayNameFromProfileAccount(tx.accountSlug, profile, tx.accountLabel),
         accountSlug:  tx.accountSlug,
         txMonth:      tx.txMonth,
       }))
