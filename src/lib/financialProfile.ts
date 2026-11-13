@@ -23,7 +23,13 @@ import type * as Firestore from "firebase-admin/firestore";
 import { extractAllTransactions } from "./extractTransactions";
 import { calculateNetWorthForMonths } from "./netWorthCalculationCore";
 import { isDebtServicingExpense, resolveDebtServicingKind } from "./debtServicing";
-import { computeTypicalSpend, INCOME_TRANSFER_RE, isCoreExcluded } from "./spendingMetrics";
+import {
+  computeTypicalSpend,
+  isCoreExcluded,
+  isExcludedFromCoreIncomeTotal as isExcludedFromCoreIncome,
+  isIncomeTransfer as isIncomeTransferTxn,
+  isNonCoreIncomeCategoryLabel,
+} from "./spendingMetrics";
 import type { CashIncomeEntry } from "./cashIncome";
 import { occurrencesInMonth } from "./cashIncome";
 import type { CashCommitment } from "@/app/api/user/cash-commitments/route";
@@ -498,16 +504,6 @@ export async function buildAndCacheFinancialProfile(
     transferPrefsSnap.exists ? (transferPrefsSnap.data()?.keys ?? []) : []
   );
 
-  /** Returns true when an income transaction is an inter-account transfer. */
-  function isIncomeTransfer(txn: IncomeTxnRecord): boolean {
-    const src = (txn.source ?? txn.description ?? "").trim();
-    if (INCOME_TRANSFER_RE.test(src)) return true;
-    if (userTransferSources.has(src)) return true;
-    // Check income category rules — if user categorized as Transfer, exclude
-    if (incomeCatRulesMap.get(sourceSlug(src)) === "Transfer") return true;
-    return false;
-  }
-
   // Cash income entries — manual/recurring income outside bank statements
   const cashIncomeEntries: CashIncomeEntry[] = cashIncomeSnap.docs.map((d) => d.data() as CashIncomeEntry);
 
@@ -520,26 +516,15 @@ export async function buildAndCacheFinancialProfile(
     const r = d.data();
     if (r.slug && r.category) incomeCatRulesMap.set(r.slug as string, r.category as string);
   }
-  function sourceSlug(s: string): string {
-    return s.toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 60);
+  const incomeClassOpts = {
+    userTransferSources,
+    incomeCategoryRules: incomeCatRulesMap,
+  };
+  function isIncomeTransfer(txn: IncomeTxnRecord): boolean {
+    return isIncomeTransferTxn(txn, incomeClassOpts);
   }
-
-  /** Categories excluded from headline income totals (transfers + catch-all / misc). */
-  function isNonCoreIncomeCategoryLabel(cat: string): boolean {
-    const c = cat.trim().toLowerCase();
-    return c === "transfer" || c === "transfer in" || c === "other";
-  }
-
-  /** Effective income category for an extracted income row after user rules. */
-  function resolvedIncomeCategoryForTxn(txn: IncomeTxnRecord): string {
-    const src = (txn.source ?? txn.description ?? "").trim();
-    return incomeCatRulesMap.get(sourceSlug(src)) ?? txn.category ?? "Other";
-  }
-
-  /** Bank credits excluded from monthly incomeTotal (transfers + non-core categories). */
   function isExcludedFromCoreIncomeTotal(txn: IncomeTxnRecord): boolean {
-    if (isIncomeTransfer(txn)) return true;
-    return isNonCoreIncomeCategoryLabel(resolvedIncomeCategoryForTxn(txn));
+    return isExcludedFromCoreIncome(txn, incomeClassOpts);
   }
 
   // User debt payment tag overrides — debtTxKey → "minimum" | "extra" | "scheduled"

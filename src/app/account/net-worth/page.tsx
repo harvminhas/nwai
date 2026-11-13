@@ -70,6 +70,7 @@ function NetWorthPageContent() {
   const [chartRange, setChartRange] = useState(0); // All — preserves the existing 12-month window
   const [growthMonths, setGrowthMonths] = useState<MonthGrowthBreakdown[]>([]);
   const [growthScope, setGrowthScope] = useState<GrowthScope>("month");
+  const [priorMonth, setPriorMonth] = useState<MonthlyNetWorthData | null>(null);
   const isLgUp = useLgUp();
 
   const loadData = async (tok: string) => {
@@ -92,7 +93,28 @@ function NetWorthPageContent() {
         totalDebts: number;
         byAccount: Array<{ slug: string; label: string; type: string; value: number }>;
       }>;
+      const prior = summary.priorMonth as {
+        yearMonth: string;
+        netWorth: number;
+        totalAssets?: number;
+        totalDebts?: number;
+        byAccount?: Array<{ slug: string; label: string; type: string; value: number }>;
+      } | null;
       setCurrency(summary.currency || "CAD");
+      setPriorMonth(
+        prior
+          ? {
+              yearMonth: prior.yearMonth,
+              netWorth: prior.netWorth,
+              totalAssets: prior.totalAssets ?? 0,
+              totalDebts: prior.totalDebts ?? 0,
+              change: null,
+              changePercent: null,
+              items: [],
+              byAccount: prior.byAccount || [],
+            }
+          : null,
+      );
 
       if (monthlyHistory.length === 0) {
         setError("No net worth data available yet. Upload some statements to get started.");
@@ -123,7 +145,7 @@ function NetWorthPageContent() {
 
       // Build final data structure: net worth values from profile, change items from feed
       const combinedData: MonthlyNetWorthData[] = monthlyHistory.map((month, idx) => {
-        const prevMonth = idx > 0 ? monthlyHistory[idx - 1] : null;
+        const prevMonth = idx > 0 ? monthlyHistory[idx - 1] : prior ?? null;
         const change = prevMonth ? month.netWorth - prevMonth.netWorth : null;
         const changePercent = prevMonth && prevMonth.netWorth !== 0 
           ? (change! / Math.abs(prevMonth.netWorth)) * 100 
@@ -251,7 +273,7 @@ function NetWorthPageContent() {
   // Calculate breakdown using per-account contributions (byAccount)
   // This adds up EXACTLY by construction since it uses the same carry-forward logic
   const selectedIdx = data.findIndex(d => d.yearMonth === selectedMonth);
-  const previousData = selectedIdx > 0 ? data[selectedIdx - 1] : null;
+  const previousData = selectedIdx > 0 ? data[selectedIdx - 1] : selectedIdx === 0 ? priorMonth : null;
   
   interface BreakdownLine {
     category: "assets" | "debts";

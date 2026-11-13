@@ -8,9 +8,11 @@
  * Flow identity (never drop the remainder):
  *
  *   ΔNW = savings (income − spending)
- *       − interest/fees NOT already in spending   (e.g. CC "Interest")
+ *       − revolving-debt interest NOT already in spending   (CC/LOC "Interest")
  *       + principal portion of installment payments already in spending
- *       + investment market growth                (split accounts only)
+ *       + Investments & Savings already in spending that also hit a split account
+ *       + investment market growth                (split accounts)
+ *       + investment change (unsplit)
  *       + other asset revaluation
  *       + new accounts (first statement)
  *       + Other/unexplained
@@ -29,7 +31,11 @@
 
 import { getParentCategory } from "./categoryTaxonomy";
 import { resolveDebtHeaderActivity } from "./debtHeaderActivity";
-import { isCoreExcluded } from "./spendingMetrics";
+import {
+  isCoreExcluded,
+  isExcludedFromCoreIncomeTotal,
+  type IncomeClassificationOpts,
+} from "./spendingMetrics";
 import type { DebtPaymentHistoryEntry, ExpenseTxnRecord, IncomeTxnRecord } from "./extractTransactions";
 import type { MonthlyHistoryEntry } from "./financialProfile";
 
@@ -143,7 +149,7 @@ export type GrowthExpenseTxn = Pick<
   Partial<Pick<ExpenseTxnRecord, "installmentInterestAmount" | "currency" | "debtType" | "merchant">>;
 
 export type GrowthIncomeTxn = Pick<IncomeTxnRecord, "txMonth" | "amount" | "accountSlug"> &
-  Partial<Pick<IncomeTxnRecord, "currency" | "category">>;
+  Partial<Pick<IncomeTxnRecord, "currency" | "category" | "source" | "description">>;
 
 export interface NetWorthGrowthInput {
   monthlyHistory: MonthlyHistoryEntry[];
@@ -152,6 +158,8 @@ export interface NetWorthGrowthInput {
   debtPaymentHistory: Array<Pick<DebtPaymentHistoryEntry, "accountSlug" | "statementMonth" | "paymentsMade" | "currency">>;
   homeCurrency?: string;
   fxRates?: Record<string, number>;
+  userTransferSources?: Iterable<string>;
+  incomeCategoryRules?: Map<string, string> | Record<string, string>;
 }
 
 function toHome(
@@ -211,11 +219,6 @@ export function isInterestNotInSpending(category: string): boolean {
   return isCoreExcluded(category) && getParentCategory(category) === "Interest";
 }
 
-function countsAsCoreIncome(category?: string): boolean {
-  const c = (category ?? "Other").trim().toLowerCase();
-  return c !== "transfer" && c !== "transfer in" && c !== "other";
-}
-
 function bySlug(accounts: MonthlyHistoryEntry["byAccount"]): Map<string, NonNullable<MonthlyHistoryEntry["byAccount"]>[number]> {
   return new Map((accounts ?? []).map((a) => [a.slug, a]));
 }
@@ -227,6 +230,7 @@ export function flowExplained(b: Pick<
   | "installmentPrincipalAddBack"
   | "spendingInvestmentAddBack"
   | "investmentMarketGrowth"
+  | "investmentUnsplit"
   | "otherAssetChanges"
   | "newAccountsTotal"
   | "unexplained"
@@ -237,6 +241,7 @@ export function flowExplained(b: Pick<
     b.installmentPrincipalAddBack +
     b.spendingInvestmentAddBack +
     b.investmentMarketGrowth +
+    b.investmentUnsplit +
     b.otherAssetChanges +
     b.newAccountsTotal +
     (b.unexplained ?? 0)
@@ -246,7 +251,16 @@ export function flowExplained(b: Pick<
 export function computeMonthGrowth(
   current: MonthlyHistoryEntry,
   previous: MonthlyHistoryEntry | null,
-  input: Pick<NetWorthGrowthInput, "expenseTxns" | "incomeTxns" | "debtPaymentHistory" | "homeCurrency" | "fxRates">,
+  input: Pick<
+    NetWorthGrowthInput,
+    | "expenseTxns"
+    | "incomeTxns"
+    | "debtPaymentHistory"
+    | "homeCurrency"
+    | "fxRates"
+    | "userTransferSources"
+    | "incomeCategoryRules"
+  >,
 ): MonthGrowthBreakdown {
   const homeCurrency = input.homeCurrency ?? "CAD";
   const fxRates = input.fxRates ?? {};
@@ -269,14 +283,35 @@ export function computeMonthGrowth(
 
   const monthExpenses = input.expenseTxns.filter((t) => t.txMonth === month);
   const monthIncome = input.incomeTxns.filter((t) => t.txMonth === month);
+  const incomeClassOpts: IncomeClassificationOpts = {
+    userTransferSources: input.userTransferSources,
+    incomeCategoryRules: input.incomeCategoryRules,
+  };
 
-  const investmentCoreIncome = monthIncome
-    .filter((t) => investmentSlugs.has(t.accountSlug) && countsAsCoreIncome(t.category))
+  const investmentIncomeInTotal = monthIncome
+    .filter(
+      (t) =>
+        investmentSlugs.has(t.accountSlug) && !isExcludedFromCoreIncomeTotal(t, incomeClassOpts),
+    )
     .reduce((sum, t) => sum + convert(Math.abs(t.amount), t.currency), 0);
-  const income = Math.max(0, (current.incomeTotal ?? 0) - investmentCoreIncome);
-  const spending = current.coreExpensesTotal ?? 0;
+  const income = Math.max(0, (current.incomeTotal ?? 0) - investmentIncomeInTotal);
+
+  const investmentWithdrawalsInSpending = monthExpenses
+    .filter((t) => {
+      if (!investmentSlugs.has(t.accountSlug)) return false;
+      if (isInterestOrFeeCategory(t.category)) return false;
+      return !isCoreExcluded(t.category, { debtType: t.debtType, merchant: t.merchant });
+    })
+    .reduce((sum, t) => sum + convert(Math.abs(t.amount), t.currency), 0);
+  const spending = (current.coreExpensesTotal ?? 0) - investmentWithdrawalsInSpending;
   const grossSavings = income - spending;
   const savingsRate = income > 0 ? grossSavings / income : null;
+
+  const debtTypeBySlug = new Map<string, string>();
+  for (const slug of debtSlugs) {
+    const row = currentMap.get(slug) ?? previousMap.get(slug);
+    if (row) debtTypeBySlug.set(slug, row.type);
+  }
 
   let interestFeesNotInSpending = 0;
   let identifiableHits = 0;
@@ -284,10 +319,12 @@ export function computeMonthGrowth(
     const onDebt = debtSlugs.has(t.accountSlug);
     if (onDebt && isInterestNotInSpending(t.category)) {
       identifiableHits += 1;
-      interestFeesNotInSpending += convert(Math.abs(t.amount), t.currency);
+      // Installment principal add-back already nets statement interest via the
+      // balance change — only revolving (card/LOC) interest is subtracted here.
+      if (isRevolvingDebtType(debtTypeBySlug.get(t.accountSlug) ?? "")) {
+        interestFeesNotInSpending += convert(Math.abs(t.amount), t.currency);
+      }
     } else if (isInterestOrFeeCategory(t.category) || (t.installmentInterestAmount ?? 0) > 0) {
-      // Fees and installment interest are already in spending — do not subtract,
-      // but they count as itemized so we don't show the "missing interest" note.
       identifiableHits += 1;
     }
   }
@@ -458,9 +495,14 @@ export function computeMonthGrowth(
     })
     .reduce((sum, t) => sum + convert(Math.abs(t.amount), t.currency), 0);
   const netSplitContributions = investmentContributions - investmentWithdrawals;
-  const investedFromSavings = Math.max(0, netSplitContributions - contributionsAlreadyInSpending);
+  // Show contributions even when they were categorized as spending.
+  const investedFromSavings = Math.max(
+    0,
+    netSplitContributions,
+    contributionsAlreadyInSpending,
+  );
   // Only add back when the same dollars also appear as split contributions;
-  // unsplit accounts leave the remainder in Other/unexplained.
+  // unsplit Δ already includes those contributions.
   const spendingInvestmentAddBack = Math.min(
     contributionsAlreadyInSpending,
     Math.max(0, netSplitContributions),
@@ -491,7 +533,11 @@ export function computeMonthGrowth(
     otherAssets.push({ slug, label, type, amount });
   }
 
-  const cashKept = grossSavings - revolvingPaydown - investedFromSavings;
+  const cashKept =
+    grossSavings -
+    revolvingPaydown -
+    investedFromSavings +
+    Math.min(contributionsAlreadyInSpending, investedFromSavings);
   const savingsForReconciliation = grossSavings;
   const netWorthChange = previous ? current.netWorth - previous.netWorth : null;
   const unexplained =
@@ -503,6 +549,7 @@ export function computeMonthGrowth(
           installmentPrincipalAddBack +
           spendingInvestmentAddBack +
           investmentMarketGrowth +
+          investmentUnsplit +
           otherAssetChanges +
           newAccountsTotal);
 
@@ -541,11 +588,19 @@ export function computeMonthGrowth(
   };
 }
 
-export function computeNetWorthGrowth(input: NetWorthGrowthInput): MonthGrowthBreakdown[] {
+export function computeNetWorthGrowth(
+  input: NetWorthGrowthInput,
+  opts?: { windowMonths?: number },
+): MonthGrowthBreakdown[] {
   const sorted = [...input.monthlyHistory].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
-  return sorted.map((current, idx) =>
-    computeMonthGrowth(current, idx > 0 ? sorted[idx - 1] : null, input),
-  );
+  const windowMonths = opts?.windowMonths;
+  const startIdx =
+    windowMonths != null && windowMonths > 0 ? Math.max(0, sorted.length - windowMonths) : 0;
+  const window = sorted.slice(startIdx);
+  return window.map((current, idx) => {
+    const previous = idx > 0 ? window[idx - 1] : startIdx > 0 ? sorted[startIdx - 1] : null;
+    return computeMonthGrowth(current, previous, input);
+  });
 }
 
 function mergeDebt(into: Map<string, DebtGrowthAccount>, acc: DebtGrowthAccount) {
@@ -572,7 +627,8 @@ export function sumGrowthBreakdowns(
     ? months.filter((m) => rangeYearMonths.includes(m.yearMonth))
     : months;
   if (inRange.length === 0) return null;
-  // First history month has no ΔNW — it's the chart baseline, not a growth month.
+  // Range = first visible month's change through last. Skip only a month that
+  // has no previous anywhere (true first history point).
   const selected = inRange.filter((m) => m.hasPreviousMonth);
   if (selected.length === 0) return inRange[0];
   if (selected.length === 1) return selected[0];
@@ -662,6 +718,7 @@ export function sumGrowthBreakdowns(
           installmentPrincipalAddBack +
           spendingInvestmentAddBack +
           investmentMarketGrowth +
+          investmentUnsplit +
           otherAssetChanges +
           newAccountsTotal);
 

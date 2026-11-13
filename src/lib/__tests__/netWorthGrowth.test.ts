@@ -108,6 +108,74 @@ describe("gross savings", () => {
     expect(result.income).toBe(6000);
     expect(result.grossSavings).toBe(2000);
   });
+
+  it("does not strip deposits already excluded from incomeTotal (TFR descriptor)", () => {
+    const current = month({
+      yearMonth: "2026-10",
+      netWorth: 15500,
+      incomeTotal: 6000, // TFR deposit already excluded by profile
+      coreExpensesTotal: 4000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 5000 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 10500 },
+      ],
+    });
+    const prior = month({
+      yearMonth: "2026-09",
+      netWorth: 14000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 4000 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 10000 },
+      ],
+    });
+    const result = computeMonthGrowth(current, prior, {
+      expenseTxns: [],
+      incomeTxns: [{
+        txMonth: "2026-10",
+        amount: 500,
+        accountSlug: "tfsa",
+        category: "Salary",
+        source: "TFR-TO TFSA",
+      }],
+      debtPaymentHistory: [],
+    });
+    expect(result.income).toBe(6000);
+    expect(result.grossSavings).toBe(2000);
+  });
+
+  it("does not strip deposits already excluded via a user Transfer income rule", () => {
+    const current = month({
+      yearMonth: "2026-10",
+      netWorth: 15500,
+      incomeTotal: 6000,
+      coreExpensesTotal: 4000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 5000 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 10500 },
+      ],
+    });
+    const prior = month({
+      yearMonth: "2026-09",
+      netWorth: 14000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 4000 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 10000 },
+      ],
+    });
+    const result = computeMonthGrowth(current, prior, {
+      expenseTxns: [],
+      incomeTxns: [{
+        txMonth: "2026-10",
+        amount: 500,
+        accountSlug: "tfsa",
+        category: "Salary",
+        source: "CONTRIBUTION",
+      }],
+      debtPaymentHistory: [],
+      incomeCategoryRules: { contribution: "Transfer" },
+    });
+    expect(result.income).toBe(6000);
+  });
 });
 
 describe("flow identity: review example (no double counting)", () => {
@@ -197,6 +265,44 @@ describe("installment principal add-back and fees already in spending", () => {
     expect(result.installmentAccounts[0].paydown).toBe(2000);
     expect(result.revolvingPaydown).toBe(0);
     expect(result.netWorthChange).toBe(1500);
+    expect(result.unexplained).toBeCloseTo(0);
+  });
+
+  it("does not subtract a mortgage statement Interest line (principal add-back already nets it)", () => {
+    const prior = month({
+      yearMonth: "2026-09",
+      netWorth: -88000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 12000 },
+        { slug: "mtg", label: "Mortgage", type: "mortgage", value: -100000 },
+      ],
+    });
+    const current = month({
+      yearMonth: "2026-10",
+      netWorth: -89200,
+      incomeTotal: 0,
+      coreExpensesTotal: 2000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 10000 },
+        { slug: "mtg", label: "Mortgage", type: "mortgage", value: -99200 },
+      ],
+    });
+    const result = computeMonthGrowth(current, prior, {
+      expenseTxns: [
+        {
+          txMonth: "2026-10",
+          amount: 2000,
+          category: "Installment Servicing",
+          accountSlug: "chk",
+        },
+        { txMonth: "2026-10", amount: 1200, category: "Interest", accountSlug: "mtg" },
+      ],
+      incomeTxns: [],
+      debtPaymentHistory: [{ accountSlug: "mtg", statementMonth: "2026-10", paymentsMade: 2000, currency: "CAD" }],
+    });
+    expect(result.interestFeesNotInSpending).toBe(0);
+    expect(result.installmentPrincipalAddBack).toBe(800);
+    expect(result.netWorthChange).toBe(-1200);
     expect(result.unexplained).toBeCloseTo(0);
   });
 
@@ -412,7 +518,7 @@ describe("investment split", () => {
     expect(result.investedFromSavings).toBe(800);
   });
 
-  it("labels growth unsplit when contributions cannot be determined", () => {
+  it("labels growth unsplit when contributions cannot be determined and keeps it on the recon", () => {
     const prior = month({
       yearMonth: "2026-09",
       netWorth: 50000,
@@ -423,22 +529,57 @@ describe("investment split", () => {
     });
     const current = month({
       yearMonth: "2026-10",
-      netWorth: 52000,
+      netWorth: 54500,
       incomeTotal: 5000,
       coreExpensesTotal: 2500,
       byAccount: [
-        { slug: "chk", label: "Checking", type: "checking", value: 2000 },
+        { slug: "chk", label: "Checking", type: "checking", value: 4500 },
         { slug: "tfsa", label: "TFSA", type: "investment", value: 50000 },
       ],
     });
     const result = computeMonthGrowth(current, prior, {
-      expenseTxns: [{ txMonth: "2026-10", amount: 500, category: "Investments & Savings", accountSlug: "chk" }],
+      expenseTxns: [
+        { txMonth: "2026-10", amount: 2000, category: "Groceries", accountSlug: "chk" },
+        { txMonth: "2026-10", amount: 500, category: "Investments & Savings", accountSlug: "chk" },
+      ],
       incomeTxns: [],
       debtPaymentHistory: [],
     });
     expect(result.investmentAccounts[0].split).toBe("unsplit");
     expect(result.investmentMarketGrowth).toBe(0);
     expect(result.investmentUnsplit).toBe(2000);
+    expect(result.investedFromSavings).toBe(500);
+    expect(result.unexplained).toBeCloseTo(0);
+  });
+
+  it("strips investment-statement withdrawals that were counted as spending", () => {
+    const prior = month({
+      yearMonth: "2026-09",
+      netWorth: 15000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 5000 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 10000 },
+      ],
+    });
+    const current = month({
+      yearMonth: "2026-10",
+      netWorth: 15000,
+      incomeTotal: 0,
+      coreExpensesTotal: 500,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 5500 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 9500 },
+      ],
+    });
+    const result = computeMonthGrowth(current, prior, {
+      expenseTxns: [{ txMonth: "2026-10", amount: 500, category: "Other", accountSlug: "tfsa" }],
+      incomeTxns: [],
+      debtPaymentHistory: [],
+    });
+    expect(result.spending).toBe(0);
+    expect(result.investmentWithdrawals).toBe(500);
+    expect(result.investmentMarketGrowth).toBe(0);
+    expect(result.unexplained).toBeCloseTo(0);
   });
 
   it("splits a savings-type TFSA the same way as an investment account", () => {
@@ -503,7 +644,7 @@ describe("investment split", () => {
     });
     expect(result.grossSavings).toBe(1000);
     expect(result.spendingInvestmentAddBack).toBe(500);
-    expect(result.investedFromSavings).toBe(0);
+    expect(result.investedFromSavings).toBe(500);
     expect(result.investmentMarketGrowth).toBe(100);
     expect(result.unexplained).toBeCloseTo(0);
   });
@@ -676,6 +817,37 @@ describe("range summation", () => {
     expect(all!.grossSavings).toBe(3500);
     expect(all!.netWorthChange).toBe(3500);
     expect(all!.unexplained).toBeCloseTo(0);
+  });
+});
+
+describe("12-month chart window", () => {
+  it("computes the first visible month's change from the month before the window", () => {
+    const history: MonthlyHistoryEntry[] = [];
+    for (let i = 0; i < 15; i++) {
+      const d = new Date(2025, i, 1);
+      const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      history.push(month({
+        yearMonth: ym,
+        netWorth: i * 1000,
+        incomeTotal: i === 0 ? 0 : 1000,
+        coreExpensesTotal: 0,
+        byAccount: [{ slug: "chk", label: "Checking", type: "checking", value: i * 1000 }],
+      }));
+    }
+    const months = computeNetWorthGrowth(
+      { monthlyHistory: history, expenseTxns: [], incomeTxns: [], debtPaymentHistory: [] },
+      { windowMonths: 12 },
+    );
+    expect(months).toHaveLength(12);
+    expect(months[0].yearMonth).toBe("2025-04");
+    expect(months[0].hasPreviousMonth).toBe(true);
+    expect(months[0].netWorthChange).toBe(1000);
+    expect(months[0].unexplained).toBeCloseTo(0);
+
+    const range = sumGrowthBreakdowns(months, months.map((m) => m.yearMonth));
+    expect(range!.netWorthChange).toBe(12000);
+    expect(range!.unexplained).toBeCloseTo(0);
+    expect(flowExplained(range!)).toBeCloseTo(12000);
   });
 });
 

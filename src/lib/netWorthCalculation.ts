@@ -6,6 +6,7 @@
  */
 
 import type { Firestore } from "firebase-admin/firestore";
+import { NET_WORTH_SUMMARY_MONTHS } from "./chartMonthSelection";
 import { getFinancialProfile } from "./financialProfile";
 
 export interface NetWorthResult {
@@ -16,10 +17,24 @@ export interface NetWorthResult {
   totalDebts: number;
   monthlyChange: number | null;
   previousMonth: { yearMonth: string; netWorth: number } | null;
+  /**
+   * Month immediately before `monthlyHistory[0]`, when full history is longer
+   * than the chart window. Lets What Changed / Growth compute the first visible
+   * month's change the same way.
+   */
+  priorMonth: {
+    yearMonth: string;
+    netWorth: number;
+    totalAssets?: number;
+    totalDebts?: number;
+    byAccount: Array<{ slug: string; label: string; type: string; value: number }>;
+  } | null;
   // Include full monthlyHistory for API consumers (from same profile snapshot)
   monthlyHistory: Array<{
     yearMonth: string;
     netWorth: number;
+    totalAssets?: number;
+    totalDebts?: number;
     byAccount: Array<{ slug: string; label: string; type: string; value: number }>;
   }>;
 }
@@ -88,13 +103,23 @@ export async function getNetWorthForMonth(
   const sortedHistory = [...profile.monthlyHistory].sort((a, b) => 
     b.yearMonth.localeCompare(a.yearMonth)
   );
-  const last12Months = sortedHistory.slice(0, 12).reverse().map(m => ({
+  const last12Months = sortedHistory.slice(0, NET_WORTH_SUMMARY_MONTHS).reverse().map(m => ({
     yearMonth: m.yearMonth,
     netWorth: m.netWorth,
     totalAssets: m.totalAssets,
     totalDebts: m.totalDebts,
     byAccount: m.byAccount || [],
   }));
+  const priorRaw = sortedHistory[NET_WORTH_SUMMARY_MONTHS] ?? null;
+  const priorMonth = priorRaw
+    ? {
+        yearMonth: priorRaw.yearMonth,
+        netWorth: priorRaw.netWorth,
+        totalAssets: priorRaw.totalAssets,
+        totalDebts: priorRaw.totalDebts,
+        byAccount: priorRaw.byAccount || [],
+      }
+    : null;
 
   return {
     netWorth: targetMonth.netWorth,
@@ -107,6 +132,7 @@ export async function getNetWorthForMonth(
       yearMonth: previousMonth.yearMonth,
       netWorth: previousMonth.netWorth,
     } : null,
+    priorMonth,
     monthlyHistory: last12Months,
   };
 }

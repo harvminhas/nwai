@@ -86,6 +86,7 @@ describe("GrowthTab", () => {
     expect(screen.getByText("Gross savings")).toBeTruthy();
     expect(screen.getByText(/33% savings rate/)).toBeTruthy();
     expect(screen.getByText("Investment market growth")).toBeTruthy();
+    expect(screen.queryByText("Investment change (unsplit)")).toBeNull();
     expect(screen.getByText("Where your savings went")).toBeTruthy();
     expect(screen.getByText("Cash kept")).toBeTruthy();
     expect(screen.getByText("Debt paid down (cards / LOC)")).toBeTruthy();
@@ -108,5 +109,35 @@ describe("GrowthTab", () => {
     );
     screen.getByRole("button", { name: "Chart range" }).click();
     expect(onScopeChange).toHaveBeenCalledWith("range");
+  });
+
+  it("shows Investment change (unsplit) when contributions cannot be split", () => {
+    render(
+      <GrowthTab
+        breakdown={{
+          ...breakdown,
+          investmentMarketGrowth: 0,
+          investmentUnsplit: 2000,
+          investmentAccounts: [{
+            slug: "tfsa",
+            label: "TFSA",
+            type: "investment",
+            amount: 2000,
+            delta: 2000,
+            contributions: null,
+            withdrawals: null,
+            marketGrowth: null,
+            split: "unsplit",
+            isBaseline: false,
+          }],
+        }}
+        currency="CAD"
+        scope="month"
+        onScopeChange={vi.fn()}
+        monthLabel="Oct 2026"
+        rangeLabel="Aug 2026 – Oct 2026"
+      />,
+    );
+    expect(screen.getByText("Investment change (unsplit)")).toBeTruthy();
   });
 });

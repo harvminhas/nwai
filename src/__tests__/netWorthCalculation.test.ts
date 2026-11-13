@@ -230,4 +230,31 @@ describe("getNetWorthForMonth - Authoritative Data Layer", () => {
 
     expect(result!.currency).toBe("CAD");
   });
+
+  it("exposes priorMonth for the first visible month of the 12-month window", async () => {
+    const history = [];
+    for (let i = 0; i < 15; i++) {
+      const d = new Date(2025, i, 1);
+      const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      history.push({
+        yearMonth: ym,
+        netWorth: i * 1000,
+        totalAssets: i * 1000,
+        totalDebts: 0,
+        byAccount: [{ slug: "chk", label: "Checking", type: "checking", value: i * 1000 }],
+      });
+    }
+    mockGetFinancialProfile.mockResolvedValue({ monthlyHistory: history } as any);
+
+    const mockUserDoc = { exists: true, data: () => ({ homeCurrency: "CAD" }) };
+    (mockDb as any).collection = vi.fn(() => ({
+      doc: vi.fn(() => ({ get: vi.fn(() => Promise.resolve(mockUserDoc)) })),
+    }));
+
+    const result = await getNetWorthForMonth("test-uid", mockDb);
+    expect(result!.monthlyHistory).toHaveLength(12);
+    expect(result!.monthlyHistory[0].yearMonth).toBe("2025-04");
+    expect(result!.priorMonth?.yearMonth).toBe("2025-03");
+    expect(result!.priorMonth?.netWorth).toBe(2000);
+  });
 });

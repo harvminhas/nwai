@@ -204,26 +204,13 @@ export default function GrowthTab({
             amount={breakdown.investmentMarketGrowth}
             currency={currency}
           >
-            {breakdown.investmentAccounts.filter((a) => !a.isBaseline).map((acc) => {
+            {breakdown.investmentAccounts.filter((a) => a.split === "split" && !a.isBaseline).map((acc) => {
               const row = netWorthAccountRow({
                 slug: acc.slug,
                 label: acc.label,
                 type: acc.type,
                 side: "asset",
               });
-              if (acc.split === "unsplit") {
-                return (
-                  <Row
-                    key={acc.slug}
-                    label={row.label}
-                    amount={acc.delta}
-                    currency={currency}
-                    href={row.href}
-                    muted
-                    sub="Unsplit — contributions aren't identifiable, so this change is not in the total"
-                  />
-                );
-              }
               return (
                 <Row
                   key={acc.slug}
@@ -235,10 +222,37 @@ export default function GrowthTab({
                 />
               );
             })}
-            {breakdown.investmentAccounts.filter((a) => !a.isBaseline).length === 0 && (
-              <p className="text-xs text-gray-400">No investment accounts this period</p>
+            {breakdown.investmentAccounts.filter((a) => a.split === "split" && !a.isBaseline).length === 0 && (
+              <p className="text-xs text-gray-400">No split investment accounts this period</p>
             )}
           </Section>
+
+          {Math.abs(breakdown.investmentUnsplit) >= 0.005 && (
+            <Section
+              title="Investment change (unsplit)"
+              amount={breakdown.investmentUnsplit}
+              currency={currency}
+              note="No deposit/withdrawal transactions on these statements — the full balance change is shown here instead of Other/unexplained."
+            >
+              {breakdown.investmentAccounts.filter((a) => a.split === "unsplit" && !a.isBaseline).map((acc) => {
+                const row = netWorthAccountRow({
+                  slug: acc.slug,
+                  label: acc.label,
+                  type: acc.type,
+                  side: "asset",
+                });
+                return (
+                  <Row
+                    key={acc.slug}
+                    label={row.label}
+                    amount={acc.delta}
+                    currency={currency}
+                    href={row.href}
+                  />
+                );
+              })}
+            </Section>
+          )}
 
           <Section title="Other assets" amount={breakdown.otherAssetChanges} currency={currency}>
             {breakdown.otherAssets.map((acc) => {

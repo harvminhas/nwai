@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import { getFinancialProfile } from "@/lib/financialProfile";
+import { NET_WORTH_SUMMARY_MONTHS } from "@/lib/chartMonthSelection";
 import { computeNetWorthGrowth } from "@/lib/netWorthGrowth";
 
 export const dynamic = "force-dynamic";
@@ -20,14 +21,17 @@ export async function GET(req: NextRequest) {
 
   try {
     const profile = await getFinancialProfile(access.targetUid, db);
-    const months = computeNetWorthGrowth({
-      monthlyHistory: profile.monthlyHistory,
-      expenseTxns: profile.expenseTxns,
-      incomeTxns: profile.incomeTxns,
-      debtPaymentHistory: profile.debtPaymentHistory,
-      homeCurrency: profile.homeCurrency,
-      fxRates: profile.fxRates,
-    });
+    const months = computeNetWorthGrowth(
+      {
+        monthlyHistory: profile.monthlyHistory,
+        expenseTxns: profile.expenseTxns,
+        incomeTxns: profile.incomeTxns,
+        debtPaymentHistory: profile.debtPaymentHistory,
+        homeCurrency: profile.homeCurrency,
+        fxRates: profile.fxRates,
+      },
+      { windowMonths: NET_WORTH_SUMMARY_MONTHS },
+    );
 
     return NextResponse.json({
       months,
