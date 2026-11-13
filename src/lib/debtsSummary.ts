@@ -87,6 +87,8 @@ export interface DebtsSummary {
       value: number; // In home currency, debts are negative
     }>;
   }>;
+  /** Full history for Performance (6M/YTD/1Y/3Y/All). Trends still uses last-12 `monthlyHistory`. */
+  allMonthlyHistory?: DebtsSummary["monthlyHistory"];
   scheduledPayments?: ScheduledDebtPayment[]; // For diagnostic output
   /** Per-account balance history from profile.accountBalanceHistory */
   accountBalanceHistory: Array<{
@@ -101,6 +103,7 @@ export interface DebtsSummary {
     amount: number;
     merchant: string;
     accountSlug: string;
+    category?: string;
   }>;
   incomeTxns: Array<{
     date: string;
@@ -108,10 +111,22 @@ export interface DebtsSummary {
     amount: number;
     source: string;
     accountSlug: string;
+    category?: string;
   }>;
 }
 
 const DEBT_TYPES = new Set(["mortgage", "credit", "credit_card", "loc", "line_of_credit", "loan", "auto_loan", "student_loan", "personal_loan", "other_debt"]);
+
+export function debtGroupLabel(type: DebtGroup["type"]): string {
+  return groupLabel(type);
+}
+
+/** Same grouping as the Debts Accounts / Overview pages, including manuals. */
+export function debtCategory(type: string, label?: string): DebtGroup["type"] {
+  const t = type.toLowerCase();
+  const raw = t.startsWith("manual-") ? t.slice("manual-".length) : t;
+  return debtGroup(raw, label);
+}
 
 export function debtGroup(accountType: string, accountName?: string): DebtGroup["type"] {
   // Use the actual account type from the snapshot
@@ -205,8 +220,8 @@ export function buildDebtsSummary(
     debtPaymentsTotal: number;
     byAccount?: Array<{ slug: string; label: string; type: string; value: number }>;
   }>, // From profile
-  expenseTxns?: Array<{ date: string; txMonth: string; amount: number; merchant: string; accountSlug: string }>,
-  incomeTxns?: Array<{ date: string; txMonth: string; amount: number; source: string; accountSlug: string }>
+  expenseTxns?: Array<{ date: string; txMonth: string; amount: number; merchant: string; accountSlug: string; category?: string }>,
+  incomeTxns?: Array<{ date: string; txMonth: string; amount: number; source: string; accountSlug: string; category?: string }>
 ): DebtsSummary {
   // Compute scheduled debt payments using the same logic as computeMonthlyBuckets
   const scheduledPayments = computeScheduledDebtPayments(
@@ -402,14 +417,12 @@ export function buildDebtsSummary(
       };
     });
 
-  // Build monthly history (last 12 months) - use profile's monthlyHistory for totals
-  const monthlyHistory: DebtsSummary["monthlyHistory"] = [];
+  // Full history for Performance; Trends receives the last 12 months.
+  const allMonthlyHistory: DebtsSummary["monthlyHistory"] = [];
   
   if (profileMonthlyHistory && profileMonthlyHistory.length > 0) {
     // Use profile's totalDebts which already has correct carry-forward logic
-    const last12Months = profileMonthlyHistory.slice(-12);
-    
-    for (const profileMonth of last12Months) {
+    for (const profileMonth of profileMonthlyHistory) {
       const month = profileMonth.yearMonth;
       
       // Compute per-group breakdown with carry-forward
@@ -453,7 +466,7 @@ export function buildDebtsSummary(
             }))
         : undefined;
 
-      monthlyHistory.push({
+      allMonthlyHistory.push({
         month,
         monthLabel: formatMonthLabel(month),
         totalDebt: profileMonth.totalDebts, // Use profile's value which includes manual assets
@@ -463,6 +476,7 @@ export function buildDebtsSummary(
       });
     }
   }
+  const monthlyHistory = allMonthlyHistory.slice(-12);
   
   // Filter transactions to only those belonging to debt accounts
   const debtAccountSlugs = new Set(debtAccounts.map(a => a.slug));
@@ -481,6 +495,7 @@ export function buildDebtsSummary(
     groups,
     payoffEstimates,
     monthlyHistory,
+    allMonthlyHistory,
     scheduledPayments, // For diagnostic output,
     accountBalanceHistory: balanceHistory
       .filter(h => debtAccountSlugs.has(h.slug))

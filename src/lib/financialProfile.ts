@@ -63,7 +63,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-export const SCHEMA_VERSION = "70"; // Manual liability inclusion in monthly net-worth / Trends history
+export const SCHEMA_VERSION = "72"; // Rebuild caches written at 71 with the reverted-then-wrong overpaid-debt sign. Do not go back to 70 — localhost may already have 71.
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**

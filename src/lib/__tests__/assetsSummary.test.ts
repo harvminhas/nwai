@@ -224,5 +224,19 @@ describe("Assets Summary", () => {
     expect(summary.groups.length).toBe(0);
     expect(summary.staleAccounts.length).toBe(0);
     expect(summary.monthlyHistory.length).toBe(0);
+    expect(summary.allMonthlyHistory?.length ?? 0).toBe(0);
+  });
+
+  test("keeps last 12 months on Trends history and full history for Performance", () => {
+    const profileMonths = Array.from({ length: 18 }, (_, i) => {
+      const d = new Date(2025, i, 1);
+      const yearMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      return { yearMonth, totalAssets: 1000 + i };
+    });
+    const summary = buildAssetsSummary([], [], [], fxRates, homeCurrency, profileMonths);
+    expect(summary.allMonthlyHistory).toHaveLength(18);
+    expect(summary.monthlyHistory).toHaveLength(12);
+    expect(summary.monthlyHistory[0].month).toBe(profileMonths[6].yearMonth);
+    expect(summary.monthlyHistory.at(-1)?.month).toBe(profileMonths[17].yearMonth);
   });
 });

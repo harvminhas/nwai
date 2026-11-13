@@ -8,6 +8,8 @@ import { getFirebaseClient } from "@/lib/firebase";
 import type { DebtsSummary } from "@/lib/debtsSummary";
 import { OverviewTab } from "./components/OverviewTab";
 import { TrendsTab } from "./components/TrendsTab";
+import { PerformanceTab } from "./components/PerformanceTab";
+import { WhatChangedTab } from "./components/WhatChangedTab";
 import { CategoriesTab } from "./components/CategoriesTab";
 import AccountSwitcher from "@/components/AccountSwitcher";
 import { statementAccountDisplayName } from "@/lib/accountListLabel";
@@ -16,6 +18,7 @@ import {
   resolveAccountSectionTab,
   type AccountSectionTabId,
 } from "@/lib/accountSectionTabs";
+import { useAccountTrendRange } from "@/lib/useAccountTrendRange";
 
 const TABS = ACCOUNT_SECTION_TABS;
 type TabId = AccountSectionTabId;
@@ -35,6 +38,7 @@ function LiabilitiesPageContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [autoMarkedAccounts, setAutoMarkedAccounts] = useState<AutoMarkedAccount[]>([]);
+  const { range, handleRangeChange } = useAccountTrendRange(searchParams);
 
   useEffect(() => {
     const tabParam = searchParams.get("tab");
@@ -210,7 +214,7 @@ function LiabilitiesPageContent() {
 
       {/* Tabs */}
       <div className="border-b border-gray-200 mb-6">
-        <nav className="-mb-px flex gap-6">
+        <nav className="-mb-px flex flex-wrap gap-x-6 gap-y-2">
           {TABS.map((tab) => (
             <button
               key={tab.id}
@@ -231,6 +235,12 @@ function LiabilitiesPageContent() {
       <div>
         {activeTab === "overview" && <OverviewTab summary={summary} />}
         {activeTab === "trends" && <TrendsTab summary={summary} />}
+        {activeTab === "performance" && (
+          <PerformanceTab summary={summary} range={range} onRangeChange={handleRangeChange} />
+        )}
+        {activeTab === "what-changed" && (
+          <WhatChangedTab summary={summary} range={range} onRangeChange={handleRangeChange} />
+        )}
         {activeTab === "accounts" && (
           <CategoriesTab summary={summary} />
         )}
