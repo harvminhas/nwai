@@ -18,6 +18,7 @@ import type { IncomeTxnRecord, AccountSnapshot } from "./extractTransactions";
 import { INCOME_TRANSFER_RE } from "./spendingMetrics";
 import { GENERIC_SOURCE_NAMES, scoreSource, detectFrequency, type Frequency, type Reliability } from "./incomeEngine";
 import type { IncomeCategory } from "./incomeEngine";
+import { mean, monthsForCashFlowAverage } from "./cashFlowAverage";
 import { getLastCompleteMonth, getCurrentMonth } from "./monthAnchor";
 
 export interface IncomeTransaction {
@@ -647,22 +648,16 @@ export function buildIncomeSummary(
     };
   });
 
-  // Compute range months for calculations (defaults to last 3 complete months)
-  const calculationMonths = rangeMonths || getLastCompleteMonths(allMonths, 3);
-  const calculationMonthsData = monthlyHistory.filter(m => calculationMonths.includes(m.yearMonth));
-  
-  // Only count months with actual income data (exclude months with no statements)
-  const monthsWithData = calculationMonthsData.filter(m => m.total > 0);
-  const excludedMonths = calculationMonths.filter(m => !monthsWithData.find(d => d.yearMonth === m));
-  
-  const calculationMonthsRegularTotal = monthsWithData.reduce((s, m) => s + m.regular, 0);
-  const calculationMonthsBonusTotal = monthsWithData.reduce((s, m) => s + m.bonus, 0);
-  const calculationMonthsTotal = calculationMonthsRegularTotal + calculationMonthsBonusTotal;
-  
-  // Divide by months with data, not all requested months
-  const typicalMonthly = monthsWithData.length > 0 
-    ? Math.round(calculationMonthsTotal / monthsWithData.length)
-    : 0;
+  // Same month set and mean as dashboard / Cash Flow (include $0 months, no rounding)
+  const calculationMonths = monthsForCashFlowAverage(allMonths, {
+    rangeMonths,
+    lastNComplete: 3,
+  });
+  const typicalMonthly = mean(
+    calculationMonths.map(
+      (ym) => monthlyHistory.find((m) => m.yearMonth === ym)?.total ?? 0,
+    ),
+  );
   
   // For backwards compatibility, also keep last3Months fields
   const last3Months = getLastCompleteMonths(allMonths, 3);

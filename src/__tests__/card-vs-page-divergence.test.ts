@@ -11,7 +11,8 @@
 import { describe, test, expect } from "vitest";
 import { computeMoneyCoachBreakdown } from "@/lib/moneyCoach";
 import { buildSpendingSummary } from "@/lib/spendingSummary";
-import type { FinancialProfileCache, ExpenseTxnRecord, AccountSnapshot, DebtPaymentHistoryEntry, IncomeTxnRecord } from "@/lib/types";
+import type { FinancialProfileCache } from "@/lib/financialProfile";
+import type { ExpenseTxnRecord, AccountSnapshot, DebtPaymentHistoryEntry, IncomeTxnRecord } from "@/lib/extractTransactions";
 
 describe("Card vs Page Divergence", () => {
   test("card and page must compute identical spending from same data", () => {

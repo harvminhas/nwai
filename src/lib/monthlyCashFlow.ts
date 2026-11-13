@@ -15,6 +15,11 @@
  */
 
 import { displayNameFromProfileAccount } from "./accountListLabel";
+import {
+  mean,
+  monthsForCashFlowAverage,
+  type CashFlowAverageOptions,
+} from "./cashFlowAverage";
 import { categoryColor } from "./categoryTaxonomy";
 import type {
   AccountSnapshot,
@@ -25,6 +30,9 @@ import type {
 import { buildIncomeSummary, type MonthlyIncomeSummary } from "./incomeSummary";
 import { spendingForMonth, type MonthlySpendingSummary } from "./spendingSummary";
 import type { DebtPaymentReview } from "./types";
+
+export { mean, monthsForCashFlowAverage } from "./cashFlowAverage";
+export type { CashFlowAverageOptions } from "./cashFlowAverage";
 
 export type MonthlyCashFlowInput = {
   expenseTxns: ExpenseTxnRecord[];
@@ -77,6 +85,50 @@ export type AveragedCashFlow = {
   savingsRate: number | null;
   buckets: MonthlyCashFlowBuckets;
 };
+
+export type LeftoverMonthBreakdown = {
+  month: string;
+  moneyIn: number;
+  moneyOut: number;
+  leftover: number;
+  buckets: MonthlyCashFlowBuckets;
+};
+
+export type AveragedCashFlowResult = AveragedCashFlow & {
+  months: string[];
+  monthly: MonthlyCashFlow[];
+  monthlyBreakdown: LeftoverMonthBreakdown[];
+};
+
+/**
+ * Build the shared cash-flow input from a financial profile plus reviews.
+ * Used by dashboard, drawers, chat, and Income/Spending typicals.
+ */
+export function cashFlowInputFromProfile(
+  profile: {
+    expenseTxns: ExpenseTxnRecord[];
+    incomeTxns: IncomeTxnRecord[];
+    homeCurrency?: string;
+    fxRates?: Record<string, number>;
+    accountSnapshots?: MonthlyCashFlowInput["accountSnapshots"];
+    debtPaymentHistory?: DebtPaymentHistoryEntry[];
+  },
+  reviews?: {
+    debtPaymentReviews?: DebtPaymentReview[];
+    incomeDepositReviews?: Map<string, string>;
+  },
+): MonthlyCashFlowInput {
+  return {
+    expenseTxns: profile.expenseTxns,
+    incomeTxns: profile.incomeTxns,
+    homeCurrency: profile.homeCurrency || "CAD",
+    fxRates: profile.fxRates,
+    accountSnapshots: profile.accountSnapshots,
+    debtPaymentHistory: profile.debtPaymentHistory,
+    userReviews: reviews?.debtPaymentReviews,
+    incomeDepositReviews: reviews?.incomeDepositReviews,
+  };
+}
 
 /**
  * Leftover ÷ money in. Null when income is zero or negative so we never
@@ -254,19 +306,58 @@ export function averageMonthlyCashFlow(months: MonthlyCashFlow[]): AveragedCashF
       buckets: { fixed: 0, essentials: 0, flexible: 0 },
     };
   }
-  const n = months.length;
-  const moneyIn = months.reduce((s, m) => s + m.moneyIn, 0) / n;
-  const moneyOut = months.reduce((s, m) => s + m.moneyOut, 0) / n;
-  const leftover = months.reduce((s, m) => s + m.leftover, 0) / n;
+  const moneyIn = mean(months.map((m) => m.moneyIn));
+  const moneyOut = mean(months.map((m) => m.moneyOut));
+  const leftover = mean(months.map((m) => m.leftover));
   return {
     moneyIn,
     moneyOut,
     leftover,
     savingsRate: computeSavingsRate(moneyIn, moneyOut),
     buckets: {
-      fixed: months.reduce((s, m) => s + m.buckets.fixed, 0) / n,
-      essentials: months.reduce((s, m) => s + m.buckets.essentials, 0) / n,
-      flexible: months.reduce((s, m) => s + m.buckets.flexible, 0) / n,
+      fixed: mean(months.map((m) => m.buckets.fixed)),
+      essentials: mean(months.map((m) => m.buckets.essentials)),
+      flexible: mean(months.map((m) => m.buckets.flexible)),
     },
+  };
+}
+
+function toBreakdown(month: MonthlyCashFlow): LeftoverMonthBreakdown {
+  return {
+    month: month.yearMonth,
+    moneyIn: month.moneyIn,
+    moneyOut: month.moneyOut,
+    leftover: month.leftover,
+    buckets: month.buckets,
+  };
+}
+
+/**
+ * Shared multi-month cash-flow average.
+ *
+ * Month set comes from {@link monthsForCashFlowAverage}: current unfinished
+ * month excluded by default, $0-income months included, no rounding.
+ * When `rangeMonths` is omitted, last 3 complete months that have income
+ * or spending (not `profile.incomeTotal > 0`).
+ */
+export function averageCashFlow(
+  input: MonthlyCashFlowInput,
+  options: CashFlowAverageOptions = {},
+): AveragedCashFlowResult {
+  const rangeMonths = options.rangeMonths?.length ? options.rangeMonths : undefined;
+  const available = rangeMonths
+    ? rangeMonths
+    : computeMonthlyCashFlowSeries(input).map((m) => m.yearMonth);
+  const months = monthsForCashFlowAverage(available, {
+    ...options,
+    rangeMonths,
+    lastNComplete: options.lastNComplete ?? 3,
+  });
+  const monthly = getMonthlyCashFlowForMonths(input, months);
+  return {
+    ...averageMonthlyCashFlow(monthly),
+    months,
+    monthly,
+    monthlyBreakdown: monthly.map(toBreakdown),
   };
 }

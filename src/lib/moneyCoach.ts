@@ -10,11 +10,7 @@ import type { FinancialProfileCache } from "./financialProfile";
 import type { DebtPaymentReview } from "./types";
 import { getBucketAdvice, BUCKET_METADATA, type MoneyCoachBucket } from "./moneyCoachBuckets";
 import { computeScheduledDebtPayments } from "./debtPayments";
-import {
-  averageMonthlyCashFlow,
-  getMonthlyCashFlowForMonths,
-  type MonthlyCashFlowInput,
-} from "./monthlyCashFlow";
+import { averageCashFlow, cashFlowInputFromProfile } from "./monthlyCashFlow";
 
 export interface MoneyCoachBucketSummary {
   bucket: MoneyCoachBucket;
@@ -52,44 +48,20 @@ export interface MoneyCoachBreakdown {
     coveragePct: number;
     missingMonths: string[];
   };
-}
-
-function cashFlowInputFrom(
-  profile: FinancialProfileCache,
-  userReviews: DebtPaymentReview[],
-  incomeTxns: unknown[],
-  accountSnapshots: unknown[],
-  homeCurrency: string,
-  incomeDepositReviews: Map<string, string>,
-): MonthlyCashFlowInput {
-  return {
-    expenseTxns: profile.expenseTxns,
-    incomeTxns: incomeTxns as MonthlyCashFlowInput["incomeTxns"],
-    homeCurrency,
-    fxRates: profile.fxRates,
-    accountSnapshots: accountSnapshots as MonthlyCashFlowInput["accountSnapshots"],
-    debtPaymentHistory: profile.debtPaymentHistory,
-    userReviews,
-    incomeDepositReviews,
-  };
-}
-
-function defaultSpendingMonths(profile: FinancialProfileCache): string[] {
-  const now = new Date();
-  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const completeMonthsWithIncome = profile.monthlyHistory.filter(
-    (h) => h.incomeTotal > 0 && h.yearMonth < currentMonth,
-  );
-  return completeMonthsWithIncome.length >= 3
-    ? completeMonthsWithIncome.slice(-3).map((h) => h.yearMonth)
-    : completeMonthsWithIncome.map((h) => h.yearMonth);
+  /** Months included in the averages (complete months; current excluded) */
+  months: string[];
 }
 
 /**
  * Compute Money Coach breakdown with spending buckets and advice.
  *
- * @param rangeMonths - Optional: specific months to use for calculations (YYYY-MM format, oldest first)
- *                      If not provided, uses last 3 complete months with income
+ * Income, spend, leftover, and bucket averages all come from
+ * {@link averageCashFlow}. Default months are last 3 complete months with
+ * income or spending — not `profile.monthlyHistory.incomeTotal > 0`.
+ *
+ * `savingsConfirmedItems` is not used: Net savings is leftover
+ * (money in − money out). Those reviews only affected the retired
+ * balance-change path (life-insurance-style contributions).
  */
 export function computeMoneyCoachBreakdown(
   profile: FinancialProfileCache,
@@ -99,24 +71,27 @@ export function computeMoneyCoachBreakdown(
   homeCurrency: string = "CAD",
   incomeDepositReviews: Map<string, string> = new Map(),
   rangeMonths?: string[],
-  _savingsConfirmedItems: Map<string, boolean> = new Map(),
 ): MoneyCoachBreakdown {
   const { coverage } = profile;
 
-  const spendingMonths =
-    rangeMonths && rangeMonths.length > 0 ? rangeMonths : defaultSpendingMonths(profile);
-
-  const input = cashFlowInputFrom(
-    profile,
-    userReviews,
-    incomeTxns,
-    accountSnapshots,
-    homeCurrency || "CAD",
-    incomeDepositReviews,
+  const input = cashFlowInputFromProfile(
+    {
+      expenseTxns: profile.expenseTxns,
+      incomeTxns: (incomeTxns.length > 0
+        ? incomeTxns
+        : profile.incomeTxns ?? []) as FinancialProfileCache["incomeTxns"],
+      homeCurrency: homeCurrency || profile.homeCurrency || "CAD",
+      fxRates: profile.fxRates,
+      accountSnapshots: (accountSnapshots.length > 0
+        ? accountSnapshots
+        : profile.accountSnapshots) as FinancialProfileCache["accountSnapshots"],
+      debtPaymentHistory: profile.debtPaymentHistory,
+    },
+    { debtPaymentReviews: userReviews, incomeDepositReviews },
   );
 
-  const monthly = getMonthlyCashFlowForMonths(input, spendingMonths);
-  const avg = averageMonthlyCashFlow(monthly);
+  const avg = averageCashFlow(input, { rangeMonths, lastNComplete: 3 });
+  const spendingMonths = avg.months;
 
   const incomeAmount = avg.moneyIn;
   const totalSpending = avg.moneyOut;
@@ -226,5 +201,6 @@ export function computeMoneyCoachBreakdown(
     totalSpending,
     savingsRate,
     coverage,
+    months: spendingMonths,
   };
 }

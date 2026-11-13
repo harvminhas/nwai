@@ -6,6 +6,7 @@
  * - If newest complete = latest finished, no missing months
  */
 
+import { describe, it, expect } from "vitest";
 import { resolveWindowMonths } from "../lib/rangeUtils";
 
 // Helper to inject test date

@@ -4,6 +4,8 @@ import {
   buildCashFlowSummary,
   buildCashFlowView,
   computeSavingsRate,
+  formatCashFlowMonthLabel,
+  formatCashFlowSummarySentence,
   formatSavingsRateSentence,
   getMonthlyCashFlow,
   selectCashFlowMonth,
@@ -70,21 +72,61 @@ describe("selectCashFlowMonth", () => {
     { yearMonth: "2026-10" },
   ];
 
-  it("defaults to the latest month", () => {
-    expect(selectCashFlowMonth(months, null)).toBe("2026-10");
-    expect(selectCashFlowMonth(months, undefined)).toBe("2026-10");
+  it("defaults to the latest complete month", () => {
+    expect(selectCashFlowMonth(months, null, "2026-11")).toBe("2026-10");
+    expect(selectCashFlowMonth(months, undefined, "2026-11")).toBe("2026-10");
+  });
+
+  it("skips the unfinished current month when defaulting", () => {
+    expect(
+      selectCashFlowMonth(
+        [{ yearMonth: "2026-09" }, { yearMonth: "2026-10" }, { yearMonth: "2026-11" }],
+        null,
+        "2026-11",
+      ),
+    ).toBe("2026-10");
+  });
+
+  it("keeps an explicit click on the current unfinished month", () => {
+    expect(
+      selectCashFlowMonth(
+        [{ yearMonth: "2026-10" }, { yearMonth: "2026-11" }],
+        "2026-11",
+        "2026-11",
+      ),
+    ).toBe("2026-11");
   });
 
   it("keeps a click that is still in range", () => {
-    expect(selectCashFlowMonth(months, "2026-08")).toBe("2026-08");
+    expect(selectCashFlowMonth(months, "2026-08", "2026-11")).toBe("2026-08");
   });
 
-  it("snaps to the latest month when the click falls out of range", () => {
-    expect(selectCashFlowMonth(months, "2026-01")).toBe("2026-10");
+  it("snaps to the latest complete month when the click falls out of range", () => {
+    expect(selectCashFlowMonth(months, "2026-01", "2026-11")).toBe("2026-10");
   });
 
   it("returns null when there are no months", () => {
-    expect(selectCashFlowMonth([], "2026-10")).toBeNull();
+    expect(selectCashFlowMonth([], "2026-10", "2026-11")).toBeNull();
+  });
+});
+
+describe("formatCashFlowMonthLabel", () => {
+  it("labels the unfinished current month as so far", () => {
+    expect(formatCashFlowMonthLabel("2026-11", { currentMonth: "2026-11" })).toBe(
+      "Nov 2026 so far",
+    );
+    expect(
+      formatCashFlowMonthLabel("2026-11", { short: true, currentMonth: "2026-11" }),
+    ).toBe("Nov so far");
+    expect(formatCashFlowMonthLabel("2026-10", { currentMonth: "2026-11" })).toBe(
+      "Oct 2026",
+    );
+  });
+
+  it("uses so far in the summary sentence for the current month", () => {
+    expect(
+      formatCashFlowSummarySentence("2026-11", 100, 40, 60, "CAD", "2026-11"),
+    ).toMatch(/Nov 2026 so far/);
   });
 });
 
@@ -316,6 +358,68 @@ describe("totals match dashboard helpers", () => {
     expect(netSavings).toBe(month.leftover);
     expect(netSavings).toBe(month.moneyIn - month.moneyOut);
     expect(month.leftover).toBe(5500);
+  });
+
+  it("matches Income typical, Spending typical, and dashboard averages for the same months", () => {
+    const months = ["2026-08", "2026-09", "2026-10"];
+    const income = buildIncomeSummary(
+      incomeTxns,
+      accountSnapshots as never,
+      "CAD",
+      new Map(),
+      months,
+    );
+    const spending = buildSpendingSummary(
+      expenseTxns,
+      accountSnapshots as never,
+      [],
+      [],
+      {},
+      "CAD",
+      months,
+    );
+    const coach = computeMoneyCoachBreakdown(
+      {
+        monthlyHistory: months.map((yearMonth) => ({
+          yearMonth,
+          incomeTotal: 0,
+          incomeTotalAllCredits: 0,
+          expensesTotal: 0,
+          coreExpensesTotal: 0,
+          debtPaymentsTotal: 0,
+          cardServicingPaymentsTotal: 0,
+          minDebtPaymentsTotal: 0,
+          totalAssets: 0,
+          totalDebts: 0,
+          netWorth: 0,
+        })),
+        expenseTxns,
+        incomeTxns,
+        coverage: {
+          monthsCovered: 3,
+          monthsSpan: 3,
+          coveragePct: 100,
+          missingMonths: [],
+        },
+        debtPaymentHistory: [],
+        accountBalanceHistory: [],
+        fxRates: {},
+        accountSnapshots,
+      } as unknown as FinancialProfileCache,
+      [],
+      incomeTxns,
+      accountSnapshots as never,
+      "CAD",
+      new Map(),
+      months,
+    );
+    expect(income.typicalMonthly).toBeCloseTo(coach.incomeAmount, 5);
+    expect(spending.typicalMonthly).toBeCloseTo(coach.totalSpending, 5);
+    expect(coach.buckets.find((b) => b.bucket === "savings")!.monthlyAverage).toBeCloseTo(
+      coach.incomeAmount - coach.totalSpending,
+      5,
+    );
+    expect(coach.months).toEqual(months);
   });
 
   it("computes spending for the current unfinished month, not $0", () => {

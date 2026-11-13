@@ -20,7 +20,6 @@ import {
 } from "@/components/dashboardAskLayout";
 import type { TimeRange } from "@/lib/rangeUtils";
 import { formatMonthList, getSelectableMonths, type SelectableMonth } from "@/lib/rangeUtils";
-import type { GapReconciliation } from "@/lib/gapReconciliation";
 import { AiAnswer } from "@/components/AiAnswer";
 
 
@@ -64,7 +63,6 @@ interface MoneyCoachBreakdown {
     missingMonths: string[];
   };
   homeCurrency?: string;
-  gapReconciliation?: GapReconciliation;
   window?: {
     actualMonthsUsed: number;
     requestedMonths: number;
@@ -460,7 +458,6 @@ function WhereMoneyGoes({
   selectableMonths: SelectableMonth[];
 }) {
   const { coverage, incomeAmount, incomeBasisLabel, rangeLabel, buckets } = breakdown;
-  const [showExternalAccountsPopover, setShowExternalAccountsPopover] = useState(false);
   
   // Calculate bucket percentages
   const fixedBucket = buckets.find(b => b.bucket === "fixed");
@@ -659,58 +656,6 @@ function WhereMoneyGoes({
                         {fmt(bucket.monthlyAverage, currency)}
                         <span className="text-sm font-medium text-gray-400">/mo</span>
                       </p>
-                      {bucket.bucket === "savings" && breakdown.gapReconciliation?.flaggedTransfers && breakdown.gapReconciliation.flaggedTransfers.length > 0 && (
-                        <div className="relative flex-shrink-0">
-                          <span
-                            role="button"
-                            tabIndex={0}
-                            onMouseEnter={() => setShowExternalAccountsPopover(true)}
-                            onMouseLeave={() => setShowExternalAccountsPopover(false)}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setShowExternalAccountsPopover(!showExternalAccountsPopover);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.stopPropagation();
-                                e.preventDefault();
-                                setShowExternalAccountsPopover(!showExternalAccountsPopover);
-                              }
-                            }}
-                            className="flex h-4 w-4 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600 cursor-pointer"
-                          >
-                            <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                            </svg>
-                          </span>
-                          {showExternalAccountsPopover && (
-                            <div className="absolute right-0 top-full z-[100] mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-gray-200 bg-white p-3 shadow-xl">
-                              <div className="text-xs font-semibold text-gray-900 break-words">Includes transfers to accounts not in the app</div>
-                              <div className="mt-3 space-y-2.5">
-                                {breakdown.gapReconciliation.flaggedTransfers.map((transfer, idx) => (
-                                  <div key={idx} className="text-xs">
-                                    <div className="flex items-baseline justify-between gap-2">
-                                      <div className="font-medium text-gray-900">{transfer.date}</div>
-                                      <div className="font-mono font-semibold text-gray-900 tabular-nums whitespace-nowrap">
-                                        {fmt(transfer.amount, currency)}
-                                      </div>
-                                    </div>
-                                    <div className="text-gray-600 break-words mt-0.5">
-                                      From {transfer.fromAccount} to account ending in {transfer.destinationNumber?.slice(-4) || transfer.destinationNumber || "unknown"}
-                                    </div>
-                                  </div>
-                                ))}
-                                <div className="flex items-center justify-between border-t border-gray-200 pt-2 text-xs font-semibold">
-                                  <span className="text-gray-700">Total</span>
-                                  <span className="font-mono text-gray-900 tabular-nums whitespace-nowrap">
-                                    {fmt(breakdown.gapReconciliation.flaggedTransfers.reduce((sum, t) => sum + t.amount, 0), currency)}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
                     </div>
                   </div>
                   <p className="mt-1 text-xs text-gray-500 break-words">

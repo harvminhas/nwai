@@ -13,13 +13,13 @@ import {
 } from "@/lib/canonicalChartConfig";
 import {
   CASH_FLOW_TRANSFER_NOTE,
+  formatCashFlowMonthLabel,
   type CashFlowCategory,
   type CashFlowSelectedView,
   type CashFlowSource,
 } from "@/lib/cashFlowSummary";
 import { getSignColor } from "@/lib/colorHelpers";
 import { formatCurrency, getCurrencySymbol } from "@/lib/currencyUtils";
-import { formatMonth, formatMonthYear } from "@/lib/dateFormatting";
 import { useLgUp } from "@/lib/useLgUp";
 import type { TrendRangeKey } from "@/lib/trendRange";
 import {
@@ -83,7 +83,7 @@ export function CashFlowView({
   const chartData: ChartPoint[] = view.visibleMonths.map((m) => ({
     month: m.yearMonth,
     yearMonth: m.yearMonth,
-    label: longRange ? formatMonthYear(m.yearMonth) : formatMonth(m.yearMonth),
+    label: formatCashFlowMonthLabel(m.yearMonth, { short: !longRange }),
     moneyIn: m.moneyIn,
     moneyOut: m.moneyOut,
     leftover: m.leftover,
@@ -102,7 +102,7 @@ export function CashFlowView({
           <h1 className="text-2xl font-bold text-gray-900 lg:text-3xl">Cash flow</h1>
           <p className="mt-1 break-words text-sm text-gray-500">
             {view.selected
-              ? formatMonthYear(view.selected.yearMonth)
+              ? formatCashFlowMonthLabel(view.selected.yearMonth)
               : "Money in, money out, and what is left"}
           </p>
         </div>
@@ -147,7 +147,7 @@ export function CashFlowView({
                   {...CANONICAL_XAXIS_CONFIG}
                   interval={longRange ? "preserveStartEnd" : 0}
                   tickFormatter={(ym: string) =>
-                    longRange ? formatMonthYear(ym) : formatMonth(ym)
+                    formatCashFlowMonthLabel(ym, { short: !longRange })
                   }
                 />
                 <YAxis
@@ -170,7 +170,7 @@ export function CashFlowView({
                     return (
                       <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-lg">
                         <p className="mb-1 text-xs font-semibold text-gray-900">
-                          {formatMonthYear(row.yearMonth)}
+                          {formatCashFlowMonthLabel(row.yearMonth)}
                         </p>
                         <p className="text-xs" style={{ color: MONEY_IN_COLOR }}>
                           Money in {money(row.moneyIn)}

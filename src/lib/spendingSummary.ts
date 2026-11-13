@@ -10,6 +10,7 @@ import type { DebtPaymentReview } from "./types";
 import { getCategoryBucket, type MoneyCoachBucket } from "./moneyCoachBuckets";
 import { merchantSlug } from "./applyRules";
 import { resolveMerchantAlias, resolveCanonicalMerchantSlug } from "./merchantUtils";
+import { mean, monthsForCashFlowAverage } from "./cashFlowAverage";
 import { getLastCompleteMonth } from "./monthAnchor";
 import { computeMonthlyBuckets } from "./monthlyBucketComputation";
 import { computeScheduledDebtPayments } from "./debtPayments";
@@ -212,9 +213,12 @@ export function buildSpendingSummary(
   });
   const allMonths = Array.from(monthSet).sort();
   
-  // Use provided range or default to last 3 months (original behavior)
-  const calculationMonths = rangeMonths || allMonths.slice(-3);
-  const last12Months = allMonths.slice(-12); // Keep for backwards compatibility
+  // Same month set and mean as dashboard / Cash Flow (include $0 months, no rounding)
+  const calculationMonths = monthsForCashFlowAverage(allMonths, {
+    rangeMonths,
+    lastNComplete: 3,
+  });
+  const last12Months = allMonths.slice(-12); // Keep for backwards compatibility (page charts)
   
   const monthlyHistory: MonthlySpendingSummary[] = last12Months.map((yearMonth) =>
     spendingForMonth(
@@ -228,12 +232,20 @@ export function buildSpendingSummary(
     ),
   );
   
-  // Calculate typical monthly based on range
-  const calculationData = monthlyHistory.filter(m => calculationMonths.includes(m.yearMonth));
-  const calculationTotals = calculationData.map(m => m.total);
-  const typicalMonthly = calculationTotals.length > 0
-    ? calculationTotals.reduce((a, b) => a + b, 0) / calculationTotals.length
-    : 0;
+  const typicalMonthly = mean(
+    calculationMonths.map(
+      (ym) =>
+        spendingForMonth(
+          ym,
+          expenseTxns,
+          accountSnapshots,
+          debtPaymentHistory,
+          userReviews,
+          fxRates,
+          currency,
+        ).total,
+    ),
+  );
   
   // Keep last 3 months for backwards compatibility
   const last3Months = last12Months.slice(-3);

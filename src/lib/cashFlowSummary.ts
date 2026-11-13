@@ -6,7 +6,8 @@
  */
 
 import { fmt } from "./currencyUtils";
-import { formatMonthYear } from "./dateFormatting";
+import { formatMonth, formatMonthYear } from "./dateFormatting";
+import { getCurrentMonth } from "./monthAnchor";
 import {
   computeMonthlyCashFlowSeries,
   type MonthlyCashFlow,
@@ -20,6 +21,9 @@ export {
   getMonthlyCashFlowForMonths,
   computeMonthlyCashFlowSeries,
   averageMonthlyCashFlow,
+  averageCashFlow,
+  monthsForCashFlowAverage,
+  cashFlowInputFromProfile,
 } from "./monthlyCashFlow";
 export type {
   MonthlyCashFlow,
@@ -90,14 +94,31 @@ export function formatSavingsRateSentence(rate: number | null): string | null {
   return `You spent ${Math.abs(pct)}% more than you earned`;
 }
 
+export function isUnfinishedCashFlowMonth(
+  yearMonth: string,
+  currentMonth: string = getCurrentMonth(),
+): boolean {
+  return yearMonth === currentMonth;
+}
+
+/** "Nov 2026 so far" for the unfinished current month; otherwise "Nov 2026". */
+export function formatCashFlowMonthLabel(
+  yearMonth: string,
+  opts?: { short?: boolean; currentMonth?: string },
+): string {
+  const base = opts?.short ? formatMonth(yearMonth) : formatMonthYear(yearMonth);
+  return isUnfinishedCashFlowMonth(yearMonth, opts?.currentMonth) ? `${base} so far` : base;
+}
+
 export function formatCashFlowSummarySentence(
   yearMonth: string,
   moneyIn: number,
   moneyOut: number,
   leftover: number,
   currency: string,
+  currentMonth?: string,
 ): string {
-  const month = formatMonthYear(yearMonth);
+  const month = formatCashFlowMonthLabel(yearMonth, { currentMonth });
   const inAmt = fmt(moneyIn, currency);
   const outAmt = fmt(moneyOut, currency);
   if (moneyIn <= 0 && moneyOut <= 0) {
@@ -112,14 +133,17 @@ export function formatCashFlowSummarySentence(
   return `In ${month} you brought in ${inAmt} and spent ${outAmt}. You spent ${fmt(-leftover, currency)} more than you earned.`;
 }
 
-/** Keep the click if it is still in range; otherwise the latest visible month. */
+/** Keep the click if it is still in range; otherwise the latest complete month. */
 export function selectCashFlowMonth(
   months: Array<{ yearMonth: string }>,
   selectedYm: string | null | undefined,
+  currentMonth: string = getCurrentMonth(),
 ): string | null {
   if (months.length === 0) return null;
   const sorted = [...months].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
   if (selectedYm && sorted.some((m) => m.yearMonth === selectedYm)) return selectedYm;
+  const complete = sorted.filter((m) => m.yearMonth < currentMonth);
+  if (complete.length > 0) return complete[complete.length - 1].yearMonth;
   return sorted[sorted.length - 1].yearMonth;
 }
 

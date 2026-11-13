@@ -5,7 +5,7 @@
 
 import type { BucketDetailedBreakdown } from "./bucketBreakdown";
 import type { DetailedIncomeMetrics } from "./incomeMetrics";
-import type { WindowSavingsResult, SavingsConfirmation } from "./savingsCalculations";
+import type { LeftoverMonthBreakdown } from "./monthlyCashFlow";
 import type { TimeRange } from "./rangeUtils";
 
 export interface IncomeDrawerData {
@@ -43,8 +43,11 @@ export interface BucketDrawerData {
 export interface SavingsDrawerData {
   type: "savings";
   range: TimeRange;
-  /** Window-period reconciliation with per-month breakdown */
-  windowSavings: WindowSavingsResult;
+  /** Average leftover (money in − money out) over the window */
+  monthlyAverage: number;
+  moneyIn: number;
+  moneyOut: number;
+  monthlyBreakdown: LeftoverMonthBreakdown[];
   homeCurrency: string;
   basisLabel: string;
   /** Optional note like "2 of 3 months" when data is sparse */

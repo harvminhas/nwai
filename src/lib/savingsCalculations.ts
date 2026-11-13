@@ -327,17 +327,18 @@ export function computeAssetGains(
 }
 
 /**
- * Compute monthly savings using NET balance change approach.
- * 
- * For month M:
- * Savings = (sum of cash/savings balances at end of M - end of M-1)
- *         + (total debt at end of M-1 - total debt at end of M)
- *         + contributions to outside accounts not tracked
- * 
- * This NET approach means:
- * - Debt transfers (e.g., paying CC with FlexLine) net to 0
- * - Can be negative if spent more cash than debt paid
- * - Balances are carried forward if missing
+ * Balance-change savings for one month. NOT used for Net savings.
+ *
+ * Net savings everywhere labelled "Net savings" is leftover from
+ * {@link getMonthlyCashFlow} / {@link averageCashFlow} (money in − money out).
+ *
+ * This path remains for inspect-savings and regression-report:
+ * Savings = cash/savings balance change + debt paydown + outside contributions.
+ *
+ * `confirmedItems` (`savingsConfirmedItems`) only affects whether ambiguous
+ * Investments & Savings merchants (e.g. life insurance) count as outside
+ * contributions. Unconfirmed items are omitted; confirmed=false skips them;
+ * confirmed=true counts them.
  */
 export function computeMonthlySavings(
   monthlyHistory: MonthlyHistoryEntry[],
@@ -516,8 +517,8 @@ export function computeMonthlySavings(
 }
 
 /**
- * Compute average monthly savings over a time window.
- * Uses computeMonthlySavings for each month and averages.
+ * Average of {@link computeMonthlySavings} over a window.
+ * Not used for Net savings — see {@link averageCashFlow}.
  */
 export function computeAverageSavings(
   monthlyHistory: MonthlyHistoryEntry[],
@@ -537,12 +538,8 @@ export function computeAverageSavings(
 }
 
 /**
- * Compute savings for a window of months with per-month reconciliation.
- * 
- * Returns:
- * - Per-month breakdown where components sum to total
- * - Per-account changes over the entire window period
- * - Monthly averages matching the header
+ * Per-month balance-change savings for a window.
+ * Not used for Net savings — see {@link averageCashFlow}.
  */
 export function computeWindowSavings(
   monthlyHistory: MonthlyHistoryEntry[],

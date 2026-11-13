@@ -5,7 +5,7 @@
  * Reproduces Honda Finance "Account not found" bug.
  */
 
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { GET } from "@/app/api/user/spending/drilldown/route";
 import { NextRequest } from "next/server";
 
