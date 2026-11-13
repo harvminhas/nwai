@@ -227,33 +227,6 @@ export default function GrowthTab({
             )}
           </Section>
 
-          {Math.abs(breakdown.investmentUnsplit) >= 0.005 && (
-            <Section
-              title="Investment change (unsplit)"
-              amount={breakdown.investmentUnsplit}
-              currency={currency}
-              note="No deposit/withdrawal transactions on these statements — the full balance change is shown here instead of Other/unexplained."
-            >
-              {breakdown.investmentAccounts.filter((a) => a.split === "unsplit" && !a.isBaseline).map((acc) => {
-                const row = netWorthAccountRow({
-                  slug: acc.slug,
-                  label: acc.label,
-                  type: acc.type,
-                  side: "asset",
-                });
-                return (
-                  <Row
-                    key={acc.slug}
-                    label={row.label}
-                    amount={acc.delta}
-                    currency={currency}
-                    href={row.href}
-                  />
-                );
-              })}
-            </Section>
-          )}
-
           <Section title="Other assets" amount={breakdown.otherAssetChanges} currency={currency}>
             {breakdown.otherAssets.map((acc) => {
               const row = netWorthAccountRow({
@@ -314,7 +287,39 @@ export default function GrowthTab({
                 amount={breakdown.unexplained}
                 currency={currency}
                 note="Remainder so this list matches the What Changed total. Never omitted."
-              />
+              >
+                {Math.abs(breakdown.investmentUnsplit) >= 0.005 && (
+                  <>
+                    <Row
+                      label="of which: investment change (unsplit)"
+                      amount={breakdown.investmentUnsplit}
+                      currency={currency}
+                      muted
+                      sub="Not added to the total — contributions vs market cannot be split, so this sits in unexplained."
+                    />
+                    {breakdown.investmentAccounts
+                      .filter((a) => a.split === "unsplit" && !a.isBaseline)
+                      .map((acc) => {
+                        const row = netWorthAccountRow({
+                          slug: acc.slug,
+                          label: acc.label,
+                          type: acc.type,
+                          side: "asset",
+                        });
+                        return (
+                          <Row
+                            key={acc.slug}
+                            label={row.label}
+                            amount={acc.delta}
+                            currency={currency}
+                            href={row.href}
+                            muted
+                          />
+                        );
+                      })}
+                  </>
+                )}
+              </Section>
 
               <div className="pt-2 border-t-2 border-gray-300">
                 <div className="flex items-center justify-between gap-3">

@@ -138,6 +138,7 @@ describe("GrowthTab", () => {
         rangeLabel="Aug 2026 – Oct 2026"
       />,
     );
-    expect(screen.getByText("Investment change (unsplit)")).toBeTruthy();
+    expect(screen.getByText("of which: investment change (unsplit)")).toBeTruthy();
+    expect(screen.getByText("Other / unexplained")).toBeTruthy();
   });
 });

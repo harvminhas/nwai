@@ -176,6 +176,41 @@ describe("gross savings", () => {
     });
     expect(result.income).toBe(6000);
   });
+
+  it("does not strip deposits already excluded via saved transfer sources", () => {
+    const current = month({
+      yearMonth: "2026-10",
+      netWorth: 15500,
+      incomeTotal: 6000,
+      coreExpensesTotal: 4000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 5000 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 10500 },
+      ],
+    });
+    const prior = month({
+      yearMonth: "2026-09",
+      netWorth: 14000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 4000 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 10000 },
+      ],
+    });
+    const result = computeMonthGrowth(current, prior, {
+      expenseTxns: [],
+      incomeTxns: [{
+        txMonth: "2026-10",
+        amount: 500,
+        accountSlug: "tfsa",
+        category: "Salary",
+        source: "CONTRIBUTION",
+      }],
+      debtPaymentHistory: [],
+      userTransferSources: ["CONTRIBUTION"],
+    });
+    expect(result.income).toBe(6000);
+    expect(result.grossSavings).toBe(2000);
+  });
 });
 
 describe("flow identity: review example (no double counting)", () => {
@@ -518,7 +553,51 @@ describe("investment split", () => {
     expect(result.investedFromSavings).toBe(800);
   });
 
-  it("labels growth unsplit when contributions cannot be determined and keeps it on the recon", () => {
+  it("keeps unsplit Δ out of the recon total when the contribution was a Transfer", () => {
+    // Review example: income 6000, spending 4000, $1000 card payment, $500 TFSA
+    // Transfer, markets +$100, TFSA statement has no deposit/withdrawal lines.
+    // Adding unsplit $600 into the total would show $2600 vs actual ΔNW $2100.
+    const previous = month({
+      yearMonth: "2026-09",
+      netWorth: 14000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 5000 },
+        { slug: "visa", label: "Visa", type: "credit", value: -1000 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 10000 },
+      ],
+    });
+    const current = month({
+      yearMonth: "2026-10",
+      netWorth: 16100,
+      incomeTotal: 6000,
+      coreExpensesTotal: 4000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 6300 },
+        { slug: "visa", label: "Visa", type: "credit", value: -800 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 10600 },
+      ],
+    });
+    const result = computeMonthGrowth(current, previous, {
+      expenseTxns: [
+        { txMonth: "2026-10", amount: 3200, category: "Groceries", accountSlug: "chk" },
+        { txMonth: "2026-10", amount: 800, category: "Shopping", accountSlug: "visa" },
+        { txMonth: "2026-10", amount: 1000, category: "Card Servicing", accountSlug: "chk" },
+        { txMonth: "2026-10", amount: 500, category: "Transfers", accountSlug: "chk" },
+      ],
+      incomeTxns: [],
+      debtPaymentHistory: [{ accountSlug: "visa", statementMonth: "2026-10", paymentsMade: 1000, currency: "CAD" }],
+    });
+    expect(result.grossSavings).toBe(2000);
+    expect(result.investmentUnsplit).toBe(600);
+    expect(result.investmentMarketGrowth).toBe(0);
+    expect(result.spendingInvestmentAddBack).toBe(0);
+    expect(result.netWorthChange).toBe(2100);
+    expect(result.unexplained).toBeCloseTo(100);
+    expect(flowExplained(result)).toBeCloseTo(result.netWorthChange!);
+    expect(flowExplained(result)).not.toBeCloseTo(2000 + 600);
+  });
+
+  it("keeps unsplit Δ out of the recon total when the contribution was counted as spending", () => {
     const prior = month({
       yearMonth: "2026-09",
       netWorth: 50000,
@@ -549,7 +628,11 @@ describe("investment split", () => {
     expect(result.investmentMarketGrowth).toBe(0);
     expect(result.investmentUnsplit).toBe(2000);
     expect(result.investedFromSavings).toBe(500);
-    expect(result.unexplained).toBeCloseTo(0);
+    expect(result.spendingInvestmentAddBack).toBe(0);
+    expect(result.grossSavings).toBe(2500);
+    expect(result.netWorthChange).toBe(4500);
+    expect(result.unexplained).toBeCloseTo(2000);
+    expect(flowExplained(result)).toBeCloseTo(result.netWorthChange!);
   });
 
   it("strips investment-statement withdrawals that were counted as spending", () => {
@@ -580,6 +663,42 @@ describe("investment split", () => {
     expect(result.investmentWithdrawals).toBe(500);
     expect(result.investmentMarketGrowth).toBe(0);
     expect(result.unexplained).toBeCloseTo(0);
+  });
+
+  it("adds investment withdrawals back into cash kept so it matches checking change", () => {
+    const prior = month({
+      yearMonth: "2026-09",
+      netWorth: 15000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 5000 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 10000 },
+      ],
+    });
+    const current = month({
+      yearMonth: "2026-10",
+      netWorth: 15000,
+      incomeTotal: 0,
+      coreExpensesTotal: 1000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 6000 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 9000 },
+      ],
+    });
+    const result = computeMonthGrowth(current, prior, {
+      expenseTxns: [{ txMonth: "2026-10", amount: 1000, category: "Other", accountSlug: "tfsa" }],
+      incomeTxns: [],
+      debtPaymentHistory: [],
+    });
+    const checkingChange =
+      (current.byAccount!.find((a) => a.slug === "chk")!.value) -
+      (prior.byAccount!.find((a) => a.slug === "chk")!.value);
+    expect(result.investmentWithdrawals).toBe(1000);
+    expect(result.spending).toBe(0);
+    expect(result.cashKept).toBe(1000);
+    expect(result.cashKept).toBe(checkingChange);
+    expect(result.netWorthChange).toBe(0);
+    expect(result.unexplained).toBeCloseTo(0);
+    expect(flowExplained(result)).toBeCloseTo(result.netWorthChange!);
   });
 
   it("splits a savings-type TFSA the same way as an investment account", () => {

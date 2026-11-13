@@ -2,7 +2,8 @@
  * GET /api/user/net-worth-growth
  *
  * Display-only growth decomposition for the Net Worth Growth tab.
- * Reads getFinancialProfile; does not write stored data.
+ * Reads getFinancialProfile plus the same income-classification prefs
+ * `incomeTotal` uses. Does not write stored data.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -14,13 +15,36 @@ import { computeNetWorthGrowth } from "@/lib/netWorthGrowth";
 
 export const dynamic = "force-dynamic";
 
+/** Same prefs `getFinancialProfile` uses when building incomeTotal — read-only. */
+async function loadIncomeClassificationOpts(
+  uid: string,
+  db: ReturnType<typeof getFirebaseAdmin>["db"],
+) {
+  const [transferPrefsSnap, incomeCatRulesSnap] = await Promise.all([
+    db.doc(`users/${uid}/prefs/transferIncomeSources`).get(),
+    db.collection(`users/${uid}/incomeCategoryRules`).get(),
+  ]);
+  const userTransferSources = new Set<string>(
+    transferPrefsSnap.exists ? (transferPrefsSnap.data()?.keys ?? []) : [],
+  );
+  const incomeCategoryRules = new Map<string, string>();
+  for (const d of incomeCatRulesSnap.docs) {
+    const r = d.data() as { slug?: string; category?: string };
+    if (r.slug && r.category) incomeCategoryRules.set(r.slug, r.category);
+  }
+  return { userTransferSources, incomeCategoryRules };
+}
+
 export async function GET(req: NextRequest) {
   const { db } = getFirebaseAdmin();
   const access = await resolveAccess(req, db);
   if (!access) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const profile = await getFinancialProfile(access.targetUid, db);
+    const [profile, incomeClassOpts] = await Promise.all([
+      getFinancialProfile(access.targetUid, db),
+      loadIncomeClassificationOpts(access.targetUid, db),
+    ]);
     const months = computeNetWorthGrowth(
       {
         monthlyHistory: profile.monthlyHistory,
@@ -29,6 +53,8 @@ export async function GET(req: NextRequest) {
         debtPaymentHistory: profile.debtPaymentHistory,
         homeCurrency: profile.homeCurrency,
         fxRates: profile.fxRates,
+        userTransferSources: incomeClassOpts.userTransferSources,
+        incomeCategoryRules: incomeClassOpts.incomeCategoryRules,
       },
       { windowMonths: NET_WORTH_SUMMARY_MONTHS },
     );

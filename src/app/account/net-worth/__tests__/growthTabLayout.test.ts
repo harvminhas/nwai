@@ -30,7 +30,7 @@ describe("Growth tab read layout", () => {
     expect(growthSrc).toContain("This month");
     expect(growthSrc).toContain("Chart range");
     expect(growthSrc).toContain("Where your savings went");
-    expect(growthSrc).toContain("Investment change (unsplit)");
+    expect(growthSrc).toContain("of which: investment change (unsplit)");
     expect(pageSrc).toContain("formatGrowthChartTitle");
     expect(pageSrc).toContain("priorMonth");
     expect(pageSrc).not.toContain("12-Month Trend");

@@ -12,10 +12,12 @@
  *       + principal portion of installment payments already in spending
  *       + Investments & Savings already in spending that also hit a split account
  *       + investment market growth                (split accounts)
- *       + investment change (unsplit)
  *       + other asset revaluation
  *       + new accounts (first statement)
  *       + Other/unexplained
+ *
+ * Unsplit investment Δ is NOT in that sum (never guess contributions vs market).
+ * It is shown as an informational "of which" under Other/unexplained.
  *
  * Card/LOC paydown and investment contributions are a separate
  * "Where your savings went" allocation (cash kept, debt paid down, invested).
@@ -230,7 +232,6 @@ export function flowExplained(b: Pick<
   | "installmentPrincipalAddBack"
   | "spendingInvestmentAddBack"
   | "investmentMarketGrowth"
-  | "investmentUnsplit"
   | "otherAssetChanges"
   | "newAccountsTotal"
   | "unexplained"
@@ -241,7 +242,6 @@ export function flowExplained(b: Pick<
     b.installmentPrincipalAddBack +
     b.spendingInvestmentAddBack +
     b.investmentMarketGrowth +
-    b.investmentUnsplit +
     b.otherAssetChanges +
     b.newAccountsTotal +
     (b.unexplained ?? 0)
@@ -533,11 +533,14 @@ export function computeMonthGrowth(
     otherAssets.push({ slug, label, type, amount });
   }
 
+  // Use net split (deposits − withdrawals), not the display Invested figure, so
+  // a withdrawal back to chequing increases cash kept. Spending-categorized
+  // contributions are already in savings — add that overlap back.
   const cashKept =
     grossSavings -
     revolvingPaydown -
-    investedFromSavings +
-    Math.min(contributionsAlreadyInSpending, investedFromSavings);
+    netSplitContributions +
+    Math.min(contributionsAlreadyInSpending, Math.max(0, netSplitContributions));
   const savingsForReconciliation = grossSavings;
   const netWorthChange = previous ? current.netWorth - previous.netWorth : null;
   const unexplained =
@@ -549,7 +552,6 @@ export function computeMonthGrowth(
           installmentPrincipalAddBack +
           spendingInvestmentAddBack +
           investmentMarketGrowth +
-          investmentUnsplit +
           otherAssetChanges +
           newAccountsTotal);
 
@@ -718,7 +720,6 @@ export function sumGrowthBreakdowns(
           installmentPrincipalAddBack +
           spendingInvestmentAddBack +
           investmentMarketGrowth +
-          investmentUnsplit +
           otherAssetChanges +
           newAccountsTotal);
 
