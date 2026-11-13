@@ -30,10 +30,23 @@ describe("Growth tab read layout", () => {
     expect(growthSrc).toContain("This month");
     expect(growthSrc).toContain("Chart range");
     expect(growthSrc).toContain("Where your savings went");
-    expect(growthSrc).toContain("of which: investment change (unsplit)");
+    expect(growthSrc).toContain("Invested (net)");
     expect(pageSrc).toContain("formatGrowthChartTitle");
     expect(pageSrc).toContain("priorMonth");
     expect(pageSrc).not.toContain("12-Month Trend");
+  });
+
+  it("places the unsplit investment row outside the reconciling list", () => {
+    const unexplained = growthSrc.indexOf('title="Other / unexplained"');
+    const total = growthSrc.indexOf("Total (matches What Changed)");
+    const unsplit = growthSrc.indexOf("Investment change, not split");
+    const savingsWent = growthSrc.lastIndexOf("Where your savings went");
+    expect(unexplained).toBeGreaterThan(-1);
+    expect(total).toBeGreaterThan(unexplained);
+    expect(unsplit).toBeGreaterThan(total);
+    expect(savingsWent).toBeGreaterThan(unsplit);
+    expect(growthSrc).not.toContain("of which");
+    expect(growthSrc).not.toContain("sits in unexplained");
   });
 
   it("does not add a public dev route", () => {

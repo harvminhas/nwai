@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MonthlyHistoryEntry } from "../financialProfile";
 import {
+  allocationExplained,
   computeMonthGrowth,
   computeNetWorthGrowth,
   flowExplained,
@@ -10,8 +11,13 @@ import {
   isInterestOrFeeCategory,
   isInvestmentAccountType,
   sumGrowthBreakdowns,
+  type MonthGrowthBreakdown,
   type NetWorthGrowthInput,
 } from "../netWorthGrowth";
+
+function expectSavingsWentSumsToSavings(result: MonthGrowthBreakdown) {
+  expect(allocationExplained(result)).toBeCloseTo(result.grossSavings);
+}
 
 function month(partial: Partial<MonthlyHistoryEntry> & { yearMonth: string; netWorth: number }): MonthlyHistoryEntry {
   return {
@@ -257,6 +263,7 @@ describe("flow identity: review example (no double counting)", () => {
     expect(flowExplained(result)).toBeCloseTo(2100);
     // Allocation is NOT part of the recon total
     expect(result.cashKept).toBe(2000 - 200 - 500);
+    expectSavingsWentSumsToSavings(result);
   });
 });
 
@@ -595,6 +602,7 @@ describe("investment split", () => {
     expect(result.unexplained).toBeCloseTo(100);
     expect(flowExplained(result)).toBeCloseTo(result.netWorthChange!);
     expect(flowExplained(result)).not.toBeCloseTo(2000 + 600);
+    expectSavingsWentSumsToSavings(result);
   });
 
   it("keeps unsplit Δ out of the recon total when the contribution was counted as spending", () => {
@@ -627,9 +635,10 @@ describe("investment split", () => {
     expect(result.investmentAccounts[0].split).toBe("unsplit");
     expect(result.investmentMarketGrowth).toBe(0);
     expect(result.investmentUnsplit).toBe(2000);
-    expect(result.investedFromSavings).toBe(500);
+    expect(result.investedFromSavings).toBe(0);
     expect(result.spendingInvestmentAddBack).toBe(0);
     expect(result.grossSavings).toBe(2500);
+    expectSavingsWentSumsToSavings(result);
     expect(result.netWorthChange).toBe(4500);
     expect(result.unexplained).toBeCloseTo(2000);
     expect(flowExplained(result)).toBeCloseTo(result.netWorthChange!);
@@ -694,11 +703,51 @@ describe("investment split", () => {
       (prior.byAccount!.find((a) => a.slug === "chk")!.value);
     expect(result.investmentWithdrawals).toBe(1000);
     expect(result.spending).toBe(0);
+    expect(result.investedFromSavings).toBe(-1000);
     expect(result.cashKept).toBe(1000);
     expect(result.cashKept).toBe(checkingChange);
     expect(result.netWorthChange).toBe(0);
     expect(result.unexplained).toBeCloseTo(0);
     expect(flowExplained(result)).toBeCloseTo(result.netWorthChange!);
+    expectSavingsWentSumsToSavings(result);
+  });
+
+  it("Where your savings went sums to savings after a TFSA withdrawal into checking", () => {
+    const previous = month({
+      yearMonth: "2026-09",
+      netWorth: 14000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 5000 },
+        { slug: "visa", label: "Visa", type: "credit", value: -1000 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 10000 },
+      ],
+    });
+    const current = month({
+      yearMonth: "2026-10",
+      netWorth: 16000,
+      incomeTotal: 6000,
+      coreExpensesTotal: 5000,
+      byAccount: [
+        { slug: "chk", label: "Checking", type: "checking", value: 7800 },
+        { slug: "visa", label: "Visa", type: "credit", value: -800 },
+        { slug: "tfsa", label: "TFSA", type: "investment", value: 9000 },
+      ],
+    });
+    const result = computeMonthGrowth(current, previous, {
+      expenseTxns: [
+        { txMonth: "2026-10", amount: 3200, category: "Groceries", accountSlug: "chk" },
+        { txMonth: "2026-10", amount: 800, category: "Shopping", accountSlug: "visa" },
+        { txMonth: "2026-10", amount: 1000, category: "Card Servicing", accountSlug: "chk" },
+        { txMonth: "2026-10", amount: 1000, category: "Other", accountSlug: "tfsa" },
+      ],
+      incomeTxns: [],
+      debtPaymentHistory: [{ accountSlug: "visa", statementMonth: "2026-10", paymentsMade: 1000, currency: "CAD" }],
+    });
+    expect(result.grossSavings).toBe(2000);
+    expect(result.cashKept).toBe(2800);
+    expect(result.revolvingPaydown).toBe(200);
+    expect(result.investedFromSavings).toBe(-1000);
+    expectSavingsWentSumsToSavings(result);
   });
 
   it("splits a savings-type TFSA the same way as an investment account", () => {
@@ -766,6 +815,7 @@ describe("investment split", () => {
     expect(result.investedFromSavings).toBe(500);
     expect(result.investmentMarketGrowth).toBe(100);
     expect(result.unexplained).toBeCloseTo(0);
+    expectSavingsWentSumsToSavings(result);
   });
 });
 
@@ -885,6 +935,7 @@ describe("complete realistic month — unexplained ≈ 0", () => {
     expect(result.revolvingPaydown).toBe(1000 - (800 + 139));
     expect(result.investedFromSavings).toBe(500);
     expect(result.cashKept).toBeCloseTo(-1500);
+    expectSavingsWentSumsToSavings(result);
     expect(result.netWorthChange).toBe(-20389);
     expect(result.unexplained).toBeCloseTo(0, 6);
     expect(flowExplained(result)).toBeCloseTo(-20389);

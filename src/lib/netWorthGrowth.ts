@@ -17,10 +17,11 @@
  *       + Other/unexplained
  *
  * Unsplit investment Δ is NOT in that sum (never guess contributions vs market).
- * It is shown as an informational "of which" under Other/unexplained.
+ * It is a muted reference row outside the reconciling list.
  *
  * Card/LOC paydown and investment contributions are a separate
- * "Where your savings went" allocation (cash kept, debt paid down, invested).
+ * "Where your savings went" allocation (cash kept, debt paid down, invested net).
+ * Identity: cash kept + revolving paydown + invested (net) = savings.
  * They are NOT added into the reconciliation total — savings already holds
  * that money because those outflows are not spending.
  *
@@ -135,8 +136,9 @@ export interface MonthGrowthBreakdown {
    */
   spendingInvestmentAddBack: number;
 
-  /** Residual of gross savings after revolving paydown and invested contributions. */
+  /** Residual of gross savings after revolving paydown and invested (net). */
   cashKept: number;
+  /** Split deposits − withdrawals. Negative when money returns from investments. */
   investedFromSavings: number;
 
   /** Gross savings — interest is a separate recon term. */
@@ -246,6 +248,13 @@ export function flowExplained(b: Pick<
     b.newAccountsTotal +
     (b.unexplained ?? 0)
   );
+}
+
+/** Where your savings went: cash kept + revolving paydown + invested (net). */
+export function allocationExplained(
+  b: Pick<MonthGrowthBreakdown, "cashKept" | "revolvingPaydown" | "investedFromSavings">,
+): number {
+  return b.cashKept + b.revolvingPaydown + b.investedFromSavings;
 }
 
 export function computeMonthGrowth(
@@ -495,12 +504,8 @@ export function computeMonthGrowth(
     })
     .reduce((sum, t) => sum + convert(Math.abs(t.amount), t.currency), 0);
   const netSplitContributions = investmentContributions - investmentWithdrawals;
-  // Show contributions even when they were categorized as spending.
-  const investedFromSavings = Math.max(
-    0,
-    netSplitContributions,
-    contributionsAlreadyInSpending,
-  );
+  // Net figure so Cash kept + Debt paid down + Invested = savings (withdrawals negative).
+  const investedFromSavings = netSplitContributions;
   // Only add back when the same dollars also appear as split contributions;
   // unsplit Δ already includes those contributions.
   const spendingInvestmentAddBack = Math.min(
@@ -533,14 +538,8 @@ export function computeMonthGrowth(
     otherAssets.push({ slug, label, type, amount });
   }
 
-  // Use net split (deposits − withdrawals), not the display Invested figure, so
-  // a withdrawal back to chequing increases cash kept. Spending-categorized
-  // contributions are already in savings — add that overlap back.
-  const cashKept =
-    grossSavings -
-    revolvingPaydown -
-    netSplitContributions +
-    Math.min(contributionsAlreadyInSpending, Math.max(0, netSplitContributions));
+  // Identity: cash kept + revolving paydown + invested (net) = gross savings.
+  const cashKept = grossSavings - revolvingPaydown - investedFromSavings;
   const savingsForReconciliation = grossSavings;
   const netWorthChange = previous ? current.netWorth - previous.netWorth : null;
   const unexplained =

@@ -287,39 +287,7 @@ export default function GrowthTab({
                 amount={breakdown.unexplained}
                 currency={currency}
                 note="Remainder so this list matches the What Changed total. Never omitted."
-              >
-                {Math.abs(breakdown.investmentUnsplit) >= 0.005 && (
-                  <>
-                    <Row
-                      label="of which: investment change (unsplit)"
-                      amount={breakdown.investmentUnsplit}
-                      currency={currency}
-                      muted
-                      sub="Not added to the total — contributions vs market cannot be split, so this sits in unexplained."
-                    />
-                    {breakdown.investmentAccounts
-                      .filter((a) => a.split === "unsplit" && !a.isBaseline)
-                      .map((acc) => {
-                        const row = netWorthAccountRow({
-                          slug: acc.slug,
-                          label: acc.label,
-                          type: acc.type,
-                          side: "asset",
-                        });
-                        return (
-                          <Row
-                            key={acc.slug}
-                            label={row.label}
-                            amount={acc.delta}
-                            currency={currency}
-                            href={row.href}
-                            muted
-                          />
-                        );
-                      })}
-                  </>
-                )}
-              </Section>
+              />
 
               <div className="pt-2 border-t-2 border-gray-300">
                 <div className="flex items-center justify-between gap-3">
@@ -334,12 +302,46 @@ export default function GrowthTab({
             </>
           )}
 
+          {Math.abs(breakdown.investmentUnsplit) >= 0.005 && (
+            <div className="pt-1 text-gray-500">
+              <div className="flex items-center justify-between gap-3 py-2">
+                <span className="min-w-0 text-sm break-words">Investment change, not split</span>
+                <IntactAmount className="text-sm font-semibold text-gray-500">
+                  {signed(breakdown.investmentUnsplit, currency)}
+                </IntactAmount>
+              </div>
+              <p className="text-xs text-gray-500 break-words pb-1">
+                Includes contributions already counted in savings plus market growth; not added to the total.
+              </p>
+              {breakdown.investmentAccounts
+                .filter((a) => a.split === "unsplit" && !a.isBaseline)
+                .map((acc) => {
+                  const row = netWorthAccountRow({
+                    slug: acc.slug,
+                    label: acc.label,
+                    type: acc.type,
+                    side: "asset",
+                  });
+                  return (
+                    <Row
+                      key={acc.slug}
+                      label={row.label}
+                      amount={acc.delta}
+                      currency={currency}
+                      href={row.href}
+                      muted
+                    />
+                  );
+                })}
+            </div>
+          )}
+
           <div className="pt-4 mt-2 border-t border-gray-200">
             <p className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
               Where your savings went
             </p>
             <p className="text-xs text-gray-500 break-words mb-2">
-              Card/LOC payments and investment contributions are uses of savings, not extra net-worth change.
+              Cash kept + debt paid down + invested (net) = savings. Not extra net-worth change.
             </p>
             <Section title="Cash kept" amount={breakdown.cashKept} currency={currency} />
             <Section title="Debt paid down (cards / LOC)" amount={breakdown.revolvingPaydown} currency={currency}>
@@ -365,7 +367,7 @@ export default function GrowthTab({
                 );
               })}
             </Section>
-            <Section title="Invested" amount={breakdown.investedFromSavings} currency={currency}>
+            <Section title="Invested (net)" amount={breakdown.investedFromSavings} currency={currency}>
               {breakdown.investmentAccounts
                 .filter((a) => a.split === "split" && !a.isBaseline)
                 .map((acc) => {

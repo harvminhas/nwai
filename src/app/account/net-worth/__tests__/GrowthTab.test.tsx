@@ -90,7 +90,7 @@ describe("GrowthTab", () => {
     expect(screen.getByText("Where your savings went")).toBeTruthy();
     expect(screen.getByText("Cash kept")).toBeTruthy();
     expect(screen.getByText("Debt paid down (cards / LOC)")).toBeTruthy();
-    expect(screen.getByText("Invested")).toBeTruthy();
+    expect(screen.getByText("Invested (net)")).toBeTruthy();
     expect(screen.getByText("Other / unexplained")).toBeTruthy();
     expect(screen.getByText("Total (matches What Changed)")).toBeTruthy();
   });
@@ -111,7 +111,7 @@ describe("GrowthTab", () => {
     expect(onScopeChange).toHaveBeenCalledWith("range");
   });
 
-  it("shows Investment change (unsplit) when contributions cannot be split", () => {
+  it("shows unsplit investment change as a muted reference row after the reconciling total", () => {
     render(
       <GrowthTab
         breakdown={{
@@ -138,7 +138,13 @@ describe("GrowthTab", () => {
         rangeLabel="Aug 2026 – Oct 2026"
       />,
     );
-    expect(screen.getByText("of which: investment change (unsplit)")).toBeTruthy();
+    const unsplit = screen.getByText("Investment change, not split");
+    const total = screen.getByText("Total (matches What Changed)");
+    expect(unsplit).toBeTruthy();
     expect(screen.getByText("Other / unexplained")).toBeTruthy();
+    expect(screen.getByText(/not added to the total/)).toBeTruthy();
+    expect(screen.queryByText(/of which/i)).toBeNull();
+    expect(screen.queryByText(/sits in unexplained/i)).toBeNull();
+    expect(total.compareDocumentPosition(unsplit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
