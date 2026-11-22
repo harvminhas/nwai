@@ -11,6 +11,12 @@ import { useToast } from "@/components/useToast";
 import { TransactionPicker } from "@/components/transactions/TransactionPicker";
 import { reselectPlanById } from "./linkTransactions";
 import { PlanCard } from "./PlanCard";
+import {
+  formatYearSubtotal,
+  groupPlans,
+  todayISO,
+  validatePlanDates,
+} from "./planList";
 
 export default function PlannerPage() {
   const router = useRouter();
@@ -20,7 +26,9 @@ export default function PlannerPage() {
   const [loading, setLoading] = useState(true);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editingPlan, setEditingPlan] = useState<Plan | null>(null);
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
+  const [pastOpen, setPastOpen] = useState(false);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -56,16 +64,8 @@ export default function PlannerPage() {
     }
   }
 
-  function categorizePlans(plans: Plan[]) {
-    const today = new Date().toISOString().split("T")[0];
-    return {
-      upcoming: plans.filter((p) => p.startDate > today),
-      inProgress: plans.filter((p) => p.startDate <= today && p.endDate >= today),
-      done: plans.filter((p) => p.endDate < today),
-    };
-  }
-
-  const { upcoming, inProgress, done } = categorizePlans(plans);
+  const today = todayISO();
+  const { inProgress, futureByYear, past } = groupPlans(plans, today);
 
   async function handleDeletePlan(id: string) {
     if (!token) return;
@@ -96,6 +96,41 @@ export default function PlannerPage() {
     }
   }
 
+  async function patchPlan(id: string, body: Record<string, unknown>) {
+    if (!token) return false;
+    try {
+      const res = await fetch("/api/user/plans", {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ id, ...body }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        error(typeof data.error === "string" ? data.error : "Could not update this plan. Please try again.");
+        return false;
+      }
+      await loadPlans(token);
+      return true;
+    } catch (err) {
+      console.error("Failed to update plan:", err);
+      error("Could not update this plan. Please try again.");
+      return false;
+    }
+  }
+
+  async function handleMarkComplete(id: string) {
+    const ok = await patchPlan(id, { completedAt: new Date().toISOString() });
+    if (ok) success("Plan marked complete");
+  }
+
+  async function handleUndoComplete(id: string) {
+    const ok = await patchPlan(id, { completedAt: null });
+    if (ok) success("Marked as not complete");
+  }
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -105,52 +140,111 @@ export default function PlannerPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-12">
+    <div className="min-h-screen overflow-x-hidden bg-gray-50 pb-12">
       <div className="mx-auto max-w-6xl px-4 py-8">
         {/* Header */}
-        <div className="mb-6 flex items-center justify-between">
-          <div>
+        <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
             <h1 className="text-2xl font-semibold text-gray-900">Planner</h1>
             <p className="mt-1 text-sm text-gray-600">
               Track spending for specific goals or events
             </p>
           </div>
           <button
-            onClick={() => setShowCreateModal(true)}
-            className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700"
+            onClick={() => {
+              setEditingPlan(null);
+              setShowCreateModal(true);
+            }}
+            className="shrink-0 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700"
           >
             + New Plan
           </button>
         </div>
 
-        {/* Upcoming Plans */}
-        {upcoming.length > 0 && (
-          <PlanSection
-            title="Upcoming"
-            plans={upcoming}
-            onSelectPlan={setSelectedPlan}
-            onDelete={handleDeletePlan}
-          />
-        )}
-
-        {/* In Progress Plans */}
         {inProgress.length > 0 && (
           <PlanSection
-            title="In Progress"
+            title="In progress"
             plans={inProgress}
+            today={today}
             onSelectPlan={setSelectedPlan}
             onDelete={handleDeletePlan}
+            onEdit={(plan) => {
+              setEditingPlan(plan);
+              setShowCreateModal(true);
+            }}
+            onMarkComplete={handleMarkComplete}
+            onUndoComplete={handleUndoComplete}
           />
         )}
 
-        {/* Done Plans */}
-        {done.length > 0 && (
-          <PlanSection
-            title="Done"
-            plans={done}
-            onSelectPlan={setSelectedPlan}
-            onDelete={handleDeletePlan}
-          />
+        {futureByYear.map((group) => (
+          <div key={group.year} className="mb-8">
+            <div className="mb-3 flex items-baseline justify-between gap-3">
+              <h2 className="text-sm font-semibold text-gray-900">{group.year}</h2>
+              <p className="min-w-0 truncate text-right text-xs text-gray-400 sm:text-sm">
+                {formatYearSubtotal(group.plans.length, group.budgetTotal, "CAD")}
+              </p>
+            </div>
+            <div className="space-y-3">
+              {group.plans.map((plan) => (
+                <PlanCard
+                  key={plan.id}
+                  plan={plan}
+                  today={today}
+                  onSelect={() => setSelectedPlan(plan)}
+                  onDelete={() => handleDeletePlan(plan.id)}
+                  onEdit={() => {
+                    setEditingPlan(plan);
+                    setShowCreateModal(true);
+                  }}
+                  onMarkComplete={() => handleMarkComplete(plan.id)}
+                  onUndoComplete={() => handleUndoComplete(plan.id)}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+
+        {past.length > 0 && (
+          <div className="mb-8">
+            <button
+              type="button"
+              aria-expanded={pastOpen}
+              onClick={() => setPastOpen((open) => !open)}
+              className="mb-3 flex w-full min-w-0 items-center gap-2 text-left"
+            >
+              <svg
+                className={`h-4 w-4 shrink-0 text-gray-400 transition-transform ${pastOpen ? "rotate-90" : ""}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                aria-hidden="true"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+              <h2 className="text-sm font-bold uppercase tracking-wide text-gray-500">Past</h2>
+              <span className="text-sm text-gray-400">{past.length}</span>
+            </button>
+            {pastOpen && (
+              <div className="space-y-3">
+                {past.map((plan) => (
+                  <PlanCard
+                    key={plan.id}
+                    plan={plan}
+                    today={today}
+                    onSelect={() => setSelectedPlan(plan)}
+                    onDelete={() => handleDeletePlan(plan.id)}
+                    onEdit={() => {
+                      setEditingPlan(plan);
+                      setShowCreateModal(true);
+                    }}
+                    onMarkComplete={() => handleMarkComplete(plan.id)}
+                    onUndoComplete={() => handleUndoComplete(plan.id)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         )}
 
         {/* Empty state */}
@@ -167,13 +261,18 @@ export default function PlannerPage() {
         )}
       </div>
 
-      {/* Create Plan Modal */}
+      {/* Create / edit plan */}
       {showCreateModal && (
         <CreatePlanModal
           token={token}
-          onClose={() => setShowCreateModal(false)}
+          existing={editingPlan}
+          onClose={() => {
+            setShowCreateModal(false);
+            setEditingPlan(null);
+          }}
           onSave={() => {
             setShowCreateModal(false);
+            setEditingPlan(null);
             if (token) loadPlans(token);
           }}
         />
@@ -202,13 +301,21 @@ export default function PlannerPage() {
 function PlanSection({
   title,
   plans,
+  today,
   onSelectPlan,
   onDelete,
+  onEdit,
+  onMarkComplete,
+  onUndoComplete,
 }: {
   title: string;
   plans: Plan[];
+  today: string;
   onSelectPlan: (plan: Plan) => void;
   onDelete: (id: string) => void;
+  onEdit: (plan: Plan) => void;
+  onMarkComplete: (id: string) => void;
+  onUndoComplete: (id: string) => void;
 }) {
   return (
     <div className="mb-8">
@@ -220,8 +327,12 @@ function PlanSection({
           <PlanCard
             key={plan.id}
             plan={plan}
+            today={today}
             onSelect={() => onSelectPlan(plan)}
             onDelete={() => onDelete(plan.id)}
+            onEdit={() => onEdit(plan)}
+            onMarkComplete={() => onMarkComplete(plan.id)}
+            onUndoComplete={() => onUndoComplete(plan.id)}
           />
         ))}
       </div>
@@ -229,43 +340,84 @@ function PlanSection({
   );
 }
 
-function CreatePlanModal({
+export function CreatePlanModal({
   token,
+  existing,
   onClose,
   onSave,
 }: {
   token: string | null;
+  existing: Plan | null;
   onClose: () => void;
   onSave: () => void;
 }) {
-  const [name, setName] = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [budget, setBudget] = useState("");
+  const [name, setName] = useState(existing?.name ?? "");
+  const [startDate, setStartDate] = useState(existing?.startDate ?? "");
+  const [endDate, setEndDate] = useState(existing?.endDate ?? "");
+  const [budget, setBudget] = useState(existing ? String(existing.budget) : "");
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  function setDates(nextStart: string, nextEnd: string) {
+    setStartDate(nextStart);
+    setEndDate(nextEnd);
+    if (nextStart && nextEnd) {
+      setFormError(validatePlanDates(nextStart, nextEnd));
+    } else {
+      setFormError(null);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!token || !name || !startDate || !endDate || !budget) return;
 
+    const dateError = validatePlanDates(startDate, endDate);
+    if (dateError) {
+      setFormError(dateError);
+      return;
+    }
+
     setSaving(true);
+    setFormError(null);
     try {
-      await fetch("/api/user/plans", {
-        method: "POST",
+      const isEdit = Boolean(existing);
+      const res = await fetch("/api/user/plans", {
+        method: isEdit ? "PATCH" : "POST",
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          name,
-          startDate,
-          endDate,
-          budget: parseFloat(budget),
-        }),
+        body: JSON.stringify(
+          isEdit
+            ? {
+                id: existing!.id,
+                name,
+                startDate,
+                endDate,
+                budget: parseFloat(budget),
+              }
+            : {
+                name,
+                startDate,
+                endDate,
+                budget: parseFloat(budget),
+              },
+        ),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setFormError(
+          typeof data.error === "string"
+            ? data.error
+            : "Could not save this plan. Please try again.",
+        );
+        return;
+      }
       onSave();
-    } catch (error) {
-      console.error("Failed to create plan:", error);
+    } catch (err) {
+      console.error("Failed to save plan:", err);
+      setFormError("Could not save this plan. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -276,11 +428,19 @@ function CreatePlanModal({
       <div className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm" onClick={onClose} />
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
         <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
-          <h2 className="mb-4 text-xl font-semibold text-gray-900">New Plan</h2>
+          <h2 className="mb-4 text-xl font-semibold text-gray-900">
+            {existing ? "Edit plan" : "New Plan"}
+          </h2>
+          {formError && (
+            <p className="mb-4 text-sm text-red-600" role="alert">
+              {formError}
+            </p>
+          )}
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Name</label>
+              <label htmlFor="plan-name" className="mb-1 block text-sm font-medium text-gray-700">Name</label>
               <input
+                id="plan-name"
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -289,31 +449,34 @@ function CreatePlanModal({
                 required
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Start Date</label>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="min-w-0">
+                <label htmlFor="plan-start-date" className="mb-1 block text-sm font-medium text-gray-700">Start Date</label>
                 <input
+                  id="plan-start-date"
                   type="date"
                   value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none"
+                  onChange={(e) => setDates(e.target.value, endDate)}
+                  className="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none"
                   required
                 />
               </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">End Date</label>
+              <div className="min-w-0">
+                <label htmlFor="plan-end-date" className="mb-1 block text-sm font-medium text-gray-700">End Date</label>
                 <input
+                  id="plan-end-date"
                   type="date"
                   value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none"
+                  onChange={(e) => setDates(startDate, e.target.value)}
+                  className="w-full min-w-0 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none"
                   required
                 />
               </div>
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Budget</label>
+              <label htmlFor="plan-budget" className="mb-1 block text-sm font-medium text-gray-700">Budget</label>
               <input
+                id="plan-budget"
                 type="number"
                 step="0.01"
                 value={budget}
@@ -336,7 +499,7 @@ function CreatePlanModal({
                 disabled={saving}
                 className="flex-1 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
               >
-                {saving ? "Creating..." : "Create"}
+                {saving ? (existing ? "Saving..." : "Creating...") : existing ? "Save" : "Create"}
               </button>
             </div>
           </form>
