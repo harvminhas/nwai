@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { formatCurrency } from "@/lib/currencyUtils";
 import {
   PLAN_DATE_RANGE_ERROR,
+  dateRangeErrorForSave,
   formatPlanDateRange,
   formatYearSubtotal,
   groupPlans,
@@ -174,6 +175,34 @@ describe("validatePlanDates", () => {
     expect(validatePlanDates("2027-05-15", "2027-05-03")).toBe(PLAN_DATE_RANGE_ERROR);
     expect(PLAN_DATE_RANGE_ERROR.toLowerCase()).toContain("end date");
     expect(PLAN_DATE_RANGE_ERROR.toLowerCase()).toContain("start date");
+  });
+});
+
+describe("dateRangeErrorForSave", () => {
+  const inverted = { startDate: "2027-07-05", endDate: "2026-11-22" };
+
+  it("skips the check when both dates are unchanged from the loaded plan", () => {
+    expect(
+      dateRangeErrorForSave(inverted.startDate, inverted.endDate, inverted),
+    ).toBeNull();
+  });
+
+  it("rejects changing a date to an invalid range", () => {
+    expect(
+      dateRangeErrorForSave("2027-07-05", "2026-01-01", inverted),
+    ).toBe(PLAN_DATE_RANGE_ERROR);
+  });
+
+  it("accepts fixing inverted dates", () => {
+    expect(
+      dateRangeErrorForSave("2026-11-22", "2027-07-05", inverted),
+    ).toBeNull();
+  });
+
+  it("always validates on create (no stored plan)", () => {
+    expect(dateRangeErrorForSave("2027-07-05", "2026-11-22", null)).toBe(
+      PLAN_DATE_RANGE_ERROR,
+    );
   });
 });
 

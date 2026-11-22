@@ -15,7 +15,7 @@ describe("planner page layout", () => {
     expect(page).toContain("aria-expanded={pastOpen}");
     expect(page).toContain("const [pastOpen, setPastOpen] = useState(false)");
     expect(page).toContain('role="alert"');
-    expect(page).toContain("validatePlanDates");
+    expect(page).toContain("dateRangeErrorForSave");
   });
 
   it("keeps the list from overflowing on a 390px phone", () => {

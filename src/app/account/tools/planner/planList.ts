@@ -39,6 +39,22 @@ export function validatePlanDates(startDate: string, endDate: string): string | 
   return null;
 }
 
+/**
+ * Skip the range check when both dates still match the stored plan, so a
+ * legacy inverted range can be renamed or rebudgeted. Changing either date
+ * validates the resulting pair.
+ */
+export function dateRangeErrorForSave(
+  startDate: string,
+  endDate: string,
+  stored?: { startDate: string; endDate: string } | null,
+): string | null {
+  if (stored && startDate === stored.startDate && endDate === stored.endDate) {
+    return null;
+  }
+  return validatePlanDates(startDate, endDate);
+}
+
 function compareByStartThenName(a: PlanListItem, b: PlanListItem): number {
   const start = a.startDate.localeCompare(b.startDate);
   if (start !== 0) return start;

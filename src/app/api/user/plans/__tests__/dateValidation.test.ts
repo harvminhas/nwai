@@ -145,4 +145,80 @@ describe("plans API date validation and PATCH", () => {
     expect(update.completedAt).toBeNull();
     expect(update).not.toHaveProperty("linkedTransactions");
   });
+
+  it("PATCH allows renaming and rebudgeting a legacy plan with inverted dates", async () => {
+    const inverted = {
+      ...existingPlan,
+      startDate: "2027-07-05",
+      endDate: "2026-11-22",
+      budget: 1200,
+    };
+    mockGet.mockResolvedValue({ exists: true, data: () => inverted });
+    mockUpdate.mockResolvedValue(undefined);
+
+    const res = await PATCH(
+      request("PATCH", {
+        id: "plan-1",
+        name: "Renamed trip",
+        startDate: "2027-07-05",
+        endDate: "2026-11-22",
+        budget: 1800,
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
+    const update = mockUpdate.mock.calls[0][0] as {
+      name: string;
+      budget: number;
+      startDate: string;
+      endDate: string;
+    };
+    expect(update.name).toBe("Renamed trip");
+    expect(update.budget).toBe(1800);
+    expect(update.startDate).toBe("2027-07-05");
+    expect(update.endDate).toBe("2026-11-22");
+  });
+
+  it("PATCH rejects changing a date to an invalid range", async () => {
+    const inverted = {
+      ...existingPlan,
+      startDate: "2027-07-05",
+      endDate: "2026-11-22",
+    };
+    mockGet.mockResolvedValue({ exists: true, data: () => inverted });
+
+    const res = await PATCH(
+      request("PATCH", {
+        id: "plan-1",
+        startDate: "2027-07-05",
+        endDate: "2026-01-01",
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: PLAN_DATE_RANGE_ERROR });
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it("PATCH succeeds when inverted dates are fixed", async () => {
+    const inverted = {
+      ...existingPlan,
+      startDate: "2027-07-05",
+      endDate: "2026-11-22",
+    };
+    mockGet.mockResolvedValue({ exists: true, data: () => inverted });
+    mockUpdate.mockResolvedValue(undefined);
+
+    const res = await PATCH(
+      request("PATCH", {
+        id: "plan-1",
+        startDate: "2026-11-22",
+        endDate: "2027-07-05",
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
+    const update = mockUpdate.mock.calls[0][0] as { startDate: string; endDate: string };
+    expect(update.startDate).toBe("2026-11-22");
+    expect(update.endDate).toBe("2027-07-05");
+  });
 });

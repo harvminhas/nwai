@@ -12,10 +12,10 @@ import { TransactionPicker } from "@/components/transactions/TransactionPicker";
 import { reselectPlanById } from "./linkTransactions";
 import { PlanCard } from "./PlanCard";
 import {
+  dateRangeErrorForSave,
   formatYearSubtotal,
   groupPlans,
   todayISO,
-  validatePlanDates,
 } from "./planList";
 
 export default function PlannerPage() {
@@ -340,7 +340,7 @@ function PlanSection({
   );
 }
 
-export function CreatePlanModal({
+function CreatePlanModal({
   token,
   existing,
   onClose,
@@ -361,18 +361,18 @@ export function CreatePlanModal({
   function setDates(nextStart: string, nextEnd: string) {
     setStartDate(nextStart);
     setEndDate(nextEnd);
-    if (nextStart && nextEnd) {
-      setFormError(validatePlanDates(nextStart, nextEnd));
-    } else {
+    if (!nextStart || !nextEnd) {
       setFormError(null);
+      return;
     }
+    setFormError(dateRangeErrorForSave(nextStart, nextEnd, existing));
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!token || !name || !startDate || !endDate || !budget) return;
 
-    const dateError = validatePlanDates(startDate, endDate);
+    const dateError = dateRangeErrorForSave(startDate, endDate, existing);
     if (dateError) {
       setFormError(dateError);
       return;

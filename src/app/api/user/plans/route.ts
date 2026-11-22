@@ -179,11 +179,12 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });
   }
 
-  if (update.startDate !== undefined || update.endDate !== undefined) {
-    const dateError = dateRangeErrorResponse(
-      update.startDate ?? existing.startDate,
-      update.endDate ?? existing.endDate,
-    );
+  const nextStart = startDate !== undefined ? startDate : existing.startDate;
+  const nextEnd = endDate !== undefined ? endDate : existing.endDate;
+  const datesChanged =
+    nextStart !== existing.startDate || nextEnd !== existing.endDate;
+  if (datesChanged) {
+    const dateError = dateRangeErrorResponse(nextStart, nextEnd);
     if (dateError) return dateError;
   }
 
