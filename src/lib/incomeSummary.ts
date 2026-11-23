@@ -19,7 +19,7 @@ import { INCOME_TRANSFER_RE } from "./spendingMetrics";
 import { GENERIC_SOURCE_NAMES, scoreSource, detectFrequency, type Frequency, type Reliability } from "./incomeEngine";
 import type { IncomeCategory } from "./incomeEngine";
 import { mean, monthsForCashFlowAverage } from "./cashFlowAverage";
-import { getLastCompleteMonth, getCurrentMonth } from "./monthAnchor";
+import { getCurrentMonth, isMonthInProgress, listMonthsWithData } from "./monthAnchor";
 
 export interface IncomeTransaction {
   source: string;
@@ -71,6 +71,8 @@ export interface MonthlyIncomeSummary {
   bonus: number;
   /** Per-source breakdown */
   sources: { source: string; amount: number; isOneOff: boolean; isBonus?: boolean }[];
+  /** True when this is the unfinished current calendar month. */
+  isInProgress?: boolean;
 }
 
 export interface IncomeComparison {
@@ -152,11 +154,9 @@ export interface IncomeSummary {
   totalMonthsTracked: number;
 }
 
-/** Helper to get last N complete months (excluding current, anchored to last complete month) */
+/** Helper to get last N complete months (excluding current). */
 function getLastCompleteMonths(allMonths: string[], n: number): string[] {
-  const lastComplete = getLastCompleteMonth();
-  const complete = allMonths.filter(m => m <= lastComplete);
-  return complete.slice(-n);
+  return monthsForCashFlowAverage(allMonths, { lastNComplete: n });
 }
 
 /** Detect if a source name is generic (triggers amount clustering) */
@@ -483,8 +483,10 @@ export function buildIncomeSummary(
   const oneOffSources = allSources.filter(s => s.isOneOff && !s.isTransfer);
   const regularSources = allSources.filter(s => !s.isOneOff && !s.isTransfer);
 
-  // Build monthly history
-  const allMonths = Array.from(new Set(transactions.map(t => t.date.slice(0, 7)))).sort();
+  // Build monthly history (includes current month when it has data)
+  const allMonths = listMonthsWithData(
+    Array.from(new Set(transactions.map((t) => t.date.slice(0, 7)))),
+  ).map((m) => m.yearMonth);
   
   // Track bonus transactions and unreviewed deposits
   const bonusTransactions: IncomeTransaction[] = [];
@@ -615,6 +617,7 @@ export function buildIncomeSummary(
       regular: regularTotal,
       oneOff: bonusTotal, // For backwards compatibility
       bonus: bonusTotal,
+      isInProgress: isMonthInProgress(ym, currentMonth),
       sources: allSources
         .filter(s => !s.isTransfer) // Exclude transfers from month sources
         .filter(s => s.transactions.some(t => t.date.startsWith(ym)))

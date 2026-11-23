@@ -10,6 +10,7 @@ import type { AccountBalanceHistory } from "./financialProfile";
 import type { ManualAsset } from "./types";
 import { fmtCompact } from "./currencyUtils";
 import { resolveAccountDisplayName } from "./accountListLabel";
+import { formatMonthWithStatus, isMonthInProgress } from "./monthAnchor";
 
 function snapshotDisplayName(
   slug: string,
@@ -155,9 +156,7 @@ function isStale(statementMonth: string): { stale: boolean; daysOld: number } {
 }
 
 function formatMonthLabel(ym: string): string {
-  const [year, month] = ym.split("-");
-  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  return `${monthNames[parseInt(month) - 1]} ${year}`;
+  return formatMonthWithStatus(ym, isMonthInProgress(ym));
 }
 
 function convertToHome(amount: number, currency: string, fxRates: Record<string, number>, homeCurrency: string): number {

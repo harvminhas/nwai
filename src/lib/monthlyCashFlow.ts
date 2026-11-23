@@ -16,10 +16,12 @@
 
 import { displayNameFromProfileAccount } from "./accountListLabel";
 import {
+  completeMonthsWithData,
   mean,
   monthsForCashFlowAverage,
   type CashFlowAverageOptions,
 } from "./cashFlowAverage";
+import { isMonthInProgress } from "./monthAnchor";
 import { categoryColor } from "./categoryTaxonomy";
 import type {
   AccountSnapshot,
@@ -31,7 +33,7 @@ import { buildIncomeSummary, type MonthlyIncomeSummary } from "./incomeSummary";
 import { spendingForMonth, type MonthlySpendingSummary } from "./spendingSummary";
 import type { DebtPaymentReview } from "./types";
 
-export { mean, monthsForCashFlowAverage } from "./cashFlowAverage";
+export { completeMonthsWithData, mean, monthsForCashFlowAverage } from "./cashFlowAverage";
 export type { CashFlowAverageOptions } from "./cashFlowAverage";
 
 export type MonthlyCashFlowInput = {
@@ -76,6 +78,8 @@ export type MonthlyCashFlow = {
   buckets: MonthlyCashFlowBuckets;
   categories: MonthlyCashFlowCategory[];
   sources: MonthlyCashFlowSource[];
+  /** True when this is the unfinished current calendar month. */
+  isInProgress?: boolean;
 };
 
 export type AveragedCashFlow = {
@@ -104,6 +108,12 @@ export type AveragedCashFlowResult = AveragedCashFlow & {
  * Build the shared cash-flow input from a financial profile plus reviews.
  * Used by dashboard, drawers, chat, and Income/Spending typicals.
  */
+/** Income-deposit and debt-payment reviews that change money in / money out. */
+export type CashFlowReviews = {
+  debtPaymentReviews?: DebtPaymentReview[];
+  incomeDepositReviews?: Map<string, string>;
+};
+
 export function cashFlowInputFromProfile(
   profile: {
     expenseTxns: ExpenseTxnRecord[];
@@ -113,10 +123,7 @@ export function cashFlowInputFromProfile(
     accountSnapshots?: MonthlyCashFlowInput["accountSnapshots"];
     debtPaymentHistory?: DebtPaymentHistoryEntry[];
   },
-  reviews?: {
-    debtPaymentReviews?: DebtPaymentReview[];
-    incomeDepositReviews?: Map<string, string>;
-  },
+  reviews?: CashFlowReviews,
 ): MonthlyCashFlowInput {
   return {
     expenseTxns: profile.expenseTxns,
@@ -150,6 +157,7 @@ function emptyMonth(yearMonth: string): MonthlyCashFlow {
     buckets: { fixed: 0, essentials: 0, flexible: 0 },
     categories: [],
     sources: [],
+    isInProgress: isMonthInProgress(yearMonth),
   };
 }
 
@@ -216,6 +224,7 @@ function composeMonth(
     },
     categories: categoriesFromSpending(spending),
     sources: sourcesFromIncome(income, incomeTxns, accountSnapshots),
+    isInProgress: isMonthInProgress(yearMonth),
   };
 }
 
@@ -262,14 +271,27 @@ function cashFlowForMonths(input: MonthlyCashFlowInput, months: string[]): Month
   );
 }
 
+export type MonthlyCashFlowSeriesOptions = {
+  /** Drop the unfinished current month. Default false (single-area series). */
+  completeOnly?: boolean;
+  /** Override "now" (tests). */
+  currentMonth?: string;
+};
+
 /**
  * Cash flow for every month that has income or spending data.
- * Includes the current unfinished month when it has data.
+ * Includes the current unfinished month when it has data, unless
+ * {@link MonthlyCashFlowSeriesOptions.completeOnly} is set.
  */
-export function computeMonthlyCashFlowSeries(input: MonthlyCashFlowInput): MonthlyCashFlow[] {
+export function computeMonthlyCashFlowSeries(
+  input: MonthlyCashFlowInput,
+  options: MonthlyCashFlowSeriesOptions = {},
+): MonthlyCashFlow[] {
   const seedMonths = monthsWithData(input, []);
-  const series = cashFlowForMonths(input, seedMonths);
-  return series;
+  const months = options.completeOnly
+    ? completeMonthsWithData(seedMonths, { currentMonth: options.currentMonth })
+    : seedMonths;
+  return cashFlowForMonths(input, months);
 }
 
 /**
@@ -347,7 +369,9 @@ export function averageCashFlow(
   const rangeMonths = options.rangeMonths?.length ? options.rangeMonths : undefined;
   const available = rangeMonths
     ? rangeMonths
-    : computeMonthlyCashFlowSeries(input).map((m) => m.yearMonth);
+    : computeMonthlyCashFlowSeries(input, { completeOnly: true, currentMonth: options.currentMonth }).map(
+        (m) => m.yearMonth,
+      );
   const months = monthsForCashFlowAverage(available, {
     ...options,
     rangeMonths,

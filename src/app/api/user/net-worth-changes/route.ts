@@ -8,6 +8,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
+import { completeMonthsWithData } from "@/lib/cashFlowAverage";
 import { getNetWorthChanges, generateNetWorthChanges } from "@/lib/netWorthChanges";
 
 // Must match GENERATOR_VERSION in netWorthChanges.ts
@@ -79,9 +80,8 @@ export async function GET(req: NextRequest) {
       // No lastViewed: count items in latest complete month only
       // (prevents 108-item badge on first visit)
       // Filter out current calendar month (incomplete by definition)
-      const now = new Date();
-      const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      const completeMonths = changes.filter(c => c.month < currentMonth);
+      const completeMonthIds = completeMonthsWithData(changes.map((x) => x.month));
+      const completeMonths = changes.filter((c) => completeMonthIds.includes(c.month));
       if (completeMonths.length > 0) {
         const latestCompleteMonth = completeMonths.sort((a, b) => b.month.localeCompare(a.month))[0];
         newCount = latestCompleteMonth.items.length;

@@ -2,6 +2,7 @@
 
 import type { IncomeSummary } from "@/lib/incomeSummary";
 import { formatMonthYear, formatDate } from "@/lib/dateFormatting";
+import { formatMonthWithStatus } from "@/lib/monthAnchor";
 import { formatCurrency, formatCurrencyWithCents } from "@/lib/currencyUtils";
 import {
   INCOME_SO_FAR_HEADER_CLASS,
@@ -24,7 +25,7 @@ export function OverviewTab({ summary, windowNote }: OverviewTabProps) {
     ? Math.min(100, Math.round((currentMonthTotal / typicalMonthly) * 100))
     : 0;
   
-  const currentMonthLabel = formatMonthYear(currentMonth);
+  const currentMonthLabel = formatMonthWithStatus(currentMonth, true);
   const isOnTrack = progressPercent >= 80;
   const progressColor = progressPercent >= 100 ? "#10b981" : progressPercent >= 80 ? "#7c3aed" : "#f59e0b";
   
@@ -71,7 +72,7 @@ export function OverviewTab({ summary, windowNote }: OverviewTabProps) {
       {/* Current month progress */}
       <div className="bg-white rounded-xl border border-gray-200 p-6">
         <div className={INCOME_SO_FAR_HEADER_CLASS}>
-          <h3 className={INCOME_SO_FAR_PERIOD_CLASS}>{currentMonthLabel} SO FAR</h3>
+          <h3 className={INCOME_SO_FAR_PERIOD_CLASS}>{currentMonthLabel}</h3>
           <p className={INCOME_SO_FAR_TYPICAL_CLASS}>
             of ~{formatCurrency(typicalMonthly, currency)} in a typical month
           </p>
@@ -116,7 +117,7 @@ export function OverviewTab({ summary, windowNote }: OverviewTabProps) {
             </div>
             
             <p className="text-xs text-gray-500">
-              No {currentMonthLabel} statements yet
+              No {formatMonthYear(currentMonth)} statements yet
             </p>
           </>
         )}

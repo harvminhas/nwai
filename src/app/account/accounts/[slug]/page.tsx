@@ -24,6 +24,7 @@ import { MerchantDrawer, useMerchantDrawer } from "@/app/account/spending/Mercha
 import { merchantSlug } from "@/lib/applyRules";
 import { monthAbbrev, resolveDebtHeaderActivity } from "@/lib/debtHeaderActivity";
 import { commitAccountMonth } from "@/lib/accountMonthPayload";
+import { isMonthInProgress } from "@/lib/monthAnchor";
 import DebtHeaderActivity from "./DebtHeaderActivity";
 
 // ── constants ─────────────────────────────────────────────────────────────────
@@ -871,14 +872,19 @@ export default function AccountDetailPage() {
           monthMap.set(e.yearMonth, {
             yearMonth: e.yearMonth,
             netWorth: e.netWorth,
-            isEstimate: e.isCarryForward || isBackfill,
+            isEstimate: (e.isCarryForward || isBackfill) && !isMonthInProgress(e.yearMonth),
             priority,
           });
         }
       }
       const chartHistory = Array.from(monthMap.values())
         .sort((a, b) => a.yearMonth.localeCompare(b.yearMonth))
-        .map(({ yearMonth, netWorth, isEstimate }) => ({ yearMonth, netWorth, isEstimate }));
+        .map(({ yearMonth, netWorth, isEstimate }) => ({
+          yearMonth,
+          netWorth,
+          isEstimate,
+          isInProgress: isMonthInProgress(yearMonth),
+        }));
       setHistory(chartHistory);
 
       setFxRates(typeof json.fxRates === "object" && json.fxRates !== null ? json.fxRates : {});

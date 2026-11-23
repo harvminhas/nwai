@@ -51,3 +51,17 @@ export function monthsForCashFlowAverage(
   const n = options.lastNComplete ?? 3;
   return complete.slice(-n);
 }
+
+/**
+ * Every complete month with data (unfinished current month excluded).
+ * Same rule as {@link monthsForCashFlowAverage} without the last-N slice.
+ */
+export function completeMonthsWithData(
+  availableMonths: string[],
+  options: Pick<CashFlowAverageOptions, "currentMonth"> = {},
+): string[] {
+  return monthsForCashFlowAverage(availableMonths, {
+    currentMonth: options.currentMonth,
+    lastNComplete: Math.max(availableMonths.length, 1),
+  });
+}

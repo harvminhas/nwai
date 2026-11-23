@@ -1,5 +1,6 @@
 import type { ParsedStatementData } from "@/lib/types";
 import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
+import { IN_PROGRESS_LABEL } from "@/lib/monthAnchor";
 
 function formatDelta(value: number): string {
   const sym = getCurrencySymbol();
@@ -84,7 +85,7 @@ export default function ConsolidatedProgressHero({
         delta={nwDelta}
         deltaLabel="this month"
         positiveIsGood
-        suppressReason={currentMonthIncomplete ? "Estimated month" : undefined}
+        suppressReason={currentMonthIncomplete ? IN_PROGRESS_LABEL : undefined}
       />
       <KpiCard
         label="Total Assets"
@@ -92,7 +93,7 @@ export default function ConsolidatedProgressHero({
         delta={assetsDelta}
         deltaLabel="vs last month"
         positiveIsGood
-        suppressReason={currentMonthIncomplete ? "Estimated month" : undefined}
+        suppressReason={currentMonthIncomplete ? IN_PROGRESS_LABEL : undefined}
       />
       <KpiCard
         label="Total Debts"
@@ -100,7 +101,7 @@ export default function ConsolidatedProgressHero({
         delta={debtsDelta}
         deltaLabel={(d) => d < 0 ? "paid down" : "more debt"}
         positiveIsGood={false}
-        suppressReason={currentMonthIncomplete ? "Estimated month" : undefined}
+        suppressReason={currentMonthIncomplete ? IN_PROGRESS_LABEL : undefined}
       />
     </div>
   );

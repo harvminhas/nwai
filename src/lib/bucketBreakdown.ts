@@ -14,7 +14,7 @@ import { getParentCategory } from "./categoryTaxonomy";
 import { computeScheduledDebtPayments } from "./debtPayments";
 import { merchantSlug } from "./applyRules";
 import { normalizeMerchantName, detectRecurringMonthlyAmount, resolveMerchantAlias, resolveCanonicalMerchantSlug } from "./merchantUtils";
-import { getLastCompleteMonth, getCurrentMonth } from "./monthAnchor";
+import { monthsForCashFlowAverage } from "./cashFlowAverage";
 import { computeAverageBuckets } from "./monthlyBucketComputation";
 
 export interface MerchantTransaction {
@@ -69,34 +69,20 @@ export function getMonthsForWindow(
   window: TimeWindow,
   currentYear: number
 ): string[] {
-  const lastComplete = getLastCompleteMonth();
-
-  // Filter to complete months only (exclude current incomplete month)
-  const completeMonths = monthlyHistory
-    .filter(h => {
-      const hasData = h.incomeTotal > 0 || h.expensesTotal > 0;
-      const isComplete = h.yearMonth <= lastComplete;
-      return hasData && isComplete;
-    })
-    .map(h => h.yearMonth)
-    .sort();
-
-  if (completeMonths.length === 0) return [];
+  const available = monthlyHistory.map((h) => h.yearMonth);
 
   switch (window) {
     case "last3":
-      return completeMonths.slice(-3);
-    
+      return monthsForCashFlowAverage(available, { lastNComplete: 3 });
     case "12month":
-      return completeMonths.slice(-12);
-    
+      return monthsForCashFlowAverage(available, { lastNComplete: 12 });
     case "ytd": {
       const ytdStart = `${currentYear}-01`;
-      return completeMonths.filter(ym => ym >= ytdStart);
+      const ytd = available.filter((ym) => ym >= ytdStart);
+      return monthsForCashFlowAverage(available, { rangeMonths: ytd });
     }
-    
     default:
-      return completeMonths.slice(-3);
+      return monthsForCashFlowAverage(available, { lastNComplete: 3 });
   }
 }
 
@@ -436,18 +422,10 @@ export function compute3MonthTrend(
   merchantCadence?: Record<string, string>,
   subscriptions?: Array<{ merchantSlug: string; amount: number | null; frequency: string | null; status: string }>
 ): { months: string[]; values: number[] } {
-  const lastComplete = getLastCompleteMonth();
-
-  // Filter to complete months only (exclude current incomplete month)
-  const completeMonths = monthlyHistory
-    .filter(h => {
-      const hasData = h.incomeTotal > 0 || h.expensesTotal > 0;
-      const isComplete = h.yearMonth <= lastComplete;
-      return hasData && isComplete;
-    })
-    .map(h => h.yearMonth)
-    .sort()
-    .slice(-3);
+  const completeMonths = monthsForCashFlowAverage(
+    monthlyHistory.map((h) => h.yearMonth),
+    { lastNComplete: 3 },
+  );
 
   const values: number[] = [];
 

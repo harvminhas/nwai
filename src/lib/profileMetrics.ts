@@ -17,6 +17,14 @@
 import type { FinancialProfileCache } from "./financialProfile";
 import { computeScheduledDebtPayments } from "./debtPayments";
 import { getHomeCurrency, toHome as toHomeCurrency, type ProfileForCurrency } from "./currencyUtils";
+import { completeMonthsWithData, monthsForCashFlowAverage } from "./cashFlowAverage";
+import { getCurrentMonth, getLastCompleteMonth } from "./monthAnchor";
+import {
+  cashFlowInputFromProfile,
+  computeSavingsRate,
+  getMonthlyCashFlow,
+  type CashFlowReviews,
+} from "./monthlyCashFlow";
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
@@ -253,14 +261,16 @@ export function getNetWorth(
  *
  * @param yearMonth  YYYY-MM. Defaults to the most recent month in the profile.
  */
-export function getSavingsRate(profile: FinancialProfileCache, yearMonth?: string): number {
-  const ym     = yearMonth ?? profile.latestTxMonth ?? "";
-  const entry  = profile.monthlyHistory.find((h) => h.yearMonth === ym);
-  if (!entry || entry.incomeTotal <= 0) return 0;
-  // Use coreExpensesTotal (transfers excluded) for a meaningful savings rate,
-  // falling back to expensesTotal if the core figure hasn't been computed yet.
-  const exp = entry.coreExpensesTotal ?? entry.expensesTotal;
-  return Math.round(((entry.incomeTotal - exp) / entry.incomeTotal) * 100);
+export function getSavingsRate(
+  profile: FinancialProfileCache,
+  yearMonth?: string,
+  reviews?: CashFlowReviews,
+): number {
+  const ym = yearMonth ?? getLatestCompleteMonth(profile);
+  if (!ym) return 0;
+  const cf = getMonthlyCashFlow(cashFlowInputFromProfile(profile, reviews), ym);
+  const rate = computeSavingsRate(cf.moneyIn, cf.moneyOut);
+  return rate == null ? 0 : Math.round(rate * 100);
 }
 
 // ── getLiquidAssets ────────────────────────────────────────────────────────────
@@ -350,8 +360,7 @@ export function getMonthlyExpenses(
 // so a freshly uploaded May statement surfaces May even when "today" is still in May.
 
 function todayYearMonth(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  return getCurrentMonth();
 }
 
 /** Latest month row with core income, or null. */
@@ -399,13 +408,12 @@ export function getLatestMonthForTopSpending(profile: FinancialProfileCache): st
  * Prefers a full “statement month” with both income and core spend, else income month, else spend month.
  */
 export function getLatestCompleteMonth(profile: FinancialProfileCache): string {
-  const both = getLatestMonthWithIncomeAndCoreExpenses(profile);
-  if (both) return both;
-  const inc = getLatestMonthWithIncome(profile);
-  if (inc) return inc;
-  const exp = getLatestMonthWithCoreExpenses(profile);
-  if (exp) return exp;
-  return profile.latestTxMonth ?? todayYearMonth();
+  const available =
+    profile.allTxMonths?.length > 0
+      ? profile.allTxMonths
+      : profile.monthlyHistory.map((h) => h.yearMonth);
+  const complete = completeMonthsWithData(available);
+  return complete[complete.length - 1] ?? getLastCompleteMonth();
 }
 
 /**
@@ -417,17 +425,19 @@ export function getTypicalMonthlySpend(profile: FinancialProfileCache): number {
 }
 
 /**
- * Typical (median) monthly income across all historical months.
- * Uses the same monthlyHistory as every other income figure in the app.
+ * Typical monthly income: mean of money-in over the last 3 complete months
+ * (same month set as Income typical / Cash Flow).
  */
-export function getTypicalMonthlyIncome(profile: FinancialProfileCache): number {
-  const vals = profile.monthlyHistory
-    .map((h) => h.incomeTotal)
-    .filter((v) => v > 0)
-    .sort((a, b) => a - b);
-  if (vals.length === 0) return 0;
-  const mid = Math.floor(vals.length / 2);
-  return vals.length % 2 !== 0 ? vals[mid] : (vals[mid - 1] + vals[mid]) / 2;
+export function getTypicalMonthlyIncome(
+  profile: FinancialProfileCache,
+  reviews?: CashFlowReviews,
+): number {
+  const available = profile.monthlyHistory.map((h) => h.yearMonth);
+  const months = monthsForCashFlowAverage(available, { lastNComplete: 3 });
+  if (months.length === 0) return 0;
+  const input = cashFlowInputFromProfile(profile, reviews);
+  const vals = months.map((ym) => getMonthlyCashFlow(input, ym).moneyIn);
+  return vals.reduce((s, v) => s + v, 0) / vals.length;
 }
 
 /**
@@ -543,9 +553,19 @@ export const EMERGENCY_FUND_TARGET_MONTHS_VARIABLE = 9;
  * Requires at least 3 months with income &gt; 0; otherwise returns 0 (treated as stable).
  */
 export function monthlyIncomeCoefficientOfVariation(
-  monthlyHistory: { incomeTotal: number }[],
+  monthlyHistory: { yearMonth?: string; incomeTotal: number }[],
 ): number {
-  const vals = monthlyHistory.map((h) => h.incomeTotal).filter((v) => v > 0);
+  const labeled = monthlyHistory.filter((h): h is { yearMonth: string; incomeTotal: number } =>
+    Boolean(h.yearMonth),
+  );
+  const complete = labeled.length > 0
+    ? completeMonthsWithData(labeled.map((h) => h.yearMonth))
+    : [];
+  const source =
+    complete.length > 0
+      ? complete.map((m) => labeled.find((h) => h.yearMonth === m)?.incomeTotal ?? 0)
+      : monthlyHistory.map((h) => h.incomeTotal);
+  const vals = source.filter((v) => v > 0);
   if (vals.length < 3) return 0;
   const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
   if (mean === 0) return 0;

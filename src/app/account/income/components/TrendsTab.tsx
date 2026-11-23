@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Line, ComposedChart, Cell } from "recharts";
 import type { IncomeSummary } from "@/lib/incomeSummary";
 import { formatMonth, formatMonthYear } from "@/lib/dateFormatting";
+import { formatMonthWithStatus, isMonthInProgress } from "@/lib/monthAnchor";
 import { formatCurrency, getCurrencySymbol } from "@/lib/currencyUtils";
 import { getSignColor } from "@/lib/colorHelpers";
 import { calculateBalanceChartDomain } from "@/lib/chartDomain";
@@ -39,10 +40,9 @@ export function TrendsTab({ summary }: TrendsTabProps) {
     filteredMonths = monthlyHistory.filter(m => summary.last3Months.includes(m.yearMonth));
     windowLabel = "Last 3 complete months";
   } else {
-    // 12 months - take last 12 complete months (excluding current)
-    const completeMonths = monthlyHistory.filter(m => m.yearMonth < currentMonth);
-    filteredMonths = completeMonths.slice(-12);
+    filteredMonths = monthlyHistory.slice(-12);
   }
+  const completeFiltered = filteredMonths.filter((m) => !isMonthInProgress(m.yearMonth, currentMonth));
   
   // Compute totals and regular/one-off split
   const totalIncome = filteredMonths.reduce((s, m) => s + m.total, 0);
@@ -164,7 +164,7 @@ export function TrendsTab({ summary }: TrendsTabProps) {
           <p className="text-3xl font-bold text-gray-900 tabular-nums">
             {formatCurrency(totalIncome, currency, undefined, true)}
           </p>
-          <p className="text-xs text-gray-400 mt-1">Average {formatCurrency(totalIncome / filteredMonths.length, currency, undefined, true)}/month (average of {filteredMonths.length} complete months)</p>
+          <p className="text-xs text-gray-400 mt-1">Average {formatCurrency(completeFiltered.length > 0 ? completeFiltered.reduce((s, m) => s + m.total, 0) / completeFiltered.length : 0, currency, undefined, true)}/month (average of {completeFiltered.length} complete months)</p>
         </div>
         
         {yoy && timeWindow === "12month" && (
@@ -224,7 +224,7 @@ export function TrendsTab({ summary }: TrendsTabProps) {
                   const data = payload[0].payload;
                   return (
                     <div className="bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2">
-                      <p className="text-xs font-semibold text-gray-900 mb-1">{formatMonthYear(data.yearMonth)}</p>
+                      <p className="text-xs font-semibold text-gray-900 mb-1">{formatMonthWithStatus(data.yearMonth, isMonthInProgress(data.yearMonth, currentMonth))}</p>
                       <p className="text-xs text-purple-600">Regular: {formatCurrency(data.regular, currency)}</p>
                       {data.oneOff > 0 && (
                         <p className="text-xs text-amber-600">One-off: {formatCurrency(data.oneOff, currency)}</p>
@@ -371,7 +371,7 @@ export function TrendsTab({ summary }: TrendsTabProps) {
               <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-widest text-purple-600">Income Detail</p>
-                  <h2 className="text-lg font-bold text-gray-900 mt-0.5">{formatMonthYear(selectedMonth)}</h2>
+                  <h2 className="text-lg font-bold text-gray-900 mt-0.5">{formatMonthWithStatus(selectedMonth, isMonthInProgress(selectedMonth, currentMonth))}</h2>
                 </div>
                 <button
                   onClick={() => setSelectedMonth(null)}

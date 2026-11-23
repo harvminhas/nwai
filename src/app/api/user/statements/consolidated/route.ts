@@ -6,6 +6,7 @@ import { applyRulesAndRecalculate, merchantSlug } from "@/lib/applyRules";
 import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
 import { docYearMonth, carryForwardStatements } from "@/lib/spendHistory";
 import { getFinancialProfile } from "@/lib/financialProfile";
+import { loadUserReviewContext } from "@/lib/userReviewContext";
 import { computeScheduledDebtPayments } from "@/lib/debtPayments";
 import {
   buildEmergencyFundSnapshot,
@@ -141,7 +142,7 @@ export async function GET(request: NextRequest) {
     // month with actual transactions" — statement dates can be in the future
     // (e.g. a March statement with a statementDate of April 1) and should not
     // override the month that genuinely has the most recent transaction data.
-    const [rulesSnap, profile, sourceMappingsSnap, cashIncomeSnap, incomeCatRulesSnap, cashCommitmentsSnap, txnOverridesSnap, incomeTxnCatSnap] = await Promise.all([
+    const [rulesSnap, profile, sourceMappingsSnap, cashIncomeSnap, incomeCatRulesSnap, cashCommitmentsSnap, txnOverridesSnap, incomeTxnCatSnap, reviewContext] = await Promise.all([
       db.collection(`users/${uid}/categoryRules`).get(),
       getFinancialProfile(uid, db),
       db.collection(`users/${uid}/sourceMappings`).get(),
@@ -150,6 +151,7 @@ export async function GET(request: NextRequest) {
       db.collection(`users/${uid}/cashCommitments`).get(),
       db.collection(`users/${uid}/txnCategoryOverrides`).get(),
       db.collection(`users/${uid}/incomeTxnCategories`).get(),
+      loadUserReviewContext(uid, db),
     ]);
     const txnOverridesMap = new Map<string, string>();
     for (const doc of txnOverridesSnap.docs) {
@@ -844,7 +846,7 @@ export async function GET(request: NextRequest) {
        * Median monthly income across historical months — more stable basis for
        * goals/FI projections than a single month's income figure.
        */
-      typicalMonthlyIncome: getTypicalMonthlyIncome(profile),
+      typicalMonthlyIncome: getTypicalMonthlyIncome(profile, reviewContext),
       /**
        * Median monthly minimum debt payments — lets Goals page offer a
        * "include debt payments" toggle for a more conservative FI target.

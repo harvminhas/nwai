@@ -8,6 +8,8 @@
 export type ChartMonthPoint = {
   yearMonth: string;
   isEstimate?: boolean;
+  /** Current calendar month with data — selectable, labelled In progress. */
+  isInProgress?: boolean;
 };
 
 export function sliceHistoryByRange<T>(history: T[], rangeMonths: number): T[] {
@@ -15,9 +17,10 @@ export function sliceHistoryByRange<T>(history: T[], rangeMonths: number): T[] {
   return history.slice(-rangeMonths);
 }
 
-/** Most recent real (non-estimated) month; last point if every month is estimated. */
+/** Most recent selectable month: in-progress current month, else a real (non-estimated) month. */
 export function latestSelectableMonth(visible: ChartMonthPoint[]): string | null {
   for (let i = visible.length - 1; i >= 0; i--) {
+    if (visible[i].isInProgress) return visible[i].yearMonth;
     if (!visible[i].isEstimate) return visible[i].yearMonth;
   }
   return visible[visible.length - 1]?.yearMonth ?? null;

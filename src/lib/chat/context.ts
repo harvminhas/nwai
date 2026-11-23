@@ -9,10 +9,18 @@
  */
 
 import type { FinancialProfileCache } from "@/lib/financialProfile";
-import { getNetWorth, buildEmergencyFundSnapshot } from "@/lib/profileMetrics";
+import { getNetWorth, buildEmergencyFundSnapshot, getLatestCompleteMonth } from "@/lib/profileMetrics";
 import { buildCategoryPromptLines } from "@/lib/categoryTaxonomy";
 import { getHomeCurrency, toHome as toHomeCurrency } from "@/lib/currencyUtils";
 import { AI_ANSWER_FORMAT } from "@/lib/aiAnswerFormat";
+import {
+  averageCashFlow,
+  cashFlowInputFromProfile,
+  computeMonthlyCashFlowSeries,
+  getMonthlyCashFlow,
+  type CashFlowReviews,
+} from "@/lib/monthlyCashFlow";
+import { formatMonthWithStatus, getCurrentMonth, IN_PROGRESS_LABEL, isMonthInProgress } from "@/lib/monthAnchor";
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -28,12 +36,16 @@ function makeFmt(currency: string) {
 
 // ── builder ──────────────────────────────────────────────────────────────────
 
-export function buildChatContext(profile: FinancialProfileCache): string {
+export function buildChatContext(
+  profile: FinancialProfileCache,
+  reviews?: CashFlowReviews,
+): string {
   const home = getHomeCurrency(profile);
-  const fxRates = profile.fxRates ?? {};
   const fmt     = makeFmt(home);
 
-  const month   = profile.latestTxMonth ?? "";
+  const current = getCurrentMonth();
+  const input   = cashFlowInputFromProfile(profile, reviews);
+  const month   = getLatestCompleteMonth(profile);
   const oldest  = profile.allTxMonths[0] ?? month;
   const total   = profile.allTxMonths.length;
 
@@ -58,22 +70,27 @@ export function buildChatContext(profile: FinancialProfileCache): string {
     return `  ${a.bankName}${id} [${a.accountType}, ${acctCcy}]: ${native}${homeEq}${aprStr}`;
   });
 
-  // ── latest month ──────────────────────────────────────────────────────────
-  const latestH = profile.monthlyHistory.find((h) => h.yearMonth === month);
-  const income   = latestH?.incomeTotal       ?? 0;
-  const expenses = latestH?.coreExpensesTotal ?? 0;
-  const net      = income - expenses;
-  const sr       = income > 0 ? `${((net / income) * 100).toFixed(1)}%` : "n/a";
+  // ── latest complete month ─────────────────────────────────────────────────
+  const latestCf = month ? getMonthlyCashFlow(input, month) : null;
+  const income   = latestCf?.moneyIn ?? 0;
+  const expenses = latestCf?.moneyOut ?? 0;
+  const net      = latestCf?.leftover ?? 0;
+  const sr       = latestCf?.savingsRate != null
+    ? `${(latestCf.savingsRate * 100).toFixed(1)}%`
+    : "n/a";
 
-  // ── monthly trend (newest first, compact) ─────────────────────────────────
-  const trendLines = [...profile.monthlyHistory]
+  // ── monthly trend (newest first; current month labelled, excluded from averages)
+  const trendLines = computeMonthlyCashFlowSeries(input)
     .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth))
     .map((h) => {
-      const n  = h.incomeTotal - h.coreExpensesTotal;
-      const sr = h.incomeTotal > 0
-        ? `${((n / h.incomeTotal) * 100).toFixed(0)}% savings`
-        : "n/a";
-      return `  ${h.yearMonth}: Income ${fmt(h.incomeTotal)}, Expenses ${fmt(h.coreExpensesTotal)}, Net ${fmt(n)} (${sr})`;
+      const inProgress = isMonthInProgress(h.yearMonth, current);
+      const label = formatMonthWithStatus(h.yearMonth, inProgress);
+      const monthSr = !inProgress && h.savingsRate != null
+        ? `${(h.savingsRate * 100).toFixed(0)}% savings`
+        : inProgress
+          ? IN_PROGRESS_LABEL
+          : "n/a";
+      return `  ${h.yearMonth} (${label}): Income ${fmt(h.moneyIn)}, Expenses ${fmt(h.moneyOut)}, Net ${fmt(h.leftover)} (${monthSr})`;
     });
 
   // ── subscriptions ─────────────────────────────────────────────────────────
@@ -127,22 +144,18 @@ Not available yet (need enough history to compute median monthly core spending).
   // ── assemble ──────────────────────────────────────────────────────────────
   
   // Compact snapshot for quick reference
-  const last3Months = [...profile.monthlyHistory]
-    .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth))
-    .slice(0, 3);
-  const income3mo = last3Months.length > 0
-    ? last3Months.reduce((sum, m) => sum + m.incomeTotal, 0) / last3Months.length
-    : 0;
-  const spending3mo = last3Months.length > 0
-    ? last3Months.reduce((sum, m) => sum + m.coreExpensesTotal, 0) / last3Months.length
-    : 0;
-  const savings3mo = income3mo - spending3mo;
+  const averaged = averageCashFlow(input, { lastNComplete: 3 });
+  const income3mo = averaged.moneyIn;
+  const spending3mo = averaged.moneyOut;
+  const savings3mo = averaged.leftover;
+  const latestLabel = formatMonthWithStatus(month, isMonthInProgress(month, current));
+  const dataEnd = profile.allTxMonths[profile.allTxMonths.length - 1] ?? month;
   
   const snapshot = `== QUICK SNAPSHOT ==
 Net Worth: ${fmt(nw.total)} (Assets: ${fmt(nw.totalAssets)}, Debts: ${fmt(nw.totalDebts)})
-Latest Month (${month}): Income ${fmt(income)}, Spending ${fmt(expenses)}, Net ${fmt(net)}, Savings Rate ${sr}
-Last 3 Months Average: Income ${fmt(income3mo)}, Spending ${fmt(spending3mo)}, Savings ${fmt(savings3mo)}
-Data Range: ${oldest} → ${month} (${total} month${total !== 1 ? "s" : ""})`;
+Latest complete month (${latestLabel}): Income ${fmt(income)}, Spending ${fmt(expenses)}, Net ${fmt(net)}, Savings Rate ${sr}
+Last 3 complete months average: Income ${fmt(income3mo)}, Spending ${fmt(spending3mo)}, Savings ${fmt(savings3mo)}
+Data Range: ${oldest} → ${dataEnd} (${total} month${total !== 1 ? "s" : ""})`;
 
   return `You are a knowledgeable, friendly personal finance assistant.
 You have access to the user's real financial data shown below AND tools to look up details.
@@ -232,10 +245,10 @@ Assets: ${fmt(nw.totalAssets)} | Debt: ${fmt(nw.totalDebts)} | Net worth: ${fmt(
 == ACCOUNTS ==
 ${accountLines.join("\n") || "  No accounts found"}
 
-== LATEST MONTH (${month}) ==
+== LATEST COMPLETE MONTH (${latestLabel}) ==
 Income: ${fmt(income)} | Expenses: ${fmt(expenses)} | Net: ${fmt(net)} | Savings rate: ${sr}
 
-== MONTHLY TREND (${oldest} → ${month}, ${total} month${total !== 1 ? "s" : ""} of data) ==
+== MONTHLY TREND (${oldest} → ${dataEnd}, ${total} month${total !== 1 ? "s" : ""} of data) ==
 ${trendLines.join("\n") || "  No history yet"}
 ${subLines.length > 0 ? `\n== CONFIRMED SUBSCRIPTIONS ==\n${subLines.join("\n")}` : ""}
 ${cashLines.length > 0 ? `\n== CASH COMMITMENTS ==\n${cashLines.join("\n")}` : ""}

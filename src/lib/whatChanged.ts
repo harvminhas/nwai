@@ -16,6 +16,7 @@ import {
 } from "./categoryTrends";
 import { fmt } from "./currencyUtils";
 import { debtGroupLabel, type DebtGroup } from "./debtsSummary";
+import { formatMonthWithStatus, isMonthInProgress } from "./monthAnchor";
 import type { TrendRangeKey } from "./trendRange";
 import type { ManualAsset } from "./types";
 
@@ -60,9 +61,7 @@ export function roundCents(n: number): number {
 }
 
 function monthLabel(ym: string): string {
-  const [y, m] = ym.split("-");
-  const date = new Date(Number(y), Number(m) - 1, 1);
-  return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+  return formatMonthWithStatus(ym, isMonthInProgress(ym));
 }
 
 export function periodPhrase(range: TrendRangeKey, firstMonth?: string): string {

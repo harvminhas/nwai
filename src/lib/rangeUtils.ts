@@ -1,11 +1,13 @@
 /**
  * Time range utilities for dashboard, drawers, and pages.
- * 
+ *
  * All ranges use COMPLETE months only and exclude the current month.
  */
 
-import { formatMonthYear } from './dateFormatting';
-import { resolveAccountDisplayName } from './accountListLabel';
+import { completeMonthsWithData, monthsForCashFlowAverage } from "./cashFlowAverage";
+import { formatMonthYear } from "./dateFormatting";
+import { getCurrentMonth as calendarMonth, getLastCompleteMonth } from "./monthAnchor";
+import { resolveAccountDisplayName } from "./accountListLabel";
 
 export type TimeRange = "3mo" | "12mo" | "ytd" | `month:${string}`;
 
@@ -17,10 +19,10 @@ export interface RangeInfo {
 
 /**
  * Get the current month in YYYY-MM format.
+ * Delegates to monthAnchor so tests that inject __TEST_NOW__ stay consistent.
  */
-export function getCurrentMonth(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+export function getCurrentMonth(today?: Date): string {
+  return calendarMonth(today);
 }
 
 /**
@@ -74,33 +76,33 @@ export function formatMonthList(months: string[]): string {
 /**
  * Get the last N complete months (excluding current month).
  */
-export function getLastNCompleteMonths(n: number): string[] {
-  const now = new Date();
+export function getLastNCompleteMonths(n: number, today?: Date): string[] {
+  const now = today ?? (globalThis as { __TEST_NOW__?: Date }).__TEST_NOW__ ?? new Date();
   const months: string[] = [];
-  
+
   for (let i = 1; i <= n; i++) {
     const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
     const month = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
     months.unshift(month);
   }
-  
+
   return months;
 }
 
 /**
  * Get months from January of current year through last complete month.
  */
-export function getYearToDateMonths(): string[] {
-  const now = new Date();
-  const currentYear = now.getFullYear();
+export function getYearToDateMonths(today?: Date): string[] {
+  const lastComplete = getLastCompleteMonth(today);
+  const current = getCurrentMonth(today);
+  const currentYear = current.slice(0, 4);
+  if (!lastComplete.startsWith(`${currentYear}-`)) return [];
+
+  const endMonth = parseInt(lastComplete.slice(5, 7), 10);
   const months: string[] = [];
-  
-  // Start from January of current year
-  for (let month = 0; month < now.getMonth(); month++) {
-    const monthStr = `${currentYear}-${String(month + 1).padStart(2, "0")}`;
-    months.push(monthStr);
+  for (let month = 1; month <= endMonth; month++) {
+    months.push(`${currentYear}-${String(month).padStart(2, "0")}`);
   }
-  
   return months;
 }
 
@@ -111,35 +113,21 @@ export function getYearToDateMonths(): string[] {
  * @returns Months in the range that have data, oldest first
  */
 export function getRangeMonths(range: TimeRange, availableMonths: string[]): string[] {
-  const currentMonth = getCurrentMonth();
-  
-  // Filter out current month from available data
-  const completeMonths = availableMonths.filter(m => m < currentMonth);
-  
-  let targetMonths: string[];
-  
   switch (range) {
     case "3mo":
-      targetMonths = getLastNCompleteMonths(3);
-      break;
+      return monthsForCashFlowAverage(availableMonths, { lastNComplete: 3 });
     case "12mo":
-      targetMonths = getLastNCompleteMonths(12);
-      break;
+      return monthsForCashFlowAverage(availableMonths, { lastNComplete: 12 });
     case "ytd":
-      targetMonths = getYearToDateMonths();
-      break;
+      return monthsForCashFlowAverage(availableMonths, { rangeMonths: getYearToDateMonths() });
     default:
-      // Single month selection (e.g., "month:2026-08")
       if (range.startsWith("month:")) {
-        targetMonths = [range.substring(6)];
-      } else {
-        targetMonths = [];
+        return monthsForCashFlowAverage(availableMonths, {
+          rangeMonths: [range.substring(6)],
+        });
       }
-      break;
+      return [];
   }
-  
-  // Return only months that are in both target and available
-  return targetMonths.filter(m => completeMonths.includes(m));
 }
 
 /**
@@ -439,9 +427,7 @@ export function getLatestCompleteMonth(
   }
   
   // Find the latest month that all active accounts have covered
-  const now = new Date();
-  const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const lastFullCalendarMonth = getPreviousMonth(currentYearMonth);
+  const lastFullCalendarMonth = getLastCompleteMonth();
   
   // Get all assigned months from active accounts
   const assignedMonths = activeAccounts.map(a => a.assignedMonth);
@@ -626,9 +612,7 @@ export function isMonthComplete(
   accountStatusMap?: Map<string, { status: string; statusDate: string }>
 ): boolean {
   // Never consider current or future months complete
-  const now = (globalThis as any).__TEST_NOW__ || new Date();
-  const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  if (month >= currentYearMonth) {
+  if (month >= getCurrentMonth()) {
     return false;
   }
   
@@ -732,15 +716,8 @@ export function resolveWindowMonths(
   }>,
   accountStatusMap?: Map<string, { status: string; statusDate: string }>
 ): ResolvedWindowMonths {
-  // Get current month - never include current or future months
-  const now = (globalThis as any).__TEST_NOW__ || new Date();
-  const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  
   // Get all available months sorted, excluding current and future months
-  const availableMonths = monthlyHistory
-    .map(m => m.yearMonth)
-    .filter(m => m < currentYearMonth)  // Only past months
-    .sort();
+  const availableMonths = completeMonthsWithData(monthlyHistory.map((m) => m.yearMonth));
   
   if (availableMonths.length === 0) {
     return {
@@ -860,9 +837,7 @@ export function resolveWindowMonths(
   
   if (hasStatementHistory && !isSingleMonth) {
     // Get current calendar month (allow injection for testing via global)
-    const now = (globalThis as any).__TEST_NOW__ || new Date();
-    const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const lastFinishedMonth = getPreviousMonth(currentYearMonth);
+    const lastFinishedMonth = getLastCompleteMonth();
     
     // Determine which months to check for missing accounts
     const newestCompleteMonth = completeMonths.length > 0 
@@ -1017,15 +992,15 @@ export function getSelectableMonths(
   nowOverride?: Date,
   accountStatusMap?: Map<string, { status: string; statusDate: string }>
 ): SelectableMonth[] {
-  const now = nowOverride || new Date();
-  const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const now = nowOverride || (globalThis as { __TEST_NOW__?: Date }).__TEST_NOW__ || new Date();
+  const calendarComplete = getLastNCompleteMonths(12, now);
   
   // Generate last 12 finished months (excluding current month)
   const months: SelectableMonth[] = [];
-  for (let i = 1; i <= 12; i++) {
-    const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const yearMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-    const label = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  for (const yearMonth of [...calendarComplete].reverse()) {
+    const [year, monthNum] = yearMonth.split("-").map(Number);
+    const date = new Date(year, monthNum - 1, 1);
+    const label = date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
     
     // Check if this month is complete using closing day assignment rule
     let isComplete = true;

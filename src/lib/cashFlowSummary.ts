@@ -7,7 +7,8 @@
 
 import { fmt } from "./currencyUtils";
 import { formatMonth, formatMonthYear } from "./dateFormatting";
-import { getCurrentMonth } from "./monthAnchor";
+import { getCurrentMonth, isMonthInProgress } from "./monthAnchor";
+import { completeMonthsWithData } from "./cashFlowAverage";
 import {
   computeMonthlyCashFlowSeries,
   type MonthlyCashFlow,
@@ -101,13 +102,12 @@ export function isUnfinishedCashFlowMonth(
   return yearMonth === currentMonth;
 }
 
-/** "Nov 2026 so far" for the unfinished current month; otherwise "Nov 2026". */
+/** Cash Flow uses complete months only — no "so far" / in-progress suffix. */
 export function formatCashFlowMonthLabel(
   yearMonth: string,
-  opts?: { short?: boolean; currentMonth?: string },
+  opts?: { short?: boolean },
 ): string {
-  const base = opts?.short ? formatMonth(yearMonth) : formatMonthYear(yearMonth);
-  return isUnfinishedCashFlowMonth(yearMonth, opts?.currentMonth) ? `${base} so far` : base;
+  return opts?.short ? formatMonth(yearMonth) : formatMonthYear(yearMonth);
 }
 
 export function formatCashFlowSummarySentence(
@@ -116,9 +116,8 @@ export function formatCashFlowSummarySentence(
   moneyOut: number,
   leftover: number,
   currency: string,
-  currentMonth?: string,
 ): string {
-  const month = formatCashFlowMonthLabel(yearMonth, { currentMonth });
+  const month = formatCashFlowMonthLabel(yearMonth);
   const inAmt = fmt(moneyIn, currency);
   const outAmt = fmt(moneyOut, currency);
   if (moneyIn <= 0 && moneyOut <= 0) {
@@ -133,7 +132,7 @@ export function formatCashFlowSummarySentence(
   return `In ${month} you brought in ${inAmt} and spent ${outAmt}. You spent ${fmt(-leftover, currency)} more than you earned.`;
 }
 
-/** Keep the click if it is still in range; otherwise the latest complete month. */
+/** Keep the click if it is a complete month still in range; otherwise the latest complete month. */
 export function selectCashFlowMonth(
   months: Array<{ yearMonth: string }>,
   selectedYm: string | null | undefined,
@@ -141,10 +140,10 @@ export function selectCashFlowMonth(
 ): string | null {
   if (months.length === 0) return null;
   const sorted = [...months].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
-  if (selectedYm && sorted.some((m) => m.yearMonth === selectedYm)) return selectedYm;
-  const complete = sorted.filter((m) => m.yearMonth < currentMonth);
+  const complete = sorted.filter((m) => !isMonthInProgress(m.yearMonth, currentMonth));
+  if (selectedYm && complete.some((m) => m.yearMonth === selectedYm)) return selectedYm;
   if (complete.length > 0) return complete[complete.length - 1].yearMonth;
-  return sorted[sorted.length - 1].yearMonth;
+  return null;
 }
 
 type NamedAmount = { name: string; amount: number; color?: string; accountLabel?: string };
@@ -170,7 +169,7 @@ function topNamedAmounts(rows: NamedAmount[], limit: number): NamedAmount[] {
 export function buildCashFlowSummary(input: CashFlowBuildInput): CashFlowSummary {
   return {
     currency: input.homeCurrency,
-    months: computeMonthlyCashFlowSeries(input),
+    months: computeMonthlyCashFlowSeries(input, { completeOnly: true }),
   };
 }
 
@@ -191,7 +190,10 @@ function categoryVsAvg(
   selectedYm: string,
   visible: CashFlowMonth[],
 ): number | null {
-  const others = visible.filter((m) => m.yearMonth !== selectedYm);
+  const current = getCurrentMonth();
+  const others = visible.filter(
+    (m) => m.yearMonth !== selectedYm && !isMonthInProgress(m.yearMonth, current),
+  );
   if (others.length === 0) return null;
   const avg =
     others.reduce((s, m) => {
@@ -227,8 +229,11 @@ export function buildCashFlowView(
   range: TrendRangeKey,
   selectedYm: string | null | undefined,
 ): CashFlowSelectedView {
+  const completeMonths = completeMonthsWithData(summary.months.map((m) => m.yearMonth));
   const visibleMonths = sliceMonthsByTrendRange(
-    summary.months.map((m) => ({ ...m, month: m.yearMonth })),
+    summary.months
+      .filter((m) => completeMonths.includes(m.yearMonth))
+      .map((m) => ({ ...m, month: m.yearMonth })),
     range,
   );
   const selectedId = selectCashFlowMonth(visibleMonths, selectedYm);

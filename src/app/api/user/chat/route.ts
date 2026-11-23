@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
   console.log(`[chat] reviews loaded — income=${reviewContext.incomeDepositReviews.size} debt=${reviewContext.debtPaymentReviews.length} savings=${reviewContext.savingsConfirmedItems.size}`);
 
   // ── 6. Build compact system context ───────────────────────────────────────
-  const systemContext = buildChatContext(profile);
+  const systemContext = buildChatContext(profile, reviewContext);
 
   // ── 7. Set up Gemini model with tools ─────────────────────────────────────
   const genAI = new GoogleGenerativeAI(apiKey);
