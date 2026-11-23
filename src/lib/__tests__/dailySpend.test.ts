@@ -456,6 +456,7 @@ describe("visits per month", () => {
     expect(visitsPerMonth(1, 3)).toBe(0);
     expect(visitsPerMonthLabel(1)).toBe("1 visit/mo");
     expect(visitsPerMonthLabel(2)).toBe("2 visits/mo");
+    expect(visitsPerMonthLabel(0)).toBe("<1 visit/mo");
 
     const txns = ["2026-08", "2026-09", "2026-10"].flatMap((ym) => [
       expense({ category: "Groceries", amount: 20, txMonth: ym, merchant: "Loblaws" }),
@@ -492,6 +493,19 @@ describe("6-month series excludes the current month from the average", () => {
     const oct = series.find((p) => p.yearMonth === "2026-10")!;
     expect(oct.isInProgress).toBe(false);
     expect(oct.dailyRate).toBeCloseTo(304 / 31, 10);
+  });
+});
+
+describe("6-month series starts at the first month with data", () => {
+  it("leaves months before the user's first data off the line instead of plotting $0", () => {
+    const txns = ["2026-09", "2026-10", "2026-11"].map((ym) =>
+      expense({ category: "Shopping", amount: 300, txMonth: ym }),
+    );
+    const shopping = spend(txns).themes.find((t) => t.id === "shopping")!;
+    expect(shopping.detail.series.map((p) => p.yearMonth)).toEqual([
+      "2026-09", "2026-10", "2026-11",
+    ]);
+    expect(spend([]).themes[0].detail.series).toEqual([]);
   });
 });
 

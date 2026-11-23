@@ -388,7 +388,11 @@ export function ThemeDetailModal({
             <h3 className="text-sm font-semibold text-gray-900">Last 6 months</h3>
             <p className="text-xs text-gray-500">$/day</p>
             <div className="mt-2 min-w-0 overflow-x-hidden">
-              <MonthSparkline series={detail.series} color={theme.color} />
+              {detail.series.length === 0 ? (
+                <p className="text-sm text-gray-500">No months with data yet.</p>
+              ) : (
+                <MonthSparkline series={detail.series} color={theme.color} />
+              )}
             </div>
             <p className="mt-1 text-xs text-gray-400">
               Finished months are solid. The current month is dashed, labelled {IN_PROGRESS_LABEL},

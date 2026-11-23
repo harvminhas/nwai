@@ -231,6 +231,8 @@ export function visitsPerMonth(count: number, monthCount: number): number {
 }
 
 export function visitsPerMonthLabel(visits: number): string {
+  // A top merchant always has at least one visit; under 0.5/mo rounds to 0.
+  if (visits <= 0) return "<1 visit/mo";
   return visits === 1 ? "1 visit/mo" : `${visits} visits/mo`;
 }
 
@@ -573,8 +575,13 @@ function seriesForTheme(
   amountsFor: (yearMonth: string) => ThemeMonthAmounts,
   currentYm: string,
   daysElapsed: number,
+  firstDataMonth: string | null,
 ): DailySpendSeriesPoint[] {
-  return lastNCalendarMonths(THEME_SERIES_MONTHS, currentYm).map((yearMonth) => {
+  // Months before the user's first data are unknown, not $0 ? leave them off.
+  if (!firstDataMonth) return [];
+  return lastNCalendarMonths(THEME_SERIES_MONTHS, currentYm)
+    .filter((yearMonth) => yearMonth >= firstDataMonth)
+    .map((yearMonth) => {
     const inProgress = isMonthInProgress(yearMonth, currentYm);
     const days = inProgress ? daysElapsed : calendarDaysInMonth(yearMonth);
     const total = amountsFor(yearMonth)[themeId];
@@ -599,6 +606,7 @@ function buildThemeDetail(
   currentYm: string,
   daysElapsed: number,
   aliasResolver: MerchantAliasResolver | null,
+  firstDataMonth: string | null,
 ): DailySpendThemeDetail {
   const residual = residualParentForTheme(themeId);
   const labels = [...taxonomyLabelsForTheme(themeId)];
@@ -651,7 +659,7 @@ function buildThemeDetail(
       calendarDays,
       aliasResolver,
     ),
-    series: seriesForTheme(themeId, amountsFor, currentYm, daysElapsed),
+    series: seriesForTheme(themeId, amountsFor, currentYm, daysElapsed, firstDataMonth),
     spendingHref: spendingHrefForTheme(themeId),
   };
 }
@@ -766,6 +774,7 @@ export function buildDailySpend(input: DailySpendInput): DailySpendResult {
         currentYm,
         daysElapsed,
         aliasResolver,
+        allMonths[0] ?? null,
       ),
     };
     return row;
