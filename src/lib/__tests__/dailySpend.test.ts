@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ExpenseTxnRecord } from "../extractTransactions";
 import { getParentCategory } from "../categoryTaxonomy";
 import { spendingForMonth } from "../spendingSummary";
+import { buildMerchantAliasResolver, resolveSpendingMerchant } from "../merchantAliases";
 import {
   buildDailySpend,
   calendarDaysInMonth,
@@ -11,16 +12,22 @@ import {
   deltaKind,
   foodSplitForCategory,
   fullySavedSoonerLabel,
+  lastNCalendarMonths,
   lastNForRange,
   NO_SPEND_THIS_MONTH_MESSAGE,
   monthlyKeep,
   monthsSooner,
   parseDailySpendRange,
+  parseDailySpendTheme,
   priorWindowMonths,
+  spendingHrefForTheme,
   themeAmountsFromCategories,
   themeIdForCategory,
+  visitsPerMonth,
+  visitsPerMonthLabel,
   yearlyKeep,
   EVEN_DELTA_THRESHOLD,
+  THEME_SERIES_MONTHS,
 } from "../dailySpend";
 
 function expense(
@@ -333,6 +340,189 @@ describe("6-month and 12-month windows", () => {
       "2026-07", "2026-08", "2026-09", "2026-10",
     ]);
     expect(twelve.months).not.toContain("2026-11");
+  });
+});
+
+describe("theme subcategory daily rates sum to the theme", () => {
+  it("sums Food leaves to the theme, and eating-out bars to eating out", () => {
+    const txns = [
+      expense({ category: "Groceries", amount: 310, txMonth: "2026-08" }),
+      expense({ category: "Restaurants", amount: 93, txMonth: "2026-08" }),
+      expense({ category: "Coffee & Drinks", amount: 31, txMonth: "2026-08" }),
+      expense({ category: "Fast Food", amount: 62, txMonth: "2026-08" }),
+      expense({ category: "Food Delivery", amount: 31, txMonth: "2026-08" }),
+      expense({ category: "Dining", amount: 15, txMonth: "2026-08" }),
+      expense({ category: "Groceries", amount: 300, txMonth: "2026-09" }),
+      expense({ category: "Restaurants", amount: 90, txMonth: "2026-09" }),
+      expense({ category: "Coffee & Drinks", amount: 30, txMonth: "2026-09" }),
+      expense({ category: "Fast Food", amount: 60, txMonth: "2026-09" }),
+      expense({ category: "Food Delivery", amount: 30, txMonth: "2026-09" }),
+      expense({ category: "Dining", amount: 15, txMonth: "2026-09" }),
+      expense({ category: "Groceries", amount: 310, txMonth: "2026-10" }),
+      expense({ category: "Restaurants", amount: 93, txMonth: "2026-10" }),
+      expense({ category: "Coffee & Drinks", amount: 31, txMonth: "2026-10" }),
+      expense({ category: "Fast Food", amount: 62, txMonth: "2026-10" }),
+      expense({ category: "Food Delivery", amount: 31, txMonth: "2026-10" }),
+      expense({ category: "Dining", amount: 15, txMonth: "2026-10" }),
+    ];
+    const food = spend(txns).themes.find((t) => t.id === "food");
+    expect(food).toBeTruthy();
+    const leafSum = food!.detail.subcategories.reduce((sum, bar) => sum + bar.dailyRate, 0);
+    expect(leafSum).toBeCloseTo(food!.dailyRate, 10);
+    expect((food!.groceriesDaily ?? 0) + (food!.eatingOutDaily ?? 0)).toBeCloseTo(food!.dailyRate, 10);
+    const eatingOutSum = food!.detail.foodSplit!.eatingOutSubcategories.reduce(
+      (sum, bar) => sum + bar.dailyRate,
+      0,
+    );
+    expect(eatingOutSum).toBeCloseTo(food!.eatingOutDaily ?? 0, 10);
+    const labels = food!.detail.foodSplit!.eatingOutSubcategories.map((b) => b.label);
+    expect(labels).toEqual(
+      expect.arrayContaining(["Restaurants", "Coffee & Drinks", "Fast Food", "Food Delivery", "Dining"]),
+    );
+  });
+
+  it("sums Getting around subtypes (excluding car insurance) to the theme", () => {
+    const txns = ["2026-08", "2026-09", "2026-10"].flatMap((ym) => [
+      expense({ category: "Gas", amount: 80, txMonth: ym }),
+      expense({ category: "Parking", amount: 20, txMonth: ym }),
+      expense({ category: "Transportation", amount: 10, txMonth: ym }),
+      expense({ category: "Car Insurance", amount: 150, txMonth: ym }),
+    ]);
+    const around = spend(txns).themes.find((t) => t.id === "getting-around");
+    expect(around).toBeTruthy();
+    const sum = around!.detail.subcategories.reduce((s, bar) => s + bar.dailyRate, 0);
+    expect(sum).toBeCloseTo(around!.dailyRate, 10);
+    expect(around!.dailyRate).toBeCloseTo((80 + 20 + 10) * 3 / 92, 10);
+    expect(around!.detail.subcategories.map((b) => b.label)).not.toContain("Car Insurance");
+  });
+});
+
+describe("merchant totals match Spending grouping for the same window", () => {
+  it("merges canonical aliases and source mappings the way Spending does", () => {
+    const txns = [
+      expense({ category: "Groceries", amount: 100, txMonth: "2026-08", merchant: "AMZN MKTP CA" }),
+      expense({ category: "Groceries", amount: 50, txMonth: "2026-08", merchant: "Amazon.ca" }),
+      expense({ category: "Restaurants", amount: 12, txMonth: "2026-08", merchant: "TIM HORTONS #3125" }),
+      expense({ category: "Groceries", amount: 100, txMonth: "2026-09", merchant: "AMZN MKTP CA" }),
+      expense({ category: "Groceries", amount: 50, txMonth: "2026-09", merchant: "Amazon.ca" }),
+      expense({ category: "Restaurants", amount: 12, txMonth: "2026-09", merchant: "TIM HORTONS #3125" }),
+      expense({ category: "Groceries", amount: 100, txMonth: "2026-10", merchant: "AMZN MKTP CA" }),
+      expense({ category: "Groceries", amount: 50, txMonth: "2026-10", merchant: "Amazon.ca" }),
+      expense({ category: "Restaurants", amount: 12, txMonth: "2026-10", merchant: "TIM HORTONS #3125" }),
+    ];
+    const mappings = [
+      { canonical: "Tim Hortons", alias: "TIM HORTONS #3125", status: "confirmed" as const, type: "expense" as const },
+    ];
+    const result = buildDailySpend({
+      expenseTxns: txns,
+      accountSnapshots: snapshots as never,
+      debtPaymentHistory: [],
+      userReviews: [],
+      fxRates: {},
+      currency: "CAD",
+      range: "3m",
+      sourceMappings: mappings,
+    });
+    const food = result.themes.find((t) => t.id === "food")!;
+    const expected = new Map<string, { name: string; total: number; count: number }>();
+    const aliasResolver = buildMerchantAliasResolver(mappings);
+    for (const txn of txns) {
+      if (!result.months.includes(txn.txMonth)) continue;
+      if (themeIdForCategory(txn.category) !== "food") continue;
+      const { slug, name } = resolveSpendingMerchant(txn.merchant, aliasResolver);
+      const cur = expected.get(slug) ?? { name, total: 0, count: 0 };
+      cur.total += Math.abs(txn.amount);
+      cur.count += 1;
+      expected.set(slug, cur);
+    }
+    const amazon = food.detail.merchants.find((m) => m.slug === "amazon");
+    expect(amazon).toBeTruthy();
+    expect(amazon!.name).toBe("Amazon");
+    expect(amazon!.total).toBe(expected.get("amazon")?.total);
+    expect(amazon!.dailyRate).toBeCloseTo(amazon!.total / result.calendarDays, 10);
+    expect(amazon!.total).toBe(450);
+
+    const tims = food.detail.merchants.find((m) => m.name === "Tim Hortons");
+    expect(tims).toBeTruthy();
+    expect(tims!.total).toBe(36);
+    expect(tims!.dailyRate).toBeCloseTo(36 / 92, 10);
+  });
+});
+
+describe("visits per month", () => {
+  it("rounds transaction count over the window divided by month count, singular at 1", () => {
+    expect(visitsPerMonth(3, 3)).toBe(1);
+    expect(visitsPerMonth(5, 3)).toBe(2);
+    expect(visitsPerMonth(1, 3)).toBe(0);
+    expect(visitsPerMonthLabel(1)).toBe("1 visit/mo");
+    expect(visitsPerMonthLabel(2)).toBe("2 visits/mo");
+    expect(visitsPerMonthLabel(0)).toBe("<1 visit/mo");
+
+    const txns = ["2026-08", "2026-09", "2026-10"].flatMap((ym) => [
+      expense({ category: "Groceries", amount: 20, txMonth: ym, merchant: "Loblaws" }),
+      expense({ category: "Groceries", amount: 15, txMonth: ym, merchant: "Loblaws" }),
+    ]);
+    const food = spend(txns).themes.find((t) => t.id === "food")!;
+    const loblaws = food.detail.merchants.find((m) => m.name === "Loblaws");
+    expect(loblaws?.count).toBe(6);
+    expect(loblaws?.visitsPerMonth).toBe(2);
+  });
+});
+
+describe("6-month series excludes the current month from the average", () => {
+  it("plots last 6 calendar months with the current month dashed and out of the average", () => {
+    expect(lastNCalendarMonths(THEME_SERIES_MONTHS, "2026-11")).toEqual([
+      "2026-06", "2026-07", "2026-08", "2026-09", "2026-10", "2026-11",
+    ]);
+    const txns = [
+      "2026-06", "2026-07", "2026-08", "2026-09", "2026-10", "2026-11",
+    ].map((ym) => expense({ category: "Shopping", amount: ym === "2026-11" ? 2300 : 304, txMonth: ym }));
+    const result = spend(txns, "3m");
+    expect(result.months).toEqual(["2026-08", "2026-09", "2026-10"]);
+    expect(result.months).not.toContain("2026-11");
+    const shopping = result.themes.find((t) => t.id === "shopping")!;
+    const series = shopping.detail.series;
+    expect(series.map((p) => p.yearMonth)).toEqual([
+      "2026-06", "2026-07", "2026-08", "2026-09", "2026-10", "2026-11",
+    ]);
+    const nov = series.find((p) => p.yearMonth === "2026-11")!;
+    expect(nov.isInProgress).toBe(true);
+    expect(nov.dailyRate).toBeCloseTo(2300 / 23, 10);
+    expect(series.filter((p) => !p.isInProgress).every((p) => p.yearMonth !== "2026-11")).toBe(true);
+    expect(shopping.dailyRate).toBeCloseTo((304 * 3) / 92, 10);
+    const oct = series.find((p) => p.yearMonth === "2026-10")!;
+    expect(oct.isInProgress).toBe(false);
+    expect(oct.dailyRate).toBeCloseTo(304 / 31, 10);
+  });
+});
+
+describe("6-month series starts at the first month with data", () => {
+  it("leaves months before the user's first data off the line instead of plotting $0", () => {
+    const txns = ["2026-09", "2026-10", "2026-11"].map((ym) =>
+      expense({ category: "Shopping", amount: 300, txMonth: ym }),
+    );
+    const shopping = spend(txns).themes.find((t) => t.id === "shopping")!;
+    expect(shopping.detail.series.map((p) => p.yearMonth)).toEqual([
+      "2026-09", "2026-10", "2026-11",
+    ]);
+    expect(spend([]).themes[0].detail.series).toEqual([]);
+  });
+});
+
+describe("spending deep-link", () => {
+  it("links to the Spending page category query the drilldown already supports", () => {
+    expect(spendingHrefForTheme("food")).toBe("/account/spending?category=Groceries,Dining");
+    expect(spendingHrefForTheme("personal-care")).toBe("/account/spending?category=Personal%20Care");
+    const result = spend([expense({ category: "Gas", amount: 100, txMonth: "2026-10" })]);
+    const byId = Object.fromEntries(result.themes.map((t) => [t.id, t.detail]));
+    expect(byId["getting-around"].spendingNote).toMatch(/Car Insurance/);
+    expect(byId.fun.spendingNote).toMatch(/Streaming/);
+    expect(byId.food.spendingNote).toBeUndefined();
+    expect(spendingHrefForTheme("getting-around")).toBe(
+      "/account/spending?category=Transportation",
+    );
+    expect(parseDailySpendTheme("food")).toBe("food");
+    expect(parseDailySpendTheme("nope")).toBeNull();
   });
 });
 

@@ -13,7 +13,7 @@
 import type { AccountSnapshot, DebtPaymentHistoryEntry, ExpenseTxnRecord } from "./extractTransactions";
 import type { DebtPaymentReview } from "./types";
 import { mean, monthsForCashFlowAverage, completeMonthsWithData } from "./cashFlowAverage";
-import { getParentCategory } from "./categoryTaxonomy";
+import { CATEGORY_TAXONOMY, getParentCategory } from "./categoryTaxonomy";
 import {
   getCurrentMonth,
   isMonthInProgress,
@@ -22,6 +22,12 @@ import {
 } from "./monthAnchor";
 import { formatMonth } from "./dateFormatting";
 import { spendingForMonth, type MonthlySpendingSummary } from "./spendingSummary";
+import { spendingHrefForCategories } from "./spendingMultiCategory";
+import {
+  buildMerchantAliasResolver,
+  resolveSpendingMerchant,
+  type MerchantAliasResolver,
+} from "./merchantAliases";
 
 export type DailySpendRange = "3m" | "6m" | "12m";
 
@@ -43,6 +49,8 @@ export const WHAT_IF_MIN_PCT = 0.4;
 export const WHAT_IF_MAX_PCT = 1.2;
 export const DAYS_PER_MONTH = 30.4;
 export const DAYS_PER_YEAR = 365;
+export const THEME_SERIES_MONTHS = 6;
+export const TOP_MERCHANT_COUNT = 5;
 
 const STREAMING_EXCLUSIONS = new Set(["streaming", "streaming services"]);
 const CAR_INSURANCE_EXCLUSIONS = new Set(["car insurance"]);
@@ -59,6 +67,21 @@ export const DAILY_SPEND_THEMES: ReadonlyArray<{
   { id: "personal-care", label: "Personal care", color: "#f472b6" },
 ];
 
+/** Every Spending-page parent a theme spans, for the “See {theme} in Spending” link. */
+export const THEME_SPENDING_CATEGORIES: Record<DailySpendThemeId, string[]> = {
+  food: ["Groceries", "Dining"],
+  "getting-around": ["Transportation"],
+  shopping: ["Shopping"],
+  fun: ["Entertainment"],
+  "personal-care": ["Personal Care"],
+};
+
+/** Where Spending's view includes a subtype Daily spend leaves out. */
+export const THEME_SPENDING_NOTE: Partial<Record<DailySpendThemeId, string>> = {
+  "getting-around": "Spending's Transportation view also includes Car Insurance, which isn't counted here.",
+  fun: "Spending's Entertainment view also includes Streaming, which isn't counted here.",
+};
+
 export interface ThemeMonthAmounts {
   food: number;
   groceries: number;
@@ -68,6 +91,43 @@ export interface ThemeMonthAmounts {
   fun: number;
   "personal-care": number;
   total: number;
+  /** Leaf / residual subcategory totals keyed by display label. */
+  subcategories: Record<string, number>;
+}
+
+export interface DailySpendBar {
+  id: string;
+  label: string;
+  dailyRate: number;
+  share: number;
+}
+
+export interface DailySpendMerchantRow {
+  slug: string;
+  name: string;
+  dailyRate: number;
+  total: number;
+  count: number;
+  visitsPerMonth: number;
+}
+
+export interface DailySpendSeriesPoint {
+  yearMonth: string;
+  dailyRate: number;
+  isInProgress: boolean;
+}
+
+export interface DailySpendThemeDetail {
+  subcategories: DailySpendBar[];
+  foodSplit?: {
+    groceries: DailySpendBar;
+    eatingOut: DailySpendBar;
+    eatingOutSubcategories: DailySpendBar[];
+  };
+  merchants: DailySpendMerchantRow[];
+  series: DailySpendSeriesPoint[];
+  spendingHref: string;
+  spendingNote?: string;
 }
 
 export interface DailySpendThemeRow {
@@ -81,6 +141,7 @@ export interface DailySpendThemeRow {
   share: number;
   groceriesDaily?: number;
   eatingOutDaily?: number;
+  detail: DailySpendThemeDetail;
 }
 
 export interface DailySpendCurrentMonth {
@@ -124,6 +185,8 @@ export interface DailySpendInput {
   currency?: string;
   range?: DailySpendRange;
   today?: Date;
+  /** Confirmed users/{uid}/sourceMappings — same input Spending drilldown uses. */
+  sourceMappings?: Array<{ canonical: string; alias: string; status?: string; type?: string }>;
 }
 
 function nowDate(today?: Date): Date {
@@ -143,12 +206,67 @@ function emptyThemeAmounts(): ThemeMonthAmounts {
     fun: 0,
     "personal-care": 0,
     total: 0,
+    subcategories: {},
   };
 }
 
 export function parseDailySpendRange(raw: string | null | undefined): DailySpendRange {
   if (raw === "6m" || raw === "12m" || raw === "3m") return raw;
   return "3m";
+}
+
+export function parseDailySpendTheme(raw: string | null | undefined): DailySpendThemeId | null {
+  if (!raw) return null;
+  return DAILY_SPEND_THEMES.some((t) => t.id === raw) ? (raw as DailySpendThemeId) : null;
+}
+
+export function spendingHrefForTheme(themeId: DailySpendThemeId): string {
+  return spendingHrefForCategories(THEME_SPENDING_CATEGORIES[themeId]);
+}
+
+export function seeInSpendingLabel(themeLabel: string): string {
+  return `See ${themeLabel} in Spending →`;
+}
+
+export function windowAverageLabel(monthRangeLabel: string): string {
+  return monthRangeLabel ? `${monthRangeLabel} average` : "Average";
+}
+
+/** Transaction count over the window ÷ number of months, rounded. */
+export function visitsPerMonth(count: number, monthCount: number): number {
+  if (monthCount <= 0) return 0;
+  return Math.round(count / monthCount);
+}
+
+export function visitsPerMonthLabel(visits: number): string {
+  // A top merchant always has at least one visit; under 0.5/mo rounds to 0.
+  if (visits <= 0) return "<1 visit/mo";
+  return visits === 1 ? "1 visit/mo" : `${visits} visits/mo`;
+}
+
+function barId(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function shiftYearMonth(yearMonth: string, deltaMonths: number): string {
+  const [yearStr, monthStr] = yearMonth.split("-");
+  const date = new Date(Number(yearStr), Number(monthStr) - 1 + deltaMonths, 1);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
+}
+
+/** Inclusive calendar months ending at `endingYm` (oldest first). */
+export function lastNCalendarMonths(n: number, endingYm: string): string[] {
+  if (n <= 0) return [];
+  const months: string[] = [];
+  for (let i = n - 1; i >= 0; i--) {
+    months.push(shiftYearMonth(endingYm, -i));
+  }
+  return months;
 }
 
 export function lastNForRange(range: DailySpendRange): number {
@@ -202,6 +320,55 @@ export function foodSplitForCategory(category: string): FoodSplit | null {
   return getParentCategory(category) === "Groceries" ? "groceries" : "eating-out";
 }
 
+/**
+ * Display label for a theme leaf: taxonomy subtype, Groceries, or the parent
+ * residual (e.g. untyped "Dining" or "Transportation").
+ */
+export function subcategoryLabelForCategory(category: string): string | null {
+  if (!themeIdForCategory(category)) return null;
+  const parent = getParentCategory(category);
+  const lower = category.trim().toLowerCase();
+  const subtypes = CATEGORY_TAXONOMY[parent] ?? [];
+  const match = subtypes.find((s) => s.toLowerCase() === lower);
+  if (match) return match;
+  if (parent === "Groceries") return "Groceries";
+  return parent;
+}
+
+function taxonomyLabelsForTheme(themeId: DailySpendThemeId): string[] {
+  switch (themeId) {
+    case "food":
+      return ["Groceries", ...CATEGORY_TAXONOMY.Dining];
+    case "getting-around":
+      return CATEGORY_TAXONOMY.Transportation.filter(
+        (s) => !CAR_INSURANCE_EXCLUSIONS.has(s.toLowerCase()),
+      );
+    case "shopping":
+      return [...CATEGORY_TAXONOMY.Shopping];
+    case "fun":
+      return CATEGORY_TAXONOMY.Entertainment.filter(
+        (s) => !STREAMING_EXCLUSIONS.has(s.toLowerCase()),
+      );
+    case "personal-care":
+      return [...CATEGORY_TAXONOMY["Personal Care"]];
+  }
+}
+
+function residualParentForTheme(themeId: DailySpendThemeId): string | null {
+  switch (themeId) {
+    case "food":
+      return "Dining";
+    case "getting-around":
+      return "Transportation";
+    case "shopping":
+      return "Shopping";
+    case "fun":
+      return "Entertainment";
+    case "personal-care":
+      return "Personal Care";
+  }
+}
+
 export function themeAmountsFromCategories(
   categories: Array<{ category: string; amount: number }>,
 ): ThemeMonthAmounts {
@@ -211,6 +378,10 @@ export function themeAmountsFromCategories(
     if (!theme) continue;
     amounts[theme] += cat.amount;
     amounts.total += cat.amount;
+    const sub = subcategoryLabelForCategory(cat.category);
+    if (sub) {
+      amounts.subcategories[sub] = (amounts.subcategories[sub] ?? 0) + cat.amount;
+    }
     if (theme === "food") {
       const split = foodSplitForCategory(cat.category);
       if (split === "groceries") amounts.groceries += cat.amount;
@@ -343,12 +514,175 @@ function availableYearMonths(expenseTxns: ExpenseTxnRecord[]): string[] {
   return listMonthsWithData(Array.from(monthSet)).map((m) => m.yearMonth);
 }
 
+function dailyRateForKey(
+  windowAmounts: ThemeMonthAmounts[],
+  windowMonths: string[],
+  key: string,
+): number {
+  return dailyRateFromMonthlyTotals(
+    windowAmounts.map((a) => a.subcategories[key] ?? 0),
+    windowMonths,
+  );
+}
+
+function barsFromLabels(
+  labels: string[],
+  windowAmounts: ThemeMonthAmounts[],
+  windowMonths: string[],
+  shareOf: number,
+  opts?: { keepZero?: boolean },
+): DailySpendBar[] {
+  const bars: DailySpendBar[] = [];
+  for (const label of labels) {
+    const dailyRate = dailyRateForKey(windowAmounts, windowMonths, label);
+    if (!opts?.keepZero && dailyRate <= 0) continue;
+    bars.push({
+      id: barId(label),
+      label,
+      dailyRate,
+      share: shareOf > 0 ? dailyRate / shareOf : 0,
+    });
+  }
+  return bars;
+}
+
+function merchantsForTheme(
+  themeId: DailySpendThemeId,
+  expenseTxns: ExpenseTxnRecord[],
+  windowMonths: string[],
+  calendarDays: number,
+  aliasResolver: MerchantAliasResolver | null,
+): DailySpendMerchantRow[] {
+  const monthSet = new Set(windowMonths);
+  const map = new Map<string, { name: string; total: number; count: number }>();
+  for (const txn of expenseTxns) {
+    if (!monthSet.has(txn.txMonth)) continue;
+    if (themeIdForCategory(txn.category) !== themeId) continue;
+    const { slug, name } = resolveSpendingMerchant(txn.merchant, aliasResolver);
+    const cur = map.get(slug) ?? { name, total: 0, count: 0 };
+    cur.total += Math.abs(txn.amount);
+    cur.count += 1;
+    map.set(slug, cur);
+  }
+  const monthCount = windowMonths.length;
+  return Array.from(map.entries())
+    .map(([slug, row]) => ({
+      slug,
+      name: row.name,
+      total: row.total,
+      dailyRate: calendarDays > 0 ? row.total / calendarDays : 0,
+      count: row.count,
+      visitsPerMonth: visitsPerMonth(row.count, monthCount),
+    }))
+    .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
+    .slice(0, TOP_MERCHANT_COUNT);
+}
+
+function seriesForTheme(
+  themeId: DailySpendThemeId,
+  amountsFor: (yearMonth: string) => ThemeMonthAmounts,
+  currentYm: string,
+  daysElapsed: number,
+  firstDataMonth: string | null,
+): DailySpendSeriesPoint[] {
+  // Months before the user's first data are unknown, not $0 ? leave them off.
+  if (!firstDataMonth) return [];
+  return lastNCalendarMonths(THEME_SERIES_MONTHS, currentYm)
+    .filter((yearMonth) => yearMonth >= firstDataMonth)
+    .map((yearMonth) => {
+    const inProgress = isMonthInProgress(yearMonth, currentYm);
+    const days = inProgress ? daysElapsed : calendarDaysInMonth(yearMonth);
+    const total = amountsFor(yearMonth)[themeId];
+    return {
+      yearMonth,
+      dailyRate: days > 0 ? total / days : 0,
+      isInProgress: inProgress,
+    };
+  });
+}
+
+function buildThemeDetail(
+  themeId: DailySpendThemeId,
+  windowAmounts: ThemeMonthAmounts[],
+  windowMonths: string[],
+  calendarDays: number,
+  dailyRate: number,
+  groceriesDaily: number | undefined,
+  eatingOutDaily: number | undefined,
+  expenseTxns: ExpenseTxnRecord[],
+  amountsFor: (yearMonth: string) => ThemeMonthAmounts,
+  currentYm: string,
+  daysElapsed: number,
+  aliasResolver: MerchantAliasResolver | null,
+  firstDataMonth: string | null,
+): DailySpendThemeDetail {
+  const residual = residualParentForTheme(themeId);
+  const labels = [...taxonomyLabelsForTheme(themeId)];
+  if (residual && !labels.includes(residual)) labels.push(residual);
+
+  const subcategories = barsFromLabels(
+    labels,
+    windowAmounts,
+    windowMonths,
+    dailyRate,
+    { keepZero: false },
+  );
+
+  let foodSplit: DailySpendThemeDetail["foodSplit"];
+  if (themeId === "food") {
+    const groceries = groceriesDaily ?? 0;
+    const eatingOut = eatingOutDaily ?? 0;
+    const eatingOutLabels = [...CATEGORY_TAXONOMY.Dining];
+    if (residual && !eatingOutLabels.includes(residual)) eatingOutLabels.push(residual);
+    foodSplit = {
+      groceries: {
+        id: "groceries",
+        label: "Groceries",
+        dailyRate: groceries,
+        share: dailyRate > 0 ? groceries / dailyRate : 0,
+      },
+      eatingOut: {
+        id: "eating-out",
+        label: "Eating out",
+        dailyRate: eatingOut,
+        share: dailyRate > 0 ? eatingOut / dailyRate : 0,
+      },
+      eatingOutSubcategories: barsFromLabels(
+        eatingOutLabels,
+        windowAmounts,
+        windowMonths,
+        eatingOut,
+        { keepZero: true },
+      ).filter((bar) => bar.id !== barId("Dining") || bar.dailyRate > 0),
+    };
+  }
+
+  return {
+    subcategories,
+    foodSplit,
+    merchants: merchantsForTheme(
+      themeId,
+      expenseTxns,
+      windowMonths,
+      calendarDays,
+      aliasResolver,
+    ),
+    series: seriesForTheme(themeId, amountsFor, currentYm, daysElapsed, firstDataMonth),
+    spendingHref: spendingHrefForTheme(themeId),
+    ...(THEME_SPENDING_NOTE[themeId] ? { spendingNote: THEME_SPENDING_NOTE[themeId] } : {}),
+  };
+}
+
 export function buildDailySpend(input: DailySpendInput): DailySpendResult {
   const today = nowDate(input.today);
   const range = input.range ?? "3m";
   const currency = input.currency ?? "CAD";
   const currentYm = getCurrentMonth(today);
   const lastN = lastNForRange(range);
+  const aliasResolver =
+    input.sourceMappings && input.sourceMappings.length > 0
+      ? buildMerchantAliasResolver(input.sourceMappings)
+      : null;
 
   const allMonths = availableYearMonths(input.expenseTxns);
   const completeMonths = completeMonthsWithData(allMonths, { currentMonth: currentYm });
@@ -396,6 +730,8 @@ export function buildDailySpend(input: DailySpendInput): DailySpendResult {
   const everydayDelta =
     priorEverydayDailyRate == null ? null : everydayDailyRate - priorEverydayDailyRate;
 
+  const daysElapsed = daysElapsedInMonth(today);
+
   const themes: DailySpendThemeRow[] = DAILY_SPEND_THEMES.map((meta) => {
     const dailyRate = dailyRateFromMonthlyTotals(
       windowAmounts.map((a) => a[meta.id]),
@@ -409,6 +745,20 @@ export function buildDailySpend(input: DailySpendInput): DailySpendResult {
           )
         : null;
     const delta = priorDailyRate == null ? null : dailyRate - priorDailyRate;
+    const groceriesDaily =
+      meta.id === "food"
+        ? dailyRateFromMonthlyTotals(
+            windowAmounts.map((a) => a.groceries),
+            windowMonths,
+          )
+        : undefined;
+    const eatingOutDaily =
+      meta.id === "food"
+        ? dailyRateFromMonthlyTotals(
+            windowAmounts.map((a) => a.eatingOut),
+            windowMonths,
+          )
+        : undefined;
     const row: DailySpendThemeRow = {
       id: meta.id,
       label: meta.label,
@@ -418,21 +768,26 @@ export function buildDailySpend(input: DailySpendInput): DailySpendResult {
       delta,
       deltaKind: deltaKind(delta),
       share: everydayDailyRate > 0 ? dailyRate / everydayDailyRate : 0,
+      groceriesDaily,
+      eatingOutDaily,
+      detail: buildThemeDetail(
+        meta.id,
+        windowAmounts,
+        windowMonths,
+        calendarDays,
+        dailyRate,
+        groceriesDaily,
+        eatingOutDaily,
+        input.expenseTxns,
+        amountsFor,
+        currentYm,
+        daysElapsed,
+        aliasResolver,
+        allMonths[0] ?? null,
+      ),
     };
-    if (meta.id === "food") {
-      row.groceriesDaily = dailyRateFromMonthlyTotals(
-        windowAmounts.map((a) => a.groceries),
-        windowMonths,
-      );
-      row.eatingOutDaily = dailyRateFromMonthlyTotals(
-        windowAmounts.map((a) => a.eatingOut),
-        windowMonths,
-      );
-    }
     return row;
   });
-
-  const daysElapsed = daysElapsedInMonth(today);
   let currentMonth: DailySpendCurrentMonth | null = null;
   // No strip at all when nothing has been recorded for the current month.
   const hasCurrentMonthTxns = input.expenseTxns.some((t) => t.txMonth === currentYm);
