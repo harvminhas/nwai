@@ -55,7 +55,7 @@ export async function GET(req: NextRequest) {
     for (const doc of stmtSnap.docs) {
       const d = doc.data();
       const status: string = d.status ?? "unknown";
-      if (status === "pending" || status === "processing") continue;
+      if (status === "pending" || status === "processing" || status === "rejected") continue;
 
       const bankName: string  = d.parsedData?.bankName ?? d.fileName ?? "Statement";
       const acctName: string  = d.parsedData?.accountName ?? "";

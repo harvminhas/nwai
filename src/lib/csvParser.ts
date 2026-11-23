@@ -8,6 +8,7 @@
 
 import { sendTextRequest } from "./ai";
 import { ALL_CATEGORY_VALUES } from "./categoryTaxonomy";
+import { isUploadedDocumentType, type UploadedDocumentType } from "./types";
 
 export interface ParsedRow {
   date: string;          // YYYY-MM-DD
@@ -29,6 +30,7 @@ export interface CsvParseResult {
   dateRange: { from: string; to: string } | null;
   closingBalance: number | null; // account balance after the last transaction (if CSV includes a balance column)
   errors: string[];
+  documentType?: UploadedDocumentType;
 }
 
 // Limit rows sent to the AI to control token cost.
@@ -40,9 +42,12 @@ const SYSTEM_PROMPT = `You are a bank CSV transaction parser. Extract all transa
 Return ONLY a JSON object — no markdown, no explanation, no code fences.
 Format:
 {
+  "documentType": "account_statement" | "bill" | "invoice" | "receipt" | "pay_stub" | "tax_form" | "other",
   "transactions": [ { "date": "YYYY-MM-DD", "description": string, "amount": number (always positive), "isExpense": boolean, "category": string, "balance": number or null } ],
   "closingBalance": number or null
 }
+
+Classify documentType first. A bank, credit card, loan, or investment transaction export is "account_statement". A utility/phone bill, invoice, receipt, pay stub, or tax form must use that type and return transactions: [].
 
 Rules for transactions:
 - isExpense = true  => money going OUT of the account (purchase, charge, fee, withdrawal, debit)
@@ -136,7 +141,7 @@ export async function parseCSV(csvText: string, accountType?: string): Promise<C
   ]);
 
   type AiRow = { date?: string; description?: string; amount?: number; isExpense?: boolean; category?: string; balance?: number | null };
-  type AiResponse = { transactions?: AiRow[]; closingBalance?: number | null };
+  type AiResponse = { documentType?: string; transactions?: AiRow[]; closingBalance?: number | null };
   let aiResponse: AiResponse;
   try {
     aiResponse = JSON.parse(objMatch[0]) as AiResponse;
@@ -151,6 +156,7 @@ export async function parseCSV(csvText: string, accountType?: string): Promise<C
     : Array.isArray(aiResponse) ? (aiResponse as unknown as AiRow[]) // fallback: AI returned bare array
     : [];
   const closingBalance = typeof aiResponse.closingBalance === "number" ? aiResponse.closingBalance : null;
+  const documentType = isUploadedDocumentType(aiResponse.documentType) ? aiResponse.documentType : undefined;
 
   const rows: ParsedRow[] = [];
   for (const item of aiRows) {
@@ -175,11 +181,12 @@ export async function parseCSV(csvText: string, accountType?: string): Promise<C
     return {
       rows: [], detectedFormat: "error", dateRange: null, closingBalance: null,
       errors: ["No transactions found in the CSV."],
+      ...(documentType ? { documentType } : {}),
     };
   }
 
   const dates = rows.map((r) => r.date).sort();
   const dateRange = { from: dates[0], to: dates[dates.length - 1] };
 
-  return { rows, detectedFormat: "ai-parsed", dateRange, closingBalance, errors: [] };
+  return { rows, detectedFormat: "ai-parsed", dateRange, closingBalance, errors: [], ...(documentType ? { documentType } : {}) };
 }

@@ -25,6 +25,7 @@ import { merchantSlug } from "@/lib/applyRules";
 import { monthAbbrev, resolveDebtHeaderActivity } from "@/lib/debtHeaderActivity";
 import { commitAccountMonth } from "@/lib/accountMonthPayload";
 import { isMonthInProgress } from "@/lib/monthAnchor";
+import { statementIdFromUploadResponse } from "@/lib/uploadLimits";
 import DebtHeaderActivity from "./DebtHeaderActivity";
 
 // ── constants ─────────────────────────────────────────────────────────────────
@@ -771,6 +772,7 @@ export default function AccountDetailPage() {
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const [uploadingPdf, setUploadingPdf] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [classificationWarning, setClassificationWarning] = useState<string | null>(null);
   /** Inline delete confirmation for History tab (same pattern as Manage uploads). */
   const [historyDeleteConfirmId, setHistoryDeleteConfirmId] = useState<string | null>(null);
 
@@ -1050,10 +1052,17 @@ export default function AccountDetailPage() {
         return;
       }
       const newSlug: string | undefined = j.accountSlug;
+      if (typeof j.warning === "string" && j.warning) {
+        setClassificationWarning(j.warning);
+        showToast(j.warning, false);
+      }
       if (newSlug && newSlug !== slug) {
         router.push(`/account/accounts/${encodeURIComponent(newSlug)}`);
       } else {
-        showToast("Re-parsed successfully — categories updated", true);
+        if (!(typeof j.warning === "string" && j.warning)) {
+          setClassificationWarning(null);
+          showToast("Re-parsed successfully — categories updated", true);
+        }
         if (idToken) loadAccountData(idToken);
       }
     } finally {
@@ -1131,6 +1140,7 @@ export default function AccountDetailPage() {
     if (!idToken) return;
     setUploadingPdf(true);
     setUploadError(null);
+    setClassificationWarning(null);
     
     try {
       const formData = new FormData();
@@ -1148,7 +1158,7 @@ export default function AccountDetailPage() {
         return;
       }
       
-      const statementId = uploadData.id;
+      const statementId = statementIdFromUploadResponse(uploadData);
       if (!statementId) {
         setUploadError("Upload succeeded but no statement ID returned");
         return;
@@ -1164,12 +1174,17 @@ export default function AccountDetailPage() {
       });
       
       const parseData = await parseRes.json();
-      if (!parseRes.ok) {
+      if (!parseRes.ok || parseData.ok === false || parseData.status === "rejected") {
         setUploadError(parseData.error || "Parse failed");
         return;
       }
-      
-      showToast("Statement parsed successfully!", true);
+      if (typeof parseData.warning === "string" && parseData.warning) {
+        setClassificationWarning(parseData.warning);
+        showToast(parseData.warning, false);
+      } else {
+        setClassificationWarning(null);
+        showToast("Statement parsed successfully!", true);
+      }
       await loadAccountData(idToken);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "Upload failed");
@@ -1596,6 +1611,13 @@ export default function AccountDetailPage() {
       {uploadError && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
           {uploadError}
+        </div>
+      )}
+
+      {classificationWarning && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <span className="font-semibold">Kept with a warning. </span>
+          {classificationWarning}
         </div>
       )}
 

@@ -104,7 +104,7 @@ export default function ProcessingAnimation({
           const res  = await fetch(`/api/statement/${statementId}`);
           const data = await res.json();
           if (data.status === "completed") handleComplete();
-          else if (data.status === "error") handleError(data.errorMessage || "Something went wrong.");
+          else if (data.status === "error" || data.status === "rejected") handleError(data.errorMessage || "Something went wrong.");
         } catch { /* network hiccup — keep polling */ }
       };
 
@@ -128,7 +128,7 @@ export default function ProcessingAnimation({
         if (doneRef.current) return;
         const status = snap.data()?.status as string | undefined;
         if (status === "completed") handleComplete();
-        else if (status === "error") handleError(snap.data()?.errorMessage || "Something went wrong.");
+        else if (status === "error" || status === "rejected") handleError(snap.data()?.errorMessage || "Something went wrong.");
       },
       (err) => {
         // Permission denied → anonymous user; fall back to polling

@@ -11,6 +11,7 @@ import type { UserStatementSummary } from "@/lib/types";
 import { computeStatementCoverage } from "@/lib/statementCoverage";
 import type { StatementCoverageGrid } from "@/lib/statementCoverage";
 import { resolveAccountDisplayName, statementAccountDisplayName } from "@/lib/accountListLabel";
+import { isRejectedStatementStatus } from "@/lib/classifyUploadedDocument";
 
 // ── bank lists ────────────────────────────────────────────────────────────────
 
@@ -67,7 +68,7 @@ function resetLabel(iso: string) {
 function statusDotClass(status: string, needsAccountSetup?: boolean) {
   if (needsAccountSetup) return "bg-amber-400";
   if (status === "processing") return "bg-amber-400 animate-pulse";
-  if (status === "error") return "bg-red-400";
+  if (status === "error" || status === "rejected") return "bg-red-400";
   if (status === "needs_review") return "bg-orange-400";
   return "bg-green-500";
 }
@@ -263,8 +264,11 @@ export default function StatementsPage() {
 
   // ── derived stats ───────────────────────────────────────────────────────────
 
-  const totalCount = statements.length;
-  const uniqueAccounts = new Set(statements.filter(s => s.bankName && s.accountId).map((s) => `${s.bankName}|${s.accountId}`)).size;
+  const countedStatements = statements.filter((s) => !isRejectedStatementStatus(s.status));
+  const totalCount = countedStatements.length;
+  const uniqueAccounts = new Set(
+    countedStatements.filter(s => s.bankName && s.accountId).map((s) => `${s.bankName}|${s.accountId}`)
+  ).size;
   
   // Compute coverage grid
   const coverageData: StatementCoverageGrid | null = totalCount > 0 ? computeStatementCoverage(statements) : null;
@@ -409,7 +413,7 @@ export default function StatementsPage() {
                     : "bg-white text-gray-500 border-gray-200 hover:border-gray-300"
                 }`}
               >
-                All uploads <span className="text-xs opacity-70 ml-1">{totalCount}</span>
+                All uploads <span className="text-xs opacity-70 ml-1">{statements.length}</span>
               </button>
             </div>
             {activeTab === "coverage" && coverageData && coverageData.accountsWithGaps > 0 && (
@@ -639,7 +643,7 @@ export default function StatementsPage() {
           )}
 
           {/* All uploads tab */}
-          {activeTab === "uploads" && totalCount > 0 && (
+          {activeTab === "uploads" && statements.length > 0 && (
             <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
               {/* Header row (desktop only) */}
               <div className="hidden sm:grid grid-cols-[40px_1.6fr_90px_110px_80px_120px_90px] gap-3 items-center px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400 border-b border-gray-100">
@@ -662,6 +666,10 @@ export default function StatementsPage() {
                   const isDeleting = deletingId === s.id;
                   const isConfirm = confirmId === s.id;
                   const isReparsing = reparsingId === s.id;
+                  const isRejected = isRejectedStatementStatus(s.status);
+                  const classificationWarning = s.classificationWarning;
+                  const rejectMessage = s.errorMessage || s.parseError ||
+                    "This looks like a document, not an account statement. Upload a bank, credit card, loan or investment statement.";
                   // accountId is last4-source only — never shown raw (may be a full number).
                   const acctLabel = statementAccountDisplayName(
                     { accountName: s.accountName, bankName: s.bankName },
@@ -672,10 +680,13 @@ export default function StatementsPage() {
                     <div
                       key={s.id}
                       onClick={(e) => {
+                        if (isRejected) return;
                         if ((e.target as HTMLElement).closest("button, a")) return;
                         router.push(`/account/statements/${s.id}`);
                       }}
-                      className="grid grid-cols-[36px_1fr_auto] sm:grid-cols-[40px_1.6fr_90px_110px_80px_120px_90px] gap-2 sm:gap-3 items-center px-3 py-3 hover:bg-gray-50 transition cursor-pointer"
+                      className={`grid grid-cols-[36px_1fr_auto] sm:grid-cols-[40px_1.6fr_90px_110px_80px_120px_90px] gap-2 sm:gap-3 items-center px-3 py-3 transition ${
+                        isRejected ? "" : "hover:bg-gray-50 cursor-pointer"
+                      }`}
                     >
                       {/* PDF icon */}
                       <div className="w-9 h-9 rounded-lg bg-red-50 text-red-600 flex items-center justify-center text-[10px] font-bold">
@@ -685,12 +696,21 @@ export default function StatementsPage() {
                       {/* File + account */}
                       <div className="min-w-0">
                         <p className="truncate text-sm font-mono text-gray-800">{s.fileName || monthStr}</p>
-                        <p className="text-xs text-gray-500 truncate">{acctLabel}</p>
+                        {isRejected ? (
+                          <p className="text-xs text-gray-700 mt-0.5">{rejectMessage}</p>
+                        ) : classificationWarning ? (
+                          <>
+                            <p className="text-xs text-gray-500 truncate">{acctLabel}</p>
+                            <p className="text-xs text-amber-800 mt-0.5">{classificationWarning}</p>
+                          </>
+                        ) : (
+                          <p className="text-xs text-gray-500 truncate">{acctLabel}</p>
+                        )}
                       </div>
 
                       {/* Period */}
                       <span className="hidden sm:block rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-700 justify-self-start whitespace-nowrap">
-                        {s.statementDate ? fmtMonth(s.statementDate.slice(0, 7)) : "—"}
+                        {isRejected ? "—" : (s.statementDate ? fmtMonth(s.statementDate.slice(0, 7)) : "—")}
                       </span>
 
                       {/* Uploaded */}
@@ -700,17 +720,20 @@ export default function StatementsPage() {
 
                       {/* Txns */}
                       <span className="hidden sm:block text-xs text-gray-500">
-                        {s.txCount ? `${s.txCount} txns` : "—"}
+                        {isRejected ? "—" : (s.txCount ? `${s.txCount} txns` : "—")}
                       </span>
 
                       {/* Net change */}
                       <span className={`text-sm font-bold tabular-nums ${s.netWorth && s.netWorth < 0 ? "text-gray-900" : "text-green-600"} text-right`}>
-                        {s.netWorth ? `${s.netWorth >= 0 ? "+" : "−"}${homeCurrency}$${Math.abs(s.netWorth).toFixed(2)}` : "—"}
+                        {isRejected || !s.netWorth ? "—" : `${s.netWorth >= 0 ? "+" : "−"}${homeCurrency}$${Math.abs(s.netWorth).toFixed(2)}`}
                       </span>
 
                       {/* Status */}
                       <div className="flex items-center gap-1 justify-self-end">
-                        {s.status === "completed" && (
+                        {s.status === "completed" && classificationWarning && (
+                          <span className="text-xs font-semibold text-amber-700">Kept with a warning</span>
+                        )}
+                        {s.status === "completed" && !classificationWarning && (
                           <span className="text-xs font-semibold text-green-600">✓ Parsed</span>
                         )}
                         {s.status === "error" && (
@@ -722,7 +745,15 @@ export default function StatementsPage() {
                             {isReparsing ? "…" : "↺ Retry"}
                           </button>
                         )}
-                        {isConfirm ? (
+                        {isRejected ? (
+                          <button
+                            onClick={() => handleDelete(s.id)}
+                            disabled={isDeleting}
+                            className="rounded px-2 py-0.5 text-xs font-semibold text-gray-600 border border-gray-200 hover:bg-gray-50 disabled:opacity-50 transition"
+                          >
+                            {isDeleting ? "…" : "Dismiss"}
+                          </button>
+                        ) : isConfirm ? (
                           <div className="flex items-center gap-1">
                             <span className="text-xs text-gray-500">Remove?</span>
                             <button onClick={() => handleDelete(s.id)} disabled={isDeleting}
@@ -748,14 +779,14 @@ export default function StatementsPage() {
               {/* Footer */}
               {statements.length > 8 && (
                 <div className="border-t border-gray-100 px-4 py-3 text-center text-xs text-gray-400">
-                  Showing 8 of {totalCount} · <button className="font-semibold text-purple-600 hover:underline">Load more</button>
+                  Showing 8 of {statements.length} · <button className="font-semibold text-purple-600 hover:underline">Load more</button>
                 </div>
               )}
             </div>
           )}
 
           {/* Empty state for uploads tab */}
-          {activeTab === "uploads" && totalCount === 0 && (
+          {activeTab === "uploads" && statements.length === 0 && (
             <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-12 text-center">
               <p className="text-sm font-medium text-gray-600">No statements uploaded yet</p>
               <p className="mt-1 text-xs text-gray-400">Drop files into the zone above or click "+ Add statements" to get started.</p>
@@ -765,7 +796,7 @@ export default function StatementsPage() {
       )}
 
       {/* Supported banks strip (empty state only) */}
-      {!loading && !error && totalCount === 0 && (
+      {!loading && !error && statements.length === 0 && (
         <div className="mt-5 flex items-center gap-2 rounded-lg border border-gray-100 bg-white px-4 py-2.5 shadow-sm">
           <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-gray-400">Supported</span>
           <div className="flex flex-wrap gap-x-3 gap-y-1">

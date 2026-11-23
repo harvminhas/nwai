@@ -67,6 +67,7 @@ export async function GET(
     parsedData: data.parsedData ?? null,
     partialParsedData: data.partialParsedData ?? null,
     parseError: data.parseError ?? data.errorMessage ?? null,
+    classificationWarning: data.classificationWarning ?? null,
     accountSlug: data.accountSlug ?? null,
     yearMonth: data.yearMonth ?? null,
     needsAccountSetup,

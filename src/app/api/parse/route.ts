@@ -20,6 +20,17 @@ import { maskAccountNumbersInParsedData } from "@/lib/accountMasking";
 import { detectDebtPayoff, shouldAutoMarkPayoff, shouldPromptPayoff } from "@/lib/debtPayoffDetection";
 import { setAccountStatus } from "@/lib/accountStatus";
 import { generateNetWorthChanges } from "@/lib/netWorthChanges";
+import { FieldValue, type DocumentReference, type Firestore } from "firebase-admin/firestore";
+import {
+  classifyUploadedDocument,
+  statusToRestoreOnClassifierReject,
+} from "@/lib/classifyUploadedDocument";
+import {
+  canRechargeQuota,
+  canRefundQuota,
+  quotaCounterField,
+  quotaRefundWrite,
+} from "@/lib/uploadLimits";
 
 export const maxDuration = 120;
 
@@ -35,6 +46,64 @@ const ERROR_MESSAGE =
 
 function isPdfBuffer(buf: Buffer): boolean {
   return buf.length >= 4 && buf.slice(0, 4).toString("ascii") === "%PDF";
+}
+
+/** Flip quotaRefunded on the statement in a transaction, then decrement used count with a floor of 0. */
+async function rejectStatementAndRefundQuota(
+  db: Firestore,
+  statementRef: DocumentReference,
+  userId: string | null,
+  rejectFields: Record<string, unknown>
+): Promise<void> {
+  await db.runTransaction(async (tx) => {
+    const stmtSnap = await tx.get(statementRef);
+    const stmtData = stmtSnap.data() ?? {};
+    const alreadyRefunded = stmtData.quotaRefunded === true;
+    const pool = canRefundQuota(stmtData);
+    const userRef = userId && pool ? db.collection("users").doc(userId) : null;
+    const userSnap = userRef ? await tx.get(userRef) : null;
+
+    let quotaRefunded = alreadyRefunded;
+    let userWrite: Record<string, unknown> | null = null;
+    if (!alreadyRefunded && userRef && userSnap?.exists && pool) {
+      const field = quotaCounterField(pool);
+      const current = Number(userSnap.data()?.[field] ?? 0);
+      const write = quotaRefundWrite(current);
+      quotaRefunded = true;
+      userWrite =
+        write.kind === "increment"
+          ? { [field]: FieldValue.increment(write.by), updatedAt: new Date() }
+          : { [field]: write.value, updatedAt: new Date() };
+    }
+
+    tx.update(statementRef, { ...rejectFields, quotaRefunded });
+    if (userRef && userWrite) tx.update(userRef, userWrite);
+  });
+}
+
+/** If this statement was refunded on a prior reject, charge the allowance again on a successful retry. */
+async function rechargeQuotaIfRefunded(
+  db: Firestore,
+  statementRef: DocumentReference,
+  userId: string | null,
+  initialData: Record<string, unknown> | undefined
+): Promise<void> {
+  if (!canRechargeQuota(initialData) || !userId) return;
+  await db.runTransaction(async (tx) => {
+    const stmtSnap = await tx.get(statementRef);
+    const stmtData = stmtSnap.data() ?? {};
+    const pool = canRechargeQuota(stmtData);
+    const userRef = userId && pool ? db.collection("users").doc(userId) : null;
+    if (userRef) await tx.get(userRef);
+    if (!pool) return;
+    tx.update(statementRef, { quotaRefunded: false });
+    if (userRef) {
+      tx.update(userRef, {
+        [quotaCounterField(pool)]: FieldValue.increment(1),
+        updatedAt: new Date(),
+      });
+    }
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -60,8 +129,26 @@ export async function POST(request: NextRequest) {
     }
 
     const data = doc.data();
+    const restoreStatus = statusToRestoreOnClassifierReject(data);
+    const existingAccountSlug = (data?.accountSlug as string | undefined) ?? null;
     const fileUrl = data?.fileUrl as string;
     if (!fileUrl) {
+      // Reparse of a statement whose file was already deleted must not
+      // overwrite the prior status — that would make the account vanish
+      // (completed) or promote needs_review/error to completed.
+      if (restoreStatus) {
+        await statementRef.update({
+          status: restoreStatus,
+          parseError: restoreStatus === "needs_review" ? (data?.parseError ?? null) : null,
+          errorMessage: restoreStatus === "error" ? (data?.errorMessage ?? null) : null,
+        });
+        return NextResponse.json({
+          ok: true,
+          status: restoreStatus,
+          accountSlug: existingAccountSlug,
+          warning: "This statement was already parsed. The original file is no longer stored, so it wasn't replaced.",
+        });
+      }
       await statementRef.update({
         status: "needs_review",
         parseError: ERROR_MESSAGE,
@@ -118,6 +205,48 @@ export async function POST(request: NextRequest) {
     // Capture AI result so the catch block can persist partial data if something
     // downstream (Firestore writes, slug logic, etc.) throws unexpectedly.
     partialParsedData = parsedData;
+
+    // Reject bills, invoices, receipts, pay stubs, tax forms, and other
+    // non-statements before any account slug or override is written.
+    const classification = classifyUploadedDocument(parsedData);
+    if (!classification.ok) {
+      if (restoreStatus) {
+        await statementRef.update({
+          status: restoreStatus,
+          classificationWarning: classification.message,
+          parseError: restoreStatus === "needs_review" ? classification.message : null,
+          errorMessage: restoreStatus === "error" ? classification.message : null,
+        });
+        return NextResponse.json({
+          ok: true,
+          status: restoreStatus,
+          accountSlug: existingAccountSlug,
+          warning: classification.message,
+        });
+      }
+
+      try {
+        await bucket.file(fileUrl).delete();
+        console.log(`[parse] Deleted rejected file from Storage: ${fileUrl}`);
+      } catch (deleteErr) {
+        console.error(`[parse] Failed to delete rejected file ${fileUrl}:`, deleteErr);
+      }
+
+      await rejectStatementAndRefundQuota(db, statementRef, userId, {
+        status: "rejected",
+        errorMessage: classification.message,
+        parseError: classification.message,
+        rejectionReason: classification.reason,
+        accountSlug: null,
+        fileUrl: "",
+        fileDeletedAt: new Date().toISOString(),
+      });
+
+      return NextResponse.json(
+        { ok: false, status: "rejected", error: classification.message, reason: classification.reason },
+        { status: 200 }
+      );
+    }
     
     console.log("[parse][post-parse-summary]", JSON.stringify({
       statementId,
@@ -373,10 +502,17 @@ export async function POST(request: NextRequest) {
       // Continue - file deletion failure shouldn't block the parse
     }
 
+    // Retry of a previously refunded reject must consume the allowance again.
+    await rechargeQuotaIfRefunded(db, statementRef, userId, data as Record<string, unknown> | undefined);
+
     await statementRef.update({
       parsedData: maskedParsedData,  // Use masked version for storage
       status: "completed",
       errorMessage: null,
+      parseError: null,
+      classificationWarning: null,
+      statusBeforeReparse: null,
+      quotaRefunded: false,
       accountSlug: slug,
       yearMonth: yearMonth ?? null,
       slugIsAccountNumber,
@@ -565,7 +701,7 @@ export async function POST(request: NextRequest) {
         const ref = db.collection("statements").doc(statementId);
         const snap = await ref.get();
         const currentStatus = snap.exists ? (snap.data()?.status as string | undefined) : undefined;
-        if (currentStatus !== "completed") {
+        if (currentStatus !== "completed" && currentStatus !== "rejected") {
           const isRetryable = isTransientAiError || isAiConfigError || isFirebaseCredError || isFirestoreNotFound;
           if (isRetryable) {
             await ref.update({ status: "error", errorMessage: friendlyMessage });

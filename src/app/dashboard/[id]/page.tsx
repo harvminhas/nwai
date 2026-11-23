@@ -48,7 +48,7 @@ export default async function DashboardPage({
     );
   }
 
-  if (statement.status === "error") {
+  if (statement.status === "error" || statement.status === "rejected") {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
         <div className="max-w-md rounded-lg border border-red-200 bg-white p-8 text-center">
