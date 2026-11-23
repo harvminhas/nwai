@@ -23,6 +23,7 @@ import {
   MOBILE_NET_WORTH_VALUE_CLASS,
   CASH_FLOW_NAV_ITEMS,
   NET_WORTH_NAV_ITEMS,
+  TOOLS_NAV_ITEMS,
   drawerLinkClass,
   dropdownLinkClass,
   isMvpNavActive,
@@ -196,25 +197,16 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
                     <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
                   </svg>
                 </button>
-                <div className="invisible absolute left-0 top-full mt-1.5 w-40 rounded-2xl border border-gray-200 bg-white p-2 opacity-0 shadow-xl shadow-gray-900/10 transition-all group-hover:visible group-hover:opacity-100">
-                  <Link
-                    href="/account/tools/planner"
-                    className="block rounded-xl px-3 py-2 text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-700"
-                  >
-                    Planner
-                  </Link>
-                  <Link
-                    href="/account/tools/trackers"
-                    className="block rounded-xl px-3 py-2 text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-700"
-                  >
-                    Trackers
-                  </Link>
-                  <Link
-                    href="/account/tools/debt-payoff"
-                    className="block rounded-xl px-3 py-2 text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-700"
-                  >
-                    Debt Payoff
-                  </Link>
+                <div className="invisible absolute left-0 top-full mt-1.5 w-44 rounded-2xl border border-gray-200 bg-white p-2 opacity-0 shadow-xl shadow-gray-900/10 transition-all group-hover:visible group-hover:opacity-100">
+                  {TOOLS_NAV_ITEMS.map(({ href, label }) => (
+                    <Link
+                      key={href}
+                      href={href}
+                      className={dropdownLinkClass(isActive(href))}
+                    >
+                      {label}
+                    </Link>
+                  ))}
                 </div>
               </div>
 
@@ -403,27 +395,16 @@ export function MvpTopNav({ netWorthData }: { netWorthData?: NetWorthData }) {
             <h6 className={DRAWER_SECTION_LABEL_CLASS}>
               Tools
             </h6>
-            <Link
-              href="/account/tools/planner"
-              onClick={() => setDrawerOpen(false)}
-              className={drawerLinkClass(isActive("/account/tools/planner"))}
-            >
-              Planner
-            </Link>
-            <Link
-              href="/account/tools/trackers"
-              onClick={() => setDrawerOpen(false)}
-              className={drawerLinkClass(isActive("/account/tools/trackers"))}
-            >
-              Trackers
-            </Link>
-            <Link
-              href="/account/tools/debt-payoff"
-              onClick={() => setDrawerOpen(false)}
-              className={drawerLinkClass(isActive("/account/tools/debt-payoff"))}
-            >
-              Debt Payoff
-            </Link>
+            {TOOLS_NAV_ITEMS.map(({ href, label }) => (
+              <Link
+                key={href}
+                href={href}
+                onClick={() => setDrawerOpen(false)}
+                className={drawerLinkClass(isActive(href))}
+              >
+                {label}
+              </Link>
+            ))}
 
             <h6 className={DRAWER_SECTION_LABEL_CLASS}>
               Net worth
