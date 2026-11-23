@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   classifyUploadedDocument,
   csvParseResultToClassifiable,
+  isCountableStatementStatus,
   rejectionMessageForDocumentType,
+  wasPreviouslyCompletedStatement,
 } from "../classifyUploadedDocument";
 import type { ParsedStatementData } from "../types";
 
@@ -197,6 +199,41 @@ describe("classifyUploadedDocument", () => {
     expect(result.message).toContain("not an account statement");
   });
 
+  it("accepts a credit card mislabelled bill with transactions", () => {
+    const result = classifyUploadedDocument(base({
+      documentType: "bill",
+      accountType: "credit",
+      bankName: "Example Card",
+      previousBalance: 400,
+      newBalance: 275,
+      netWorth: -275,
+      debts: 275,
+      expenses: {
+        total: 50,
+        categories: [],
+        transactions: [{ merchant: "Store", amount: 50, date: "2026-03-04", category: "Shopping" }],
+      },
+    }));
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects a utility bill with an amount due only", () => {
+    const parsed = {
+      ...base({
+        documentType: "bill",
+        accountType: "other",
+        bankName: "City Water",
+        netWorth: 67.4,
+      }),
+      amountDue: 67.4,
+    };
+    const result = classifyUploadedDocument(parsed);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("bill");
+    expect(result.message).toContain("a bill, not an account statement");
+  });
+
   it("does not reject a credit card on amount due or minimum payment alone", () => {
     const parsed = {
       ...base({
@@ -238,5 +275,36 @@ describe("csvParseResultToClassifiable", () => {
       closingBalance: 1950,
     }, "checking");
     expect(classifyUploadedDocument(parsed).ok).toBe(true);
+  });
+});
+
+describe("wasPreviouslyCompletedStatement", () => {
+  it("treats a completed statement as previously completed", () => {
+    expect(wasPreviouslyCompletedStatement({
+      status: "completed",
+      parsedData: { bankName: "Example" },
+      accountSlug: "1234",
+    })).toBe(true);
+  });
+
+  it("treats a reparse reset that kept slug and data as previously completed", () => {
+    expect(wasPreviouslyCompletedStatement({
+      status: "processing",
+      parsedData: { bankName: "Example" },
+      accountSlug: "1234",
+    })).toBe(true);
+  });
+
+  it("does not treat a rejected or fresh upload as previously completed", () => {
+    expect(wasPreviouslyCompletedStatement({ status: "rejected", accountSlug: null })).toBe(false);
+    expect(wasPreviouslyCompletedStatement({ status: "processing" })).toBe(false);
+  });
+});
+
+describe("isCountableStatementStatus", () => {
+  it("excludes rejected records from statement counts", () => {
+    expect(isCountableStatementStatus("rejected")).toBe(false);
+    expect(isCountableStatementStatus("completed")).toBe(true);
+    expect(isCountableStatementStatus("error")).toBe(true);
   });
 });

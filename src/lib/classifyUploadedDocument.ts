@@ -36,6 +36,28 @@ export function isRejectedStatementStatus(status: string | undefined): boolean {
   return status === "rejected";
 }
 
+/** Rejected records are omitted from accounts, net worth, cash flow, and admin counts. */
+export function isCountableStatementStatus(status: string | undefined): boolean {
+  return !isRejectedStatementStatus(status);
+}
+
+/**
+ * True when this statement already has a completed parse we must not wipe
+ * (status still "completed", or reparse reset to processing while keeping slug + data).
+ */
+export function wasPreviouslyCompletedStatement(
+  data: {
+    status?: string;
+    parsedData?: unknown;
+    accountSlug?: string | null;
+  } | null | undefined
+): boolean {
+  if (!data) return false;
+  if (isRejectedStatementStatus(data.status)) return false;
+  if (data.status === "completed") return true;
+  return Boolean(data.parsedData) && Boolean(data.accountSlug);
+}
+
 export function rejectionMessageForDocumentType(documentType: string): string {
   const noun = DOCUMENT_NOUN[documentType] ?? "document";
   return `This looks like a ${noun}, not an account statement. Upload a bank, credit card, loan or investment statement.`;
@@ -93,6 +115,34 @@ function accountTypeOf(parsed: Partial<ParsedStatementData>): string {
 }
 
 /**
+ * Strong account-statement evidence. Beats a wrong documentType label
+ * (e.g. a credit-card statement the model tagged as a bill).
+ *
+ * Amount due / minimum payment are never evidence.
+ */
+export function hasStrongAccountEvidence(
+  parsed: Partial<ParsedStatementData> | null | undefined
+): boolean {
+  const p = parsed ?? {};
+  const accountType = accountTypeOf(p);
+  const hasTxns = transactionCount(p) > 0;
+
+  if (CREDIT_TYPES.has(accountType) && (hasTxns || hasPreviousOrNewBalance(p))) {
+    return true;
+  }
+  if (LOAN_TYPES.has(accountType) && hasPrincipalBalance(p) && (hasRate(p) || hasParts(p))) {
+    return true;
+  }
+  if (accountType === "investment" && hasHoldings(p)) {
+    return true;
+  }
+  if (DEPOSIT_TYPES.has(accountType) && hasDepositBalance(p) && hasTxns) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Decide whether extracted data is an account statement we can keep.
  *
  * Amount due and minimum payment are ignored — they never cause a reject
@@ -104,6 +154,13 @@ export function classifyUploadedDocument(
   const p = parsed ?? {};
   const documentType = p.documentType;
   const accountType = accountTypeOf(p);
+  const hasTxns = transactionCount(p) > 0;
+
+  // Evidence beats the label: a mis-tagged statement with real account
+  // structure is kept. Reject on the label only when that evidence is absent.
+  if (hasStrongAccountEvidence(p)) {
+    return { ok: true };
+  }
 
   if (documentType && NON_STATEMENT_TYPES.has(documentType)) {
     return {
@@ -112,8 +169,6 @@ export function classifyUploadedDocument(
       message: rejectionMessageForDocumentType(documentType),
     };
   }
-
-  const hasTxns = transactionCount(p) > 0;
 
   if (documentType === "account_statement") {
     return { ok: true };

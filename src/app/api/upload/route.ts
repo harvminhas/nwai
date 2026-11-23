@@ -7,6 +7,7 @@ import {
 import { randomUUID, createHash } from "crypto";
 import { FREE_ONETIME_UPLOADS, FREE_MONTHLY_UPLOADS } from "@/lib/plans";
 import { resolvePlan } from "@/app/api/user/plan/route";
+import { decideDuplicateUpload } from "@/lib/uploadLimits";
 
 export const maxDuration = 30;
 
@@ -108,19 +109,49 @@ export async function POST(request: NextRequest) {
         .get();
       if (!dupSnap.empty) {
         const dup = dupSnap.docs[0];
-        const existingStatus = dup.data().status as string | undefined;
+        const dupData = dup.data();
+        const existingStatus = dupData.status as string | undefined;
+        const decision = decideDuplicateUpload(existingStatus);
 
-        // If the previous attempt failed, reset it so the client can re-trigger parsing.
-        // Do NOT create a second storage copy — reuse the original file.
-        if (existingStatus === "error") {
-          await dup.ref.update({ status: "processing", errorMessage: null });
-          return NextResponse.json({ statementId: dup.id, retrying: true });
+        if (decision.action === "retry") {
+          // Rejected parses delete the stored file; save this upload onto the
+          // same record so parse can run again. Do not charge quota again.
+          let retryFileUrl = (dupData.fileUrl as string | undefined) || "";
+          let retryBucket = (dupData.storageBucket as string | undefined) || bucketName;
+          if (decision.reason === "rejected" || !retryFileUrl) {
+            const ext = file.name.split(".").pop() || "bin";
+            retryFileUrl = `statements/${dup.id}/statement.${ext}`;
+            retryBucket = bucketName;
+            const retryBucketHandle = storage.bucket(retryBucket);
+            await retryBucketHandle.file(retryFileUrl).save(buffer, {
+              contentType: file.type,
+              metadata: { contentType: file.type },
+            });
+          }
+          await dup.ref.update({
+            status: "processing",
+            errorMessage: null,
+            parseError: null,
+            rejectionReason: null,
+            fileUrl: retryFileUrl,
+            storageBucket: retryBucket,
+            fileName: file.name,
+            contentType: file.type,
+            quotaRefunded: dupData.quotaRefunded === true,
+          });
+          return NextResponse.json({
+            statementId: dup.id,
+            retrying: true,
+            previousRejection: decision.reason === "rejected"
+              ? (dupData.errorMessage as string | undefined) ?? (dupData.parseError as string | undefined) ?? null
+              : null,
+          });
         }
 
         return NextResponse.json(
           {
             error: "duplicate",
-            message: "You've already uploaded this exact file.",
+            message: decision.message,
             existingStatementId: dup.id,
             existingStatus,
           },
@@ -130,6 +161,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Enforce upload limits and track usage for free-tier users.
+    let quotaPool: "onetime" | "monthly" | null = null;
     if (userId) {
       const usersRef = db.collection("users").doc(userId);
       const userDoc  = await usersRef.get();
@@ -148,6 +180,7 @@ export async function POST(request: NextRequest) {
         const onetimeRemaining = Math.max(0, FREE_ONETIME_UPLOADS - onetimeUsed);
 
         if (onetimeRemaining > 0) {
+          quotaPool = "onetime";
           // Consume from one-time allotment
           await usersRef.set(
             {
@@ -177,6 +210,7 @@ export async function POST(request: NextRequest) {
             );
           }
 
+          quotaPool = "monthly";
           const nextReset = new Date(now.getFullYear(), now.getMonth() + 1, 1);
           await usersRef.set(
             {
@@ -242,6 +276,7 @@ export async function POST(request: NextRequest) {
       contentType: file.type,
       status: "processing",
       fileHash,
+      ...(quotaPool ? { quotaPool, quotaRefunded: false } : {}),
       // Audit: who physically uploaded this file (may differ from userId when shared access)
       ...(actorUid && actorUid !== userId
         ? { uploadedBy: actorUid, uploadedByEmail: actorEmail }

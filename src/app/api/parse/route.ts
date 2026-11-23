@@ -20,7 +20,11 @@ import { maskAccountNumbersInParsedData } from "@/lib/accountMasking";
 import { detectDebtPayoff, shouldAutoMarkPayoff, shouldPromptPayoff } from "@/lib/debtPayoffDetection";
 import { setAccountStatus } from "@/lib/accountStatus";
 import { generateNetWorthChanges } from "@/lib/netWorthChanges";
-import { classifyUploadedDocument } from "@/lib/classifyUploadedDocument";
+import {
+  classifyUploadedDocument,
+  wasPreviouslyCompletedStatement,
+} from "@/lib/classifyUploadedDocument";
+import { applyQuotaRefund, isQuotaPool } from "@/lib/uploadLimits";
 
 export const maxDuration = 120;
 
@@ -61,8 +65,25 @@ export async function POST(request: NextRequest) {
     }
 
     const data = doc.data();
+    const previouslyCompleted = wasPreviouslyCompletedStatement(data);
+    const existingAccountSlug = (data?.accountSlug as string | undefined) ?? null;
     const fileUrl = data?.fileUrl as string;
     if (!fileUrl) {
+      // Reparse of a completed statement whose file was already deleted must
+      // not downgrade the record — that would make the account vanish.
+      if (previouslyCompleted) {
+        await statementRef.update({
+          status: "completed",
+          parseError: null,
+          errorMessage: null,
+        });
+        return NextResponse.json({
+          ok: true,
+          status: "completed",
+          accountSlug: existingAccountSlug,
+          warning: "This statement was already parsed. The original file is no longer stored, so it wasn't replaced.",
+        });
+      }
       await statementRef.update({
         status: "needs_review",
         parseError: ERROR_MESSAGE,
@@ -124,11 +145,41 @@ export async function POST(request: NextRequest) {
     // non-statements before any account slug or override is written.
     const classification = classifyUploadedDocument(parsedData);
     if (!classification.ok) {
+      if (previouslyCompleted) {
+        await statementRef.update({
+          status: "completed",
+          classificationWarning: classification.message,
+          parseError: null,
+          errorMessage: null,
+        });
+        return NextResponse.json({
+          ok: true,
+          status: "completed",
+          accountSlug: existingAccountSlug,
+          warning: classification.message,
+        });
+      }
+
       try {
         await bucket.file(fileUrl).delete();
         console.log(`[parse] Deleted rejected file from Storage: ${fileUrl}`);
       } catch (deleteErr) {
         console.error(`[parse] Failed to delete rejected file ${fileUrl}:`, deleteErr);
+      }
+
+      const quotaPool = isQuotaPool(data?.quotaPool) ? data.quotaPool : null;
+      const alreadyRefunded = data?.quotaRefunded === true;
+      let quotaRefunded = alreadyRefunded;
+      if (userId && quotaPool && !alreadyRefunded) {
+        try {
+          const userRef = db.collection("users").doc(userId);
+          const userDoc = await userRef.get();
+          const refund = applyQuotaRefund(userDoc.exists ? userDoc.data() ?? {} : {}, quotaPool);
+          await userRef.set({ ...refund, updatedAt: new Date() }, { merge: true });
+          quotaRefunded = true;
+        } catch (quotaErr) {
+          console.error("[parse] Failed to refund upload quota after reject:", quotaErr);
+        }
       }
 
       await statementRef.update({
@@ -139,6 +190,7 @@ export async function POST(request: NextRequest) {
         accountSlug: null,
         fileUrl: "",
         fileDeletedAt: new Date().toISOString(),
+        quotaRefunded,
       });
 
       return NextResponse.json(

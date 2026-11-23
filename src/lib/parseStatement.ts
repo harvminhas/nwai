@@ -647,6 +647,8 @@ function coerceDefaults(data: Record<string, unknown>): ParsedStatementData {
     ...(typeof data.periodEnd === "string" ? { periodEnd: data.periodEnd } : {}),
     ...(typeof data.previousBalance === "number" ? { previousBalance: data.previousBalance } : {}),
     ...(typeof data.newBalance === "number" ? { newBalance: data.newBalance } : {}),
+    // Holdings are a breakdown of the investment account's already-recorded
+    // netWorth/assets. They are display-only and are not added into net worth.
     ...(Array.isArray(data.holdings) ? { holdings: data.holdings as ParsedStatementData["holdings"] } : {}),
   };
 }

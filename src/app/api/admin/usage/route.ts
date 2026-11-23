@@ -10,7 +10,7 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { authBearerToken, requireAdminDecoded } from "@/lib/adminAuth";
 import { resolvePlan } from "@/app/api/user/plan/route";
 import { COST_PER_STATEMENT_USD, COST_PER_ASK_USD } from "@/lib/aiCostEstimate";
-import { isRejectedStatementStatus } from "@/lib/classifyUploadedDocument";
+import { isCountableStatementStatus } from "@/lib/classifyUploadedDocument";
 
 export interface AdminUsageRow {
   uid: string;
@@ -97,7 +97,7 @@ export async function GET(req: NextRequest) {
     const d = doc.data();
     const uid = typeof d.userId === "string" ? d.userId : "";
     if (!uid || !usersMap.has(uid)) continue;
-    if (isRejectedStatementStatus(d.status as string | undefined)) continue;
+    if (!isCountableStatementStatus(d.status as string | undefined)) continue;
 
     const user = usersMap.get(uid)!;
     user.totalStatements += 1;
