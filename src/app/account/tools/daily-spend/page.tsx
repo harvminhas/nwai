@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
@@ -118,6 +118,7 @@ export default function DailySpendPage() {
   const [planPickerOpen, setPlanPickerOpen] = useState(false);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [openThemeId, setOpenThemeId] = useState<DailySpendThemeId | null>(null);
+  const themeRowRefs = useRef<Partial<Record<DailySpendThemeId, HTMLButtonElement | null>>>({});
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -295,6 +296,9 @@ export default function DailySpendPage() {
                   <li key={theme.id}>
                     <button
                       type="button"
+                      ref={(el) => {
+                        themeRowRefs.current[theme.id] = el;
+                      }}
                       className={THEME_ROW_CLASS}
                       onClick={() => setOpenThemeId(theme.id)}
                       aria-haspopup="dialog"
@@ -488,7 +492,11 @@ export default function DailySpendPage() {
       theme={data.themes.find((t) => t.id === openThemeId) ?? null}
       currency={currency}
       windowLabel={data.monthRangeLabel}
-      onClose={() => setOpenThemeId(null)}
+      onClose={() => {
+        const closedId = openThemeId;
+        setOpenThemeId(null);
+        if (closedId) requestAnimationFrame(() => themeRowRefs.current[closedId]?.focus());
+      }}
     />
     </>
   );

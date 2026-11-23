@@ -22,6 +22,7 @@ import {
 } from "./monthAnchor";
 import { formatMonth } from "./dateFormatting";
 import { spendingForMonth, type MonthlySpendingSummary } from "./spendingSummary";
+import { spendingHrefForCategories } from "./spendingMultiCategory";
 import {
   buildMerchantAliasResolver,
   resolveSpendingMerchant,
@@ -66,13 +67,19 @@ export const DAILY_SPEND_THEMES: ReadonlyArray<{
   { id: "personal-care", label: "Personal care", color: "#f472b6" },
 ];
 
-/** Spending-page parent for the “See {theme} in Spending” footer link. */
-export const THEME_SPENDING_CATEGORY: Record<DailySpendThemeId, string> = {
-  food: "Dining",
-  "getting-around": "Transportation",
-  shopping: "Shopping",
-  fun: "Entertainment",
-  "personal-care": "Personal Care",
+/** Every Spending-page parent a theme spans, for the “See {theme} in Spending” link. */
+export const THEME_SPENDING_CATEGORIES: Record<DailySpendThemeId, string[]> = {
+  food: ["Groceries", "Dining"],
+  "getting-around": ["Transportation"],
+  shopping: ["Shopping"],
+  fun: ["Entertainment"],
+  "personal-care": ["Personal Care"],
+};
+
+/** Where Spending's view includes a subtype Daily spend leaves out. */
+export const THEME_SPENDING_NOTE: Partial<Record<DailySpendThemeId, string>> = {
+  "getting-around": "Spending's Transportation view also includes Car Insurance, which isn't counted here.",
+  fun: "Spending's Entertainment view also includes Streaming, which isn't counted here.",
 };
 
 export interface ThemeMonthAmounts {
@@ -120,6 +127,7 @@ export interface DailySpendThemeDetail {
   merchants: DailySpendMerchantRow[];
   series: DailySpendSeriesPoint[];
   spendingHref: string;
+  spendingNote?: string;
 }
 
 export interface DailySpendThemeRow {
@@ -213,7 +221,7 @@ export function parseDailySpendTheme(raw: string | null | undefined): DailySpend
 }
 
 export function spendingHrefForTheme(themeId: DailySpendThemeId): string {
-  return `/account/spending?category=${encodeURIComponent(THEME_SPENDING_CATEGORY[themeId])}`;
+  return spendingHrefForCategories(THEME_SPENDING_CATEGORIES[themeId]);
 }
 
 export function seeInSpendingLabel(themeLabel: string): string {
@@ -661,6 +669,7 @@ function buildThemeDetail(
     ),
     series: seriesForTheme(themeId, amountsFor, currentYm, daysElapsed, firstDataMonth),
     spendingHref: spendingHrefForTheme(themeId),
+    ...(THEME_SPENDING_NOTE[themeId] ? { spendingNote: THEME_SPENDING_NOTE[themeId] } : {}),
   };
 }
 

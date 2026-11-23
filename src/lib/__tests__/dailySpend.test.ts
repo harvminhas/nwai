@@ -511,7 +511,13 @@ describe("6-month series starts at the first month with data", () => {
 
 describe("spending deep-link", () => {
   it("links to the Spending page category query the drilldown already supports", () => {
-    expect(spendingHrefForTheme("food")).toBe("/account/spending?category=Dining");
+    expect(spendingHrefForTheme("food")).toBe("/account/spending?category=Groceries,Dining");
+    expect(spendingHrefForTheme("personal-care")).toBe("/account/spending?category=Personal%20Care");
+    const result = spend([expense({ category: "Gas", amount: 100, txMonth: "2026-10" })]);
+    const byId = Object.fromEntries(result.themes.map((t) => [t.id, t.detail]));
+    expect(byId["getting-around"].spendingNote).toMatch(/Car Insurance/);
+    expect(byId.fun.spendingNote).toMatch(/Streaming/);
+    expect(byId.food.spendingNote).toBeUndefined();
     expect(spendingHrefForTheme("getting-around")).toBe(
       "/account/spending?category=Transportation",
     );

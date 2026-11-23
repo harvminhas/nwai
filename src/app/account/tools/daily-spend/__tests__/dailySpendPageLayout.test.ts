@@ -53,4 +53,8 @@ describe("daily spend page layout", () => {
     expect(page).toContain("fullySavedSoonerLabel(sooner)");
     expect(page).not.toContain("Reaches it");
   });
+
+  it("returns focus to the theme row when the modal closes", () => {
+    expect(page).toContain("themeRowRefs.current[closedId]?.focus()");
+  });
 });

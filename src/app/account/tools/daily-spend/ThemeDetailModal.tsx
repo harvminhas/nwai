@@ -408,6 +408,9 @@ export function ThemeDetailModal({
           >
             {seeInSpendingLabel(theme.label)}
           </Link>
+          {detail.spendingNote && (
+            <p className="mt-2 text-center text-xs text-gray-500">{detail.spendingNote}</p>
+          )}
         </div>
       </div>
     </div>

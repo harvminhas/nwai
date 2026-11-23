@@ -18,6 +18,12 @@ import {
 } from "@/lib/canonicalChartConfig";
 import { formatMonthWithStatus, isMonthInProgress } from "@/lib/monthAnchor";
 import { SpendingCategoryRow } from "./SpendingCategoryRow";
+import {
+  combineCategoryDrilldowns,
+  isMultiCategory,
+  parseCategoryParam,
+  type CategoryDrilldownPart,
+} from "@/lib/spendingMultiCategory";
 
 interface MonthlySeries {
   yearMonth: string;
@@ -84,6 +90,9 @@ interface DrilldownData {
   oneOffTotal?: number;
   oneOffLabel?: string;
   query?: string;
+  /** Multi-category view (?category=Groceries,Dining): one section per category. */
+  categories?: string[];
+  sections?: Array<{ category: string; total: number; avgPerMonth: number }>;
 }
 
 function formatMonthLabel(yearMonth: string, short = true): string {
@@ -110,6 +119,8 @@ export function DrilldownView({ token }: DrilldownViewProps) {
   const view = searchParams.get("view") || ""; // Explicit view type from search
   
   const level = merchant ? "merchant" : category ? "category" : searchQuery ? "search" : "all";
+  const categoryList = parseCategoryParam(category);
+  const multiCategory = level === "category" && isMultiCategory(categoryList);
   
   const [searchInput, setSearchInput] = useState(searchQuery);
   const [debouncedSearch, setDebouncedSearch] = useState(searchQuery);
@@ -205,6 +216,30 @@ export function DrilldownView({ token }: DrilldownViewProps) {
     }
 
     try {
+      if (multiCategory) {
+        // Fetch each category's own page and combine, so the combined total
+        // is exactly the sum of the single-category pages.
+        const parts = await Promise.all(
+          categoryList.map(async (cat) => {
+            const catParams = new URLSearchParams({ level: "category", category: cat });
+            const catRes = await fetch(`/api/user/spending/drilldown?${catParams}`, {
+              headers: { Authorization: `Bearer ${token}` },
+              cache: "no-store",
+            });
+            if (catRes.status === 404) return null;
+            if (!catRes.ok) {
+              const errorData = await catRes.json().catch(() => ({ error: "Failed to load data" }));
+              throw new Error(errorData.error || "Failed to load data");
+            }
+            return (await catRes.json()) as CategoryDrilldownPart;
+          }),
+        );
+        const combined = combineCategoryDrilldowns(categoryList, parts);
+        if (!combined) throw new Error("Category not found");
+        setData(combined as unknown as DrilldownData);
+        return;
+      }
+
       const params = new URLSearchParams({ level });
       if (category) params.set("category", category);
       if (merchant) params.set("merchant", merchant);
@@ -275,7 +310,7 @@ export function DrilldownView({ token }: DrilldownViewProps) {
     if (level === "all") {
       router.push(`/account/spending?category=${encodeURIComponent(item.name)}`);
     } else if (level === "category") {
-      router.push(`/account/spending?category=${encodeURIComponent(category)}&merchant=${encodeURIComponent(item.slug)}`);
+      router.push(`/account/spending?category=${encodeURIComponent(item.category ?? category)}&merchant=${encodeURIComponent(item.slug)}`);
     } else if (level === "search" && item.category) {
       // From search results, navigate to merchant detail with both category and merchant
       router.push(`/account/spending?category=${encodeURIComponent(item.category)}&merchant=${encodeURIComponent(item.slug)}`);
@@ -1087,9 +1122,32 @@ export function DrilldownView({ token }: DrilldownViewProps) {
         ) : (
           // Regular ranked items view
           <div className="space-y-2">
-            {displayedItems.map((item) => (
+            {(displayData.sections && displayData.sections.length > 1
+              ? displayData.sections.map((section) => ({
+                  key: section.category,
+                  section,
+                  items: displayedItems.filter((item) => item.category === section.category),
+                }))
+              : [{ key: "all", section: null, items: displayedItems }]
+            ).map(({ key, section, items }) => (
+              <div key={key} className="space-y-2">
+                {section && (
+                  <div className="flex items-baseline justify-between gap-3 px-2 pt-3">
+                    <span className="text-sm font-semibold text-neutral-900">{section.category}</span>
+                    <span className="text-sm tabular-nums text-neutral-600">
+                      {formatCurrencyWithCents(
+                        selectedMonth
+                          ? items.reduce((sum, item) => sum + item.displayTotal, 0)
+                          : section.total,
+                        displayData.currency,
+                        displayData.currency,
+                      )}
+                    </span>
+                  </div>
+                )}
+                {items.map((item) => (
                 <SpendingCategoryRow
-                  key={item.slug}
+                  key={item.category ? `${item.category}-${item.slug}` : item.slug}
                   item={{
                     name: item.name,
                     slug: item.slug,
@@ -1105,6 +1163,8 @@ export function DrilldownView({ token }: DrilldownViewProps) {
                     if (item.slug !== "other") handleItemClick(item);
                   }}
                 />
+                ))}
+              </div>
             ))}
             
             {/* Note under level 1 (All spending) */}
