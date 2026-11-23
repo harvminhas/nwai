@@ -12,6 +12,13 @@ export const NET_WORTH_NAV_ITEMS = [
   { href: "/account/liabilities", label: "Debts" },
 ] as const;
 
+export const TOOLS_NAV_ITEMS = [
+  { href: "/account/tools/planner", label: "Planner" },
+  { href: "/account/tools/daily-spend", label: "Daily spend" },
+  { href: "/account/tools/trackers", label: "Trackers" },
+  { href: "/account/tools/debt-payoff", label: "Debt Payoff" },
+] as const;
+
 export function isMvpNavActive(
   pathname: string | null | undefined,
   path: string,

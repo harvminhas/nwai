@@ -15,6 +15,7 @@ import {
   MOBILE_NET_WORTH_LINK_CLASS,
   MOBILE_NET_WORTH_SKELETON_CLASS,
   NET_WORTH_NAV_ITEMS,
+  TOOLS_NAV_ITEMS,
   drawerLinkClass,
   dropdownLinkClass,
 } from "../mvpNavLayout";
@@ -138,9 +139,13 @@ describe("MvpTopNav phone header and drawer", () => {
     expect(footer.className).toBe(DRAWER_FOOTER_CLASS);
     expect(footer.textContent).toContain("Privacy & Terms");
     expect(footer.textContent).toContain("Sign out");
-    expect(drawer.querySelector('a[href="/account/tools/planner"]')).toBeTruthy();
-    expect(drawer.querySelector('a[href="/account/tools/trackers"]')).toBeTruthy();
-    expect(drawer.querySelector('a[href="/account/tools/debt-payoff"]')).toBeTruthy();
+    const toolsLinks = drawerGroupLinks(drawer, "Tools");
+    expect(toolsLinks.map((link) => link.getAttribute("href"))).toEqual(
+      TOOLS_NAV_ITEMS.map((item) => item.href),
+    );
+    expect(toolsLinks.map((link) => link.textContent)).toEqual(
+      TOOLS_NAV_ITEMS.map((item) => item.label),
+    );
   });
 
   it("puts Cash Flow first in the cash-flow group and highlights only /account/cash-flow", () => {
