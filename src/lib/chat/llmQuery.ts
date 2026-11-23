@@ -40,7 +40,7 @@ export async function queryLLMWithTools(
   reviewContext: UserReviewContext,
   history: ChatMessage[] = []
 ): Promise<string> {
-  const systemContext = buildChatContext(profile);
+  const systemContext = buildChatContext(profile, reviewContext);
 
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({

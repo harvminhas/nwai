@@ -20,10 +20,13 @@ import { buildIncomeSummary } from "../incomeSummary";
 import { buildSpendingSummary } from "../spendingSummary";
 import { computeMoneyCoachBreakdown } from "../moneyCoach";
 import { getCurrentMonth } from "../monthAnchor";
-import { getSavingsRate } from "../profileMetrics";
+import { getSavingsRate, getTypicalMonthlyIncome } from "../profileMetrics";
+import { buildChatContext } from "../chat/context";
 import { executeGetSavingsSummary } from "../chat/executor";
+import { txFingerprint } from "../txFingerprint";
 import type { FinancialProfileCache } from "../financialProfile";
 import type { UserReviewContext } from "../userReviewContext";
+import type { DebtPaymentReview } from "../types";
 
 function expense(
   overrides: Partial<ExpenseTxnRecord> & Pick<ExpenseTxnRecord, "category" | "amount" | "txMonth">,
@@ -109,6 +112,11 @@ function profileFor(): FinancialProfileCache {
     homeCurrency: "CAD",
     accountStatusRecords: [],
     statementHistory: [],
+    accountRates: [],
+    confirmedSubscriptions: [],
+    goals: [],
+    cashCommitmentEntries: [],
+    typicalMonthly: { median: 0, avg: 0, monthsTracked: 0 },
   } as unknown as FinancialProfileCache;
 }
 
@@ -175,6 +183,115 @@ describe("current-month rule — complete-month consistency", () => {
     expect(month.moneyIn).toBe(5000);
     expect(month.moneyOut).toBe(1200);
     expect(month.leftover).toBe(3800);
+  });
+
+  it("keeps coach, cash flow, drawer, chat, context, savings rate, and typical income in sync when reviews apply", () => {
+    const refund = income({
+      amount: 300,
+      txMonth: completeYm,
+      source: "Tax Refund",
+      category: "Other",
+    });
+    const loanSlug = "td-loan-9999";
+    const reviewedIncome = [...incomeTxns, refund];
+    const loanSnap = {
+      slug: loanSlug,
+      bankName: "TD",
+      accountId: "9999",
+      accountName: "Car loan",
+      accountType: "loan",
+      balance: -8000,
+      statementMonth: completeYm,
+      statementDate: `${completeYm}-31`,
+      interestRate: 5,
+      currency: "CAD",
+    };
+    const snapshots = [...accountSnapshots, loanSnap];
+    const debtPaymentHistory = [
+      { accountSlug: loanSlug, statementMonth: "2026-08", paymentsMade: 400, currency: "CAD" },
+      { accountSlug: loanSlug, statementMonth: "2026-09", paymentsMade: 800, currency: "CAD" },
+    ];
+    const ignoreFingerprint = txFingerprint(loanSlug, "2026-09-15", 800, "Payment");
+    const debtReview: DebtPaymentReview = {
+      txFingerprint: ignoreFingerprint,
+      accountSlug: loanSlug,
+      classification: "ignore",
+      date: "2026-09-15",
+      amount: 800,
+      reviewedAt: new Date("2026-11-01"),
+    };
+    const reviews: UserReviewContext = {
+      incomeDepositReviews: new Map([
+        [`${refund.date}:${refund.source}:${refund.amount}:${refund.accountSlug}`, "not_income"],
+      ]),
+      debtPaymentReviews: [debtReview],
+      savingsConfirmedItems: new Map(),
+    };
+    const profile = {
+      ...profileFor(),
+      incomeTxns: reviewedIncome,
+      expenseTxns,
+      accountSnapshots: snapshots,
+      debtPaymentHistory,
+    } as unknown as FinancialProfileCache;
+
+    const input = cashFlowInputFromProfile(profile, reviews);
+    const withoutReviews = getMonthlyCashFlow(
+      cashFlowInputFromProfile(profile),
+      completeYm,
+    );
+    const month = getMonthlyCashFlow(input, completeYm);
+    expect(month.moneyIn).not.toBe(withoutReviews.moneyIn);
+    expect(month.moneyOut).not.toBe(withoutReviews.moneyOut);
+
+    const cash = buildCashFlowSummary(input).months.find((m) => m.yearMonth === completeYm)!;
+    const coach = computeMoneyCoachBreakdown(
+      profile,
+      reviews.debtPaymentReviews,
+      reviewedIncome,
+      snapshots as never,
+      "CAD",
+      reviews.incomeDepositReviews,
+      [completeYm],
+    );
+    const drawer = averageCashFlow(input, { rangeMonths: [completeYm] });
+    const chat = executeGetSavingsSummary(profile, { range: `month:${completeYm}` }, reviews);
+    const rate = getSavingsRate(profile, completeYm, reviews);
+    const typical = getTypicalMonthlyIncome(profile, reviews);
+    const ctx = buildChatContext(profile, reviews);
+    const fmtCad = (v: number) =>
+      new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "CAD",
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+      }).format(v);
+
+    expect(cash.moneyIn).toBe(month.moneyIn);
+    expect(cash.moneyOut).toBe(month.moneyOut);
+    expect(cash.leftover).toBe(month.leftover);
+    expect(coach.incomeAmount).toBe(month.moneyIn);
+    expect(coach.totalSpending).toBe(month.moneyOut);
+    expect(coach.buckets.find((b) => b.bucket === "savings")!.monthlyAverage).toBe(month.leftover);
+    expect(drawer.moneyIn).toBe(month.moneyIn);
+    expect(drawer.moneyOut).toBe(month.moneyOut);
+    expect(drawer.leftover).toBe(month.leftover);
+    expect(chat.ok).toBe(true);
+    const chatData = chat.data as {
+      money_in: number;
+      money_out: number;
+      leftover: number;
+      savings_rate: number | null;
+    };
+    expect(chatData.money_in).toBe(month.moneyIn);
+    expect(chatData.money_out).toBe(month.moneyOut);
+    expect(chatData.leftover).toBe(month.leftover);
+    expect(chatData.savings_rate).toBe(month.savingsRate);
+    expect(rate).toBe(Math.round((computeSavingsRate(month.moneyIn, month.moneyOut) ?? 0) * 100));
+    expect(typical).toBe(month.moneyIn);
+    expect(ctx).toContain(
+      `Income ${fmtCad(month.moneyIn)}, Spending ${fmtCad(month.moneyOut)}, Net ${fmtCad(month.leftover)}`,
+    );
   });
 });
 

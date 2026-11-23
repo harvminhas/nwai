@@ -18,6 +18,7 @@ import {
   cashFlowInputFromProfile,
   computeMonthlyCashFlowSeries,
   getMonthlyCashFlow,
+  type CashFlowReviews,
 } from "@/lib/monthlyCashFlow";
 import { formatMonthWithStatus, getCurrentMonth, IN_PROGRESS_LABEL, isMonthInProgress } from "@/lib/monthAnchor";
 
@@ -35,12 +36,15 @@ function makeFmt(currency: string) {
 
 // ── builder ──────────────────────────────────────────────────────────────────
 
-export function buildChatContext(profile: FinancialProfileCache): string {
+export function buildChatContext(
+  profile: FinancialProfileCache,
+  reviews?: CashFlowReviews,
+): string {
   const home = getHomeCurrency(profile);
   const fmt     = makeFmt(home);
 
   const current = getCurrentMonth();
-  const input   = cashFlowInputFromProfile(profile);
+  const input   = cashFlowInputFromProfile(profile, reviews);
   const month   = getLatestCompleteMonth(profile);
   const oldest  = profile.allTxMonths[0] ?? month;
   const total   = profile.allTxMonths.length;

@@ -105,9 +105,8 @@ export function isUnfinishedCashFlowMonth(
 /** Cash Flow uses complete months only — no "so far" / in-progress suffix. */
 export function formatCashFlowMonthLabel(
   yearMonth: string,
-  opts?: { short?: boolean; currentMonth?: string },
+  opts?: { short?: boolean },
 ): string {
-  void opts?.currentMonth;
   return opts?.short ? formatMonth(yearMonth) : formatMonthYear(yearMonth);
 }
 
@@ -117,9 +116,8 @@ export function formatCashFlowSummarySentence(
   moneyOut: number,
   leftover: number,
   currency: string,
-  currentMonth?: string,
 ): string {
-  const month = formatCashFlowMonthLabel(yearMonth, { currentMonth });
+  const month = formatCashFlowMonthLabel(yearMonth);
   const inAmt = fmt(moneyIn, currency);
   const outAmt = fmt(moneyOut, currency);
   if (moneyIn <= 0 && moneyOut <= 0) {

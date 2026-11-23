@@ -23,6 +23,7 @@ import {
   cashFlowInputFromProfile,
   computeSavingsRate,
   getMonthlyCashFlow,
+  type CashFlowReviews,
 } from "./monthlyCashFlow";
 
 // ── Shared types ──────────────────────────────────────────────────────────────
@@ -260,10 +261,14 @@ export function getNetWorth(
  *
  * @param yearMonth  YYYY-MM. Defaults to the most recent month in the profile.
  */
-export function getSavingsRate(profile: FinancialProfileCache, yearMonth?: string): number {
+export function getSavingsRate(
+  profile: FinancialProfileCache,
+  yearMonth?: string,
+  reviews?: CashFlowReviews,
+): number {
   const ym = yearMonth ?? getLatestCompleteMonth(profile);
   if (!ym) return 0;
-  const cf = getMonthlyCashFlow(cashFlowInputFromProfile(profile), ym);
+  const cf = getMonthlyCashFlow(cashFlowInputFromProfile(profile, reviews), ym);
   const rate = computeSavingsRate(cf.moneyIn, cf.moneyOut);
   return rate == null ? 0 : Math.round(rate * 100);
 }
@@ -423,11 +428,14 @@ export function getTypicalMonthlySpend(profile: FinancialProfileCache): number {
  * Typical monthly income: mean of money-in over the last 3 complete months
  * (same month set as Income typical / Cash Flow).
  */
-export function getTypicalMonthlyIncome(profile: FinancialProfileCache): number {
+export function getTypicalMonthlyIncome(
+  profile: FinancialProfileCache,
+  reviews?: CashFlowReviews,
+): number {
   const available = profile.monthlyHistory.map((h) => h.yearMonth);
   const months = monthsForCashFlowAverage(available, { lastNComplete: 3 });
   if (months.length === 0) return 0;
-  const input = cashFlowInputFromProfile(profile);
+  const input = cashFlowInputFromProfile(profile, reviews);
   const vals = months.map((ym) => getMonthlyCashFlow(input, ym).moneyIn);
   return vals.reduce((s, v) => s + v, 0) / vals.length;
 }

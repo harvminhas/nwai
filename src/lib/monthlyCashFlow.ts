@@ -108,6 +108,12 @@ export type AveragedCashFlowResult = AveragedCashFlow & {
  * Build the shared cash-flow input from a financial profile plus reviews.
  * Used by dashboard, drawers, chat, and Income/Spending typicals.
  */
+/** Income-deposit and debt-payment reviews that change money in / money out. */
+export type CashFlowReviews = {
+  debtPaymentReviews?: DebtPaymentReview[];
+  incomeDepositReviews?: Map<string, string>;
+};
+
 export function cashFlowInputFromProfile(
   profile: {
     expenseTxns: ExpenseTxnRecord[];
@@ -117,10 +123,7 @@ export function cashFlowInputFromProfile(
     accountSnapshots?: MonthlyCashFlowInput["accountSnapshots"];
     debtPaymentHistory?: DebtPaymentHistoryEntry[];
   },
-  reviews?: {
-    debtPaymentReviews?: DebtPaymentReview[];
-    incomeDepositReviews?: Map<string, string>;
-  },
+  reviews?: CashFlowReviews,
 ): MonthlyCashFlowInput {
   return {
     expenseTxns: profile.expenseTxns,

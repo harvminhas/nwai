@@ -112,22 +112,14 @@ describe("selectCashFlowMonth", () => {
 
 describe("formatCashFlowMonthLabel", () => {
   it("does not add a so-far suffix — Cash Flow uses complete months only", () => {
-    expect(formatCashFlowMonthLabel("2026-11", { currentMonth: "2026-11" })).toBe("Nov 2026");
-    expect(
-      formatCashFlowMonthLabel("2026-11", { short: true, currentMonth: "2026-11" }),
-    ).toBe("Nov");
-    expect(formatCashFlowMonthLabel("2026-10", { currentMonth: "2026-11" })).toBe(
-      "Oct 2026",
-    );
+    expect(formatCashFlowMonthLabel("2026-11")).toBe("Nov 2026");
+    expect(formatCashFlowMonthLabel("2026-11", { short: true })).toBe("Nov");
+    expect(formatCashFlowMonthLabel("2026-10")).toBe("Oct 2026");
   });
 
   it("does not say so far in the summary sentence", () => {
-    expect(
-      formatCashFlowSummarySentence("2026-11", 100, 40, 60, "CAD", "2026-11"),
-    ).toMatch(/Nov 2026/);
-    expect(
-      formatCashFlowSummarySentence("2026-11", 100, 40, 60, "CAD", "2026-11"),
-    ).not.toMatch(/so far/i);
+    expect(formatCashFlowSummarySentence("2026-11", 100, 40, 60, "CAD")).toMatch(/Nov 2026/);
+    expect(formatCashFlowSummarySentence("2026-11", 100, 40, 60, "CAD")).not.toMatch(/so far/i);
   });
 });
 
