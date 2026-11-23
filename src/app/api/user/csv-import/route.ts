@@ -19,6 +19,7 @@ import { buildCsvCoverage, planCsvImport, writeCsvStatementDocs } from "@/lib/cs
 import { runCsvQualityCheck } from "@/lib/csvQa";
 import { invalidateFinancialProfileCache } from "@/lib/financialProfile";
 import { fireInsightEvent } from "@/lib/insights/index";
+import { classifyUploadedDocument, csvParseResultToClassifiable } from "@/lib/classifyUploadedDocument";
 
 async function getUid(request: NextRequest): Promise<string | null> {
   const token = request.headers.get("authorization")?.replace("Bearer ", "");
@@ -65,6 +66,21 @@ export async function POST(request: NextRequest) {
   const preselectedAccountType = preselectedAccount?.accountType ?? undefined;
 
   const parsed = await parseCSV(csvText, preselectedAccountType);
+
+  const classification = classifyUploadedDocument(
+    csvParseResultToClassifiable(parsed, preselectedAccountType)
+  );
+  const hardDocumentReject =
+    !classification.ok &&
+    ["bill", "invoice", "receipt", "pay_stub", "tax_form"].includes(classification.reason);
+  // Same gate as PDF: reject bills/invoices/etc. before import. Soft rejects
+  // only apply when the CSV actually parsed into rows (don't hide parse errors).
+  if (!classification.ok && (hardDocumentReject || parsed.rows.length > 0)) {
+    return NextResponse.json(
+      { error: classification.message, reason: classification.reason },
+      { status: 422 }
+    );
+  }
 
   // ── Quality check, before anything is written ───────────────────────────
   // Block only on things that make the import meaningless (unreadable columns,

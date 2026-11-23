@@ -49,7 +49,7 @@ export function addPendingParse(id: string, name?: string) {
 
 // ── banner ────────────────────────────────────────────────────────────────────
 
-type ParseItemStatus = "analyzing" | "done" | "error" | "needs_review";
+type ParseItemStatus = "analyzing" | "done" | "error" | "needs_review" | "rejected";
 interface ParseItem extends PendingParse { status: ParseItemStatus }
 
 export default function ParseStatusBanner({
@@ -82,13 +82,15 @@ export default function ParseStatusBanner({
         try { localStorage.removeItem(PENDING_KEY); } catch { /* */ }
         const hasNeedsReview = next.some((p) => p.status === "needs_review");
         const hasError = next.some((p) => p.status === "error");
+        const hasRejected = next.some((p) => p.status === "rejected");
         // Only show the green "ready" strip when all succeeded
-        if (!hasNeedsReview && !hasError) setShowDone(true);
+        if (!hasNeedsReview && !hasError && !hasRejected) setShowDone(true);
         setTimeout(() => {
           onRefreshRef.current();
           onAllCompleteRef.current?.();
         }, 800);
-        // Auto-dismiss after 2.5 s when all done cleanly; keep visible for needs_review/error
+        // Auto-dismiss after 2.5 s when all done cleanly (including rejected — the list row has the message).
+        // Keep visible for needs_review/error so the user can act.
         if (!hasNeedsReview && !hasError) setTimeout(() => setItems([]), 2500);
       }
       return next;
@@ -119,6 +121,7 @@ export default function ParseStatusBanner({
           if (data.status === "completed") { clearInterval(t); markDone(id, "done"); }
           else if (data.status === "error") { clearInterval(t); markDone(id, "error"); }
           else if (data.status === "needs_review") { clearInterval(t); markDone(id, "needs_review"); }
+          else if (data.status === "rejected") { clearInterval(t); markDone(id, "rejected"); }
         } catch { /* network blip — keep going */ }
       };
       poll();
@@ -135,6 +138,7 @@ export default function ParseStatusBanner({
         if (s === "completed") { unsub(); if (pollingTimer) clearInterval(pollingTimer); markDone(id, "done"); }
         else if (s === "error") { unsub(); if (pollingTimer) clearInterval(pollingTimer); markDone(id, "error"); }
         else if (s === "needs_review") { unsub(); if (pollingTimer) clearInterval(pollingTimer); markDone(id, "needs_review"); }
+        else if (s === "rejected") { unsub(); if (pollingTimer) clearInterval(pollingTimer); markDone(id, "rejected"); }
       },
       () => { pollingTimer = startPolling(); }
     );

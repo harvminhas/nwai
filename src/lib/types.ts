@@ -235,6 +235,23 @@ export type AccountType =
   | "line_of_credit"
   | "other";
 
+/** Classification of an uploaded file before it is treated as an account statement. */
+export const UPLOADED_DOCUMENT_TYPES = [
+  "account_statement",
+  "bill",
+  "invoice",
+  "receipt",
+  "pay_stub",
+  "tax_form",
+  "other",
+] as const;
+
+export type UploadedDocumentType = (typeof UPLOADED_DOCUMENT_TYPES)[number];
+
+export function isUploadedDocumentType(value: unknown): value is UploadedDocumentType {
+  return typeof value === "string" && (UPLOADED_DOCUMENT_TYPES as readonly string[]).includes(value);
+}
+
 /**
  * A single segment of a multi-part statement (e.g. revolving HELOC + term
  * mortgage portions inside one TD FlexLine PDF).
@@ -365,6 +382,19 @@ export interface ParsedStatementData {
   debts?: number;
   statementDate: string;
   bankName: string;
+  /**
+   * What kind of document the model thinks this is.
+   * Optional for backward compatibility with statements parsed before classification.
+   */
+  documentType?: UploadedDocumentType;
+  /** First day of the statement period as printed (YYYY-MM-DD), when present. */
+  periodStart?: string;
+  /** Last day of the statement period as printed (YYYY-MM-DD), when present. */
+  periodEnd?: string;
+  /** Previous / opening / prior balance when printed. */
+  previousBalance?: number;
+  /** New / closing / ending balance when printed. */
+  newBalance?: number;
   /** Masked account number e.g. "••••1234" or full if not sensitive */
   accountId?: string;
   /**
@@ -434,7 +464,7 @@ export interface StatementDocument {
   fileName: string;
   fileUrl: string;
   parsedData?: ParsedStatementData;
-  status: "processing" | "completed" | "error" | "needs_review";
+  status: "processing" | "completed" | "error" | "needs_review" | "rejected";
   errorMessage?: string;
   /** Partial data captured from a failed AI parse — pre-fills the review form */
   partialParsedData?: Partial<ParsedStatementData>;
@@ -448,7 +478,7 @@ export interface StatementDocument {
 
 // API response types
 export interface StatementApiResponse {
-  status: "processing" | "completed" | "error" | "needs_review";
+  status: "processing" | "completed" | "error" | "needs_review" | "rejected";
   parsedData?: ParsedStatementData;
   partialParsedData?: Partial<ParsedStatementData>;
   parseError?: string;
@@ -471,6 +501,9 @@ export interface UserStatementSummary {
   accountName?: string;
   accountType?: string;
   status: string;
+  /** Present on rejected / failed uploads so the Statements page can show a plain-language message. */
+  errorMessage?: string;
+  parseError?: string;
   superseded?: boolean;
   supersededBy?: string;
   fileHash?: string;

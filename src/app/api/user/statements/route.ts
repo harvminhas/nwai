@@ -41,6 +41,8 @@ export async function GET(request: NextRequest) {
         accountName: d.parsedData?.accountName,
         accountType: d.parsedData?.accountType,
         status: d.status ?? "processing",
+        errorMessage: d.errorMessage ?? d.parseError ?? undefined,
+        parseError: d.parseError ?? d.errorMessage ?? undefined,
         superseded: d.superseded === true,
         supersededBy: d.supersededBy,
         source: d.source ?? "pdf",

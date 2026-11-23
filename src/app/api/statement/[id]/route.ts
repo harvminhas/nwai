@@ -29,7 +29,7 @@ export async function GET(
     if (status === "completed" && data?.parsedData) {
       response.parsedData = data.parsedData;
     }
-    if (status === "error" && data?.errorMessage) {
+    if ((status === "error" || status === "rejected") && data?.errorMessage) {
       response.errorMessage = data.errorMessage;
     }
 

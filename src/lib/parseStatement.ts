@@ -1,4 +1,4 @@
-import type { ParsedStatementData } from "./types";
+import { isUploadedDocumentType, type ParsedStatementData } from "./types";
 import { sendVisionRequest, sendPdfRequest, sendTextRequest } from "./ai";
 import { isIncomeCategory, toIncomeCategoryLabel } from "./applyRules";
 import { normalizeDebtExpenseCategory } from "./debtServicing";
@@ -19,8 +19,30 @@ Extract EVERY row that has a date and an amount. Do NOT skip rows because the de
 
 ---
 
+**STEP 0A — DOCUMENT CLASSIFICATION (do this FIRST)**
+Classify the document before extracting a ledger. This product only accepts account statements.
+- documentType: exactly one of "account_statement" | "bill" | "invoice" | "receipt" | "pay_stub" | "tax_form" | "other"
+  - account_statement: a bank, credit card, loan, mortgage, line of credit, or investment/brokerage account statement covering a statement period
+  - bill: a utility, phone, internet, insurance, medical, or similar amount-due bill — NOT an account statement
+  - invoice: a vendor or business invoice
+  - receipt: a purchase receipt or payment confirmation
+  - pay_stub: a payroll / earnings statement
+  - tax_form: a tax return, T4, W-2, 1099, Notice of Assessment, or similar
+  - other: none of the above
+- periodStart: first day of the statement/billing period as printed (YYYY-MM-DD). Omit if not present.
+- periodEnd: last day of the statement/billing period as printed (YYYY-MM-DD). Omit if not present.
+- previousBalance: previous / opening / prior balance if printed. Omit if not present.
+- newBalance: new / closing / ending / current balance if printed. Omit if not present.
+
+If documentType is not account_statement, still return documentType, bankName (the issuer), statementDate (due date or period end if printed), netWorth (amount due only if that is the printed total), periodStart/periodEnd when present, and empty transactions. Do not invent an account, transactions, or holdings.
+
+For account statements, continue with the steps below.
+
+---
+
 **STEP 1 — ACCOUNT DETAILS**
 Extract the following fields:
+- documentType, periodStart, periodEnd, previousBalance, newBalance as specified in STEP 0A.
 - bankName: name of the bank or financial institution as printed.
 - accountId: copy the account number EXACTLY as printed (e.g. "28215846", "••••1234", "5223 XXXX XXXX 0773"). Copy character-for-character — do NOT reformat, mask, unmask, truncate, or invent digits. If absent, return "unknown".
 - accountName: account product name or nickname (e.g. "TD All-Inclusive Banking", "Chase Sapphire Reserve"). Infer from context if not labelled.
@@ -282,6 +304,9 @@ For combined products (HELOC + mortgage term portions, etc.):
 
 For an investment / retirement account (401k, RRSP, TFSA, brokerage):
 {
+  "documentType": "account_statement",
+  "periodStart": "2026-02-01",
+  "periodEnd": "2026-02-28",
   "netWorth": 64510.67,
   "assets": 64510.67,
   "debts": 0,
@@ -306,6 +331,9 @@ For an investment / retirement account (401k, RRSP, TFSA, brokerage):
 
 For a HELOC / Home Equity Line of Credit (revolving advances are expenses; payments across ALL portions go into paymentsMade):
 {
+  "documentType": "account_statement",
+  "periodStart": "2025-12-01",
+  "periodEnd": "2025-12-31",
   "netWorth": -508329.06,
   "assets": 0,
   "debts": 508329.06,
@@ -334,6 +362,9 @@ For a HELOC / Home Equity Line of Credit (revolving advances are expenses; payme
 
 For a pure mortgage/loan (no consumer purchases; income, expenses, subscriptions will be empty):
 {
+  "documentType": "account_statement",
+  "periodStart": "2025-12-01",
+  "periodEnd": "2025-12-31",
   "netWorth": -446969.13,
   "assets": 0,
   "debts": 446969.13,
@@ -353,6 +384,11 @@ For a pure mortgage/loan (no consumer purchases; income, expenses, subscriptions
 For a checking/savings/credit account.
 accountId examples: TD statement printing "••••3156" → use "••••3156". Wealthsimple printing "28215846" → use "28215846". Always copy verbatim.
 {
+  "documentType": "account_statement",
+  "periodStart": "2026-02-01",
+  "periodEnd": "2026-02-27",
+  "previousBalance": 6890.12,
+  "newBalance": 7148.01,
   "netWorth": 7148.01,
   "assets": 7148.01,
   "debts": 0,
@@ -413,8 +449,20 @@ Direction mapping:
 - Format C: negative => expense, positive/unsigned => income
 - Format D: infer using nearby headers/labels (withdrawal/deposit). If still ambiguous, classify as "Other" but do not drop the row.
 
+STEP 0A - DOCUMENT CLASSIFICATION (do this FIRST)
+Classify before extracting a ledger:
+- documentType: account_statement | bill | invoice | receipt | pay_stub | tax_form | other
+  - account_statement: bank, credit card, loan, mortgage, line of credit, or investment statement
+  - bill: utility/phone/insurance/medical amount-due bill
+  - invoice / receipt / pay_stub / tax_form: those document kinds
+  - other: none of the above
+- periodStart / periodEnd: statement period dates (YYYY-MM-DD) when printed
+- previousBalance / newBalance: opening and closing balances when printed
+If documentType is not account_statement, return documentType plus issuer/date/amount fields and empty transactions. Do not invent an account.
+
 STEP 1 - ACCOUNT DETAILS
 Extract:
+- documentType, periodStart, periodEnd, previousBalance, newBalance
 - bankName
 - accountId (verbatim, if present; else "unknown")
 - accountName
@@ -466,6 +514,11 @@ Return JSON only. No markdown or explanation.
 
 Required shape:
 {
+  "documentType": "account_statement",
+  "periodStart": "YYYY-MM-DD",
+  "periodEnd": "YYYY-MM-DD",
+  "previousBalance": 0.0,
+  "newBalance": 0.0,
   "netWorth": 0.0,
   "assets": 0.0,
   "debts": 0.0,
@@ -589,6 +642,12 @@ function coerceDefaults(data: Record<string, unknown>): ParsedStatementData {
     savingsRate: typeof data.savingsRate === "number" ? data.savingsRate : 0,
     insights: Array.isArray(data.insights) ? data.insights : [],
     subAccounts: Array.isArray(data.subAccounts) ? data.subAccounts : [],
+    ...(isUploadedDocumentType(data.documentType) ? { documentType: data.documentType } : {}),
+    ...(typeof data.periodStart === "string" ? { periodStart: data.periodStart } : {}),
+    ...(typeof data.periodEnd === "string" ? { periodEnd: data.periodEnd } : {}),
+    ...(typeof data.previousBalance === "number" ? { previousBalance: data.previousBalance } : {}),
+    ...(typeof data.newBalance === "number" ? { newBalance: data.newBalance } : {}),
+    ...(Array.isArray(data.holdings) ? { holdings: data.holdings as ParsedStatementData["holdings"] } : {}),
   };
 }
 
@@ -598,7 +657,7 @@ export async function parseStatementImage(
 ): Promise<ParsedStatementData> {
   const raw = await sendVisionRequest(
     SYSTEM_PROMPT,
-    "Analyze this bank statement image and return the JSON now.",
+    "Analyze this financial document. Classify documentType first, then return the JSON now.",
     imageBase64,
     mediaType
   );
@@ -608,7 +667,7 @@ export async function parseStatementImage(
 export async function parseStatementPdf(pdfBase64: string): Promise<ParsedStatementData> {
   const raw = await sendPdfRequest(
     SYSTEM_PROMPT,
-    "Analyze this bank statement PDF and return the JSON now.",
+    "Analyze this financial document. Classify documentType first, then return the JSON now.",
     pdfBase64
   );
   return parseJsonResponse(raw);

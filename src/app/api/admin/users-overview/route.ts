@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { authBearerToken, requireAdminDecoded } from "@/lib/adminAuth";
+import { isRejectedStatementStatus } from "@/lib/classifyUploadedDocument";
 
 export type AdminUserOverviewRow = {
   uid: string;
@@ -33,6 +34,7 @@ export async function GET(req: NextRequest) {
     const d = doc.data();
     const uid = typeof d.userId === "string" ? d.userId : "";
     if (!uid) continue;
+    if (isRejectedStatementStatus(d.status as string | undefined)) continue;
 
     let row = agg.get(uid);
     if (!row) {

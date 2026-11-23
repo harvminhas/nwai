@@ -20,6 +20,7 @@ import { maskAccountNumbersInParsedData } from "@/lib/accountMasking";
 import { detectDebtPayoff, shouldAutoMarkPayoff, shouldPromptPayoff } from "@/lib/debtPayoffDetection";
 import { setAccountStatus } from "@/lib/accountStatus";
 import { generateNetWorthChanges } from "@/lib/netWorthChanges";
+import { classifyUploadedDocument } from "@/lib/classifyUploadedDocument";
 
 export const maxDuration = 120;
 
@@ -118,6 +119,33 @@ export async function POST(request: NextRequest) {
     // Capture AI result so the catch block can persist partial data if something
     // downstream (Firestore writes, slug logic, etc.) throws unexpectedly.
     partialParsedData = parsedData;
+
+    // Reject bills, invoices, receipts, pay stubs, tax forms, and other
+    // non-statements before any account slug or override is written.
+    const classification = classifyUploadedDocument(parsedData);
+    if (!classification.ok) {
+      try {
+        await bucket.file(fileUrl).delete();
+        console.log(`[parse] Deleted rejected file from Storage: ${fileUrl}`);
+      } catch (deleteErr) {
+        console.error(`[parse] Failed to delete rejected file ${fileUrl}:`, deleteErr);
+      }
+
+      await statementRef.update({
+        status: "rejected",
+        errorMessage: classification.message,
+        parseError: classification.message,
+        rejectionReason: classification.reason,
+        accountSlug: null,
+        fileUrl: "",
+        fileDeletedAt: new Date().toISOString(),
+      });
+
+      return NextResponse.json(
+        { ok: false, status: "rejected", error: classification.message, reason: classification.reason },
+        { status: 200 }
+      );
+    }
     
     console.log("[parse][post-parse-summary]", JSON.stringify({
       statementId,
@@ -565,7 +593,7 @@ export async function POST(request: NextRequest) {
         const ref = db.collection("statements").doc(statementId);
         const snap = await ref.get();
         const currentStatus = snap.exists ? (snap.data()?.status as string | undefined) : undefined;
-        if (currentStatus !== "completed") {
+        if (currentStatus !== "completed" && currentStatus !== "rejected") {
           const isRetryable = isTransientAiError || isAiConfigError || isFirebaseCredError || isFirestoreNotFound;
           if (isRetryable) {
             await ref.update({ status: "error", errorMessage: friendlyMessage });
