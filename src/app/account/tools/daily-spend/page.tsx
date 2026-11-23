@@ -38,10 +38,12 @@ import {
   STACK_CLASS,
   SUBTITLE_CLASS,
   THEME_AMOUNT_CLASS,
+  THEME_CHEVRON_CLASS,
   THEME_NAME_CLASS,
   THEME_ROW_CLASS,
   TITLE_CLASS,
 } from "./dailySpendReadLayout";
+import { ThemeDetailModal } from "./ThemeDetailModal";
 
 const RANGE_BUTTON_LABEL: Record<DailySpendRange, string> = {
   "3m": "3M",
@@ -115,6 +117,7 @@ export default function DailySpendPage() {
   const [targetDaily, setTargetDaily] = useState<number | null>(null);
   const [planPickerOpen, setPlanPickerOpen] = useState(false);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [openThemeId, setOpenThemeId] = useState<DailySpendThemeId | null>(null);
 
   useEffect(() => {
     const { auth } = getFirebaseClient();
@@ -236,6 +239,7 @@ export default function DailySpendPage() {
     bounds.max > bounds.min ? ((usualDaily - bounds.min) / (bounds.max - bounds.min)) * 100 : 50;
 
   return (
+    <>
     <div className={PAGE_CLASS}>
       <div className={PAGE_INNER_CLASS}>
         <Header range={range} onRangeChange={setRange} />
@@ -288,46 +292,64 @@ export default function DailySpendPage() {
               <h2 className="text-sm font-semibold text-gray-900">Where a day goes</h2>
               <ul className="mt-1 divide-y divide-gray-100">
                 {data.themes.map((theme) => (
-                  <li key={theme.id} className={THEME_ROW_CLASS}>
-                    <span
-                      className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full"
-                      style={{ backgroundColor: theme.color }}
-                      aria-hidden
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex min-w-0 items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className={THEME_NAME_CLASS}>{theme.label}</p>
-                          {theme.id === "food" && (
-                            <p className="mt-0.5 break-words text-xs text-gray-500">
-                              Groceries {money(theme.groceriesDaily ?? 0, currency)} · Eating out{" "}
-                              {money(theme.eatingOutDaily ?? 0, currency)}
+                  <li key={theme.id}>
+                    <button
+                      type="button"
+                      className={THEME_ROW_CLASS}
+                      onClick={() => setOpenThemeId(theme.id)}
+                      aria-haspopup="dialog"
+                      aria-label={`${theme.label} details`}
+                    >
+                      <span
+                        className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: theme.color }}
+                        aria-hidden
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-w-0 items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className={THEME_NAME_CLASS}>{theme.label}</p>
+                            {theme.id === "food" && (
+                              <p className="mt-0.5 break-words text-xs text-gray-500">
+                                Groceries {money(theme.groceriesDaily ?? 0, currency)} · Eating out{" "}
+                                {money(theme.eatingOutDaily ?? 0, currency)}
+                              </p>
+                            )}
+                          </div>
+                          <div className={`${THEME_AMOUNT_CLASS} space-y-1`}>
+                            <p className="font-semibold text-gray-900">
+                              {moneyPerDay(theme.dailyRate, currency)}
                             </p>
-                          )}
-                        </div>
-                        <div className={`${THEME_AMOUNT_CLASS} space-y-1`}>
-                          <p className="font-semibold text-gray-900">
-                            {moneyPerDay(theme.dailyRate, currency)}
-                          </p>
-                          <div className="flex justify-end">
-                            <DeltaPill
-                              kind={theme.deltaKind}
-                              delta={theme.delta}
-                              currency={currency}
-                            />
+                            <div className="flex justify-end">
+                              <DeltaPill
+                                kind={theme.deltaKind}
+                                delta={theme.delta}
+                                currency={currency}
+                              />
+                            </div>
                           </div>
                         </div>
+                        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                          <div
+                            className="h-full rounded-full"
+                            style={{
+                              width: `${Math.min(100, Math.max(0, theme.share * 100))}%`,
+                              backgroundColor: theme.color,
+                            }}
+                          />
+                        </div>
                       </div>
-                      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
-                        <div
-                          className="h-full rounded-full"
-                          style={{
-                            width: `${Math.min(100, Math.max(0, theme.share * 100))}%`,
-                            backgroundColor: theme.color,
-                          }}
-                        />
-                      </div>
-                    </div>
+                      <svg
+                        className={THEME_CHEVRON_CLASS}
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        aria-hidden
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -462,6 +484,13 @@ export default function DailySpendPage() {
         </div>
       </div>
     </div>
+    <ThemeDetailModal
+      theme={data.themes.find((t) => t.id === openThemeId) ?? null}
+      currency={currency}
+      windowLabel={data.monthRangeLabel}
+      onClose={() => setOpenThemeId(null)}
+    />
+    </>
   );
 }
 

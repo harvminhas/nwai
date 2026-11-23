@@ -4,9 +4,14 @@ import { describe, expect, it } from "vitest";
 import {
   COLUMNS_CLASS,
   HEADER_CLASS,
+  MODAL_BODY_CLASS,
+  MODAL_FOOTER_CLASS,
+  MODAL_HANDLE_CLASS,
+  MODAL_PANEL_CLASS,
   PAGE_CLASS,
   PAGE_INNER_CLASS,
   THEME_AMOUNT_CLASS,
+  THEME_CHEVRON_CLASS,
   THEME_NAME_CLASS,
   THEME_ROW_CLASS,
 } from "../dailySpendReadLayout";
@@ -29,6 +34,17 @@ describe("daily spend page layout", () => {
     expect(THEME_NAME_CLASS).toContain("break-words");
     expect(THEME_AMOUNT_CLASS).toContain("shrink-0");
     expect(THEME_AMOUNT_CLASS).toContain("tabular-nums");
+    expect(THEME_ROW_CLASS).toContain("w-full");
+    expect(THEME_CHEVRON_CLASS).toContain("shrink-0");
+    expect(page).toContain("THEME_CHEVRON_CLASS");
+    expect(page).toContain('aria-haspopup="dialog"');
+    expect(page).toContain("ThemeDetailModal");
+    expect(MODAL_PANEL_CLASS).toContain("lg:max-w-[560px]");
+    expect(MODAL_PANEL_CLASS).toContain("max-lg:h-[90%]");
+    expect(MODAL_PANEL_CLASS).toContain("max-w-full");
+    expect(MODAL_HANDLE_CLASS).toContain("lg:hidden");
+    expect(MODAL_BODY_CLASS).toContain("overflow-x-hidden");
+    expect(MODAL_FOOTER_CLASS).toContain("shrink-0");
   });
 
   it("shows a muted no-spend line and the fully-saved wording", () => {

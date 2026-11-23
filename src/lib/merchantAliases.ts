@@ -9,6 +9,7 @@
  */
 
 import { merchantSlug } from "@/lib/applyRules";
+import { resolveCanonicalMerchantSlug, resolveMerchantAlias } from "@/lib/merchantUtils";
 
 export interface MerchantAliasResolver {
   /**
@@ -76,5 +77,24 @@ export function buildMerchantAliasResolver(
     getAliasesFor(canonicalSlug: string): string[] {
       return canonicalToAliases.get(canonicalSlug) ?? [];
     },
+  };
+}
+
+/**
+ * Canonical merchant key + display name used by the Spending page.
+ *
+ * Matches drilldown grouping: user-confirmed source mappings first, then
+ * built-in aliases (`amazon-ca` → Amazon) via {@link resolveCanonicalMerchantSlug}
+ * and {@link resolveMerchantAlias}.
+ */
+export function resolveSpendingMerchant(
+  merchantName: string,
+  aliasResolver?: Pick<MerchantAliasResolver, "resolve"> | null,
+): { slug: string; name: string } {
+  const resolved = aliasResolver?.resolve(merchantName) ?? merchantName;
+  const slug = merchantSlug(resolved);
+  return {
+    slug: resolveCanonicalMerchantSlug(slug),
+    name: resolveMerchantAlias(slug, resolved),
   };
 }
