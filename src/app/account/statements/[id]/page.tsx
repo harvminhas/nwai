@@ -45,6 +45,7 @@ interface StatementDetail {
   parsedData: ParsedStatementData | null;
   partialParsedData: Partial<ParsedStatementData> | null;
   parseError: string | null;
+  classificationWarning?: string | null;
   accountSlug: string | null;
   yearMonth: string | null;
   /** True when parsed but dashboard excludes this until /account/setup is done */
@@ -659,6 +660,18 @@ export default function StatementDetailPage() {
           {/* Completed — read-only summary */}
           {!loading && isCompleted && statement && (
             <div className="space-y-5">
+              {statement.classificationWarning && (
+                <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3.5">
+                  <svg className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 15.75h.007v.008H12v-.008z" />
+                  </svg>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-amber-900">Kept with a warning</p>
+                    <p className="mt-0.5 text-xs text-amber-800">{statement.classificationWarning}</p>
+                  </div>
+                </div>
+              )}
               {statement.needsAccountSetup && (
                 <div className="flex flex-col gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-start gap-3 min-w-0">

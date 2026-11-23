@@ -504,6 +504,8 @@ export interface UserStatementSummary {
   /** Present on rejected / failed uploads so the Statements page can show a plain-language message. */
   errorMessage?: string;
   parseError?: string;
+  /** Reparse kept the prior parse; show this instead of treating the statement as failed. */
+  classificationWarning?: string;
   superseded?: boolean;
   supersededBy?: string;
   fileHash?: string;

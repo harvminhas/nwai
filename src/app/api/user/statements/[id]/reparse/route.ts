@@ -33,8 +33,21 @@ export async function POST(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const data = snap.data() as { fileHash?: string; userId?: string };
+    const data = snap.data() as {
+      fileHash?: string;
+      userId?: string;
+      status?: string;
+      statusBeforeReparse?: string;
+    };
     const fileHash = data?.fileHash;
+    const currentStatus = data?.status;
+    const recorded = data?.statusBeforeReparse;
+    const statusBeforeReparse =
+      currentStatus && currentStatus !== "processing"
+        ? currentStatus
+        : recorded && recorded !== "processing"
+          ? recorded
+          : currentStatus ?? null;
 
     // Clear parse cache for this file so a manual "Retry parse" always forces a
     // fresh AI call instead of reusing previously cached parsedData.
@@ -44,8 +57,14 @@ export async function POST(
       });
     }
 
-    // Reset so /api/parse can overwrite it
-    await ref.update({ status: "processing", errorMessage: null, parseError: null });
+    // Reset so /api/parse can overwrite it. Keep the prior status so a
+    // classifier reject restores needs_review/error instead of promoting.
+    await ref.update({
+      status: "processing",
+      errorMessage: null,
+      parseError: null,
+      statusBeforeReparse,
+    });
 
     return NextResponse.json({ ok: true, statementId, cacheCleared: Boolean(uid && fileHash) });
   } catch (err) {

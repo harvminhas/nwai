@@ -58,6 +58,33 @@ export function wasPreviouslyCompletedStatement(
   return Boolean(data.parsedData) && Boolean(data.accountSlug);
 }
 
+const RESTORE_ON_REJECT_STATUSES = new Set(["completed", "needs_review", "error"]);
+
+/**
+ * Status to put back when a reparse's extraction looks like a non-statement.
+ * Prefers `statusBeforeReparse` (written by the reparse route) so a
+ * needs_review/error record is not promoted to completed.
+ */
+export function statusToRestoreOnClassifierReject(
+  data: {
+    status?: string;
+    statusBeforeReparse?: string | null;
+    parsedData?: unknown;
+    accountSlug?: string | null;
+  } | null | undefined
+): string | null {
+  if (!data) return null;
+  const recorded = data.statusBeforeReparse;
+  if (typeof recorded === "string" && RESTORE_ON_REJECT_STATUSES.has(recorded)) {
+    return recorded;
+  }
+  if (typeof data.status === "string" && RESTORE_ON_REJECT_STATUSES.has(data.status)) {
+    return data.status;
+  }
+  if (wasPreviouslyCompletedStatement(data)) return "completed";
+  return null;
+}
+
 export function rejectionMessageForDocumentType(documentType: string): string {
   const noun = DOCUMENT_NOUN[documentType] ?? "document";
   return `This looks like a ${noun}, not an account statement. Upload a bank, credit card, loan or investment statement.`;

@@ -667,6 +667,7 @@ export default function StatementsPage() {
                   const isConfirm = confirmId === s.id;
                   const isReparsing = reparsingId === s.id;
                   const isRejected = isRejectedStatementStatus(s.status);
+                  const classificationWarning = s.classificationWarning;
                   const rejectMessage = s.errorMessage || s.parseError ||
                     "This looks like a document, not an account statement. Upload a bank, credit card, loan or investment statement.";
                   // accountId is last4-source only — never shown raw (may be a full number).
@@ -697,6 +698,11 @@ export default function StatementsPage() {
                         <p className="truncate text-sm font-mono text-gray-800">{s.fileName || monthStr}</p>
                         {isRejected ? (
                           <p className="text-xs text-gray-700 mt-0.5">{rejectMessage}</p>
+                        ) : classificationWarning ? (
+                          <>
+                            <p className="text-xs text-gray-500 truncate">{acctLabel}</p>
+                            <p className="text-xs text-amber-800 mt-0.5">{classificationWarning}</p>
+                          </>
                         ) : (
                           <p className="text-xs text-gray-500 truncate">{acctLabel}</p>
                         )}
@@ -724,7 +730,10 @@ export default function StatementsPage() {
 
                       {/* Status */}
                       <div className="flex items-center gap-1 justify-self-end">
-                        {s.status === "completed" && (
+                        {s.status === "completed" && classificationWarning && (
+                          <span className="text-xs font-semibold text-amber-700">Kept with a warning</span>
+                        )}
+                        {s.status === "completed" && !classificationWarning && (
                           <span className="text-xs font-semibold text-green-600">✓ Parsed</span>
                         )}
                         {s.status === "error" && (

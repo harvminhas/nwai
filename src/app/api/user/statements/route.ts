@@ -43,6 +43,9 @@ export async function GET(request: NextRequest) {
         status: d.status ?? "processing",
         errorMessage: d.errorMessage ?? d.parseError ?? undefined,
         parseError: d.parseError ?? d.errorMessage ?? undefined,
+        ...(typeof d.classificationWarning === "string" && d.classificationWarning
+          ? { classificationWarning: d.classificationWarning }
+          : {}),
         superseded: d.superseded === true,
         supersededBy: d.supersededBy,
         source: d.source ?? "pdf",

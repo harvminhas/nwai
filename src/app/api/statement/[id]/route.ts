@@ -23,6 +23,7 @@ export async function GET(
       status: string;
       parsedData?: unknown;
       errorMessage?: string;
+      warning?: string;
       statementId?: string;
     } = { status, statementId: id };
 
@@ -31,6 +32,9 @@ export async function GET(
     }
     if ((status === "error" || status === "rejected") && data?.errorMessage) {
       response.errorMessage = data.errorMessage;
+    }
+    if (typeof data?.classificationWarning === "string" && data.classificationWarning) {
+      response.warning = data.classificationWarning;
     }
 
     return NextResponse.json(response);

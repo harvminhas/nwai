@@ -4,6 +4,7 @@ import {
   csvParseResultToClassifiable,
   isCountableStatementStatus,
   rejectionMessageForDocumentType,
+  statusToRestoreOnClassifierReject,
   wasPreviouslyCompletedStatement,
 } from "../classifyUploadedDocument";
 import type { ParsedStatementData } from "../types";
@@ -298,6 +299,34 @@ describe("wasPreviouslyCompletedStatement", () => {
   it("does not treat a rejected or fresh upload as previously completed", () => {
     expect(wasPreviouslyCompletedStatement({ status: "rejected", accountSlug: null })).toBe(false);
     expect(wasPreviouslyCompletedStatement({ status: "processing" })).toBe(false);
+  });
+});
+
+describe("statusToRestoreOnClassifierReject", () => {
+  it("restores needs_review / error from statusBeforeReparse instead of completed", () => {
+    expect(statusToRestoreOnClassifierReject({
+      status: "processing",
+      statusBeforeReparse: "needs_review",
+      parsedData: { bankName: "Example" },
+      accountSlug: "1234",
+    })).toBe("needs_review");
+    expect(statusToRestoreOnClassifierReject({
+      status: "processing",
+      statusBeforeReparse: "error",
+    })).toBe("error");
+  });
+
+  it("restores completed when that was the status before reparse", () => {
+    expect(statusToRestoreOnClassifierReject({
+      status: "processing",
+      statusBeforeReparse: "completed",
+      parsedData: { bankName: "Example" },
+      accountSlug: "1234",
+    })).toBe("completed");
+  });
+
+  it("does not restore a fresh processing upload", () => {
+    expect(statusToRestoreOnClassifierReject({ status: "processing" })).toBeNull();
   });
 });
 
