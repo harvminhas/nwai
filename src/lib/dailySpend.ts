@@ -89,6 +89,8 @@ export interface DailySpendCurrentMonth {
   inProgressLabel: string;
   dailyRate: number;
   themeTotal: number;
+  /** False when this month has transactions but no everyday-theme spend yet. */
+  hasEverydaySpend: boolean;
   daysElapsed: number;
   fromDay: number;
   toDay: number;
@@ -309,6 +311,13 @@ export function whatIfSliderBounds(usualDaily: number): { min: number; max: numb
   };
 }
 
+export const NO_SPEND_THIS_MONTH_MESSAGE = "No spending recorded yet this month";
+
+/** "Fully saved 1 month sooner" / "Fully saved 3 months sooner". */
+export function fullySavedSoonerLabel(months: number): string {
+  return `Fully saved ${months} ${months === 1 ? "month" : "months"} sooner`;
+}
+
 /**
  * How many months sooner a plan is reached if extra monthly savings are
  * added to the existing set-aside. Null when the comparison is not meaningful.
@@ -425,13 +434,16 @@ export function buildDailySpend(input: DailySpendInput): DailySpendResult {
 
   const daysElapsed = daysElapsedInMonth(today);
   let currentMonth: DailySpendCurrentMonth | null = null;
-  if (isMonthInProgress(currentYm, currentYm)) {
+  // No strip at all when nothing has been recorded for the current month.
+  const hasCurrentMonthTxns = input.expenseTxns.some((t) => t.txMonth === currentYm);
+  if (hasCurrentMonthTxns && isMonthInProgress(currentYm, currentYm)) {
     const currentAmounts = amountsFor(currentYm);
     currentMonth = {
       yearMonth: currentYm,
       isInProgress: true,
       inProgressLabel: IN_PROGRESS_LABEL,
       themeTotal: currentAmounts.total,
+      hasEverydaySpend: currentAmounts.total > 0,
       daysElapsed,
       fromDay: 1,
       toDay: daysElapsed,

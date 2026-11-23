@@ -30,4 +30,11 @@ describe("daily spend page layout", () => {
     expect(THEME_AMOUNT_CLASS).toContain("shrink-0");
     expect(THEME_AMOUNT_CLASS).toContain("tabular-nums");
   });
+
+  it("shows a muted no-spend line and the fully-saved wording", () => {
+    expect(page).toContain("NO_SPEND_THIS_MONTH_MESSAGE");
+    expect(page).toContain("hasEverydaySpend");
+    expect(page).toContain("fullySavedSoonerLabel(sooner)");
+    expect(page).not.toContain("Reaches it");
+  });
 });

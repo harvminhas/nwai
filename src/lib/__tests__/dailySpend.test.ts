@@ -10,7 +10,9 @@ import {
   daysElapsedInMonth,
   deltaKind,
   foodSplitForCategory,
+  fullySavedSoonerLabel,
   lastNForRange,
+  NO_SPEND_THIS_MONTH_MESSAGE,
   monthlyKeep,
   monthsSooner,
   parseDailySpendRange,
@@ -198,6 +200,27 @@ describe("current month is excluded from the average", () => {
       themeTotal: 2300,
     });
     expect(result.currentMonth?.dailyRate).toBeCloseTo(2300 / 23, 10);
+    expect(result.currentMonth?.hasEverydaySpend).toBe(true);
+  });
+
+  it("flags no everyday spend this month instead of a CA$0/day rate", () => {
+    const txns = [
+      expense({ category: "Groceries", amount: 310, txMonth: "2026-10" }),
+      expense({ category: "Rent", amount: 2000, txMonth: "2026-11" }),
+    ];
+    const result = spend(txns);
+    expect(result.currentMonth).toMatchObject({
+      yearMonth: "2026-11",
+      inProgressLabel: "In progress",
+      themeTotal: 0,
+      hasEverydaySpend: false,
+    });
+    expect(NO_SPEND_THIS_MONTH_MESSAGE).toBe("No spending recorded yet this month");
+  });
+
+  it("hides the current-month strip when the month has no data at all", () => {
+    const txns = [expense({ category: "Groceries", amount: 310, txMonth: "2026-10" })];
+    expect(spend(txns).currentMonth).toBeNull();
   });
 });
 
@@ -332,5 +355,10 @@ describe("range helpers and what-if math", () => {
     expect(monthsSooner(1200, 100, 50)).toBe(4);
     expect(monthsSooner(1200, 100, 0)).toBeNull();
     expect(monthsSooner(0, 100, 50)).toBeNull();
+  });
+
+  it("words the plan result as fully saved, singular for one month", () => {
+    expect(fullySavedSoonerLabel(1)).toBe("Fully saved 1 month sooner");
+    expect(fullySavedSoonerLabel(4)).toBe("Fully saved 4 months sooner");
   });
 });

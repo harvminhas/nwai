@@ -23,6 +23,8 @@ import {
   DAILY_SPEND_THEMES,
   monthlyKeep,
   monthsSooner,
+  fullySavedSoonerLabel,
+  NO_SPEND_THIS_MONTH_MESSAGE,
   whatIfSliderBounds,
   yearlyKeep,
 } from "@/lib/dailySpend";
@@ -268,9 +270,13 @@ export default function DailySpendPage() {
                     {data.currentMonth.inProgressLabel}
                   </span>
                 </div>
-                <IntactAmount className="mt-2 block text-2xl font-semibold tabular-nums text-gray-900">
-                  {moneyPerDay(data.currentMonth.dailyRate, currency)}
-                </IntactAmount>
+                {data.currentMonth.hasEverydaySpend ? (
+                  <IntactAmount className="mt-2 block text-2xl font-semibold tabular-nums text-gray-900">
+                    {moneyPerDay(data.currentMonth.dailyRate, currency)}
+                  </IntactAmount>
+                ) : (
+                  <p className="mt-2 text-sm text-gray-500">{NO_SPEND_THIS_MONTH_MESSAGE}</p>
+                )}
                 <p className="mt-2 text-sm text-gray-500">
                   {data.currentMonth.rangeLabel} · {data.currentMonth.daysElapsed} days · not used
                   in the average
@@ -446,7 +452,7 @@ export default function DailySpendPage() {
                   )}
                   {selectedPlan && sooner != null && keepMonthly > 0 && (
                     <p className="mt-3 text-sm text-gray-700">
-                      Reaches it {sooner} {sooner === 1 ? "month" : "months"} sooner
+                      {fullySavedSoonerLabel(sooner)}
                     </p>
                   )}
                 </div>
